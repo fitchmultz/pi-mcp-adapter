@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Added a strict TypeScript typecheck command and CI gate.
 
+### Fixed
+- Stopped tokenless MCP UI discovery requests from receiving the session capability token; Moshi discovery now serves a non-sensitive landing page while authenticated UI routes remain token-gated.
+
 ## [2.19.0] - 2026-08-03
 
 ### Added

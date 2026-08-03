@@ -236,7 +236,7 @@ describe("UiServer", () => {
       expect(res.body).toEqual({ ok: false, error: "Invalid session" });
     });
 
-    it("serves a tokenless loopback landing shell for Moshi preview", async () => {
+    it("serves a tokenless Moshi landing page without disclosing the session", async () => {
       handle = await startUiServer(createServerOptions());
       const url = `http://localhost:${handle.port}/`;
 
@@ -244,8 +244,10 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("text/html");
-      expect(res.body).toContain("location.replace");
-      expect(res.body).toContain(encodeURIComponent(handle.sessionToken));
+      expect(res.body).toContain("Open the authenticated MCP UI URL shown by Pi");
+      expect(res.body).not.toContain("location.replace");
+      expect(res.body).not.toContain(handle.sessionToken);
+      expect(res.body).not.toContain(encodeURIComponent(handle.sessionToken));
     });
 
     it("answers HEAD discovery probes without a session token", async () => {
@@ -276,7 +278,8 @@ describe("UiServer", () => {
       const res = await request(url, { headers: { Host: `[::1]:${handle.port}` } });
 
       expect(res.status).toBe(200);
-      expect(res.body).toContain("location.replace");
+      expect(res.body).toContain("Open the authenticated MCP UI URL shown by Pi");
+      expect(res.body).not.toContain(handle.sessionToken);
     });
   });
 
@@ -776,6 +779,26 @@ describe("UiServer", () => {
       expect(res.status).toBe(403);
     });
 
+    it("rejects anonymous tool calls", async () => {
+      const callTool = vi.fn();
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          client: { callTool },
+          tools: [{ name: "some_tool" }],
+        }),
+      });
+      handle = await startUiServer(createServerOptions({ manager }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: { params: { name: "some_tool", arguments: {} } },
+      });
+
+      expect(res.status).toBe(403);
+      expect(callTool).not.toHaveBeenCalled();
+    });
+
     it("tracks in-flight requests", async () => {
       const manager = createMockManager();
       handle = await startUiServer(createServerOptions({ manager }));
@@ -795,6 +818,19 @@ describe("UiServer", () => {
   });
 
   describe("POST /proxy/ui/consent", () => {
+    it("rejects anonymous approval", async () => {
+      const consentManager = createMockConsentManager();
+      handle = await startUiServer(createServerOptions({ consentManager }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/consent`, {
+        method: "POST",
+        body: { params: { approved: true } },
+      });
+
+      expect(res.status).toBe(403);
+      expect(consentManager.registerDecision).not.toHaveBeenCalled();
+    });
+
     it("registers approval", async () => {
       const consentManager = createMockConsentManager();
       handle = await startUiServer(createServerOptions({ consentManager }));
@@ -831,6 +867,20 @@ describe("UiServer", () => {
   });
 
   describe("POST /proxy/ui/message", () => {
+    it("rejects anonymous messages", async () => {
+      const onMessage = vi.fn();
+      handle = await startUiServer(createServerOptions({ onMessage }));
+
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/message`, {
+        method: "POST",
+        body: { params: { type: "prompt", prompt: "Injected" } },
+      });
+
+      expect(res.status).toBe(403);
+      expect(handle.getSessionMessages().prompts).toEqual([]);
+      expect(onMessage).not.toHaveBeenCalled();
+    });
+
     it("tracks prompt messages", async () => {
       const onMessage = vi.fn();
       handle = await startUiServer(createServerOptions({ onMessage }));
