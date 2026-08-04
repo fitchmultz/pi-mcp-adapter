@@ -95,6 +95,7 @@ export interface UiServerHandle {
 
 export async function startUiServer(options: UiServerOptions): Promise<UiServerHandle> {
   const sessionToken = options.sessionToken ?? randomUUID();
+  const uiResourceToken = randomUUID();
   const log = logger.child({ 
     component: "UiServer",
     server: options.serverName,
@@ -286,6 +287,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
 
         const html = buildHostHtmlTemplate({
           sessionToken,
+          uiResourceToken,
           serverName: options.serverName,
           toolName: options.toolName,
           toolArgs: options.toolArgs,
@@ -330,7 +332,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (method === "GET" && url.pathname === "/ui-app") {
-        if (!validateTokenQuery(url, sessionToken, res)) return;
+        if (!validateTokenQuery(url, uiResourceToken, res, "resource")) return;
         touchHeartbeat();
         // Enforce host metadata independently of where app HTML places its document head.
         const cspContent = buildCspMetaContent(options.resource.meta.csp);
@@ -768,8 +770,13 @@ function isAllowedHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
-function validateTokenQuery(url: URL, expected: string, res: ServerResponse): boolean {
-  const token = url.searchParams.get("session");
+function validateTokenQuery(
+  url: URL,
+  expected: string,
+  res: ServerResponse,
+  parameter = "session",
+): boolean {
+  const token = url.searchParams.get(parameter);
   if (token !== expected) {
     sendJson(res, 403, { ok: false, error: "Invalid session" });
     return false;

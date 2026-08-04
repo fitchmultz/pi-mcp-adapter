@@ -4,6 +4,7 @@ import { buildHostHtmlTemplate, type HostHtmlTemplateInput } from "../host-html-
 function createMinimalInput(overrides: Partial<HostHtmlTemplateInput> = {}): HostHtmlTemplateInput {
   return {
     sessionToken: "test-token-123",
+    uiResourceToken: "resource-token-456",
     serverName: "test-server",
     toolName: "test-tool",
     toolArgs: { arg1: "value1" },
@@ -77,12 +78,18 @@ describe("buildHostHtmlTemplate", () => {
   });
 
   describe("data injection", () => {
-    it("injects session token", () => {
+    it("keeps the session token out of the sandboxed app URL", () => {
       const html = buildHostHtmlTemplate(
-        createMinimalInput({ sessionToken: "secret-token-xyz" })
+        createMinimalInput({
+          sessionToken: "secret-session-token",
+          uiResourceToken: "app-resource-token",
+        })
       );
 
-      expect(html).toContain('"secret-token-xyz"');
+      expect(html).toContain('const SESSION_TOKEN = "secret-session-token"');
+      expect(html).toContain('const UI_RESOURCE_TOKEN = "app-resource-token"');
+      expect(html).toContain('iframe.src = "/ui-app?resource=" + encodeURIComponent(UI_RESOURCE_TOKEN)');
+      expect(html).not.toContain('iframe.src = "/ui-app?session="');
     });
 
     it("injects tool arguments", () => {

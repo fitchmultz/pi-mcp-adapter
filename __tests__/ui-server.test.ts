@@ -162,6 +162,15 @@ function createServerOptions(overrides: Partial<UiServerOptions> = {}): UiServer
   };
 }
 
+async function getUiAppUrl(handle: UiServerHandle): Promise<string> {
+  const host = await request(handle.url);
+  const match = typeof host.body === "string"
+    ? host.body.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/)
+    : null;
+  if (!match?.[1]) throw new Error("UI resource token missing from host page");
+  return `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(match[1])}`;
+}
+
 describe("UiServer", () => {
   let handle: UiServerHandle | null = null;
 
@@ -284,6 +293,25 @@ describe("UiServer", () => {
   });
 
   describe("GET /ui-app", () => {
+    it("does not accept the app resource token on privileged proxy routes", async () => {
+      const manager = createMockManager();
+      handle = await startUiServer(createServerOptions({ manager }));
+      const appUrl = new URL(await getUiAppUrl(handle));
+      const resourceToken = appUrl.searchParams.get("resource");
+
+      expect(resourceToken).toBeTruthy();
+      expect(resourceToken).not.toBe(handle.sessionToken);
+      expect((await request(`http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`)).status).toBe(403);
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: { token: resourceToken, params: { name: "some_tool", arguments: {} } },
+      });
+
+      expect(res.status).toBe(403);
+      expect(manager.getConnection).not.toHaveBeenCalled();
+    });
+
     it("enforces metadata CSP with a response header while preserving app HTML", async () => {
       const appHtml = `<!-- decoy <head><meta http-equiv="Content-Security-Policy" content="default-src *"></head> -->
 <!doctype html>
@@ -308,7 +336,7 @@ describe("UiServer", () => {
           },
         }),
       }));
-      const url = `http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`;
+      const url = await getUiAppUrl(handle);
 
       const res = await request(url);
       const cspHeader = res.headers["content-security-policy"];
@@ -340,7 +368,7 @@ describe("UiServer", () => {
         }),
       }));
 
-      const res = await request(`http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`);
+      const res = await request(await getUiAppUrl(handle));
 
       expect(res.status).toBe(200);
       expect(res.headers["content-security-policy"]).toContain("https://safe.example.com");
@@ -358,7 +386,7 @@ describe("UiServer", () => {
         }),
       }));
 
-      const res = await request(`http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`);
+      const res = await request(await getUiAppUrl(handle));
 
       expect(res.status).toBe(200);
       expect(res.headers["content-security-policy"]).toContain("default-src 'none'");
@@ -368,7 +396,7 @@ describe("UiServer", () => {
 
     it("emits restrictive default CSP when metadata is undefined", async () => {
       handle = await startUiServer(createServerOptions());
-      const url = `http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`;
+      const url = await getUiAppUrl(handle);
 
       const res = await request(url);
 

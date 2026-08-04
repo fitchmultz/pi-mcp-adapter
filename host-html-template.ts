@@ -5,6 +5,7 @@ const DEFAULT_APP_BRIDGE_MODULE_URL = "/app-bridge.bundle.js";
 
 export interface HostHtmlTemplateInput {
   sessionToken: string;
+  uiResourceToken: string;
   serverName: string;
   toolName: string;
   toolArgs: Record<string, unknown>;
@@ -20,6 +21,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
   const hostContext = input.hostContext ?? {};
 
   const sessionToken = safeInlineJSON(input.sessionToken);
+  const uiResourceToken = safeInlineJSON(input.uiResourceToken);
   const toolArgs = safeInlineJSON(input.toolArgs);
   const serverName = safeInlineJSON(input.serverName);
   const toolName = safeInlineJSON(input.toolName);
@@ -127,6 +129,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     import { AppBridge, PostMessageTransport } from ${moduleUrl};
 
     const SESSION_TOKEN = ${sessionToken};
+    const UI_RESOURCE_TOKEN = ${uiResourceToken};
     const SERVER_NAME = ${serverName};
     const TOOL_NAME = ${toolName};
     const TOOL_ARGS = ${toolArgs};
@@ -310,7 +313,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     const iframeLoaded = new Promise((resolve) => {
       iframe.onload = resolve;
     });
-    iframe.src = "/ui-app?session=" + encodeURIComponent(SESSION_TOKEN);
+    iframe.src = "/ui-app?resource=" + encodeURIComponent(UI_RESOURCE_TOKEN);
     await iframeLoaded;
 
     const eventSource = new EventSource("/events?session=" + encodeURIComponent(SESSION_TOKEN));
