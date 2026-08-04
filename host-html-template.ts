@@ -239,6 +239,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     // Also listen for raw postMessage events with custom types (notify, prompt, intent, etc.)
     // These bypass the AppBridge protocol but are used by some MCP UI implementations
     window.addEventListener("message", async (event) => {
+      if (event.source !== iframe.contentWindow) return;
       const data = event.data;
       if (!data || typeof data !== "object") return;
       
@@ -303,7 +304,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
 
     // Connect bridge BEFORE loading iframe to ensure we're listening when the app sends ui/initialize
     try {
-      const transport = new PostMessageTransport(iframe.contentWindow, null);
+      const transport = new PostMessageTransport(iframe.contentWindow, iframe.contentWindow);
       await bridge.connect(transport);
     } catch (error) {
       console.error("[host] Bridge connection failed:", error);

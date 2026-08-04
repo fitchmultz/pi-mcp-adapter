@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a strict TypeScript typecheck command and CI gate.
 
 ### Fixed
-- Stopped tokenless discovery requests and sandboxed MCP app documents from receiving the session capability token; discovery now serves a non-sensitive landing page, and app HTML loads with a separate resource-only token.
+- Stopped tokenless discovery requests, sandboxed MCP app documents, and unrelated child windows from gaining session authority; discovery now serves a non-sensitive landing page, app HTML loads with a separate resource-only token, and host messages accept only the app frame as their source.
 
 ## [2.19.0] - 2026-08-03
 

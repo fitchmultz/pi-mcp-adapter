@@ -58,6 +58,14 @@ describe("buildHostHtmlTemplate", () => {
       expect(html).toContain('referrerpolicy="no-referrer"');
     });
 
+    it("rejects nested-frame protocol and raw messages by binding to the sandboxed app frame", () => {
+      const html = buildHostHtmlTemplate(createMinimalInput());
+
+      expect(html).toContain("new PostMessageTransport(iframe.contentWindow, iframe.contentWindow)");
+      expect(html).toContain("if (event.source !== iframe.contentWindow) return;");
+      expect(html).not.toContain("new PostMessageTransport(iframe.contentWindow, null)");
+    });
+
     it("includes control buttons", () => {
       const html = buildHostHtmlTemplate(createMinimalInput());
 
