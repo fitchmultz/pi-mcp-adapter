@@ -111,7 +111,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     </div>
   </header>
   <main>
-    <iframe id="mcp-app" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads" referrerpolicy="no-referrer"></iframe>
+    <iframe id="mcp-app" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads" referrerpolicy="no-referrer"></iframe>
   </main>
   <div class="overlay" id="error-overlay">
     <div class="panel">

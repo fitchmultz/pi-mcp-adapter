@@ -53,7 +53,8 @@ describe("buildHostHtmlTemplate", () => {
       const html = buildHostHtmlTemplate(createMinimalInput());
 
       expect(html).toContain('<iframe id="mcp-app"');
-      expect(html).toContain('sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads"');
+      expect(html).toContain('sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"');
+      expect(html).not.toContain("allow-popups-to-escape-sandbox");
       expect(html).not.toContain("allow-same-origin");
       expect(html).toContain('referrerpolicy="no-referrer"');
     });
