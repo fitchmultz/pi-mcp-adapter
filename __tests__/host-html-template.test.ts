@@ -197,6 +197,7 @@ describe("buildHostHtmlTemplate", () => {
 
       expect(csp).toBe([
         "default-src 'none'",
+        "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
         "script-src 'self' 'unsafe-inline' https://esm.sh",
         "style-src 'self' 'unsafe-inline' https://esm.sh",
         "font-src 'self' https://esm.sh",
@@ -272,6 +273,7 @@ describe("buildHostHtmlTemplate", () => {
 
       expect(csp).toBe([
         "default-src 'none'",
+        "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
         "script-src 'self' 'unsafe-inline'",
         "style-src 'self' 'unsafe-inline'",
         "font-src 'self'",
@@ -304,6 +306,7 @@ describe("buildHostHtmlTemplate", () => {
 
       expect(buildCspMetaContent(undefined)).toBe([
         "default-src 'none'",
+        "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
         "script-src 'self' 'unsafe-inline'",
         "style-src 'self' 'unsafe-inline'",
         "font-src 'self'",

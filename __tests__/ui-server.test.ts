@@ -312,7 +312,7 @@ describe("UiServer", () => {
       expect(manager.getConnection).not.toHaveBeenCalled();
     });
 
-    it("enforces metadata CSP with a response header while preserving app HTML", async () => {
+    it("enforces metadata CSP and response-level sandboxing while preserving app HTML", async () => {
       const appHtml = `<!-- decoy <head><meta http-equiv="Content-Security-Policy" content="default-src *"></head> -->
 <!doctype html>
 <html>
@@ -344,6 +344,9 @@ describe("UiServer", () => {
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("text/html");
       expect(cspHeader).toContain("default-src 'none'");
+      expect(cspHeader).toContain("sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads");
+      expect(cspHeader).not.toContain("allow-popups-to-escape-sandbox");
+      expect(cspHeader).not.toContain("allow-same-origin");
       expect(cspHeader).toContain("script-src 'self' 'unsafe-inline' https://esm.sh");
       expect(cspHeader).toContain("style-src 'self' 'unsafe-inline' https://esm.sh");
       expect(cspHeader).toContain("connect-src https://api.excalidraw.com");

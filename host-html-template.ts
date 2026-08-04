@@ -2,6 +2,7 @@ import type { UiHostContext, UiResourceContent, UiResourceCsp } from "./types.ts
 
 // Use locally bundled AppBridge to avoid CDN Zod bundling issues
 const DEFAULT_APP_BRIDGE_MODULE_URL = "/app-bridge.bundle.js";
+const APP_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-downloads";
 
 export interface HostHtmlTemplateInput {
   sessionToken: string;
@@ -111,7 +112,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     </div>
   </header>
   <main>
-    <iframe id="mcp-app" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads" referrerpolicy="no-referrer"></iframe>
+    <iframe id="mcp-app" sandbox="${APP_SANDBOX}" referrerpolicy="no-referrer"></iframe>
   </main>
   <div class="overlay" id="error-overlay">
     <div class="panel">
@@ -403,6 +404,7 @@ export function buildCspMetaContent(csp: UiResourceCsp | undefined): string {
 
   return [
     "default-src 'none'",
+    `sandbox ${APP_SANDBOX}`,
     toDirective("script-src", ["'self'", "'unsafe-inline'"], resourceDomains),
     toDirective("style-src", ["'self'", "'unsafe-inline'"], resourceDomains),
     toDirective("font-src", ["'self'"], resourceDomains),
