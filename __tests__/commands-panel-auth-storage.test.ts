@@ -42,15 +42,14 @@ function createState() {
 
 describe("MCP panels with unavailable OAuth credential storage", () => {
   it.each([
-    ["/mcp", openMcpPanel],
-    ["/mcp-auth", openMcpAuthPanel],
+    ["/mcp", (state: any, ctx: any) => openMcpPanel(state, {} as any, ctx)],
+    ["/mcp-auth", (state: any, ctx: any) => openMcpAuthPanel(state, ctx)],
   ])("opens %s without throwing and presents the failure reason", async (_command, openPanel) => {
     process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
     const { ui, getRendered } = createPanelHarness();
 
     await expect(openPanel(
       createState(),
-      { getFlag: () => undefined } as any,
       { hasUI: true, mode: "tui", isProjectTrusted: () => true, cwd: "/tmp", ui } as any,
     )).resolves.toEqual({ configChanged: false });
 

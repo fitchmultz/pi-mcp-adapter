@@ -106,7 +106,7 @@ describe("config discovery", () => {
       mcpServers: { vscode: { command: "vscode-server" } },
     });
     writeJson(join(project, "opencode.json"), {
-      mcp: { opencode: { command: ["opencode-server"] } },
+      mcp: { opencode: { type: "local", command: ["opencode-server"] } },
     });
     writeJson(join(project, "cursor-target.json"), {
       mcpServers: { cursorLinked: { command: "project-server" } },
@@ -122,6 +122,7 @@ describe("config discovery", () => {
       project: { command: "project-server" },
       projectPi: { command: "project-pi-server" },
       vscode: { command: "vscode-server" },
+      opencode: { command: "opencode-server" },
     });
     expect(loadMcpConfig(join(project, ".pi", "mcp.json"), project, { includeProject: false }).mcpServers)
       .not.toHaveProperty("projectPi");
@@ -190,7 +191,7 @@ describe("config discovery", () => {
       mcpServers: { global: { command: "global-server" } },
     });
     writeJson(join(project, "opencode.json"), {
-      mcp: { parentProject: { command: ["project-server"] } },
+      mcp: { parentProject: { type: "local", command: ["project-server"] } },
     });
 
     const { loadMcpConfig } = await import("../config.ts");
