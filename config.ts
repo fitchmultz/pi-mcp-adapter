@@ -1,5 +1,5 @@
 // config.ts - Config loading with import support
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -361,10 +361,18 @@ function getConfigConflicts(
     .sort((left, right) => left.serverName.localeCompare(right.serverName));
 }
 
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
 function isProjectConfigSource(source: ConfigSourceSpec, overridePath: string | undefined, cwd: string): boolean {
   if (source.scope === "project") return true;
   if (overridePath === undefined || source.id !== "pi-global") return false;
-  const pathFromCwd = relative(resolve(cwd), resolve(source.readPath));
+  const pathFromCwd = relative(canonicalPath(cwd), canonicalPath(source.readPath));
   return pathFromCwd === "" || (!pathFromCwd.startsWith("..") && !isAbsolute(pathFromCwd));
 }
 

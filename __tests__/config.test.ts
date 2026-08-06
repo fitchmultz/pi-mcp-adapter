@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -114,6 +114,11 @@ describe("config discovery", () => {
       vscode: { command: "vscode-server" },
     });
     expect(loadMcpConfig(join(project, ".pi", "mcp.json"), project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("projectPi");
+
+    const projectAlias = `${project}-alias`;
+    symlinkSync(project, projectAlias, "dir");
+    expect(loadMcpConfig(join(projectAlias, ".pi", "mcp.json"), project, { includeProject: false }).mcpServers)
       .not.toHaveProperty("projectPi");
   });
 
