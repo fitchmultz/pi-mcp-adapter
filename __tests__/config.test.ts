@@ -10,6 +10,7 @@ function writeJson(path: string, value: unknown): void {
 
 describe("config discovery", () => {
   const originalHome = process.env.HOME;
+  const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalCwd = process.cwd();
 
   beforeEach(() => {
@@ -18,6 +19,11 @@ describe("config discovery", () => {
 
   afterEach(() => {
     process.env.HOME = originalHome;
+    if (originalAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    }
     process.chdir(originalCwd);
   });
 
@@ -136,6 +142,13 @@ describe("config discovery", () => {
     symlinkSync(join(outsideProject, "mcp.json"), projectLink);
     expect(loadMcpConfig(projectLink, project, { includeProject: false }).mcpServers)
       .not.toHaveProperty("linkedProject");
+
+    process.env.PI_CODING_AGENT_DIR = join(project, ".pi-agent");
+    writeJson(join(project, ".pi-agent", "mcp.json"), {
+      mcpServers: { projectAgentDir: { command: "project-server" } },
+    });
+    expect(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("projectAgentDir");
   });
 
   it("replaces transport-specific fields when an override switches to or from a socket", async () => {

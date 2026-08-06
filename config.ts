@@ -269,7 +269,7 @@ export function loadMcpConfig(
 ): McpConfig {
   const includeProject = options.includeProject !== false;
   const sourceSpecs = getConfigSources(overridePath, cwd)
-    .filter((source) => includeProject || !isProjectConfigSource(source, overridePath, cwd));
+    .filter((source) => includeProject || !isProjectConfigSource(source, cwd));
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd, includeProject);
   // Host files are a lower-precedence fallback. This ordering means an opt-in
   // discovery cannot override a shared or Pi-owned definition, and all normal
@@ -294,7 +294,7 @@ function getConfiguredHostConfigDiscovery(
 ): HostConfigDiscovery {
   let configured: HostConfigDiscovery = "off";
   for (const source of getConfigSources(overridePath, cwd)) {
-    if (!includeProject && isProjectConfigSource(source, overridePath, cwd)) continue;
+    if (!includeProject && isProjectConfigSource(source, cwd)) continue;
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
     const value = loaded?.settings?.hostConfigDiscovery;
     if (value === "off" || value === "prompt" || value === "on") configured = value;
@@ -369,9 +369,8 @@ function canonicalPath(path: string): string {
   }
 }
 
-function isProjectConfigSource(source: ConfigSourceSpec, overridePath: string | undefined, cwd: string): boolean {
+function isProjectConfigSource(source: ConfigSourceSpec, cwd: string): boolean {
   if (source.scope === "project") return true;
-  if (overridePath === undefined || source.id !== "pi-global") return false;
 
   const contains = (root: string, path: string): boolean => {
     const pathFromRoot = relative(root, path);
