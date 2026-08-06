@@ -1,10 +1,9 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   keyHint: () => "ctrl+o to expand",
 }));
-import { describe, expect, it } from "vitest";
 import {
   createMcpDirectToolCallRenderer,
   formatMcpDirectToolCallLines,
