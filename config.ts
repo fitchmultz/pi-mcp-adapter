@@ -370,13 +370,14 @@ function canonicalPath(path: string): string {
 }
 
 function isPathInsideProject(path: string, cwd: string): boolean {
+  const projectRoot = findProjectRoot(cwd) ?? cwd;
   const contains = (root: string, candidate: string): boolean => {
     const pathFromRoot = relative(root, candidate);
     return pathFromRoot === ""
       || (pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot));
   };
-  return contains(resolve(cwd), resolve(path))
-    || contains(canonicalPath(cwd), canonicalPath(path));
+  return contains(resolve(projectRoot), resolve(path))
+    || contains(canonicalPath(projectRoot), canonicalPath(path));
 }
 
 function isProjectConfigSource(source: ConfigSourceSpec, cwd: string): boolean {
@@ -545,7 +546,6 @@ function expandImports(config: McpConfig, cwd: string, includeProject: boolean):
 
 function resolveImportCandidates(importKind: ImportKind, cwd: string, includeProject: boolean): string[] {
   return (IMPORT_PATHS[importKind] ?? [])
-    .filter((candidate) => includeProject || candidate !== "./opencode.json")
     .map((candidate) => {
       if (importKind === "opencode" && candidate === "./opencode.json") {
         const start = resolve(cwd);

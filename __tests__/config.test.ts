@@ -182,13 +182,17 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
     const nested = join(project, "nested");
     process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = join(project, ".pi-agent");
     mkdirSync(join(project, ".git"), { recursive: true });
     mkdirSync(nested, { recursive: true });
     process.chdir(nested);
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
       imports: ["opencode"],
       mcpServers: { global: { command: "global-server" } },
+    });
+    writeJson(join(project, ".pi-agent", "mcp.json"), {
+      mcpServers: { parentAgent: { command: "project-server" } },
     });
     writeJson(join(project, "opencode.json"), {
       mcp: { parentProject: { type: "local", command: ["project-server"] } },
