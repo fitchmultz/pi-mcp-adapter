@@ -1,4 +1,9 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { vi } from "vitest";
+
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  keyHint: () => "ctrl+o to expand",
+}));
 import { describe, expect, it } from "vitest";
 import {
   createMcpDirectToolCallRenderer,
@@ -155,7 +160,7 @@ describe("MCP tool result renderer", () => {
 
     expect(output).toContain("segment-1");
     expect(output).toContain("…");
-    expect(output).toContain("Ctrl+O to expand");
+    expect(output).toContain("ctrl+o to expand");
     expect(output).not.toContain("segment-8");
   });
 
@@ -169,7 +174,7 @@ describe("MCP tool result renderer", () => {
     ).render(80).join("\n");
 
     expect(output).toContain("head");
-    expect(output).toContain("Ctrl+O to expand");
+    expect(output).toContain("ctrl+o to expand");
     expect(output).not.toContain("tail-marker");
   });
 
@@ -186,7 +191,7 @@ describe("MCP tool result renderer", () => {
     expect(output).toContain("two");
     expect(output).toContain("three");
     expect(output).not.toContain("four");
-    expect(output).toContain("Ctrl+O to expand");
+    expect(output).toContain("ctrl+o to expand");
   });
 
   it("shows the full wrapped single line when expanded", () => {
@@ -201,7 +206,7 @@ describe("MCP tool result renderer", () => {
     ).render(20).join("\n");
 
     expect(output).toContain("segment-8");
-    expect(output).not.toContain("Ctrl+O to expand");
+    expect(output).not.toContain("ctrl+o to expand");
   });
 
   it("renders long error results expanded even when the row is collapsed", () => {
@@ -213,7 +218,7 @@ describe("MCP tool result renderer", () => {
     ).render(80).join("\n");
 
     expect(output).toContain("line 4");
-    expect(output).not.toContain("Ctrl+O to expand");
+    expect(output).not.toContain("ctrl+o to expand");
     expect(output).not.toContain("…");
   });
 
@@ -229,7 +234,7 @@ describe("MCP tool result renderer", () => {
     ).render(20).join("\n");
 
     expect(output).toContain("segment-8");
-    expect(output).not.toContain("Ctrl+O to expand");
+    expect(output).not.toContain("ctrl+o to expand");
   });
 
   it("renders adapter error details expanded even when Pi context is not marked as an error", () => {
@@ -241,7 +246,7 @@ describe("MCP tool result renderer", () => {
     ).render(80).join("\n");
 
     expect(output).toContain("line 4");
-    expect(output).not.toContain("Ctrl+O to expand");
+    expect(output).not.toContain("ctrl+o to expand");
     expect(output).not.toContain("…");
   });
 

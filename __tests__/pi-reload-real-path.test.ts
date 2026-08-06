@@ -3,20 +3,22 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
 const roots: string[] = [];
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalHome = process.env.HOME;
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
 });
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
@@ -61,6 +63,7 @@ async function createReloadHarness() {
   const root = await mkdtemp(join(tmpdir(), "pi-mcp-reload-real-path-"));
   roots.push(root);
   const agentDir = join(root, "agent");
+  process.env.HOME = root;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   const cwd = join(root, "project");
   await writeFile(join(root, "placeholder"), "ok");
@@ -93,8 +96,10 @@ async function createReloadHarness() {
     additionalExtensionPaths: [resolve("index.ts")],
   });
   await loader.reload();
-  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const modelRuntime = await ModelRuntime.create({
+    authPath: join(agentDir, "auth.json"),
+    modelsPath: null,
+  });
   const errors: Array<{ error: string; stack?: string }> = [];
   const statusCalls: string[] = [];
   const ui = {
@@ -108,8 +113,7 @@ async function createReloadHarness() {
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(cwd),
     settingsManager,
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     noTools: "all",
   });
   await session.bindExtensions({ mode: "tui", uiContext: ui, onError: error => errors.push(error) });

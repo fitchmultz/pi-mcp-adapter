@@ -1,4 +1,4 @@
-import { complete, type Api, type AssistantMessage, type Message, type Model, type TextContent } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Message, Model, TextContent } from "@earendil-works/pi-ai";
 import { truncateAtWord } from "./utils.ts";
 import { throwIfAborted } from "./abort.ts";
 import type { ExtensionUIContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
@@ -54,7 +54,7 @@ export async function handleSamplingRequest(
   }
 
   const messages = params.messages.map(convertSamplingMessage);
-  const { model, apiKey, headers } = await resolveSamplingModel(options, params.modelPreferences);
+  const model = await resolveSamplingModel(options, params.modelPreferences);
   throwIfAborted(signal);
   await confirmSampling(
     options,
@@ -63,15 +63,13 @@ export async function handleSamplingRequest(
   );
   throwIfAborted(signal);
 
-  const result = await complete(
+  const result = await options.modelRegistry.complete(
     model,
     {
       ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
       messages,
     },
     {
-      ...(apiKey !== undefined ? { apiKey } : {}),
-      ...(headers !== undefined ? { headers } : {}),
       maxTokens: params.maxTokens,
       ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
       ...(params.metadata !== undefined ? { metadata: params.metadata as Record<string, unknown> } : {}),
@@ -124,11 +122,7 @@ function messageText(message: Message): string {
 async function resolveSamplingModel(
   options: SamplingHandlerOptions,
   modelPreferences: ModelPreferences | undefined,
-): Promise<{
-  model: Model<Api>;
-  apiKey?: string;
-  headers?: Record<string, string>;
-}> {
+): Promise<Model<Api>> {
   const candidates: Model<Api>[] = [];
   const availableModels = options.modelRegistry.getAvailable();
 
@@ -160,11 +154,7 @@ async function resolveSamplingModel(
       errors.push(`${model.provider}/${model.id}: ${auth.error}`);
       continue;
     }
-    return {
-      model,
-      ...(auth.apiKey !== undefined ? { apiKey: auth.apiKey } : {}),
-      ...(auth.headers !== undefined ? { headers: auth.headers } : {}),
-    };
+    return model;
   }
 
   if (errors.length > 0) {

@@ -379,6 +379,14 @@ export async function openMcpSetup(
   mode: "empty" | "setup" = "setup",
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) return { configChanged: false };
+  if (!ctx.isProjectTrusted()) {
+    ctx.ui.notify("Project MCP setup is unavailable until this project is trusted.", "warning");
+    return { configChanged: false };
+  }
+  if (ctx.mode !== "tui") {
+    ctx.ui.notify("MCP setup is available in TUI mode only.", "info");
+    return { configChanged: false };
+  }
   if (state.programmaticConfig) {
     ctx.ui.notify("MCP setup is unavailable when config is supplied by createMcpAdapter().", "info");
     return { configChanged: false };
@@ -506,6 +514,10 @@ export async function openMcpPanel(
   configOverridePath?: string,
   onDirectToolsConfigChanged?: (changes: Map<string, true | string[] | false>) => void | Promise<void>,
 ): Promise<PanelFlowResult> {
+  if (!ctx.isProjectTrusted() || ctx.mode !== "tui") {
+    if (ctx.hasUI) await showStatus(state, ctx);
+    return { configChanged: false };
+  }
   if (state.programmaticConfig) {
     if (ctx.hasUI) {
       ctx.ui.notify("MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.", "info");
@@ -567,6 +579,14 @@ export async function openMcpAuthPanel(
   configOverridePath?: string,
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) return { configChanged: false };
+  if (!ctx.isProjectTrusted()) {
+    ctx.ui.notify("Use /mcp-auth <server> while this project is untrusted.", "info");
+    return { configChanged: false };
+  }
+  if (ctx.mode !== "tui") {
+    ctx.ui.notify("Use /mcp-auth <server> to authenticate outside TUI mode.", "info");
+    return { configChanged: false };
+  }
   if (state.programmaticConfig) {
     ctx.ui.notify("Use /mcp-auth <server> to authenticate a server from the in-memory SDK config.", "info");
     return { configChanged: false };

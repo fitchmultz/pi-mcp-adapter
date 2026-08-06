@@ -66,10 +66,31 @@ describe("commands onboarding", () => {
       manager: { getConnection: () => null },
       toolMetadata: new Map(),
       failureTracker: new Map(),
-    } as any, { getFlag: () => undefined } as any, { hasUI: true, ui } as any);
+    } as any, { getFlag: () => undefined } as any, { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any);
 
     expect(mocks.createMcpSetupPanel).toHaveBeenCalled();
     expect(mocks.createMcpPanel).not.toHaveBeenCalled();
+  });
+
+  it("does not open custom panels outside TUI mode", async () => {
+    const ui = createUi();
+    const { openMcpAuthPanel, openMcpPanel, openMcpSetup } = await import("../commands.ts");
+    const state = {
+      config: { mcpServers: {} },
+      manager: { getConnection: () => null },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+    } as any;
+    const ctx = { hasUI: true, mode: "rpc", isProjectTrusted: () => true, ui } as any;
+
+    await openMcpSetup(state, {} as any, ctx);
+    await openMcpPanel(state, { getFlag: () => undefined } as any, ctx);
+    await openMcpAuthPanel(state, { getFlag: () => undefined } as any, ctx);
+
+    expect(ui.custom).not.toHaveBeenCalled();
+    expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("TUI mode"), "info");
+    expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("MCP Server Status"), "info");
+    expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("/mcp-auth <server>"), "info");
   });
 
   it("shows a one-time shared-config notice in the MCP panel", async () => {
@@ -94,7 +115,7 @@ describe("commands onboarding", () => {
       manager: { getConnection: () => null },
       toolMetadata: new Map(),
       failureTracker: new Map(),
-    } as any, { getFlag: () => undefined } as any, { hasUI: true, ui } as any);
+    } as any, { getFlag: () => undefined } as any, { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any);
 
     expect(mocks.createMcpPanel).toHaveBeenCalled();
     const options = mocks.createMcpPanel.mock.calls[0]?.[6];
@@ -120,7 +141,7 @@ describe("commands onboarding", () => {
       manager: { close },
       toolMetadata: new Map(),
       failureTracker: new Map(),
-    } as any, { hasUI: true, ui } as any);
+    } as any, { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any);
 
     await pendingCallbackRejection;
     expect(result.ok).toBe(true);
@@ -148,7 +169,7 @@ describe("commands onboarding", () => {
       manager: { getConnection: () => null },
       toolMetadata: new Map(),
       failureTracker: new Map(),
-    } as any, { getFlag: () => undefined } as any, { hasUI: true, ui } as any);
+    } as any, { getFlag: () => undefined } as any, { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any);
 
     const callbacks = mocks.createMcpPanel.mock.calls[0]?.[3];
     expect(callbacks.getConnectionStatus("legacy")).toBe("needs-auth");
@@ -187,7 +208,7 @@ describe("commands onboarding", () => {
     } as any;
     const { openMcpPanel } = await import("../commands.ts");
 
-    await openMcpPanel(state, { getFlag: () => undefined } as any, { hasUI: true, ui } as any);
+    await openMcpPanel(state, { getFlag: () => undefined } as any, { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any);
 
     const callbacks = mocks.createMcpPanel.mock.calls[0]?.[3];
     await expect(callbacks.reconnect("notion")).resolves.toBe(true);

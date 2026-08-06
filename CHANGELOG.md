@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-06
+
 ### Added
 - Added a strict TypeScript typecheck command and CI gate.
 
@@ -21,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented Linux revoked-keyring recovery in the OAuth guide and `_meta.ui.visibility` behavior in the MCP UI guide.
 
 ### Changed
+- **BREAKING:** Pi 0.84.0 or later and Node.js 22.19.0 or later are now required. Pi host development dependencies and TypeBox are pinned to the released 0.84.0 contract, while core runtime packages remain optional wildcard peers per Pi package conventions.
+- MCP sampling now dispatches through Pi's `ModelRegistry.complete()` so resolved endpoints, custom providers, authentication, and `null` header-deletion markers are preserved by the 0.84 request pipeline.
+- Direct-tool schemas now use Pi 0.84's bundled TypeBox APIs directly, stale tools use the supported active-tool deactivation flow instead of compatibility probes for non-contract host APIs, and renderer hints honor configured Pi keybindings.
+- Project MCP configuration and project-local host imports now respect Pi 0.84's project trust decision. They are not read and cannot start servers unless the project is trusted.
+- Custom MCP panels now open only in TUI mode; non-TUI UI clients receive text status or command guidance.
 - `mcp_script` is now registered by default for trusted JavaScript MCP multi-call workflows, while `mcp` remains the right tool for status, discovery, auth, and single calls. Set `settings.scriptMode` to `false` to hide the tool.
 
 ### Fixed

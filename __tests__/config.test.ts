@@ -79,6 +79,44 @@ describe("config discovery", () => {
     });
   });
 
+  it("excludes project config and project-local host imports when project trust is denied", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      imports: ["vscode", "opencode"],
+      settings: { hostConfigDiscovery: "on" },
+      mcpServers: { global: { command: "global-server" } },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: { project: { command: "project-server" } },
+    });
+    writeJson(join(project, ".pi", "mcp.json"), {
+      mcpServers: { projectPi: { command: "project-pi-server" } },
+    });
+    writeJson(join(project, ".vscode", "mcp.json"), {
+      mcpServers: { vscode: { command: "vscode-server" } },
+    });
+    writeJson(join(project, "opencode.json"), {
+      mcp: { opencode: { command: ["opencode-server"] } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers).toEqual({
+      global: { command: "global-server" },
+    });
+    expect(loadMcpConfig(undefined, project, { includeProject: true }).mcpServers).toMatchObject({
+      global: { command: "global-server" },
+      project: { command: "project-server" },
+      projectPi: { command: "project-pi-server" },
+      vscode: { command: "vscode-server" },
+    });
+    expect(loadMcpConfig(join(project, ".pi", "mcp.json"), project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("projectPi");
+  });
+
   it("replaces transport-specific fields when an override switches to or from a socket", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));

@@ -1,7 +1,7 @@
 // config.ts - Config loading with import support
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAgentPath } from "./agent-dir.ts";
@@ -258,28 +258,43 @@ export function cloneMcpConfig(config: McpConfig): McpConfig {
   return structuredClone(config);
 }
 
-export function loadMcpConfig(overridePath?: string, cwd = process.cwd()): McpConfig {
-  const sourceSpecs = getConfigSources(overridePath, cwd);
-  const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
+export interface LoadMcpConfigOptions {
+  includeProject?: boolean;
+}
+
+export function loadMcpConfig(
+  overridePath?: string,
+  cwd = process.cwd(),
+  options: LoadMcpConfigOptions = {},
+): McpConfig {
+  const includeProject = options.includeProject !== false;
+  const sourceSpecs = getConfigSources(overridePath, cwd)
+    .filter((source) => includeProject || !isProjectConfigSource(source, overridePath, cwd));
+  const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd, includeProject);
   // Host files are a lower-precedence fallback. This ordering means an opt-in
   // discovery cannot override a shared or Pi-owned definition, and all normal
   // URL-bound credential stripping remains in mergeServerMaps.
   let config: McpConfig = hostConfigDiscovery === "on"
-    ? loadDiscoveredHostConfigs(cwd)
+    ? loadDiscoveredHostConfigs(cwd, includeProject)
     : { mcpServers: {} };
 
   for (const source of sourceSpecs) {
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
     if (!loaded) continue;
-    config = mergeConfigs(config, expandImports(loaded, cwd));
+    config = mergeConfigs(config, expandImports(loaded, cwd, includeProject));
   }
 
   return config;
 }
 
-function getConfiguredHostConfigDiscovery(overridePath?: string, cwd = process.cwd()): HostConfigDiscovery {
+function getConfiguredHostConfigDiscovery(
+  overridePath?: string,
+  cwd = process.cwd(),
+  includeProject = true,
+): HostConfigDiscovery {
   let configured: HostConfigDiscovery = "off";
   for (const source of getConfigSources(overridePath, cwd)) {
+    if (!includeProject && isProjectConfigSource(source, overridePath, cwd)) continue;
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
     const value = loaded?.settings?.hostConfigDiscovery;
     if (value === "off" || value === "prompt" || value === "on") configured = value;
@@ -287,10 +302,10 @@ function getConfiguredHostConfigDiscovery(overridePath?: string, cwd = process.c
   return configured;
 }
 
-function loadDiscoveredHostConfigs(cwd: string): McpConfig {
+function loadDiscoveredHostConfigs(cwd: string, includeProject = true): McpConfig {
   let config: McpConfig = { mcpServers: {} };
   for (const importKind of Object.keys(IMPORT_PATHS) as ImportKind[]) {
-    const imported = loadImportedConfig(importKind, cwd, `Failed to discover imported MCP config from ${importKind}:`);
+    const imported = loadImportedConfig(importKind, cwd, `Failed to discover imported MCP config from ${importKind}:`, includeProject);
     if (!imported) continue;
     config = mergeConfigs(config, {
       mcpServers: extractServers(imported.value, importKind),
@@ -344,6 +359,13 @@ function getConfigConflicts(
     .filter(([, sources]) => sources.length > 1)
     .map(([serverName, sources]) => ({ serverName, sources, winner: sources[sources.length - 1]! }))
     .sort((left, right) => left.serverName.localeCompare(right.serverName));
+}
+
+function isProjectConfigSource(source: ConfigSourceSpec, overridePath: string | undefined, cwd: string): boolean {
+  if (source.scope === "project") return true;
+  if (overridePath === undefined || source.id !== "pi-global") return false;
+  const pathFromCwd = relative(resolve(cwd), resolve(source.readPath));
+  return pathFromCwd === "" || (!pathFromCwd.startsWith("..") && !isAbsolute(pathFromCwd));
 }
 
 function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
@@ -483,12 +505,12 @@ function mergeImports(left: ImportKind[] | undefined, right: ImportKind[] | unde
   return [...new Set(merged)];
 }
 
-function expandImports(config: McpConfig, cwd = process.cwd()): McpConfig {
+function expandImports(config: McpConfig, cwd = process.cwd(), includeProject = true): McpConfig {
   if (!config.imports?.length) return config;
 
   const importedServers: Record<string, ServerEntry> = {};
   for (const importKind of config.imports) {
-    const imported = loadImportedConfig(importKind, cwd, `Failed to import MCP config from ${importKind}:`);
+    const imported = loadImportedConfig(importKind, cwd, `Failed to import MCP config from ${importKind}:`, includeProject);
     if (!imported) continue;
 
     const servers = extractServers(imported.value, importKind);
@@ -506,32 +528,34 @@ function expandImports(config: McpConfig, cwd = process.cwd()): McpConfig {
   };
 }
 
-function resolveImportCandidates(importKind: ImportKind, cwd: string): string[] {
-  return (IMPORT_PATHS[importKind] ?? []).map((candidate) => {
-    if (importKind === "opencode" && candidate === "./opencode.json") {
-      const start = resolve(cwd);
-      let gitRoot: string | undefined;
-      let current = start;
-      while (true) {
-        if (existsSync(join(current, ".git"))) {
-          gitRoot = current;
-          break;
+function resolveImportCandidates(importKind: ImportKind, cwd: string, includeProject = true): string[] {
+  return (IMPORT_PATHS[importKind] ?? [])
+    .filter((candidate) => includeProject || !candidate.startsWith("."))
+    .map((candidate) => {
+      if (importKind === "opencode" && candidate === "./opencode.json") {
+        const start = resolve(cwd);
+        let gitRoot: string | undefined;
+        let current = start;
+        while (true) {
+          if (existsSync(join(current, ".git"))) {
+            gitRoot = current;
+            break;
+          }
+          const parent = dirname(current);
+          if (parent === current) break;
+          current = parent;
         }
-        const parent = dirname(current);
-        if (parent === current) break;
-        current = parent;
-      }
 
-      if (!gitRoot) return join(start, "opencode.json");
-      current = start;
-      while (true) {
-        const projectConfig = join(current, "opencode.json");
-        if (existsSync(projectConfig) || current === gitRoot) return projectConfig;
-        current = dirname(current);
+        if (!gitRoot) return join(start, "opencode.json");
+        current = start;
+        while (true) {
+          const projectConfig = join(current, "opencode.json");
+          if (existsSync(projectConfig) || current === gitRoot) return projectConfig;
+          current = dirname(current);
+        }
       }
-    }
-    return candidate.startsWith(".") ? resolve(cwd, candidate) : candidate;
-  });
+      return candidate.startsWith(".") ? resolve(cwd, candidate) : candidate;
+    });
 }
 
 function parseJsonConfig(raw: string): unknown {
@@ -547,12 +571,13 @@ function loadImportedConfig(
   importKind: ImportKind,
   cwd: string,
   warningPrefix: string,
+  includeProject = true,
 ): { path: string; value: unknown } | null {
   if (importKind === "opencode") {
     let merged: Record<string, unknown> = {};
     let highestPrecedencePath: string | undefined;
 
-    for (const path of resolveImportCandidates(importKind, cwd)) {
+    for (const path of resolveImportCandidates(importKind, cwd, includeProject)) {
       if (!existsSync(path)) continue;
 
       try {
@@ -569,7 +594,7 @@ function loadImportedConfig(
     return highestPrecedencePath ? { path: highestPrecedencePath, value: merged } : null;
   }
 
-  for (const path of resolveImportCandidates(importKind, cwd)) {
+  for (const path of resolveImportCandidates(importKind, cwd, includeProject)) {
     if (!existsSync(path)) continue;
 
     try {

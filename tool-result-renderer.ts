@@ -1,19 +1,19 @@
-import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { keyHint, type AgentToolResult, type Theme, type ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
 
-interface RenderTheme {
-  fg: (name: string, text: string) => string;
-  bold?: (text: string) => string;
-}
+type RenderTheme = Pick<Theme, "fg" | "bold">;
 
-const plainTheme: RenderTheme = { fg: (_name, text) => text };
+const plainTheme: RenderTheme = {
+  fg: (_name, text) => text,
+  bold: (text) => text,
+};
 
 export interface McpProxyToolCallInput {
   tool?: string;
-  args?: string | Record<string, unknown>;
+  args?: string | object;
   connect?: string;
   describe?: string;
   search?: string;
@@ -151,7 +151,7 @@ export function formatMcpDirectToolCallLines(
 function renderToolCallLines(lines: string[], theme?: RenderTheme) {
   const activeTheme = theme ?? plainTheme;
   const [title = "mcp", ...rest] = lines;
-  const styledTitle = activeTheme.fg("toolTitle", activeTheme.bold ? activeTheme.bold(title) : title);
+  const styledTitle = activeTheme.fg("toolTitle", activeTheme.bold(title));
   const styledRest = rest.map(line => activeTheme.fg("muted", line));
   return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
 }
@@ -255,7 +255,7 @@ export function formatMcpToolResultLines(
 }
 
 export function renderMcpToolResult(
-  result: AgentToolResult<McpToolResultDetails>,
+  result: AgentToolResult<unknown>,
   options: ToolRenderResultOptions,
   theme?: RenderTheme,
   context?: McpToolRenderContext,
@@ -265,10 +265,13 @@ export function renderMcpToolResult(
     return new Text(activeTheme.fg("warning", "Running MCP tool..."), 0, 0);
   }
 
-  const hasErrorDetails = Boolean(result.details.error);
+  const details = typeof result.details === "object" && result.details !== null
+    ? result.details as McpToolResultDetails
+    : {};
+  const hasErrorDetails = Boolean(details.error);
   const expanded = options.expanded || context?.isError === true || hasErrorDetails;
   const display = formatMcpToolResultLines(result, expanded);
-  const identity = formatMcpToolResultIdentity(result.details);
+  const identity = formatMcpToolResultIdentity(details);
   const output = [
     ...(identity ? [activeTheme.fg("muted", identity)] : []),
     ...display.lines.map((line) => activeTheme.fg("toolOutput", line)),
@@ -279,7 +282,7 @@ export function renderMcpToolResult(
     expanded,
     DEFAULT_MAX_COLLAPSED_LINES + (identity ? 1 : 0),
     activeTheme.fg("muted", "…"),
-    activeTheme.fg("muted", "(Ctrl+O to expand)"),
+    activeTheme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`),
     display.truncated,
   );
 }

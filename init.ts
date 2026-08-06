@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type McpAdapterOptions, type PromptMetadata, type ToolMetadata } from "./types.ts";
+import { isServerDisabled, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ToolMetadata } from "./types.ts";
 import { existsSync } from "node:fs";
 import { cloneMcpConfig, loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
@@ -86,6 +86,7 @@ export function isTuiMode(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolea
 type McpInitializationOptions = McpAdapterOptions & {
   oauthRuntime?: McpOAuthRuntime;
   statusEvents?: McpExtensionState["statusEvents"];
+  resolvedConfig?: McpConfig;
 };
 
 export async function initializeMcp(
@@ -109,7 +110,9 @@ export async function initializeMcp(
   const runtimeSignal = combineAbortSignals(owner.signal, initialSignal);
   const config = options.config !== undefined
     ? cloneMcpConfig(options.config)
-    : loadMcpConfig(configPath, cwd);
+    : options.resolvedConfig !== undefined
+      ? cloneMcpConfig(options.resolvedConfig)
+      : loadMcpConfig(configPath, cwd);
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
 
   const ownsOAuthRuntime = options.oauthRuntime === undefined;

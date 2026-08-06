@@ -99,24 +99,17 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     : options.configPath ?? getConfigPathFromArgv();
   const earlyConfig = programmaticConfig
     ? cloneMcpConfig(sessionConfig)
-    : loadMcpConfig(earlyConfigPath);
+    : earlyConfigPath === undefined
+      ? loadMcpConfig(undefined, process.cwd(), { includeProject: false })
+      : { mcpServers: {} };
   const earlyCache = loadMetadataCache();
   const envRaw = process.env.MCP_DIRECT_TOOLS;
   const envDirectToolOverride = envRaw?.split(",").map(s => s.trim()).filter(Boolean);
   const registeredDirectTools = new Map<string, string>();
-  const fallbackDeactivatedTools = new Set<string>();
+  const deactivatedTools = new Set<string>();
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
   let directToolsFrozen = false;
-
-  // OMP remaps `typebox` to a host shim that historically lacked Type.Unsafe.
-  // Prefer Unsafe when present (real TypeBox / fixed OMP shim); otherwise pass
-  // the normalized JSON Schema through as a plain object so toolWireSchema and
-  // validateToolArguments still treat it as JSON Schema.
-  const toToolParameters = (schema: Record<string, unknown>) =>
-    typeof (Type as { Unsafe?: (value: never) => unknown }).Unsafe === "function"
-      ? (Type as { Unsafe: (value: never) => unknown }).Unsafe(schema as never)
-      : schema;
 
   function directToolFingerprint(spec: DirectToolSpec): string {
     return JSON.stringify({
@@ -132,12 +125,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   function registerDirectTool(spec: DirectToolSpec): void {
-    (pi.registerTool as (tool: unknown) => unknown)({
+    pi.registerTool({
       name: spec.prefixedName,
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
-      parameters: toToolParameters(normalizeDirectToolInputSchema(spec.inputSchema)),
+      parameters: Type.Unsafe<Record<string, unknown>>(normalizeDirectToolInputSchema(spec.inputSchema)),
       execute: createDirectToolExecutor(() => state, () => initPromise, spec),
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
       renderResult: renderMcpToolResult,
@@ -150,23 +143,15 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     return resolveDirectTools(config, cache, prefix, envDirectToolOverride);
   }
 
-  function deactivateTools(toolNames: string[]): string[] {
-    if (toolNames.length === 0) return [];
-    const unregisterTool = (pi as ExtensionAPI & { unregisterTool?: (name: string) => boolean }).unregisterTool;
-    const unregistered = toolNames.filter((toolName) => unregisterTool?.(toolName) === true);
-    const fallbackNames = toolNames.filter((toolName) => !unregistered.includes(toolName));
+  function deactivateTools(toolNames: string[]): void {
+    if (toolNames.length === 0) return;
     const remove = new Set(toolNames);
-    const activeTools = pi.getActiveTools?.();
-    if (!activeTools || activeTools.length === 0) {
-      for (const toolName of fallbackNames) fallbackDeactivatedTools.add(toolName);
-      return unregistered;
-    }
+    for (const toolName of toolNames) deactivatedTools.add(toolName);
+    const activeTools = pi.getActiveTools();
     const nextActiveTools = activeTools.filter((name) => !remove.has(name));
     if (nextActiveTools.length !== activeTools.length) {
-      for (const toolName of fallbackNames) fallbackDeactivatedTools.add(toolName);
       pi.setActiveTools(nextActiveTools);
     }
-    return unregistered;
   }
 
   function syncDirectTools(config: McpConfig, cache: MetadataCache | null): {
@@ -187,9 +172,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (previous !== fingerprint) {
         registerDirectTool(spec);
         registeredDirectTools.set(spec.prefixedName, fingerprint);
-        if (fallbackDeactivatedTools.delete(spec.prefixedName)) {
-          const activeTools = pi.getActiveTools?.();
-          if (activeTools && !activeTools.includes(spec.prefixedName)) {
+        if (deactivatedTools.delete(spec.prefixedName)) {
+          const activeTools = pi.getActiveTools();
+          if (!activeTools.includes(spec.prefixedName)) {
             pi.setActiveTools([...activeTools, spec.prefixedName]);
           }
         }
@@ -221,6 +206,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const cache = loadMetadataCache();
     const result = syncDirectTools(config, cache);
     syncProxyTool(config, cache, result.specs);
+    syncScriptTool(config);
     const changed = result.added.length + result.updated.length + result.deactivated.length;
     if (changed > 0 && ctx?.hasUI) {
       ctx.ui.notify(
@@ -256,7 +242,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     type: "string",
   });
 
-  function startInitialization(ctx: ExtensionContext, owner: McpRuntimeOwner, oauthRuntime: McpOAuthRuntime, generation: number, staleReason: string): Promise<void> {
+  function startInitialization(
+    ctx: ExtensionContext,
+    owner: McpRuntimeOwner,
+    oauthRuntime: McpOAuthRuntime,
+    runtimeConfig: McpConfig,
+    generation: number,
+    staleReason: string,
+  ): Promise<void> {
     const promise = initializeMcp(pi, ctx, owner, {
       ...(programmaticConfig || options.configPath !== undefined
         ? {
@@ -266,6 +259,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         : {}),
       oauthRuntime,
       statusEvents: pi.events,
+      ...(!programmaticConfig ? { resolvedConfig: runtimeConfig } : {}),
     });
     initPromise = promise;
 
@@ -293,7 +287,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       syncToolSurface(ctx);
       updateStatusBar(nextState);
       initPromise = null;
-      if (earlyConfig.settings?.freezeDirectTools === true) {
+      if (nextState.config.settings?.freezeDirectTools === true) {
         directToolsFrozen = true;
         logger.info("MCP: direct tools frozen after initial sync — reconnects won't rebuild the system prompt; use mcp({ connect: \"server\" }) to rediscover");
       }
@@ -316,30 +310,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       } catch (error) {
         console.error(`MCP: failed to clean rejected initialization: ${formatTerminalError(error)}`);
       }
-    });
-  }
-
-  function startLoadTimeInitialization(): void {
-    const hasStartupServer = Object.values(earlyConfig.mcpServers).some((definition) => {
-      if (definition.disabled === true) return false;
-      return definition.lifecycle === "eager" || definition.lifecycle === "keep-alive";
-    });
-    if (!hasStartupServer) return;
-    setImmediate(() => {
-      if (lifecycleGeneration !== 0 || state || initPromise) return;
-      const generation = ++lifecycleGeneration;
-      const owner = createMcpRuntimeOwner();
-      const oauthRuntime = createOAuthRuntime(owner.signal);
-      currentOwner = owner;
-      currentOAuthRuntime = oauthRuntime;
-      startInitialization({
-        mode: "print",
-        hasUI: false,
-        cwd: process.cwd(),
-        model: undefined,
-        modelRegistry: undefined,
-        signal: undefined,
-      } as unknown as ExtensionContext, owner, oauthRuntime, generation, "stale_load_time_initialization");
     });
   }
 
@@ -370,10 +340,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
     if (generation !== lifecycleGeneration || !owner.isActive()) return;
 
-    const initialization = startInitialization(ctx, owner, oauthRuntime, generation, "stale_session_start");
+    const runtimeConfig = programmaticConfig
+      ? cloneMcpConfig(sessionConfig)
+      : loadMcpConfig(earlyConfigPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
+    registerPromptCommands(resolveCachedPrompts(runtimeConfig));
+    const cachedDirectTools = syncDirectTools(runtimeConfig, loadMetadataCache()).specs;
+    syncProxyTool(runtimeConfig, loadMetadataCache(), cachedDirectTools);
+    syncScriptTool(runtimeConfig);
+
+    const initialization = startInitialization(ctx, owner, oauthRuntime, runtimeConfig, generation, "stale_session_start");
     if (envRaw !== undefined && envRaw !== "__none__") {
       const missingEnvDirectTools = getMissingConfiguredDirectToolServers(
-        earlyConfig,
+        runtimeConfig,
         loadMetadataCache(),
         envDirectToolOverride,
       );
@@ -443,8 +421,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     },
     handler: async (args, ctx) => {
       const commandOwner = currentOwner;
-      const commandReload = typeof ctx.reload === "function" ? ctx.reload.bind(ctx) : async () => {};
       const commandHasUI = ctx.hasUI;
+      const commandProjectTrusted = ctx.isProjectTrusted();
       const commandCtx = {
         hasUI: commandHasUI,
         ui: commandHasUI
@@ -453,6 +431,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         cwd: ctx.cwd,
         mode: ctx.mode,
         signal: commandOwner?.signal ?? ctx.signal,
+        isProjectTrusted: () => commandProjectTrusted,
       } as unknown as ExtensionContext;
       if (!state && initPromise) {
         try {
@@ -489,6 +468,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           break;
         case "setup": {
           commandOwner?.throwIfInactive();
+          if (!commandProjectTrusted) {
+            commandCtx.ui?.notify("Project MCP setup is unavailable until this project is trusted.", "warning");
+            break;
+          }
           if (programmaticConfig) {
             commandCtx.ui?.notify("MCP setup is unavailable when config is supplied by createMcpAdapter().", "info");
             break;
@@ -496,7 +479,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           const result = await openMcpSetup(state, pi, commandCtx, earlyConfigPath, "setup");
           if (result?.configChanged) {
             commandOwner?.throwIfInactive();
-            await commandReload();
+            await ctx.reload();
             return;
           }
           break;
@@ -514,6 +497,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         case "disable":
         case "enable": {
           const serverName = rest;
+          if (!commandProjectTrusted) {
+            commandCtx.ui?.notify("Project MCP changes are unavailable until this project is trusted.", "warning");
+            break;
+          }
           if (programmaticConfig) {
             commandCtx.ui?.notify(`/mcp ${subcommand} is unavailable when config is supplied by createMcpAdapter().`, "info");
             break;
@@ -540,8 +527,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         default:
           if (commandCtx.hasUI) {
             commandOwner?.throwIfInactive();
-            if (programmaticConfig) {
-              commandCtx.ui?.notify("MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.", "info");
+            if (programmaticConfig || !commandProjectTrusted) {
+              if (programmaticConfig) {
+                commandCtx.ui?.notify("MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.", "info");
+              }
               await showStatus(state, commandCtx);
               break;
             }
@@ -551,7 +540,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             });
             if (result?.configChanged) {
               commandOwner?.throwIfInactive();
-              await commandReload();
+              await ctx.reload();
               return;
             }
           } else {
@@ -567,6 +556,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     handler: async (args, ctx) => {
       const commandOwner = currentOwner;
       const commandHasUI = ctx.hasUI;
+      const commandProjectTrusted = ctx.isProjectTrusted();
       const commandCtx = {
         hasUI: commandHasUI,
         ui: commandHasUI
@@ -575,6 +565,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         cwd: ctx.cwd,
         mode: ctx.mode,
         signal: commandOwner?.signal ?? ctx.signal,
+        isProjectTrusted: () => commandProjectTrusted,
       } as unknown as ExtensionContext;
       const serverName = args?.trim();
       if (!serverName && !commandCtx.hasUI) {
@@ -598,6 +589,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
 
       if (!serverName) {
+        if (!commandProjectTrusted) {
+          commandCtx.ui?.notify("Use /mcp-auth <server> while this project is untrusted.", "info");
+          return;
+        }
         if (programmaticConfig) {
           commandCtx.ui?.notify("Use /mcp-auth <server> to authenticate a server from the in-memory SDK config.", "info");
           return;
@@ -614,16 +609,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     },
   });
 
-  if (earlyConfig.settings?.scriptMode !== false) {
-    (pi.registerTool as (tool: unknown) => unknown)({
+  let scriptToolRegistered = false;
+
+  function registerScriptTool(): void {
+    if (scriptToolRegistered) return;
+    pi.registerTool({
       name: "mcp_script",
       label: "MCP Script",
       description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } } — or use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
       parameters: Type.Object({
         code: Type.String({ description: "Trusted JavaScript MCP script. Use tools.<prefixedToolName>(args) and emit(value)." }),
-        // Raw JSON schema: host TypeBox shims may omit Type.Number (see index-lifecycle shim test).
-        timeoutMs: Type.Optional({ type: "number", minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" } as any),
+        timeoutMs: Type.Optional(Type.Number({ minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" })),
       }),
       renderResult: renderMcpToolResult,
       async execute(_toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined) {
@@ -658,10 +655,24 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         return runMcpScript(state, params.code, params.timeoutMs, getPiTools, signal);
       },
     });
+    scriptToolRegistered = true;
+  }
+
+  function syncScriptTool(config: McpConfig): void {
+    if (config.settings?.scriptMode === false) {
+      if (scriptToolRegistered) deactivateTools(["mcp_script"]);
+      return;
+    }
+
+    registerScriptTool();
+    if (deactivatedTools.delete("mcp_script")) {
+      const activeTools = pi.getActiveTools();
+      if (!activeTools.includes("mcp_script")) pi.setActiveTools([...activeTools, "mcp_script"]);
+    }
   }
 
   function registerProxyTool(description: string): void {
-    (pi.registerTool as (tool: unknown) => unknown)({
+    pi.registerTool({
       name: "mcp",
       label: "MCP",
       description,
@@ -682,9 +693,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
         regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
-        // Raw JSON schema: host TypeBox shims may omit Type.Number (see index-lifecycle shim test).
-        limit: Type.Optional({ type: "number", minimum: 1, description: "Maximum search results to return (default: 12)" } as any),
-        offset: Type.Optional({ type: "number", minimum: 0, description: "Search result offset (default: 0)" } as any),
+        limit: Type.Optional(Type.Number({ minimum: 1, description: "Maximum search results to return (default: 12)" })),
+        offset: Type.Optional(Type.Number({ minimum: 0, description: "Search result offset (default: 0)" })),
         server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages', 'auth-start', or 'auth-complete'" })),
       }),
@@ -831,25 +841,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         registerProxyTool(description);
         return;
       }
-      const activeTools = pi.getActiveTools?.();
-      if (activeTools && !activeTools.includes("mcp")) {
+      const activeTools = pi.getActiveTools();
+      if (!activeTools.includes("mcp")) {
         pi.setActiveTools([...activeTools, "mcp"]);
       }
       return;
     }
 
-    if (proxyToolRegistered) {
-      const unregistered = deactivateTools(["mcp"]);
-      if (unregistered.includes("mcp")) {
-        proxyToolRegistered = false;
-        proxyToolDescription = null;
-      }
-    }
+    if (proxyToolRegistered) deactivateTools(["mcp"]);
   }
 
   const initialDirectTools = syncDirectTools(earlyConfig, earlyCache).specs;
   syncProxyTool(earlyConfig, earlyCache, initialDirectTools);
-  startLoadTimeInitialization();
+  syncScriptTool(earlyConfig);
 }
 
 export function createMcpAdapter(options: McpAdapterOptions = {}) {
