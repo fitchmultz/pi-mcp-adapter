@@ -248,25 +248,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     oauthRuntime: McpOAuthRuntime,
     runtimeConfig: McpConfig,
     generation: number,
-    staleReason: string,
   ): Promise<void> {
     const promise = initializeMcp(pi, ctx, owner, {
-      ...(programmaticConfig || options.configPath !== undefined
-        ? {
-            ...(earlyConfigPath !== undefined ? { configPath: earlyConfigPath } : {}),
-            ...(sessionConfig !== undefined ? { config: sessionConfig } : {}),
-          }
-        : {}),
+      ...(programmaticConfig ? { config: sessionConfig } : { resolvedConfig: runtimeConfig }),
       oauthRuntime,
       statusEvents: pi.events,
-      ...(!programmaticConfig ? { resolvedConfig: runtimeConfig } : {}),
     });
     initPromise = promise;
 
     return promise.then(async (nextState) => {
       if (!owner.isActive() || generation !== lifecycleGeneration || initPromise !== promise) {
         try {
-          await shutdownState(nextState, staleReason);
+          await shutdownState(nextState, "stale_session_start");
         } catch (error) {
           console.error(`MCP: failed to clean stale initialization state: ${formatTerminalError(error)}`);
         }
@@ -344,15 +337,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ? cloneMcpConfig(sessionConfig)
       : loadMcpConfig(earlyConfigPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
     registerPromptCommands(resolveCachedPrompts(runtimeConfig));
-    const cachedDirectTools = syncDirectTools(runtimeConfig, loadMetadataCache()).specs;
-    syncProxyTool(runtimeConfig, loadMetadataCache(), cachedDirectTools);
+    const runtimeCache = loadMetadataCache();
+    const cachedDirectTools = syncDirectTools(runtimeConfig, runtimeCache).specs;
+    syncProxyTool(runtimeConfig, runtimeCache, cachedDirectTools);
     syncScriptTool(runtimeConfig);
 
-    const initialization = startInitialization(ctx, owner, oauthRuntime, runtimeConfig, generation, "stale_session_start");
+    const initialization = startInitialization(ctx, owner, oauthRuntime, runtimeConfig, generation);
     if (envRaw !== undefined && envRaw !== "__none__") {
       const missingEnvDirectTools = getMissingConfiguredDirectToolServers(
         runtimeConfig,
-        loadMetadataCache(),
+        runtimeCache,
         envDirectToolOverride,
       );
       if (missingEnvDirectTools.length > 0) {
@@ -839,8 +833,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       const description = buildProxyDescription(config, cache, directSpecs);
       if (!proxyToolRegistered || proxyToolDescription !== description) {
         registerProxyTool(description);
-        return;
       }
+      deactivatedTools.delete("mcp");
       const activeTools = pi.getActiveTools();
       if (!activeTools.includes("mcp")) {
         pi.setActiveTools([...activeTools, "mcp"]);

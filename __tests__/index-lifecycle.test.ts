@@ -396,6 +396,45 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "mcp" }));
   });
 
+  it("reactivates an updated proxy when direct tools disappear", async () => {
+    const config = {
+      settings: { disableProxyTool: true },
+      mcpServers: {
+        demo: { command: "demo-server", directTools: true },
+      },
+    };
+    const state = createState();
+    state.config = config;
+    const directTool = {
+      serverName: "demo",
+      originalName: "search",
+      prefixedName: "demo_search",
+      description: "Search demo",
+    };
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.resolveDirectTools
+      .mockReturnValueOnce([])
+      .mockReturnValueOnce([directTool])
+      .mockReturnValueOnce([]);
+    mocks.buildProxyDescription
+      .mockReturnValueOnce("MCP gateway before metadata")
+      .mockReturnValueOnce("MCP gateway after metadata");
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({
+      name: "mcp",
+      description: "MCP gateway after metadata",
+    }));
+    expect(api.getActiveTools()).toEqual(["bash", "mcp"]);
+  });
+
   it("reactivates a direct tool when a later metadata refresh restores it", async () => {
     const config = {
       settings: { disableProxyTool: true },

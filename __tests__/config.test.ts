@@ -120,6 +120,13 @@ describe("config discovery", () => {
     symlinkSync(project, projectAlias, "dir");
     expect(loadMcpConfig(join(projectAlias, ".pi", "mcp.json"), project, { includeProject: false }).mcpServers)
       .not.toHaveProperty("projectPi");
+
+    const dotDotNamedDirectory = join(project, "..mcp");
+    writeJson(join(dotDotNamedDirectory, "mcp.json"), {
+      mcpServers: { disguisedProject: { command: "project-server" } },
+    });
+    expect(loadMcpConfig(join(dotDotNamedDirectory, "mcp.json"), project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("disguisedProject");
   });
 
   it("replaces transport-specific fields when an override switches to or from a socket", async () => {

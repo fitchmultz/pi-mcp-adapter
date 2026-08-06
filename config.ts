@@ -1,7 +1,7 @@
 // config.ts - Config loading with import support
 import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAgentPath } from "./agent-dir.ts";
@@ -373,7 +373,8 @@ function isProjectConfigSource(source: ConfigSourceSpec, overridePath: string | 
   if (source.scope === "project") return true;
   if (overridePath === undefined || source.id !== "pi-global") return false;
   const pathFromCwd = relative(canonicalPath(cwd), canonicalPath(source.readPath));
-  return pathFromCwd === "" || (!pathFromCwd.startsWith("..") && !isAbsolute(pathFromCwd));
+  return pathFromCwd === ""
+    || (pathFromCwd !== ".." && !pathFromCwd.startsWith(`..${sep}`) && !isAbsolute(pathFromCwd));
 }
 
 function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
