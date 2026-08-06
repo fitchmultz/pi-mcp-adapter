@@ -59,9 +59,10 @@ export async function parallelLimit<T, R>(
 }
 
 export function getConfigPathFromArgv(): string | undefined {
-  const idx = process.argv.indexOf("--mcp-config");
-  if (idx >= 0 && idx + 1 < process.argv.length) {
-    return process.argv[idx + 1];
+  for (let index = 0; index < process.argv.length; index++) {
+    const argument = process.argv[index];
+    if (argument === "--mcp-config") return process.argv[index + 1];
+    if (argument?.startsWith("--mcp-config=")) return argument.slice("--mcp-config=".length) || undefined;
   }
   return undefined;
 }

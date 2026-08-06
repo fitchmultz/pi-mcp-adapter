@@ -54,6 +54,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let currentOwner: McpRuntimeOwner | null = null;
   let currentOAuthRuntime: McpOAuthRuntime | null = null;
   let lifecycleGeneration = 0;
+  let currentConfigPath: string | undefined;
 
   async function shutdownState(currentState: McpExtensionState | null, reason: string): Promise<void> {
     if (!currentState) {
@@ -94,14 +95,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   }
 
-  const earlyConfigPath = programmaticConfig
-    ? undefined
-    : options.configPath ?? getConfigPathFromArgv();
   const earlyConfig = programmaticConfig
     ? cloneMcpConfig(sessionConfig)
-    : earlyConfigPath === undefined
-      ? loadMcpConfig(undefined, process.cwd(), { includeProject: false })
-      : { mcpServers: {} };
+    : { mcpServers: {} };
   const earlyCache = loadMetadataCache();
   const envRaw = process.env.MCP_DIRECT_TOOLS;
   const envDirectToolOverride = envRaw?.split(",").map(s => s.trim()).filter(Boolean);
@@ -335,9 +331,21 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
     if (generation !== lifecycleGeneration || !owner.isActive()) return;
 
-    const runtimeConfig = programmaticConfig
-      ? cloneMcpConfig(sessionConfig)
-      : loadMcpConfig(earlyConfigPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
+    let runtimeConfig: McpConfig;
+    if (programmaticConfig) {
+      currentConfigPath = undefined;
+      runtimeConfig = cloneMcpConfig(sessionConfig);
+    } else {
+      const registeredConfigPath = pi.getFlag("mcp-config");
+      currentConfigPath = options.configPath
+        ?? (typeof registeredConfigPath === "string" ? registeredConfigPath : undefined)
+        ?? getConfigPathFromArgv();
+      runtimeConfig = loadMcpConfig(
+        currentConfigPath,
+        ctx.cwd,
+        { includeProject: ctx.isProjectTrusted() },
+      );
+    }
     registerPromptCommands(resolveCachedPrompts(runtimeConfig));
     const runtimeCache = loadMetadataCache();
     const cachedDirectTools = syncDirectTools(runtimeConfig, runtimeCache).specs;
@@ -468,7 +476,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             commandCtx.ui?.notify("MCP setup is unavailable when config is supplied by createMcpAdapter().", "info");
             break;
           }
-          const result = await openMcpSetup(state, pi, commandCtx, earlyConfigPath, "setup");
+          const result = await openMcpSetup(state, pi, commandCtx, currentConfigPath, "setup");
           if (result?.configChanged) {
             commandOwner?.throwIfInactive();
             await ctx.reload();
@@ -506,7 +514,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             break;
           }
           commandOwner?.throwIfInactive();
-          const result = writeProjectServerDisabledOverride(earlyConfigPath, commandCtx.cwd, serverName, subcommand === "disable");
+          const result = writeProjectServerDisabledOverride(currentConfigPath, commandCtx.cwd, serverName, subcommand === "disable");
           if (result.changed) {
             commandCtx.ui?.notify(`${subcommand === "disable" ? "Disabled" : "Enabled"} server "${serverName}" in ${result.path} — run /reload to apply`, "info");
           } else {
@@ -524,7 +532,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
               await showStatus(state, commandCtx);
               break;
             }
-            const result = await openMcpPanel(state, pi, commandCtx, earlyConfigPath, (changes) => {
+            const result = await openMcpPanel(state, pi, commandCtx, currentConfigPath, (changes) => {
               applyDirectToolConfigChanges(changes);
               syncToolSurface(commandCtx);
             });
@@ -583,7 +591,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           commandCtx.ui?.notify("Use /mcp-auth <server> to authenticate a server from the in-memory SDK config.", "info");
           return;
         }
-        await openMcpAuthPanel(state, pi, commandCtx, earlyConfigPath);
+        await openMcpAuthPanel(state, pi, commandCtx, currentConfigPath);
         return;
       }
 

@@ -117,7 +117,6 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const untrustedServers = loadMcpConfig(undefined, project, { includeProject: false }).mcpServers;
     expect(untrustedServers).toEqual({ global: { command: "global-server" } });
-    expect(untrustedServers).not.toHaveProperty("cursorLinked");
     expect(loadMcpConfig(undefined, project, { includeProject: true }).mcpServers).toMatchObject({
       global: { command: "global-server" },
       project: { command: "project-server" },
