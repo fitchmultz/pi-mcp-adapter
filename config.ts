@@ -369,16 +369,18 @@ function canonicalPath(path: string): string {
   }
 }
 
-function isProjectConfigSource(source: ConfigSourceSpec, cwd: string): boolean {
-  if (source.scope === "project") return true;
-
-  const contains = (root: string, path: string): boolean => {
-    const pathFromRoot = relative(root, path);
+function isPathInsideProject(path: string, cwd: string): boolean {
+  const contains = (root: string, candidate: string): boolean => {
+    const pathFromRoot = relative(root, candidate);
     return pathFromRoot === ""
       || (pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot));
   };
-  if (contains(resolve(cwd), resolve(source.readPath))) return true;
-  return contains(canonicalPath(cwd), canonicalPath(source.readPath));
+  return contains(resolve(cwd), resolve(path))
+    || contains(canonicalPath(cwd), canonicalPath(path));
+}
+
+function isProjectConfigSource(source: ConfigSourceSpec, cwd: string): boolean {
+  return source.scope === "project" || isPathInsideProject(source.readPath, cwd);
 }
 
 function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
@@ -543,7 +545,6 @@ function expandImports(config: McpConfig, cwd = process.cwd(), includeProject = 
 
 function resolveImportCandidates(importKind: ImportKind, cwd: string, includeProject = true): string[] {
   return (IMPORT_PATHS[importKind] ?? [])
-    .filter((candidate) => includeProject || !candidate.startsWith("."))
     .map((candidate) => {
       if (importKind === "opencode" && candidate === "./opencode.json") {
         const start = resolve(cwd);
@@ -568,7 +569,8 @@ function resolveImportCandidates(importKind: ImportKind, cwd: string, includePro
         }
       }
       return candidate.startsWith(".") ? resolve(cwd, candidate) : candidate;
-    });
+    })
+    .filter((candidate) => includeProject || !isPathInsideProject(candidate, cwd));
 }
 
 function parseJsonConfig(raw: string): unknown {

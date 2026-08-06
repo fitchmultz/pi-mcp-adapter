@@ -92,7 +92,7 @@ describe("config discovery", () => {
     process.chdir(project);
 
     writeJson(join(home, ".pi", "agent", "mcp.json"), {
-      imports: ["vscode", "opencode"],
+      imports: ["cursor", "vscode", "opencode"],
       settings: { hostConfigDiscovery: "on" },
       mcpServers: { global: { command: "global-server" } },
     });
@@ -108,11 +108,16 @@ describe("config discovery", () => {
     writeJson(join(project, "opencode.json"), {
       mcp: { opencode: { command: ["opencode-server"] } },
     });
+    writeJson(join(project, "cursor-target.json"), {
+      mcpServers: { cursorLinked: { command: "project-server" } },
+    });
+    mkdirSync(join(home, ".cursor"), { recursive: true });
+    symlinkSync(join(project, "cursor-target.json"), join(home, ".cursor", "mcp.json"));
 
     const { loadMcpConfig } = await import("../config.ts");
-    expect(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers).toEqual({
-      global: { command: "global-server" },
-    });
+    const untrustedServers = loadMcpConfig(undefined, project, { includeProject: false }).mcpServers;
+    expect(untrustedServers).toEqual({ global: { command: "global-server" } });
+    expect(untrustedServers).not.toHaveProperty("cursorLinked");
     expect(loadMcpConfig(undefined, project, { includeProject: true }).mcpServers).toMatchObject({
       global: { command: "global-server" },
       project: { command: "project-server" },
@@ -149,6 +154,27 @@ describe("config discovery", () => {
     });
     expect(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers)
       .not.toHaveProperty("projectAgentDir");
+  });
+
+  it("excludes nominally global import paths located inside an untrusted project", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    const outsideProject = mkdtempSync(join(tmpdir(), "pi-mcp-config-outside-"));
+    process.env.HOME = join(project, "home");
+    process.chdir(project);
+
+    const overridePath = join(outsideProject, "mcp.json");
+    writeJson(overridePath, {
+      imports: ["cursor"],
+      mcpServers: { global: { command: "global-server" } },
+    });
+    writeJson(join(project, "home", ".cursor", "mcp.json"), {
+      mcpServers: { cursorInside: { command: "project-server" } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(overridePath, project, { includeProject: false }).mcpServers).toEqual({
+      global: { command: "global-server" },
+    });
   });
 
   it("replaces transport-specific fields when an override switches to or from a socket", async () => {
