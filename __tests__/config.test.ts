@@ -127,6 +127,15 @@ describe("config discovery", () => {
     });
     expect(loadMcpConfig(join(dotDotNamedDirectory, "mcp.json"), project, { includeProject: false }).mcpServers)
       .not.toHaveProperty("disguisedProject");
+
+    const outsideProject = mkdtempSync(join(tmpdir(), "pi-mcp-config-outside-"));
+    writeJson(join(outsideProject, "mcp.json"), {
+      mcpServers: { linkedProject: { command: "project-server" } },
+    });
+    const projectLink = join(project, "linked-mcp.json");
+    symlinkSync(join(outsideProject, "mcp.json"), projectLink);
+    expect(loadMcpConfig(projectLink, project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("linkedProject");
   });
 
   it("replaces transport-specific fields when an override switches to or from a socket", async () => {

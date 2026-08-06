@@ -372,9 +372,14 @@ function canonicalPath(path: string): string {
 function isProjectConfigSource(source: ConfigSourceSpec, overridePath: string | undefined, cwd: string): boolean {
   if (source.scope === "project") return true;
   if (overridePath === undefined || source.id !== "pi-global") return false;
-  const pathFromCwd = relative(canonicalPath(cwd), canonicalPath(source.readPath));
-  return pathFromCwd === ""
-    || (pathFromCwd !== ".." && !pathFromCwd.startsWith(`..${sep}`) && !isAbsolute(pathFromCwd));
+
+  const contains = (root: string, path: string): boolean => {
+    const pathFromRoot = relative(root, path);
+    return pathFromRoot === ""
+      || (pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot));
+  };
+  if (contains(resolve(cwd), resolve(source.readPath))) return true;
+  return contains(canonicalPath(cwd), canonicalPath(source.readPath));
 }
 
 function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
