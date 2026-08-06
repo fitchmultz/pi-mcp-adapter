@@ -156,6 +156,41 @@ describe("config discovery", () => {
       .not.toHaveProperty("projectAgentDir");
   });
 
+  it("keeps user-global config available to untrusted projects under the home directory", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = join(home, "src", "project");
+    process.env.HOME = home;
+    mkdirSync(join(project, ".git"), { recursive: true });
+    process.chdir(project);
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      mcpServers: { global: { command: "global-server" } },
+    });
+    writeJson(join(project, ".pi", "mcp.json"), {
+      mcpServers: { project: { command: "project-server" } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers).toEqual({
+      global: { command: "global-server" },
+    });
+  });
+
+  it("classifies missing files through a symlinked directory as project-local", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    const globalDir = join(home, ".pi", "agent");
+    const projectAgentDir = join(project, ".pi-agent");
+    process.env.HOME = home;
+    mkdirSync(join(project, ".git"), { recursive: true });
+    mkdirSync(dirname(globalDir), { recursive: true });
+    mkdirSync(projectAgentDir, { recursive: true });
+    symlinkSync(projectAgentDir, globalDir, "dir");
+
+    const { isPathInsideProject } = await import("../config.ts");
+    expect(isPathInsideProject(join(globalDir, "mcp-cache.json"), project)).toBe(true);
+  });
+
   it("excludes nominally global import paths located inside an untrusted project", async () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
     const outsideProject = mkdtempSync(join(tmpdir(), "pi-mcp-config-outside-"));

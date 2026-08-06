@@ -362,10 +362,18 @@ function getConfigConflicts(
 }
 
 function canonicalPath(path: string): string {
+  const resolvedPath = resolve(path);
+  let existingPath = resolvedPath;
+  while (!existsSync(existingPath)) {
+    const parent = dirname(existingPath);
+    if (parent === existingPath) return resolvedPath;
+    existingPath = parent;
+  }
+
   try {
-    return realpathSync(path);
+    return resolve(realpathSync(existingPath), relative(existingPath, resolvedPath));
   } catch {
-    return resolve(path);
+    return resolvedPath;
   }
 }
 
@@ -1005,13 +1013,17 @@ function isRepoPromptServer(name: string, entry: ServerEntry): boolean {
 
 function findProjectRoots(cwd = process.cwd()): string[] {
   const roots: string[] = [];
+  const home = resolve(homedir());
   let current = resolve(cwd);
   while (true) {
     if (
-      existsSync(join(current, ".git"))
-      || existsSync(join(current, "package.json"))
-      || existsSync(join(current, PROJECT_CONFIG_NAME))
-      || existsSync(join(current, ".pi"))
+      current !== home
+      && (
+        existsSync(join(current, ".git"))
+        || existsSync(join(current, "package.json"))
+        || existsSync(join(current, PROJECT_CONFIG_NAME))
+        || existsSync(join(current, ".pi"))
+      )
     ) {
       roots.push(current);
     }
