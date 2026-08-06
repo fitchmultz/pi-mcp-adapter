@@ -93,6 +93,27 @@ describe("commands onboarding", () => {
     expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("/mcp-auth <server>"), "info");
   });
 
+  it("uses the resolved config override without re-reading Pi flags", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-commands-home-"));
+    process.env.HOME = home;
+    const ui = createUi();
+    const getFlag = vi.fn(() => "/flag/mcp.json");
+    const state = {
+      config: { mcpServers: { oauth: { url: "https://example.com/mcp", auth: "oauth" } } },
+      manager: { getConnection: () => null },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+    } as any;
+    const ctx = { hasUI: true, mode: "tui", isProjectTrusted: () => true, cwd: "/project", ui } as any;
+    const { openMcpAuthPanel, openMcpPanel } = await import("../commands.ts");
+
+    await openMcpPanel(state, { getFlag } as any, ctx, "/factory/mcp.json");
+    await openMcpAuthPanel(state, { getFlag } as any, ctx, "/factory/mcp.json");
+
+    expect(getFlag).not.toHaveBeenCalled();
+    expect(mocks.createMcpPanel).toHaveBeenCalledTimes(2);
+  });
+
   it("shows a one-time shared-config notice in the MCP panel", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-commands-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-commands-project-"));
