@@ -176,6 +176,29 @@ describe("config discovery", () => {
     });
   });
 
+  it("excludes parent project OpenCode config from an untrusted nested cwd", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    const nested = join(project, "nested");
+    process.env.HOME = home;
+    mkdirSync(join(project, ".git"), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    process.chdir(nested);
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      imports: ["opencode"],
+      mcpServers: { global: { command: "global-server" } },
+    });
+    writeJson(join(project, "opencode.json"), {
+      mcp: { parentProject: { command: ["project-server"] } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, nested, { includeProject: false }).mcpServers).toEqual({
+      global: { command: "global-server" },
+    });
+  });
+
   it("replaces transport-specific fields when an override switches to or from a socket", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));

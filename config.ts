@@ -545,6 +545,7 @@ function expandImports(config: McpConfig, cwd: string, includeProject: boolean):
 
 function resolveImportCandidates(importKind: ImportKind, cwd: string, includeProject: boolean): string[] {
   return (IMPORT_PATHS[importKind] ?? [])
+    .filter((candidate) => includeProject || candidate !== "./opencode.json")
     .map((candidate) => {
       if (importKind === "opencode" && candidate === "./opencode.json") {
         const start = resolve(cwd);
