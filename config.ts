@@ -379,7 +379,9 @@ function canonicalPath(path: string): string {
 
 export function isPathInsideProject(path: string, cwd: string): boolean {
   const projectRoots = findProjectRoots(cwd);
-  const roots = projectRoots.length > 0 ? projectRoots : [cwd];
+  const roots = projectRoots.length > 0
+    ? projectRoots
+    : isHomePath(cwd) ? [] : [cwd];
   const contains = (root: string, candidate: string): boolean => {
     const pathFromRoot = relative(root, candidate);
     return pathFromRoot === ""
@@ -1011,27 +1013,40 @@ function isRepoPromptServer(name: string, entry: ServerEntry): boolean {
   return (entry.args ?? []).some((arg) => typeof arg === "string" && arg.toLowerCase().includes("repoprompt"));
 }
 
+function isHomePath(path: string): boolean {
+  const home = resolve(homedir());
+  return resolve(path) === home || canonicalPath(path) === canonicalPath(home);
+}
+
 function findProjectRoots(cwd = process.cwd()): string[] {
   const roots: string[] = [];
-  const home = resolve(homedir());
-  let current = resolve(cwd);
-  while (true) {
-    if (
-      current !== home
-      && (
-        existsSync(join(current, ".git"))
-        || existsSync(join(current, "package.json"))
-        || existsSync(join(current, PROJECT_CONFIG_NAME))
-        || existsSync(join(current, ".pi"))
-      )
-    ) {
-      roots.push(current);
-    }
+  const seen = new Set<string>();
+  const startPaths = new Set([resolve(cwd), canonicalPath(cwd)]);
 
-    const parent = dirname(current);
-    if (parent === current) return roots;
-    current = parent;
+  for (const startPath of startPaths) {
+    let current = startPath;
+    while (true) {
+      if (
+        !isHomePath(current)
+        && (
+          existsSync(join(current, ".git"))
+          || existsSync(join(current, "package.json"))
+          || existsSync(join(current, PROJECT_CONFIG_NAME))
+          || existsSync(join(current, ".pi"))
+        )
+        && !seen.has(current)
+      ) {
+        roots.push(current);
+        seen.add(current);
+      }
+
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
   }
+
+  return roots;
 }
 
 function findProjectRoot(cwd = process.cwd()): string | null {

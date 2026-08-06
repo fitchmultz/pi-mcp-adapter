@@ -176,6 +176,46 @@ describe("config discovery", () => {
     });
   });
 
+  it("keeps user-global config available when the untrusted cwd is the home directory", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    process.env.HOME = home;
+    process.chdir(home);
+
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      mcpServers: { sharedGlobal: { command: "shared-global" } },
+    });
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      mcpServers: { piGlobal: { command: "pi-global" } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, home, { includeProject: false }).mcpServers).toEqual({
+      sharedGlobal: { command: "shared-global" },
+      piGlobal: { command: "pi-global" },
+    });
+  });
+
+  it("classifies project files through a symlinked cwd as project-local", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    const nested = join(project, "src", "nested");
+    const cwdAlias = join(home, "project-link");
+    const projectAgentDir = join(project, ".pi-agent");
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = projectAgentDir;
+    mkdirSync(join(project, ".git"), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    symlinkSync(nested, cwdAlias, "dir");
+    writeJson(join(projectAgentDir, "mcp.json"), {
+      mcpServers: { projectAgent: { command: "project-server" } },
+    });
+
+    const { isPathInsideProject, loadMcpConfig } = await import("../config.ts");
+    expect(isPathInsideProject(join(projectAgentDir, "mcp-cache.json"), cwdAlias)).toBe(true);
+    expect(loadMcpConfig(undefined, cwdAlias, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("projectAgent");
+  });
+
   it("classifies missing files through a symlinked directory as project-local", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));

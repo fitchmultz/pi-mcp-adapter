@@ -9,9 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.0] - 2026-08-06
 
-### Added
-- Added a strict TypeScript typecheck command and CI gate.
-
 ### Changed
 - **BREAKING:** Pi 0.84.0 or later and Node.js 22.19.0 or later are now required. Pi host development dependencies and TypeBox are pinned to the released 0.84.0 contract, while core runtime packages remain optional wildcard peers per Pi package conventions.
 - MCP sampling now dispatches through Pi's `ModelRegistry.complete()` so resolved endpoints, custom providers, authentication, and `null` header-deletion markers are preserved by the 0.84 request pipeline.
