@@ -39,7 +39,8 @@ export function getMetadataCachePath(): string {
   return getAgentPath("mcp-cache.json");
 }
 
-export function loadMetadataCache(): MetadataCache | null {
+export function loadMetadataCache(enabled = true): MetadataCache | null {
+  if (!enabled) return null;
   const cachePath = getMetadataCachePath();
   if (!existsSync(cachePath)) return null;
   try {
@@ -53,7 +54,8 @@ export function loadMetadataCache(): MetadataCache | null {
   }
 }
 
-export function saveMetadataCache(cache: MetadataCache): void {
+export function saveMetadataCache(cache: MetadataCache, enabled = true): void {
+  if (!enabled) return;
   const cachePath = getMetadataCachePath();
   const dir = dirname(cachePath);
   mkdirSync(dir, { recursive: true });

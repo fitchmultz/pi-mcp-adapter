@@ -501,7 +501,7 @@ function buildMcpPanelCallbacks(
     },
     getFailureMessage: (serverName: string) => authStatusFailures.get(serverName) ?? getFailureMessage(state, serverName),
     refreshCacheAfterReconnect: (serverName: string) => {
-      const freshCache = loadMetadataCache();
+      const freshCache = loadMetadataCache(state.metadataCacheEnabled);
       return freshCache?.servers?.[serverName] ?? null;
     },
   };
@@ -530,7 +530,7 @@ export async function openMcpPanel(
   }
 
   const config = state.config;
-  const cache = loadMetadataCache();
+  const cache = loadMetadataCache(state.metadataCacheEnabled);
   const configPath = configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
   const { lines: noticeLines, fingerprint } = buildSharedConfigNoticeLines(configPath, ctx.cwd);
@@ -600,7 +600,7 @@ export async function openMcpAuthPanel(
     return { configChanged: false };
   }
 
-  const cache = loadMetadataCache();
+  const cache = loadMetadataCache(state.metadataCacheEnabled);
   const configPath = configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
   const callbacks = buildMcpPanelCallbacks(state, config, ctx);

@@ -180,11 +180,13 @@ describe("config discovery", () => {
   it("excludes parent project OpenCode config from an untrusted nested cwd", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
-    const nested = join(project, "nested");
+    const nestedPackage = join(project, "packages", "app");
+    const nested = join(nestedPackage, "src");
     process.env.HOME = home;
     process.env.PI_CODING_AGENT_DIR = join(project, ".pi-agent");
     mkdirSync(join(project, ".git"), { recursive: true });
     mkdirSync(nested, { recursive: true });
+    writeJson(join(nestedPackage, "package.json"), { name: "app" });
     process.chdir(nested);
 
     writeJson(join(home, ".config", "mcp", "mcp.json"), {

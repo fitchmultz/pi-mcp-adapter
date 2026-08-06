@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   shutdownOAuth: vi.fn().mockResolvedValue(undefined),
   loadMcpConfig: vi.fn(() => ({ mcpServers: {} })),
   cloneMcpConfig: vi.fn((config: unknown) => structuredClone(config)),
+  isPathInsideProject: vi.fn(() => false),
+  getMetadataCachePath: vi.fn(() => "/global/mcp-cache.json"),
   loadMetadataCache: vi.fn(() => null),
   buildProxyDescription: vi.fn(() => "MCP gateway"),
   createDirectToolExecutor: vi.fn(() => vi.fn()),
@@ -35,7 +37,6 @@ const mocks = vi.hoisted(() => ({
   executeSearch: vi.fn(),
   executeStatus: vi.fn(),
   executeUiMessages: vi.fn(),
-  getConfigPathFromArgv: vi.fn(() => undefined),
   normalizeDirectToolInputSchema: vi.fn((schema: unknown) => schema && typeof schema === "object" && !Array.isArray(schema)
     ? Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "$schema" && key !== "additionalProperties"))
     : { type: "object", properties: {} }),
@@ -58,10 +59,12 @@ vi.mock("../mcp-auth-flow.ts", () => ({
 vi.mock("../config.ts", () => ({
   loadMcpConfig: mocks.loadMcpConfig,
   cloneMcpConfig: mocks.cloneMcpConfig,
+  isPathInsideProject: mocks.isPathInsideProject,
   writeProjectServerDisabledOverride: mocks.writeProjectServerDisabledOverride,
 }));
 
 vi.mock("../metadata-cache.ts", () => ({
+  getMetadataCachePath: mocks.getMetadataCachePath,
   loadMetadataCache: mocks.loadMetadataCache,
 }));
 
@@ -99,7 +102,6 @@ vi.mock("../proxy-modes.ts", () => ({
 
 vi.mock("../utils.ts", () => ({
   formatTerminalError: (error: unknown) => error instanceof Error ? error.message : String(error),
-  getConfigPathFromArgv: mocks.getConfigPathFromArgv,
   normalizeDirectToolInputSchema: mocks.normalizeDirectToolInputSchema,
   sanitizeTerminalText: (text: string) => text,
   truncateAtWord: mocks.truncateAtWord,
@@ -191,7 +193,6 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.createDirectToolExecutor.mockReturnValue(vi.fn());
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue([]);
     mocks.resolveDirectTools.mockReturnValue([]);
-    mocks.getConfigPathFromArgv.mockReturnValue(undefined);
     mocks.normalizeDirectToolInputSchema.mockImplementation((schema: unknown) => schema && typeof schema === "object" && !Array.isArray(schema)
       ? Object.fromEntries(Object.entries(schema).filter(([key]) => key !== "$schema" && key !== "additionalProperties"))
       : { type: "object", properties: {} });
@@ -698,7 +699,6 @@ describe("mcpAdapter session lifecycle", () => {
       },
       settings: { disableProxyTool: true as const },
     };
-    mocks.getConfigPathFromArgv.mockReturnValue("/ambient/argv.json");
     mocks.resolveDirectTools.mockReturnValue([{
       serverName: "memory",
       originalName: "search",
@@ -714,7 +714,6 @@ describe("mcpAdapter session lifecycle", () => {
     createMcpAdapter({ config })(api);
 
     expect(mocks.loadMcpConfig).not.toHaveBeenCalled();
-    expect(mocks.getConfigPathFromArgv).not.toHaveBeenCalled();
     expect(mocks.resolveDirectTools).toHaveBeenCalledWith(
       expect.objectContaining({ mcpServers: { memory: config.mcpServers.memory } }),
       null,
@@ -755,13 +754,11 @@ describe("mcpAdapter session lifecycle", () => {
   it("defers explicit config paths until trusted session startup", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    mocks.getConfigPathFromArgv.mockReturnValue("/argv.json");
     const { createMcpAdapter, default: defaultAdapter } = await import("../index.ts");
 
     const configuredPi = createPi();
     createMcpAdapter({ configPath: "/factory.json" })(configuredPi.api);
     expect(mocks.loadMcpConfig).not.toHaveBeenCalled();
-    expect(mocks.getConfigPathFromArgv).not.toHaveBeenCalled();
     await configuredPi.handlers.get("session_start")?.({}, {});
     expect(mocks.loadMcpConfig).toHaveBeenCalledWith(
       "/factory.json",
@@ -770,15 +767,13 @@ describe("mcpAdapter session lifecycle", () => {
     );
 
     mocks.loadMcpConfig.mockClear();
-    mocks.getConfigPathFromArgv.mockClear();
     const defaultPi = createPi();
+    defaultPi.api.getFlag.mockReturnValue("/flag.json");
     defaultAdapter(defaultPi.api);
-    expect(mocks.getConfigPathFromArgv).not.toHaveBeenCalled();
     expect(mocks.loadMcpConfig).not.toHaveBeenCalled();
     await defaultPi.handlers.get("session_start")?.({}, {});
-    expect(mocks.getConfigPathFromArgv).toHaveBeenCalledTimes(1);
     expect(mocks.loadMcpConfig).toHaveBeenCalledWith(
-      "/argv.json",
+      "/flag.json",
       process.cwd(),
       { includeProject: true },
     );
@@ -803,7 +798,6 @@ describe("mcpAdapter session lifecycle", () => {
       "/actual/project",
       { includeProject: false },
     );
-    expect(mocks.getConfigPathFromArgv).not.toHaveBeenCalled();
   });
 
   it("uses status notifications instead of ambient panels in memory-config mode", async () => {
@@ -877,10 +871,9 @@ describe("mcpAdapter session lifecycle", () => {
   it("defers project config reads and server startup until session trust is known", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
-    mocks.getConfigPathFromArgv.mockReturnValue("/project/.pi/mcp.json");
-
     const { default: mcpAdapter } = await import("../index.ts");
     const { api, handlers } = createPi();
+    api.getFlag.mockReturnValue("/project/.pi/mcp.json");
     mcpAdapter(api);
 
     expect(mocks.loadMcpConfig).not.toHaveBeenCalled();

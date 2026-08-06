@@ -4,14 +4,14 @@ import type { DirectToolSpec, McpAdapterOptions, McpConfig, PromptMetadata } fro
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, authenticateServer, logoutServer, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
-import { cloneMcpConfig, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
+import { cloneMcpConfig, isPathInsideProject, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.ts";
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
-import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
+import { getMetadataCachePath, loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
 import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeInstructions, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
-import { formatTerminalError, getConfigPathFromArgv, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
+import { formatTerminalError, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
 import { createOAuthRuntime, shutdownOAuth } from "./mcp-auth-flow.ts";
 import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
 import { toolErrorOverride } from "./error-signal.ts";
@@ -30,6 +30,13 @@ export {
 
 const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
+const inactiveDirectToolsKey = Symbol.for("pi-mcp-adapter.inactive-direct-tools");
+const inactiveDirectToolsBySession = (() => {
+  const shared = globalThis as typeof globalThis & {
+    [inactiveDirectToolsKey]?: Map<string, Set<string>>;
+  };
+  return shared[inactiveDirectToolsKey] ??= new Map<string, Set<string>>();
+})();
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -98,11 +105,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const earlyConfig = programmaticConfig
     ? cloneMcpConfig(sessionConfig)
     : { mcpServers: {} };
-  const earlyCache = loadMetadataCache();
+  const earlyCache: MetadataCache | null = null;
   const envRaw = process.env.MCP_DIRECT_TOOLS;
   const envDirectToolOverride = envRaw?.split(",").map(s => s.trim()).filter(Boolean);
   const registeredDirectTools = new Map<string, string>();
   const deactivatedTools = new Set<string>();
+  const preservedInactiveTools = new Set<string>();
+  let activationKey: string | null = null;
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
   let directToolsFrozen = false;
@@ -131,6 +140,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
       renderResult: renderMcpToolResult,
     });
+    if (preservedInactiveTools.has(spec.prefixedName)) {
+      const activeTools = pi.getActiveTools();
+      if (activeTools.includes(spec.prefixedName)) {
+        pi.setActiveTools(activeTools.filter((name) => name !== spec.prefixedName));
+      }
+    }
   }
 
   function resolveCurrentDirectTools(config: McpConfig, cache: MetadataCache | null): DirectToolSpec[] {
@@ -201,7 +216,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function syncToolSurface(ctx?: ExtensionContext): void {
     const config = state?.config ?? earlyConfig;
-    const cache = loadMetadataCache();
+    const cache = loadMetadataCache(state?.metadataCacheEnabled ?? false);
     const result = syncDirectTools(config, cache);
     syncProxyTool(config, cache, result.specs);
     syncScriptTool(config);
@@ -231,7 +246,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     registerPromptCommands([...(state?.promptMetadata?.values() ?? [])].flat());
   }
 
-  registerPromptCommands(resolveCachedPrompts(earlyConfig));
+  registerPromptCommands(resolveCachedPrompts(earlyConfig, false));
 
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
 
@@ -338,16 +353,22 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     } else {
       const registeredConfigPath = pi.getFlag("mcp-config");
       currentConfigPath = options.configPath
-        ?? (typeof registeredConfigPath === "string" ? registeredConfigPath : undefined)
-        ?? getConfigPathFromArgv();
+        ?? (typeof registeredConfigPath === "string" ? registeredConfigPath : undefined);
       runtimeConfig = loadMcpConfig(
         currentConfigPath,
         ctx.cwd,
         { includeProject: ctx.isProjectTrusted() },
       );
     }
-    registerPromptCommands(resolveCachedPrompts(runtimeConfig));
-    const runtimeCache = loadMetadataCache();
+    const metadataCacheEnabled = ctx.isProjectTrusted()
+      || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
+    activationKey = `${ctx.cwd}\0${currentConfigPath ?? ""}`;
+    preservedInactiveTools.clear();
+    for (const toolName of inactiveDirectToolsBySession.get(activationKey) ?? []) {
+      preservedInactiveTools.add(toolName);
+    }
+    registerPromptCommands(resolveCachedPrompts(runtimeConfig, metadataCacheEnabled));
+    const runtimeCache = loadMetadataCache(metadataCacheEnabled);
     const cachedDirectTools = syncDirectTools(runtimeConfig, runtimeCache).specs;
     syncProxyTool(runtimeConfig, runtimeCache, cachedDirectTools);
     syncScriptTool(runtimeConfig);
@@ -366,6 +387,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   });
 
   pi.on("session_shutdown", async () => {
+    if (activationKey) {
+      const activeTools = new Set(pi.getActiveTools());
+      const inactiveTools = new Set(
+        [...registeredDirectTools.keys()].filter((name) => !activeTools.has(name)),
+      );
+      if (inactiveTools.size > 0) inactiveDirectToolsBySession.set(activationKey, inactiveTools);
+      else inactiveDirectToolsBySession.delete(activationKey);
+    }
     ++lifecycleGeneration;
     const currentState = state;
     const owner = currentOwner;

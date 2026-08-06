@@ -369,15 +369,18 @@ function canonicalPath(path: string): string {
   }
 }
 
-function isPathInsideProject(path: string, cwd: string): boolean {
-  const projectRoot = findProjectRoot(cwd) ?? cwd;
+export function isPathInsideProject(path: string, cwd: string): boolean {
+  const projectRoots = findProjectRoots(cwd);
+  const roots = projectRoots.length > 0 ? projectRoots : [cwd];
   const contains = (root: string, candidate: string): boolean => {
     const pathFromRoot = relative(root, candidate);
     return pathFromRoot === ""
       || (pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot));
   };
-  return contains(resolve(projectRoot), resolve(path))
-    || contains(canonicalPath(projectRoot), canonicalPath(path));
+  return roots.some((root) =>
+    contains(resolve(root), resolve(path))
+    || contains(canonicalPath(root), canonicalPath(path)),
+  );
 }
 
 function isProjectConfigSource(source: ConfigSourceSpec, cwd: string): boolean {
@@ -1000,7 +1003,8 @@ function isRepoPromptServer(name: string, entry: ServerEntry): boolean {
   return (entry.args ?? []).some((arg) => typeof arg === "string" && arg.toLowerCase().includes("repoprompt"));
 }
 
-function findProjectRoot(cwd = process.cwd()): string | null {
+function findProjectRoots(cwd = process.cwd()): string[] {
+  const roots: string[] = [];
   let current = resolve(cwd);
   while (true) {
     if (
@@ -1009,13 +1013,17 @@ function findProjectRoot(cwd = process.cwd()): string | null {
       || existsSync(join(current, PROJECT_CONFIG_NAME))
       || existsSync(join(current, ".pi"))
     ) {
-      return current;
+      roots.push(current);
     }
 
     const parent = dirname(current);
-    if (parent === current) return null;
+    if (parent === current) return roots;
     current = parent;
   }
+}
+
+function findProjectRoot(cwd = process.cwd()): string | null {
+  return findProjectRoots(cwd)[0] ?? null;
 }
 
 function buildRepoPromptEntry(executablePath: string): ServerEntry {
