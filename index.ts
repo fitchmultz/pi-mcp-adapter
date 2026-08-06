@@ -591,7 +591,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           commandCtx.ui?.notify("Use /mcp-auth <server> to authenticate a server from the in-memory SDK config.", "info");
           return;
         }
-        await openMcpAuthPanel(state, pi, commandCtx, currentConfigPath);
+        await openMcpAuthPanel(state, commandCtx, currentConfigPath);
         return;
       }
 

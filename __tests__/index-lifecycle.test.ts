@@ -1156,7 +1156,7 @@ describe("mcpAdapter session lifecycle", () => {
     const commandDef = api.registerCommand.mock.calls.find((call: any[]) => call[0] === "mcp-auth")?.[1];
     await commandDef.handler("", { hasUI: true, ui });
 
-    expect(mocks.openMcpAuthPanel).toHaveBeenCalledWith(state, api, expect.any(Object), undefined);
+    expect(mocks.openMcpAuthPanel).toHaveBeenCalledWith(state, expect.any(Object), undefined);
     expect(mocks.authenticateServer).not.toHaveBeenCalled();
   });
 

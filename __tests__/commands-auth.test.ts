@@ -27,7 +27,7 @@ describe("authenticateServer", () => {
     await openMcpAuthPanel({
       programmaticConfig: false,
       config: { mcpServers: { disabled: { url: "https://example.test/mcp", auth: "oauth", disabled: true } } },
-    } as any, { getFlag: vi.fn() } as any, { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any);
+    } as any, { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any);
 
     expect(ui.notify).toHaveBeenCalledWith("No OAuth-capable MCP servers are configured.", "warning");
     expect(ui.custom).not.toHaveBeenCalled();

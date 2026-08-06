@@ -97,9 +97,6 @@ export async function initializeMcp(
 ): Promise<McpExtensionState> {
   // Pi guards ExtensionContext getters after reload. Snapshot all values that
   // can be used by asynchronous work before the first await.
-  const configPath = options.config !== undefined
-    ? undefined
-    : options.configPath ?? (pi.getFlag("mcp-config") as string | undefined);
   const cwd = ctx.cwd;
   const hasUI = ctx.hasUI;
   const mode = ctx.mode;
@@ -112,7 +109,7 @@ export async function initializeMcp(
     ? cloneMcpConfig(options.config)
     : options.resolvedConfig !== undefined
       ? cloneMcpConfig(options.resolvedConfig)
-      : loadMcpConfig(configPath, cwd);
+      : loadMcpConfig(options.configPath ?? (pi.getFlag("mcp-config") as string | undefined), cwd);
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
 
   const ownsOAuthRuntime = options.oauthRuntime === undefined;

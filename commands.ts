@@ -574,7 +574,6 @@ export async function openMcpPanel(
 
 export async function openMcpAuthPanel(
   state: McpExtensionState,
-  _pi: ExtensionAPI,
   ctx: ExtensionContext,
   configOverridePath?: string,
 ): Promise<PanelFlowResult> {

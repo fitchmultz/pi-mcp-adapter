@@ -85,7 +85,7 @@ describe("commands onboarding", () => {
 
     await openMcpSetup(state, {} as any, ctx);
     await openMcpPanel(state, { getFlag: () => undefined } as any, ctx);
-    await openMcpAuthPanel(state, { getFlag: () => undefined } as any, ctx);
+    await openMcpAuthPanel(state, ctx);
 
     expect(ui.custom).not.toHaveBeenCalled();
     expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("TUI mode"), "info");
@@ -108,7 +108,7 @@ describe("commands onboarding", () => {
     const { openMcpAuthPanel, openMcpPanel } = await import("../commands.ts");
 
     await openMcpPanel(state, { getFlag } as any, ctx, "/factory/mcp.json");
-    await openMcpAuthPanel(state, { getFlag } as any, ctx, "/factory/mcp.json");
+    await openMcpAuthPanel(state, ctx, "/factory/mcp.json");
 
     expect(getFlag).not.toHaveBeenCalled();
     expect(mocks.createMcpPanel).toHaveBeenCalledTimes(2);
