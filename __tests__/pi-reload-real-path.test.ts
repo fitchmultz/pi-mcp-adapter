@@ -1,22 +1,33 @@
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { computeServerHash } from "../metadata-cache.ts";
 
 const roots: string[] = [];
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalHome = process.env.HOME;
+const originalDirectTools = process.env.MCP_DIRECT_TOOLS;
+
+beforeEach(() => {
+  delete process.env.MCP_DIRECT_TOOLS;
+});
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
+  if (originalDirectTools === undefined) delete process.env.MCP_DIRECT_TOOLS;
+  else process.env.MCP_DIRECT_TOOLS = originalDirectTools;
 });
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
@@ -61,6 +72,7 @@ async function createReloadHarness() {
   const root = await mkdtemp(join(tmpdir(), "pi-mcp-reload-real-path-"));
   roots.push(root);
   const agentDir = join(root, "agent");
+  process.env.HOME = root;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   const cwd = join(root, "project");
   await writeFile(join(root, "placeholder"), "ok");
@@ -70,21 +82,30 @@ async function createReloadHarness() {
   ]);
   const pidDir = join(root, "pids");
   await mkdir(pidDir, { recursive: true });
+  const definition = {
+    command: process.execPath,
+    args: [resolve("__tests__/fixtures/delayed-mcp-server.mjs")],
+    env: { MCP_RELOAD_PID_DIR: pidDir },
+    debug: true,
+    lifecycle: "eager" as const,
+    directTools: true,
+  };
   const configPath = join(agentDir, "mcp.json");
   await writeFile(configPath, JSON.stringify({
-    mcpServers: {
-      delayed: {
-        command: process.execPath,
-        args: [resolve("__tests__/fixtures/delayed-mcp-server.mjs")],
-        env: { MCP_RELOAD_PID_DIR: pidDir },
-        debug: true,
-        lifecycle: "eager",
-      },
-    },
+    mcpServers: { delayed: definition },
     settings: { sampling: false, elicitation: false },
   }));
-  process.argv.push("--mcp-config", configPath);
-
+  await writeFile(join(agentDir, "mcp-cache.json"), JSON.stringify({
+    version: 1,
+    servers: {
+      delayed: {
+        configHash: computeServerHash(definition),
+        tools: [{ name: "reload_identity", description: "Reload identity", inputSchema: { type: "object" } }],
+        resources: [],
+        cachedAt: Date.now(),
+      },
+    },
+  }));
   const settingsManager = SettingsManager.inMemory();
   const loader = new DefaultResourceLoader({
     cwd,
@@ -93,8 +114,10 @@ async function createReloadHarness() {
     additionalExtensionPaths: [resolve("index.ts")],
   });
   await loader.reload();
-  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const modelRuntime = await ModelRuntime.create({
+    authPath: join(agentDir, "auth.json"),
+    modelsPath: null,
+  });
   const errors: Array<{ error: string; stack?: string }> = [];
   const statusCalls: string[] = [];
   const ui = {
@@ -108,20 +131,15 @@ async function createReloadHarness() {
     resourceLoader: loader,
     sessionManager: SessionManager.inMemory(cwd),
     settingsManager,
-    authStorage,
-    modelRegistry,
-    noTools: "all",
+    modelRuntime,
   });
+  session.extensionRunner.setFlagValue("mcp-config", configPath);
   await session.bindExtensions({ mode: "tui", uiContext: ui, onError: error => errors.push(error) });
   return {
     session,
     errors,
     statusCalls,
     pidDir,
-    cleanupArgv: () => {
-      const index = process.argv.lastIndexOf("--mcp-config");
-      if (index >= 0) process.argv.splice(index, 2);
-    },
   };
 }
 
@@ -144,6 +162,10 @@ describe("Pi registered extension reload real path", () => {
       });
       oldPids.push(secondActive[0].pid);
       await waitFor(() => !isAlive(oldPids[0]));
+      expect(harness.session.getActiveToolNames()).toContain("delayed_reload_identity");
+      harness.session.setActiveToolsByName(
+        harness.session.getActiveToolNames().filter((name) => name !== "delayed_reload_identity"),
+      );
 
       await harness.session.reload();
       const active = await waitForFixture(harness.pidDir, fixtures =>
@@ -151,6 +173,7 @@ describe("Pi registered extension reload real path", () => {
       );
       oldPids.push(active[0].pid);
       await waitFor(() => !isAlive(oldPids[1]));
+      expect(harness.session.getActiveToolNames()).not.toContain("delayed_reload_identity");
 
       expect(active).toHaveLength(1);
       expect(active[0].toolName).toBe("reload_identity");
@@ -176,8 +199,94 @@ describe("Pi registered extension reload real path", () => {
           }
         }
       }
-      harness.cleanupArgv();
       harness.session.dispose();
+    }
+  }, 20_000);
+
+  it("ignores a project-local metadata cache when the project is untrusted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-mcp-cache-trust-real-path-"));
+    roots.push(root);
+    const cwd = join(root, "project");
+    const agentDir = join(cwd, ".pi-agent");
+    const pidDir = join(root, "pids");
+    await Promise.all([
+      mkdir(join(cwd, ".git"), { recursive: true }),
+      mkdir(agentDir, { recursive: true }),
+      mkdir(pidDir, { recursive: true }),
+    ]);
+    process.env.HOME = root;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    const definition = {
+      command: process.execPath,
+      args: [resolve("__tests__/fixtures/delayed-mcp-server.mjs")],
+      env: { MCP_RELOAD_PID_DIR: pidDir },
+      lifecycle: "eager" as const,
+      directTools: true,
+    };
+    const configPath = join(root, "global-mcp.json");
+    await writeFile(configPath, JSON.stringify({
+      mcpServers: { demo: definition },
+      settings: { sampling: false, elicitation: false },
+    }));
+    const cachePath = join(agentDir, "mcp-cache.json");
+    await writeFile(cachePath, JSON.stringify({
+      version: 1,
+      servers: {
+        demo: {
+          configHash: computeServerHash(definition),
+          tools: [{ name: "attacker", description: "ATTACKER CACHE TEXT", inputSchema: { type: "object" } }],
+          resources: [],
+          instructions: "ATTACKER CACHE TEXT",
+          cachedAt: Date.now(),
+        },
+      },
+    }));
+
+    const settingsManager = SettingsManager.inMemory();
+    settingsManager.setProjectTrusted(false);
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      additionalExtensionPaths: [resolve("index.ts")],
+    });
+    await loader.reload();
+    const modelRuntime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: null,
+    });
+    const { session } = await createAgentSession({
+      cwd,
+      agentDir,
+      resourceLoader: loader,
+      sessionManager: SessionManager.inMemory(cwd),
+      settingsManager,
+      modelRuntime,
+    });
+    session.extensionRunner.setFlagValue("mcp-config", configPath);
+    await session.bindExtensions({ mode: "print", onError: error => { throw new Error(error.error); } });
+
+    let pid: number | undefined;
+    try {
+      await session.reload();
+      const active = await waitForFixture(pidDir, fixtures => fixtures.length === 1);
+      pid = active[0].pid;
+      const registered = session.extensionRunner.getAllRegisteredTools();
+      expect(registered.map(tool => tool.definition.name)).not.toContain("demo_attacker");
+      expect(registered.find(tool => tool.definition.name === "mcp")?.definition.description)
+        .not.toContain("ATTACKER CACHE TEXT");
+      expect(await readFile(cachePath, "utf8")).toContain("ATTACKER CACHE TEXT");
+      await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      await waitFor(() => pid === undefined || !isAlive(pid));
+    } finally {
+      try {
+        await session.extensionRunner.emit({ type: "session_shutdown", reason: "test-finally" });
+      } catch {
+        // Preserve the original assertion while still attempting extension cleanup.
+      }
+      if (pid !== undefined && isAlive(pid)) process.kill(pid, "SIGTERM");
+      session.dispose();
     }
   }, 20_000);
 });

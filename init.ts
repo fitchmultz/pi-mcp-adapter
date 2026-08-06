@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type McpAdapterOptions, type PromptMetadata, type ToolMetadata } from "./types.ts";
+import { isServerDisabled, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ToolMetadata } from "./types.ts";
 import { existsSync } from "node:fs";
-import { cloneMcpConfig, loadMcpConfig } from "./config.ts";
+import { cloneMcpConfig, isPathInsideProject, loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
 import { McpLifecycleManager } from "./lifecycle.ts";
 import {
@@ -86,6 +86,7 @@ export function isTuiMode(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolea
 type McpInitializationOptions = McpAdapterOptions & {
   oauthRuntime?: McpOAuthRuntime;
   statusEvents?: McpExtensionState["statusEvents"];
+  resolvedConfig?: McpConfig;
 };
 
 export async function initializeMcp(
@@ -96,9 +97,6 @@ export async function initializeMcp(
 ): Promise<McpExtensionState> {
   // Pi guards ExtensionContext getters after reload. Snapshot all values that
   // can be used by asynchronous work before the first await.
-  const configPath = options.config !== undefined
-    ? undefined
-    : options.configPath ?? (pi.getFlag("mcp-config") as string | undefined);
   const cwd = ctx.cwd;
   const hasUI = ctx.hasUI;
   const mode = ctx.mode;
@@ -109,8 +107,12 @@ export async function initializeMcp(
   const runtimeSignal = combineAbortSignals(owner.signal, initialSignal);
   const config = options.config !== undefined
     ? cloneMcpConfig(options.config)
-    : loadMcpConfig(configPath, cwd);
+    : options.resolvedConfig !== undefined
+      ? cloneMcpConfig(options.resolvedConfig)
+      : loadMcpConfig(options.configPath ?? (pi.getFlag("mcp-config") as string | undefined), cwd);
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
+  const metadataCacheEnabled = (ctx.isProjectTrusted?.() ?? true)
+    || !isPathInsideProject(getMetadataCachePath(), cwd);
 
   const ownsOAuthRuntime = options.oauthRuntime === undefined;
   const oauthRuntime = options.oauthRuntime ?? createOAuthRuntime(owner.signal);
@@ -163,6 +165,7 @@ export async function initializeMcp(
     programmaticConfig: options.config !== undefined,
     oauthRuntime,
     authStorageOptions,
+    metadataCacheEnabled,
     failureTracker,
     failureMessages,
     approvedToolCalls,
@@ -212,16 +215,16 @@ export async function initializeMcp(
   lifecycle.setGlobalIdleTimeout(idleSetting);
 
   const cachePath = getMetadataCachePath();
-  const cacheFileExists = existsSync(cachePath);
-  let cache = loadMetadataCache();
+  const cacheFileExists = metadataCacheEnabled && existsSync(cachePath);
+  let cache = loadMetadataCache(metadataCacheEnabled);
   let bootstrapAll = false;
 
   if (!cacheFileExists) {
     bootstrapAll = true;
-    saveMetadataCache({ version: 1, servers: {} });
+    saveMetadataCache({ version: 1, servers: {} }, metadataCacheEnabled);
   } else if (!cache) {
     cache = { version: 1, servers: {} };
-    saveMetadataCache(cache);
+    saveMetadataCache(cache, metadataCacheEnabled);
   }
 
   const prefix = config.settings?.toolPrefix ?? "server";
@@ -336,7 +339,7 @@ export async function initializeMcp(
 
   const envDirect = process.env.MCP_DIRECT_TOOLS;
   if (envDirect !== "__none__") {
-    const currentCache = loadMetadataCache();
+    const currentCache = loadMetadataCache(state.metadataCacheEnabled);
     const envDirectToolOverride = envDirect?.split(",").map(selector => selector.trim()).filter(Boolean);
     const missingCacheServers = getMissingConfiguredDirectToolServers(config, currentCache, envDirectToolOverride);
 
@@ -462,7 +465,7 @@ export function updateMetadataCache(
   if (!definition || isServerDisabled(definition)) return;
 
   const configHash = computeServerHash(definition);
-  const existing = loadMetadataCache();
+  const existing = loadMetadataCache(state.metadataCacheEnabled);
   const existingEntry = existing?.servers?.[serverName];
 
   const tools = serializeTools(connection.tools);
@@ -490,7 +493,7 @@ export function updateMetadataCache(
     cachedAt: Date.now(),
   };
 
-  saveMetadataCache({ version: 1, servers: { [serverName]: entry } });
+  saveMetadataCache({ version: 1, servers: { [serverName]: entry } }, state.metadataCacheEnabled);
 }
 
 export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: string, reason: string): void {

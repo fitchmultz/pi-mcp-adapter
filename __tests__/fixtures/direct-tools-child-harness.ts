@@ -1,8 +1,7 @@
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -16,7 +15,6 @@ if (!agentDir || !configPath || !projectDir || !adapterPath || !probePath) {
   throw new Error("Missing direct-tool child harness environment");
 }
 
-process.argv.push("--mcp-config", configPath);
 const settingsManager = SettingsManager.inMemory();
 const loader = new DefaultResourceLoader({
   cwd: projectDir,
@@ -25,17 +23,20 @@ const loader = new DefaultResourceLoader({
   additionalExtensionPaths: [adapterPath, probePath],
 });
 await loader.reload();
-const authStorage = AuthStorage.create(`${agentDir}/auth.json`);
+const modelRuntime = await ModelRuntime.create({
+  authPath: `${agentDir}/auth.json`,
+  modelsPath: null,
+});
 const { session } = await createAgentSession({
   cwd: projectDir,
   agentDir,
   resourceLoader: loader,
   sessionManager: SessionManager.inMemory(projectDir),
   settingsManager,
-  authStorage,
-  modelRegistry: ModelRegistry.inMemory(authStorage),
+  modelRuntime,
   tools: ["demo_reload_identity"],
 });
+session.extensionRunner.setFlagValue("mcp-config", configPath);
 await session.bindExtensions({ mode: "print", onError: error => console.error(error.error) });
 
 try {

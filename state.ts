@@ -44,6 +44,7 @@ export interface McpExtensionState {
   programmaticConfig?: boolean;
   oauthRuntime: McpOAuthRuntime;
   authStorageOptions: AuthStorageOptions;
+  metadataCacheEnabled: boolean;
   failureTracker: Map<string, number>;
   failureMessages: Map<string, string>;
   /** Session-only approvals keyed by server and original tool name. */

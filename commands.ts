@@ -379,6 +379,14 @@ export async function openMcpSetup(
   mode: "empty" | "setup" = "setup",
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) return { configChanged: false };
+  if (!ctx.isProjectTrusted()) {
+    ctx.ui.notify("Project MCP setup is unavailable until this project is trusted.", "warning");
+    return { configChanged: false };
+  }
+  if (ctx.mode !== "tui") {
+    ctx.ui.notify("MCP setup is available in TUI mode only.", "info");
+    return { configChanged: false };
+  }
   if (state.programmaticConfig) {
     ctx.ui.notify("MCP setup is unavailable when config is supplied by createMcpAdapter().", "info");
     return { configChanged: false };
@@ -493,7 +501,7 @@ function buildMcpPanelCallbacks(
     },
     getFailureMessage: (serverName: string) => authStatusFailures.get(serverName) ?? getFailureMessage(state, serverName),
     refreshCacheAfterReconnect: (serverName: string) => {
-      const freshCache = loadMetadataCache();
+      const freshCache = loadMetadataCache(state.metadataCacheEnabled);
       return freshCache?.servers?.[serverName] ?? null;
     },
   };
@@ -506,6 +514,10 @@ export async function openMcpPanel(
   configOverridePath?: string,
   onDirectToolsConfigChanged?: (changes: Map<string, true | string[] | false>) => void | Promise<void>,
 ): Promise<PanelFlowResult> {
+  if (!ctx.isProjectTrusted() || ctx.mode !== "tui") {
+    if (ctx.hasUI) await showStatus(state, ctx);
+    return { configChanged: false };
+  }
   if (state.programmaticConfig) {
     if (ctx.hasUI) {
       ctx.ui.notify("MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.", "info");
@@ -518,8 +530,8 @@ export async function openMcpPanel(
   }
 
   const config = state.config;
-  const cache = loadMetadataCache();
-  const configPath = pi.getFlag("mcp-config") as string | undefined ?? configOverridePath;
+  const cache = loadMetadataCache(state.metadataCacheEnabled);
+  const configPath = configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
   const { lines: noticeLines, fingerprint } = buildSharedConfigNoticeLines(configPath, ctx.cwd);
 
@@ -562,11 +574,18 @@ export async function openMcpPanel(
 
 export async function openMcpAuthPanel(
   state: McpExtensionState,
-  pi: ExtensionAPI,
   ctx: ExtensionContext,
   configOverridePath?: string,
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) return { configChanged: false };
+  if (!ctx.isProjectTrusted()) {
+    ctx.ui.notify("Use /mcp-auth <server> while this project is untrusted.", "info");
+    return { configChanged: false };
+  }
+  if (ctx.mode !== "tui") {
+    ctx.ui.notify("Use /mcp-auth <server> to authenticate outside TUI mode.", "info");
+    return { configChanged: false };
+  }
   if (state.programmaticConfig) {
     ctx.ui.notify("Use /mcp-auth <server> to authenticate a server from the in-memory SDK config.", "info");
     return { configChanged: false };
@@ -581,8 +600,8 @@ export async function openMcpAuthPanel(
     return { configChanged: false };
   }
 
-  const cache = loadMetadataCache();
-  const configPath = pi.getFlag("mcp-config") as string | undefined ?? configOverridePath;
+  const cache = loadMetadataCache(state.metadataCacheEnabled);
+  const configPath = configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
   const callbacks = buildMcpPanelCallbacks(state, config, ctx);
   const { createMcpPanel } = await import("./mcp-panel.ts");

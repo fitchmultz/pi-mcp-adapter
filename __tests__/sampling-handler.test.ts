@@ -7,10 +7,6 @@ const mocks = vi.hoisted(() => ({
   complete: vi.fn(),
 }));
 
-vi.mock("@earendil-works/pi-ai", () => ({
-  complete: mocks.complete,
-}));
-
 const usage = {
   input: 0,
   output: 0,
@@ -59,17 +55,24 @@ type SamplingTestOptions = Omit<SamplingHandlerOptions, "modelRegistry"> & {
 };
 
 function createOptions(overrides: Partial<SamplingTestOptions> = {}): SamplingHandlerOptions {
+  const { modelRegistry: modelRegistryOverride, ...rest } = overrides;
   const options = {
     serverName: "i18n",
     autoApprove: true,
     modelRegistry: {
       getAvailable: vi.fn(() => [model]),
-      getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "key", headers: { "x-test": "1" } })),
+      getApiKeyAndHeaders: vi.fn(async () => ({
+        ok: true,
+        apiKey: "key",
+        headers: { authorization: null, "x-test": "1" },
+      })),
+      ...modelRegistryOverride,
+      complete: mocks.complete,
     },
     getCurrentModel: vi.fn(() => undefined),
     getSignal: vi.fn(() => undefined),
-    ...overrides,
-  } satisfies SamplingTestOptions;
+    ...rest,
+  };
   return options as SamplingHandlerOptions;
 }
 
@@ -103,7 +106,7 @@ describe("sampling handler", () => {
     });
   });
 
-  it("converts approved MCP sampling requests into pi-ai completions", async () => {
+  it("converts approved MCP sampling requests through Pi's model runtime", async () => {
     const { handleSamplingRequest } = await import("../sampling-handler.ts");
     const result = await handleSamplingRequest(createOptions(), createSamplingRequest({
       systemPrompt: "Translate tersely.",
@@ -126,8 +129,6 @@ describe("sampling handler", () => {
         ],
       },
       {
-        apiKey: "key",
-        headers: { "x-test": "1" },
         maxTokens: 50,
         temperature: 0.2,
         metadata: { locale: "fr" },

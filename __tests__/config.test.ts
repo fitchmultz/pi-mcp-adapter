@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -10,6 +10,7 @@ function writeJson(path: string, value: unknown): void {
 
 describe("config discovery", () => {
   const originalHome = process.env.HOME;
+  const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalCwd = process.cwd();
 
   beforeEach(() => {
@@ -18,6 +19,11 @@ describe("config discovery", () => {
 
   afterEach(() => {
     process.env.HOME = originalHome;
+    if (originalAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    }
     process.chdir(originalCwd);
   });
 
@@ -76,6 +82,202 @@ describe("config discovery", () => {
       directTools: true,
       autoAuth: true,
       oauthDir: ".pi/oauth",
+    });
+  });
+
+  it("excludes project config and project-local host imports when project trust is denied", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      imports: ["cursor", "vscode", "opencode"],
+      settings: { hostConfigDiscovery: "on" },
+      mcpServers: { global: { command: "global-server" } },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: { project: { command: "project-server" } },
+    });
+    writeJson(join(project, ".pi", "mcp.json"), {
+      mcpServers: { projectPi: { command: "project-pi-server" } },
+    });
+    writeJson(join(project, ".vscode", "mcp.json"), {
+      mcpServers: { vscode: { command: "vscode-server" } },
+    });
+    writeJson(join(project, "opencode.json"), {
+      mcp: { opencode: { type: "local", command: ["opencode-server"] } },
+    });
+    writeJson(join(project, "cursor-target.json"), {
+      mcpServers: { cursorLinked: { command: "project-server" } },
+    });
+    mkdirSync(join(home, ".cursor"), { recursive: true });
+    symlinkSync(join(project, "cursor-target.json"), join(home, ".cursor", "mcp.json"));
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const untrustedServers = loadMcpConfig(undefined, project, { includeProject: false }).mcpServers;
+    expect(untrustedServers).toEqual({ global: { command: "global-server" } });
+    expect(loadMcpConfig(undefined, project, { includeProject: true }).mcpServers).toMatchObject({
+      global: { command: "global-server" },
+      project: { command: "project-server" },
+      projectPi: { command: "project-pi-server" },
+      vscode: { command: "vscode-server" },
+      opencode: { command: "opencode-server" },
+    });
+    expect(loadMcpConfig(join(project, ".pi", "mcp.json"), project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("projectPi");
+
+    const projectAlias = `${project}-alias`;
+    symlinkSync(project, projectAlias, "dir");
+    expect(loadMcpConfig(join(projectAlias, ".pi", "mcp.json"), project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("projectPi");
+
+    const dotDotNamedDirectory = join(project, "..mcp");
+    writeJson(join(dotDotNamedDirectory, "mcp.json"), {
+      mcpServers: { disguisedProject: { command: "project-server" } },
+    });
+    expect(loadMcpConfig(join(dotDotNamedDirectory, "mcp.json"), project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("disguisedProject");
+
+    const outsideProject = mkdtempSync(join(tmpdir(), "pi-mcp-config-outside-"));
+    writeJson(join(outsideProject, "mcp.json"), {
+      mcpServers: { linkedProject: { command: "project-server" } },
+    });
+    const projectLink = join(project, "linked-mcp.json");
+    symlinkSync(join(outsideProject, "mcp.json"), projectLink);
+    expect(loadMcpConfig(projectLink, project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("linkedProject");
+
+    process.env.PI_CODING_AGENT_DIR = join(project, ".pi-agent");
+    writeJson(join(project, ".pi-agent", "mcp.json"), {
+      mcpServers: { projectAgentDir: { command: "project-server" } },
+    });
+    expect(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("projectAgentDir");
+  });
+
+  it("keeps user-global config available to untrusted projects under the home directory", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = join(home, "src", "project");
+    process.env.HOME = home;
+    mkdirSync(join(project, ".git"), { recursive: true });
+    process.chdir(project);
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      mcpServers: { global: { command: "global-server" } },
+    });
+    writeJson(join(project, ".pi", "mcp.json"), {
+      mcpServers: { project: { command: "project-server" } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers).toEqual({
+      global: { command: "global-server" },
+    });
+  });
+
+  it("keeps user-global config available when the untrusted cwd is the home directory", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    process.env.HOME = home;
+    process.chdir(home);
+
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      mcpServers: { sharedGlobal: { command: "shared-global" } },
+    });
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      mcpServers: { piGlobal: { command: "pi-global" } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, home, { includeProject: false }).mcpServers).toEqual({
+      sharedGlobal: { command: "shared-global" },
+      piGlobal: { command: "pi-global" },
+    });
+  });
+
+  it("classifies project files through a symlinked cwd as project-local", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    const nested = join(project, "src", "nested");
+    const cwdAlias = join(home, "project-link");
+    const projectAgentDir = join(project, ".pi-agent");
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = projectAgentDir;
+    mkdirSync(join(project, ".git"), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    symlinkSync(nested, cwdAlias, "dir");
+    writeJson(join(projectAgentDir, "mcp.json"), {
+      mcpServers: { projectAgent: { command: "project-server" } },
+    });
+
+    const { isPathInsideProject, loadMcpConfig } = await import("../config.ts");
+    expect(isPathInsideProject(join(projectAgentDir, "mcp-cache.json"), cwdAlias)).toBe(true);
+    expect(loadMcpConfig(undefined, cwdAlias, { includeProject: false }).mcpServers)
+      .not.toHaveProperty("projectAgent");
+  });
+
+  it("classifies missing files through a symlinked directory as project-local", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    const globalDir = join(home, ".pi", "agent");
+    const projectAgentDir = join(project, ".pi-agent");
+    process.env.HOME = home;
+    mkdirSync(join(project, ".git"), { recursive: true });
+    mkdirSync(dirname(globalDir), { recursive: true });
+    mkdirSync(projectAgentDir, { recursive: true });
+    symlinkSync(projectAgentDir, globalDir, "dir");
+
+    const { isPathInsideProject } = await import("../config.ts");
+    expect(isPathInsideProject(join(globalDir, "mcp-cache.json"), project)).toBe(true);
+  });
+
+  it("excludes nominally global import paths located inside an untrusted project", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    const outsideProject = mkdtempSync(join(tmpdir(), "pi-mcp-config-outside-"));
+    process.env.HOME = join(project, "home");
+    process.chdir(project);
+
+    const overridePath = join(outsideProject, "mcp.json");
+    writeJson(overridePath, {
+      imports: ["cursor"],
+      mcpServers: { global: { command: "global-server" } },
+    });
+    writeJson(join(project, "home", ".cursor", "mcp.json"), {
+      mcpServers: { cursorInside: { command: "project-server" } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(overridePath, project, { includeProject: false }).mcpServers).toEqual({
+      global: { command: "global-server" },
+    });
+  });
+
+  it("excludes parent project OpenCode config from an untrusted nested cwd", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
+    const nestedPackage = join(project, "packages", "app");
+    const nested = join(nestedPackage, "src");
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = join(project, ".pi-agent");
+    mkdirSync(join(project, ".git"), { recursive: true });
+    mkdirSync(nested, { recursive: true });
+    writeJson(join(nestedPackage, "package.json"), { name: "app" });
+    process.chdir(nested);
+
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      imports: ["opencode"],
+      mcpServers: { global: { command: "global-server" } },
+    });
+    writeJson(join(project, ".pi-agent", "mcp.json"), {
+      mcpServers: { parentAgent: { command: "project-server" } },
+    });
+    writeJson(join(project, "opencode.json"), {
+      mcp: { parentProject: { type: "local", command: ["project-server"] } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, nested, { includeProject: false }).mcpServers).toEqual({
+      global: { command: "global-server" },
     });
   });
 

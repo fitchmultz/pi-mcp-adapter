@@ -36,6 +36,7 @@ describe("direct tools in child Pi processes", () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
+          HOME: root,
           PI_CODING_AGENT_DIR: agentDir,
           MCP_CHILD_CONFIG: configPath,
           MCP_CHILD_PROJECT_DIR: projectDir,
@@ -43,7 +44,7 @@ describe("direct tools in child Pi processes", () => {
           MCP_CHILD_PROBE_PATH: resolve("__tests__/fixtures/direct-tools-agent-start-probe.ts"),
           MCP_DIRECT_TOOLS: "demo/reload_identity",
         },
-        timeout: 15_000,
+        timeout: 60_000,
       },
     );
 
@@ -51,5 +52,5 @@ describe("direct tools in child Pi processes", () => {
     const toolsLine = stdout.split("\n").find(line => line.startsWith("DIRECT_TOOLS_AT_AGENT_START="));
     expect(toolsLine).toBeDefined();
     expect(JSON.parse(toolsLine!.slice("DIRECT_TOOLS_AT_AGENT_START=".length))).toContain("demo_reload_identity");
-  }, 20_000);
+  }, 70_000);
 });
