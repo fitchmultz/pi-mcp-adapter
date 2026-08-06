@@ -146,8 +146,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function deactivateTools(toolNames: string[]): void {
     if (toolNames.length === 0) return;
     const remove = new Set(toolNames);
-    for (const toolName of toolNames) deactivatedTools.add(toolName);
     const activeTools = pi.getActiveTools();
+    for (const toolName of toolNames) {
+      if (activeTools.includes(toolName)) deactivatedTools.add(toolName);
+    }
     const nextActiveTools = activeTools.filter((name) => !remove.has(name));
     if (nextActiveTools.length !== activeTools.length) {
       pi.setActiveTools(nextActiveTools);
