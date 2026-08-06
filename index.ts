@@ -462,10 +462,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           break;
         case "setup": {
           commandOwner?.throwIfInactive();
-          if (!commandProjectTrusted) {
-            commandCtx.ui?.notify("Project MCP setup is unavailable until this project is trusted.", "warning");
-            break;
-          }
           if (programmaticConfig) {
             commandCtx.ui?.notify("MCP setup is unavailable when config is supplied by createMcpAdapter().", "info");
             break;
@@ -521,10 +517,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         default:
           if (commandCtx.hasUI) {
             commandOwner?.throwIfInactive();
-            if (programmaticConfig || !commandProjectTrusted) {
-              if (programmaticConfig) {
-                commandCtx.ui?.notify("MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.", "info");
-              }
+            if (programmaticConfig) {
+              commandCtx.ui?.notify("MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.", "info");
               await showStatus(state, commandCtx);
               break;
             }
@@ -583,10 +577,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }
 
       if (!serverName) {
-        if (!commandProjectTrusted) {
-          commandCtx.ui?.notify("Use /mcp-auth <server> while this project is untrusted.", "info");
-          return;
-        }
         if (programmaticConfig) {
           commandCtx.ui?.notify("Use /mcp-auth <server> to authenticate a server from the in-memory SDK config.", "info");
           return;
@@ -834,10 +824,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       if (!proxyToolRegistered || proxyToolDescription !== description) {
         registerProxyTool(description);
       }
-      deactivatedTools.delete("mcp");
-      const activeTools = pi.getActiveTools();
-      if (!activeTools.includes("mcp")) {
-        pi.setActiveTools([...activeTools, "mcp"]);
+      if (deactivatedTools.delete("mcp")) {
+        const activeTools = pi.getActiveTools();
+        if (!activeTools.includes("mcp")) {
+          pi.setActiveTools([...activeTools, "mcp"]);
+        }
       }
       return;
     }
