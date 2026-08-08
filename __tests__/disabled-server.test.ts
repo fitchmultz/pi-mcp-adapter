@@ -230,8 +230,10 @@ describe("disabled MCP servers", () => {
 
   it("keeps no-theme status usable and reports disabled count", () => {
     const setStatus = vi.fn();
+    const state = disabledState();
+    state.config.settings = { mcpFooterStatus: "full" };
     updateStatusBar({
-      ...disabledState(),
+      ...state,
       ui: { setStatus, theme: undefined },
     });
     expect(setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled (1 disabled)");

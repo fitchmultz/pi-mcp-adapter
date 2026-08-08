@@ -262,7 +262,7 @@ You can also pass only the `code` query parameter with `args: { code: "..." }`. 
     "idleTimeout": 10,
     "requestTimeoutMs": 30000,
     "showStatusIcon": true,
-    "mcpFooterStatus": "full",
+    "mcpFooterStatus": "compact",
     "hostConfigDiscovery": "off",
     "approveTools": ["github_delete_*", "notion_update_*"],
     "oauthDir": ".pi/mcp-oauth",
@@ -283,7 +283,7 @@ You can also pass only the `code` query parameter with `args: { code: "..." }`. 
 | `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
 | `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
 | `showStatusIcon` | Show the plug icon in MCP status and connection text (default: `true`). Set to `false` for plain `MCP: ...` text. |
-| `mcpFooterStatus` | MCP footer verbosity: `"full"` (default), `"compact"` for `MCP connected/enabled`, or `"off"` to clear the persistent footer status. `/mcp status` remains available. |
+| `mcpFooterStatus` | MCP footer verbosity: `"compact"` (default) for `MCP connected/enabled`, `"full"` for enabled/connected/disabled detail, or `"off"` to clear the persistent footer status. `/mcp status` remains available. |
 | `hostConfigDiscovery` | Host-specific config policy: `"off"` (default), `"prompt"` (detect/report only), or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
 | `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
 | `oauthDir` | Legacy OAuth `tokens.json` import directory for this MCP config. Relative paths resolve from the active project cwd. `MCP_OAUTH_DIR` still wins when set. Persistent OAuth credentials are stored in the OS credential store, not this directory. |

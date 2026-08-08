@@ -20,7 +20,7 @@ describe("formatMcpStatus", () => {
 describe("updateStatusBar", () => {
   it("shows enabled servers instead of active connections as the primary count", () => {
     const setStatus = vi.fn();
-    const state = createState({ setStatus });
+    const state = createState({ setStatus }, { mcpFooterStatus: "full" });
 
     updateStatusBar(state);
 
@@ -29,7 +29,7 @@ describe("updateStatusBar", () => {
 
   it("does not count a needs-auth connection as connected", () => {
     const setStatus = vi.fn();
-    const state = createState({ setStatus });
+    const state = createState({ setStatus }, { mcpFooterStatus: "full" });
     state.manager.getAllConnections.mockReturnValue(new Map([["demo", { status: "needs-auth" }]]));
 
     updateStatusBar(state);
@@ -39,7 +39,7 @@ describe("updateStatusBar", () => {
 
   it("shows connected servers as secondary state", () => {
     const setStatus = vi.fn();
-    const state = createState({ setStatus });
+    const state = createState({ setStatus }, { mcpFooterStatus: "full" });
     state.manager.getAllConnections.mockReturnValue(new Map([["demo", { status: "connected" }]]));
 
     updateStatusBar(state);
@@ -52,7 +52,7 @@ describe("updateStatusBar", () => {
     const state = createState({
       setStatus,
       theme: { fg: vi.fn((_name: string, text: string) => `styled:${text}`) },
-    });
+    }, { mcpFooterStatus: "full" });
 
     updateStatusBar(state);
 
@@ -61,7 +61,7 @@ describe("updateStatusBar", () => {
 
   it("keeps the icon when explicitly enabled", () => {
     const setStatus = vi.fn();
-    updateStatusBar(createState({ setStatus }, { showStatusIcon: true }));
+    updateStatusBar(createState({ setStatus }, { showStatusIcon: true, mcpFooterStatus: "full" }));
 
     expect(setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled");
   });
@@ -71,7 +71,7 @@ describe("updateStatusBar", () => {
     const state = createState({
       setStatus,
       theme: { fg: vi.fn((_name: string, text: string) => `styled:${text}`) },
-    }, { showStatusIcon: false });
+    }, { showStatusIcon: false, mcpFooterStatus: "full" });
     state.config.mcpServers.disabled = { command: "disabled", disabled: true };
     state.manager.getAllConnections.mockReturnValue(new Map([[
       "demo", { status: "connected" },
@@ -82,9 +82,9 @@ describe("updateStatusBar", () => {
     expect(setStatus).toHaveBeenCalledWith("mcp", "styled:MCP: 1 server enabled (1 connected) (1 disabled)");
   });
 
-  it("can show a compact connected/enabled footer", () => {
+  it("shows a compact connected/enabled footer by default", () => {
     const setStatus = vi.fn();
-    const state = createState({ setStatus }, { mcpFooterStatus: "compact" });
+    const state = createState({ setStatus });
     state.manager.getAllConnections.mockReturnValue(new Map([["demo", { status: "connected" }]]));
 
     updateStatusBar(state);

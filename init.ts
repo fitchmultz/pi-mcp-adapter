@@ -534,7 +534,7 @@ export function updateStatusBar(state: McpExtensionState): void {
     const definition = state.config.mcpServers[name];
     return connection.status === "connected" && definition !== undefined && !isServerDisabled(definition);
   }).length;
-  const footerStatus = state.config.settings?.mcpFooterStatus ?? "full";
+  const footerStatus = state.config.settings?.mcpFooterStatus ?? "compact";
   if (footerStatus === "off") {
     ui.setStatus("mcp", undefined);
     return;

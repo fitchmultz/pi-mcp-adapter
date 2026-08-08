@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-08-07
+
+### Changed
+- The MCP footer status now defaults to compact `MCP connected/enabled`. Set `settings.mcpFooterStatus` to `"full"` to restore the previous detailed text.
+
 ## [3.0.0] - 2026-08-06
 
 ### Changed
