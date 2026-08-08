@@ -459,6 +459,7 @@ export function executeSearch(
   offset = 0,
 ): ProxyToolResult {
   const showSchemas = includeSchemas !== false;
+  const schemasOption = showSchemas ? "" : ", includeSchemas: false";
   if (server && isServerDisabled(state.config.mcpServers[server])) return disabledResult("search", server);
 
   let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;
@@ -486,8 +487,8 @@ export function executeSearch(
   }
   if (page.items.length === 0) {
     const retry = server
-      ? `mcp({ search: ${JSON.stringify(query)}, server: ${JSON.stringify(server)}, limit: ${limit}, offset: 0 })`
-      : `mcp({ search: ${JSON.stringify(query)}, limit: ${limit}, offset: 0 })`;
+      ? `mcp({ search: ${JSON.stringify(query)}, server: ${JSON.stringify(server)}${schemasOption}, limit: ${limit}, offset: 0 })`
+      : `mcp({ search: ${JSON.stringify(query)}${schemasOption}, limit: ${limit}, offset: 0 })`;
     return {
       content: [{ type: "text" as const, text: `No search results at offset ${offset}; ${page.total} tools match. Retry with ${retry}.` }],
       details: { mode: "search", error: "offset_out_of_range", matches: [], count: page.total, hasMore: false, nextOffset: null, query },
@@ -519,8 +520,8 @@ export function executeSearch(
   }
   const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
   const nextSearch = server
-    ? `mcp({ search: ${JSON.stringify(query)}, server: ${JSON.stringify(server)}, limit: ${limit}, offset: ${page.nextOffset} })`
-    : `mcp({ search: ${JSON.stringify(query)}, limit: ${limit}, offset: ${page.nextOffset} })`;
+    ? `mcp({ search: ${JSON.stringify(query)}, server: ${JSON.stringify(server)}${schemasOption}, limit: ${limit}, offset: ${page.nextOffset} })`
+    : `mcp({ search: ${JSON.stringify(query)}${schemasOption}, limit: ${limit}, offset: ${page.nextOffset} })`;
   text += page.hasMore
     ? `\n${first}-${first + page.items.length - 1} of ${page.total} — ${nextSearch} for more\n`
     : `\n${first}-${first + page.items.length - 1} of ${page.total} — end\n`;
@@ -1054,6 +1055,19 @@ export async function executeCall(
 
     const hintServer = serverName ?? prefixMatchedServer;
     const suggestions = rankSuggestions(state, toolName, 5, hintServer);
+    const suggestedServer = serverOverride && suggestions[0] === toolName
+      ? [...state.toolMetadata].find(([candidateServer, metadata]) =>
+        candidateServer !== serverOverride
+        && !isServerDisabled(state.config.mcpServers[candidateServer])
+        && metadata.some(tool => tool.name === toolName))?.[0]
+      : undefined;
+    if (suggestedServer) {
+      return {
+        content: [{ type: "text" as const, text: `Tool "${toolName}" is on server "${suggestedServer}", not "${serverOverride}". Retry the same call with server: "${suggestedServer}" or omit server.` }],
+        details: { mode: "call", error: "tool_not_found", requestedTool: toolName, hintServer, suggestedServer, suggestions },
+      };
+    }
+
     let hint: string;
     if (suggestions.length > 0) {
       hint = ` Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ describe: "${suggestions[0]}" }).`;

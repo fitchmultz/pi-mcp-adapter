@@ -79,7 +79,7 @@ describe("proxy discovery", () => {
   it("returns ranked paged search details", () => {
     const result = executeSearch(createState(), "demo", undefined, false, 1, 0);
 
-    expect(result.content[0].text).toContain('1-1 of 2 — mcp({ search: "demo", limit: 1, offset: 1 }) for more');
+    expect(result.content[0].text).toContain('1-1 of 2 — mcp({ search: "demo", includeSchemas: false, limit: 1, offset: 1 }) for more');
 
     expect(result.details).toMatchObject({
       count: 2,
@@ -87,6 +87,15 @@ describe("proxy discovery", () => {
       nextOffset: 1,
       matches: [{ server: "demo", tool: "demo_find", score: expect.any(Number) }],
     });
+  });
+
+  it("preserves compact server-scoped search in continuation and retry calls", () => {
+    const state = createState();
+    const page = executeSearch(state, "demo", "demo", false, 1, 0);
+    const retry = executeSearch(state, "demo", "demo", false, 1, 99);
+
+    expect(page.content[0].text).toContain('mcp({ search: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 1 })');
+    expect(retry.content[0].text).toContain('mcp({ search: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 0 })');
   });
 
   it("paginates search results without changing their order", () => {
@@ -162,10 +171,10 @@ describe("proxy discovery", () => {
 
     const result = await executeCall(state, "gh_list_issues", undefined, "slack");
 
-    expect(result.details).toMatchObject({ hintServer: "slack", suggestions: ["gh_list_issues"] });
-    expect(result.content[0].text).toContain("Did you mean: gh_list_issues");
-    expect(result.content[0].text).not.toContain('connect: "slack"');
-    expect(result.content[0].text).not.toContain('server: "slack"');
+    expect(result.details).toMatchObject({ hintServer: "slack", suggestedServer: "gh", suggestions: ["gh_list_issues"] });
+    expect(result.content[0].text).toBe(
+      'Tool "gh_list_issues" is on server "gh", not "slack". Retry the same call with server: "gh" or omit server.',
+    );
   });
 
   it("uses effective per-server prefixes for lazy routing", async () => {
