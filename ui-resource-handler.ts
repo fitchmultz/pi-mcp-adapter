@@ -1,6 +1,5 @@
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { UrlElicitationRequiredError, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
-import { ResourceFetchError, ResourceParseError } from "./errors.ts";
 import { logger } from "./logger.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import type { McpServerManager } from "./server-manager.ts";
@@ -29,7 +28,7 @@ export class UiResourceHandler {
     const log = this.log.child({ server: serverName, uri });
 
     if (!uri.startsWith("ui://")) {
-      throw new ResourceParseError(uri, "URI must start with ui://", { server: serverName });
+      throw new Error(`Invalid UI resource "${uri}": URI must start with ui://`);
     }
 
     log.debug("Fetching UI resource");
@@ -65,10 +64,8 @@ export class UiResourceHandler {
       if (error instanceof UrlElicitationRequiredError || error instanceof SessionRecoveryAuthRequiredError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       log.error("Failed to read resource", error instanceof Error ? error : undefined);
-      throw new ResourceFetchError(uri, message, {
-        server: serverName,
-        ...(error instanceof Error ? { cause: error } : {}),
-      });
+      throw new Error(`Failed to fetch UI resource "${uri}": ${message}`,
+        error instanceof Error ? { cause: error } : undefined);
     }
 
     const content = selectContent(result, uri);
@@ -76,17 +73,15 @@ export class UiResourceHandler {
 
     if (mimeType && !isHtmlMimeType(mimeType)) {
       log.warn("Unsupported MIME type", { mimeType });
-      throw new ResourceParseError(
-        uri,
-        `unsupported MIME type "${mimeType}" (expected text/html or ${RESOURCE_MIME_TYPE})`,
-        { server: serverName, mimeType }
+      throw new Error(
+        `Invalid UI resource "${uri}": unsupported MIME type "${mimeType}" (expected text/html or ${RESOURCE_MIME_TYPE})`
       );
     }
 
     const html = toHtml(content);
     if (!html.trim()) {
       log.warn("Resource content is empty");
-      throw new ResourceParseError(uri, "content is empty", { server: serverName });
+      throw new Error(`Invalid UI resource "${uri}": content is empty`);
     }
 
     const contentMeta = extractUiMeta(content._meta);

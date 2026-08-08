@@ -16,7 +16,6 @@ function createMinimalInput(overrides: Partial<HostHtmlTemplateInput> = {}): Hos
     },
     allowAttribute: "",
     requireToolConsent: false,
-    cacheToolConsent: true,
     ...overrides,
   };
 }
@@ -156,14 +155,6 @@ describe("buildHostHtmlTemplate", () => {
       );
 
       expect(html).toContain("const REQUIRE_TOOL_CONSENT = true");
-    });
-
-    it("injects cacheToolConsent", () => {
-      const html = buildHostHtmlTemplate(
-        createMinimalInput({ cacheToolConsent: false })
-      );
-
-      expect(html).toContain("const CACHE_TOOL_CONSENT = false");
     });
 
     it("records explicit consent denials", () => {

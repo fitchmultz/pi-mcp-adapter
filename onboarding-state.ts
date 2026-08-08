@@ -6,7 +6,6 @@ export interface McpOnboardingState {
   version: 1;
   sharedConfigHintShown: boolean;
   setupCompleted: boolean;
-  lastDiscoveryFingerprint?: string;
 }
 
 const DEFAULT_STATE: McpOnboardingState = {
@@ -30,9 +29,6 @@ export function loadOnboardingState(): McpOnboardingState {
       version: 1,
       sharedConfigHintShown: raw.sharedConfigHintShown === true,
       setupCompleted: raw.setupCompleted === true,
-      ...(typeof raw.lastDiscoveryFingerprint === "string"
-        ? { lastDiscoveryFingerprint: raw.lastDiscoveryFingerprint }
-        : {}),
     };
   } catch {
     return { ...DEFAULT_STATE };
@@ -53,24 +49,10 @@ export function updateOnboardingState(updater: (state: McpOnboardingState) => Mc
   return next;
 }
 
-export function markSharedConfigHintShown(fingerprint?: string): McpOnboardingState {
-  return updateOnboardingState((state) => {
-    const lastDiscoveryFingerprint = fingerprint ?? state.lastDiscoveryFingerprint;
-    return {
-      ...state,
-      sharedConfigHintShown: true,
-      ...(lastDiscoveryFingerprint !== undefined ? { lastDiscoveryFingerprint } : {}),
-    };
-  });
+export function markSharedConfigHintShown(): McpOnboardingState {
+  return updateOnboardingState((state) => ({ ...state, sharedConfigHintShown: true }));
 }
 
-export function markSetupCompleted(fingerprint?: string): McpOnboardingState {
-  return updateOnboardingState((state) => {
-    const lastDiscoveryFingerprint = fingerprint ?? state.lastDiscoveryFingerprint;
-    return {
-      ...state,
-      setupCompleted: true,
-      ...(lastDiscoveryFingerprint !== undefined ? { lastDiscoveryFingerprint } : {}),
-    };
-  });
+export function markSetupCompleted(): McpOnboardingState {
+  return updateOnboardingState((state) => ({ ...state, setupCompleted: true }));
 }

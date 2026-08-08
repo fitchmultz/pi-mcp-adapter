@@ -35,14 +35,13 @@ describe("onboarding state", () => {
       getOnboardingStatePath,
     } = await import("../onboarding-state.ts");
 
-    markSharedConfigHintShown("first");
-    markSetupCompleted("second");
+    markSharedConfigHintShown();
+    markSetupCompleted();
 
     expect(loadOnboardingState()).toEqual({
       version: 1,
       sharedConfigHintShown: true,
       setupCompleted: true,
-      lastDiscoveryFingerprint: "second",
     });
 
     const raw = JSON.parse(readFileSync(getOnboardingStatePath(), "utf-8"));

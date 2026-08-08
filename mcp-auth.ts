@@ -191,18 +191,6 @@ const keyRevokedAuthSecretStore: AuthSecretStore = {
   },
 };
 
-export function resetTestAuthSecretStore(): void {
-  memoryAuthEntries.clear();
-}
-
-export function getTestAuthSecretStoreEntries(): [string, string][] {
-  return [...memoryAuthEntries.entries()];
-}
-
-export function removeTestAuthSecretStoreEntry(account: string): void {
-  memoryAuthEntries.delete(account);
-}
-
 function getAuthSecretStore(): AuthSecretStore {
   if (process.env[TEST_AUTH_STORE_ENV] === 'memory') return memoryAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'unavailable') return unavailableAuthSecretStore;
@@ -351,10 +339,6 @@ const linuxKeyringRecoveryAuthSecretStore: AuthSecretStore = {
     runLinuxKeyringRecoveryOperation('remove', account);
   },
 };
-
-export function loadTestKeyringEntryClass(keyringRequire: KeyringRequire, platform: NodeJS.Platform, arch: NodeJS.Architecture): KeyringEntryConstructor {
-  return loadKeyringEntryClass(keyringRequire, platform, arch);
-}
 
 export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): AuthStorageOptions {
   const baseDir = resolveConfiguredOAuthDir(oauthDir, cwd);
@@ -718,20 +702,6 @@ export function updateClientInfo(
 }
 
 /**
- * Update code verifier for a server.
- */
-export function updateCodeVerifier(serverName: string, codeVerifier: string, serverUrl?: string, options?: AuthStorageOptions): void {
-  const entry = getAuthEntry(serverName, options) ?? {};
-  if (serverUrl && entry.serverUrl !== serverUrl) {
-    delete entry.tokens;
-    delete entry.clientInfo;
-    delete entry.oauthState;
-  }
-  entry.codeVerifier = codeVerifier;
-  saveAuthEntry(serverName, entry, serverUrl, options);
-}
-
-/**
  * Clear code verifier for a server.
  */
 export function clearCodeVerifier(serverName: string, options?: AuthStorageOptions): void {
@@ -740,20 +710,6 @@ export function clearCodeVerifier(serverName: string, options?: AuthStorageOptio
     delete entry.codeVerifier;
     saveAuthEntry(serverName, entry, undefined, options);
   }
-}
-
-/**
- * Update OAuth state for a server.
- */
-export function updateOAuthState(serverName: string, state: string, serverUrl?: string, options?: AuthStorageOptions): void {
-  const entry = getAuthEntry(serverName, options) ?? {};
-  if (serverUrl && entry.serverUrl !== serverUrl) {
-    delete entry.tokens;
-    delete entry.clientInfo;
-    delete entry.codeVerifier;
-  }
-  entry.oauthState = state;
-  saveAuthEntry(serverName, entry, serverUrl, options);
 }
 
 /**
@@ -773,25 +729,6 @@ export function clearOAuthState(serverName: string, options?: AuthStorageOptions
     delete entry.oauthState;
     saveAuthEntry(serverName, entry, undefined, options);
   }
-}
-
-/**
- * Check if stored tokens are expired.
- * Returns null if no tokens exist, false if no expiry or not expired, true if expired.
- */
-export function isTokenExpired(serverName: string, options?: AuthStorageOptions): boolean | null {
-  const entry = getAuthEntry(serverName, options);
-  if (!entry?.tokens) return null;
-  if (!entry.tokens.expiresAt) return false;
-  return entry.tokens.expiresAt < Date.now() / 1000;
-}
-
-/**
- * Check if a server has stored tokens.
- */
-export function hasStoredTokens(serverName: string, options?: AuthStorageOptions): boolean {
-  const entry = getAuthEntry(serverName, options);
-  return !!entry?.tokens;
 }
 
 /**

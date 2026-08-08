@@ -421,6 +421,42 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   // Re-flag returned MCP tool failures so pi registers them as errors (see toolErrorOverride).
   pi.on("tool_result", (event) => toolErrorOverride(event.details));
 
+  function createCommandContext(ctx: ExtensionContext): {
+    owner: McpRuntimeOwner | null;
+    context: ExtensionContext;
+  } {
+    const owner = currentOwner;
+    const hasUI = ctx.hasUI;
+    const projectTrusted = ctx.isProjectTrusted();
+    return {
+      owner,
+      context: {
+        hasUI,
+        ui: hasUI ? (owner ? createOwnedUi(ctx.ui, owner) : ctx.ui) : undefined,
+        cwd: ctx.cwd,
+        mode: ctx.mode,
+        signal: owner?.signal ?? ctx.signal,
+        isProjectTrusted: () => projectTrusted,
+      } as unknown as ExtensionContext,
+    };
+  }
+
+  async function ensureCommandState(owner: McpRuntimeOwner | null, ctx: ExtensionContext): Promise<McpExtensionState | null> {
+    if (!state && initPromise) {
+      try {
+        const initialized = await initPromise;
+        owner?.throwIfInactive();
+        state = initialized;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.ui?.notify(`MCP initialization failed: ${message}`, "error");
+        return null;
+      }
+    }
+    if (!state) ctx.ui?.notify("MCP not initialized", "error");
+    return state;
+  }
+
   pi.registerCommand("mcp", {
     description: "Show MCP server status",
     getArgumentCompletions: (prefix: string) => {
@@ -453,34 +489,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       return servers.length > 0 ? servers : null;
     },
     handler: async (args, ctx) => {
-      const commandOwner = currentOwner;
-      const commandHasUI = ctx.hasUI;
-      const commandProjectTrusted = ctx.isProjectTrusted();
-      const commandCtx = {
-        hasUI: commandHasUI,
-        ui: commandHasUI
-          ? commandOwner ? createOwnedUi(ctx.ui, commandOwner) : ctx.ui
-          : undefined,
-        cwd: ctx.cwd,
-        mode: ctx.mode,
-        signal: commandOwner?.signal ?? ctx.signal,
-        isProjectTrusted: () => commandProjectTrusted,
-      } as unknown as ExtensionContext;
-      if (!state && initPromise) {
-        try {
-          const initialized = await initPromise;
-          commandOwner?.throwIfInactive();
-          state = initialized;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (commandCtx.hasUI) commandCtx.ui?.notify(`MCP initialization failed: ${message}`, "error");
-          return;
-        }
-      }
-      if (!state) {
-        if (commandCtx.hasUI) commandCtx.ui?.notify("MCP not initialized", "error");
-        return;
-      }
+      const { owner: commandOwner, context: commandCtx } = createCommandContext(ctx);
+      const commandProjectTrusted = commandCtx.isProjectTrusted();
+      const commandState = await ensureCommandState(commandOwner, commandCtx);
+      if (!commandState) return;
 
       const parts = args?.trim()?.split(/\s+/) ?? [];
       const subcommand = parts[0] ?? "";
@@ -490,14 +502,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       switch (subcommand) {
         case "reconnect":
           commandOwner?.throwIfInactive();
-          await reconnectServers(state, commandCtx, targetServer);
+          await reconnectServers(commandState, commandCtx, targetServer);
           if (directToolsFrozen) syncToolSurface(commandCtx);
           break;
         case "tools":
-          await showTools(state, commandCtx);
+          await showTools(commandState, commandCtx);
           break;
         case "prompts":
-          await showPrompts(state, commandCtx);
+          await showPrompts(commandState, commandCtx);
           break;
         case "setup": {
           commandOwner?.throwIfInactive();
@@ -505,7 +517,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             commandCtx.ui?.notify("MCP setup is unavailable when config is supplied by createMcpAdapter().", "info");
             break;
           }
-          const result = await openMcpSetup(state, pi, commandCtx, currentConfigPath, "setup");
+          const result = await openMcpSetup(commandState, pi, commandCtx, currentConfigPath, "setup");
           if (result?.configChanged) {
             commandOwner?.throwIfInactive();
             await ctx.reload();
@@ -520,7 +532,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             return;
           }
           commandOwner?.throwIfInactive();
-          await logoutServer(serverName, state, commandCtx);
+          await logoutServer(serverName, commandState, commandCtx);
           break;
         }
         case "disable":
@@ -538,7 +550,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             commandCtx.ui?.notify(`Usage: /mcp ${subcommand} <server>`, "error");
             break;
           }
-          if (!state.config.mcpServers[serverName]) {
+          if (!commandState.config.mcpServers[serverName]) {
             commandCtx.ui?.notify(`Server "${serverName}" not found in effective config`, "error");
             break;
           }
@@ -558,10 +570,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             commandOwner?.throwIfInactive();
             if (programmaticConfig) {
               commandCtx.ui?.notify("MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.", "info");
-              await showStatus(state, commandCtx);
+              await showStatus(commandState, commandCtx);
               break;
             }
-            const result = await openMcpPanel(state, pi, commandCtx, currentConfigPath, (changes) => {
+            const result = await openMcpPanel(commandState, pi, commandCtx, currentConfigPath, (changes) => {
               applyDirectToolConfigChanges(changes);
               syncToolSurface(commandCtx);
             });
@@ -571,7 +583,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
               return;
             }
           } else {
-            await showStatus(state, commandCtx);
+            await showStatus(commandState, commandCtx);
           }
           break;
       }
@@ -581,53 +593,28 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   pi.registerCommand("mcp-auth", {
     description: "Authenticate with an MCP server (OAuth)",
     handler: async (args, ctx) => {
-      const commandOwner = currentOwner;
-      const commandHasUI = ctx.hasUI;
-      const commandProjectTrusted = ctx.isProjectTrusted();
-      const commandCtx = {
-        hasUI: commandHasUI,
-        ui: commandHasUI
-          ? commandOwner ? createOwnedUi(ctx.ui, commandOwner) : ctx.ui
-          : undefined,
-        cwd: ctx.cwd,
-        mode: ctx.mode,
-        signal: commandOwner?.signal ?? ctx.signal,
-        isProjectTrusted: () => commandProjectTrusted,
-      } as unknown as ExtensionContext;
+      const { owner: commandOwner, context: commandCtx } = createCommandContext(ctx);
       const serverName = args?.trim();
       if (!serverName && !commandCtx.hasUI) {
         return;
       }
 
-      if (!state && initPromise) {
-        try {
-          const initialized = await initPromise;
-          commandOwner?.throwIfInactive();
-          state = initialized;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (commandCtx.hasUI) commandCtx.ui?.notify(`MCP initialization failed: ${message}`, "error");
-          return;
-        }
-      }
-      if (!state) {
-        if (commandCtx.hasUI) commandCtx.ui?.notify("MCP not initialized", "error");
-        return;
-      }
+      const commandState = await ensureCommandState(commandOwner, commandCtx);
+      if (!commandState) return;
 
       if (!serverName) {
         if (programmaticConfig) {
           commandCtx.ui?.notify("Use /mcp-auth <server> to authenticate a server from the in-memory SDK config.", "info");
           return;
         }
-        await openMcpAuthPanel(state, commandCtx, currentConfigPath);
+        await openMcpAuthPanel(commandState, commandCtx, currentConfigPath);
         return;
       }
 
-      const result = await authenticateServer(serverName, state.config, commandCtx, commandCtx.signal, state.oauthRuntime);
+      const result = await authenticateServer(serverName, commandState.config, commandCtx, commandCtx.signal, commandState.oauthRuntime);
       if (result.ok) {
         commandOwner?.throwIfInactive();
-        await reconnectServer(state, commandCtx, serverName);
+        await reconnectServer(commandState, commandCtx, serverName);
       }
     },
   });

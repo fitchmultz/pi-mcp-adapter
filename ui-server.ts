@@ -9,7 +9,6 @@ import {
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { ConsentManager } from "./consent-manager.ts";
-import { ServerError, wrapError } from "./errors.ts";
 import { formatAuthRequiredMessage } from "./utils.ts";
 import { buildHostHtmlTemplate, buildCspMetaContent } from "./host-html-template.ts";
 import { logger } from "./logger.ts";
@@ -294,7 +293,6 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           resource: options.resource,
           allowAttribute: buildAllowAttribute(options.resource.meta.permissions),
           requireToolConsent: options.consentManager.requiresPrompt(options.serverName),
-          cacheToolConsent: options.consentManager.shouldCacheConsent(),
           hostContext,
         });
 
@@ -598,12 +596,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         sendJson(res, 401, { ok: false, error: message });
         return;
       }
-      const wrapped = wrapError(error, { server: options.serverName, tool: options.toolName });
-      const status = /approval required|denied/i.test(wrapped.message) ? 403 : 500;
+      const message = error instanceof Error ? error.message : String(error);
+      const status = /approval required|denied/i.test(message) ? 403 : 500;
       if (status === 500) {
         log.error("Request handler error", error instanceof Error ? error : undefined);
       }
-      sendJson(res, status, { ok: false, error: wrapped.message });
+      sendJson(res, status, { ok: false, error: message });
     }
   });
 
@@ -645,18 +643,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         return;
       }
       log.error("Failed to start server", error);
-      const port = candidates[candidateIndex];
-      reject(new ServerError(error.message, {
-        ...(port !== undefined ? { port } : {}),
-        cause: error,
-      }));
+      reject(new Error(`UI server error: ${error.message}`, { cause: error }));
     };
 
     const onListening = () => {
       server.off("error", onError);
       const address = server.address();
       if (!address || typeof address === "string") {
-        const err = new ServerError("invalid address");
+        const err = new Error("UI server error: invalid address");
         log.error("Invalid server address", err);
         reject(err);
         return;

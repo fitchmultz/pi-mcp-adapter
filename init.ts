@@ -79,10 +79,6 @@ export function recordFailure(state: McpExtensionState, serverName: string, mess
   getFailureExpiryTimers(state).set(serverName, timer);
 }
 
-export function isTuiMode(ctx: Pick<ExtensionContext, "hasUI" | "mode">): boolean {
-  return ctx.hasUI && ctx.mode === "tui";
-}
-
 type McpInitializationOptions = McpAdapterOptions & {
   oauthRuntime?: McpOAuthRuntime;
   statusEvents?: McpExtensionState["statusEvents"];
@@ -151,7 +147,7 @@ export async function initializeMcp(
   const failureMessages = new Map<string, string>();
   const approvedToolCalls = new Map<string, true>();
   const uiResourceHandler = new UiResourceHandler(manager, config);
-  const consentManager = new ConsentManager("once-per-server");
+  const consentManager = new ConsentManager();
   const state: McpExtensionState = {
     owner,
     manager,
