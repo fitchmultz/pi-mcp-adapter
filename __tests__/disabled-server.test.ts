@@ -104,7 +104,7 @@ describe("disabled MCP servers", () => {
     state.toolMetadata.delete("enabled");
     expect(executeDescribe(state, "disabled_search").details).toMatchObject({ error: "server_disabled" });
     expect(executeSearch(state, "cached").details).toMatchObject({ count: 0 });
-    expect(executeSearch(state, "cached", false, "disabled").details).toMatchObject({ error: "server_disabled" });
+    expect(executeSearch(state, "cached", "disabled").details).toMatchObject({ error: "server_disabled" });
     expect((await executeCall(state, "disabled_search", {})).details).toMatchObject({ error: "server_disabled" });
     expect((await executeCall(state, "disabled_search", {}, "disabled")).details).toMatchObject({ error: "server_disabled" });
     expect((await executeConnect(state, "disabled")).details).toMatchObject({ error: "server_disabled" });

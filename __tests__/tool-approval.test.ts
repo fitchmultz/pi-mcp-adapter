@@ -142,6 +142,6 @@ describe("tool approval", () => {
     const { state } = createState({ approveTools: true });
 
     expect(executeDescribe(state, tool.name).content[0].text).toContain("search-records (requires approval)");
-    expect(executeSearch(state, "search", false, undefined, false).content[0].text).toContain("(requires approval)");
+    expect(executeSearch(state, "search", undefined, false).content[0].text).toContain("(requires approval)");
   });
 });
