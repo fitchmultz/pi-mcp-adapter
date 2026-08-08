@@ -1051,7 +1051,9 @@ export async function executeCall(
     }
 
     const hintServer = serverName ?? prefixMatchedServer;
-    const localOriginalName = serverOverride && state.toolMetadata.get(serverOverride)?.some(tool => tool.originalName === toolName);
+    const normalizedToolName = toolName.replace(/-/g, "_");
+    const localOriginalName = serverOverride && state.toolMetadata.get(serverOverride)
+      ?.some(tool => tool.originalName.replace(/-/g, "_") === normalizedToolName);
     const suggestedOwner = serverOverride && !localOriginalName
       ? [...state.toolMetadata].find(([candidateServer, metadata]) =>
         candidateServer !== serverOverride
