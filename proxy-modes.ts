@@ -1,8 +1,8 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
-import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
+import type { ServerConnection } from "./server-manager.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
 import { getServerPrefix, isServerDisabled, parseUiPromptHandoff } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
@@ -23,14 +23,7 @@ import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-appro
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
-const require = createRequire(import.meta.url);
-const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
 const INSTRUCTIONS_PREVIEW_LENGTH = 300;
-const REGEX_SAFETY_CHECK_PARAMS = {
-  attackTimeout: 50,
-  incubationTimeout: 50,
-  timeout: 250,
-} as const;
 
 type AutoAuthResult =
   | { status: "skipped" }
@@ -458,7 +451,6 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
 export function executeSearch(
   state: McpExtensionState,
   query: string,
-  regex?: boolean,
   server?: string,
   includeSchemas?: boolean,
   limit = 12,
@@ -468,49 +460,7 @@ export function executeSearch(
   if (server && isServerDisabled(state.config.mcpServers[server])) return disabledResult("search", server);
 
   let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;
-  if (regex) {
-    let pattern: RegExp;
-    try {
-      if (query.length > MAX_REGEX_SEARCH_QUERY_LENGTH) {
-        return {
-          content: [{ type: "text" as const, text: `Regex query is too long; maximum length is ${MAX_REGEX_SEARCH_QUERY_LENGTH} characters.` }],
-          details: { mode: "search", error: "query_too_long", query, maxLength: MAX_REGEX_SEARCH_QUERY_LENGTH },
-        };
-      }
-      pattern = new RegExp(query, "i");
-      let safety;
-      try {
-        const { checkSync } = require("recheck") as typeof import("recheck");
-        safety = checkSync(query, "i", REGEX_SAFETY_CHECK_PARAMS);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: "text" as const, text: "Regex query rejected because safety analysis failed." }],
-          details: { mode: "search", error: "unsafe_pattern", query, reason },
-        };
-      }
-      if (safety.status !== "safe") {
-        return {
-          content: [{ type: "text" as const, text: `Regex query rejected as unsafe (${safety.status}).` }],
-          details: { mode: "search", error: "unsafe_pattern", query, safetyStatus: safety.status },
-        };
-      }
-    } catch {
-      return {
-        content: [{ type: "text" as const, text: `Invalid regex: ${query}` }],
-        details: { mode: "search", error: "invalid_pattern", query },
-      };
-    }
-
-    matches = [];
-    for (const [serverName, metadata] of state.toolMetadata.entries()) {
-      if (isServerDisabled(state.config.mcpServers[serverName])) continue;
-      if (server && serverName !== server) continue;
-      for (const tool of metadata) {
-        if (pattern.test(tool.name) || pattern.test(tool.description)) matches.push({ server: serverName, tool, score: 0 });
-      }
-    }
-  } else if (query.trim().length === 0) {
+  if (query.trim().length === 0) {
     if (!server) {
       return {
         content: [{ type: "text" as const, text: "Search query cannot be empty" }],
@@ -740,6 +690,160 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
       content: [{ type: "text" as const, text: `Failed to connect to "${serverName}": ${message}` }],
       details: { mode: "connect", error: isAbortError(error, ownedSignal) ? "aborted" : "connect_failed", server: serverName, message },
     };
+  }
+}
+
+/** The part of a tool call that is identical for proxy and direct tools. */
+type ToolCallTarget = Pick<ToolMetadata, "originalName" | "inputSchema" | "resourceUri" | "uiResourceUri" | "uiStreamMode">;
+
+interface ToolCallOptions {
+  /** Spread into every details payload: identity, and `mode` for proxy calls. */
+  detailsBase: Record<string, unknown>;
+  ownedSignal: AbortSignal | undefined;
+  /** Caller-supplied signal, passed to the UI session rather than the MCP call. */
+  signal: AbortSignal | undefined;
+  /** Proxy reconnects via manager.connect, direct tools via lazyConnect. */
+  recoverAuthConnection: (serverName: string) => Promise<ServerConnection | undefined>;
+  authRequiredMessage: () => string;
+  autoAuthAttempted: () => boolean;
+}
+
+/**
+ * Executes an already-approved tool call against a connected server.
+ *
+ * Both the `mcp` proxy and direct tools reach this with a resolved target and a
+ * live connection; everything before this point (name resolution, connect and
+ * auth strategy, approval) differs between them and stays with the caller.
+ */
+export async function runToolCall(
+  state: McpExtensionState,
+  serverName: string,
+  target: ToolCallTarget,
+  args: Record<string, unknown> | undefined,
+  options: ToolCallOptions,
+): Promise<ProxyToolResult> {
+  const { detailsBase, ownedSignal, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted } = options;
+  const requestOptions = state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
+  const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
+  // Lazy: formatSchema recurses, so only pay for it (and only risk it throwing)
+  // on the error paths that actually print it.
+  const schemaSuffix = () => target.inputSchema ? `\n\nExpected parameters:\n${formatSchema(target.inputSchema)}` : "";
+  const recovery = {
+    manager: state.manager,
+    config: state.config,
+    ...(ownedSignal ? { signal: ownedSignal } : {}),
+    onNeedsAuth: recoverAuthConnection,
+  };
+  let uiSession: UiSessionRuntime | null = null;
+
+  try {
+    state.manager.touch(serverName);
+    state.manager.incrementInFlight(serverName);
+
+    if (target.resourceUri) {
+      const result = await withSessionRecovery(
+        recovery,
+        serverName,
+        (conn) => conn.client.readResource({ uri: target.resourceUri! }, requestOptions),
+      );
+      const contents = (result.contents ?? []).map(c => ({
+        type: "text" as const,
+        text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
+      }));
+      const guarded = await guardMcpOutput(contents.length > 0 ? contents : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
+      return { content: guarded.content, details: { ...detailsBase, ...guardedMcpDetails(guarded) } };
+    }
+
+    uiSession = target.uiResourceUri
+      ? await maybeStartUiSession(state, {
+          serverName,
+          toolName: target.originalName,
+          toolArgs: args ?? {},
+          uiResourceUri: target.uiResourceUri,
+          ...(target.uiStreamMode !== undefined ? { streamMode: target.uiStreamMode } : {}),
+          ...(signal ? { signal } : {}),
+          onNeedsAuth: recoverAuthConnection,
+        })
+      : null;
+
+    const result = await withSessionRecovery<ClientCallToolResult>(
+      recovery,
+      serverName,
+      (conn) => abortable(conn.client.callTool({
+        name: target.originalName,
+        arguments: args ?? {},
+        _meta: uiSession?.requestMeta,
+      }, undefined, requestOptions), ownedSignal),
+    );
+    uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
+
+    if (result.isError) {
+      const content = transformMcpContent((result.content ?? []) as McpContent[]);
+      const guarded = await guardMcpOutput(
+        content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }],
+        { ...outputGuardOptions, prefix: "Error: ", suffix: schemaSuffix(), emptyTextFallback: "Tool execution failed", rawMcpResult: result },
+      );
+      return { content: guarded.content, details: { ...detailsBase, error: "tool_error", ...guardedMcpDetails(guarded) } };
+    }
+
+    const content = resolveMcpResultContent(result as Record<string, unknown>);
+    const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
+
+    if (target.uiResourceUri) {
+      const uiSummary = summarizeUiSessionResult(uiSession);
+      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiSummary.message}`, rawMcpResult: result });
+      return {
+        content: guarded.content,
+        details: {
+          ...detailsBase,
+          ...guardedMcpDetails(guarded),
+          uiOpen: uiSummary.uiOpen,
+          uiViewer: uiSummary.uiViewer,
+          uiUrl: uiSummary.uiUrl,
+        },
+      };
+    }
+
+    const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: result });
+    return { content: guarded.content, details: { ...detailsBase, ...guardedMcpDetails(guarded) } };
+  } catch (error) {
+    if (error instanceof SessionRecoveryAuthRequiredError) {
+      const message = error.authMessage ?? authRequiredMessage();
+      uiSession?.sendToolCancelled(message);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        details: { ...detailsBase, error: "auth_required", message, autoAuthAttempted: autoAuthAttempted() },
+      };
+    }
+    if (error instanceof UrlElicitationRequiredError) {
+      const action = await state.manager.handleUrlElicitationRequired(serverName, error);
+      const message = action === "accept"
+        ? "The original MCP tool did not run. Complete the opened browser interaction, then retry the tool."
+        : `The URL interaction was ${action === "decline" ? "declined" : "cancelled"}.`;
+      uiSession?.sendToolCancelled(message);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        details: { ...detailsBase, error: "url_elicitation_required", action },
+      };
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    uiSession?.sendToolCancelled(message);
+    const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaSuffix() });
+    return {
+      content: guarded.content,
+      details: {
+        ...detailsBase,
+        error: isAbortError(error, ownedSignal) ? "aborted" : "call_failed",
+        message: guarded.outputGuard ? "output truncated; see outputGuard.fullOutputPath" : message,
+        ...guardedMcpDetails(guarded),
+      },
+    };
+  } finally {
+    if (uiSession?.reused) {
+      uiSession.close();
+    }
+    state.manager.decrementInFlight(serverName);
+    state.manager.touch(serverName);
   }
 }
 
@@ -1052,10 +1156,6 @@ export async function executeCall(
     };
   }
 
-  let uiSession: UiSessionRuntime | null = null;
-  const requestOptions = state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
-
-  const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
   const recoverAuthConnection = async () => {
     const current = state.manager.getConnection(serverName);
     if (current?.status === "connected") return current;
@@ -1082,145 +1182,12 @@ export async function executeCall(
     return state.manager.getConnection(serverName);
   };
 
-  try {
-    state.manager.touch(serverName);
-    state.manager.incrementInFlight(serverName);
-
-    if (toolMeta.resourceUri) {
-      const result = await withSessionRecovery(
-        {
-          manager: state.manager,
-          config: state.config,
-          ...(ownedSignal ? { signal: ownedSignal } : {}),
-          onNeedsAuth: recoverAuthConnection,
-        },
-        serverName,
-        (conn) => conn.client.readResource({ uri: toolMeta.resourceUri! }, requestOptions),
-      );
-      const content = (result.contents ?? []).map(c => ({
-        type: "text" as const,
-        text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
-      }));
-      const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
-      return {
-        content: guarded.content,
-        details: { mode: "call", ...callIdentity, ...guardedMcpDetails(guarded) },
-      };
-    }
-
-    uiSession = toolMeta.uiResourceUri
-      ? await maybeStartUiSession(state, {
-          serverName,
-          toolName: toolMeta.originalName,
-          toolArgs: args ?? {},
-          uiResourceUri: toolMeta.uiResourceUri,
-          ...(toolMeta.uiStreamMode !== undefined ? { streamMode: toolMeta.uiStreamMode } : {}),
-          ...(signal ? { signal } : {}),
-          onNeedsAuth: recoverAuthConnection,
-        })
-      : null;
-
-    const result = await withSessionRecovery<ClientCallToolResult>(
-      {
-        manager: state.manager,
-        config: state.config,
-        ...(ownedSignal ? { signal: ownedSignal } : {}),
-        onNeedsAuth: recoverAuthConnection,
-      },
-      serverName,
-      (conn) => abortable(conn.client.callTool({
-        name: toolMeta.originalName,
-        arguments: args ?? {},
-        _meta: uiSession?.requestMeta,
-      }, undefined, requestOptions), ownedSignal),
-    );
-
-    if (toolMeta.uiResourceUri) {
-      uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
-
-      if (result.isError) {
-        const mcpContent = (result.content ?? []) as McpContent[];
-        const content = transformMcpContent(mcpContent);
-        const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-        const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
-        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed", rawMcpResult: result });
-        return {
-          content: guarded.content,
-          details: { mode: "call", error: "tool_error", ...callIdentity, ...guardedMcpDetails(guarded) },
-        };
-      }
-
-      const content = resolveMcpResultContent(result as Record<string, unknown>);
-      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-      const uiSummary = summarizeUiSessionResult(uiSession);
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiSummary.message}`, rawMcpResult: result });
-      return {
-        content: guarded.content,
-        details: {
-          mode: "call",
-          ...guardedMcpDetails(guarded),
-          ...callIdentity,
-          uiOpen: uiSummary.uiOpen,
-          uiViewer: uiSummary.uiViewer,
-          uiUrl: uiSummary.uiUrl,
-        },
-      };
-    }
-
-    if (result.isError) {
-      const mcpContent = (result.content ?? []) as McpContent[];
-      const content = transformMcpContent(mcpContent);
-      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-      const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed", rawMcpResult: result });
-      return {
-        content: guarded.content,
-        details: { mode: "call", error: "tool_error", ...callIdentity, ...guardedMcpDetails(guarded) },
-      };
-    }
-
-    const content = resolveMcpResultContent(result as Record<string, unknown>);
-    const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-    const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: result });
-    return {
-      content: guarded.content,
-      details: { mode: "call", ...guardedMcpDetails(guarded), ...callIdentity },
-    };
-  } catch (error) {
-    if (error instanceof SessionRecoveryAuthRequiredError) {
-      const message = error.authMessage ?? getAuthRequiredMessage(state, serverName);
-      uiSession?.sendToolCancelled(message);
-      return {
-        content: [{ type: "text" as const, text: message }],
-        details: { mode: "call", error: "auth_required", ...callIdentity, message, autoAuthAttempted },
-      };
-    }
-    if (error instanceof UrlElicitationRequiredError) {
-      const action = await state.manager.handleUrlElicitationRequired(serverName, error);
-      const message = action === "accept"
-        ? "The original MCP tool did not run. Complete the opened browser interaction, then retry the tool."
-        : `The URL interaction was ${action === "decline" ? "declined" : "cancelled"}.`;
-      uiSession?.sendToolCancelled(message);
-      return {
-        content: [{ type: "text" as const, text: message }],
-        details: { mode: "call", error: "url_elicitation_required", ...callIdentity, action },
-      };
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    uiSession?.sendToolCancelled(message);
-
-    const schemaText = toolMeta.inputSchema ? `\n\nExpected parameters:\n${formatSchema(toolMeta.inputSchema)}` : "";
-    const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaText });
-
-    return {
-      content: guarded.content,
-      details: { mode: "call", error: isAbortError(error, ownedSignal) ? "aborted" : "call_failed", ...callIdentity, message: guarded.outputGuard ? "output truncated; see outputGuard.fullOutputPath" : message, ...guardedMcpDetails(guarded) },
-    };
-  } finally {
-    if (uiSession?.reused) {
-      uiSession.close();
-    }
-    state.manager.decrementInFlight(serverName);
-    state.manager.touch(serverName);
-  }
+  return runToolCall(state, serverName, toolMeta, args, {
+    detailsBase: { mode: "call", ...callIdentity },
+    ownedSignal,
+    signal,
+    recoverAuthConnection,
+    authRequiredMessage: () => getAuthRequiredMessage(state, serverName),
+    autoAuthAttempted: () => autoAuthAttempted,
+  });
 }

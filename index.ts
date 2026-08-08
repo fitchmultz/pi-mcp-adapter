@@ -701,7 +701,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
         instructions: Type.Optional(Type.String({ description: "Server name to show that server's usage instructions" })),
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
-        regex: Type.Optional(Type.Boolean({ description: "Treat search as regex (default: substring match)" })),
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
         limit: Type.Optional(Type.Number({ minimum: 1, description: "Maximum search results to return (default: 12)" })),
         offset: Type.Optional(Type.Number({ minimum: 0, description: "Search result offset (default: 0)" })),
@@ -716,7 +715,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         describe?: string;
         instructions?: string;
         search?: string;
-        regex?: boolean;
         includeSchemas?: boolean;
         limit?: number;
         offset?: number;
@@ -822,7 +820,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return executeInstructions(state, params.instructions);
         }
         if (params.search !== undefined) {
-          return executeSearch(state, params.search, params.regex, params.server, params.includeSchemas, params.limit, params.offset);
+          return executeSearch(state, params.search, params.server, params.includeSchemas, params.limit, params.offset);
         }
         if (params.server) {
           return executeList(state, params.server);

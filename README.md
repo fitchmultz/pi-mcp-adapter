@@ -588,7 +588,7 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/mcp.json` only 
 
 MCP proxy and direct-tool results render compactly by default: long text shows the first three terminal-wrapped lines plus Pi's configured `app.tools.expand` keybinding hint, while the full result remains available when expanded and is still returned unchanged to the model.
 
-Search includes both MCP tools and Pi tools (from extensions). Pi tools appear first with `[pi tool]` prefix. Space-separated words are ranked by weighted matches across name, server, and description, then returned one page at a time (`limit` defaults to 12). Use `details.nextOffset` for the next page. Regex search is still available with `regex: true`, but regex results are paginated without ranking.
+Search includes both MCP tools and Pi tools (from extensions). Pi tools appear first with `[pi tool]` prefix. Space-separated words are ranked by weighted matches across name, server, and description, then returned one page at a time (`limit` defaults to 12). Use `details.nextOffset` for the next page.
 
 Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_library_id` finds `context7_resolve-library-id`. When `describe` or `tool` cannot resolve a name, the result includes top suggestions so the agent can correct a typo or missing prefix in the same turn.
 

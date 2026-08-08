@@ -51,8 +51,8 @@ describe("MCP tool call renderer", () => {
   });
 
   it("shows proxy discovery operations", () => {
-    expect(formatMcpProxyToolCallLines({ search: "tail events", server: "cf-portal", regex: true })).toEqual([
-      "mcp search tail events @ cf-portal (regex)",
+    expect(formatMcpProxyToolCallLines({ search: "tail events", server: "cf-portal" })).toEqual([
+      "mcp search tail events @ cf-portal",
     ]);
     expect(formatMcpProxyToolCallLines({ connect: "cf-portal" })).toEqual(["mcp connect cf-portal"]);
     expect(formatMcpProxyToolCallLines({ server: "cf-portal" })).toEqual(["mcp list cf-portal"]);

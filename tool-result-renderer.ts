@@ -17,7 +17,6 @@ export interface McpProxyToolCallInput {
   connect?: string;
   describe?: string;
   search?: string;
-  regex?: boolean;
   includeSchemas?: boolean;
   server?: string;
   action?: string;
@@ -128,7 +127,6 @@ export function formatMcpProxyToolCallLines(
   if (args.search) {
     let line = `mcp search ${args.search}`;
     if (args.server) line += ` @ ${args.server}`;
-    if (args.regex === true) line += " (regex)";
     if (args.includeSchemas === false) line += " (schemas hidden)";
     return [line];
   }

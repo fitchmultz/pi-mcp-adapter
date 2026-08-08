@@ -1,26 +1,19 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
 import type { McpExtensionState } from "./state.ts";
-import type { DirectToolSpec, McpConfig, McpContent, ToolPrefix } from "./types.ts";
+import type { DirectToolSpec, McpConfig, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
-import { abortable, throwIfAborted } from "./abort.ts";
+import { throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
-import { formatSchema } from "./tool-metadata.ts";
-import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
-import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
-import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
+import { runToolCall } from "./proxy-modes.ts";
 import { formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
 import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./utils.ts";
-import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
+import { SessionRecoveryAuthRequiredError } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
-
-type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 const INSTRUCTIONS_SNIPPET_LENGTH = 150;
@@ -403,10 +396,6 @@ export function createDirectToolExecutor(
       };
     }
 
-    let uiSession: UiSessionRuntime | null = null;
-    const requestOptions = state.manager.getRequestOptions?.(spec.serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
-
-    const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
     const recoverAuthConnection = async () => {
       const current = state.manager.getConnection(spec.serverName);
       if (current?.status === "connected") return current;
@@ -431,130 +420,15 @@ export function createDirectToolExecutor(
       return state.manager.getConnection(spec.serverName);
     };
 
-    try {
-      state.manager.touch(spec.serverName);
-      state.manager.incrementInFlight(spec.serverName);
-
-      if (spec.resourceUri) {
-        const result = await withSessionRecovery(
-          {
-            manager: state.manager,
-            config: state.config,
-            ...(ownedSignal ? { signal: ownedSignal } : {}),
-            onNeedsAuth: recoverAuthConnection,
-          },
-          spec.serverName,
-          (conn) => conn.client.readResource({ uri: spec.resourceUri! }, requestOptions),
-        );
-        const content = (result.contents ?? []).map(c => ({
-          type: "text" as const,
-          text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
-        }));
-        const guarded = await guardMcpOutput(content.length > 0 ? content : [{ type: "text" as const, text: "(empty resource)" }], outputGuardOptions);
-        return {
-          content: guarded.content,
-          details: { server: spec.serverName, resourceUri: spec.resourceUri, ...guardedMcpDetails(guarded) },
-        };
-      }
-
-      const hasUi = !!spec.uiResourceUri;
-      uiSession = hasUi
-        ? await maybeStartUiSession(state, {
-            serverName: spec.serverName,
-            toolName: spec.originalName,
-            toolArgs: params ?? {},
-            uiResourceUri: spec.uiResourceUri!,
-            ...(spec.uiStreamMode !== undefined ? { streamMode: spec.uiStreamMode } : {}),
-            ...(signal ? { signal } : {}),
-            onNeedsAuth: recoverAuthConnection,
-          })
-        : null;
-
-      const result = await withSessionRecovery<ClientCallToolResult>(
-        {
-          manager: state.manager,
-          config: state.config,
-          ...(ownedSignal ? { signal: ownedSignal } : {}),
-          onNeedsAuth: recoverAuthConnection,
-        },
-        spec.serverName,
-        (conn) => abortable(conn.client.callTool({
-          name: spec.originalName,
-          arguments: params ?? {},
-          _meta: uiSession?.requestMeta,
-        }, undefined, requestOptions), ownedSignal),
-      );
-      uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
-
-      if (result.isError) {
-        const mcpContent = (result.content ?? []) as McpContent[];
-        const content = transformMcpContent(mcpContent);
-        const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-        const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
-        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed" });
-        return {
-          content: guarded.content,
-          details: { error: "tool_error", server: spec.serverName, ...guardedMcpDetails(guarded) },
-        };
-      }
-
-      const content = resolveMcpResultContent(result as Record<string, unknown>);
-      const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
-      if (hasUi) {
-        const uiSummary = summarizeUiSessionResult(uiSession);
-        const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, suffix: `\n\n${uiSummary.message}` });
-        return {
-          content: guarded.content,
-          details: {
-            server: spec.serverName,
-            tool: spec.originalName,
-            uiOpen: uiSummary.uiOpen,
-            uiViewer: uiSummary.uiViewer,
-            uiUrl: uiSummary.uiUrl,
-            ...guardedMcpDetails(guarded),
-          },
-        };
-      }
-
-      const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions });
-      return {
-        content: guarded.content,
-        details: { server: spec.serverName, tool: spec.originalName, ...guardedMcpDetails(guarded) },
-      };
-    } catch (error) {
-      if (error instanceof SessionRecoveryAuthRequiredError) {
-        const message = error.authMessage ?? getDirectAuthRequiredMessage(state, spec.serverName);
-        uiSession?.sendToolCancelled(message);
-        return {
-          content: [{ type: "text" as const, text: message }],
-          details: { error: "auth_required", server: spec.serverName, message, autoAuthAttempted },
-        };
-      }
-      if (error instanceof UrlElicitationRequiredError) {
-        const action = await state.manager.handleUrlElicitationRequired(spec.serverName, error);
-        const message = action === "accept"
-          ? "The original MCP tool did not run. Complete the opened browser interaction, then retry the tool."
-          : `The URL interaction was ${action === "decline" ? "declined" : "cancelled"}.`;
-        uiSession?.sendToolCancelled(message);
-        return {
-          content: [{ type: "text" as const, text: message }],
-          details: { error: "url_elicitation_required", server: spec.serverName, action },
-        };
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      uiSession?.sendToolCancelled(message);
-      const schemaText = spec.inputSchema ? `\n\nExpected parameters:\n${formatSchema(spec.inputSchema)}` : "";
-      const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaText });
-      return {
-        content: guarded.content,
-        details: { error: isAbortError(error, ownedSignal) ? "aborted" : "call_failed", server: spec.serverName, ...guardedMcpDetails(guarded) },
-      };
-    } finally {
-      if (uiSession?.reused) {
-        uiSession.close();
-      }
-      state.manager.decrementInFlight(spec.serverName);
-      state.manager.touch(spec.serverName);
-    }
+    return runToolCall(state, spec.serverName, spec, params, {
+      detailsBase: spec.resourceUri
+        ? { server: spec.serverName, resourceUri: spec.resourceUri }
+        : { server: spec.serverName, tool: spec.originalName },
+      ownedSignal,
+      signal,
+      recoverAuthConnection,
+      authRequiredMessage: () => getDirectAuthRequiredMessage(state, spec.serverName),
+      autoAuthAttempted: () => autoAuthAttempted,
+    });
   };
 }

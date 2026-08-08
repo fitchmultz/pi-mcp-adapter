@@ -52,7 +52,7 @@ export interface McpOutputGuardOptions {
    * Raw MCP result to expose as details.mcpResult. Kept raw when its JSON
    * fits detailsMaxBytes (or when the guard is disabled); otherwise replaced
    * with a compact summary and spilled to a temp file. Omit for call sites
-   * whose details never carried the raw result (e.g. direct tools).
+   * whose details never carried the raw result (e.g. resource reads).
    */
   rawMcpResult?: unknown;
 }
