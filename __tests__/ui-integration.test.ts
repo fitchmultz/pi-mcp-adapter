@@ -187,6 +187,14 @@ function createIntegrationManager(): McpServerManager {
   } as unknown as McpServerManager;
 }
 
+function approvedConsentManager(): ConsentManager {
+  const manager = new ConsentManager();
+  for (const serverName of ["test-server", "chat-server", "error-server", "disconnected-server"]) {
+    manager.registerDecision(serverName, true);
+  }
+  return manager;
+}
+
 describe("MCP UI Integration", () => {
   let handle: UiServerHandle | null = null;
 
@@ -201,7 +209,7 @@ describe("MCP UI Integration", () => {
     it("completes a full agent → browser → agent cycle", async () => {
       // 1. Agent calls tool with UI
       const manager = createIntegrationManager();
-      const consentManager = new ConsentManager("never"); // No consent prompts
+      const consentManager = approvedConsentManager(); // No consent prompts
       
       const resource: UiResourceContent = {
         uri: "ui://test/app",
@@ -248,7 +256,7 @@ describe("MCP UI Integration", () => {
 
     it("handles multiple messages in conversation", async () => {
       const manager = createIntegrationManager();
-      const consentManager = new ConsentManager("never");
+      const consentManager = approvedConsentManager();
       
       const resource: UiResourceContent = {
         uri: "ui://test/chat",
@@ -289,7 +297,7 @@ describe("MCP UI Integration", () => {
 
     it("handles consent flow for tool calls", async () => {
       const manager = createIntegrationManager();
-      const consentManager = new ConsentManager("once-per-server");
+      const consentManager = new ConsentManager();
       
       const resource: UiResourceContent = {
         uri: "ui://test/app",
@@ -323,7 +331,7 @@ describe("MCP UI Integration", () => {
 
     it("tracks in-flight requests correctly", async () => {
       const manager = createIntegrationManager();
-      const consentManager = new ConsentManager("never");
+      const consentManager = approvedConsentManager();
       
       const resource: UiResourceContent = {
         uri: "ui://test/app",
@@ -367,7 +375,7 @@ describe("MCP UI Integration", () => {
       expect(resource.mimeType).toBe("text/html");
 
       // Start server with the resource
-      const consentManager = new ConsentManager("never");
+      const consentManager = approvedConsentManager();
       handle = await startUiServer({
         serverName: "test-server",
         toolName: "launch_app",
@@ -389,7 +397,7 @@ describe("MCP UI Integration", () => {
     it("calls onComplete when session ends", async () => {
       const onComplete = vi.fn();
       const manager = createIntegrationManager();
-      const consentManager = new ConsentManager("never");
+      const consentManager = approvedConsentManager();
       
       handle = await startUiServer({
         serverName: "test-server",
@@ -417,7 +425,7 @@ describe("MCP UI Integration", () => {
 
     it("maintains heartbeat to prevent timeout", async () => {
       const manager = createIntegrationManager();
-      const consentManager = new ConsentManager("never");
+      const consentManager = approvedConsentManager();
       
       handle = await startUiServer({
         serverName: "test-server",
@@ -459,7 +467,7 @@ describe("MCP UI Integration", () => {
         }),
       } as unknown as McpServerManager;
 
-      const consentManager = new ConsentManager("never");
+      const consentManager = approvedConsentManager();
       
       handle = await startUiServer({
         serverName: "error-server",
@@ -491,7 +499,7 @@ describe("MCP UI Integration", () => {
         getConnection: vi.fn().mockReturnValue(null),
       } as unknown as McpServerManager;
 
-      const consentManager = new ConsentManager("never");
+      const consentManager = approvedConsentManager();
       
       handle = await startUiServer({
         serverName: "disconnected-server",
@@ -518,7 +526,7 @@ describe("MCP UI Integration", () => {
   describe("Display Mode Changes", () => {
     it("allows switching display modes", async () => {
       const manager = createIntegrationManager();
-      const consentManager = new ConsentManager("never");
+      const consentManager = approvedConsentManager();
       
       handle = await startUiServer({
         serverName: "test-server",

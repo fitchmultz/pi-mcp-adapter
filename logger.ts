@@ -13,16 +13,6 @@ export interface LogContext {
   [key: string]: unknown;
 }
 
-export interface LogEntry {
-  level: LogLevel;
-  message: string;
-  context?: LogContext;
-  error?: Error;
-  timestamp: Date;
-}
-
-type LogHandler = (entry: LogEntry) => void;
-
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -39,23 +29,9 @@ const LEVEL_PREFIX: Record<LogLevel, string> = {
 
 class Logger {
   private minLevel: LogLevel = "info";
-  private handlers: LogHandler[] = [];
-  private defaultContext: LogContext = {};
 
   setLevel(level: LogLevel): void {
     this.minLevel = level;
-  }
-
-  setDefaultContext(context: LogContext): void {
-    this.defaultContext = context;
-  }
-
-  addHandler(handler: LogHandler): void {
-    this.handlers.push(handler);
-  }
-
-  clearHandlers(): void {
-    this.handlers = [];
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -65,17 +41,8 @@ class Logger {
   private emit(level: LogLevel, message: string, context?: LogContext, error?: Error): void {
     if (!this.shouldLog(level)) return;
 
-    const entry: LogEntry = {
-      level,
-      message,
-      context: { ...this.defaultContext, ...context },
-      ...(error !== undefined ? { error } : {}),
-      timestamp: new Date(),
-    };
-
-    // Default console output
     const prefix = LEVEL_PREFIX[level];
-    const contextStr = formatContext(entry.context);
+    const contextStr = formatContext(context);
     const fullMessage = contextStr ? `${prefix} ${message} ${contextStr}` : `${prefix} ${message}`;
 
     if (level === "error") {
@@ -86,15 +53,6 @@ class Logger {
       console.debug(fullMessage);
     } else {
       console.log(fullMessage);
-    }
-
-    // Custom handlers
-    for (const handler of this.handlers) {
-      try {
-        handler(entry);
-      } catch {
-        // Ignore handler errors
-      }
     }
   }
 

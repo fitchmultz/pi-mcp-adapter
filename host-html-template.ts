@@ -13,7 +13,6 @@ export interface HostHtmlTemplateInput {
   resource: UiResourceContent;
   allowAttribute: string;
   requireToolConsent: boolean;
-  cacheToolConsent: boolean;
   hostContext?: UiHostContext;
   appBridgeModuleUrl?: string;
 }
@@ -29,7 +28,6 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
   const hostContextJson = safeInlineJSON(hostContext);
   const allowAttribute = safeInlineJSON(input.allowAttribute);
   const requireToolConsent = safeInlineJSON(input.requireToolConsent);
-  const cacheToolConsent = safeInlineJSON(input.cacheToolConsent);
   const moduleUrl = safeInlineJSON(input.appBridgeModuleUrl ?? DEFAULT_APP_BRIDGE_MODULE_URL);
 
   return `<!doctype html>
@@ -137,7 +135,6 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     const HOST_CONTEXT = ${hostContextJson};
     const ALLOW_ATTRIBUTE = ${allowAttribute};
     const REQUIRE_TOOL_CONSENT = ${requireToolConsent};
-    const CACHE_TOOL_CONSENT = ${cacheToolConsent};
     const STREAM_CONTEXT_KEY = "pi-mcp-adapter/stream";
     const STREAM_PATCH_METHOD = "notifications/pi-mcp-adapter/ui-result-patch";
 
@@ -220,9 +217,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
           };
         }
         await post("/proxy/ui/consent", { approved: true });
-        if (CACHE_TOOL_CONSENT) {
-          consentGranted = true;
-        }
+        consentGranted = true;
       }
       const result = await post("/proxy/tools/call", params);
       // Notify agent about the tool call
@@ -458,12 +453,4 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function escapeHtmlAttribute(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }

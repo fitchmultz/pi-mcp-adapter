@@ -10,8 +10,6 @@ import {
   waitForCallback,
   cancelPendingCallback,
   stopCallbackServer,
-  isCallbackServerRunning,
-  getPendingAuthCount,
   releaseCallbackServer,
 } from "./mcp-callback-server.ts"
 import { getConfiguredOAuthCallbackPort, getOAuthCallbackPath, getOAuthCallbackPort } from "./mcp-oauth-provider.ts"
@@ -42,18 +40,6 @@ describe("mcp-callback-server", () => {
   })
 
   describe("ensureCallbackServer", () => {
-    it("should start the callback server", async () => {
-      await ensureCallbackServer()
-      assert.strictEqual(isCallbackServerRunning(), true)
-    })
-
-    it("should be idempotent", async () => {
-      await ensureCallbackServer()
-      await ensureCallbackServer()
-      await ensureCallbackServer()
-      assert.strictEqual(isCallbackServerRunning(), true)
-    })
-
     it("should reserve callback state atomically with the initial bind", async () => {
       await ensureCallbackServer({ oauthState: "reserved-initial-state", reserveState: true })
 
@@ -387,14 +373,6 @@ describe("mcp-callback-server", () => {
   })
 
   describe("stopCallbackServer", () => {
-    it("should stop the server", async () => {
-      await ensureCallbackServer()
-      assert.strictEqual(isCallbackServerRunning(), true)
-
-      await stopCallbackServer()
-      assert.strictEqual(isCallbackServerRunning(), false)
-    })
-
     it("should reject all pending callbacks", async () => {
       await ensureCallbackServer()
 
@@ -411,30 +389,4 @@ describe("mcp-callback-server", () => {
     })
   })
 
-  describe("getPendingAuthCount", () => {
-    it("should return 0 when no pending auths", async () => {
-      await ensureCallbackServer()
-      assert.strictEqual(getPendingAuthCount(), 0)
-    })
-
-    it("should return count of pending auths", async () => {
-      await ensureCallbackServer()
-
-      const promise1 = waitForCallback("state-1")
-      assert.strictEqual(getPendingAuthCount(), 1)
-
-      const promise2 = waitForCallback("state-2")
-      assert.strictEqual(getPendingAuthCount(), 2)
-
-      const promise3 = waitForCallback("state-3")
-      assert.strictEqual(getPendingAuthCount(), 3)
-
-      cancelPendingCallback("state-1")
-      cancelPendingCallback("state-2")
-      cancelPendingCallback("state-3")
-      await assert.rejects(promise1, /Authorization cancelled/)
-      await assert.rejects(promise2, /Authorization cancelled/)
-      await assert.rejects(promise3, /Authorization cancelled/)
-    })
-  })
 })

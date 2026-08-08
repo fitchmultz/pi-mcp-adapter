@@ -8,13 +8,56 @@ import {
   getAuthEntry,
   getAuthEntryFilePath,
   getAuthStorageOptions,
-  getTestAuthSecretStoreEntries,
   inspectAuthForUrl,
   OAuthCredentialStoreError,
-  removeTestAuthSecretStoreEntry,
-  resetTestAuthSecretStore,
   saveAuthEntry,
 } from "../mcp-auth.ts";
+
+function createRecoveryHarness(): { harnessDir: string; storePath: string } {
+  const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-keyring-recovery-"));
+  const keyctlPath = join(harnessDir, "keyctl");
+  const helperPath = join(harnessDir, "helper.cjs");
+  const storePath = join(harnessDir, "store.json");
+
+  writeFileSync(keyctlPath, `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" != "session" ] || [ "$2" != "-" ]; then exit 64; fi
+shift 2
+exec "$@"
+`, { mode: 0o755 });
+  writeFileSync(helperPath, `const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const path = process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE;
+const store = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+if (input.operation === 'read') {
+  const value = store[input.account];
+  process.stdout.write(JSON.stringify(value === undefined ? { ok: true, found: false } : { ok: true, found: true, value }) + '\\n');
+} else if (input.operation === 'write') {
+  store[input.account] = input.payload;
+  writeFileSync(path, JSON.stringify(store));
+  process.stdout.write(JSON.stringify({ ok: true }) + '\\n');
+} else if (input.operation === 'remove') {
+  delete store[input.account];
+  writeFileSync(path, JSON.stringify(store));
+  process.stdout.write(JSON.stringify({ ok: true }) + '\\n');
+} else {
+  process.stdout.write(JSON.stringify({ ok: false, error: 'bad op' }) + '\\n');
+  process.exitCode = 1;
+}
+`);
+
+  process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "keyrevoked";
+  process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY = "1";
+  process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL = keyctlPath;
+  process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE = process.execPath;
+  process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER = helperPath;
+  process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE = storePath;
+  return { harnessDir, storePath };
+}
+
+function readRecoveryStore(storePath: string): Record<string, string> {
+  return JSON.parse(readFileSync(storePath, "utf8")) as Record<string, string>;
+}
 
 describe("OAuth credential-store diagnostics", () => {
   it("recognizes a revoked Linux keyring through the error cause chain", () => {
@@ -48,7 +91,6 @@ describe("mcp-auth storage paths", () => {
   beforeEach(() => {
     authDir = mkdtempSync(join(tmpdir(), "pi-mcp-auth-storage-"));
     process.env.MCP_OAUTH_DIR = authDir;
-    resetTestAuthSecretStore();
   });
 
   afterEach(() => {
@@ -143,104 +185,73 @@ describe("mcp-auth storage paths", () => {
     rmSync(project, { recursive: true, force: true });
   });
 
-  it("chunks large secure-store entries and reads them back", () => {
+  it("round-trips large secure-store entries", () => {
     const accessToken = "x".repeat(5000);
     saveAuthEntry("large-entry", { tokens: { accessToken } }, "https://example.com/mcp");
-
     expect(getAuthEntry("large-entry")?.tokens?.accessToken).toBe(accessToken);
-    const entries = getTestAuthSecretStoreEntries();
-    const manifestEntry = entries.find(([account]) => !account.includes(".chunk."));
-    const chunkEntries = entries.filter(([account]) => account.includes(".chunk."));
-
-    expect(manifestEntry).toBeDefined();
-    const manifest = JSON.parse(manifestEntry![1]) as { __piMcpAdapterOAuthChunked?: number; chunkCount?: number };
-    expect(manifest.__piMcpAdapterOAuthChunked).toBe(1);
-    expect(chunkEntries).toHaveLength(manifest.chunkCount);
-    expect(chunkEntries.every(([, payload]) => payload.length <= 1800)).toBe(true);
   });
 
-  it("returns unavailable status when a stored chunk cannot be read", () => {
-    saveAuthEntry("large-status", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
-    const chunkAccount = getTestAuthSecretStoreEntries().find(([account]) => account.includes(".chunk."))?.[0];
-    expect(chunkAccount).toBeDefined();
-    removeTestAuthSecretStoreEntry(chunkAccount!);
+  describe("Linux keyring recovery helper", () => {
+    let harnessDir: string;
+    let storePath: string;
 
-    expect(inspectAuthForUrl("large-status", "https://example.com/mcp").status).toBe("unavailable");
-  });
+    beforeEach(() => {
+      ({ harnessDir, storePath } = createRecoveryHarness());
+    });
 
-  it("removes chunk payloads when credentials are cleared", () => {
-    saveAuthEntry("large-remove", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
-    const storedAccounts = getTestAuthSecretStoreEntries().map(([account]) => account);
-    expect(storedAccounts.some(account => account.includes(".chunk."))).toBe(true);
+    afterEach(() => {
+      rmSync(harnessDir, { recursive: true, force: true });
+    });
 
-    clearAllCredentials("large-remove");
+    it("routes revoked keyring operations through the helper", () => {
+      saveAuthEntry("recovered", { tokens: { accessToken: "token" } });
+      expect(getAuthEntry("recovered")?.tokens?.accessToken).toBe("token");
+      clearAllCredentials("recovered");
+      expect(readRecoveryStore(storePath)).toEqual({});
+    });
 
-    const remainingAccounts = new Set(getTestAuthSecretStoreEntries().map(([account]) => account));
-    expect(storedAccounts.every(account => !remainingAccounts.has(account))).toBe(true);
-  });
+    it("chunks large entries within the secure-store payload limit", () => {
+      const accessToken = "x".repeat(5000);
+      saveAuthEntry("large", { tokens: { accessToken } });
+      expect(getAuthEntry("large")?.tokens?.accessToken).toBe(accessToken);
 
-  it("cleans stale chunks when a large entry is replaced by a small one", () => {
-    saveAuthEntry("large-to-small", { tokens: { accessToken: "x".repeat(5000) } }, "https://example.com/mcp");
-    expect(getTestAuthSecretStoreEntries().some(([account]) => account.includes(".chunk."))).toBe(true);
+      const store = readRecoveryStore(storePath);
+      const chunkEntries = Object.entries(store).filter(([account]) => account.includes(".chunk."));
+      const manifestPayload = Object.entries(store).find(([account]) => !account.includes(".chunk."))?.[1];
+      expect(manifestPayload).toBeDefined();
+      const manifest = JSON.parse(manifestPayload!) as { __piMcpAdapterOAuthChunked?: number; chunkCount?: number };
+      expect(manifest.__piMcpAdapterOAuthChunked).toBe(1);
+      expect(chunkEntries).toHaveLength(manifest.chunkCount);
+      expect(chunkEntries.every(([, payload]) => payload.length <= 1800)).toBe(true);
+    });
 
-    saveAuthEntry("large-to-small", { tokens: { accessToken: "small" } }, "https://example.com/mcp");
+    it("reports unavailable status when a chunk is missing", () => {
+      const serverUrl = "https://example.com/mcp";
+      saveAuthEntry("corrupt", { tokens: { accessToken: "x".repeat(5000) } }, serverUrl);
+      const store = readRecoveryStore(storePath);
+      const missingChunk = Object.keys(store).find((account) => account.includes(".chunk."));
+      expect(missingChunk).toBeDefined();
+      delete store[missingChunk!];
+      writeFileSync(storePath, JSON.stringify(store));
+      expect(inspectAuthForUrl("corrupt", serverUrl).status).toBe("unavailable");
+    });
 
-    expect(getAuthEntry("large-to-small")?.tokens?.accessToken).toBe("small");
-    const entries = getTestAuthSecretStoreEntries();
-    expect(entries).toHaveLength(1);
-    expect(entries[0][0]).not.toContain(".chunk.");
-  });
+    it("cleans stale chunks when a large entry is replaced", () => {
+      saveAuthEntry("shrinking", { tokens: { accessToken: "x".repeat(5000) } });
+      saveAuthEntry("shrinking", { tokens: { accessToken: "small" } });
 
-  it("routes revoked Linux keyring operations through the recovery helper", () => {
-    const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-keyring-recovery-"));
-    const keyctlPath = join(harnessDir, "keyctl");
-    const helperPath = join(harnessDir, "helper.cjs");
-    const storePath = join(harnessDir, "store.json");
+      expect(getAuthEntry("shrinking")?.tokens?.accessToken).toBe("small");
+      const accounts = Object.keys(readRecoveryStore(storePath));
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]).not.toContain(".chunk.");
+    });
 
-    writeFileSync(keyctlPath, `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1" != "session" ] || [ "$2" != "-" ]; then exit 64; fi
-shift 2
-exec "$@"
-`, { mode: 0o755 });
-    writeFileSync(helperPath, `const { existsSync, readFileSync, writeFileSync } = require('node:fs');
-const input = JSON.parse(readFileSync(0, 'utf8'));
-const path = process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE;
-const store = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
-if (input.operation === 'read') {
-  const value = store[input.account];
-  process.stdout.write(JSON.stringify(value === undefined ? { ok: true, found: false } : { ok: true, found: true, value }) + '\\n');
-} else if (input.operation === 'write') {
-  store[input.account] = input.payload;
-  writeFileSync(path, JSON.stringify(store));
-  process.stdout.write(JSON.stringify({ ok: true }) + '\\n');
-} else if (input.operation === 'remove') {
-  delete store[input.account];
-  writeFileSync(path, JSON.stringify(store));
-  process.stdout.write(JSON.stringify({ ok: true }) + '\\n');
-} else {
-  process.stdout.write(JSON.stringify({ ok: false, error: 'bad op' }) + '\\n');
-  process.exitCode = 1;
-}
-`);
-
-    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "keyrevoked";
-    process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY = "1";
-    process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL = keyctlPath;
-    process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE = process.execPath;
-    process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER = helperPath;
-    process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE = storePath;
-
-    const accessToken = "x".repeat(5000);
-    saveAuthEntry("recovered", { tokens: { accessToken } }, "https://example.com/mcp");
-
-    expect(getAuthEntry("recovered")?.tokens?.accessToken).toBe(accessToken);
-
-    clearAllCredentials("recovered");
-
-    expect(getAuthEntry("recovered")).toBeUndefined();
-    expect(JSON.parse(readFileSync(storePath, "utf8"))).toEqual({});
-    rmSync(harnessDir, { recursive: true, force: true });
+    it("removes chunk payloads when credentials are cleared", () => {
+      saveAuthEntry("removing", { tokens: { accessToken: "x".repeat(5000) } });
+      expect(Object.keys(readRecoveryStore(storePath)).some((account) => account.includes(".chunk."))).toBe(true);
+      clearAllCredentials("removing");
+      expect(readRecoveryStore(storePath)).toEqual({});
+    });
   });
 
   it("does not use the recovery helper for generic secure-store failures", () => {

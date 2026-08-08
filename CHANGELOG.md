@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING:** Removed the legacy `settings.hostConfigDiscovery: "prompt"` value. Existing `"prompt"` settings are treated as `"off"`; use `"on"` to load detected host configs.
+
 ## [3.0.1] - 2026-08-07
 
 ### Changed

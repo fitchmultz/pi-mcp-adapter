@@ -131,7 +131,6 @@ function createMockManager(overrides: Partial<McpServerManager> = {}): McpServer
 function createMockConsentManager(overrides: Partial<ConsentManager> = {}): ConsentManager {
   return {
     requiresPrompt: vi.fn().mockReturnValue(false),
-    shouldCacheConsent: vi.fn().mockReturnValue(true),
     ensureApproved: vi.fn(),
     registerDecision: vi.fn(),
     ...overrides,

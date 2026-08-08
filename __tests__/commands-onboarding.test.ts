@@ -148,12 +148,14 @@ describe("commands onboarding", () => {
     process.env.MCP_OAUTH_DIR = mkdtempSync(join(tmpdir(), "pi-mcp-commands-logout-"));
     const ui = createUi();
     const close = vi.fn();
-    const { getAuthEntry, updateOAuthState, updateTokens } = await import("../mcp-auth.ts");
+    const { getAuthEntry, saveAuthEntry } = await import("../mcp-auth.ts");
     const { waitForCallback } = await import("../mcp-callback-server.ts");
     const { logoutServer } = await import("../commands.ts");
 
-    updateTokens("oauth-server", { accessToken: "token", refreshToken: "refresh" }, "https://example.com/mcp");
-    updateOAuthState("oauth-server", "pending-state", "https://example.com/mcp");
+    saveAuthEntry("oauth-server", {
+      tokens: { accessToken: "token", refreshToken: "refresh" },
+      oauthState: "pending-state",
+    }, "https://example.com/mcp");
     const pendingCallback = waitForCallback("pending-state");
     const pendingCallbackRejection = expect(pendingCallback).rejects.toThrow("Authorization cancelled");
 

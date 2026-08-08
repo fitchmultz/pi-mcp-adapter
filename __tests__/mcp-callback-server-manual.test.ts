@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ensureCallbackServer,
-  getPendingAuthCount,
   releaseCallbackServer,
   stopCallbackServer,
 } from "../mcp-callback-server.ts";
@@ -25,7 +24,6 @@ describe("manual OAuth callback reservations", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("Authorization Received");
-    expect(getPendingAuthCount()).toBe(0);
 
     await expect(ensureCallbackServer({ callbackPath: "/other/callback" })).rejects.toThrow(
       /cannot be switched while authorizations are pending/,

@@ -479,15 +479,33 @@ describe("config discovery", () => {
     writeJson(join(home, ".claude.json"), { mcpServers: { old: { command: "old" } } });
     writeJson(join(project, ".vscode", "mcp.json"), { mcpServers: { editor: { command: "code" } } });
 
-    const { findAvailableImportConfigs } = await import("../config.ts");
-    const imports = findAvailableImportConfigs();
+    const { getMcpDiscoverySummary } = await import("../config.ts");
+    expect(getMcpDiscoverySummary().imports).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "claude-code", path: join(home, ".claude", "mcp.json") }),
+      expect.objectContaining({ kind: "vscode", path: resolve(realProject, ".vscode", "mcp.json") }),
+    ]));
+  });
 
-    expect(imports).toEqual(
-      expect.arrayContaining([
-        { kind: "claude-code", path: join(home, ".claude", "mcp.json") },
-        { kind: "vscode", path: resolve(realProject, ".vscode", "mcp.json") },
-      ]),
-    );
+  it("treats the legacy prompt policy as an explicit off override", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-legacy-host-discovery-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-legacy-host-discovery-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      settings: { hostConfigDiscovery: "on" },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      settings: { hostConfigDiscovery: "prompt" },
+    });
+    writeJson(join(home, ".cursor", "mcp.json"), {
+      mcpServers: { hostOnly: { command: "host-only" } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig();
+    expect(config.settings?.hostConfigDiscovery).toBe("off");
+    expect(config.mcpServers.hostOnly).toBeUndefined();
   });
 
   it("keeps host discovery opt-in and reports active sources, precedence, conflicts, and provenance", async () => {
@@ -706,13 +724,12 @@ describe("config discovery", () => {
       mcpServers: { exa: { url: "https://mcp.exa.ai/mcp" } },
     });
 
-    const { findAvailableImportConfigs, getMcpDiscoverySummary } = await import("../config.ts");
-    expect(findAvailableImportConfigs()).toContainEqual({ kind: "codex", path: join(home, ".codex", "config.json") });
+    const { getMcpDiscoverySummary } = await import("../config.ts");
     expect(getMcpDiscoverySummary().imports).toEqual([
       expect.objectContaining({ kind: "codex", path: join(home, ".codex", "config.json"), serverCount: 1 }),
     ]);
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to discover imported MCP config from codex:"),
+      expect.stringContaining("Failed to inspect imported MCP config from codex:"),
       expect.anything(),
     );
   });
@@ -1149,7 +1166,6 @@ describe("config discovery", () => {
     const {
       previewCompatibilityImports,
       previewSharedServerEntry,
-      getGenericGlobalConfigPath,
     } = await import("../config.ts");
 
     const importsPreview = previewCompatibilityImports(["cursor", "codex"]);
@@ -1158,7 +1174,7 @@ describe("config discovery", () => {
     expect(importsPreview.diffText).toContain("+++ after");
     expect(importsPreview.diffText).toContain('+     "codex"');
 
-    const sharedPreview = previewSharedServerEntry(getGenericGlobalConfigPath(), "repoprompt", {
+    const sharedPreview = previewSharedServerEntry(join(home, ".config", "mcp", "mcp.json"), "repoprompt", {
       command: "/tmp/repoprompt_cli",
       args: [],
       lifecycle: "lazy",
@@ -1244,9 +1260,12 @@ describe("config discovery", () => {
       mcp: { projectOnly: { type: "local", command: ["npx", "project-server"] } },
     });
 
-    const { loadMcpConfig, findAvailableImportConfigs } = await import("../config.ts");
+    const { getMcpDiscoverySummary, loadMcpConfig } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers.projectOnly).toEqual({ command: "npx", args: ["project-server"] });
-    expect(findAvailableImportConfigs()).toContainEqual({ kind: "opencode", path: resolve(realpathSync(project), "opencode.json") });
+    expect(getMcpDiscoverySummary().imports).toContainEqual(expect.objectContaining({
+      kind: "opencode",
+      path: resolve(realpathSync(project), "opencode.json"),
+    }));
   });
 
   it("merges OpenCode global and project servers with nested project precedence", async () => {
@@ -1313,12 +1332,12 @@ describe("config discovery", () => {
       mcp: { projectRoot: { type: "local", command: ["root-server"] } },
     });
 
-    const { loadMcpConfig, findAvailableImportConfigs } = await import("../config.ts");
+    const { getMcpDiscoverySummary, loadMcpConfig } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers.projectRoot).toEqual({ command: "root-server", args: [] });
-    expect(findAvailableImportConfigs()).toContainEqual({
+    expect(getMcpDiscoverySummary().imports).toContainEqual(expect.objectContaining({
       kind: "opencode",
       path: resolve(realpathSync(project), "opencode.json"),
-    });
+    }));
   });
 
   it("does not inherit remote credentials or local process secrets across identity changes", async () => {
