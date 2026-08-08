@@ -1,6 +1,6 @@
 {
   "name": "pi-mcp-adapter",
-  "version": "3.0.1",
+  "version": "4.0.0",
   "description": "MCP (Model Context Protocol) adapter extension for Pi coding agent",
   "type": "module",
   "types": "./index.ts",
