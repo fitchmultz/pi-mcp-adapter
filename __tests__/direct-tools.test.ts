@@ -56,7 +56,7 @@ describe("buildProxyDescription", () => {
       version: 1,
       servers: {
         demo: {
-          configHash: "hash",
+          configHash: computeServerHash(config.mcpServers.demo),
           cachedAt: Date.now(),
           tools: [
             {
@@ -77,6 +77,8 @@ describe("buildProxyDescription", () => {
     expect(description).toContain("server status, tool search/describe, auth, and single MCP tool calls");
     expect(description).toContain("When one request needs several MCP calls with logic between them, use mcp_script.");
     expect(description).toContain("Search MCP tools by name/description");
+    expect(description).toContain("Cached server catalogs (call mcp({}) for live status)");
+    expect(description).toContain('mcp({ server: "name", limit: 12 })');
     expect(description).toContain("Non-MCP Pi tools should be called directly, not through mcp.");
     expect(description).not.toContain("MCP + pi");
   });
@@ -112,8 +114,31 @@ describe("buildProxyDescription", () => {
 
     const description = buildProxyDescription(config, cache, []);
 
-    expect(description).toContain("Servers: figma (1 tools)");
+    expect(description).toContain("Cached server catalogs (call mcp({}) for live status): figma (1 tools)");
     expect(description).not.toContain("figma (3 tools)");
+  });
+
+  it("omits stale cache entries from proxy summaries", () => {
+    const config: McpConfig = {
+      mcpServers: { demo: { command: "npx", args: ["changed"] } },
+    };
+    const cache: MetadataCache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: "stale",
+          cachedAt: Date.now(),
+          tools: [{ name: "old_tool", description: "Old" }],
+          resources: [],
+          instructions: "Old instructions",
+        },
+      },
+    };
+
+    const description = buildProxyDescription(config, cache, []);
+
+    expect(description).not.toContain("demo (1 tools)");
+    expect(description).not.toContain("Old instructions");
   });
 
   it("includes a truncated instructions snippet for servers that provide one", () => {
@@ -127,7 +152,7 @@ describe("buildProxyDescription", () => {
       version: 1,
       servers: {
         demo: {
-          configHash: "hash",
+          configHash: computeServerHash(config.mcpServers.demo),
           cachedAt: Date.now(),
           tools: [{ name: "read_skill", description: "Read a skill" }],
           resources: [],
@@ -155,7 +180,7 @@ describe("buildProxyDescription", () => {
       version: 1,
       servers: {
         demo: {
-          configHash: "hash",
+          configHash: computeServerHash(config.mcpServers.demo),
           cachedAt: Date.now(),
           tools: [{ name: "read_skill", description: "Read a skill" }],
           resources: [],
@@ -585,8 +610,10 @@ describe("excludeTools filtering", () => {
     };
 
     const specs = resolveDirectTools(config, cache, "server");
+    resolveDirectTools(config, cache, "server");
 
     expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
+    expect(warn).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("75+ direct tools"));
   });
 

@@ -1,4 +1,5 @@
 node_modules/
+.dogfood/
 .pi/
 conformance/results/
 *.log

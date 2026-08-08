@@ -18,6 +18,7 @@ import { ensureToolCallApproved } from "./tool-approval.ts";
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 const INSTRUCTIONS_SNIPPET_LENGTH = 150;
 export const DIRECT_TOOLS_ADVISORY_THRESHOLD = 75;
+const advisedDirectToolCounts = new Set<number>();
 
 type DirectAutoAuthResult =
   | { status: "skipped" }
@@ -193,7 +194,8 @@ export function resolveDirectTools(
     }
   }
 
-  if (specs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD) {
+  if (specs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD && !advisedDirectToolCounts.has(specs.length)) {
+    advisedDirectToolCounts.add(specs.length);
     console.warn(`MCP: ${specs.length} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered.`);
   }
 
@@ -224,6 +226,7 @@ export function buildProxyDescription(
     const definition = config.mcpServers[serverName];
     if (!definition || isServerDisabled(definition)) continue;
     const entry = cache?.servers?.[serverName];
+    if (!entry || !isServerCacheValid(entry, definition)) continue;
     const effectivePrefix = resolveToolPrefix(definition, prefix);
     const toolCount = (entry?.tools ?? []).filter(
       (tool) => isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools),
@@ -244,7 +247,7 @@ export function buildProxyDescription(
   }
 
   if (serverSummaries.length > 0) {
-    desc += `\nServers: ${serverSummaries.join(", ")}\n`;
+    desc += `\nCached server catalogs (call mcp({}) for live status): ${serverSummaries.join(", ")}\n`;
   }
 
   const disabledServers = Object.entries(config.mcpServers)
@@ -256,8 +259,11 @@ export function buildProxyDescription(
 
   const instructionSummaries: string[] = [];
   for (const serverName of Object.keys(config.mcpServers)) {
-    if (isServerDisabled(config.mcpServers[serverName])) continue;
-    const instructions = cache?.servers?.[serverName]?.instructions;
+    const definition = config.mcpServers[serverName];
+    if (!definition || isServerDisabled(definition)) continue;
+    const entry = cache?.servers?.[serverName];
+    if (!entry || !isServerCacheValid(entry, definition)) continue;
+    const instructions = entry.instructions;
     if (!instructions) continue;
     const snippet = truncateAtWord(instructions.replace(/\s+/g, " ").trim(), INSTRUCTIONS_SNIPPET_LENGTH);
     instructionSummaries.push(`  ${serverName}: ${snippet}`);
@@ -268,7 +274,7 @@ export function buildProxyDescription(
 
   desc += `\nUsage:\n`;
   desc += `  mcp({ })                              → Show server status\n`;
-  desc += `  mcp({ server: "name" })               → List tools from server\n`;
+  desc += `  mcp({ server: "name", limit: 12 })    → Browse a server's tools (use offset for more)\n`;
   desc += `  mcp({ search: "query" })              → Search MCP tools by name/description\n`;
   desc += `  mcp({ describe: "tool_name" })        → Show tool details and parameters\n`;
   desc += `  mcp({ instructions: "name" })         → Show full server usage instructions\n`;

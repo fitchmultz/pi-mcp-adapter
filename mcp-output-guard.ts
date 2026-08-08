@@ -32,7 +32,7 @@ export interface McpResultSummary {
   isError: boolean;
   contentBlocks: number;
   contentSummary: Array<Record<string, unknown>>;
-  structuredContent?: Record<string, unknown>;
+  structuredContentSummary?: Record<string, unknown>;
   meta?: Record<string, unknown>;
   extraFields?: Array<Record<string, unknown>>;
   rawResultBytes: number;
@@ -289,7 +289,7 @@ async function summarizeMcpResult(result: unknown, raw: string, rawBytes: number
   };
 
   if (record && "structuredContent" in record) {
-    summary.structuredContent = summarizeValue(record.structuredContent);
+    summary.structuredContentSummary = summarizeValue(record.structuredContent);
   }
   if (record && "_meta" in record) {
     summary.meta = summarizeValue(record._meta);

@@ -205,6 +205,24 @@ describe("runMcpScript", () => {
     });
   });
 
+  it("lets scripts reduce raw MCP results larger than the model-facing details limit", async () => {
+    const value = "x".repeat(1000);
+    const limitedState = {
+      ...state,
+      config: {
+        settings: { outputGuard: { detailsMaxBytes: 100 } },
+        mcpServers: { fixture: definition },
+      },
+    } as unknown as McpExtensionState;
+
+    const result = await runMcpScript(
+      limitedState,
+      `const result = await tools.fixture_echo({ value: ${JSON.stringify(value)} }); return { omitted: result.data.omitted === true, echoed: result.data.structuredContent?.echoed };`,
+    );
+
+    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({ omitted: false, echoed: value });
+  });
+
   it("returns a failure envelope and lets the script continue", async () => {
     const result = await runMcpScript(
       state,

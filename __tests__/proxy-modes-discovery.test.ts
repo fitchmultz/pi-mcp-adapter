@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { executeCall, executeDescribe, executeSearch } from "../proxy-modes.ts";
+import { describe, expect, it, vi } from "vitest";
+import { executeCall, executeDescribe, executeList, executeSearch, executeStatus } from "../proxy-modes.ts";
 import type { McpExtensionState } from "../state.ts";
 
 function createState(): McpExtensionState {
@@ -30,6 +30,7 @@ function createState(): McpExtensionState {
     manager: {
       getConnection: () => undefined,
     },
+    serverInstructions: new Map(),
     failureTracker: new Map(),
   } as unknown as McpExtensionState;
 }
@@ -48,8 +49,37 @@ describe("proxy discovery", () => {
     expect(result.details).toMatchObject({ count: 0 });
   });
 
+  it("paginates server listings", () => {
+    const result = executeList(createState(), "demo", 1, 0);
+
+    expect(result.content[0].text).toContain("demo_search");
+    expect(result.content[0].text).not.toContain("demo_find");
+    expect(result.content[0].text).toContain("1-1 of 2 — offset: 1 for more");
+    expect(result.details).toMatchObject({
+      count: 2,
+      hasMore: true,
+      nextOffset: 1,
+      tools: ["demo_search"],
+    });
+  });
+
+  it("explains an out-of-range server-list offset", () => {
+    const result = executeList(createState(), "demo", 1, 99);
+
+    expect(result.content[0].text).toBe('No tools at offset 99; "demo" has 2 tools. Retry with mcp({ server: "demo", limit: 1, offset: 0 }).');
+    expect(result.details).toMatchObject({ error: "offset_out_of_range", count: 2, tools: [] });
+  });
+
+  it("explains lazy connection state", () => {
+    const result = executeStatus(createState());
+
+    expect(result.content[0].text).toContain("MCP: 0/1 connected, 2 tools available (calls connect lazily)");
+  });
+
   it("returns ranked paged search details", () => {
     const result = executeSearch(createState(), "demo", undefined, false, 1, 0);
+
+    expect(result.content[0].text).toContain("1-1 of 2 — offset: 1 for more");
 
     expect(result.details).toMatchObject({
       count: 2,
@@ -70,11 +100,39 @@ describe("proxy discovery", () => {
     });
   });
 
-  it("suggests the matching tool for a prefix-mangled describe name", () => {
-    const result = executeDescribe(createState(), "demo_sear");
+  it("explains an out-of-range search offset", () => {
+    const result = executeSearch(createState(), "demo", undefined, false, 1, 99);
+
+    expect(result.content[0].text).toContain("No search results at offset 99; 2 tools match");
+    expect(result.details).toMatchObject({ error: "offset_out_of_range", count: 2, matches: [] });
+  });
+
+  it("scopes prefix-mangled suggestions to the matching server", () => {
+    const state = createState();
+    state.config.mcpServers.noise = { command: "npx", args: ["noise"] };
+    state.toolMetadata.set("noise", [{
+      name: "noise_search",
+      originalName: "search",
+      description: "Search demo records",
+    }]);
+
+    const result = executeDescribe(state, "demo_sear");
 
     expect(result.details).toMatchObject({ suggestions: ["demo_search"] });
+    expect(result.content[0].text).toContain('Inspect with mcp({ describe: "demo_search" })');
+  });
+
+  it("keeps cached prefixed call typos bounded without connecting", async () => {
+    const state = createState();
+    const connect = vi.fn();
+    state.manager = { getConnection: () => undefined, connect } as never;
+
+    const result = await executeCall(state, "demo_sear");
+
+    expect(connect).not.toHaveBeenCalled();
     expect(result.content[0].text).toContain("Did you mean: demo_search");
+    expect(result.content[0].text).not.toContain("demo_find");
+    expect(result.content[0].text.length).toBeLessThan(200);
   });
 
   it("tells callers to invoke native Pi tools directly", async () => {

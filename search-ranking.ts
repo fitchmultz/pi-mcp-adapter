@@ -115,13 +115,40 @@ export function paginate<T>(items: T[], offset: number, limit: number): { items:
   };
 }
 
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        current[j - 1]! + 1,
+        previous[j]! + 1,
+        previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length]!;
+}
+
 export function rankSuggestions(state: McpExtensionState, name: string, limit: number): string[] {
-  const stripped = Object.keys(state.config.mcpServers)
+  const prefixed = Object.keys(state.config.mcpServers)
     .flatMap(server => (["server", "short", "mcp"] as const)
-      .map(prefix => getServerPrefix(server, prefix)))
-    .filter((candidate): candidate is string => Boolean(candidate) && name.startsWith(`${candidate}_`))
-    .sort((a, b) => b.length - a.length)
-    .map(candidate => name.slice(candidate.length + 1));
-  const query = stripped[0] ?? name;
-  return rankToolMatches(state, query).slice(0, limit).map(match => match.tool.name);
+      .map(mode => ({ server, prefix: getServerPrefix(server, mode) })))
+    .filter((candidate): candidate is { server: string; prefix: string } =>
+      Boolean(candidate.prefix)
+      && !isServerDisabled(state.config.mcpServers[candidate.server])
+      && name.startsWith(`${candidate.prefix}_`))
+    .sort((a, b) => b.prefix.length - a.prefix.length);
+  const matched = prefixed[0];
+  if (!matched) return rankToolMatches(state, name).slice(0, limit).map(match => match.tool.name);
+
+  const query = normalizeSearchText(name).replace(/\s+/g, "_");
+  const maxDistance = Math.max(2, Math.floor(query.length * 0.2));
+  return (state.toolMetadata.get(matched.server) ?? [])
+    .map(tool => ({ tool, distance: editDistance(query, normalizeSearchText(tool.name).replace(/\s+/g, "_")) }))
+    .filter(({ distance }) => distance <= maxDistance)
+    .sort((a, b) => a.distance - b.distance || a.tool.name.localeCompare(b.tool.name))
+    .slice(0, limit)
+    .map(({ tool }) => tool.name);
 }

@@ -8,7 +8,7 @@ import { getServerPrefix, isServerDisabled, parseUiPromptHandoff } from "./types
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { buildToolMetadata, getToolNames, findToolByName, formatSchema } from "./tool-metadata.ts";
+import { buildToolMetadata, findToolByName, formatSchema } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { resolveMcpResultContent, transformMcpContent } from "./tool-registrar.ts";
@@ -268,7 +268,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
   const totalTools = enabledServers.reduce((sum, s) => sum + s.toolCount, 0);
   const connectedCount = enabledServers.filter(s => s.status === "connected").length;
 
-  let text = `MCP: ${connectedCount}/${enabledServers.length} servers, ${totalTools} tools`;
+  let text = `MCP: ${connectedCount}/${enabledServers.length} connected, ${totalTools} tools available (calls connect lazily)`;
   if (disabledCount > 0) text += ` (${disabledCount} disabled)`;
   text += "\n\n";
   for (const server of servers) {
@@ -296,7 +296,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
   }
 
   if (servers.length > 0) {
-    text += `\nmcp({ server: "name" }) to list tools, mcp({ search: "..." }) to search`;
+    text += `\nmcp({ server: "name" }) to browse tools, mcp({ search: "..." }) to search`;
   }
 
   return {
@@ -416,9 +416,11 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
   if (!serverName || !toolMeta) {
     if (disabledMatch) return disabledResult("describe", disabledMatch);
     const suggestions = rankSuggestions(state, toolName, 5);
-    const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
+    const hint = suggestions.length > 0
+      ? `Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ describe: "${suggestions[0]}" }).`
+      : `Use mcp({ search: "..." }) to search.`;
     return {
-      content: [{ type: "text" as const, text: `Tool "${toolName}" not found. Use mcp({ search: "..." }) to search.${suggestionText}` }],
+      content: [{ type: "text" as const, text: `Tool "${toolName}" not found. ${hint}` }],
       details: { mode: "describe", error: "tool_not_found", requestedTool: toolName, suggestions },
     };
   }
@@ -482,6 +484,15 @@ export function executeSearch(
       details: { mode: "search", matches: [], count: 0, hasMore: false, nextOffset: null, query },
     };
   }
+  if (page.items.length === 0) {
+    const retry = server
+      ? `mcp({ search: ${JSON.stringify(query)}, server: ${JSON.stringify(server)}, limit: ${limit}, offset: 0 })`
+      : `mcp({ search: ${JSON.stringify(query)}, limit: ${limit}, offset: 0 })`;
+    return {
+      content: [{ type: "text" as const, text: `No search results at offset ${offset}; ${page.total} tools match. Retry with ${retry}.` }],
+      details: { mode: "search", error: "offset_out_of_range", matches: [], count: page.total, hasMore: false, nextOffset: null, query },
+    };
+  }
 
   let text = `Found ${page.total} tool${page.total === 1 ? "" : "s"} matching "${query}":\n\n`;
   for (const match of page.items) {
@@ -506,7 +517,10 @@ export function executeSearch(
       text += "\n";
     }
   }
-  if (page.hasMore) text += `\n${page.items.length} of ${page.total} — offset: ${page.nextOffset} for more\n`;
+  if (page.hasMore) {
+    const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
+    text += `\n${first}-${first + page.items.length - 1} of ${page.total} — offset: ${page.nextOffset} for more\n`;
+  }
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
@@ -521,7 +535,7 @@ export function executeSearch(
   };
 }
 
-export function executeList(state: McpExtensionState, server: string): ProxyToolResult {
+export function executeList(state: McpExtensionState, server: string, limit = 12, offset = 0): ProxyToolResult {
   const definition = state.config.mcpServers[server];
   if (!definition) {
     return {
@@ -532,7 +546,6 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
   if (isServerDisabled(definition)) return disabledResult("list", server);
 
   const metadata = state.toolMetadata.get(server);
-  const toolNames = metadata?.map(m => m.name) ?? [];
   const connection = state.manager.getConnection(server);
   const instructions = state.serverInstructions.get(server);
   let instructionsText = "";
@@ -544,7 +557,7 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     }
   }
 
-  if (toolNames.length === 0) {
+  if (!metadata?.length) {
     if (connection?.status === "connected") {
       return {
         content: [{ type: "text" as const, text: `Server "${server}" has no tools.${instructionsText}` }],
@@ -563,29 +576,40 @@ export function executeList(state: McpExtensionState, server: string): ProxyTool
     };
   }
 
-  const cachedNote = connection?.status === "connected" ? "" : " (not connected, cached)";
-  let text = `${server} (${toolNames.length} tools${cachedNote}):\n\n`;
-
-  const descMap = new Map<string, string>();
-  if (metadata) {
-    for (const m of metadata) {
-      descMap.set(m.name, m.description);
-    }
+  const page = paginate(metadata, offset, limit);
+  if (page.items.length === 0) {
+    return {
+      content: [{ type: "text" as const, text: `No tools at offset ${offset}; "${server}" has ${page.total} tools. Retry with mcp({ server: ${JSON.stringify(server)}, limit: ${limit}, offset: 0 }).` }],
+      details: { mode: "list", error: "offset_out_of_range", server, tools: [], count: page.total, hasMore: false, nextOffset: null, hasInstructions: Boolean(instructions) },
+    };
   }
 
-  for (const tool of toolNames) {
-    const desc = descMap.get(tool) ?? "";
-    const truncated = truncateAtWord(desc, 50);
-    text += `- ${tool}`;
-    if (truncated) text += ` - ${truncated}`;
+  const cachedNote = connection?.status === "connected" ? "" : ", not connected, cached";
+  let text = `${server} (${page.total} tools${cachedNote}):\n\n`;
+
+  for (const tool of page.items) {
+    const description = truncateAtWord(tool.description, 50);
+    text += `- ${tool.name}`;
+    if (description) text += ` - ${description}`;
     text += "\n";
   }
-
+  if (page.hasMore) {
+    const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
+    text += `\n${first}-${first + page.items.length - 1} of ${page.total} — offset: ${page.nextOffset} for more`;
+  }
   text += instructionsText;
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "list", server, tools: toolNames, count: toolNames.length, hasInstructions: Boolean(instructions) },
+    details: {
+      mode: "list",
+      server,
+      tools: page.items.map(tool => tool.name),
+      count: page.total,
+      hasMore: page.hasMore,
+      nextOffset: page.nextOffset,
+      hasInstructions: Boolean(instructions),
+    },
   };
 }
 
@@ -706,6 +730,7 @@ interface ToolCallOptions {
   recoverAuthConnection: (serverName: string) => Promise<ServerConnection | undefined>;
   authRequiredMessage: () => string;
   autoAuthAttempted: () => boolean;
+  onRawResult?: (result: unknown) => void;
 }
 
 /**
@@ -722,7 +747,7 @@ export async function runToolCall(
   args: Record<string, unknown> | undefined,
   options: ToolCallOptions,
 ): Promise<ProxyToolResult> {
-  const { detailsBase, ownedSignal, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted } = options;
+  const { detailsBase, ownedSignal, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted, onRawResult } = options;
   const requestOptions = state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
   const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
   // Lazy: formatSchema recurses, so only pay for it (and only risk it throwing)
@@ -746,6 +771,7 @@ export async function runToolCall(
         serverName,
         (conn) => conn.client.readResource({ uri: target.resourceUri! }, requestOptions),
       );
+      onRawResult?.(result);
       const contents = (result.contents ?? []).map(c => ({
         type: "text" as const,
         text: "text" in c ? c.text : ("blob" in c ? `[Binary data: ${(c as { mimeType?: string }).mimeType ?? "unknown"}]` : JSON.stringify(c)),
@@ -786,6 +812,7 @@ export async function runToolCall(
       return { content: guarded.content, details: { ...detailsBase, error: "tool_error", ...guardedMcpDetails(guarded) } };
     }
 
+    onRawResult?.(result);
     const content = resolveMcpResultContent(result as Record<string, unknown>);
     const outputContent = content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }];
 
@@ -854,6 +881,7 @@ export async function executeCall(
   serverOverride?: string,
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
+  onRawResult?: (result: unknown) => void,
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
@@ -906,7 +934,7 @@ export async function executeCall(
     if (!toolMeta && disabledMatch) return disabledCallResult(disabledMatch.serverName, disabledMatch.toolMeta);
   }
 
-  if (serverName && !toolMeta) {
+  if (serverName && !toolMeta && !state.toolMetadata.has(serverName)) {
     const connected = await lazyConnect(state, serverName, ownedSignal);
     if (connected) {
       toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
@@ -974,6 +1002,10 @@ export async function executeCall(
       const existingConnection = state.manager.getConnection(configuredServer);
       const failedAgo = getFailureAgeSeconds(state, configuredServer);
       if (failedAgo !== null && existingConnection?.status !== "needs-auth") continue;
+      if (state.toolMetadata.has(configuredServer)) {
+        prefixMatchedServer ??= configuredServer;
+        continue;
+      }
 
       let connected = await lazyConnect(state, configuredServer, ownedSignal);
       if (!connected && state.manager.getConnection(configuredServer)?.status === "needs-auth" && !autoAuthAttempted) {
@@ -1014,17 +1046,17 @@ export async function executeCall(
     }
 
     const hintServer = serverName ?? prefixMatchedServer;
-    const available = hintServer ? getToolNames(state, hintServer) : [];
-    let msg = `Tool "${toolName}" not found.`;
-    if (available.length > 0) {
-      msg += ` Server "${hintServer}" has: ${available.join(", ")}`;
-    } else {
-      msg += ` Use mcp({ search: "..." }) to search.`;
-    }
     const suggestions = rankSuggestions(state, toolName, 5);
-    if (suggestions.length > 0) msg += ` Did you mean: ${suggestions.join(", ")}`;
+    let hint: string;
+    if (suggestions.length > 0) {
+      hint = ` Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ describe: "${suggestions[0]}" }).`;
+    } else if (hintServer) {
+      hint = ` Search with mcp({ search: ${JSON.stringify(toolName)}, server: ${JSON.stringify(hintServer)} }).`;
+    } else {
+      hint = ` Use mcp({ search: "..." }) to search.`;
+    }
     return {
-      content: [{ type: "text" as const, text: msg }],
+      content: [{ type: "text" as const, text: `Tool "${toolName}" not found.${hint}` }],
       details: { mode: "call", error: "tool_not_found", requestedTool: toolName, hintServer, suggestions },
     };
   }
@@ -1113,14 +1145,12 @@ export async function executeCall(
       updateStatusBar(state);
       toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
       if (!toolMeta) {
-        const available = getToolNames(state, serverName);
-        const hint = available.length > 0
-          ? `Available tools on "${serverName}": ${available.join(", ")}`
-          : `Server "${serverName}" has no tools.`;
         const suggestions = rankSuggestions(state, toolName, 5);
-        const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
+        const hint = suggestions.length > 0
+          ? ` Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ describe: "${suggestions[0]}" }).`
+          : ` Search with mcp({ search: ${JSON.stringify(toolName)}, server: ${JSON.stringify(serverName)} }).`;
         return {
-          content: [{ type: "text" as const, text: `Tool "${toolName}" not found on "${serverName}" after reconnect. ${hint}${suggestionText}` }],
+          content: [{ type: "text" as const, text: `Tool "${toolName}" not found on "${serverName}" after reconnect.${hint}` }],
           details: { mode: "call", error: "tool_not_found_after_reconnect", server: serverName, requestedTool: toolName, suggestions },
         };
       }
@@ -1189,5 +1219,6 @@ export async function executeCall(
     recoverAuthConnection,
     authRequiredMessage: () => getAuthRequiredMessage(state, serverName),
     autoAuthAttempted: () => autoAuthAttempted,
+    ...(onRawResult ? { onRawResult } : {}),
   });
 }

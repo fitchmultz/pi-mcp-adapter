@@ -96,7 +96,7 @@ describe("disabled MCP servers", () => {
   it("rejects proxy execution and hides disabled cached metadata while listing it in status", async () => {
     const state = disabledState();
     expect(executeStatus(state).content[0].text).toContain("disabled");
-    expect(executeStatus(state).content[0].text).toContain("0/1 servers");
+    expect(executeStatus(state).content[0].text).toContain("0/1 connected");
     expect(executeList(state, "disabled").details).toMatchObject({ error: "server_disabled" });
     expect(executeInstructions(state, "disabled").details).toMatchObject({ error: "server_disabled" });
     state.toolMetadata.set("enabled", [{ name: "disabled_search", originalName: "search", description: "enabled duplicate" }]);
