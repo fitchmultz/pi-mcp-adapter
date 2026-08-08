@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-08-08
+
 ### Changed
+- **BREAKING:** Removed regex tool search and the `regex: true` input. Ranked substring and token search remains available.
 - **BREAKING:** Removed the legacy `settings.hostConfigDiscovery: "prompt"` value. Existing `"prompt"` settings are treated as `"off"`; use `"on"` to load detected host configs.
+- Proxy and direct tool calls now share one execution path, keeping output guarding, recovery, UI handling, and raw MCP result details consistent.
+- Removed unused internal APIs, compatibility modules, and dependencies, reducing non-test source by about 805 lines and the installed footprint by about 56 MB.
 
 ## [3.0.1] - 2026-08-07
 
