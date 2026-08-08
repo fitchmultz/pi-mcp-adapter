@@ -89,6 +89,12 @@ describe("proxy discovery", () => {
     });
   });
 
+  it("keeps the default schema mode implicit in search continuations", () => {
+    const result = executeSearch(createState(), "demo", undefined, undefined, 1, 0);
+
+    expect(result.content[0].text).not.toContain("includeSchemas");
+  });
+
   it("preserves compact server-scoped search in continuation and retry calls", () => {
     const state = createState();
     const page = executeSearch(state, "demo", "demo", false, 1, 0);
@@ -166,7 +172,10 @@ describe("proxy discovery", () => {
     state.config.mcpServers.slack = { command: "slack" };
     state.toolMetadata = new Map([
       ["gh", [{ name: "gh_list_issues", originalName: "list_issues", description: "List issues" }]],
-      ["slack", [{ name: "slack_send", originalName: "send", description: "Send" }]],
+      ["slack", [
+        { name: "slack_send", originalName: "send", description: "Send" },
+        { name: "gh_list_issue", originalName: "gh_list_issue", description: "Near match" },
+      ]],
     ]);
 
     const result = await executeCall(state, "gh_list_issues", undefined, "slack");
@@ -175,6 +184,9 @@ describe("proxy discovery", () => {
     expect(result.content[0].text).toBe(
       'Tool "gh_list_issues" is on server "gh", not "slack". Retry the same call with server: "gh" or omit server.',
     );
+
+    const alias = await executeCall(state, "gh-list-issues", undefined, "slack");
+    expect(alias.details).toMatchObject({ suggestedServer: "gh" });
   });
 
   it("uses effective per-server prefixes for lazy routing", async () => {
