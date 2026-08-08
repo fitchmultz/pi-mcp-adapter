@@ -610,7 +610,7 @@ describe("excludeTools filtering", () => {
     };
 
     const specs = resolveDirectTools(config, cache, "server");
-    resolveDirectTools(config, cache, "server");
+    resolveDirectTools(structuredClone(config), cache, "server");
 
     expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
     expect(warn).toHaveBeenCalledOnce();

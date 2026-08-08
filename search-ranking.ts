@@ -182,7 +182,7 @@ export function rankSuggestions(state: McpExtensionState, name: string, limit: n
   if (closest.length > 0) return closest;
 
   const queryTokens = tokenize(query);
-  return rankToolMatches(state, query, matchedServer)
+  const tokenMatches = rankToolMatches(state, query, matchedServer)
     .filter(({ tool }) => {
       const candidateTokens = tokenize(tool.originalName);
       return queryTokens.every(token => candidateTokens.some(candidate =>
@@ -192,4 +192,5 @@ export function rankSuggestions(state: McpExtensionState, name: string, limit: n
     })
     .slice(0, limit)
     .map(match => match.tool.name);
+  return tokenMatches.length > 0 || !server ? tokenMatches : rankSuggestions(state, name, limit);
 }

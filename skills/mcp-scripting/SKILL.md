@@ -25,7 +25,7 @@ return result.data?.structuredContent ?? result.data;
 
 ## Workflow
 
-1. Find candidate tools with `await tools.search({ query, server?, limit?, offset? })`.
+1. Find candidate tools with `await tools.search({ query, server?, limit?, offset? })`. `limit` defaults to 12 and is capped at 100.
 2. Inspect the exact returned path with `await tools.describe({ path })`.
 3. Call it with `tools.call(path, args)`.
 

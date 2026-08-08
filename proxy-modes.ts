@@ -4,7 +4,7 @@ import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js"
 import type { McpExtensionState } from "./state.ts";
 import type { ServerConnection } from "./server-manager.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
-import { getServerPrefix, isServerDisabled, parseUiPromptHandoff } from "./types.ts";
+import { getServerPrefix, isServerDisabled, parseUiPromptHandoff, resolveToolPrefix } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
@@ -415,7 +415,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
 
   if (!serverName || !toolMeta) {
     if (disabledMatch) return disabledResult("describe", disabledMatch);
-    const suggestions = rankSuggestions(state, toolName, 5, serverName);
+    const suggestions = rankSuggestions(state, toolName, 5);
     const hint = suggestions.length > 0
       ? `Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ describe: "${suggestions[0]}" }).`
       : `Use mcp({ search: "..." }) to search.`;
@@ -518,8 +518,11 @@ export function executeSearch(
     }
   }
   const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
+  const nextSearch = server
+    ? `mcp({ search: ${JSON.stringify(query)}, server: ${JSON.stringify(server)}, limit: ${limit}, offset: ${page.nextOffset} })`
+    : `mcp({ search: ${JSON.stringify(query)}, limit: ${limit}, offset: ${page.nextOffset} })`;
   text += page.hasMore
-    ? `\n${first}-${first + page.items.length - 1} of ${page.total} — offset: ${page.nextOffset} for more\n`
+    ? `\n${first}-${first + page.items.length - 1} of ${page.total} — ${nextSearch} for more\n`
     : `\n${first}-${first + page.items.length - 1} of ${page.total} — end\n`;
 
   return {
@@ -994,7 +997,10 @@ export async function executeCall(
   if (!serverName && !toolMeta && prefixMode !== "none") {
     const candidates = Object.keys(state.config.mcpServers)
       .filter(name => !isServerDisabled(state.config.mcpServers[name]))
-      .map(name => ({ name, prefix: getServerPrefix(name, prefixMode) }))
+      .map(name => ({
+        name,
+        prefix: getServerPrefix(name, resolveToolPrefix(state.config.mcpServers[name], prefixMode)),
+      }))
       .filter(c => c.prefix && toolName.startsWith(c.prefix + "_"))
       .sort((a, b) => b.prefix.length - a.prefix.length)
       .slice(0, 1);
@@ -1056,7 +1062,9 @@ export async function executeCall(
     } else {
       hint = ` Use mcp({ search: "..." }) to search.`;
     }
-    if (hintServer && state.toolMetadata.has(hintServer) && state.manager.getConnection(hintServer)?.status !== "connected") {
+    const suggestionOnHintServer = hintServer && suggestions.some(suggestion =>
+      state.toolMetadata.get(hintServer)?.some(tool => tool.name === suggestion));
+    if (hintServer && (suggestions.length === 0 || suggestionOnHintServer) && state.toolMetadata.has(hintServer) && state.manager.getConnection(hintServer)?.status !== "connected") {
       hint += ` Refresh a stale catalog with mcp({ connect: ${JSON.stringify(hintServer)} }).`;
     }
     return {

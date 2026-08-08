@@ -79,7 +79,7 @@ describe("proxy discovery", () => {
   it("returns ranked paged search details", () => {
     const result = executeSearch(createState(), "demo", undefined, false, 1, 0);
 
-    expect(result.content[0].text).toContain("1-1 of 2 — offset: 1 for more");
+    expect(result.content[0].text).toContain('1-1 of 2 — mcp({ search: "demo", limit: 1, offset: 1 }) for more');
 
     expect(result.details).toMatchObject({
       count: 2,
@@ -149,6 +149,47 @@ describe("proxy discovery", () => {
     const result = await executeCall(state, "sear", undefined, "demo");
 
     expect(result.details).toMatchObject({ hintServer: "demo", suggestions: ["search"] });
+  });
+
+  it("recovers from an explicit server that does not own the tool", async () => {
+    const state = createState();
+    state.config.mcpServers.gh = { command: "gh" };
+    state.config.mcpServers.slack = { command: "slack" };
+    state.toolMetadata = new Map([
+      ["gh", [{ name: "gh_list_issues", originalName: "list_issues", description: "List issues" }]],
+      ["slack", [{ name: "slack_send", originalName: "send", description: "Send" }]],
+    ]);
+
+    const result = await executeCall(state, "gh_list_issues", undefined, "slack");
+
+    expect(result.details).toMatchObject({ hintServer: "slack", suggestions: ["gh_list_issues"] });
+    expect(result.content[0].text).toContain("Did you mean: gh_list_issues");
+    expect(result.content[0].text).not.toContain('connect: "slack"');
+    expect(result.content[0].text).not.toContain('server: "slack"');
+  });
+
+  it("uses effective per-server prefixes for lazy routing", async () => {
+    const state = createState();
+    state.config.mcpServers = {
+      "github-enterprise": { command: "enterprise", toolPrefix: "none" },
+      github: { command: "github" },
+    };
+    state.toolMetadata = new Map([["github-enterprise", [{
+      name: "search",
+      originalName: "search",
+      description: "Search enterprise",
+    }]]]);
+    const connect = vi.fn(async () => { throw new Error("stop after routing"); });
+    state.manager = {
+      getConnection: () => undefined,
+      getAllConnections: () => [],
+      connect,
+    } as never;
+
+    await executeCall(state, "github_enterprise_search");
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(connect.mock.calls[0]?.[0]).toBe("github");
   });
 
   it("does not connect a shorter overlapping prefix after a cached miss", async () => {
