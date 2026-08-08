@@ -459,6 +459,8 @@ export function executeSearch(
   offset = 0,
 ): ProxyToolResult {
   const showSchemas = includeSchemas !== false;
+  const searchCall = (nextOffset: number | null) =>
+    `mcp({ search: ${JSON.stringify(query)}${server ? `, server: ${JSON.stringify(server)}` : ""}${showSchemas ? "" : ", includeSchemas: false"}, limit: ${limit}, offset: ${nextOffset} })`;
   if (server && isServerDisabled(state.config.mcpServers[server])) return disabledResult("search", server);
 
   let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;
@@ -485,9 +487,7 @@ export function executeSearch(
     };
   }
   if (page.items.length === 0) {
-    const retry = server
-      ? `mcp({ search: ${JSON.stringify(query)}, server: ${JSON.stringify(server)}, limit: ${limit}, offset: 0 })`
-      : `mcp({ search: ${JSON.stringify(query)}, limit: ${limit}, offset: 0 })`;
+    const retry = searchCall(0);
     return {
       content: [{ type: "text" as const, text: `No search results at offset ${offset}; ${page.total} tools match. Retry with ${retry}.` }],
       details: { mode: "search", error: "offset_out_of_range", matches: [], count: page.total, hasMore: false, nextOffset: null, query },
@@ -518,9 +518,7 @@ export function executeSearch(
     }
   }
   const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
-  const nextSearch = server
-    ? `mcp({ search: ${JSON.stringify(query)}, server: ${JSON.stringify(server)}, limit: ${limit}, offset: ${page.nextOffset} })`
-    : `mcp({ search: ${JSON.stringify(query)}, limit: ${limit}, offset: ${page.nextOffset} })`;
+  const nextSearch = searchCall(page.nextOffset);
   text += page.hasMore
     ? `\n${first}-${first + page.items.length - 1} of ${page.total} — ${nextSearch} for more\n`
     : `\n${first}-${first + page.items.length - 1} of ${page.total} — end\n`;
@@ -1053,6 +1051,24 @@ export async function executeCall(
     }
 
     const hintServer = serverName ?? prefixMatchedServer;
+    const normalizedToolName = toolName.replace(/-/g, "_");
+    const localOriginalName = serverOverride && state.toolMetadata.get(serverOverride)
+      ?.some(tool => tool.originalName.replace(/-/g, "_") === normalizedToolName);
+    const suggestedOwner = serverOverride && !localOriginalName
+      ? [...state.toolMetadata].find(([candidateServer, metadata]) =>
+        candidateServer !== serverOverride
+        && !isServerDisabled(state.config.mcpServers[candidateServer])
+        && findToolByName(metadata, toolName))
+      : undefined;
+    const suggestedTool = suggestedOwner ? findToolByName(suggestedOwner[1], toolName) : undefined;
+    if (suggestedOwner && suggestedTool) {
+      const suggestedServer = suggestedOwner[0];
+      return {
+        content: [{ type: "text" as const, text: `Tool ${JSON.stringify(toolName)} is on server ${JSON.stringify(suggestedServer)}, not ${JSON.stringify(serverOverride)}. Retry the same call with server: ${JSON.stringify(suggestedServer)} or omit server.` }],
+        details: { mode: "call", error: "tool_not_found", requestedTool: toolName, hintServer, suggestedServer, suggestions: [suggestedTool.name] },
+      };
+    }
+
     const suggestions = rankSuggestions(state, toolName, 5, hintServer);
     let hint: string;
     if (suggestions.length > 0) {
