@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-08-08
+
+### Fixed
+- Paginated server tool catalogs with bounded ranges, explicit continuation calls, a 100-item page cap, and out-of-range recovery instead of dumping every tool.
+- Ranked typo suggestions by same-server edit distance, rejected oversized guessed names before ranking, avoided connecting on cached-name misses, and removed full-catalog error dumps.
+- Let `mcp_script` process full raw MCP results before model-facing output guards, and kept overflow summaries distinct from real `structuredContent`.
+- Omitted stale catalog counts from tool guidance and emitted the large direct-tool advisory only once per resolved tool set.
+
 ## [4.0.0] - 2026-08-08
 
 ### Changed

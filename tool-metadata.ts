@@ -81,10 +81,6 @@ export function buildToolMetadata(
   return { metadata, failedTools };
 }
 
-export function getToolNames(state: McpExtensionState, serverName: string): string[] {
-  return state.toolMetadata.get(serverName)?.map(m => m.name) ?? [];
-}
-
 export function totalToolCount(state: McpExtensionState): number {
   let count = 0;
   for (const metadata of state.toolMetadata.values()) {

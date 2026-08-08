@@ -71,7 +71,8 @@ describe("guardMcpOutput", () => {
     const summary = guarded.mcpResult as McpResultSummary;
     expect(summary).toMatchObject({ omitted: true, isError: false, contentBlocks: 1 });
     expect(summary.fullResultPath).toBeTruthy();
-    expect(summary.structuredContent).toMatchObject({ omitted: true });
+    expect(summary.structuredContentSummary).toMatchObject({ omitted: true });
+    expect(summary).not.toHaveProperty("structuredContent");
     expect(JSON.stringify(summary)).not.toContain("line-19");
   });
 

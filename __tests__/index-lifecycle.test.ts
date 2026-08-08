@@ -607,6 +607,25 @@ describe("mcpAdapter session lifecycle", () => {
     );
   });
 
+  it("forwards pagination into server listings", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.executeList.mockReturnValue({ content: [{ type: "text", text: "ok" }] });
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    mcpAdapter(api);
+
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const proxyTool = api.registerTool.mock.calls.find((call: any[]) => call[0].name === "mcp")?.[0];
+    await proxyTool.execute("call-1", { server: "demo", limit: 5, offset: 10 });
+
+    expect(mocks.executeList).toHaveBeenCalledWith(state, "demo", 5, 10);
+  });
+
   it("routes manual auth actions through the proxy tool", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
