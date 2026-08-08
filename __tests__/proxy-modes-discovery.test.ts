@@ -42,38 +42,14 @@ describe("proxy discovery", () => {
     expect(result.details).toMatchObject({ count: 0, matches: [] });
   });
 
-  it("rejects regex queries longer than the safety cap", () => {
-    const result = executeSearch(createState(), "a".repeat(257), true);
+  it("treats a long query as plain text rather than a pattern", () => {
+    const result = executeSearch(createState(), "search terms ".repeat(40));
 
-    expect(result.details).toMatchObject({ error: "query_too_long", maxLength: 256 });
-  });
-
-  it("reports malformed regex queries separately from unsafe patterns", () => {
-    const result = executeSearch(createState(), "[", true);
-
-    expect(result.details).toMatchObject({ error: "invalid_pattern" });
-  });
-
-  it("rejects catastrophic-backtracking regex queries", () => {
-    const result = executeSearch(createState(), "(a+)+$", true);
-
-    expect(result.details).toMatchObject({ error: "unsafe_pattern", safetyStatus: "vulnerable" });
-  });
-
-  it("accepts safe regex queries", () => {
-    const result = executeSearch(createState(), "^demo_[a-z]+$", true);
-
-    expect(result.details).toMatchObject({ count: 2, query: "^demo_[a-z]+$" });
-  });
-
-  it("keeps non-regex searches unaffected by the regex length cap", () => {
-    const result = executeSearch(createState(), "search terms ".repeat(40), false);
-
-    expect(result.details).not.toMatchObject({ error: "query_too_long" });
+    expect(result.details).toMatchObject({ count: 0 });
   });
 
   it("returns ranked paged search details", () => {
-    const result = executeSearch(createState(), "demo", false, undefined, false, 1, 0);
+    const result = executeSearch(createState(), "demo", undefined, false, 1, 0);
 
     expect(result.details).toMatchObject({
       count: 2,
@@ -83,14 +59,14 @@ describe("proxy discovery", () => {
     });
   });
 
-  it("paginates regex search results without changing their order", () => {
-    const result = executeSearch(createState(), "^demo_", true, undefined, false, 1, 1);
+  it("paginates search results without changing their order", () => {
+    const result = executeSearch(createState(), "demo", undefined, false, 1, 1);
 
     expect(result.details).toMatchObject({
       count: 2,
       hasMore: false,
       nextOffset: null,
-      matches: [{ server: "demo", tool: "demo_find", score: 0 }],
+      matches: [{ server: "demo", tool: "demo_search", score: expect.any(Number) }],
     });
   });
 

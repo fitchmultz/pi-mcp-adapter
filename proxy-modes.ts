@@ -1,7 +1,6 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
-import { createRequire } from "node:module";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
 import { getServerPrefix, isServerDisabled, parseUiPromptHandoff } from "./types.ts";
@@ -23,14 +22,7 @@ import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-appro
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
-const require = createRequire(import.meta.url);
-const MAX_REGEX_SEARCH_QUERY_LENGTH = 256;
 const INSTRUCTIONS_PREVIEW_LENGTH = 300;
-const REGEX_SAFETY_CHECK_PARAMS = {
-  attackTimeout: 50,
-  incubationTimeout: 50,
-  timeout: 250,
-} as const;
 
 type AutoAuthResult =
   | { status: "skipped" }
@@ -458,7 +450,6 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
 export function executeSearch(
   state: McpExtensionState,
   query: string,
-  regex?: boolean,
   server?: string,
   includeSchemas?: boolean,
   limit = 12,
@@ -468,49 +459,7 @@ export function executeSearch(
   if (server && isServerDisabled(state.config.mcpServers[server])) return disabledResult("search", server);
 
   let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;
-  if (regex) {
-    let pattern: RegExp;
-    try {
-      if (query.length > MAX_REGEX_SEARCH_QUERY_LENGTH) {
-        return {
-          content: [{ type: "text" as const, text: `Regex query is too long; maximum length is ${MAX_REGEX_SEARCH_QUERY_LENGTH} characters.` }],
-          details: { mode: "search", error: "query_too_long", query, maxLength: MAX_REGEX_SEARCH_QUERY_LENGTH },
-        };
-      }
-      pattern = new RegExp(query, "i");
-      let safety;
-      try {
-        const { checkSync } = require("recheck") as typeof import("recheck");
-        safety = checkSync(query, "i", REGEX_SAFETY_CHECK_PARAMS);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: "text" as const, text: "Regex query rejected because safety analysis failed." }],
-          details: { mode: "search", error: "unsafe_pattern", query, reason },
-        };
-      }
-      if (safety.status !== "safe") {
-        return {
-          content: [{ type: "text" as const, text: `Regex query rejected as unsafe (${safety.status}).` }],
-          details: { mode: "search", error: "unsafe_pattern", query, safetyStatus: safety.status },
-        };
-      }
-    } catch {
-      return {
-        content: [{ type: "text" as const, text: `Invalid regex: ${query}` }],
-        details: { mode: "search", error: "invalid_pattern", query },
-      };
-    }
-
-    matches = [];
-    for (const [serverName, metadata] of state.toolMetadata.entries()) {
-      if (isServerDisabled(state.config.mcpServers[serverName])) continue;
-      if (server && serverName !== server) continue;
-      for (const tool of metadata) {
-        if (pattern.test(tool.name) || pattern.test(tool.description)) matches.push({ server: serverName, tool, score: 0 });
-      }
-    }
-  } else if (query.trim().length === 0) {
+  if (query.trim().length === 0) {
     if (!server) {
       return {
         content: [{ type: "text" as const, text: "Search query cannot be empty" }],
