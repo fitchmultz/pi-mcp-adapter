@@ -1051,7 +1051,8 @@ export async function executeCall(
     }
 
     const hintServer = serverName ?? prefixMatchedServer;
-    const suggestedOwner = serverOverride
+    const localOriginalName = serverOverride && state.toolMetadata.get(serverOverride)?.some(tool => tool.originalName === toolName);
+    const suggestedOwner = serverOverride && !localOriginalName
       ? [...state.toolMetadata].find(([candidateServer, metadata]) =>
         candidateServer !== serverOverride
         && !isServerDisabled(state.config.mcpServers[candidateServer])

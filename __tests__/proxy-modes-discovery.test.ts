@@ -156,6 +156,17 @@ describe("proxy discovery", () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
+  it("prefers the explicit server's original tool name over another server's exact name", async () => {
+    const state = createState();
+    state.config.mcpServers.noise = { command: "noise", toolPrefix: "none" };
+    state.toolMetadata.set("noise", [{ name: "search", originalName: "search", description: "Search noise" }]);
+
+    const result = await executeCall(state, "search", undefined, "demo");
+
+    expect(result.details).toMatchObject({ hintServer: "demo", suggestions: ["demo_search"] });
+    expect(result.content[0].text).not.toContain('server "noise"');
+  });
+
   it("suggests unprefixed tools when an explicit server is provided", async () => {
     const state = createState();
     state.config.mcpServers.demo.toolPrefix = "none";

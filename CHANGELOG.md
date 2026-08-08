@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Preserved compact search settings across pagination and clarified recovery when an explicit server does not own a requested tool.
+
 ## [4.0.1] - 2026-08-08
 
 ### Fixed
