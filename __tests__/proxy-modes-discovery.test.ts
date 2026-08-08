@@ -54,7 +54,7 @@ describe("proxy discovery", () => {
 
     expect(result.content[0].text).toContain("demo_search");
     expect(result.content[0].text).not.toContain("demo_find");
-    expect(result.content[0].text).toContain("1-1 of 2 — offset: 1 for more");
+    expect(result.content[0].text).toContain('1-1 of 2 — mcp({ server: "demo", limit: 1, offset: 1 }) for more');
     expect(result.details).toMatchObject({
       count: 2,
       hasMore: true,
@@ -92,6 +92,7 @@ describe("proxy discovery", () => {
   it("paginates search results without changing their order", () => {
     const result = executeSearch(createState(), "demo", undefined, false, 1, 1);
 
+    expect(result.content[0].text).toContain("2-2 of 2 — end");
     expect(result.details).toMatchObject({
       count: 2,
       hasMore: false,
@@ -132,7 +133,42 @@ describe("proxy discovery", () => {
     expect(connect).not.toHaveBeenCalled();
     expect(result.content[0].text).toContain("Did you mean: demo_search");
     expect(result.content[0].text).not.toContain("demo_find");
-    expect(result.content[0].text.length).toBeLessThan(200);
+    expect(result.content[0].text).toContain('mcp({ connect: "demo" })');
+    expect(result.content[0].text.length).toBeLessThan(300);
+
+    const missing = await executeCall(state, "demo_new_tool");
+    expect(missing.content[0].text).toContain('mcp({ connect: "demo" })');
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("suggests unprefixed tools when an explicit server is provided", async () => {
+    const state = createState();
+    state.config.mcpServers.demo.toolPrefix = "none";
+    state.toolMetadata.set("demo", [{ name: "search", originalName: "search", description: "Search" }]);
+
+    const result = await executeCall(state, "sear", undefined, "demo");
+
+    expect(result.details).toMatchObject({ hintServer: "demo", suggestions: ["search"] });
+  });
+
+  it("does not connect a shorter overlapping prefix after a cached miss", async () => {
+    const state = createState();
+    state.config.mcpServers = {
+      "github-enterprise": { command: "enterprise" },
+      github: { command: "github" },
+    };
+    state.toolMetadata = new Map([["github-enterprise", [{
+      name: "github_enterprise_search",
+      originalName: "search",
+      description: "Search enterprise",
+    }]]]);
+    const connect = vi.fn();
+    state.manager = { getConnection: () => undefined, connect } as never;
+
+    const result = await executeCall(state, "github_enterprise_sear");
+
+    expect(connect).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({ hintServer: "github-enterprise", suggestions: ["github_enterprise_search"] });
   });
 
   it("tells callers to invoke native Pi tools directly", async () => {

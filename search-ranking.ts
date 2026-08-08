@@ -1,6 +1,6 @@
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata } from "./types.ts";
-import { getServerPrefix, isServerDisabled } from "./types.ts";
+import { getServerPrefix, isServerDisabled, resolveToolPrefix } from "./types.ts";
 
 /**
  * Shortest field token allowed to stem-match a longer query token.
@@ -8,6 +8,8 @@ import { getServerPrefix, isServerDisabled } from "./types.ts";
  * which would otherwise make every query starting with that letter a match.
  */
 const MIN_STEM_LENGTH = 4;
+export const MAX_PAGE_SIZE = 100;
+export const MAX_TOOL_NAME_LENGTH = 512;
 
 const FIELD_WEIGHTS = {
   name: 12,
@@ -103,7 +105,7 @@ export function rankToolMatches(state: McpExtensionState, query: string, server?
 
 export function paginate<T>(items: T[], offset: number, limit: number): { items: T[]; total: number; hasMore: boolean; nextOffset: number | null } {
   const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0;
-  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 1;
+  const safeLimit = Number.isFinite(limit) ? Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(limit))) : 1;
   const total = items.length;
   const page = items.slice(safeOffset, safeOffset + safeLimit);
   const nextOffset = safeOffset + page.length;
@@ -115,40 +117,79 @@ export function paginate<T>(items: T[], offset: number, limit: number): { items:
   };
 }
 
-function editDistance(a: string, b: string): number {
+function editDistance(a: string, b: string, maxDistance: number): number {
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
   let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
   for (let i = 1; i <= a.length; i++) {
     const current = [i];
+    let rowMin = i;
     for (let j = 1; j <= b.length; j++) {
       current[j] = Math.min(
         current[j - 1]! + 1,
         previous[j]! + 1,
         previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
       );
+      rowMin = Math.min(rowMin, current[j]!);
     }
+    if (rowMin > maxDistance) return maxDistance + 1;
     previous = current;
   }
   return previous[b.length]!;
 }
 
-export function rankSuggestions(state: McpExtensionState, name: string, limit: number): string[] {
-  const prefixed = Object.keys(state.config.mcpServers)
-    .flatMap(server => (["server", "short", "mcp"] as const)
-      .map(mode => ({ server, prefix: getServerPrefix(server, mode) })))
-    .filter((candidate): candidate is { server: string; prefix: string } =>
-      Boolean(candidate.prefix)
-      && !isServerDisabled(state.config.mcpServers[candidate.server])
-      && name.startsWith(`${candidate.prefix}_`))
-    .sort((a, b) => b.prefix.length - a.prefix.length);
-  const matched = prefixed[0];
-  if (!matched) return rankToolMatches(state, name).slice(0, limit).map(match => match.tool.name);
-
-  const query = normalizeSearchText(name).replace(/\s+/g, "_");
-  const maxDistance = Math.max(2, Math.floor(query.length * 0.2));
-  return (state.toolMetadata.get(matched.server) ?? [])
-    .map(tool => ({ tool, distance: editDistance(query, normalizeSearchText(tool.name).replace(/\s+/g, "_")) }))
+function rankClosest(tools: ToolMetadata[], query: string, limit: number, candidateName: (tool: ToolMetadata) => string): string[] {
+  const normalizedQuery = normalizeSearchText(query).replace(/\s+/g, "_");
+  const maxDistance = Math.max(2, Math.floor(normalizedQuery.length * 0.2));
+  return tools
+    .map(tool => ({
+      tool,
+      distance: editDistance(normalizedQuery, normalizeSearchText(candidateName(tool)).replace(/\s+/g, "_"), maxDistance),
+    }))
     .filter(({ distance }) => distance <= maxDistance)
     .sort((a, b) => a.distance - b.distance || a.tool.name.localeCompare(b.tool.name))
     .slice(0, limit)
     .map(({ tool }) => tool.name);
+}
+
+export function rankSuggestions(state: McpExtensionState, name: string, limit: number, server?: string): string[] {
+  if (name.length > MAX_TOOL_NAME_LENGTH) return [];
+
+  const globalPrefix = state.config.settings?.toolPrefix ?? "server";
+  const inferred = server ? undefined : Object.entries(state.config.mcpServers)
+    .filter(([, definition]) => !isServerDisabled(definition))
+    .map(([candidateServer, definition]) => ({
+      server: candidateServer,
+      prefix: getServerPrefix(candidateServer, resolveToolPrefix(definition, globalPrefix)),
+    }))
+    .filter((candidate): candidate is { server: string; prefix: string } =>
+      Boolean(candidate.prefix) && name.startsWith(`${candidate.prefix}_`))
+    .sort((a, b) => b.prefix.length - a.prefix.length)[0];
+  const matchedServer = server ?? inferred?.server;
+  if (!matchedServer) {
+    const tools = [...state.toolMetadata.entries()]
+      .filter(([candidateServer]) => !isServerDisabled(state.config.mcpServers[candidateServer]))
+      .flatMap(([, metadata]) => metadata);
+    const closest = rankClosest(tools, name, limit, tool => tool.name);
+    return closest.length > 0 ? closest : rankToolMatches(state, name).slice(0, limit).map(match => match.tool.name);
+  }
+
+  const definition = state.config.mcpServers[matchedServer];
+  if (!definition || isServerDisabled(definition)) return [];
+  const prefix = inferred?.prefix ?? getServerPrefix(matchedServer, resolveToolPrefix(definition, globalPrefix));
+  const query = prefix && name.startsWith(`${prefix}_`) ? name.slice(prefix.length + 1) : name;
+  const tools = state.toolMetadata.get(matchedServer) ?? [];
+  const closest = rankClosest(tools, query, limit, tool => tool.originalName);
+  if (closest.length > 0) return closest;
+
+  const queryTokens = tokenize(query);
+  return rankToolMatches(state, query, matchedServer)
+    .filter(({ tool }) => {
+      const candidateTokens = tokenize(tool.originalName);
+      return queryTokens.every(token => candidateTokens.some(candidate =>
+        candidate === token
+        || candidate.startsWith(token)
+        || (candidate.length >= MIN_STEM_LENGTH && token.startsWith(candidate))));
+    })
+    .slice(0, limit)
+    .map(match => match.tool.name);
 }

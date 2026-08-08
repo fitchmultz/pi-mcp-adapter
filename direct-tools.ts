@@ -18,7 +18,7 @@ import { ensureToolCallApproved } from "./tool-approval.ts";
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 const INSTRUCTIONS_SNIPPET_LENGTH = 150;
 export const DIRECT_TOOLS_ADVISORY_THRESHOLD = 75;
-const advisedDirectToolCounts = new Set<number>();
+const advisedDirectToolCounts = new WeakMap<McpConfig, number>();
 
 type DirectAutoAuthResult =
   | { status: "skipped" }
@@ -194,8 +194,8 @@ export function resolveDirectTools(
     }
   }
 
-  if (specs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD && !advisedDirectToolCounts.has(specs.length)) {
-    advisedDirectToolCounts.add(specs.length);
+  if (specs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD && advisedDirectToolCounts.get(config) !== specs.length) {
+    advisedDirectToolCounts.set(config, specs.length);
     console.warn(`MCP: ${specs.length} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered.`);
   }
 

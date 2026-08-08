@@ -415,7 +415,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
 
   if (!serverName || !toolMeta) {
     if (disabledMatch) return disabledResult("describe", disabledMatch);
-    const suggestions = rankSuggestions(state, toolName, 5);
+    const suggestions = rankSuggestions(state, toolName, 5, serverName);
     const hint = suggestions.length > 0
       ? `Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ describe: "${suggestions[0]}" }).`
       : `Use mcp({ search: "..." }) to search.`;
@@ -517,10 +517,10 @@ export function executeSearch(
       text += "\n";
     }
   }
-  if (page.hasMore) {
-    const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
-    text += `\n${first}-${first + page.items.length - 1} of ${page.total} — offset: ${page.nextOffset} for more\n`;
-  }
+  const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
+  text += page.hasMore
+    ? `\n${first}-${first + page.items.length - 1} of ${page.total} — offset: ${page.nextOffset} for more\n`
+    : `\n${first}-${first + page.items.length - 1} of ${page.total} — end\n`;
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
@@ -593,10 +593,10 @@ export function executeList(state: McpExtensionState, server: string, limit = 12
     if (description) text += ` - ${description}`;
     text += "\n";
   }
-  if (page.hasMore) {
-    const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
-    text += `\n${first}-${first + page.items.length - 1} of ${page.total} — offset: ${page.nextOffset} for more`;
-  }
+  const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
+  text += page.hasMore
+    ? `\n${first}-${first + page.items.length - 1} of ${page.total} — mcp({ server: ${JSON.stringify(server)}, limit: ${limit}, offset: ${page.nextOffset} }) for more`
+    : `\n${first}-${first + page.items.length - 1} of ${page.total} — end`;
   text += instructionsText;
 
   return {
@@ -957,7 +957,7 @@ export async function executeCall(
             if (connectedAfterAuth) {
               toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
               if (!toolMeta) {
-                const suggestions = rankSuggestions(state, toolName, 5);
+                const suggestions = rankSuggestions(state, toolName, 5, serverName);
                 const suggestionText = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}` : "";
                 return {
                   content: [{ type: "text" as const, text: `Tool "${toolName}" not found on "${serverName}" after reconnect.${suggestionText}` }],
@@ -996,7 +996,8 @@ export async function executeCall(
       .filter(name => !isServerDisabled(state.config.mcpServers[name]))
       .map(name => ({ name, prefix: getServerPrefix(name, prefixMode) }))
       .filter(c => c.prefix && toolName.startsWith(c.prefix + "_"))
-      .sort((a, b) => b.prefix.length - a.prefix.length);
+      .sort((a, b) => b.prefix.length - a.prefix.length)
+      .slice(0, 1);
 
     for (const { name: configuredServer } of candidates) {
       const existingConnection = state.manager.getConnection(configuredServer);
@@ -1046,7 +1047,7 @@ export async function executeCall(
     }
 
     const hintServer = serverName ?? prefixMatchedServer;
-    const suggestions = rankSuggestions(state, toolName, 5);
+    const suggestions = rankSuggestions(state, toolName, 5, hintServer);
     let hint: string;
     if (suggestions.length > 0) {
       hint = ` Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ describe: "${suggestions[0]}" }).`;
@@ -1054,6 +1055,9 @@ export async function executeCall(
       hint = ` Search with mcp({ search: ${JSON.stringify(toolName)}, server: ${JSON.stringify(hintServer)} }).`;
     } else {
       hint = ` Use mcp({ search: "..." }) to search.`;
+    }
+    if (hintServer && state.toolMetadata.has(hintServer) && state.manager.getConnection(hintServer)?.status !== "connected") {
+      hint += ` Refresh a stale catalog with mcp({ connect: ${JSON.stringify(hintServer)} }).`;
     }
     return {
       content: [{ type: "text" as const, text: `Tool "${toolName}" not found.${hint}` }],
@@ -1145,7 +1149,7 @@ export async function executeCall(
       updateStatusBar(state);
       toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
       if (!toolMeta) {
-        const suggestions = rankSuggestions(state, toolName, 5);
+        const suggestions = rankSuggestions(state, toolName, 5, serverName);
         const hint = suggestions.length > 0
           ? ` Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ describe: "${suggestions[0]}" }).`
           : ` Search with mcp({ search: ${JSON.stringify(toolName)}, server: ${JSON.stringify(serverName)} }).`;

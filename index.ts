@@ -18,6 +18,7 @@ import { toolErrorOverride } from "./error-signal.ts";
 import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { runMcpScript } from "./mcp-code.ts";
+import { MAX_PAGE_SIZE, MAX_TOOL_NAME_LENGTH } from "./search-ranking.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
 export {
@@ -626,7 +627,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     pi.registerTool({
       name: "mcp_script",
       label: "MCP Script",
-      description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } }; data is the raw MCP result, usually { content, structuredContent? }. The sandbox has no Node, filesystem, or network globals. Use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
+      description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } }; data is the raw MCP result: tool calls usually return { content, structuredContent? }, while resource reads return { contents }. The sandbox has no Node, filesystem, or network globals. Use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
       parameters: Type.Object({
         code: Type.String({ description: "Trusted JavaScript MCP script. Use tools.<prefixedToolName>(args) and emit(value)." }),
@@ -689,7 +690,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       promptSnippet: "MCP gateway — status, search, describe, auth, and single MCP tool calls",
       renderCall: renderMcpProxyToolCall,
       parameters: Type.Object({
-        tool: Type.Optional(Type.String({ description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
+        tool: Type.Optional(Type.String({ maxLength: MAX_TOOL_NAME_LENGTH, description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
         args: Type.Optional(Type.Union([
           Type.String({ description: "Arguments as a JSON string (e.g., '{\"key\": \"value\"}')" }),
           Type.Object({}, {
@@ -698,11 +699,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }),
         ], { description: "Tool arguments as a JSON object, or as a JSON string encoding one" })),
         connect: Type.Optional(Type.String({ description: "Server name to connect (lazy connect + metadata refresh)" })),
-        describe: Type.Optional(Type.String({ description: "Tool name to describe (shows parameters)" })),
+        describe: Type.Optional(Type.String({ maxLength: MAX_TOOL_NAME_LENGTH, description: "Tool name to describe (shows parameters)" })),
         instructions: Type.Optional(Type.String({ description: "Server name to show that server's usage instructions" })),
         search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
         includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
-        limit: Type.Optional(Type.Number({ minimum: 1, description: "Maximum search or server-list results to return (default: 12)" })),
+        limit: Type.Optional(Type.Number({ minimum: 1, maximum: MAX_PAGE_SIZE, description: "Maximum search or server-list results to return (default: 12, max: 100)" })),
         offset: Type.Optional(Type.Number({ minimum: 0, description: "Search or server-list result offset (default: 0)" })),
         server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages', 'auth-start', or 'auth-complete'" })),

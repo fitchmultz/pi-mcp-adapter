@@ -110,7 +110,10 @@ describe("proxy auto auth", () => {
     };
     const fresh = {
       status: "connected",
-      tools: [{ name: "fresh", description: "Fresh tool" }],
+      tools: Array.from({ length: 13 }, (_, index) => ({
+        name: index === 0 ? "fresh" : `fresh_${index}`,
+        description: `Fresh tool ${index}`,
+      })),
       resources: [],
     };
     const manager = {
@@ -135,8 +138,9 @@ describe("proxy auto auth", () => {
 
     expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, undefined);
     expect(manager.connect).not.toHaveBeenCalled();
-    expect(result.details).toMatchObject({ mode: "list", server: "demo", count: 1 });
+    expect(result.details).toMatchObject({ mode: "list", server: "demo", count: 13 });
     expect(result.content[0].text).toContain("demo_fresh");
+    expect(result.content[0].text).toContain('mcp({ server: "demo", limit: 12, offset: 12 })');
     expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({ originalName: "fresh" });
   });
 
