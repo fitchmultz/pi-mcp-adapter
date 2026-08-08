@@ -994,7 +994,7 @@ export async function executeCall(
 
   let prefixMatchedServer: string | undefined;
 
-  if (!serverName && !toolMeta && prefixMode !== "none") {
+  if (!serverName && !toolMeta) {
     const candidates = Object.keys(state.config.mcpServers)
       .filter(name => !isServerDisabled(state.config.mcpServers[name]))
       .map(name => ({

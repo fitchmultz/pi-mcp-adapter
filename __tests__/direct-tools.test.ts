@@ -118,6 +118,22 @@ describe("buildProxyDescription", () => {
     expect(description).not.toContain("figma (3 tools)");
   });
 
+  it("treats missing cached arrays as empty", () => {
+    const config: McpConfig = { mcpServers: { demo: { command: "demo" } } };
+    const cache = {
+      version: 1,
+      servers: {
+        demo: {
+          configHash: computeServerHash(config.mcpServers.demo),
+          cachedAt: Date.now(),
+        },
+      },
+    } as unknown as MetadataCache;
+
+    expect(() => buildProxyDescription(config, cache, [])).not.toThrow();
+    expect(buildProxyDescription(config, cache, [])).not.toContain("demo (");
+  });
+
   it("omits stale cache entries from proxy summaries", () => {
     const config: McpConfig = {
       mcpServers: { demo: { command: "npx", args: ["changed"] } },
@@ -610,7 +626,9 @@ describe("excludeTools filtering", () => {
     };
 
     const specs = resolveDirectTools(config, cache, "server");
-    resolveDirectTools(structuredClone(config), cache, "server");
+    const reordered = structuredClone(cache);
+    reordered.servers.huge!.tools.reverse();
+    resolveDirectTools(structuredClone(config), reordered, "server");
 
     expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
     expect(warn).toHaveBeenCalledOnce();

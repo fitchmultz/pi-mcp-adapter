@@ -192,6 +192,24 @@ describe("proxy discovery", () => {
     expect(connect.mock.calls[0]?.[0]).toBe("github");
   });
 
+  it("honors a server prefix override when the global prefix is none", async () => {
+    const state = createState();
+    state.config.settings = { toolPrefix: "none" };
+    state.config.mcpServers = { github: { command: "github", toolPrefix: "server" } };
+    state.toolMetadata.clear();
+    const connect = vi.fn(async () => { throw new Error("stop after routing"); });
+    state.manager = {
+      getConnection: () => undefined,
+      getAllConnections: () => [],
+      connect,
+    } as never;
+
+    await executeCall(state, "github_search");
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(connect.mock.calls[0]?.[0]).toBe("github");
+  });
+
   it("does not connect a shorter overlapping prefix after a cached miss", async () => {
     const state = createState();
     state.config.mcpServers = {

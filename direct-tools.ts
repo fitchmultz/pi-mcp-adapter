@@ -194,7 +194,7 @@ export function resolveDirectTools(
     }
   }
 
-  const advisoryKey = specs.map(spec => spec.prefixedName).join("\0");
+  const advisoryKey = specs.map(spec => spec.prefixedName).sort().join("\0");
   if (specs.length >= DIRECT_TOOLS_ADVISORY_THRESHOLD && !advisedDirectToolSets.has(advisoryKey)) {
     advisedDirectToolSets.add(advisoryKey);
     console.warn(`MCP: ${specs.length} direct tools resolved. Each direct tool adds prompt context; README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] when 75+ direct tools would be registered.`);
@@ -229,11 +229,11 @@ export function buildProxyDescription(
     const entry = cache?.servers?.[serverName];
     if (!entry || !isServerCacheValid(entry, definition)) continue;
     const effectivePrefix = resolveToolPrefix(definition, prefix);
-    const toolCount = entry.tools.filter(
+    const toolCount = (entry.tools ?? []).filter(
       (tool) => isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools),
     ).length;
     const resourceCount = definition.exposeResources !== false
-      ? entry.resources.filter((resource) => {
+      ? (entry.resources ?? []).filter((resource) => {
           const baseName = `read_${resourceNameToToolName(resource.name)}`;
           return isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools);
         }).length
