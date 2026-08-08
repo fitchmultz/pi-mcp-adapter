@@ -59,4 +59,19 @@ describe("proxy and direct tool call parity", () => {
     expect(proxy.details).toEqual({ mode: "call", ...direct.details });
     expect(direct.content).toEqual(proxy.content);
   });
+
+  it("does not format the input schema on the success path", async () => {
+    // formatSchema recurses, so a pathological schema must not be able to fail
+    // a call that would otherwise succeed. It is only printed in error suffixes.
+    const state = connectedState();
+    const [tool] = state.toolMetadata.get("demo");
+    Object.defineProperty(tool, "inputSchema", {
+      get() { throw new Error("input schema formatted on the success path"); },
+    });
+
+    const result = await executeCall(state, "demo_echo", { x: 1 });
+
+    expect(result.details.error).toBeUndefined();
+    expect(result.details.mcpResult).toEqual(MCP_RESULT);
+  });
 });

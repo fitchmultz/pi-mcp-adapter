@@ -725,7 +725,9 @@ export async function runToolCall(
   const { detailsBase, ownedSignal, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted } = options;
   const requestOptions = state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
   const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
-  const schemaText = target.inputSchema ? `\n\nExpected parameters:\n${formatSchema(target.inputSchema)}` : "";
+  // Lazy: formatSchema recurses, so only pay for it (and only risk it throwing)
+  // on the error paths that actually print it.
+  const schemaSuffix = () => target.inputSchema ? `\n\nExpected parameters:\n${formatSchema(target.inputSchema)}` : "";
   const recovery = {
     manager: state.manager,
     config: state.config,
@@ -779,7 +781,7 @@ export async function runToolCall(
       const content = transformMcpContent((result.content ?? []) as McpContent[]);
       const guarded = await guardMcpOutput(
         content.length > 0 ? content : [{ type: "text" as const, text: "(empty result)" }],
-        { ...outputGuardOptions, prefix: "Error: ", suffix: schemaText, emptyTextFallback: "Tool execution failed", rawMcpResult: result },
+        { ...outputGuardOptions, prefix: "Error: ", suffix: schemaSuffix(), emptyTextFallback: "Tool execution failed", rawMcpResult: result },
       );
       return { content: guarded.content, details: { ...detailsBase, error: "tool_error", ...guardedMcpDetails(guarded) } };
     }
@@ -826,7 +828,7 @@ export async function runToolCall(
     }
     const message = error instanceof Error ? error.message : String(error);
     uiSession?.sendToolCancelled(message);
-    const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaText });
+    const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaSuffix() });
     return {
       content: guarded.content,
       details: {
