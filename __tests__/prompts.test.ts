@@ -4,7 +4,6 @@ import type { GetPromptResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   createPromptCommand,
   formatPromptResult,
-  listAllPromptMetadata,
   parsePromptArgs,
   resolvePromptArgs,
 } from "../prompts.ts";
@@ -268,18 +267,5 @@ describe("createPromptCommand handler", () => {
 
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("no text content"), "warning");
-  });
-});
-
-describe("listAllPromptMetadata", () => {
-  it("flattens and sorts across servers", () => {
-    const promptMetadata = new Map<string, PromptMetadata[]>([
-      ["beta", [meta({ serverName: "beta", commandName: "mcp__beta__plan", originalName: "plan" })]],
-      ["alpha", [meta({ serverName: "alpha", commandName: "mcp__alpha__plan", originalName: "plan" })]],
-    ]);
-    const state = baseState(promptMetadata);
-
-    const names = listAllPromptMetadata(state).map(p => p.commandName);
-    expect(names).toEqual(["mcp__alpha__plan", "mcp__beta__plan"]);
   });
 });

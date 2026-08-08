@@ -8,6 +8,7 @@ import { mkdirSync, rmSync, existsSync, writeFileSync } from "fs"
 import { dirname, join } from "path"
 import { tmpdir } from "os"
 import { randomBytes } from "crypto"
+import Module from "node:module"
 
 // Set up isolated temp directory for tests
 const TEST_DIR = join(tmpdir(), `mcp-oauth-test-${randomBytes(4).toString('hex')}`)
@@ -21,18 +22,12 @@ import {
   removeAuthEntry,
   updateTokens,
   updateClientInfo,
-  updateCodeVerifier,
   clearCodeVerifier,
-  updateOAuthState,
   getOAuthState,
   clearOAuthState,
-  isTokenExpired,
-  hasStoredTokens,
   clearAllCredentials,
   clearClientInfo,
   clearTokens,
-  resetTestAuthSecretStore,
-  loadTestKeyringEntryClass,
   type AuthEntry,
 } from "./mcp-auth.ts"
 
@@ -60,7 +55,6 @@ describe("mcp-auth", () => {
     }
   })
 
-
   describe("keyring native binding fallback", () => {
     class FakeEntry {
       constructor(readonly service: string, readonly account: string) {}
@@ -69,73 +63,67 @@ describe("mcp-auth", () => {
       deleteCredential(): boolean { return true }
     }
 
-    it("loads the native binding by absolute path when the package loader fails", () => {
+    const moduleLoader = Module as unknown as {
+      _load: (request: string, parent: unknown, isMain: boolean) => unknown
+      _resolveFilename: (request: string, parent: unknown, isMain: boolean, options?: unknown) => string
+    }
+
+    it("preserves loader failures and tries the Linux musl binding after gnu", () => {
+      const originalStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE
+      const originalLoad = moduleLoader._load
+      const originalResolve = moduleLoader._resolveFilename
+      const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!
+      const archDescriptor = Object.getOwnPropertyDescriptor(process, "arch")!
       const loaderError = new Error("package loader failed")
-      const nativePath = "/tmp/keyring-darwin-arm64/keyring.darwin-arm64.node"
-      const required: string[] = []
-      const requireStub = Object.assign((id: string) => {
-        required.push(id)
-        if (id === "@napi-rs/keyring") throw loaderError
-        if (id === nativePath) return { Entry: FakeEntry }
-        throw new Error(`unexpected require: ${id}`)
-      }, {
-        resolve(id: string) {
-          assert.strictEqual(id, "@napi-rs/keyring-darwin-arm64/package.json")
-          return "/tmp/keyring-darwin-arm64/package.json"
-        },
-      })
-
-      const Entry = loadTestKeyringEntryClass(requireStub, "darwin", "arm64")
-
-      assert.strictEqual(Entry, FakeEntry)
-      assert.deepStrictEqual(required, ["@napi-rs/keyring", nativePath])
-    })
-
-    it("tries the Linux musl package when the gnu package is unavailable", () => {
-      const loaderError = new Error("package loader failed")
-      const nativePath = "/tmp/keyring-linux-x64-musl/keyring.linux-x64-musl.node"
-      const resolved: string[] = []
-      const requireStub = Object.assign((id: string) => {
-        if (id === "@napi-rs/keyring") throw loaderError
-        if (id === nativePath) return { Entry: FakeEntry }
-        throw new Error(`unexpected require: ${id}`)
-      }, {
-        resolve(id: string) {
-          resolved.push(id)
-          if (id === "@napi-rs/keyring-linux-x64-musl/package.json") return "/tmp/keyring-linux-x64-musl/package.json"
-          throw new Error(`missing package: ${id}`)
-        },
-      })
-
-      const Entry = loadTestKeyringEntryClass(requireStub, "linux", "x64")
-
-      assert.strictEqual(Entry, FakeEntry)
-      assert.deepStrictEqual(resolved, [
-        "@napi-rs/keyring-linux-x64-gnu/package.json",
-        "@napi-rs/keyring-linux-x64-musl/package.json",
-      ])
-    })
-
-    it("keeps the original loader error in the cause chain when fallback fails", () => {
-      const loaderError = new Error("package loader failed")
-      const fallbackError = new Error("native binding failed")
-      const requireStub = Object.assign((id: string) => {
-        if (id === "@napi-rs/keyring") throw loaderError
-        throw fallbackError
-      }, {
-        resolve() { return "/tmp/keyring-darwin-arm64/package.json" },
-      })
-
-      assert.throws(() => loadTestKeyringEntryClass(requireStub, "darwin", "arm64"), (error) => {
-        assert(error instanceof Error)
-        assert.match(error.message, /absolute-path native binding fallback also failed: native binding failed/)
-        let current: unknown = error
-        while (current && typeof current === "object") {
-          if (current === loaderError) return true
-          current = (current as { cause?: unknown }).cause
+      try {
+        delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE
+        moduleLoader._load = (request, parent, isMain) => {
+          if (request === "@napi-rs/keyring") throw loaderError
+          if (request.endsWith(".node")) throw new Error("native binding failed")
+          return originalLoad.call(Module, request, parent, isMain)
         }
-        assert.fail("original loader error was not preserved in the cause chain")
-      })
+
+        assert.throws(() => getAuthEntry("fallback-failure"), (error) => {
+          assert(error instanceof Error)
+          assert.match(error.message, /Failed to read OAuth credentials/)
+          let current: unknown = error
+          while (current && typeof current === "object") {
+            if (current === loaderError) return true
+            current = (current as { cause?: unknown }).cause
+          }
+          assert.fail("original loader error was not preserved in the cause chain")
+        })
+
+        const resolved: string[] = []
+        Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" })
+        Object.defineProperty(process, "arch", { ...archDescriptor, value: "x64" })
+        moduleLoader._resolveFilename = (request, parent, isMain, options) => {
+          if (request.startsWith("@napi-rs/keyring-linux-x64-")) {
+            resolved.push(request)
+            if (request.includes("-gnu/")) throw new Error("gnu binding unavailable")
+            return "/tmp/keyring-linux-x64-musl/package.json"
+          }
+          return originalResolve.call(Module, request, parent, isMain, options)
+        }
+        moduleLoader._load = (request, parent, isMain) => {
+          if (request === "@napi-rs/keyring") throw loaderError
+          if (request.endsWith("keyring.linux-x64-musl.node")) return { Entry: FakeEntry }
+          return originalLoad.call(Module, request, parent, isMain)
+        }
+
+        assert.strictEqual(getAuthEntry("fallback-success"), undefined)
+        assert.deepStrictEqual(resolved, [
+          "@napi-rs/keyring-linux-x64-gnu/package.json",
+          "@napi-rs/keyring-linux-x64-musl/package.json",
+        ])
+      } finally {
+        moduleLoader._load = originalLoad
+        moduleLoader._resolveFilename = originalResolve
+        Object.defineProperty(process, "platform", platformDescriptor)
+        Object.defineProperty(process, "arch", archDescriptor)
+        if (originalStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE
+        else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = originalStore
+      }
     })
   })
 
@@ -162,7 +150,6 @@ describe("mcp-auth", () => {
     it("should fail closed when the secure credential store is unavailable", () => {
       const previous = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE
       process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable"
-      resetTestAuthSecretStore()
       try {
         assert.throws(
           () => getAuthEntry("secure-store-unavailable"),
@@ -375,83 +362,28 @@ describe("mcp-auth", () => {
     })
   })
 
-  describe("updateCodeVerifier / clearCodeVerifier", () => {
-    it("should save and retrieve code verifier", () => {
-      updateCodeVerifier("test-server", "verifier-123")
-      const entry = getAuthEntry("test-server")
-      assert.strictEqual(entry?.codeVerifier, "verifier-123")
-    })
-
-    it("should clear code verifier", () => {
-      updateCodeVerifier("test-server", "verifier-123")
+  describe("legacy flow state cleanup", () => {
+    it("clears a code verifier", () => {
+      saveAuthEntry("test-server", { codeVerifier: "verifier-123" })
       clearCodeVerifier("test-server")
-      const entry = getAuthEntry("test-server")
-      assert.strictEqual(entry?.codeVerifier, undefined)
-    })
-  })
-
-  describe("updateOAuthState / getOAuthState / clearOAuthState", () => {
-    it("should save and retrieve OAuth state", () => {
-      updateOAuthState("test-server", "state-abc-123")
-      const state = getOAuthState("test-server")
-      assert.strictEqual(state, "state-abc-123")
+      assert.strictEqual(getAuthEntry("test-server")?.codeVerifier, undefined)
     })
 
-    it("should clear OAuth state", () => {
-      updateOAuthState("test-server", "state-abc-123")
+    it("clears OAuth state", () => {
+      saveAuthEntry("test-server", { oauthState: "state-abc-123" })
+      assert.strictEqual(getOAuthState("test-server"), "state-abc-123")
       clearOAuthState("test-server")
-      const state = getOAuthState("test-server")
-      assert.strictEqual(state, undefined)
-    })
-  })
-
-  describe("isTokenExpired", () => {
-    it("should return null if no tokens", () => {
-      const expired = isTokenExpired("expiry-test-null")
-      assert.strictEqual(expired, null)
-    })
-
-    it("should return false if no expiry", () => {
-      updateTokens("expiry-test-no-expiry", { accessToken: "token" })
-      const expired = isTokenExpired("expiry-test-no-expiry")
-      assert.strictEqual(expired, false)
-    })
-
-    it("should return true if expired", () => {
-      updateTokens("expiry-test-expired", {
-        accessToken: "token",
-        expiresAt: 1, // Way in the past
-      })
-      const expired = isTokenExpired("expiry-test-expired")
-      assert.strictEqual(expired, true)
-    })
-
-    it("should return false if not expired", () => {
-      updateTokens("expiry-test-future", {
-        accessToken: "token",
-        expiresAt: Date.now() / 1000 + 3600, // 1 hour from now
-      })
-      const expired = isTokenExpired("expiry-test-future")
-      assert.strictEqual(expired, false)
-    })
-  })
-
-  describe("hasStoredTokens", () => {
-    it("should return false if no tokens", () => {
-      assert.strictEqual(hasStoredTokens("has-tokens-test-false"), false)
-    })
-
-    it("should return true if tokens exist", () => {
-      updateTokens("has-tokens-test-true", { accessToken: "token" })
-      assert.strictEqual(hasStoredTokens("has-tokens-test-true"), true)
+      assert.strictEqual(getOAuthState("test-server"), undefined)
     })
   })
 
   describe("clearAllCredentials", () => {
     it("should remove all credentials", () => {
-      updateTokens("test-server", { accessToken: "token" })
-      updateClientInfo("test-server", { clientId: "client" })
-      updateCodeVerifier("test-server", "verifier")
+      saveAuthEntry("test-server", {
+        tokens: { accessToken: "token" },
+        clientInfo: { clientId: "client" },
+        codeVerifier: "verifier",
+      })
 
       clearAllCredentials("test-server")
 

@@ -44,7 +44,6 @@ async function request(
 function createMockConsentManager(): ConsentManager {
   return {
     requiresPrompt: vi.fn().mockReturnValue(false),
-    shouldCacheConsent: vi.fn().mockReturnValue(true),
     ensureApproved: vi.fn(),
     registerDecision: vi.fn(),
   } as unknown as ConsentManager;

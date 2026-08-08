@@ -5,7 +5,6 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type McpConfig, type PromptMetadata } from "./types.ts";
-import { formatPromptCommandName } from "./types.ts";
 import { lazyConnect } from "./init.ts";
 import { isServerCacheValid, loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
 import { logger } from "./logger.ts";
@@ -336,18 +335,3 @@ function buildCommandDescription(metadata: PromptMetadata): string {
   const base = metadata.description || metadata.title || `MCP prompt from ${metadata.serverName}`;
   return truncateAtWord(`MCP: ${base}`, 120) || `MCP prompt from ${metadata.serverName}`;
 }
-
-/**
- * Public helper used by `/mcp prompts` to render the list of prompts known
- * to the adapter, whether from a live connection or the metadata cache.
- */
-export function listAllPromptMetadata(state: McpExtensionState): PromptMetadata[] {
-  const flat: PromptMetadata[] = [];
-  for (const list of state.promptMetadata?.values() ?? []) flat.push(...list);
-  flat.sort((a, b) => a.commandName.localeCompare(b.commandName));
-  return flat;
-}
-
-// Re-exported so index.ts can format cache-only prompt-command names without
-// duplicating the namespace logic.
-export { formatPromptCommandName };

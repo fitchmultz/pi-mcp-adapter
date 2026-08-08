@@ -30,6 +30,8 @@ function makeState() {
     tools: [{ name: "app", description: "App", inputSchema: { type: "object" } }],
     resources: [],
   };
+  const consentManager = new ConsentManager();
+  consentManager.registerDecision("demo", true);
   const state = {
     config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
     manager: {
@@ -56,7 +58,7 @@ function makeState() {
         meta: {},
       })),
     },
-    consentManager: new ConsentManager("never"),
+    consentManager,
     uiServer: null,
     completedUiSessions: [],
     openBrowser: vi.fn(async () => undefined),

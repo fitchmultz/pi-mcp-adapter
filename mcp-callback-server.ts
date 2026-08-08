@@ -334,10 +334,6 @@ async function ensureCallbackServerLocked(options: EnsureCallbackServerOptions =
   }
 }
 
-export function reserveCallbackServer(oauthState: string): void {
-  reservedAuthStates.add(oauthState)
-}
-
 export function releaseCallbackServer(oauthState: string): void {
   reservedAuthStates.delete(oauthState)
 }
@@ -416,18 +412,4 @@ export function stopCallbackServer(): Promise<void> {
   })
   stoppingPromise = operation
   return operation
-}
-
-/**
- * Check if the callback server is running.
- */
-export function isCallbackServerRunning(): boolean {
-  return server !== undefined
-}
-
-/**
- * Get the number of pending authorizations.
- */
-export function getPendingAuthCount(): number {
-  return pendingAuths.size
 }

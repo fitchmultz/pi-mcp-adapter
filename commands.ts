@@ -11,7 +11,6 @@ import {
   previewSharedServerEntry,
   previewStarterProjectConfig,
   writeDirectToolsConfig,
-  writeProjectServerDisabledOverride,
   writeSharedServerEntry,
   writeStarterProjectConfig,
 } from "./config.ts";
@@ -353,22 +352,17 @@ export interface PanelFlowResult {
   configChanged: boolean;
 }
 
-function buildSharedConfigNoticeLines(configOverridePath: string | undefined, cwd: string): { lines: string[]; fingerprint: string | null } {
+function buildSharedConfigNoticeLines(configOverridePath: string | undefined, cwd: string): string[] {
   const discovery = getMcpDiscoverySummary(configOverridePath, cwd);
   const onboardingState = loadOnboardingState();
-  if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
-    return { lines: [], fingerprint: null };
-  }
+  if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) return [];
 
   const sharedSources = discovery.sources.filter((source) => source.kind === "shared" && source.serverCount > 0);
   const sourceList = sharedSources.map((source) => source.path).join(", ");
-  return {
-    lines: [
-      `Using standard MCP config from ${sourceList}.`,
-      "Pi only writes compatibility imports and adapter-specific overrides into Pi-owned files when needed.",
-    ],
-    fingerprint: discovery.fingerprint,
-  };
+  return [
+    `Using standard MCP config from ${sourceList}.`,
+    "Pi only writes compatibility imports and adapter-specific overrides into Pi-owned files when needed.",
+  ];
 }
 
 export async function openMcpSetup(
@@ -433,9 +427,7 @@ export async function openMcpSetup(
     openPath: async (targetPath: string) => {
       await openPath(pi, targetPath);
     },
-    markSetupCompleted: () => {
-      persistSetupCompleted(discovery.fingerprint);
-    },
+    markSetupCompleted: persistSetupCompleted,
   };
 
   return new Promise<PanelFlowResult>((resolve) => {
@@ -533,7 +525,7 @@ export async function openMcpPanel(
   const cache = loadMetadataCache(state.metadataCacheEnabled);
   const configPath = configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
-  const { lines: noticeLines, fingerprint } = buildSharedConfigNoticeLines(configPath, ctx.cwd);
+  const noticeLines = buildSharedConfigNoticeLines(configPath, ctx.cwd);
 
   const callbacks = buildMcpPanelCallbacks(state, config, ctx);
 
@@ -565,9 +557,7 @@ export async function openMcpPanel(
     );
   });
 
-  if (noticeLines.length > 0 && fingerprint) {
-    markSharedConfigHintShown(fingerprint);
-  }
+  if (noticeLines.length > 0) markSharedConfigHintShown();
 
   return { configChanged };
 }

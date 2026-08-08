@@ -21,8 +21,6 @@ import {
 } from "./mcp-callback-server.ts"
 import {
   getAuthForUrl,
-  isTokenExpired,
-  hasStoredTokens,
   clearAllCredentials,
   clearClientInfo,
   clearTokens,
@@ -31,7 +29,6 @@ import {
   clearOAuthState,
   getAuthBaseDir,
   type AuthStorageOptions,
-  type StoredTokens,
 } from "./mcp-auth.ts"
 import { isServerDisabled, type ServerEntry } from "./types.ts"
 import { formatTerminalError, interpolateEnvRecord, interpolateEnvVars } from "./utils.ts"
@@ -530,14 +527,6 @@ export function parseAuthorizationRedirectInput(input: string, expectedState?: s
 }
 
 /**
- * Extract an OAuth authorization code from either a raw code, a query string,
- * or the full localhost redirect URL copied from the browser address bar.
- */
-export function parseAuthorizationCodeInput(input: string, expectedState?: string): string {
-  return parseAuthorizationRedirectInput(input, expectedState).code
-}
-
-/**
  * Complete OAuth authentication from manual user input.
  */
 export async function completeAuthFromInput(
@@ -551,7 +540,6 @@ export async function completeAuthFromInput(
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
   const key = getPendingAuthKey(serverName, fallbackAuthStorageOptions)
-  const authStorageOptions = runtimeState.pendingAuths.get(key)?.authStorageOptions ?? fallbackAuthStorageOptions
   const oauthState = runtimeState.pendingAuthStates.get(key)
   throwIfAborted(signal)
   const parsed = parseAuthorizationRedirectInput(input, oauthState)
@@ -730,93 +718,6 @@ export async function authenticate(
       runtimeState.pendingAuthentications.delete(authKey)
     }
   }
-}
-
-/**
- * Get a valid access token for a server, refreshing if necessary.
- * 
- * @param serverName - The name of the MCP server
- * @param serverUrl - The URL of the MCP server
- * @returns The valid tokens or null if not authenticated
- */
-export async function getValidToken(
-  serverName: string,
-  serverUrl: string,
-  options: AuthenticateOptions = {},
-): Promise<StoredTokens | null> {
-  const runtime = getRuntime(options)
-  const authStorageOptions = options.authStorageOptions ?? {}
-  const signal = combineAbortSignals(runtime.signal, options.signal)
-  throwIfAborted(signal)
-  // Check if we have valid tokens
-  const entry = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
-  throwIfAborted(signal)
-  if (!entry?.tokens) {
-    return null
-  }
-
-  // Check expiration
-  const expired = await isTokenExpired(serverName, authStorageOptions)
-  if (expired === false) {
-    return entry.tokens
-  }
-
-  if (expired === true && entry.tokens.refreshToken) {
-    // Token is expired, try to refresh
-    console.log(`MCP Auth: Token expired for ${serverName}, attempting refresh`)
-
-    try {
-      // Create auth provider for token refresh
-      const authProvider = new McpOAuthProvider(serverName, serverUrl, {}, {
-        onRedirect: async () => {},
-      }, authStorageOptions, runtime.signal)
-
-      try {
-        const clientInfo = await authProvider.clientInformation()
-        throwIfAborted(signal)
-        if (!clientInfo) {
-          console.log(`MCP Auth: No client info for refresh for ${serverName}`)
-          return null
-        }
-
-        const discovery = await probeAuthDiscovery(serverUrl, undefined, signal)
-        throwIfAborted(signal)
-        const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery }), signal)
-        throwIfAborted(signal)
-        if (result !== "AUTHORIZED") {
-          return null
-        }
-        const refreshed = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
-        throwIfAborted(signal)
-        return refreshed?.tokens ?? null
-      } finally {
-        authProvider.deactivate()
-      }
-    } catch (error) {
-      if (isAbortError(error, signal)) throw error
-      console.error(`MCP Auth: Token refresh failed for ${serverName}`, { error })
-      return null
-    }
-  }
-
-  // No expiration info or no refresh token, assume valid
-  return entry.tokens
-}
-
-/**
- * Check the authentication status for a server.
- * 
- * @param serverName - The name of the MCP server
- * @returns The current auth status
- */
-export async function getAuthStatus(serverName: string, options: AuthenticateOptions = {}): Promise<AuthStatus> {
-  const runtime = getRuntime(options)
-  const authStorageOptions = options.authStorageOptions ?? {}
-  const hasTokens = await hasStoredTokens(serverName, authStorageOptions)
-  if (!hasTokens) return "not_authenticated"
-
-  const expired = await isTokenExpired(serverName, authStorageOptions)
-  return expired ? "expired" : "authenticated"
 }
 
 /**

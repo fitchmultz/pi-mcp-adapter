@@ -418,7 +418,7 @@ export interface McpOutputGuardSettings {
 
 // Settings
 export type ToolPrefix = "server" | "none" | "short" | "mcp";
-export type HostConfigDiscovery = "off" | "prompt" | "on";
+export type HostConfigDiscovery = "off" | "on";
 export type McpFooterStatus = "full" | "compact" | "off";
 
 export interface McpTraceSettings {

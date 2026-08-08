@@ -50,7 +50,6 @@ function createEmptyDiscovery(): McpDiscoverySummary {
     hostConfigs: [],
     hostConfigDiscovery: "off",
     conflicts: [],
-    fingerprint: "test",
     repoPrompt: { configured: false },
   };
 }
