@@ -27,7 +27,9 @@ async function main() {
 	if (!existsSync(tscPath)) {
 		throw new Error(`typescript is not installed at ${tscPath}; run npm install first.`);
 	}
-	const stagingDir = join(process.cwd(), "dist.staging");
+	// Pid-scoped so concurrent builds (pack-triggered prepare, smoke lanes) cannot
+	// clobber each other's staging tree or swap a partial emit into dist/.
+	const stagingDir = join(process.cwd(), `dist.staging.${process.pid}`);
 	await rm(stagingDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	try {
 		const { stderr, stdout } = await execFile(
@@ -46,8 +48,23 @@ async function main() {
 		if (error?.stderr) process.stderr.write(error.stderr);
 		throw error;
 	}
-	await rm(join(process.cwd(), "dist"), { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
-	await rename(stagingDir, join(process.cwd(), "dist"));
+	const distDir = join(process.cwd(), "dist");
+	// A failed dist removal (for example a Windows file lock) must fail loudly:
+	// it stays outside the race-loss handling below.
+	await rm(distDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
+	try {
+		await rename(stagingDir, distDir);
+	} catch (error) {
+		await rm(stagingDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
+		// A concurrent build can repopulate dist/ between our rm and rename; its
+		// output is an equivalent fresh emit, so losing that race is a success.
+		// Anything else (no repopulated dist to show for it) is a real failure.
+		if (existsSync(distDir)) {
+			console.warn("dist/ was replaced by a concurrent build; keeping that output.");
+			return;
+		}
+		throw error;
+	}
 }
 
 main().catch((error) => {
