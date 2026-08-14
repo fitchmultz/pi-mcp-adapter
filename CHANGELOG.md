@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-08-13
+
+### Changed
+
+- The Pi extension manifest now loads precompiled `dist/index.js` instead of transpiling the ~19kloc TypeScript graph at every pi startup. A `prepare` lifecycle script builds `dist/` on install and update, including Pi's `npm install --omit=dev` git-install flow, and copies the runtime sibling assets (`mcp-keyring-helper.cjs`, `mcp-script-worker.mjs`, `app-bridge.bundle.js`) into `dist/`.
+
 ## [4.0.2] - 2026-08-09
 
 ### Fixed
