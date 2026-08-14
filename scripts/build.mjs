@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
  * Purpose: Produce the compiled runtime files that the Pi extension manifest loads.
- * Responsibilities: Remove stale dist output, run TypeScript emit, and copy runtime
- * assets that modules resolve as dist-relative siblings at runtime.
+ * Responsibilities: Run TypeScript emit into a staging directory, copy runtime assets
+ * that modules resolve as dist-relative siblings, then atomically swap it into dist/
+ * so a failed build never destroys a previously working dist.
  * Usage: `npm run build`; also invoked by scripts/prepare.mjs during install lifecycles.
  */
 
 import { execFile as execFileCallback } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, rm } from "node:fs/promises";
+import { copyFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
@@ -26,22 +27,27 @@ async function main() {
 	if (!existsSync(tscPath)) {
 		throw new Error(`typescript is not installed at ${tscPath}; run npm install first.`);
 	}
-	await rm(join(process.cwd(), "dist"), { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
+	const stagingDir = join(process.cwd(), "dist.staging");
+	await rm(stagingDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	try {
-		const { stderr, stdout } = await execFile(process.execPath, [tscPath, "-p", "tsconfig.build.json"], {
-			cwd: process.cwd(),
-			maxBuffer: 10 * 1024 * 1024,
-		});
+		const { stderr, stdout } = await execFile(
+			process.execPath,
+			[tscPath, "-p", "tsconfig.build.json", "--outDir", stagingDir],
+			{ cwd: process.cwd(), maxBuffer: 10 * 1024 * 1024 },
+		);
 		if (stdout) process.stdout.write(stdout);
 		if (stderr) process.stderr.write(stderr);
+		for (const asset of RUNTIME_ASSETS) {
+			await copyFile(join(process.cwd(), asset), join(stagingDir, asset));
+		}
 	} catch (error) {
+		await rm(stagingDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 		if (error?.stdout) process.stdout.write(error.stdout);
 		if (error?.stderr) process.stderr.write(error.stderr);
 		throw error;
 	}
-	for (const asset of RUNTIME_ASSETS) {
-		await copyFile(join(process.cwd(), asset), join(process.cwd(), "dist", asset));
-	}
+	await rm(join(process.cwd(), "dist"), { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
+	await rename(stagingDir, join(process.cwd(), "dist"));
 }
 
 main().catch((error) => {
