@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.5] - 2026-08-14
+
+### Fixed
+
+- Load MCP status, setup, and authentication panels through the extension's static module graph so Pi can resolve their `@earendil-works/pi-tui` and `@earendil-works/pi-coding-agent` host peers after install-time dev-dependency pruning.
+
 ## [4.1.4] - 2026-08-14
 
 ### Changed

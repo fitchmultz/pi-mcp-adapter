@@ -22,6 +22,8 @@ import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
 import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
+import { createMcpPanel } from "./mcp-panel.ts";
+import { createMcpSetupPanel } from "./mcp-setup-panel.ts";
 
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) return;
@@ -388,7 +390,6 @@ export async function openMcpSetup(
 
   const discovery = getMcpDiscoverySummary(configOverridePath, ctx.cwd);
   const onboardingState = loadOnboardingState();
-  const { createMcpSetupPanel } = await import("./mcp-setup-panel.ts");
   let configChanged = false;
 
   const callbacks = {
@@ -529,7 +530,6 @@ export async function openMcpPanel(
 
   const callbacks = buildMcpPanelCallbacks(state, config, ctx);
 
-  const { createMcpPanel } = await import("./mcp-panel.ts");
   let configChanged = false;
 
   await new Promise<void>((resolve) => {
@@ -594,7 +594,6 @@ export async function openMcpAuthPanel(
   const configPath = configOverridePath;
   const provenanceMap = getServerProvenance(configPath, ctx.cwd);
   const callbacks = buildMcpPanelCallbacks(state, config, ctx);
-  const { createMcpPanel } = await import("./mcp-panel.ts");
 
   await new Promise<void>((resolve) => {
     ctx.ui.custom(

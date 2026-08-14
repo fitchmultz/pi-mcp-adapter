@@ -50,6 +50,16 @@ describe("package.json files", () => {
   });
 });
 
+describe("compiled extension peer resolution", () => {
+  it("loads TUI panels statically so Pi resolves their host peers", () => {
+    const commandsSource = readFileSync(join(repoRoot, "commands.ts"), "utf-8");
+
+    expect(commandsSource).toContain('import { createMcpPanel } from "./mcp-panel.ts";');
+    expect(commandsSource).toContain('import { createMcpSetupPanel } from "./mcp-setup-panel.ts";');
+    expect(commandsSource).not.toMatch(/await import\(["']\.\/mcp-(?:setup-)?panel\.ts["']\)/);
+  });
+});
+
 describe("package.json dependency policy", () => {
   it("treats Pi host packages as optional wildcard peers with exact dev pins", () => {
     const entries = Object.entries(hostPeerPackages);
