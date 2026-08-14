@@ -2,7 +2,7 @@ import { execFile as execFileCallback, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 
@@ -68,8 +68,11 @@ function makeFixture(): string {
 // build's own diagnostic instead of a bare "expected 1 to be 0".
 async function runBuild(cwd: string, env: Record<string, string> = {}, nodeArgs: string[] = []) {
 	try {
-		await execFile(process.execPath, [...nodeArgs, buildScript], { cwd, env: { ...process.env, ...env } });
-		return { code: 0, stderr: "" };
+		const { stderr } = await execFile(process.execPath, [...nodeArgs, buildScript], {
+			cwd,
+			env: { ...process.env, ...env },
+		});
+		return { code: 0, stderr };
 	} catch (error) {
 		const failure = error as { code?: number; stderr?: string };
 		return { code: failure.code ?? 1, stderr: failure.stderr ?? "" };
@@ -150,7 +153,7 @@ describe("build.mjs staging swap", () => {
 		const dir = makeFixture();
 		fixtures.push(dir);
 
-		const result = await runBuild(dir, {}, ["--import", join(dir, "late-winner-preload.mjs")]);
+		const result = await runBuild(dir, {}, ["--import", pathToFileURL(join(dir, "late-winner-preload.mjs")).href]);
 
 		expect(result).toEqual({ code: 0, stderr: "" });
 		expect(existsSync(join(dir, "dist", "index.js"))).toBe(true);

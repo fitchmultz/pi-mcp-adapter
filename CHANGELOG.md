@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `dist/` is now published by retrying this build's own `rename` instead of waiting on another build. A rename failure yields only when `dist/` already exists (an existence check, not an errno check, so platforms that report a different code for rename-onto-existing-directory still behave correctly); otherwise the staging tree is retained and the rename retried, so no build's success depends on another build's scheduling. This replaces the bounded poll shipped in 4.1.2, which could still fail a build whose concurrent winner was descheduled past the poll window.
+- `dist/` is now published by retrying this build's own `rename` instead of waiting on another build. A rename failure yields only when `dist/` already exists (an existence check, not an errno check, so platforms that report a different code for rename-onto-existing-directory still behave correctly); otherwise the staging tree is retained and the rename retried, so this build can publish its own output rather than wait on a concurrent winner's scheduling. This replaces the bounded poll shipped in 4.1.2, which could still fail a build whose concurrent winner was descheduled past the poll window.
 - Staging-reaper documentation now states its precise guarantee: only pids already gone at probe time are eligible; pid reuse between probe and removal remains inherent to pid-based reaping.
 - Swap coverage now includes the deterministic slow-winner regression, and concurrent-storm failures surface the build's stderr instead of only its exit code.
 
