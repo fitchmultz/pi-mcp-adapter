@@ -36,7 +36,10 @@ jobs:
           git clone --quiet . /tmp/omit-dev-smoke
           cd /tmp/omit-dev-smoke
           npm install --omit=dev
-          node --input-type=module -e "await import('./dist/index.js'); console.log('dist loads')"
+          # Plain node cannot import dist/index.js here: host packages (typebox,
+          # @earendil-works/*) are pruned and provided at runtime by pi's loader
+          # aliases. Assert emit + assets + prune instead; syntax-check the entry.
+          node --check dist/index.js
           test -f dist/mcp-keyring-helper.cjs
           test -f dist/mcp-script-worker.mjs
           test -f dist/app-bridge.bundle.js
