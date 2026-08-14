@@ -188,8 +188,10 @@ describe("build.mjs staging swap", () => {
 	it("rethrows when the staged emit disappears before publication", async () => {
 		const dir = makeFixture();
 		fixtures.push(dir);
-		const { code } = await runBuild(dir, { BUILD_SWAP_FAULT: "vanish-staging" }, faultArgs());
-		expect(code).not.toBe(0);
+		const result = await runBuild(dir, { BUILD_SWAP_FAULT: "vanish-staging" }, faultArgs());
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("ENOENT");
 		expect(existsSync(join(dir, "dist"))).toBe(false);
+		expect(stagingDirs(dir)).toEqual([]);
 	}, 10_000);
 });
