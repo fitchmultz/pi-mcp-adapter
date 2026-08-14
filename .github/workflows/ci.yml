@@ -31,3 +31,16 @@ jobs:
       - run: npm run test:oauth
       - run: npm run test:conformance
       - run: npm pack --dry-run
+      - name: Git-install lifecycle smoke (npm install --omit=dev builds and prunes)
+        run: |
+          git clone --quiet . /tmp/omit-dev-smoke
+          cd /tmp/omit-dev-smoke
+          npm install --omit=dev
+          # Plain node cannot import dist/index.js here: host packages (typebox,
+          # @earendil-works/*) are pruned and provided at runtime by pi's loader
+          # aliases. Assert emit + assets + prune instead; syntax-check the entry.
+          node --check dist/index.js
+          test -f dist/mcp-keyring-helper.cjs
+          test -f dist/mcp-script-worker.mjs
+          test -f dist/app-bridge.bundle.js
+          test ! -d node_modules/typescript

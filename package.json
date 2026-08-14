@@ -1,6 +1,6 @@
 {
   "name": "pi-mcp-adapter",
-  "version": "4.0.2",
+  "version": "4.1.0",
   "description": "MCP (Model Context Protocol) adapter extension for Pi coding agent",
   "type": "module",
   "types": "./index.ts",
@@ -25,6 +25,8 @@
     "pi-mcp-adapter": "cli.js"
   },
   "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "prepare": "node ./scripts/prepare.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -50,7 +52,7 @@
   ],
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
     ],
     "skills": [
       "./skills"
@@ -58,6 +60,11 @@
     "video": "https://github.com/nicobailon/pi-mcp-adapter/raw/refs/heads/main/pi-mcp.mp4"
   },
   "files": [
+    "dist",
+    "scripts/build.mjs",
+    "scripts/prepare.mjs",
+    "tsconfig.build.json",
+    "tsconfig.json",
     "cli.js",
     "agent-dir.ts",
     "index.ts",
