@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.2] - 2026-08-14
+
+### Changed
+
+- `scripts/build.mjs` now reaps `dist.staging.<pid>` directories stranded by dead builds (SIGKILL or crash mid-emit) at the start of every build, using a signal-0 liveness probe so live concurrent builds are never touched.
+- The race-loss check now polls briefly for a mid-swap concurrent winner before declaring failure, closing the window identified in the v4.1.1 review where a losing build could spuriously exit 1 while the winner was between its own `rm` and `rename`.
+- `scripts/prepare.mjs` prunes the dev toolchain in a `finally` (even when the build fails) and forwards build output on success, so install-time diagnostics such as the concurrent-swap race-loss warning are no longer swallowed.
+- New automated coverage for the staging swap: failed builds preserve the previous `dist/`, successful builds purge stale files and copy the runtime assets, dead-pid staging dirs are reaped while live ones survive, and concurrent builds all succeed.
+
 ## [4.1.1] - 2026-08-14
 
 ### Changed
