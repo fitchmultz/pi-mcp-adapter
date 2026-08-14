@@ -5,11 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.1.1] - 2026-08-13
+## [4.1.1] - 2026-08-14
 
 ### Changed
 
-- `scripts/build.mjs` now emits into a pid-scoped `dist.staging.<pid>` directory, so concurrent builds (pack-triggered `prepare`, parallel lanes) cannot clobber each other's staging tree or swap a partial emit into `dist/`. A build that loses the swap race to a concurrent winner exits 0 (the winner's tree is an equivalent fresh emit); `rm(dist)` failures still fail loudly. Ports the build hardening reviewed in pi-cursor-sdk v0.3.0.
+- `scripts/build.mjs` now emits into a pid-scoped `dist.staging.<pid>` directory, so concurrent builds (pack-triggered `prepare`, parallel lanes) cannot clobber each other's staging tree or swap a partial emit into `dist/`. A build that loses the swap race to a concurrent winner normally exits 0 (the winner's tree is an equivalent fresh emit; a narrow timing window can still surface the loss as a loud failure); `rm(dist)` failures always fail loudly. Ports the build hardening reviewed in pi-cursor-sdk v0.3.0.
 
 ## [4.1.0] - 2026-08-13
 
