@@ -73,9 +73,9 @@ async function compileToStaging(cwd, stagingDir) {
 			[tscPath, "-p", "tsconfig.build.json", "--outDir", stagingDir],
 			{ cwd, maxBuffer: 10 * 1024 * 1024 },
 		);
-		for (const asset of RUNTIME_ASSETS) await copyFile(join(cwd, asset), join(stagingDir, asset));
 		if (stdout) process.stdout.write(stdout);
 		if (stderr) process.stderr.write(stderr);
+		for (const asset of RUNTIME_ASSETS) await copyFile(join(cwd, asset), join(stagingDir, asset));
 	} catch (error) {
 		if (error?.stdout) process.stdout.write(error.stdout);
 		if (error?.stderr) process.stderr.write(error.stderr);

@@ -101,6 +101,22 @@ describe("build.mjs staging swap", () => {
 		expect(existsSync(join(dir, "dist", "index.js"))).toBe(true);
 	});
 
+	it("fails loudly when the previous dist cannot be removed", async () => {
+		const dir = makeFixture();
+		fixtures.push(dir);
+		mkdirSync(join(dir, "dist"));
+		writeFileSync(join(dir, "dist", "sentinel.txt"), "previous build");
+		const result = await runBuild(
+			dir,
+			{ BUILD_SWAP_FAULT: "stale-rm", LOCKED_STAGING_NAME: "dist" },
+			faultArgs(),
+		);
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("synthetic stale-staging lock");
+		expect(existsSync(join(dir, "dist", "sentinel.txt"))).toBe(true);
+		expect(stagingDirs(dir)).toEqual([]);
+	});
+
 	it("concurrent build storms succeed with valid dist", async () => {
 		const dir = makeFixture();
 		fixtures.push(dir);
@@ -172,7 +188,7 @@ describe("build.mjs staging swap", () => {
 	it("rethrows when the staged emit disappears before publication", async () => {
 		const dir = makeFixture();
 		fixtures.push(dir);
-		const { code } = await runBuild(dir, { TSC_STUB_SABOTAGE_STAGING: "1" });
+		const { code } = await runBuild(dir, { BUILD_SWAP_FAULT: "vanish-staging" }, faultArgs());
 		expect(code).not.toBe(0);
 		expect(existsSync(join(dir, "dist"))).toBe(false);
 	}, 10_000);
