@@ -12,4 +12,4 @@ plan.md
 triage-*.md
 review-*.md
 dist/
-dist.staging/
+dist.staging*/
