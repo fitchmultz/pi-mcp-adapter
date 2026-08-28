@@ -23,9 +23,9 @@
 import { spawnSync } from 'child_process';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { createRequire } from 'module';
-import { readFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { tmpdir } from 'os';
+import { homedir, userInfo } from 'os';
 import { fileURLToPath } from 'url';
 import { getAgentPath } from './agent-dir.ts';
 import { resolveConfiguredOAuthDir } from './config.ts';
@@ -454,14 +454,14 @@ interface EncryptedAuthEntryFile {
 let cachedDataEncryptionKey: { storeKind: string; key: Buffer } | undefined;
 
 /**
- * Accounts whose corrupt legacy keyring entry could not be deleted (removal
- * denied/failed). Skipping them for the rest of the process prevents re-reading
- * — and on macOS re-prompting for — an item that will never parse. Absence is
- * deliberately NOT cached: probing an absent item never prompts, and a legacy
- * entry written later by a concurrently running pre-v5 process must stay
- * visible. The next process retries the deletion once.
+ * Corrupt legacy keyring entries whose deletion was denied/failed, keyed by
+ * the hash of the corrupt payload bytes. While the stored bytes still match,
+ * re-processing (manifest fan-out, retirement deletes) is skipped — one cheap
+ * re-read per inspection at most. A later write by a concurrently running
+ * pre-v5 process changes the bytes, so it is seen and processed normally.
+ * Plain absence is never cached: probing an absent item never prompts.
  */
-const pendingLegacyKeyringRetirement = new Set<string>();
+const pendingLegacyKeyringRetirement = new Map<string, string>();
 
 /** Test-only hook: drop the in-process encryption-key and legacy-probe caches. */
 export function __resetAuthEncryptionKeyCacheForTests(): void {
@@ -489,22 +489,38 @@ function readDataEncryptionKeyFromStore(store: AuthSecretStore): Buffer | undefi
 // can both observe "no key", generate different keys, and each encrypt files
 // with a key the store no longer holds — permanently orphaning one side's
 // credentials. The DEK keyring account is global per OS user, so the lock is
-// global too: one mkdir lock in the per-user temp dir, NOT scoped to any
-// configured oauthDir. Only the create path locks; reads of an existing key
-// stay lock-free. The critical section is prompt-free (creating a new keychain
-// item does not ACL-prompt), so holders finish in milliseconds.
+// too: one directory under the account owner's real home (passwd/uid-based,
+// ignoring $HOME, TMPDIR, oauthDir, and PI_CODING_AGENT_DIR overrides, so
+// launchd services, terminals, and differently configured installs all share
+// it). Protocol:
+//
+//   acquire   Build the lock fully populated in a private mkdtemp sibling
+//             (owner token inside), then rename() it onto the lock path. The
+//             lock is never observable without its owner, and renaming a dir
+//             onto a non-empty dir fails atomically on POSIX and Windows.
+//   stale     Age-based only: the owner token's timestamp, dir mtime as
+//             fallback. A provably dead holder pid (ESRCH) only shortens the
+//             wait; nothing ever breaks a fresh lock.
+//   reclaim   Rename the stale lock to a random quarantine name FIRST, then
+//             re-verify identity (same owner token, or same mtime when there
+//             is no owner file) before deleting. A captured fresh replacement
+//             is renamed back, never deleted. Nobody removes the lock path
+//             in place, so a replacement holder can never be unlinked.
+//   release   Verify our owner token, rename to a private quarantine, delete.
 
 const DEK_LOCK_SPIN_MS = 20;
+const DEK_LOCK_STALE_LIVE_MS = 60_000;
+const DEK_LOCK_STALE_DEAD_MS = 5_000;
+const DEK_LOCK_FILE = 'mcp-oauth-dek.lock';
+
+interface DekLockHandle {
+  lockPath: string;
+  quarantinePath: string;
+  tokenId: string;
+}
 
 function sleepBlocking(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function getDataEncryptionKeyLockPath(): string {
-  // Per-user: tmpdir is user-private on macOS/Windows; the uid suffix keeps it
-  // private on multi-user Linux /tmp. Matches the per-user keyring account.
-  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
-  return join(tmpdir(), `pi-mcp-adapter-${uid}.dek.lock`);
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -517,62 +533,176 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-function withDataEncryptionKeyLock<T>(fn: () => T): T {
-  const lockPath = getDataEncryptionKeyLockPath();
-  const token = `${process.pid}.${randomBytes(8).toString('hex')}`;
-  const tokenPath = join(lockPath, 'owner');
-  for (;;) {
+function getDataEncryptionKeyLockParent(): string {
+  let home: string;
+  try {
+    home = userInfo().homedir; // passwd/uid-based: stable per OS user
+  } catch {
+    home = homedir();
+  }
+  const parent = join(home, '.pi', 'agent');
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
+  return parent;
+}
+
+function readDekLockOwner(lockDir: string): string | undefined {
+  try {
+    return readFileSync(join(lockDir, 'owner'), 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+function dekLockOwnerContent(tokenId: string): string {
+  return `${Date.now()}.${process.pid}.${tokenId}`;
+}
+
+/** Sweep staging/quarantine leftovers from crashed processes (age-gated). */
+function sweepDekLockLeftovers(parent: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(parent);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith('.dek-lock-') && !name.startsWith('.dek-quarantine-') && !name.startsWith('.dek-release-')) continue;
     try {
-      mkdirSync(lockPath);
-      writeFileSync(tokenPath, token);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
-    // Another process holds it. Break the lock only when the holder is dead —
-    // never steal from a live holder, no matter how long it takes.
-    try {
-      const owner = readFileSync(tokenPath, 'utf8');
-      const ownerPid = Number.parseInt(owner.split('.')[0] ?? '', 10);
-      if (Number.isInteger(ownerPid) && ownerPid > 0 && !isProcessAlive(ownerPid)) {
-        rmSync(lockPath, { recursive: true, force: true });
-        continue;
-      }
-      // Holder alive but lock abandoned without a token (died between mkdir and
-      // token write): only break once it is clearly stale.
-      if (!owner && Date.now() - statSync(lockPath).mtimeMs > 60_000) {
-        rmSync(lockPath, { recursive: true, force: true });
-        continue;
+      if (Date.now() - statSync(join(parent, name)).mtimeMs > DEK_LOCK_STALE_LIVE_MS) {
+        rmSync(join(parent, name), { recursive: true, force: true });
       }
     } catch {
-      // Lock or token vanished mid-check: retry immediately.
+      // Gone or unreadable: leave it for the next sweep.
+    }
+  }
+}
+
+function acquireDataEncryptionKeyLock(parent: string): DekLockHandle {
+  const lockPath = join(parent, DEK_LOCK_FILE);
+  const tokenId = randomBytes(8).toString('hex');
+  for (;;) {
+    // Build fully populated, then rename into place: never ownerless.
+    const staging = mkdtempSync(join(parent, '.dek-lock-'));
+    writeFileSync(join(staging, 'owner'), dekLockOwnerContent(tokenId));
+    try {
+      renameSync(staging, lockPath);
+      sweepDekLockLeftovers(parent);
+      return {
+        lockPath,
+        quarantinePath: join(parent, `.dek-release-${randomBytes(8).toString('hex')}`),
+        tokenId,
+      };
+    } catch (error) {
+      rmSync(staging, { recursive: true, force: true });
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST' && code !== 'ENOTEMPTY' && code !== 'ENOTDIR' && code !== 'EPERM' && code !== 'EACCES') throw error;
+    }
+
+    // Held by someone else. Decide staleness, then reclaim ownership-safely.
+    const observedOwner = readDekLockOwner(lockPath);
+    let observedMtime: number;
+    let ageMs: number;
+    let dead = false;
+    try {
+      observedMtime = statSync(lockPath).mtimeMs;
+    } catch {
+      continue; // Vanished between rename and stat: retry.
+    }
+    if (observedOwner !== undefined) {
+      const [tsText, pidText] = observedOwner.split('.');
+      const ts = Number(tsText);
+      ageMs = Date.now() - (Number.isFinite(ts) && ts > 0 ? ts : observedMtime);
+      const pid = Number.parseInt(pidText ?? '', 10);
+      dead = Number.isInteger(pid) && pid > 0 && !isProcessAlive(pid);
+    } else {
+      ageMs = Date.now() - observedMtime;
+    }
+    if (ageMs < (dead ? DEK_LOCK_STALE_DEAD_MS : DEK_LOCK_STALE_LIVE_MS)) {
+      sleepBlocking(DEK_LOCK_SPIN_MS);
       continue;
     }
-    sleepBlocking(DEK_LOCK_SPIN_MS);
-  }
-  try {
-    return fn();
-  } finally {
-    // Owned release: never delete a replacement holder's lock.
+
+    // Reclaim: quarantine first, verify it is the object we judged stale.
+    const quarantine = join(parent, `.dek-quarantine-${randomBytes(8).toString('hex')}`);
     try {
-      if (readFileSync(tokenPath, 'utf8') === token) {
-        rmSync(lockPath, { recursive: true, force: true });
-      }
+      renameSync(lockPath, quarantine);
     } catch {
-      // Lock already gone.
+      continue; // Another waiter reclaimed it, or the holder released.
     }
+    const capturedOwner = readDekLockOwner(quarantine);
+    let capturedMtime: number | undefined;
+    try {
+      capturedMtime = statSync(quarantine).mtimeMs;
+    } catch {
+      capturedMtime = undefined;
+    }
+    const sameObject = observedOwner !== undefined
+      ? capturedOwner === observedOwner
+      : capturedMtime !== undefined && capturedMtime === observedMtime;
+    if (sameObject) {
+      rmSync(quarantine, { recursive: true, force: true });
+      continue;
+    }
+    // We captured a fresh replacement lock (a concurrent reclaimer released and
+    // someone re-acquired between our staleness check and rename): put it back.
+    for (;;) {
+      try {
+        renameSync(quarantine, lockPath);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'EEXIST' && code !== 'ENOTEMPTY' && code !== 'ENOTDIR') {
+          rmSync(quarantine, { recursive: true, force: true }); // Cannot restore; remove to unblock.
+          break;
+        }
+        sleepBlocking(DEK_LOCK_SPIN_MS); // A third holder occupies the path; wait for release.
+      }
+    }
+  }
+}
+
+function releaseDataEncryptionKeyLock(handle: DekLockHandle): void {
+  try {
+    // Owned release: our section is milliseconds old, so no reclaimer can have
+    // judged us stale; a token mismatch means the lock was reclaimed/replaced.
+    // Identity is the random token id; the timestamp/pid prefix refreshes.
+    if (readDekLockOwner(handle.lockPath)?.endsWith(`.${handle.tokenId}`) !== true) return;
+    renameSync(handle.lockPath, handle.quarantinePath);
+    rmSync(handle.quarantinePath, { recursive: true, force: true });
+  } catch {
+    // Lock already gone.
+  }
+}
+
+function withDataEncryptionKeyLock<T>(fn: (refresh: () => void) => T): T {
+  const parent = getDataEncryptionKeyLockParent();
+  const handle = acquireDataEncryptionKeyLock(parent);
+  try {
+    return fn(() => {
+      // Heartbeat for slow keyring calls: a live holder refreshing never looks
+      // stale, and a reclaimer that captured a pre-refresh token restores us.
+      try {
+        writeFileSync(join(handle.lockPath, 'owner'), dekLockOwnerContent(handle.tokenId));
+      } catch {
+        // Lock was reclaimed out from under us; the section still completes.
+      }
+    });
+  } finally {
+    releaseDataEncryptionKeyLock(handle);
   }
 }
 
 function getOrCreateDataEncryptionKeyInStore(store: AuthSecretStore): Buffer {
   const existing = readDataEncryptionKeyFromStore(store);
   if (existing) return existing;
-  return withDataEncryptionKeyLock(() => {
+  return withDataEncryptionKeyLock(refresh => {
     // Another process may have created the key while we waited for the lock.
     const recheck = readDataEncryptionKeyFromStore(store);
     if (recheck) return recheck;
     const generated = randomBytes(32);
+    refresh();
     store.write(AUTH_DEK_ACCOUNT, generated.toString('base64'));
+    refresh();
     // Read back so the common concurrent-first-write case settles on the stored key.
     return readDataEncryptionKeyFromStore(store) ?? generated;
   });
@@ -723,11 +853,12 @@ function legacyRetirementCacheKey(account: string): string {
  * — a successfully deleted item is absent, and probing an absent item never
  * prompts.
  */
-function retireLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string, account: string): void {
+function retireLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string, account: string, payload: string): void {
   try {
     removeLegacyKeyringAuthEntry(store, serverName);
   } catch {
-    pendingLegacyKeyringRetirement.add(legacyRetirementCacheKey(account));
+    const digest = createHash('sha256').update(payload, 'utf8').digest('hex');
+    pendingLegacyKeyringRetirement.set(legacyRetirementCacheKey(account), digest);
   }
 }
 
@@ -738,7 +869,7 @@ function isLegacyAuthEntryShape(value: unknown): value is AuthEntry {
 
 function readLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string): AuthEntry | undefined {
   const account = getAuthEntryAccount(serverName);
-  if (pendingLegacyKeyringRetirement.has(legacyRetirementCacheKey(account))) return undefined;
+  const retirementCacheKey = legacyRetirementCacheKey(account);
   const readAccount = (name: string): string | undefined => {
     try {
       return store.read(name);
@@ -754,21 +885,32 @@ function readLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string):
   const payload = readAccount(account);
   if (payload === undefined) return undefined;
 
+  // Known-corrupt and undeletable: skip while the bytes are unchanged. A later
+  // valid write (e.g. a concurrent pre-v5 process) differs and is processed.
+  const cachedCorruptHash = pendingLegacyKeyringRetirement.get(retirementCacheKey);
+  if (cachedCorruptHash !== undefined) {
+    const payloadHash = createHash('sha256').update(payload, 'utf8').digest('hex');
+    if (payloadHash === cachedCorruptHash) return undefined;
+    pendingLegacyKeyringRetirement.delete(retirementCacheKey);
+  }
+
+  const retire = (): void => retireLegacyKeyringAuthEntry(store, serverName, account, payload);
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(payload);
   } catch {
-    retireLegacyKeyringAuthEntry(store, serverName, account);
+    retire();
     return undefined;
   }
   if (!isAuthEntryChunkManifest(parsed)) {
     // Manifest-shaped but invalid (e.g. absurd chunkCount): corrupt, not credentials.
     if (isLegacyAuthEntryShape(parsed) && (parsed as Record<string, unknown>)[AUTH_CHUNK_MANIFEST_KEY] === 1) {
-      retireLegacyKeyringAuthEntry(store, serverName, account);
+      retire();
       return undefined;
     }
     if (!isLegacyAuthEntryShape(parsed)) {
-      retireLegacyKeyringAuthEntry(store, serverName, account);
+      retire();
       return undefined;
     }
     return parsed;
@@ -778,7 +920,7 @@ function readLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string):
   for (const chunkAccount of getAuthEntryChunkAccounts(account, parsed)) {
     const chunk = readAccount(chunkAccount);
     if (chunk === undefined) {
-      retireLegacyKeyringAuthEntry(store, serverName, account);
+      retire();
       return undefined; // Partial chunk set: unauthenticated, never crash.
     }
     chunks.push(chunk);
@@ -786,18 +928,18 @@ function readLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string):
   const assembled = chunks.join('');
   const digest = createHash('sha256').update(assembled, 'utf8').digest('hex').slice(0, 16);
   if (digest !== parsed.chunkDigest) {
-    retireLegacyKeyringAuthEntry(store, serverName, account);
+    retire();
     return undefined; // Chunk contents do not match the manifest: unauthenticated.
   }
   let assembledEntry: unknown;
   try {
     assembledEntry = JSON.parse(assembled);
   } catch {
-    retireLegacyKeyringAuthEntry(store, serverName, account);
+    retire();
     return undefined;
   }
   if (!isLegacyAuthEntryShape(assembledEntry)) {
-    retireLegacyKeyringAuthEntry(store, serverName, account);
+    retire();
     return undefined;
   }
   return assembledEntry;

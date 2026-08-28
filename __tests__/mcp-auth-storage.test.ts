@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
@@ -579,22 +579,29 @@ describe("mcp-auth storage paths", () => {
       }
     });
 
-    it("skips a corrupt entry whose deletion is denied without hiding later valid writes", () => {
-      // Removal denied: the corrupt item stays, but must not be re-read (and on
-      // macOS re-prompted) on every status inspection.
+    it("skips a deletion-denied corrupt entry until a later valid write replaces it", () => {
       process.env.PI_MCP_ADAPTER_FAKE_KEYRING_DENY_REMOVE = "1";
       try {
         writeFileSync(storePath, JSON.stringify({ [accountFor("denied")]: "}{corrupt" }));
         expect(getAuthEntry("denied")).toBeUndefined();
         expect(readRecoveryStore(storePath)).toEqual({ [accountFor("denied")]: "}{corrupt" });
 
+        // While the corrupt bytes are unchanged, later inspections do one cheap
+        // re-read (hash compare) and nothing else: no chunk fan-out, no removes.
         writeFileSync(logPath, "");
         expect(getAuthEntry("denied")).toBeUndefined();
         expect(inspectAuthForUrl("denied", "https://example.com/mcp").status).toBe("absent");
-        expect(readFileSync(logPath, "utf8")).toBe("");
+        const ops = readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean);
+        expect(ops).toEqual([`read ${accountFor("denied")}`, `read ${accountFor("denied")}`]);
       } finally {
         delete process.env.PI_MCP_ADAPTER_FAKE_KEYRING_DENY_REMOVE;
       }
+
+      // A pre-v5 process later writes a valid entry over the corrupt one: the
+      // bytes differ from the cached corrupt hash, so it is seen and migrated.
+      seedLegacyKeyringEntry(storePath, "denied", { tokens: { accessToken: "late-token" }, serverUrl: "https://example.com/mcp" });
+      expect(getAuthEntry("denied")?.tokens?.accessToken).toBe("late-token");
+      expect(Object.keys(readRecoveryStore(storePath))).toEqual([DEK_ACCOUNT]);
     });
 
     it("sees a legacy entry written later by a concurrently running pre-v5 process", () => {
@@ -734,19 +741,26 @@ if (process.argv[3] === 'save') {
 }
 `);
 
-    const env = {
-      ...process.env,
-      PI_MCP_ADAPTER_TEST_AUTH_STORE: "keyrevoked",
-      PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY: "1",
-      PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL: keyctlPath,
-      PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE: process.execPath,
-      PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER: helperPath,
-      RACE_ROOT: harnessDir,
+    // Divergent TMPDIRs: the DEK is global, so the lock must not be derived
+    // from the temp environment (terminal vs launchd processes diverge here).
+    const envFor = (server: string) => {
+      const childTmp = join(harnessDir, `tmp-${server}`);
+      mkdirSync(childTmp, { recursive: true });
+      return {
+        ...process.env,
+        TMPDIR: childTmp,
+        PI_MCP_ADAPTER_TEST_AUTH_STORE: "keyrevoked",
+        PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY: "1",
+        PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL: keyctlPath,
+        PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE: process.execPath,
+        PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER: helperPath,
+        RACE_ROOT: harnessDir,
+      };
     };
     const run = (server: string, operation: string) => new Promise<string>((resolve, reject) => {
       const child = spawn(process.execPath, ["--import", "tsx", childPath, server, operation], {
         cwd: repoRoot,
-        env,
+        env: envFor(server),
         stdio: ["ignore", "pipe", "pipe"],
       });
       let stdout = "";
@@ -768,23 +782,24 @@ if (process.argv[3] === 'save') {
   });
 
   it("never steals the encryption-key lock from a live holder", { timeout: 60_000 }, async () => {
-    // A holder slow for any reason (e.g. waiting on the OS) must not lose the
-    // lock; the pre-fix code stole it after 2s and split the DEK.
+    // A live holder is never broken into, no matter how slow: staleness is
+    // age-based (60s) and reclamation quarantine-verifies identity.
     const recoveryHarness = createRecoveryHarness();
     const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-dek-hold-"));
     const holderPath = join(harnessDir, "holder.mjs");
     const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
     writeFileSync(holderPath, `
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { join } from "node:path";
-const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-const lockPath = join(tmpdir(), \`pi-mcp-adapter-\${uid}.dek.lock\`);
-const token = \`\${process.pid}.holder\`;
-mkdirSync(lockPath);
-writeFileSync(join(lockPath, "owner"), token);
+const parent = join(userInfo().homedir, ".pi", "agent");
+const lockPath = join(parent, "mcp-oauth-dek.lock");
+const token = \`\${Date.now()}.\${process.pid}.holdertoken\`;
+const staging = mkdtempSync(join(parent, ".dek-lock-"));
+writeFileSync(join(staging, "owner"), token);
+renameSync(staging, lockPath);
 console.log("holding");
-Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 4000);
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
 let survived = false;
 try { survived = readFileSync(join(lockPath, "owner"), "utf8") === token; } catch {}
 console.log(survived ? "survived" : "stolen");
@@ -801,15 +816,127 @@ rmSync(lockPath, { recursive: true, force: true });
     });
 
     try {
-      // Runs while the live holder still holds the lock.
+      const startedAt = Date.now();
       saveAuthEntry("waited", { tokens: { accessToken: "token" } });
+      const waitedMs = Date.now() - startedAt;
       expect(getAuthEntry("waited")?.tokens?.accessToken).toBe("token");
       await new Promise<void>(resolve => holder.on("close", () => resolve()));
       expect(holderOut).toContain("survived");
+      expect(waitedMs).toBeGreaterThan(2000); // waited out the live holder, did not break in
     } finally {
       holder.kill();
       rmSync(harnessDir, { recursive: true, force: true });
       rmSync(recoveryHarness.harnessDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers the encryption-key lock from an immediately killed holder", { timeout: 60_000 }, async () => {
+    const recoveryHarness = createRecoveryHarness();
+    const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-dek-killed-"));
+    const holderPath = join(harnessDir, "holder.mjs");
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+    writeFileSync(holderPath, `
+import { mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { userInfo } from "node:os";
+import { join } from "node:path";
+const parent = join(userInfo().homedir, ".pi", "agent");
+const staging = mkdtempSync(join(parent, ".dek-lock-"));
+writeFileSync(join(staging, "owner"), \`\${Date.now()}.\${process.pid}.killedholder\`);
+renameSync(staging, join(parent, "mcp-oauth-dek.lock"));
+console.log("holding");
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120000);
+`);
+
+    const holder = spawn(process.execPath, [holderPath], { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] });
+    let holderOut = "";
+    holder.stdout.on("data", chunk => { holderOut += chunk; });
+    holder.stderr.on("data", chunk => { holderOut += chunk; });
+    await new Promise<void>(resolve => {
+      const poll = () => (holderOut.includes("holding") ? resolve() : setTimeout(poll, 25));
+      poll();
+    });
+    holder.kill("SIGKILL"); // dies holding the lock; owner pid becomes ESRCH
+    await new Promise<void>(resolve => holder.on("close", () => resolve())); // reap the zombie
+
+    try {
+      const startedAt = Date.now();
+      saveAuthEntry("after-kill", { tokens: { accessToken: "token" } });
+      expect(getAuthEntry("after-kill")?.tokens?.accessToken).toBe("token");
+      // Dead-holder reclamation uses the 5s threshold, never the live 60s one.
+      expect(Date.now() - startedAt).toBeLessThan(30_000);
+    } finally {
+      rmSync(harnessDir, { recursive: true, force: true });
+      rmSync(recoveryHarness.harnessDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers from an ownerless stale lock without spinning forever", { timeout: 60_000 }, () => {
+    createRecoveryHarness();
+    const parent = join(userInfo().homedir, ".pi", "agent");
+    mkdirSync(parent, { recursive: true, mode: 0o700 });
+    const lockPath = join(parent, "mcp-oauth-dek.lock");
+    rmSync(lockPath, { recursive: true, force: true });
+    mkdirSync(lockPath); // foreign/ownerless lock dir, e.g. from a crashed older build
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(lockPath, old, old);
+    try {
+      saveAuthEntry("after-ownerless", { tokens: { accessToken: "token" } });
+      expect(getAuthEntry("after-ownerless")?.tokens?.accessToken).toBe("token");
+    } finally {
+      rmSync(lockPath, { recursive: true, force: true });
+    }
+  });
+
+  it("settles concurrent stale-lock reclamation on a single acquisition", { timeout: 90_000 }, async () => {
+    // Two waiters, one stale lock: exactly one quarantine-rename wins; the
+    // loser must not delete or bypass the replacement holder.
+    const { storePath, logPath, harnessDir } = createRecoveryHarness();
+    const parent = join(userInfo().homedir, ".pi", "agent");
+    mkdirSync(parent, { recursive: true, mode: 0o700 });
+    const lockPath = join(parent, "mcp-oauth-dek.lock");
+    rmSync(lockPath, { recursive: true, force: true });
+    const staging = mkdtempSync(join(parent, ".dek-lock-"));
+    writeFileSync(join(staging, "owner"), `${Date.now() - 120_000}.4242424242.staletoken`);
+    renameSync(staging, lockPath);
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(lockPath, old, old);
+
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const childPath = join(harnessDir, "child.mts");
+    writeFileSync(childPath, `
+process.env.MCP_OAUTH_DIR = ${JSON.stringify(authDir)};
+const auth = await import(${JSON.stringify(join(repoRoot, "mcp-auth.ts"))});
+const server = process.argv[2];
+auth.saveAuthEntry(server, { tokens: { accessToken: 'token-' + server } }, 'https://example.com');
+console.log(server, auth.getAuthEntry(server)?.tokens?.accessToken ?? 'UNREADABLE');
+`);
+    const run = (server: string) => new Promise<string>((resolve, reject) => {
+      const child = spawn(process.execPath, ["--import", "tsx", childPath, server], {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PI_MCP_ADAPTER_FAKE_KEYRING_STORE: storePath,
+          PI_MCP_ADAPTER_FAKE_KEYRING_LOG: logPath,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", chunk => { stdout += chunk; });
+      child.stderr.on("data", chunk => { stderr += chunk; });
+      child.on("close", code => code === 0 ? resolve(stdout.trim()) : reject(new Error(`${server} exited ${code}: ${stderr}`)));
+    });
+
+    try {
+      const results = await Promise.all([run("reclaim-a"), run("reclaim-b")]);
+      expect(results.sort()).toEqual(["reclaim-a token-reclaim-a", "reclaim-b token-reclaim-b"]);
+      // Single DEK despite the reclaim race; the test process shares the store.
+      expect(Object.keys(readRecoveryStore(storePath))).toEqual([DEK_ACCOUNT]);
+      expect(getAuthEntry("reclaim-a")?.tokens?.accessToken).toBe("token-reclaim-a");
+      expect(getAuthEntry("reclaim-b")?.tokens?.accessToken).toBe("token-reclaim-b");
+    } finally {
+      rmSync(lockPath, { recursive: true, force: true });
+      rmSync(harnessDir, { recursive: true, force: true });
     }
   });
 
