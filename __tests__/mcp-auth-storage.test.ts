@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash, randomBytes } from "node:crypto";
@@ -269,7 +269,36 @@ describe("mcp-auth storage paths", () => {
     rmSync(project, { recursive: true, force: true });
   });
 
-  it("does not migrate legacy credentials during status-only inspection", () => {
+  it("fails closed on write: an unavailable store means no file is ever written", () => {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+    try {
+      expect(() => saveAuthEntry("write-fail-closed", { tokens: { accessToken: "token" } }, "https://example.com/mcp"))
+        .toThrow(OAuthCredentialStoreError);
+      expect(existsSync(getAuthEntryEncFilePath("write-fail-closed"))).toBe(false);
+      // No plaintext or torn tmp files either.
+      expect(readdirSync(authDir).filter(name => name.includes("write-fail-closed") || name.endsWith(".tmp"))).toEqual([]);
+    } finally {
+      process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    }
+  });
+
+  it("deletes the encrypted file even when the keyring is unavailable during logout", () => {
+    saveAuthEntry("logout-store-down", { tokens: { accessToken: "token" } }, "https://example.com/mcp");
+    const encPath = getAuthEntryEncFilePath("logout-store-down");
+    expect(existsSync(encPath)).toBe(true);
+
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+    try {
+      // Legacy keyring cleanup still fails loudly (leftover items could be
+      // re-imported), but the canonical credential file is already gone.
+      expect(() => clearAllCredentials("logout-store-down")).toThrow(OAuthCredentialStoreError);
+      expect(existsSync(encPath)).toBe(false);
+    } finally {
+      process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    }
+  });
+
+  it("migrates legacy credentials during status-only inspection so prompts cannot repeat", () => {
     const filePath = getAuthEntryFilePath("status-only");
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, JSON.stringify({
@@ -278,10 +307,12 @@ describe("mcp-auth storage paths", () => {
     }), "utf-8");
 
     expect(inspectAuthForUrl("status-only", "https://example.com/mcp").status).toBe("present");
-    expect(existsSync(filePath)).toBe(true);
+    // Status inspection migrates like any other read: re-reading legacy
+    // keychain items on every panel refresh would re-trigger the prompt storm.
+    expect(existsSync(filePath)).toBe(false);
+    expect(existsSync(getAuthEntryEncFilePath("status-only"))).toBe(true);
 
     expect(getAuthEntry("status-only")?.tokens?.accessToken).toBe("legacy-token");
-    expect(existsSync(filePath)).toBe(false);
   });
 
   it("scopes encrypted credentials to the configured oauthDir", () => {
@@ -385,6 +416,32 @@ describe("mcp-auth storage paths", () => {
       expect(getAuthEntry("small-legacy")?.tokens?.accessToken).toBe("small-token");
       expect(Object.keys(readRecoveryStore(storePath))).toEqual([DEK_ACCOUNT]);
       expect(getAuthEntry("small-legacy")?.tokens?.accessToken).toBe("small-token");
+    });
+
+    it("migrates legacy keyring entries during status inspection, then never touches the keyring again", () => {
+      seedLegacyKeyringEntry(storePath, "panel-server", { tokens: { accessToken: "panel-token" }, serverUrl: "https://example.com/mcp" });
+
+      expect(inspectAuthForUrl("panel-server", "https://example.com/mcp").status).toBe("present");
+      expect(Object.keys(readRecoveryStore(storePath))).toEqual([DEK_ACCOUNT]);
+      expect(existsSync(getAuthEntryEncFilePath("panel-server"))).toBe(true);
+
+      const opsBefore = readFileSync(logPath, "utf8");
+      expect(inspectAuthForUrl("panel-server", "https://example.com/mcp").status).toBe("present");
+      expect(inspectAuthForUrl("panel-server", "https://example.com/mcp").status).toBe("present");
+      expect(readFileSync(logPath, "utf8")).toBe(opsBefore);
+    });
+
+    it("wraps recovery helper failures as credential-store errors instead of leaking raw errors", () => {
+      saveAuthEntry("helper-down", { tokens: { accessToken: "token" } }, "https://example.com/mcp");
+      expect(existsSync(getAuthEntryEncFilePath("helper-down"))).toBe(true);
+
+      // The store still reports KeyRevoked, but the helper can no longer run.
+      writeFileSync(join(harnessDir, "keyctl"), "#!/usr/bin/env bash\nexit 99\n", { mode: 0o755 });
+      __resetAuthEncryptionKeyCacheForTests();
+
+      expect(() => getAuthEntry("helper-down")).toThrow(OAuthCredentialStoreError);
+      expect(() => getAuthEntry("helper-down")).toThrow(/OS secure credential store/);
+      expect(inspectAuthForUrl("helper-down", "https://example.com/mcp").status).toBe("unavailable");
     });
 
     it("treats partial or corrupt legacy chunk sets as unauthenticated without crashing", () => {

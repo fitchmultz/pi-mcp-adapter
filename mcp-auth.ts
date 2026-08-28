@@ -222,13 +222,13 @@ function getAuthSecretStore(): AuthSecretStore {
 let keychainAccessNoticeShown = false;
 
 /**
- * The macOS keychain dialog names no password and no reason. Say what is about
- * to happen once per process so a (single) prompt never comes out of nowhere.
+ * The macOS keychain dialog names no password and no reason. Say what may be
+ * about to happen once per process so a prompt never comes out of nowhere.
  */
 function showKeychainAccessNoticeOnce(): void {
   if (keychainAccessNoticeShown || process.platform !== 'darwin') return;
   keychainAccessNoticeShown = true;
-  console.warn(`pi-mcp-adapter: reading the OAuth encryption key from the OS credential store. ${DARWIN_KEYCHAIN_GUIDANCE}`);
+  console.warn(`pi-mcp-adapter: accessing the OS credential store for OAuth credentials. If ${DARWIN_KEYCHAIN_GUIDANCE}`);
 }
 
 function getKeyringEntry(account: string): KeyringEntry {
@@ -475,8 +475,7 @@ function getOrCreateDataEncryptionKeyInStore(store: AuthSecretStore): Buffer {
   if (existing) return existing;
   const generated = randomBytes(32);
   store.write(AUTH_DEK_ACCOUNT, generated.toString('base64'));
-  // A concurrent first-write may have won; always encrypt with the key that is
-  // actually stored so every file stays decryptable.
+  // Read back so the common concurrent-first-write case settles on the stored key.
   return readDataEncryptionKeyFromStore(store) ?? generated;
 }
 
@@ -501,9 +500,17 @@ function getDataEncryptionKey(create: boolean): Buffer | undefined {
         error,
       );
     }
-    key = create
-      ? getOrCreateDataEncryptionKeyInStore(linuxKeyringRecoveryAuthSecretStore)
-      : readDataEncryptionKeyFromStore(linuxKeyringRecoveryAuthSecretStore);
+    try {
+      key = create
+        ? getOrCreateDataEncryptionKeyInStore(linuxKeyringRecoveryAuthSecretStore)
+        : readDataEncryptionKeyFromStore(linuxKeyringRecoveryAuthSecretStore);
+    } catch (recoveryError) {
+      throw new OAuthCredentialStoreError(
+        `Failed to access the OS secure credential store for OAuth credential encryption${keyringAccessGuidance()}`,
+        create ? 'write' : 'read',
+        recoveryError,
+      );
+    }
   }
   if (key) cachedDataEncryptionKey = { storeKind, key };
   return key;
@@ -566,7 +573,7 @@ function writeEncryptedAuthEntry(serverName: string, entry: AuthEntry, options?:
   const filePath = getAuthEntryEncFilePath(serverName, options);
   const tmpPath = `${filePath}.${process.pid}.tmp`;
   try {
-    mkdirSync(dirname(filePath), { recursive: true });
+    mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
     writeFileSync(tmpPath, encryptAuthEntryPayload(key, JSON.stringify(entry)), { mode: 0o600 });
     renameSync(tmpPath, filePath);
   } catch (error) {
@@ -706,13 +713,14 @@ function removeLegacyAuthEntry(serverName: string, options?: AuthStorageOptions)
  * of legacy keyring entries (chunked or single-item) and legacy plaintext
  * tokens.json. Successful imports are re-persisted as encrypted files and the
  * legacy records are removed; legacy cleanup failure never fails the read, so
- * keychain prompts can never loop.
+ * keychain prompts can never loop. Every read migrates — including status-only
+ * inspection — because skipping migration would re-read (and on macOS
+ * re-prompt for) the legacy keychain items on every status refresh.
  */
 function readAuthEntryFromStore(
   store: AuthSecretStore,
   serverName: string,
   options?: AuthStorageOptions,
-  behavior: { migrateLegacy?: boolean } = {},
 ): AuthEntry | undefined {
   const encrypted = readEncryptedAuthEntry(serverName, options);
   if (encrypted) {
@@ -722,7 +730,6 @@ function readAuthEntryFromStore(
 
   const legacyKeyringEntry = readLegacyKeyringAuthEntry(store, serverName);
   if (legacyKeyringEntry) {
-    if (behavior.migrateLegacy === false) return legacyKeyringEntry;
     writeEncryptedAuthEntry(serverName, legacyKeyringEntry, options);
     try {
       removeLegacyKeyringAuthEntry(store, serverName);
@@ -736,7 +743,6 @@ function readAuthEntryFromStore(
 
   const legacyEntry = readLegacyAuthEntry(serverName, options);
   if (!legacyEntry) return undefined;
-  if (behavior.migrateLegacy === false) return legacyEntry;
   writeEncryptedAuthEntry(serverName, legacyEntry, options);
   removeLegacyAuthEntry(serverName, options);
   return legacyEntry;
@@ -745,13 +751,12 @@ function readAuthEntryFromStore(
 function readAuthEntry(
   serverName: string,
   options?: AuthStorageOptions,
-  behavior: { migrateLegacy?: boolean } = {},
 ): AuthEntry | undefined {
   try {
-    return readAuthEntryFromStore(getAuthSecretStore(), serverName, options, behavior);
+    return readAuthEntryFromStore(getAuthSecretStore(), serverName, options);
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
-    return readAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore, serverName, options, behavior);
+    return readAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore, serverName, options);
   }
 }
 
@@ -781,8 +786,10 @@ export function getAuthForUrl(serverName: string, serverUrl: string, options?: A
 
 /**
  * Inspect credentials for status-only UI paths without treating an unavailable
- * secure store as missing credentials. Authentication operations continue to
- * use getAuthForUrl() directly and therefore remain fail-closed.
+ * secure store as missing credentials. Reads migrate legacy storage like any
+ * other read (otherwise every status refresh would re-read — and on macOS
+ * re-prompt for — legacy keychain items). Authentication operations continue
+ * to use getAuthForUrl() directly and therefore remain fail-closed.
  */
 export function inspectAuthForUrl(
   serverName: string,
@@ -790,7 +797,7 @@ export function inspectAuthForUrl(
   options?: AuthStorageOptions,
 ): OAuthCredentialStatus {
   try {
-    const entry = readAuthEntry(serverName, options, { migrateLegacy: false });
+    const entry = readAuthEntry(serverName, options);
     if (!entry?.serverUrl || entry.serverUrl !== serverUrl) return { status: 'absent' };
     return { status: 'present', entry };
   } catch (error) {
@@ -816,13 +823,15 @@ export function saveAuthEntry(serverName: string, entry: AuthEntry, serverUrl?: 
  * items, and any legacy plaintext file.
  */
 export function removeAuthEntry(serverName: string, options?: AuthStorageOptions): void {
+  // The encrypted file is the canonical credential and needs no keyring access:
+  // remove it first so logout still works when the OS credential store is down.
+  removeEncryptedAuthEntry(serverName, options);
   try {
     removeLegacyKeyringAuthEntry(getAuthSecretStore(), serverName);
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
     removeLegacyKeyringAuthEntry(linuxKeyringRecoveryAuthSecretStore, serverName);
   }
-  removeEncryptedAuthEntry(serverName, options);
   removeLegacyAuthEntry(serverName, options);
 }
 

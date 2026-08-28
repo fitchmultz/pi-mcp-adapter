@@ -5,12 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.2.0] - 2026-08-28
+## [5.0.0] - 2026-08-28
 
 ### Changed
 
 - OAuth credential storage no longer lives in the OS credential store as chunked keyring items. A single random 32-byte data-encryption key (DEK) is stored in the OS credential store once per install (service `pi-mcp-adapter.oauth`, account `encryption-key.v1`), and each server's OAuth entry is persisted as an AES-256-GCM encrypted file at `<oauthDir>/sha256-<server-hash>.enc` (default `~/.pi/agent/mcp-oauth`, honoring `settings.oauthDir` / `MCP_OAUTH_DIR`, written owner-only and atomically). macOS now shows at most one keychain prompt per install instead of one prompt per stored chunk on every Node/Pi upgrade. Chunked writes are dead on every platform, so the Windows Credential Manager blob-size cap no longer applies. On Linux, the revoked-session-keyring recovery path (`keyctl session - node <packaged helper>`) now only fetches/stores the single DEK.
-- `settings.oauthDir` / `MCP_OAUTH_DIR` are the credential location again (now encrypted), so explicitly configured directories scope credentials per directory; the default `~/.pi/agent/mcp-oauth` remains shared per OS user. These directories are also still the legacy plaintext import source.
+- **Breaking:** `settings.oauthDir` / `MCP_OAUTH_DIR` are the credential location again (now AES-256-GCM encrypted), so explicitly configured directories scope credentials per directory instead of sharing the keyring namespace; the default `~/.pi/agent/mcp-oauth` remains shared per OS user. These directories are also still the legacy plaintext import source. Never commit a project-local OAuth directory.
 - Keyring-access errors and notices now explain what is happening on macOS: "macOS is asking for your login keychain password (normally your Mac login password); click Always Allow to stop future prompts." A one-time notice is printed before the first keychain read so the single remaining dialog never appears without context.
 
 ### Fixed
