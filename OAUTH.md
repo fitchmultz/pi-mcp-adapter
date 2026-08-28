@@ -20,7 +20,7 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 - ✅ **Auto-Discovery** - Discovers OAuth endpoints from server metadata
 - ✅ **Automatic Token Refresh** - SDK handles expired tokens automatically
 - ✅ **State Parameter Validation** - CSRF protection
-- ✅ **Secure Token Storage** - Persistent OAuth entries are stored in the operating system credential store
+- ✅ **Secure Token Storage** - OAuth entries are AES-256-GCM encrypted files; the single encryption key lives in the operating system credential store
 
 ## Configuration
 
@@ -226,13 +226,22 @@ A Node.js HTTP server runs on a loopback callback endpoint and handles the activ
 
 ## Token Storage
 
-Persistent OAuth entries are stored per configured server name in the operating system credential store, using macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
+Persistent OAuth entries are stored per configured server name as AES-256-GCM encrypted files at `~/.pi/agent/mcp-oauth/sha256-<server-hash>.enc` (honoring `settings.oauthDir` / `MCP_OAUTH_DIR`, written owner-only and atomically). The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
 
-The adapter fails closed when the OS credential store is unavailable. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth; the adapter does not silently fall back to plaintext token files.
+Encryption uses a single random 32-byte data-encryption key (DEK) shared by all servers, stored as one small item in the operating system credential store — macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring` (service `pi-mcp-adapter.oauth`, account `encryption-key.v1`). Because the keyring holds exactly one tiny item per install, macOS prompts for keychain access at most once; earlier versions stored chunked payload items in the keyring (to fit the Windows Credential Manager size cap), which produced a login-keychain password dialog per chunk on every Node or Pi upgrade. The encrypted files have no size limit, so chunking is gone on every platform.
 
-On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path requires `keyctl` and `node` on `PATH`; missing, locked, or otherwise unavailable credential stores still fail closed.
+The adapter fails closed when the OS credential store is unavailable: no key means no decryption, and tokens are never written in plaintext. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth. If the keychain item is lost or deleted, existing encrypted files are undecryptable and the affected servers are treated as unauthenticated — run `/mcp-auth <server>` again; a new key is generated automatically on the next save.
 
-Older versions stored plaintext entries at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json`, or under `settings.oauthDir` / `MCP_OAUTH_DIR`. On first read after upgrade, a valid legacy entry is imported into the OS credential store and the plaintext `tokens.json` file is removed. These directories are now legacy import locations, not persistent credential stores or isolation namespaces.
+On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path now only fetches/stores the single DEK; it requires `keyctl` and `node` on `PATH`, and missing, locked, or otherwise unavailable credential stores still fail closed.
+
+On macOS, the one remaining keychain dialog is announced: the adapter prints a notice before the first keychain read, and store errors include "macOS is asking for your login keychain password (normally your Mac login password); click Always Allow to stop future prompts."
+
+### Migration from older versions
+
+On first read after upgrade, legacy storage is imported one-way into the encrypted-file scheme, then removed:
+
+- **Chunked keyring entries** (a manifest item plus `sha256-<hash>.chunk.<digest>.<n>` items, written by versions that chunked payloads for Windows Credential Manager) are reassembled, written to `<server-hash>.enc`, and deleted from the keyring. Reading and deleting legacy items may prompt once per item at migration time; cleanup is best-effort and never re-prompts in a loop. Partial or corrupt chunk sets are treated as unauthenticated rather than crashing.
+- **Plaintext `tokens.json`** at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json` (or under `settings.oauthDir` / `MCP_OAUTH_DIR`) is imported and the file removed.
 
 The stored `serverUrl` field ensures credentials are invalidated if the server URL changes.
 
@@ -248,7 +257,7 @@ A cryptographically secure random state parameter is generated for each flow and
 
 ### OS Credential Store
 
-Persistent OAuth credentials are written to the OS credential store. Legacy plaintext files are read only for one-way migration and are removed after successful import. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
+The OS credential store holds only the single shared AES-256-GCM data-encryption key; OAuth credentials themselves live exclusively as encrypted files derived from it. Legacy keyring entries and legacy plaintext files are read only for one-way migration and are removed after successful import. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
 
 ### URL Validation
 
@@ -256,9 +265,13 @@ Credentials are tied to a specific server URL. If the URL changes, the credentia
 
 ## Troubleshooting
 
+### macOS asks for a keychain password
+
+macOS is asking for your login keychain password (normally your Mac login password) so the adapter can read the OAuth encryption key from the Keychain. Click **Always Allow** to stop future prompts — there is only one keychain item, so this happens at most once per install (and once more whenever the binary changes, such as after a Node or Pi upgrade).
+
 ### "No OAuth tokens found"
 
-Run `/mcp-auth <server>` to authenticate.
+Run `/mcp-auth <server>` to authenticate. This also applies after the OS keychain item holding the encryption key was deleted or reset: the encrypted credential files can no longer be decrypted, so re-authentication writes fresh ones.
 
 ### "Failed to discover OAuth endpoints"
 
@@ -297,7 +310,7 @@ If the browser fails to open (e.g., in SSH sessions), the authorization URL will
 
 The OAuth implementation uses the following modules:
 
-- `mcp-auth.ts` - Auth storage and retrieval through the OS credential store, with one-way legacy `tokens.json` import
+- `mcp-auth.ts` - Auth storage as encrypted files keyed by a DEK in the OS credential store, with one-way migration from legacy chunked keyring entries and plaintext `tokens.json`
 - `mcp-oauth-provider.ts` - SDK OAuthClientProvider implementation
 - `mcp-callback-server.ts` - Node.js HTTP callback server
 - `mcp-auth-flow.ts` - High-level auth flow using SDK transport

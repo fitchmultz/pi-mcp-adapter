@@ -347,7 +347,7 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(getOAuthState("stale")).not.toBe("old-state");
   });
 
-  it("keeps same-name pending OAuth flows isolated while sharing secure-store credentials by server name", async () => {
+  it("keeps same-name pending OAuth flows isolated and scopes stored credentials by oauthDir", async () => {
     delete process.env.MCP_OAUTH_DIR;
     const projectA = mkdtempSync(join(tmpdir(), "pi-mcp-auth-flow-a-"));
     const projectB = mkdtempSync(join(tmpdir(), "pi-mcp-auth-flow-b-"));
@@ -383,7 +383,9 @@ describe("mcp-auth-flow explicit auth", () => {
 
     await completeAuthFromInput("shared", "code-b", { authStorageOptions: authStorageOptionsB, runtime: runtimeB });
 
-    expect(getAuthForUrl("shared", "https://api.example.com/mcp", authStorageOptionsA)?.tokens?.accessToken).toBe("token-b");
+    // Encrypted credential files live under each configured oauthDir, so the
+    // completed flow is only visible through the directory that completed it.
+    expect(getAuthForUrl("shared", "https://api.example.com/mcp", authStorageOptionsA)?.tokens?.accessToken).toBeUndefined();
     expect(getAuthForUrl("shared", "https://api.example.com/mcp", authStorageOptionsB)?.tokens?.accessToken).toBe("token-b");
     await shutdownOAuth(runtimeA);
     await shutdownOAuth(runtimeB);
