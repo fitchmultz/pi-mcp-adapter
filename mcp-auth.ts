@@ -25,6 +25,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypt
 import { createRequire } from 'module';
 import { readFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
+import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { getAgentPath } from './agent-dir.ts';
 import { resolveConfiguredOAuthDir } from './config.ts';
@@ -423,7 +424,7 @@ function isAuthEntryChunkManifest(value: unknown): value is AuthEntryChunkManife
     && typeof manifest.chunkCount === 'number'
     && Number.isInteger(manifest.chunkCount)
     && manifest.chunkCount > 0
-    && manifest.chunkCount <= 4096 // sanity bound: 1800-byte chunks, real entries are kilobytes
+    && manifest.chunkCount <= 64 // 1800-byte chunks cover ~115KB of credentials; also bounds retirement work
     && typeof manifest.chunkDigest === 'string'
     && /^[a-f0-9]{16}$/.test(manifest.chunkDigest);
 }
@@ -453,16 +454,19 @@ interface EncryptedAuthEntryFile {
 let cachedDataEncryptionKey: { storeKind: string; key: Buffer } | undefined;
 
 /**
- * Accounts whose legacy keyring entries are known to be absent, migrated, or
- * retired as corrupt. Prevents re-reading (and on macOS re-prompting for) the
- * same legacy items on every status inspection.
+ * Accounts whose corrupt legacy keyring entry could not be deleted (removal
+ * denied/failed). Skipping them for the rest of the process prevents re-reading
+ * — and on macOS re-prompting for — an item that will never parse. Absence is
+ * deliberately NOT cached: probing an absent item never prompts, and a legacy
+ * entry written later by a concurrently running pre-v5 process must stay
+ * visible. The next process retries the deletion once.
  */
-const legacyKeyringNegativeCache = new Set<string>();
+const pendingLegacyKeyringRetirement = new Set<string>();
 
 /** Test-only hook: drop the in-process encryption-key and legacy-probe caches. */
 export function __resetAuthEncryptionKeyCacheForTests(): void {
   cachedDataEncryptionKey = undefined;
-  legacyKeyringNegativeCache.clear();
+  pendingLegacyKeyringRetirement.clear();
 }
 
 function getAuthStoreKind(): string {
@@ -484,60 +488,86 @@ function readDataEncryptionKeyFromStore(store: AuthSecretStore): Buffer | undefi
 // Keyrings offer no compare-and-swap, so without exclusion two fresh processes
 // can both observe "no key", generate different keys, and each encrypt files
 // with a key the store no longer holds — permanently orphaning one side's
-// credentials. A mkdir lock (atomic on POSIX and Windows) serializes only the
-// create path; reads of an existing key stay lock-free. The lock lives in the
-// resolved OAuth dir; cross-dir first-run races on a brand-new install remain
-// theoretical and self-heal via re-authentication.
+// credentials. The DEK keyring account is global per OS user, so the lock is
+// global too: one mkdir lock in the per-user temp dir, NOT scoped to any
+// configured oauthDir. Only the create path locks; reads of an existing key
+// stay lock-free. The critical section is prompt-free (creating a new keychain
+// item does not ACL-prompt), so holders finish in milliseconds.
 
-const DEK_LOCK_STALE_MS = 10_000;
 const DEK_LOCK_SPIN_MS = 20;
-const DEK_LOCK_ATTEMPTS = 100;
 
 function sleepBlocking(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function withDataEncryptionKeyLock<T>(options: AuthStorageOptions | undefined, fn: () => T): T {
-  const baseDir = getAuthBaseDir(options);
-  mkdirSync(baseDir, { recursive: true, mode: 0o700 });
-  const lockPath = join(baseDir, '.dek.lock');
-  let acquired = false;
-  for (let attempt = 0; attempt < DEK_LOCK_ATTEMPTS; attempt++) {
+function getDataEncryptionKeyLockPath(): string {
+  // Per-user: tmpdir is user-private on macOS/Windows; the uid suffix keeps it
+  // private on multi-user Linux /tmp. Matches the per-user keyring account.
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  return join(tmpdir(), `pi-mcp-adapter-${uid}.dek.lock`);
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but is owned by someone else.
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function withDataEncryptionKeyLock<T>(fn: () => T): T {
+  const lockPath = getDataEncryptionKeyLockPath();
+  const token = `${process.pid}.${randomBytes(8).toString('hex')}`;
+  const tokenPath = join(lockPath, 'owner');
+  for (;;) {
     try {
       mkdirSync(lockPath);
-      acquired = true;
+      writeFileSync(tokenPath, token);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      try {
-        const stat = statSync(lockPath);
-        if (Date.now() - stat.mtimeMs > DEK_LOCK_STALE_MS) {
-          rmSync(lockPath, { recursive: true, force: true });
-          continue;
-        }
-      } catch {
-        continue; // Lock vanished between mkdir and stat: retry immediately.
-      }
-      sleepBlocking(DEK_LOCK_SPIN_MS);
     }
-  }
-  if (!acquired) {
-    // A holder past the spin budget is dead or hung; break the lock rather than
-    // block credential storage forever.
-    rmSync(lockPath, { recursive: true, force: true });
-    mkdirSync(lockPath);
+    // Another process holds it. Break the lock only when the holder is dead —
+    // never steal from a live holder, no matter how long it takes.
+    try {
+      const owner = readFileSync(tokenPath, 'utf8');
+      const ownerPid = Number.parseInt(owner.split('.')[0] ?? '', 10);
+      if (Number.isInteger(ownerPid) && ownerPid > 0 && !isProcessAlive(ownerPid)) {
+        rmSync(lockPath, { recursive: true, force: true });
+        continue;
+      }
+      // Holder alive but lock abandoned without a token (died between mkdir and
+      // token write): only break once it is clearly stale.
+      if (!owner && Date.now() - statSync(lockPath).mtimeMs > 60_000) {
+        rmSync(lockPath, { recursive: true, force: true });
+        continue;
+      }
+    } catch {
+      // Lock or token vanished mid-check: retry immediately.
+      continue;
+    }
+    sleepBlocking(DEK_LOCK_SPIN_MS);
   }
   try {
     return fn();
   } finally {
-    rmSync(lockPath, { recursive: true, force: true });
+    // Owned release: never delete a replacement holder's lock.
+    try {
+      if (readFileSync(tokenPath, 'utf8') === token) {
+        rmSync(lockPath, { recursive: true, force: true });
+      }
+    } catch {
+      // Lock already gone.
+    }
   }
 }
 
-function getOrCreateDataEncryptionKeyInStore(store: AuthSecretStore, options?: AuthStorageOptions): Buffer {
+function getOrCreateDataEncryptionKeyInStore(store: AuthSecretStore): Buffer {
   const existing = readDataEncryptionKeyFromStore(store);
   if (existing) return existing;
-  return withDataEncryptionKeyLock(options, () => {
+  return withDataEncryptionKeyLock(() => {
     // Another process may have created the key while we waited for the lock.
     const recheck = readDataEncryptionKeyFromStore(store);
     if (recheck) return recheck;
@@ -553,13 +583,13 @@ function getOrCreateDataEncryptionKeyInStore(store: AuthSecretStore, options?: A
  * OAuthCredentialStoreError) when the store is unavailable; returns undefined
  * only when the store works but no key has been created yet.
  */
-function getDataEncryptionKey(create: boolean, options?: AuthStorageOptions): Buffer | undefined {
+function getDataEncryptionKey(create: boolean): Buffer | undefined {
   const storeKind = getAuthStoreKind();
   if (cachedDataEncryptionKey?.storeKind === storeKind) return cachedDataEncryptionKey.key;
   let key: Buffer | undefined;
   try {
     key = create
-      ? getOrCreateDataEncryptionKeyInStore(getAuthSecretStore(), options)
+      ? getOrCreateDataEncryptionKeyInStore(getAuthSecretStore())
       : readDataEncryptionKeyFromStore(getAuthSecretStore());
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) {
@@ -571,7 +601,7 @@ function getDataEncryptionKey(create: boolean, options?: AuthStorageOptions): Bu
     }
     try {
       key = create
-        ? getOrCreateDataEncryptionKeyInStore(linuxKeyringRecoveryAuthSecretStore, options)
+        ? getOrCreateDataEncryptionKeyInStore(linuxKeyringRecoveryAuthSecretStore)
         : readDataEncryptionKeyFromStore(linuxKeyringRecoveryAuthSecretStore);
     } catch (recoveryError) {
       throw new OAuthCredentialStoreError(
@@ -626,7 +656,7 @@ function decryptAuthEntryPayload(key: Buffer, raw: string): string {
 function readEncryptedAuthEntry(serverName: string, options?: AuthStorageOptions): AuthEntry | undefined {
   const filePath = getAuthEntryEncFilePath(serverName, options);
   if (!existsSync(filePath)) return undefined;
-  const key = getDataEncryptionKey(false, options);
+  const key = getDataEncryptionKey(false);
   if (!key) return undefined;
   try {
     return JSON.parse(decryptAuthEntryPayload(key, readFileSync(filePath, 'utf-8'))) as AuthEntry;
@@ -638,7 +668,7 @@ function readEncryptedAuthEntry(serverName: string, options?: AuthStorageOptions
 function writeEncryptedAuthEntry(serverName: string, entry: AuthEntry, options?: AuthStorageOptions): void {
   // Resolve the key first: when the OS credential store is unavailable we must
   // fail before any file is written (never fall back to plaintext).
-  const key = getDataEncryptionKey(true, options);
+  const key = getDataEncryptionKey(true);
   if (!key) {
     throw new OAuthCredentialStoreError(
       `Failed to write OAuth credentials for ${serverName}: the OS secure credential store has no usable encryption key${keyringAccessGuidance()}`,
@@ -683,29 +713,32 @@ function removeEncryptedAuthEntry(serverName: string, options?: AuthStorageOptio
 // manifest item plus N chunk items (Windows Credential Manager size limit).
 // These are only read for one-way import and then deleted.
 
-function legacyNegativeCacheKey(account: string): string {
+function legacyRetirementCacheKey(account: string): string {
   return `${getAuthStoreKind()}:${account}`;
 }
 
 /**
  * Retire a corrupt legacy entry: best-effort delete so it is never read (and on
- * macOS never prompted for) again, and cache the negative result in-process
- * even when deletion is denied — a corrupt entry must never recreate the
- * prompt storm on every status inspection.
+ * macOS never prompted for) again. Only a FAILED deletion is cached in-process
+ * — a successfully deleted item is absent, and probing an absent item never
+ * prompts.
  */
 function retireLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string, account: string): void {
   try {
     removeLegacyKeyringAuthEntry(store, serverName);
   } catch {
-    // Deletion denied or store hiccup: the negative cache still stops re-reads
-    // for this process, and the next process retries the cleanup once.
+    pendingLegacyKeyringRetirement.add(legacyRetirementCacheKey(account));
   }
-  legacyKeyringNegativeCache.add(legacyNegativeCacheKey(account));
+}
+
+/** Valid legacy payloads are plain objects; null/false/0/''/arrays are corruption. */
+function isLegacyAuthEntryShape(value: unknown): value is AuthEntry {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function readLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string): AuthEntry | undefined {
   const account = getAuthEntryAccount(serverName);
-  if (legacyKeyringNegativeCache.has(legacyNegativeCacheKey(account))) return undefined;
+  if (pendingLegacyKeyringRetirement.has(legacyRetirementCacheKey(account))) return undefined;
   const readAccount = (name: string): string | undefined => {
     try {
       return store.read(name);
@@ -719,10 +752,7 @@ function readLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string):
   };
 
   const payload = readAccount(account);
-  if (payload === undefined) {
-    legacyKeyringNegativeCache.add(legacyNegativeCacheKey(account));
-    return undefined;
-  }
+  if (payload === undefined) return undefined;
 
   let parsed: unknown;
   try {
@@ -733,11 +763,15 @@ function readLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string):
   }
   if (!isAuthEntryChunkManifest(parsed)) {
     // Manifest-shaped but invalid (e.g. absurd chunkCount): corrupt, not credentials.
-    if (typeof parsed === 'object' && parsed !== null && (parsed as Record<string, unknown>)[AUTH_CHUNK_MANIFEST_KEY] === 1) {
+    if (isLegacyAuthEntryShape(parsed) && (parsed as Record<string, unknown>)[AUTH_CHUNK_MANIFEST_KEY] === 1) {
       retireLegacyKeyringAuthEntry(store, serverName, account);
       return undefined;
     }
-    return parsed as AuthEntry;
+    if (!isLegacyAuthEntryShape(parsed)) {
+      retireLegacyKeyringAuthEntry(store, serverName, account);
+      return undefined;
+    }
+    return parsed;
   }
 
   const chunks: string[] = [];
@@ -755,12 +789,18 @@ function readLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string):
     retireLegacyKeyringAuthEntry(store, serverName, account);
     return undefined; // Chunk contents do not match the manifest: unauthenticated.
   }
+  let assembledEntry: unknown;
   try {
-    return JSON.parse(assembled) as AuthEntry;
+    assembledEntry = JSON.parse(assembled);
   } catch {
     retireLegacyKeyringAuthEntry(store, serverName, account);
     return undefined;
   }
+  if (!isLegacyAuthEntryShape(assembledEntry)) {
+    retireLegacyKeyringAuthEntry(store, serverName, account);
+    return undefined;
+  }
+  return assembledEntry;
 }
 
 function removeLegacyKeyringAuthEntry(store: AuthSecretStore, serverName: string): void {
@@ -864,7 +904,6 @@ function readAuthEntryFromStore(
   const legacyKeyringEntry = readLegacyKeyringAuthEntry(store, serverName);
   if (legacyKeyringEntry) {
     writeEncryptedAuthEntry(serverName, legacyKeyringEntry, options);
-    legacyKeyringNegativeCache.add(legacyNegativeCacheKey(getAuthEntryAccount(serverName)));
     try {
       removeLegacyKeyringAuthEntry(store, serverName);
     } catch {
