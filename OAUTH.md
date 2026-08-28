@@ -232,7 +232,7 @@ Encryption uses a single random 32-byte data-encryption key (DEK) shared by all 
 
 The adapter fails closed when the OS credential store is unavailable: no key means no decryption, and tokens are never written in plaintext. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth. If the keychain item is lost or deleted, existing encrypted files are undecryptable and the affected servers are treated as unauthenticated — run `/mcp-auth <server>` again; a new key is generated automatically on the next save.
 
-On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path now only fetches/stores the single DEK; it requires `keyctl` and `node` on `PATH`, and missing, locked, or otherwise unavailable credential stores still fail closed.
+On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path now only touches the single DEK (plus one-time reads/removals of legacy entries during migration); it requires `keyctl` and `node` on `PATH`, and missing, locked, or otherwise unavailable credential stores still fail closed.
 
 On macOS, the one remaining keychain dialog is announced: the adapter prints a notice before the first keychain read, and store errors include "macOS is asking for your login keychain password (normally your Mac login password); click Always Allow to stop future prompts."
 
@@ -240,7 +240,7 @@ On macOS, the one remaining keychain dialog is announced: the adapter prints a n
 
 On first read after upgrade, legacy storage is imported one-way into the encrypted-file scheme, then removed:
 
-- **Chunked keyring entries** (a manifest item plus `sha256-<hash>.chunk.<digest>.<n>` items, written by versions that chunked payloads for Windows Credential Manager) are reassembled, written to `<server-hash>.enc`, and deleted from the keyring. Reading and deleting legacy items may prompt once per item at migration time; cleanup is best-effort and never re-prompts in a loop. Partial or corrupt chunk sets are treated as unauthenticated rather than crashing.
+- **Chunked keyring entries** (a manifest item plus `sha256-<hash>.chunk.<digest>.<n>` items, written by versions that chunked payloads for Windows Credential Manager) are reassembled, verified against the manifest's chunk digest, written to `<server-hash>.enc`, and deleted from the keyring. Reading and deleting legacy items may prompt once per item at migration time; cleanup is best-effort and never re-prompts in a loop. Partial, corrupt, or digest-mismatched chunk sets are treated as unauthenticated and the corrupt keyring items are retired on first read, so status refreshes never re-prompt for them.
 - **Plaintext `tokens.json`** at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json` (or under `settings.oauthDir` / `MCP_OAUTH_DIR`) is imported and the file removed.
 
 The stored `serverUrl` field ensures credentials are invalidated if the server URL changes.
