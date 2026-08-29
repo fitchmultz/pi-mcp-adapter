@@ -1130,8 +1130,7 @@ describe("config discovery", () => {
       },
     });
 
-    const { getServerProvenance, loadMcpConfig, writeDirectToolsConfig, getPiGlobalConfigPath } = await import("../config.ts");
-    const fullConfig = loadMcpConfig();
+    const { getServerProvenance, writeDirectToolsConfig, getPiGlobalConfigPath } = await import("../config.ts");
     const provenance = getServerProvenance();
 
     writeDirectToolsConfig(
@@ -1140,14 +1139,67 @@ describe("config discovery", () => {
         ["projectServer", ["search"]],
       ]),
       provenance,
-      fullConfig,
     );
 
     const userConfig = JSON.parse(readFileSync(getPiGlobalConfigPath(), "utf-8"));
-    expect(userConfig.mcpServers.genericServer).toMatchObject({ command: "generic", directTools: true });
+    expect(userConfig.mcpServers.genericServer).toEqual({ directTools: true });
 
     const projectConfig = JSON.parse(readFileSync(join(project, ".mcp.json"), "utf-8"));
     expect(projectConfig.mcpServers.projectServer).toMatchObject({ command: "project", directTools: ["search"] });
+  });
+
+  it("persists directTools for shared-layer servers as a partial overlay without copying the definition", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-overlay-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-overlay-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      mcpServers: {
+        sharedServer: {
+          url: "https://internal.example.com/mcp",
+          headers: { Authorization: "Bearer secret" },
+        },
+      },
+    });
+
+    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+      mcpServers: {
+        piServer: { command: "pi-owned" },
+      },
+    });
+
+    const { getServerProvenance, loadMcpConfig, writeDirectToolsConfig, getPiGlobalConfigPath } = await import("../config.ts");
+    const provenance = getServerProvenance();
+
+    writeDirectToolsConfig(
+      new Map([
+        ["sharedServer", true],
+        ["piServer", false],
+      ]),
+      provenance,
+    );
+
+    const piPath = getPiGlobalConfigPath();
+    const userConfig = JSON.parse(readFileSync(piPath, "utf-8"));
+    // Partial overlay only: no definition keys or credentials cross layers.
+    expect(userConfig.mcpServers.sharedServer).toEqual({ directTools: true });
+    // Pi-owned servers still persist in place.
+    expect(userConfig.mcpServers.piServer).toEqual({ command: "pi-owned", directTools: false });
+
+    // The merged effective config resolves url from the source layer plus
+    // directTools from the overlay.
+    const merged = loadMcpConfig();
+    expect(merged.mcpServers.sharedServer).toEqual({
+      url: "https://internal.example.com/mcp",
+      headers: { Authorization: "Bearer secret" },
+      directTools: true,
+    });
+
+    // A second toggle updates the overlay in place, still without copying.
+    writeDirectToolsConfig(new Map([["sharedServer", ["search"]]]), getServerProvenance());
+    const rewritten = JSON.parse(readFileSync(piPath, "utf-8"));
+    expect(rewritten.mcpServers.sharedServer).toEqual({ directTools: ["search"] });
   });
 
   it("builds real diff previews for compatibility imports and shared server writes", async () => {

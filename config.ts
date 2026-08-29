@@ -1162,9 +1162,8 @@ export function getServerProvenance(overridePath?: string, cwd = process.cwd()):
 export function writeDirectToolsConfig(
   changes: Map<string, true | string[] | false>,
   provenance: Map<string, ServerProvenance>,
-  fullConfig: McpConfig,
 ): void {
-  const byPath = new Map<string, { name: string; value: true | string[] | false; prov: ServerProvenance }[]>();
+  const byPath = new Map<string, { name: string; value: true | string[] | false }[]>();
 
   for (const [serverName, value] of changes) {
     const prov = provenance.get(serverName);
@@ -1173,22 +1172,19 @@ export function writeDirectToolsConfig(
     const targetPath = prov.path;
 
     if (!byPath.has(targetPath)) byPath.set(targetPath, []);
-    byPath.get(targetPath)!.push({ name: serverName, value, prov });
+    byPath.get(targetPath)!.push({ name: serverName, value });
   }
 
   for (const [filePath, entries] of byPath) {
     const raw = readRawConfigObject(filePath);
     const servers = getServersObject(raw);
 
-    for (const { name, value, prov } of entries) {
-      if (prov.kind === "import") {
-        const fullDef = fullConfig.mcpServers[name];
-        if (fullDef) {
-          servers[name] = { ...fullDef, directTools: value };
-        }
-      } else if (servers[name]) {
-        servers[name] = { ...servers[name], directTools: value };
-      }
+    for (const { name, value } of entries) {
+      // Persist only the adapter-owned key as a partial overlay. The server
+      // definition (url/command/auth/...) stays in its source layer and is
+      // never copied here; mergeServerMaps merges per-field, so a url-less
+      // entry inherits the lower-precedence definition.
+      servers[name] = { ...servers[name], directTools: value };
     }
 
     setServersObject(raw, servers);
