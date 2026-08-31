@@ -18,12 +18,13 @@
 //   - match broad error messages without a prior session id
 //   - match generic HTTP 400 responses, which are ambiguous and can mean
 //     many things other than "your session is gone"
-//   - treat generic -32000/ConnectionClosed errors as session expiry
+//   - treat generic -32000/ConnectionClosed errors as session expiry; a call
+//     only joins one when this manager's proven-404 recovery closed its client
 //   - treat AbortError/cancellation as a session failure
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "./logger.ts";
-import { throwIfAborted } from "./abort.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerDisabled, type McpConfig } from "./types.ts";
 import type { McpServerManager, ServerConnection } from "./server-manager.ts";
 
@@ -56,6 +57,15 @@ export function isTerminatedSession(err: unknown, hadSessionId: boolean): boolea
     && SERVER_NOT_INITIALIZED_MCP_MESSAGES.has(err.message);
 }
 
+function isReconnectInterruption(err: unknown, hadSessionId: boolean): boolean {
+  return hadSessionId
+    && err instanceof McpError
+    && err.code === ErrorCode.ConnectionClosed
+    && err.message === `MCP error ${ErrorCode.ConnectionClosed}: Connection closed`;
+}
+
+const missingSessionRecoveryByConnection = new WeakMap<ServerConnection, Promise<ServerConnection>>();
+
 function hasSessionId(connection: ServerConnection): boolean {
   // Only StreamableHTTPClientTransport exposes `sessionId`; stdio/SSE
   // transports (and test doubles that omit `transport` entirely) simply
@@ -81,9 +91,10 @@ export interface SessionRecoveryDeps {
 /**
  * Runs `fn` against the current connection for `serverName`. If it fails
  * with a terminated Streamable HTTP session (see `isTerminatedSession`),
- * reconnects exactly once via `McpServerManager.reconnect` (single-flight,
+ * reconnects exactly once via `McpServerManager` (single-flight,
  * identity-guarded — see server-manager.ts) and retries `fn` exactly once
- * against the fresh connection.
+ * against the fresh connection. Sibling requests interrupted when that recovery
+ * closes their shared SDK client join the same recovery before retrying.
  *
  * Any other failure — including a second failure after reconnecting, or the
  * server having been removed from config in the meantime — propagates
@@ -107,7 +118,11 @@ export async function withSessionRecovery<T>(
   try {
     return await fn(connection);
   } catch (err) {
-    if (!isTerminatedSession(err, hadSessionId)) {
+    const missingSession = hadSessionId && err instanceof StreamableHTTPError && err.code === 404;
+    const terminated = isTerminatedSession(err, hadSessionId);
+    const interrupted = isReconnectInterruption(err, hadSessionId);
+    let recovery = missingSessionRecoveryByConnection.get(connection);
+    if (!terminated && (!interrupted || recovery === undefined)) {
       throw err;
     }
 
@@ -121,12 +136,19 @@ export async function withSessionRecovery<T>(
     }
 
     throwIfAborted(deps.signal);
-    logger.debug(`MCP session for "${serverName}" expired; reconnecting`, {
-      server: serverName,
-    });
-    let freshConnection = deps.signal
-      ? await deps.manager.reconnect(serverName, definition, connection, deps.signal)
-      : await deps.manager.reconnect(serverName, definition, connection);
+    if (recovery === undefined) {
+      logger.debug(`MCP session for "${serverName}" expired; reconnecting`, {
+        server: serverName,
+      });
+      recovery = deps.manager.reconnect(serverName, definition, connection);
+      if (missingSession) {
+        missingSessionRecoveryByConnection.set(connection, recovery);
+        const clear = () => missingSessionRecoveryByConnection.delete(connection);
+        void recovery.then(clear, clear);
+      }
+    }
+
+    let freshConnection = await abortable(recovery, deps.signal);
     throwIfAborted(deps.signal);
 
     if (freshConnection.status === "needs-auth") {

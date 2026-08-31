@@ -155,7 +155,7 @@ describe("withSessionRecovery", () => {
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
   });
 
-  it("does not recover unrelated -32000 MCP errors", async () => {
+  it("does not recover a generic connection close without an active session reconnect", async () => {
     const connection = makeConnection("session-1");
     const manager = makeManager({ getConnection: () => connection, reconnect: async () => connection });
     const err = new McpError(-32000, "Connection closed");
@@ -203,26 +203,6 @@ describe("withSessionRecovery", () => {
 
     await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn))
       .rejects.toBeInstanceOf(SessionRecoveryAuthRequiredError);
-  });
-
-  it("passes the abort signal into reconnect", async () => {
-    const stale = makeConnection("session-1");
-    const fresh = makeConnection("session-2");
-    const signal = new AbortController().signal;
-    const manager = makeManager({
-      getConnection: () => stale,
-      reconnect: async () => fresh,
-    });
-    const fn = vi.fn(async (conn: ServerConnection) => {
-      if (conn === stale) {
-        throw new StreamableHTTPError(404, "Session not found");
-      }
-      return "ok";
-    });
-
-    await expect(withSessionRecovery({ manager: manager as any, config, signal }, "demo", fn)).resolves.toBe("ok");
-
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale, signal);
   });
 
   it("does not reconnect after the caller aborts", async () => {
@@ -336,37 +316,38 @@ describe("withSessionRecovery", () => {
     expect(manager.reconnect).not.toHaveBeenCalled();
   });
 
-  it("concurrency: two simultaneous session failures both replay against the same fresh connection", async () => {
+  it("caller cancellation does not cancel a shared session recovery", async () => {
     const stale = makeConnection("session-1");
     const fresh = makeConnection("session-2");
-
-    // Simulate McpServerManager.reconnect's real single-flight contract: no
-    // matter how many callers ask, they all get the same in-flight promise
-    // resolving to the same fresh connection.
-    const sharedReconnect = Promise.resolve(fresh);
+    const controller = new AbortController();
+    const reason = new Error("stop waiting");
+    let finishReconnect!: (connection: ServerConnection) => void;
+    const reconnect = new Promise<ServerConnection>((resolve) => {
+      finishReconnect = resolve;
+    });
     const manager = makeManager({
       getConnection: () => stale,
-      reconnect: () => sharedReconnect,
+      reconnect: () => reconnect,
+    });
+    const fn = vi.fn(async (connection: ServerConnection) => {
+      if (connection === stale) throw new StreamableHTTPError(404, "Session not found");
+      return "ok";
     });
 
-    const fn = vi.fn(async (conn: ServerConnection) => {
-      if (conn === stale) {
-        throw new StreamableHTTPError(404, "Session not found");
-      }
-      return conn === fresh ? "ok" : "unexpected";
-    });
+    const cancelled = withSessionRecovery(
+      { manager: manager as any, config, signal: controller.signal },
+      "demo",
+      fn,
+    );
+    const sibling = withSessionRecovery({ manager: manager as any, config }, "demo", fn);
+    await vi.waitFor(() => expect(manager.reconnect).toHaveBeenCalledTimes(1));
 
-    const [r1, r2] = await Promise.all([
-      withSessionRecovery({ manager: manager as any, config }, "demo", fn),
-      withSessionRecovery({ manager: manager as any, config }, "demo", fn),
-    ]);
+    controller.abort(reason);
+    await expect(cancelled).rejects.toBe(reason);
+    finishReconnect(fresh);
+    await expect(sibling).resolves.toBe("ok");
 
-    expect(r1).toBe("ok");
-    expect(r2).toBe("ok");
-    // Each caller's own failure triggers its own reconnect() call, but the
-    // manager's single-flight dedupes the underlying work; both resolve to
-    // the identical fresh connection.
-    expect(manager.reconnect).toHaveBeenCalledTimes(2);
-    expect(fn).toHaveBeenCalledTimes(4); // 2 failed stale attempts + 2 successful fresh replays
+    expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale);
+    expect(fn).toHaveBeenCalledTimes(3);
   });
 });

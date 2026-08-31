@@ -1,3 +1,4 @@
+import type { ServerResponse } from "node:http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // direct-tools.ts calls lazyConnect() before touching the connection; mock
@@ -13,14 +14,15 @@ vi.mock("../init.ts", () => ({
 }));
 
 describe("session recovery — Streamable HTTP wire path", () => {
-  it("recovers a JSON-RPC server-not-initialized response from the SDK transport", async () => {
+  it("recovers sibling requests interrupted by a stale-session reconnect", async () => {
     const { createServer } = await import("node:http");
     const { McpServerManager } = await import("../server-manager.ts");
     const { withSessionRecovery } = await import("../session-recovery.ts");
 
     let sessionCount = 0;
-    let toolCalls = 0;
+    let staleSessionId: string | undefined;
     const toolCallSessionIds: string[] = [];
+    const staleResponses: ServerResponse[] = [];
     const server = createServer(async (req, res) => {
       if (req.method === "GET") {
         res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
@@ -79,17 +81,18 @@ describe("session recovery — Streamable HTTP wire path", () => {
       }
 
       if (message.method === "tools/call") {
-        toolCalls += 1;
         const sessionId = req.headers["mcp-session-id"];
-        toolCallSessionIds.push(Array.isArray(sessionId) ? sessionId[0] : sessionId ?? "");
-        if (toolCalls === 1) {
-          res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32000, message: "Bad Request: Server not initialized" },
-          }));
+        const value = Array.isArray(sessionId) ? sessionId[0] : sessionId ?? "";
+        toolCallSessionIds.push(value);
+
+        if (value === staleSessionId) {
+          staleResponses.push(res);
+          if (staleResponses.length === 3) {
+            res.writeHead(404).end("Session not found");
+          }
           return;
         }
+
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
           jsonrpc: "2.0",
           id: message.id,
@@ -108,18 +111,28 @@ describe("session recovery — Streamable HTTP wire path", () => {
     const manager = new McpServerManager();
     const definition = { url: `http://127.0.0.1:${address.port}/mcp` };
     try {
-      await manager.connect("demo", definition);
-      const result = await withSessionRecovery(
-        { manager, config: { mcpServers: { demo: definition } } },
-        "demo",
-        connection => connection.client.callTool({ name: "search", arguments: {} }),
-      );
+      const staleConnection = await manager.connect("demo", definition);
+      staleSessionId = (staleConnection.transport as { sessionId?: string }).sessionId;
+      expect(staleSessionId).toBeDefined();
 
-      expect(result.content[0]).toMatchObject({ type: "text", text: "ok" });
-      expect(toolCalls).toBe(2);
-      expect(toolCallSessionIds).toHaveLength(2);
-      expect(toolCallSessionIds[0]).not.toBe(toolCallSessionIds[1]);
+      const results = await Promise.all(Array.from({ length: 3 }, () =>
+        withSessionRecovery(
+          { manager, config: { mcpServers: { demo: definition } } },
+          "demo",
+          connection => connection.client.callTool({ name: "search", arguments: {} }),
+        )));
+
+      for (const result of results) {
+        expect(result.content[0]).toMatchObject({ type: "text", text: "ok" });
+      }
+      expect(toolCallSessionIds).toHaveLength(6);
+      expect(toolCallSessionIds.slice(0, 3)).toEqual(Array(3).fill(staleSessionId));
+      expect(new Set(toolCallSessionIds.slice(3)).size).toBe(1);
+      expect(toolCallSessionIds[3]).not.toBe(staleSessionId);
     } finally {
+      for (const response of staleResponses) {
+        if (!response.writableEnded && !response.destroyed) response.end();
+      }
       await manager.close("demo").catch(() => {});
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
