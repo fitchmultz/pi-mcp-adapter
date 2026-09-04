@@ -265,6 +265,16 @@ describe("runMcpScript", () => {
     });
   });
 
+  it("aborts nested calls and releases in-flight accounting on caller cancellation", async () => {
+    const controller = new AbortController();
+    const pending = runMcpScript(state, 'await tools.fixture_hang({});', 5000, undefined, controller.signal);
+    await expect.poll(() => manager.getConnection("fixture")?.inFlight).toBe(1);
+    controller.abort(new Error("caller cancelled"));
+    const result = await pending;
+    expect(result.details).toMatchObject({ error: "aborted", calls: [{ path: "fixture_hang", ok: false, error: "incomplete" }] });
+    await expect.poll(() => manager.getConnection("fixture")?.inFlight).toBe(0);
+  });
+
   it("returns promptly on early return and marks un-awaited calls incomplete", async () => {
     const start = Date.now();
     const result = await runMcpScript(

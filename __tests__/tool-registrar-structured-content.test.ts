@@ -37,10 +37,9 @@ describe("resolveMcpResultContent", () => {
     expect(resolveMcpResultContent({})).toEqual([]);
   });
 
-  it("does not treat null structuredContent as a fallback payload", () => {
-    expect(
-      resolveMcpResultContent({ content: [], structuredContent: null }),
-    ).toEqual([]);
+  it.each([null, false, 0])("preserves JSON primitive structuredContent %s", structuredContent => {
+    expect(resolveMcpResultContent({ content: [], structuredContent }))
+      .toEqual([{ type: "text", text: JSON.stringify(structuredContent) }]);
   });
 
   it("treats an empty structuredContent object as a present payload", () => {

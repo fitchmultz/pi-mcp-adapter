@@ -69,12 +69,12 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("recovers a terminated Streamable HTTP session transparently, when config is supplied", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
     const fresh = {
@@ -120,12 +120,12 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("returns auth guidance when recovery reconnect needs auth and no callback can refresh it", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
     const needsAuth = {
@@ -167,12 +167,12 @@ describe("UiServer /proxy/tools/call session recovery", () => {
   });
 
   it("uses the supplied auth callback when recovery reconnect returns needs-auth", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
     const needsAuth = {
@@ -216,17 +216,17 @@ describe("UiServer /proxy/tools/call session recovery", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "after auth" }] } });
-    expect(onNeedsAuth).toHaveBeenCalledWith("test-server");
+    expect(onNeedsAuth).toHaveBeenCalledWith("test-server", undefined);
     expect((fresh.client.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
   });
 
   it("runs without recovery (unchanged pre-existing behavior) when config is not supplied", async () => {
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValue(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
 

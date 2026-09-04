@@ -10,7 +10,8 @@
     "uninstall-local": "node ./scripts/uninstall-local.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^1.2.0",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/server": "2.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "chart.js": "^4.5.1",
     "zod": "^4.1.0"

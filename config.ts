@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAgentPath } from "./agent-dir.ts";
-import { isServerDisabled, type HostConfigDiscovery, type McpConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
+import { isServerDisabled, validateServerProtocolConfig, type HostConfigDiscovery, type McpConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
 import { toStringRecord } from "./utils.ts";
 
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
@@ -623,6 +623,9 @@ function validateConfig(raw: unknown): McpConfig {
     return { mcpServers: {} };
   }
 
+  for (const entry of Object.values(servers)) {
+    if (entry && typeof entry === "object") validateServerProtocolConfig(entry);
+  }
   return {
     mcpServers: servers as Record<string, ServerEntry>,
     ...(Array.isArray(obj.imports) ? { imports: obj.imports as ImportKind[] } : {}),

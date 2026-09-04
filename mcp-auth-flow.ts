@@ -8,8 +8,9 @@ import {
   auth as runSdkAuth,
   extractWWWAuthenticateParams,
   UnauthorizedError,
-} from "@modelcontextprotocol/sdk/client/auth.js"
-import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js"
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client"
 import open from "open"
 import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {
@@ -30,8 +31,8 @@ import {
   getAuthBaseDir,
   type AuthStorageOptions,
 } from "./mcp-auth.ts"
-import { isServerDisabled, type ServerEntry } from "./types.ts"
-import { formatTerminalError, interpolateEnvRecord, interpolateEnvVars } from "./utils.ts"
+import { isServerDisabled, validateServerProtocolConfig, type ServerEntry } from "./types.ts"
+import { formatTerminalError, interpolateEnvRecord, interpolateEnvVars, normalizeRequestTimeoutMs } from "./utils.ts"
 import { abortable, throwIfAborted } from "./abort.ts"
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts"
 
@@ -52,10 +53,15 @@ export interface AuthenticateOptions {
 type AuthDiscovery = {
   resourceMetadataUrl?: URL
   scope?: string
+  skipIssuerMetadataValidation?: boolean
 }
 
 function applyConfiguredScope(discovery: AuthDiscovery, config: McpOAuthConfig): AuthDiscovery {
-  return config.scope !== undefined ? { ...discovery, scope: config.scope } : discovery
+  return {
+    ...discovery,
+    ...(config.scope !== undefined ? { scope: config.scope } : {}),
+    ...(config.skipIssuerMetadataValidation !== undefined ? { skipIssuerMetadataValidation: config.skipIssuerMetadataValidation } : {}),
+  }
 }
 
 type PendingAuth = {
@@ -142,11 +148,13 @@ function generateState(): string {
  * Extract OAuth configuration from a ServerEntry.
  */
 export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
+  validateServerProtocolConfig(definition)
   if (definition.oauth === false) {
     return {}
   }
 
   const config: McpOAuthConfig = {}
+  if (definition.oauth?.skipIssuerMetadataValidation !== undefined) config.skipIssuerMetadataValidation = definition.oauth.skipIssuerMetadataValidation
   if (definition.oauth?.grantType !== undefined) config.grantType = definition.oauth.grantType
   if (definition.oauth?.clientId !== undefined) {
     if (typeof definition.oauth.clientId !== "string") throw new Error("OAuth clientId must be a string")
@@ -214,39 +222,29 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
     ? Object.fromEntries(Object.entries(definition.headers).filter(([, value]) => !value.startsWith("!") || value.startsWith("!!")))
     : undefined
   const headers = new Headers(interpolateEnvRecord(discoveryHeaders))
-  headers.set("content-type", "application/json")
-
-  const controller = new AbortController()
-  const discoverySignal = combineAbortSignals(signal, controller.signal)
-  const timer = setTimeout(() => controller.abort(), 5000)
-
+  const timeout = normalizeRequestTimeoutMs(definition?.requestTimeoutMs) ?? 5000
+  const discoverySignal = combineAbortSignals(signal, AbortSignal.timeout(Math.ceil(timeout)))
+  let discovery: AuthDiscovery = {}
+  const client = new Client({ name: "pi-mcp-auth-discovery", version: "4.2.1" }, {
+    versionNegotiation: { mode: definition?.protocolVersion ?? "auto" },
+  })
+  const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
+    requestInit: { headers },
+    fetch: async (input, init) => {
+      const response = await fetch(input, init)
+      const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response)
+      discovery = { ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}), ...(scope ? { scope } : {}) }
+      return response
+    },
+  })
   try {
-    headers.set("accept", "application/json, text/event-stream")
-
-    const response = await fetch(new URL(serverUrl), {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 0,
-        method: "initialize",
-        params: {
-          protocolVersion: LATEST_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: "pi-mcp-adapter", version: "2.11.0" },
-        },
-      }),
-      ...(discoverySignal ? { signal: discoverySignal } : {}),
-    })
-    const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response)
-    await response.body?.cancel().catch(() => {})
-    return { ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}), ...(scope ? { scope } : {}) }
+    await abortable(client.connect(transport, { timeout }), discoverySignal)
   } catch (error) {
     if (signal?.aborted) throwIfAborted(signal)
-    return {}
   } finally {
-    clearTimeout(timer)
+    await (client.transport ? client.close() : transport.close())
   }
+  return discovery
 }
 
 function parseOAuthRedirectUri(redirectUri: string): { port: number; callbackHost: string; callbackPath: string } {
@@ -594,6 +592,7 @@ export async function completeAuth(
     const result = await abortable(runSdkAuth(pendingAuth.authProvider, {
       serverUrl: pendingAuth.serverUrl,
       authorizationCode: code,
+      ...(iss !== undefined ? { iss } : {}),
       ...pendingAuth.discovery,
     }), signal)
     throwIfAborted(signal)
