@@ -2,7 +2,7 @@ import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from 
 import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpConfig, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
-import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
+import { lazyConnect, getFailureAgeSeconds, clearFailure, recordFailure, updateStatusBar } from "./init.ts";
 import { throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
@@ -350,10 +350,19 @@ export function createDirectToolExecutor(
         };
       }
       if (autoAuth.status === "success") {
-        const liveDefinition = state.config.mcpServers[spec.serverName];
-        if (liveDefinition) await state.manager.reconnect(spec.serverName, liveDefinition, needsAuthConnection, ownedSignal);
         clearFailure(state, spec.serverName);
-        connected = await lazyConnect(state, spec.serverName, ownedSignal);
+        try {
+          const liveDefinition = state.config.mcpServers[spec.serverName];
+          if (liveDefinition) {
+            await state.manager.reconnect(spec.serverName, liveDefinition, needsAuthConnection, ownedSignal);
+            connected = true;
+          }
+        } catch (error) {
+          if (isAbortError(error, ownedSignal)) throwIfAborted(ownedSignal);
+          recordFailure(state, spec.serverName, error instanceof Error ? error.message : String(error));
+          updateStatusBar(state);
+        }
+        if (connected) connected = await lazyConnect(state, spec.serverName, ownedSignal);
       }
     }
 

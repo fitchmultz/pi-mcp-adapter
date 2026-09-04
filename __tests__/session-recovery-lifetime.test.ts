@@ -2,7 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
 import { McpServerManager } from "../server-manager.ts";
-import { withSessionRecovery } from "../session-recovery.ts";
+import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "../session-recovery.ts";
+import { clearFailure } from "../init.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { createMcpRuntimeOwner } from "../runtime-owner.ts";
@@ -87,6 +88,22 @@ async function fixture(handler: (e: Exchange) => boolean | void = () => {}) {
     connection => connection.client.callTool({ name }, manager.getRequestOptions("local", signal)),
   );
   return { manager, state, definition, requests, executions, calls, call, sessions: () => sessions };
+}
+
+function oauthMetadata(e: Exchange, url: string): boolean {
+  const origin = new URL(url).origin;
+  if (e.req.url?.startsWith("/.well-known/oauth-protected-resource")) {
+    e.res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ resource: url, authorization_servers: [origin] }));
+    return true;
+  }
+  if (e.req.url?.startsWith("/.well-known/oauth-authorization-server")) {
+    e.res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+      issuer: origin, authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`,
+      response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
+    }));
+    return true;
+  }
+  return false;
 }
 
 // The server has already executed the effect and sent 200 before expiry; only its body tail is held.
@@ -406,6 +423,89 @@ describe("native session replacement lifetime", () => {
     }
   });
 
+  it.each(["direct", "proxy-cached", "proxy-named", "proxy-prefix"])("reports and records initial post-auth setup failure via %s without retrying", async entry => {
+    let authorized = false;
+    let attempts = 0;
+    const f = await fixture(e => {
+      if (oauthMetadata(e, f.definition.url!)) return true;
+      if (e.body.method !== "initialize") return;
+      attempts++;
+      if (authorized) e.res.writeHead(503).end("fixture setup unavailable");
+      else e.res.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${new URL(f.definition.url!).origin}/.well-known/oauth-protected-resource/mcp"` }).end();
+      return true;
+    });
+    f.definition.auth = "oauth";
+    f.definition.oauth = { clientId: "local-failure", redirectUri: "http://127.0.0.1:19878/callback" };
+    f.state.config.settings!.autoAuth = true;
+    f.state.ui = { setStatus: vi.fn() } as any;
+    f.state.failureMessages = new Map();
+    cleanups.push(async () => { clearFailure(f.state, "local"); });
+    auth.authenticate.mockReset().mockImplementation(async () => { authorized = true; return "authenticated"; });
+    expect((await f.manager.connect("local", f.definition)).status).toBe("needs-auth");
+    if (entry === "proxy-named" || entry === "proxy-prefix") f.state.toolMetadata.clear();
+    const pending = entry === "direct"
+      ? createDirectToolExecutor(() => f.state, () => null, {
+          serverName: "local", originalName: "effect", prefixedName: "local_effect", description: "effect",
+        })("call", {}, undefined, undefined, {} as any)
+      : executeCall(f.state, "local_effect", {}, entry === "proxy-prefix" ? undefined : "local");
+    const output = await pending;
+    expect(output.details.error).toBe(entry === "direct" ? "server_unavailable"
+      : entry === "proxy-cached" ? "connect_failed" : entry === "proxy-named" ? "server_backoff" : "tool_not_found");
+    expect(f.state.failureTracker.has("local")).toBe(true);
+    expect(f.state.failureMessages.get("local")).toContain("fixture setup unavailable");
+    expect(attempts).toBe(2);
+    expect(f.calls("effect")).toHaveLength(0);
+  });
+
+  it.each(["authenticate", "missing callback", "abort", "shutdown"])("handles a native needs-auth record before dispatch: %s", async mode => {
+    let authorized = false;
+    let attempts = 0;
+    const f = await fixture(e => {
+      if (oauthMetadata(e, f.definition.url!)) return true;
+      if (e.body.method !== "initialize") return;
+      attempts++;
+      if (authorized) return;
+      e.res.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${new URL(f.definition.url!).origin}/.well-known/oauth-protected-resource/mcp"` }).end();
+      return true;
+    });
+    f.definition.auth = "oauth";
+    f.definition.oauth = { clientId: "local-readiness", redirectUri: "http://127.0.0.1:19878/callback" };
+    const needsAuth = await f.manager.connect("local", f.definition);
+    expect(needsAuth.status).toBe("needs-auth");
+    const consent = gate();
+    const controller = new AbortController();
+    const onNeedsAuth = vi.fn(async () => {
+      await consent.promise;
+      authorized = true;
+      return f.manager.reconnect("local", f.definition, needsAuth, controller.signal);
+    });
+    const dispatch = vi.fn(connection => connection.client.callTool({ name: "effect" }));
+    const pending = settle(withSessionRecovery({
+      manager: f.manager, config: f.state.config, signal: controller.signal,
+      ...(mode === "missing callback" ? {} : { onNeedsAuth }),
+    }, "local", dispatch));
+    if (mode !== "missing callback") {
+      await vi.waitFor(() => expect(onNeedsAuth).toHaveBeenCalledTimes(1));
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(attempts).toBe(1);
+      if (mode === "abort") controller.abort(new Error("caller cancelled auth wait"));
+      if (mode === "shutdown") await f.manager.closeAll();
+      consent.resolve();
+    }
+    const outcome = await pending;
+    if (mode === "authenticate") {
+      expect(outcome).toMatchObject({ status: "fulfilled", value: content("effect") });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch).toHaveBeenCalledWith(f.manager.getConnection("local"));
+      expect(attempts).toBe(2);
+    } else {
+      expect(outcome).toMatchObject({ status: "rejected" });
+      if (mode === "missing callback" && outcome?.status === "rejected") expect(outcome.reason).toBeInstanceOf(SessionRecoveryAuthRequiredError);
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(attempts).toBe(1);
+    }
+  });
+
   it.each(["proxy", "direct"])("keeps an accepted effect through automatic post-expiry auth via %s", async entry => {
     const headers = observeAcceptedHeaders();
     let release = () => {};
@@ -414,15 +514,7 @@ describe("native session replacement lifetime", () => {
     let challenges = 0;
     const f = await fixture(e => {
       const origin = new URL(f.definition.url!).origin;
-      if (e.req.url?.startsWith("/.well-known/oauth-protected-resource")) {
-        e.res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ resource: f.definition.url, authorization_servers: [origin] })); return true;
-      }
-      if (e.req.url?.startsWith("/.well-known/oauth-authorization-server")) {
-        e.res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-          issuer: origin, authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`,
-          response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
-        })); return true;
-      }
+      if (oauthMetadata(e, f.definition.url!)) return true;
       if (e.body.method === "initialize" && expired) {
         if (!authorized) {
           challenges++;

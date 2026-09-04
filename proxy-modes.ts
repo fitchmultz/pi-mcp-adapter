@@ -948,10 +948,20 @@ export async function executeCall(
             };
           }
           if (autoAuth.status === "success") {
-            const definition = state.config.mcpServers[serverName];
-            if (definition) await state.manager.reconnect(serverName, definition, needsAuthConnection, ownedSignal);
             clearFailure(state, serverName);
-            const connectedAfterAuth = await lazyConnect(state, serverName, ownedSignal);
+            let connectedAfterAuth = false;
+            try {
+              const definition = state.config.mcpServers[serverName];
+              if (definition) {
+                await state.manager.reconnect(serverName, definition, needsAuthConnection, ownedSignal);
+                connectedAfterAuth = true;
+              }
+            } catch (error) {
+              if (isAbortError(error, ownedSignal)) throwIfAborted(ownedSignal);
+              recordFailure(state, serverName, error instanceof Error ? error.message : String(error));
+              updateStatusBar(state);
+            }
+            if (connectedAfterAuth) connectedAfterAuth = await lazyConnect(state, serverName, ownedSignal);
             if (connectedAfterAuth) {
               toolMeta = findToolByName(state.toolMetadata.get(serverName), toolName);
               if (!toolMeta) {
@@ -1021,10 +1031,19 @@ export async function executeCall(
           };
         }
         if (autoAuth.status === "success") {
-          const definition = state.config.mcpServers[configuredServer];
-          if (definition) await state.manager.reconnect(configuredServer, definition, needsAuthConnection, ownedSignal);
           clearFailure(state, configuredServer);
-          connected = await lazyConnect(state, configuredServer, ownedSignal);
+          try {
+            const definition = state.config.mcpServers[configuredServer];
+            if (definition) {
+              await state.manager.reconnect(configuredServer, definition, needsAuthConnection, ownedSignal);
+              connected = true;
+            }
+          } catch (error) {
+            if (isAbortError(error, ownedSignal)) throwIfAborted(ownedSignal);
+            recordFailure(state, configuredServer, error instanceof Error ? error.message : String(error));
+            updateStatusBar(state);
+          }
+          if (connected) connected = await lazyConnect(state, configuredServer, ownedSignal);
         }
       }
 
@@ -1105,14 +1124,12 @@ export async function executeCall(
         };
       }
       if (autoAuth.status === "success") {
-        const definition = state.config.mcpServers[serverName];
-        if (definition) connection = await state.manager.reconnect(serverName, definition, connection, ownedSignal);
         clearFailure(state, serverName);
         refreshAfterAuth = true;
       }
     }
 
-    if (connection?.status === "needs-auth") {
+    if (connection?.status === "needs-auth" && !refreshAfterAuth) {
       const message = getAuthRequiredMessage(state, serverName);
       return {
         content: [{ type: "text" as const, text: message }],
@@ -1120,7 +1137,7 @@ export async function executeCall(
       };
     }
   }
-  if (!connection || connection.status !== "connected" || refreshAfterAuth) {
+  if (!connection || connection.status !== "connected") {
     const failedAgo = getFailureAgeSeconds(state, serverName);
     if (failedAgo !== null) {
       return {
@@ -1141,7 +1158,9 @@ export async function executeCall(
       if (state.ui) {
         state.ui.setStatus("mcp", formatMcpStatus(state.config, `connecting to ${serverName}...`));
       }
-      if (connection?.status !== "connected") connection = await state.manager.connect(serverName, definition, ownedSignal);
+      connection = refreshAfterAuth && connection
+        ? await state.manager.reconnect(serverName, definition, connection, ownedSignal)
+        : await state.manager.connect(serverName, definition, ownedSignal);
       if (connection.status === "needs-auth") {
         if (!autoAuthAttempted) {
           autoAuthAttempted = true;

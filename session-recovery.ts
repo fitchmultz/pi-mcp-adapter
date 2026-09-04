@@ -138,9 +138,12 @@ export async function withSessionRecovery<T>(
     const definition = deps.config.mcpServers[serverName];
     if (!definition) throw error;
     throwIfAborted(deps.signal);
-    let fresh = deps.signal
-      ? await deps.manager.reconnect(serverName, definition, stale, deps.signal)
-      : await deps.manager.reconnect(serverName, definition, stale);
+    let fresh = stale;
+    if (fresh.status !== "needs-auth") {
+      fresh = deps.signal
+        ? await deps.manager.reconnect(serverName, definition, stale, deps.signal)
+        : await deps.manager.reconnect(serverName, definition, stale);
+    }
     throwIfAborted(deps.signal);
     if (fresh.status === "needs-auth" && deps.onNeedsAuth) {
       fresh = await abortable(deps.onNeedsAuth(serverName, deps.signal), deps.signal) ?? fresh;
@@ -151,8 +154,8 @@ export async function withSessionRecovery<T>(
     return fresh;
   };
 
-  // Nothing has been dispatched yet: join a replacement that began during UI preparation.
-  if (connection.status === "closed") {
+  // Nothing has been dispatched yet: wait for replacement/auth begun during UI preparation.
+  if (connection.status !== "connected") {
     connection = await reconnect(connection, new Error(`Server "${serverName}" is not connected`));
   }
   const hadSessionId = hasSessionId(connection);
