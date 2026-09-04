@@ -687,11 +687,10 @@ export async function completeAuth(
       throw new UnauthorizedError("Failed to authorize")
     }
     const request = pendingAuth.request
-    const current = getOAuthRequest(serverName, pendingAuth.serverUrl, getAuthBaseDir(authStorageOptions), runtime)
-    const issuedScope = (await getAuthForUrl(serverName, pendingAuth.serverUrl, authStorageOptions))?.tokens?.scope
-    if (request && request === current && issuedScope !== undefined && request.challenge?.requiredScope
-      && !isStrictScopeSuperset(request.challenge.requiredScope, issuedScope)) {
-      delete request.challenge
+    if (request?.challenge?.requiredScope
+      && request === getOAuthRequest(serverName, pendingAuth.serverUrl, getAuthBaseDir(authStorageOptions), runtime)) {
+      const issuedScope = (await getAuthForUrl(serverName, pendingAuth.serverUrl, authStorageOptions))?.tokens?.scope
+      if (issuedScope !== undefined && !isStrictScopeSuperset(request.challenge.requiredScope, issuedScope)) delete request.challenge
     }
     return "authenticated"
   } catch (error) {

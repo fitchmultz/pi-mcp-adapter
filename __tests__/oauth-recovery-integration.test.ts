@@ -20,14 +20,14 @@ import { executeAuthStart, executeAuthComplete, executeCall } from "../proxy-mod
 import type { McpExtensionState } from "../state.ts";
 import { formatToolName, type ServerEntry } from "../types.ts";
 
-const browser = vi.hoisted(() => ({ open: vi.fn() }));
+const browser = vi.hoisted(() => ({ open: vi.fn(async (_url: string) => {}) }));
 vi.mock("open", () => ({ default: browser.open }));
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.reverse()) await cleanup();
   cleanups.length = 0;
   vi.restoreAllMocks();
-  browser.open.mockReset();
+  browser.open.mockReset().mockResolvedValue(undefined);
 });
 
 const tools = ["write", "effect"].map(name => ({ name, inputSchema: { type: "object" } }));
