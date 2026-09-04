@@ -111,7 +111,7 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 | `<Pi agent dir>/mcp.json` | Pi global override and compatibility imports (`~/.pi/agent/mcp.json` by default) |
 | `.pi/mcp.json` | Pi project override |
 
-Pi-specific files are the write targets for imported or shared global servers when Pi needs to persist adapter-only settings such as `directTools`.
+For imported or shared global servers, Pi saves only `directTools` selections in its own config, without copying connection details or credentials from the source file.
 
 ### SDK configuration
 

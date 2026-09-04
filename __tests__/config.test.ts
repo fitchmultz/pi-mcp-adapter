@@ -1144,8 +1144,7 @@ describe("config discovery", () => {
       },
     });
 
-    const { getServerProvenance, loadMcpConfig, writeDirectToolsConfig, getPiGlobalConfigPath } = await import("../config.ts");
-    const fullConfig = loadMcpConfig();
+    const { getServerProvenance, writeDirectToolsConfig, getPiGlobalConfigPath } = await import("../config.ts");
     const provenance = getServerProvenance();
 
     writeDirectToolsConfig(
@@ -1154,11 +1153,10 @@ describe("config discovery", () => {
         ["projectServer", ["search"]],
       ]),
       provenance,
-      fullConfig,
     );
 
     const userConfig = JSON.parse(readFileSync(getPiGlobalConfigPath(), "utf-8"));
-    expect(userConfig.mcpServers.genericServer).toMatchObject({ command: "generic", directTools: true });
+    expect(userConfig.mcpServers.genericServer).toEqual({ directTools: true });
 
     const projectConfig = JSON.parse(readFileSync(join(project, ".mcp.json"), "utf-8"));
     expect(projectConfig.mcpServers.projectServer).toMatchObject({ command: "project", directTools: ["search"] });
