@@ -9,13 +9,14 @@ import {
   UnauthorizedError,
   type AddClientAuthentication,
   type OAuthClientProvider,
+  type OAuthClientInformationContext,
+  type StoredOAuthClientInformation,
+  type StoredOAuthTokens,
   type OAuthDiscoveryState,
-} from "@modelcontextprotocol/sdk/client/auth.js"
+} from "@modelcontextprotocol/client"
 import type {
-  OAuthClientInformationMixed,
   OAuthClientMetadata,
-  OAuthTokens,
-} from "@modelcontextprotocol/sdk/shared/auth.js"
+} from "@modelcontextprotocol/client"
 import {
   getAuthForUrl,
   updateTokens,
@@ -30,9 +31,6 @@ import {
   type StoredClientInfo,
 } from "./mcp-auth.ts"
 import { resolveCommandSecret } from "./utils.ts"
-
-type IssuerBoundClientInformation = OAuthClientInformationMixed & { issuer?: string }
-type IssuerBoundTokens = OAuthTokens & { issuer?: string }
 
 function issuersMatch(first: string, second: string): boolean {
   return first === second
@@ -78,6 +76,7 @@ export function setOAuthCallbackPath(path: string): void {
 
 /** Configuration options for OAuth */
 export interface McpOAuthConfig {
+  skipIssuerMetadataValidation?: boolean
   grantType?: "authorization_code" | "client_credentials"
   clientId?: string
   clientSecret?: string
@@ -223,8 +222,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Get client information (for pre-registered or dynamically registered clients).
    * Returns undefined if no client info exists or if the server URL has changed.
    */
-  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    const issuer = this.discoveredIssuer
+  async clientInformation(context?: OAuthClientInformationContext): Promise<StoredOAuthClientInformation | undefined> {
+    const issuer = context?.issuer ?? this.discoveredIssuer
     const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
     this.assertStoredIssuerBindings(stored, issuer)
 
@@ -252,7 +251,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         client_id: this.config.clientId,
         client_secret: clientSecret,
         ...(issuer !== undefined ? { issuer } : {}),
-      } as IssuerBoundClientInformation
+      }
     }
 
     // Keep client registration associated with this in-flight flow even if
@@ -288,7 +287,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions)
       }
       // Return all registration metadata and the local issuer extension.
-      // This keeps the SDK v1 view and the stored issuer binding consistent.
+      // Keep the SDK's view and the stored issuer binding consistent.
       return {
         client_id: clientInfo.clientId,
         client_secret: clientInfo.clientSecret,
@@ -302,7 +301,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
           ? { redirect_uris: clientInfo.redirectUris }
           : {}),
         ...(clientInfo.issuer !== undefined ? { issuer: clientInfo.issuer } : {}),
-      } as IssuerBoundClientInformation
+      }
     }
 
     // No client info or URL changed - will trigger dynamic registration
@@ -312,9 +311,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
   /**
    * Save client information from dynamic registration.
    */
-  async saveClientInformation(info: OAuthClientInformationMixed): Promise<void> {
+  async saveClientInformation(info: StoredOAuthClientInformation, context?: OAuthClientInformationContext): Promise<void> {
     this.throwIfInactive()
-    const issuer = this.discoveredIssuer ?? (info as IssuerBoundClientInformation).issuer
+    const issuer = context?.issuer ?? this.discoveredIssuer ?? info.issuer
     if (this.config.clientId && info.client_id === this.config.clientId) {
       updateClientInfo(
         this.serverName,
@@ -347,11 +346,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Get stored OAuth tokens.
    * Returns undefined if no tokens exist or if the server URL has changed.
    */
-  async tokens(): Promise<OAuthTokens | undefined> {
+  async tokens(context?: OAuthClientInformationContext): Promise<StoredOAuthTokens | undefined> {
     // Use getAuthForUrl to validate tokens are for the current server URL.
     const entry = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
     if (!entry?.tokens) return undefined
-    const issuer = this.discoveredIssuer
+    const issuer = context?.issuer ?? this.discoveredIssuer
     this.assertStoredIssuerBindings(entry, issuer)
     if (issuer && entry.tokens.issuer === undefined) {
       entry.tokens.issuer = issuer
@@ -367,14 +366,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
         : undefined,
       scope: entry.tokens.scope,
       ...(entry.tokens.issuer !== undefined ? { issuer: entry.tokens.issuer } : {}),
-    } as IssuerBoundTokens
+    }
   }
 
   /**
    * Save OAuth tokens.
    */
-  async saveTokens(tokens: OAuthTokens): Promise<void> {
-    const issuer = this.discoveredIssuer ?? (tokens as IssuerBoundTokens).issuer
+  async saveTokens(tokens: StoredOAuthTokens, context?: OAuthClientInformationContext): Promise<void> {
+    const issuer = context?.issuer ?? this.discoveredIssuer ?? tokens.issuer
     const storedTokens: StoredTokens = {
       accessToken: tokens.access_token,
       ...(tokens.refresh_token !== undefined ? { refreshToken: tokens.refresh_token } : {}),

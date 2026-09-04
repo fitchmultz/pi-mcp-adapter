@@ -1,5 +1,5 @@
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,10 +67,10 @@ server.registerTool(
       datasets: JSON.parse(args.datasets || "[]"),
     };
 
-    const streamToken = extra._meta?.["pi-mcp-adapter/stream-token"] as string | undefined;
+    const streamToken = extra.mcpReq._meta?.["pi-mcp-adapter/stream-token"] as string | undefined;
     if (streamToken) {
       const sendAdapterNotification = (notification: StreamNotification) =>
-        extra.sendNotification(notification as never);
+        extra.mcpReq.notify(notification);
       for (let i = 0; i < spec.datasets.length; i++) {
         const partial = { ...spec, datasets: spec.datasets.slice(0, i + 1) };
         const isLast = i === spec.datasets.length - 1;
@@ -186,11 +186,11 @@ server.registerTool(
     _meta: { ui: { resourceUri: "ui://interactive-visualizer/app.html" } },
   },
   async (_args, extra) => {
-    const streamToken = extra._meta?.["pi-mcp-adapter/stream-token"] as string | undefined;
+    const streamToken = extra.mcpReq._meta?.["pi-mcp-adapter/stream-token"] as string | undefined;
 
     if (streamToken) {
       const sendAdapterNotification = (notification: StreamNotification) =>
-        extra.sendNotification(notification as never);
+        extra.mcpReq.notify(notification);
       for (let t = 1; t <= STORY.length; t++) {
         const isLast = t === STORY.length;
         await sendStreamFrame(streamToken, sendAdapterNotification, {

@@ -1,8 +1,8 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/sdk/types.js";
+import type { Transport } from "@modelcontextprotocol/client";
+import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
 
 export const MCP_TRACE_SCHEMA_VERSION = 1;
 export const DEFAULT_MCP_TRACE_MAX_BYTES = 256 * 1024;
@@ -238,7 +238,7 @@ export function wrapTransportWithMcpTrace(
   transportKind: McpTraceTransport,
   observer: McpTraceObserver,
 ): Transport {
-  let messageHandler: Transport["onmessage"];
+  let messageHandler = transport.onmessage;
   const record = (event: McpTraceEvent): void => {
     try {
       observer.record(event);
@@ -246,60 +246,39 @@ export function wrapTransportWithMcpTrace(
       // An observer failure must never alter SDK transport behavior.
     }
   };
-  const traced = {
-    start: () => transport.start(),
-    send: async (message: JSONRPCMessage, options?: Parameters<Transport["send"]>[1]) => {
-      const started = performance.now();
-      const messages = Array.isArray(message) ? message : [message];
-      try {
-        await transport.send(message, options);
-        for (const item of messages) {
-          record(createMcpTraceEvent("outbound", server, transportKind, item, "sent", {
-            durationMs: performance.now() - started,
-          }));
-        }
-      } catch (error) {
-        for (const item of messages) {
-          record(createMcpTraceEvent("outbound", server, transportKind, item, "error", {
-            durationMs: performance.now() - started,
-          }));
-        }
-        throw error;
+  // Instrument the native instance: the SDK inspects stdio identity and HTTP
+  // hasPerRequestStream to choose negotiation and cancellation behavior.
+  const send = transport.send.bind(transport);
+  transport.send = async (message, options) => {
+    const started = performance.now();
+    const messages = Array.isArray(message) ? message : [message];
+    try {
+      await send(message, options);
+      for (const item of messages) {
+        record(createMcpTraceEvent("outbound", server, transportKind, item, "sent", {
+          durationMs: performance.now() - started,
+        }));
       }
-    },
-    close: () => transport.close(),
-    get onclose() {
-      return transport.onclose;
-    },
-    set onclose(handler: Transport["onclose"]) {
-      Reflect.set(transport, "onclose", handler);
-    },
-    get onerror() {
-      return transport.onerror;
-    },
-    set onerror(handler: Transport["onerror"]) {
-      Reflect.set(transport, "onerror", handler);
-    },
-    get onmessage() {
-      return messageHandler;
-    },
-    set onmessage(handler: Transport["onmessage"]) {
-      messageHandler = handler;
-      Reflect.set(transport, "onmessage", handler
-        ? ((message: JSONRPCMessage, extra?: MessageExtraInfo) => {
-            record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
-            handler(message, extra);
-          })
-        : undefined);
-    },
-    get sessionId() {
-      return transport.sessionId;
-    },
-    setProtocolVersion: transport.setProtocolVersion
-      ? (version: string) => transport.setProtocolVersion?.(version)
-      : undefined,
+    } catch (error) {
+      for (const item of messages) {
+        record(createMcpTraceEvent("outbound", server, transportKind, item, "error", {
+          durationMs: performance.now() - started,
+        }));
+      }
+      throw error;
+    }
   };
-  return traced as Transport;
+  Object.defineProperty(transport, "onmessage", {
+    configurable: true,
+    get: () => messageHandler,
+    set: (handler: Transport["onmessage"]) => {
+      messageHandler = handler ? (message: JSONRPCMessage, extra?: MessageExtraInfo) => {
+        record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
+        handler(message, extra);
+      } : undefined;
+    },
+  });
+  return transport;
 }
 
 export function traceTransportKind(definition: { command?: string; url?: string; socket?: string }, transport: Transport): McpTraceTransport {

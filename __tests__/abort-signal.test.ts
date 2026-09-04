@@ -71,8 +71,7 @@ describe("AbortSignal propagation", () => {
     expect(result.details.error).toBe("aborted");
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },
-      undefined,
-      { signal: controller.signal },
+      { signal: expect.any(AbortSignal) },
     );
     expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
   });
@@ -91,8 +90,7 @@ describe("AbortSignal propagation", () => {
     expect(result.details.error).toBe("aborted");
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },
-      undefined,
-      { signal: controller.signal },
+      { signal: expect.any(AbortSignal) },
     );
     expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
   });

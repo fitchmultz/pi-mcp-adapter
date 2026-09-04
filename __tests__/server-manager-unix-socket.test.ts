@@ -2,8 +2,8 @@ import { createServer, type Server } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
-import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/client";
+import type { JSONRPCMessage } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { McpServerManager } from "../server-manager.ts";
 

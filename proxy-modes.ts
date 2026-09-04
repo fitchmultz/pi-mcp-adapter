@@ -1,6 +1,6 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { UrlElicitationRequiredError } from "@modelcontextprotocol/sdk/types.js";
+import type { Client } from "@modelcontextprotocol/client";
+import { DEFAULT_REQUEST_TIMEOUT_MSEC, UrlElicitationRequiredError } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import type { ServerConnection } from "./server-manager.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
@@ -728,7 +728,7 @@ interface ToolCallOptions {
   /** Caller-supplied signal, passed to the UI session rather than the MCP call. */
   signal: AbortSignal | undefined;
   /** Proxy reconnects via manager.connect, direct tools via lazyConnect. */
-  recoverAuthConnection: (serverName: string) => Promise<ServerConnection | undefined>;
+  recoverAuthConnection: (serverName: string, signal?: AbortSignal) => Promise<ServerConnection | undefined>;
   authRequiredMessage: () => string;
   autoAuthAttempted: () => boolean;
   onRawResult?: (result: unknown) => void;
@@ -748,23 +748,35 @@ export async function runToolCall(
   args: Record<string, unknown> | undefined,
   options: ToolCallOptions,
 ): Promise<ProxyToolResult> {
-  const { detailsBase, ownedSignal, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted, onRawResult } = options;
-  const requestOptions = state.manager.getRequestOptions?.(serverName, ownedSignal) ?? (ownedSignal ? { signal: ownedSignal } : undefined);
+  const { detailsBase, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted, onRawResult } = options;
+  const configuredOptions = state.manager.getRequestOptions?.(serverName, options.ownedSignal);
+  const callerSignal = combineAbortSignals(configuredOptions?.signal, options.ownedSignal);
   const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
   // Lazy: formatSchema recurses, so only pay for it (and only risk it throwing)
   // on the error paths that actually print it.
   const schemaSuffix = () => target.inputSchema ? `\n\nExpected parameters:\n${formatSchema(target.inputSchema)}` : "";
-  const recovery = {
-    manager: state.manager,
-    config: state.config,
-    ...(ownedSignal ? { signal: ownedSignal } : {}),
-    onNeedsAuth: recoverAuthConnection,
-  };
   let uiSession: UiSessionRuntime | null = null;
 
   try {
     state.manager.touch(serverName);
     state.manager.incrementInFlight(serverName);
+
+    uiSession = !target.resourceUri && target.uiResourceUri
+      ? await maybeStartUiSession(state, {
+          serverName,
+          toolName: target.originalName,
+          toolArgs: args ?? {},
+          uiResourceUri: target.uiResourceUri,
+          ...(target.uiStreamMode !== undefined ? { streamMode: target.uiStreamMode } : {}),
+          ...(signal ? { signal } : {}),
+          onNeedsAuth: recoverAuthConnection,
+        })
+      : null;
+
+    // Start at dispatch, not UI preparation. Keep this deadline across every retry.
+    const ownedSignal = combineAbortSignals(callerSignal, AbortSignal.timeout(Math.ceil(configuredOptions?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC)))!;
+    const requestOptions = { ...configuredOptions, signal: ownedSignal };
+    const recovery = { manager: state.manager, config: state.config, signal: ownedSignal, onNeedsAuth: recoverAuthConnection };
 
     if (target.resourceUri) {
       const result = await withSessionRecovery(
@@ -781,28 +793,16 @@ export async function runToolCall(
       return { content: guarded.content, details: { ...detailsBase, ...guardedMcpDetails(guarded) } };
     }
 
-    uiSession = target.uiResourceUri
-      ? await maybeStartUiSession(state, {
-          serverName,
-          toolName: target.originalName,
-          toolArgs: args ?? {},
-          uiResourceUri: target.uiResourceUri,
-          ...(target.uiStreamMode !== undefined ? { streamMode: target.uiStreamMode } : {}),
-          ...(signal ? { signal } : {}),
-          onNeedsAuth: recoverAuthConnection,
-        })
-      : null;
-
     const result = await withSessionRecovery<ClientCallToolResult>(
-      recovery,
+      { ...recovery, retryOnTransportFailure: true },
       serverName,
       (conn) => abortable(conn.client.callTool({
         name: target.originalName,
         arguments: args ?? {},
         _meta: uiSession?.requestMeta,
-      }, undefined, requestOptions), ownedSignal),
+      }, requestOptions), ownedSignal),
     );
-    uiSession?.sendToolResult(result as unknown as import("@modelcontextprotocol/sdk/types.js").CallToolResult);
+    uiSession?.sendToolResult(result);
 
     if (result.isError) {
       const content = transformMcpContent((result.content ?? []) as McpContent[]);
@@ -861,7 +861,7 @@ export async function runToolCall(
       content: guarded.content,
       details: {
         ...detailsBase,
-        error: isAbortError(error, ownedSignal) ? "aborted" : "call_failed",
+        error: isAbortError(error, callerSignal) ? "aborted" : "call_failed",
         message: guarded.outputGuard ? "output truncated; see outputGuard.fullOutputPath" : message,
         ...guardedMcpDetails(guarded),
       },
@@ -1214,13 +1214,15 @@ export async function executeCall(
     };
   }
 
-  const recoverAuthConnection = async () => {
+  const recoverAuthConnection = async (_serverName: string, recoverySignal = ownedSignal) => {
+    throwIfAborted(recoverySignal);
     const current = state.manager.getConnection(serverName);
     if (current?.status === "connected") return current;
 
     if (!autoAuthAttempted) {
       autoAuthAttempted = true;
-      const autoAuth = await attemptAutoAuth(state, serverName, ownedSignal);
+      const autoAuth = await attemptAutoAuth(state, serverName, recoverySignal);
+      throwIfAborted(recoverySignal);
       if (autoAuth.status === "failed") {
         throw new SessionRecoveryAuthRequiredError(serverName, autoAuth.message);
       }
@@ -1232,8 +1234,9 @@ export async function executeCall(
         if (afterAuth?.status === "needs-auth") {
           await state.manager.close(serverName);
         }
+        throwIfAborted(recoverySignal);
         clearFailure(state, serverName);
-        connection = await state.manager.connect(serverName, definition, ownedSignal);
+        connection = await state.manager.connect(serverName, definition, recoverySignal);
         return connection;
       }
     }

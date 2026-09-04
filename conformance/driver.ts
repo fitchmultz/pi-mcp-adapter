@@ -22,7 +22,7 @@
  */
 
 import { rmSync } from "node:fs"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
+import { UnauthorizedError } from "@modelcontextprotocol/client"
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent"
 import { McpServerManager } from "../server-manager.ts"
 import {
@@ -117,7 +117,8 @@ const debugLog = (message: string): void => {
   if (process.env.CONFORMANCE_DRIVER_DEBUG) console.error(`[driver] ${message}`)
 }
 
-const definition: ServerEntry = { url: serverUrl }
+// Conformance 0.1.16 exercises only the legacy protocol profile.
+const definition: ServerEntry = { url: serverUrl, protocolVersion: "legacy" }
 if (context.client_id) {
   definition.oauth = {
     clientId: context.client_id,
@@ -126,6 +127,12 @@ if (context.client_id) {
 }
 if (scenario.startsWith("auth/client-credentials")) {
   definition.oauth = { ...(definition.oauth ?? {}), grantType: "client_credentials" }
+}
+
+// This legacy fixture advertises an origin AS but returns a path-scoped issuer.
+// Exercise the explicit compatibility option, not a relaxed runtime default.
+if (scenario === "auth/2025-03-26-oauth-metadata-backcompat") {
+  definition.oauth = { ...(definition.oauth || {}), skipIssuerMetadataValidation: true }
 }
 
 const oauthRuntime = await initializeOAuth()
@@ -210,7 +217,6 @@ async function callTool(toolName: string, args: Record<string, unknown>) {
     try {
       const result = await connection.client.callTool(
         { name: toolName, arguments: args },
-        undefined,
         manager.getRequestOptions(SERVER_NAME),
       )
       if (result.isError) {

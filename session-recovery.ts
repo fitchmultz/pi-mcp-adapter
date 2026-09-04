@@ -20,12 +20,48 @@
 //     many things other than "your session is gone"
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
-import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { SdkHttpError, SdkErrorCode, ProtocolError, type FetchLike, type Transport } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
-import { throwIfAborted } from "./abort.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerDisabled, type McpConfig } from "./types.ts";
 import type { McpServerManager, ServerConnection } from "./server-manager.ts";
+
+const toolTransportFailures = new WeakSet<object>();
+
+/** Retain fetch-error origin without changing the SDK's errors or wire requests. */
+export const trackToolTransportFailure: FetchLike = async (input, init) => {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    if (error instanceof Error && !init?.signal?.aborted && init?.method === "POST"
+      && new Headers(init.headers).get("Mcp-Method") === "tools/call") {
+      toolTransportFailures.add(error);
+    }
+    throw error;
+  }
+};
+
+/** Observe only the originating tool send, not OAuth or catalog requests. */
+export function trackToolHttpFailures(transport: Transport): void {
+  const send = transport.send.bind(transport);
+  transport.send = async (message, options) => {
+    try {
+      await send(message, options);
+    } catch (error) {
+      if ("method" in message && message.method === "tools/call"
+        && error instanceof SdkHttpError && error.code === SdkErrorCode.ClientHttpNotImplemented
+        && error.status >= 500 && error.status < 600) {
+        let errorBody = false;
+        try {
+          const body = JSON.parse(String(error.data.text));
+          errorBody = body?.jsonrpc === "2.0" && body.error !== undefined;
+        } catch {}
+        if (!errorBody) toolTransportFailures.add(error);
+      }
+      throw error;
+    }
+  };
+}
 
 /**
  * True when `err` is a stale Streamable HTTP session signal for a request
@@ -34,25 +70,25 @@ import type { McpServerManager, ServerConnection } from "./server-manager.ts";
  * gate response some servers emit before dispatching to a handler.
  *
  * `hadSessionId` must reflect the transport's session id from *before* the
- * call that produced `err` was made. The installed SDK (1.30.0) does not
+ * call that produced `err` was made. The SDK does not
  * clear `transport.sessionId` on a 404 response, so callers must capture it
  * before the call rather than rely on catch-time transport state.
  */
 const SERVER_NOT_INITIALIZED_MCP_MESSAGES = new Set([
-  `MCP error ${ErrorCode.ConnectionClosed}: Server not initialized`,
-  `MCP error ${ErrorCode.ConnectionClosed}: Bad Request: Server not initialized`,
+  "Server not initialized",
+  "Bad Request: Server not initialized",
 ]);
 
 export function isTerminatedSession(err: unknown, hadSessionId: boolean): boolean {
   if (!hadSessionId) return false;
-  if (err instanceof StreamableHTTPError) {
-    return err.code === 404
-      || (err.code === 400
+  if (err instanceof SdkHttpError) {
+    return err.status === 404
+      || (err.status === 400
         && /"code"\s*:\s*-32000/.test(err.message)
         && /"message"\s*:\s*"Bad Request: Server not initialized"/.test(err.message));
   }
-  return err instanceof McpError
-    && err.code === ErrorCode.ConnectionClosed
+  return err instanceof ProtocolError
+    && err.code === -32000
     && SERVER_NOT_INITIALIZED_MCP_MESSAGES.has(err.message);
 }
 
@@ -75,19 +111,14 @@ export interface SessionRecoveryDeps {
   manager: McpServerManager;
   config: McpConfig;
   signal?: AbortSignal;
-  onNeedsAuth?: (serverName: string) => Promise<ServerConnection | undefined>;
+  /** Only tool calls may opt into a same-client retry of a proven modern POST transport failure. */
+  retryOnTransportFailure?: boolean;
+  onNeedsAuth?: (serverName: string, signal?: AbortSignal) => Promise<ServerConnection | undefined>;
 }
 
 /**
- * Runs `fn` against the current connection for `serverName`. If it fails
- * with a terminated Streamable HTTP session (see `isTerminatedSession`),
- * reconnects exactly once via `McpServerManager.reconnect` (single-flight,
- * identity-guarded — see server-manager.ts) and retries `fn` exactly once
- * against the fresh connection.
- *
- * Any other failure — including a second failure after reconnecting, or the
- * server having been removed from config in the meantime — propagates
- * unchanged through the caller's existing error handling.
+ * Retry once on the same modern client when explicitly enabled, or reconnect
+ * an expired legacy session once. Neither path retries its second failure.
  */
 export async function withSessionRecovery<T>(
   deps: SessionRecoveryDeps,
@@ -107,6 +138,13 @@ export async function withSessionRecovery<T>(
   try {
     return await fn(connection);
   } catch (err) {
+    throwIfAborted(deps.signal);
+    if (deps.retryOnTransportFailure === true
+      && deps.config.mcpServers[serverName]?.retryOnTransportFailure === true
+      && connection.client.getProtocolEra?.() === "modern"
+      && err instanceof Error && toolTransportFailures.has(err)) {
+      return fn(connection);
+    }
     if (!isTerminatedSession(err, hadSessionId)) {
       throw err;
     }
@@ -129,8 +167,8 @@ export async function withSessionRecovery<T>(
       : await deps.manager.reconnect(serverName, definition, connection);
     throwIfAborted(deps.signal);
 
-    if (freshConnection.status === "needs-auth") {
-      freshConnection = await deps.onNeedsAuth?.(serverName) ?? freshConnection;
+    if (freshConnection.status === "needs-auth" && deps.onNeedsAuth) {
+      freshConnection = await abortable(deps.onNeedsAuth(serverName, deps.signal), deps.signal) ?? freshConnection;
       throwIfAborted(deps.signal);
     }
 

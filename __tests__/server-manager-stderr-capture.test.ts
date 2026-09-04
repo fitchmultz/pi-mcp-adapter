@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   connectImpl: null as null | ((transport: any) => Promise<void>),
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any) {
     this.setRequestHandler = vi.fn();
@@ -28,7 +28,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
   }),
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: any) {
     this.options = options;
     this.stderr = options?.stderr === "pipe" ? new PassThrough() : null;
@@ -97,7 +97,7 @@ describe("McpServerManager stderr capture", () => {
     expect(Buffer.byteLength(capturedError?.message ?? "", "utf8")).toBeLessThanOrEqual(8_192 + 100);
   });
 
-  it("keeps empty stdio stderr unchanged and enriches HTTP errors with a probe", async () => {
+  it("keeps connection errors unchanged without sending a redundant HTTP probe", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>Not found</html>", {
       status: 404,
       headers: { "content-type": "text/html" },
@@ -110,8 +110,9 @@ describe("McpServerManager stderr capture", () => {
 
     await expect(manager.connect("stdio", { command: "node" })).rejects.toThrow(/^MCP error -32000: Connection closed$/);
     await expect(manager.connect("http", { url: "https://example.com/mcp" })).rejects.toThrow(
-      /MCP error -32000: Connection closed — probe: endpoint returned HTML \(404\)/,
+      /^MCP error -32000: Connection closed$/,
     );
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("bounds captured stderr and keeps only its final three lines", async () => {

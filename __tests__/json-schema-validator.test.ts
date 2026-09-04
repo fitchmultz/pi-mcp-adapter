@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation/types.js";
-import { createJsonSchemaValidator } from "../json-schema-validator.ts";
+import type { JsonSchemaType } from "@modelcontextprotocol/client";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 
 const draft07 = "http://json-schema.org/draft-07/schema#";
 const draft07Https = "https://json-schema.org/draft-07/schema#";
 
 function validate(schema: Record<string, unknown>, value: unknown) {
-  return createJsonSchemaValidator().getValidator(schema as JsonSchemaType)(value);
+  return new AjvJsonSchemaValidator().getValidator(schema as JsonSchemaType)(value);
 }
 
-describe("createJsonSchemaValidator", () => {
+describe("SDK schema dialect compatibility", () => {
   it.each([draft07, draft07Https])("routes %s to draft-07 semantics", schema => {
     const result = validate({
       $schema: schema,
@@ -93,8 +93,8 @@ describe("createJsonSchemaValidator", () => {
   });
 
   it("creates isolated validator providers", () => {
-    const first = createJsonSchemaValidator();
-    const second = createJsonSchemaValidator();
+    const first = new AjvJsonSchemaValidator();
+    const second = new AjvJsonSchemaValidator();
     const firstSchema = { $schema: draft07, $id: "https://example.com/shared-schema", type: "string" };
     const secondSchema = { $schema: draft07, $id: "https://example.com/shared-schema", type: "number" };
 

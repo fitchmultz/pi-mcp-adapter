@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("open", () => ({ default: mocks.open }));
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation(function (this: any, info: unknown, options: unknown) {
     this.info = info;
@@ -28,7 +28,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
   SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
     this.close = vi.fn(async () => undefined);
@@ -152,7 +152,7 @@ describe("McpServerManager sampling", () => {
   });
 
   it("handles every URL in a URL-required error", async () => {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/sdk/types.js");
+    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
     const { McpServerManager } = await import("../server-manager.ts");
     const ui = {
       select: vi.fn().mockResolvedValue("Open"),
@@ -307,8 +307,8 @@ describe("McpServerManager sampling", () => {
 
     const client = mocks.clients[0];
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 2500 });
-    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 2500 });
-    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 2500 });
+    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 2500, cacheMode: "refresh" });
+    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 2500, cacheMode: "refresh" });
   });
 
   it("prefers the per-server timeout for connect and discovery requests", async () => {
@@ -320,8 +320,8 @@ describe("McpServerManager sampling", () => {
 
     const client = mocks.clients[0];
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 5000 });
-    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000 });
-    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000 });
+    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh" });
+    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh" });
   });
 
   it("builds request options from global and per-server timeouts", async () => {
