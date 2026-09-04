@@ -80,6 +80,7 @@ You can optionally provide a pre-registered client:
 - `oauth.redirectUri` - Exact browser callback URI to advertise and bind, such as `http://localhost:3118/callback` (optional)
 - `oauth.clientName` - Client display name used for dynamic registration (optional, defaults to `Pi Coding Agent`)
 - `oauth.clientUri` - Client homepage URI used for dynamic registration (optional)
+- `oauth.skipIssuerMetadataValidation` - Skip only the SDK's metadata issuer-echo check for a known incompatible authorization server (default: `false`). This weakens metadata validation; prefer correcting the provider's metadata.
 
 Dynamic clients normally omit `oauth.redirectUri`; the adapter starts the callback server lazily on the default loopback host (`localhost`) and asks the OS for an available local port when auth begins. Use `oauth.redirectUri` when the provider requires a pre-registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`. The URI must use `http://` with `localhost`, `127.0.0.1`, or `[::1]`, include an explicit port, and its host/path become the bound callback endpoint.
 
@@ -302,17 +303,35 @@ The OAuth implementation uses the following modules:
 - `mcp-callback-server.ts` - Node.js HTTP callback server
 - `mcp-auth-flow.ts` - High-level auth flow using SDK transport
 
+## Issuer compatibility
+
+SDK 2.0.0 checks that authorization-server metadata returns the issuer advertised by discovery. Some providers advertise a path-scoped issuer but return the origin instead. If the provider cannot be corrected, explicitly opt out for that server only:
+
+```json
+{
+  "mcpServers": {
+    "known-provider": {
+      "url": "https://mcp.example.com/mcp",
+      "auth": "oauth",
+      "oauth": { "skipIssuerMetadataValidation": true }
+    }
+  }
+}
+```
+
+The default remains strict, including when `protocolVersion` is `"legacy"`. The exception applies to discovery during authorization, completion, and refresh. It does not disable URL-bound credentials, stored issuer bindings, callback state, or callback `iss` validation. If the provider requires `iss`, paste the full redirect URL rather than only the authorization code; a missing issuer leaves the pending flow available for another attempt. The adapter also passes `iss` to the SDK before token exchange.
+
 ## SDK Integration
 
-The implementation uses the MCP SDK v1 client and OAuth APIs:
+The implementation uses the official split MCP SDK v2 client and OAuth APIs. SDK v1 remains installed only because the current MCP Apps package requires it:
 
 ```typescript
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
 import {
   auth,
   UnauthorizedError,
   type OAuthClientProvider,
-} from "@modelcontextprotocol/sdk/client/auth.js"
+} from "@modelcontextprotocol/client"
 ```
 
 The `McpOAuthProvider` class implements `OAuthClientProvider` and is passed to `StreamableHTTPClientTransport`:

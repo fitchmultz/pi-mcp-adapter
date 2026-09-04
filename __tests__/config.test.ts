@@ -27,6 +27,20 @@ describe("config discovery", () => {
     process.chdir(originalCwd);
   });
 
+  it.each([
+    { protocolVersion: "future" },
+    { retryOnTransportFailure: "true" },
+    { oauth: { skipIssuerMetadataValidation: "true" } },
+  ])("rejects invalid protocol options from files: %j", async invalid => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = join(home, ".pi", "agent");
+    process.chdir(home);
+    writeJson(join(home, ".pi", "agent", "mcp.json"), { mcpServers: { invalid: { url: "https://example.invalid/mcp", ...invalid } } });
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers).toEqual({});
+  });
+
   it("loads standard MCP files first, then Pi overrides", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));

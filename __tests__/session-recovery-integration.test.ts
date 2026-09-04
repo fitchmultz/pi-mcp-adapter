@@ -106,7 +106,7 @@ describe("session recovery — Streamable HTTP wire path", () => {
     if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
 
     const manager = new McpServerManager();
-    const definition = { url: `http://127.0.0.1:${address.port}/mcp` };
+    const definition = { url: `http://127.0.0.1:${address.port}/mcp`, protocolVersion: "legacy" as const };
     try {
       await manager.connect("demo", definition);
       const result = await withSessionRecovery(
@@ -129,13 +129,13 @@ describe("session recovery — Streamable HTTP wire path", () => {
 describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
   it("recovers a terminated Streamable HTTP session transparently mid tool-call", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi.fn().mockRejectedValueOnce(new StreamableHTTPError(404, "Session not found")),
+        callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })),
       },
     };
     const fresh = {
@@ -169,20 +169,20 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
 
     expect(stale.client.callTool).toHaveBeenCalledTimes(1);
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale);
+    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
     expect(result.content[0].text).toContain("ok");
   });
 
   it("recovers a server-not-initialized MCP error transparently mid tool-call", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
-    const { McpError } = await import("@modelcontextprotocol/sdk/types.js");
+    const { ProtocolError } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi.fn().mockRejectedValueOnce(new McpError(-32000, "Server not initialized")),
+        callTool: vi.fn().mockRejectedValueOnce(new ProtocolError(-32000, "Server not initialized")),
       },
     };
     const fresh = {
@@ -216,24 +216,24 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
 
     expect(stale.client.callTool).toHaveBeenCalledTimes(1);
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale);
+    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
     expect(result.content[0].text).toContain("ok");
   });
 
   it("gives up after one reconnect attempt: a second server-not-initialized MCP error propagates as call_failed", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
-    const { McpError } = await import("@modelcontextprotocol/sdk/types.js");
+    const { ProtocolError } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValue(new McpError(-32000, "Server not initialized")) },
+      client: { callTool: vi.fn().mockRejectedValue(new ProtocolError(-32000, "Server not initialized")) },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn().mockRejectedValue(new McpError(-32000, "Server not initialized")) },
+      client: { callTool: vi.fn().mockRejectedValue(new ProtocolError(-32000, "Server not initialized")) },
     };
 
     const manager = {
@@ -265,17 +265,17 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
 
   it("gives up after one reconnect attempt: a second terminated session propagates as call_failed", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValue(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn().mockRejectedValue(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
     };
 
     const manager = {
@@ -314,13 +314,13 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
 
   it("recovers a terminated Streamable HTTP session transparently for a direct tool call", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi.fn().mockRejectedValueOnce(new StreamableHTTPError(404, "Session not found")),
+        callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })),
       },
     };
     const fresh = {
@@ -358,20 +358,20 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
 
     expect(stale.client.callTool).toHaveBeenCalledTimes(1);
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale);
+    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
     expect(result.content[0].text).toContain("ok");
   });
 
   it("recovers a server-not-initialized MCP error transparently for a direct tool call", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const { McpError } = await import("@modelcontextprotocol/sdk/types.js");
+    const { ProtocolError } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi.fn().mockRejectedValueOnce(new McpError(-32000, "Server not initialized")),
+        callTool: vi.fn().mockRejectedValueOnce(new ProtocolError(-32000, "Server not initialized")),
       },
     };
     const fresh = {
@@ -409,24 +409,24 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
 
     expect(stale.client.callTool).toHaveBeenCalledTimes(1);
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale);
+    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
     expect(result.content[0].text).toContain("ok");
   });
 
   it("gives up after one reconnect attempt: a second terminated session propagates as call_failed", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const { StreamableHTTPError } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
 
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValue(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn().mockRejectedValue(new StreamableHTTPError(404, "Session not found")) },
+      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
     };
 
     const manager = {

@@ -403,13 +403,15 @@ export function createDirectToolExecutor(
       };
     }
 
-    const recoverAuthConnection = async () => {
+    const recoverAuthConnection = async (_serverName: string, recoverySignal = ownedSignal) => {
+      throwIfAborted(recoverySignal);
       const current = state.manager.getConnection(spec.serverName);
       if (current?.status === "connected") return current;
 
       if (!autoAuthAttempted) {
         autoAuthAttempted = true;
-        const autoAuth = await attemptDirectAutoAuth(state, spec.serverName, ownedSignal);
+        const autoAuth = await attemptDirectAutoAuth(state, spec.serverName, recoverySignal);
+        throwIfAborted(recoverySignal);
         if (autoAuth.status === "failed") {
           throw new SessionRecoveryAuthRequiredError(spec.serverName, autoAuth.message);
         }
@@ -419,8 +421,9 @@ export function createDirectToolExecutor(
           if (afterAuth?.status === "needs-auth") {
             await state.manager.close(spec.serverName);
           }
+          throwIfAborted(recoverySignal);
           clearFailure(state, spec.serverName);
-          const reconnected = await lazyConnect(state, spec.serverName, ownedSignal);
+          const reconnected = await lazyConnect(state, spec.serverName, recoverySignal);
           return reconnected ? state.manager.getConnection(spec.serverName) : undefined;
         }
       }

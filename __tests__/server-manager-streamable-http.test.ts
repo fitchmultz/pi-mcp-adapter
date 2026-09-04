@@ -47,6 +47,12 @@ describe("McpServerManager StreamableHTTP transport", () => {
         let body = "";
         for await (const chunk of req) body += chunk;
         const message = JSON.parse(body) as { id?: string | number; method?: string };
+        if (message.method === "server/discover") {
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+            jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" },
+          }));
+          return;
+        }
         const result = message.method === "initialize"
           ? {
               protocolVersion: "2025-06-18",
@@ -133,6 +139,12 @@ describe("McpServerManager StreamableHTTP transport", () => {
       let body = "";
       for await (const chunk of req) body += chunk;
       const message = JSON.parse(body) as { id?: string | number; method?: string };
+      if (message.method === "server/discover") {
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" },
+        }));
+        return;
+      }
 
       if (message.method === "initialize") {
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
@@ -209,7 +221,7 @@ describe("McpServerManager StreamableHTTP transport", () => {
         .trim()
         .split("\n")
         .map(line => JSON.parse(line) as { direction: string; method?: string });
-      expect(traceLines.filter(event => event.direction === "outbound" && event.method === "initialize")).toHaveLength(2);
+      expect(traceLines.filter(event => event.direction === "outbound" && event.method === "initialize")).toHaveLength(1);
     } finally {
       await manager.close("post-only").catch(() => {});
     }

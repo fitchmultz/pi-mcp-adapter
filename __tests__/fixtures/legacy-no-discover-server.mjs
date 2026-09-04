@@ -1,4 +1,7 @@
 import readline from "node:readline";
+import { appendFileSync } from "node:fs";
+
+if (process.env.MCP_HANDSHAKE_PIDS) appendFileSync(process.env.MCP_HANDSHAKE_PIDS, `${process.pid}\n`);
 
 const lines = readline.createInterface({ input: process.stdin });
 
@@ -17,6 +20,7 @@ function reject(id, message) {
 lines.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "server/discover") {
+    if (process.env.MCP_EXIT_ON_DISCOVER === "1") process.exit(0);
     reject(request.id, "server/discover is not supported");
     return;
   }
