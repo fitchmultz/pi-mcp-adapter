@@ -1183,10 +1183,7 @@ export function writeDirectToolsConfig(
     const servers = getServersObject(raw);
 
     for (const { name, value } of entries) {
-      // Persist only the adapter-owned key as a partial overlay. The server
-      // definition (url/command/auth/...) stays in its source layer and is
-      // never copied here; mergeServerMaps merges per-field, so a url-less
-      // entry inherits the lower-precedence definition.
+      // Keep inherited connection details in their source file.
       servers[name] = { ...servers[name], directTools: value };
     }
 
