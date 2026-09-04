@@ -13,6 +13,10 @@ conformance referee
   -> referee MCP and OAuth servers
 ```
 
+The driver explicitly selects the legacy protocol profile: conformance 0.1.16 has no 2026-07-28 client profile. Modern wire behavior is covered by the real local HTTP tests in `__tests__/sdk-v2-http.test.ts`.
+
+The `auth/2025-03-26-oauth-metadata-backcompat` fixture advertises an origin authorization server but returns a path-scoped issuer. That scenario explicitly enables `oauth.skipIssuerMetadataValidation`; it is not evidence of strict-default metadata acceptance. `__tests__/sdk-v2-oauth.test.ts` separately proves strict rejection, explicit opt-out, callback validation, issuer binding, and refresh with the actual SDK.
+
 It covers the four core client scenarios and the full OAuth matrix shipped by conformance 0.1.16, 26 scenarios in total. The OAuth driver follows the referee's authorization redirect into the adapter's real callback server, then completes the pending flow through `completeAuthFromInput()`.
 
 ## Run the tests

@@ -4,6 +4,12 @@ import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import type { McpConfig, ServerEntry } from "./types.ts";
 
+export function normalizeRequestTimeoutMs(timeoutMs: number | undefined): number | undefined {
+  return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : undefined;
+}
+
 async function execOpen(pi: ExtensionAPI, target: string, browser?: string, signal?: AbortSignal) {
   const os = platform();
 

@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
   httpTransports: [] as HttpTransportMock[],
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Client: vi.fn().mockImplementation((info: unknown, options: ClientOptions) => {
     const client = {
@@ -45,20 +45,15 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", async (importOriginal) => (
     mocks.clients.push(client);
     return client;
   }),
-}));
-
-vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
   StreamableHTTPClientTransport: vi.fn().mockImplementation((url: URL, options: TransportOptions) => {
     const transport = { url, options, close: vi.fn(async () => undefined) };
     mocks.httpTransports.push(transport);
     return transport;
   }),
+  SSEClientTransport: vi.fn(),
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({ SSEClientTransport: vi.fn() }));
-
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn(),
 }));
 
@@ -220,7 +215,7 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(authProvider?.clientMetadata?.client_uri).toBe("https://example.com/custom-mcp");
   });
 
-  it("applies the configured timeout to the HTTP probe connect", async () => {
+  it("connects the actual HTTP client once with the configured timeout", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
 
     const manager = new McpServerManager();
@@ -230,7 +225,8 @@ describe("McpServerManager HTTP bearer auth", () => {
       requestTimeoutMs: 5000,
     });
 
-    expect(mocks.clients[1].connect).toHaveBeenCalledWith(mocks.httpTransports[0], { timeout: 5000 });
-    expect(mocks.clients[0].connect).toHaveBeenCalledWith(mocks.httpTransports[1], { timeout: 5000 });
+    expect(mocks.clients).toHaveLength(1);
+    expect(mocks.httpTransports).toHaveLength(1);
+    expect(mocks.clients[0].connect).toHaveBeenCalledWith(mocks.httpTransports[0], { timeout: 5000 });
   });
 });

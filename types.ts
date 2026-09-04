@@ -1,11 +1,11 @@
 // types.ts - Core type definitions
-import type { Transport as McpTransport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Transport as McpTransport } from "@modelcontextprotocol/client";
 import type {
   ContentBlock as McpContentBlock,
   ListPromptsResult,
   ListResourcesResult,
   ListToolsResult,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 import type { UiStreamMode } from "./ui-stream-types.ts";
 import type { UiToolVisibility } from "./ui-tool-visibility.ts";
@@ -334,6 +334,8 @@ export type ContentBlock = TextContent | ImageContent;
 
 // OAuth configuration (SDK handles auto-discovery and dynamic registration)
 export interface OAuthConfig {
+  /** Skip only authorization-server metadata issuer validation. Defaults to false. */
+  skipIssuerMetadataValidation?: boolean;
   /** OAuth grant type (defaults to authorization_code) */
   grantType?: "authorization_code" | "client_credentials";
   /** Pre-registered client ID (optional, dynamic registration used if not provided) */
@@ -360,6 +362,10 @@ export interface ServerEntry {
   socket?: string;
   env?: Record<string, string>;
   cwd?: string;
+  /** HTTP defaults to auto negotiation; stdio/socket default to legacy. */
+  protocolVersion?: "auto" | "legacy";
+  /** Retry one modern tool POST connection failure or HTTP 5xx without a JSON-RPC error. May duplicate side effects; defaults to false. */
+  retryOnTransportFailure?: boolean;
   // HTTP fields
   url?: string;
   headers?: Record<string, string>;
@@ -399,6 +405,20 @@ export interface ServerEntry {
   trace?: boolean;
   // Keep configuration visible without allowing connections or execution.
   disabled?: boolean;
+}
+
+/** Validate protocol options for both file and in-memory configurations. */
+export function validateServerProtocolConfig(definition: ServerEntry): void {
+  if (definition.protocolVersion !== undefined && definition.protocolVersion !== "auto" && definition.protocolVersion !== "legacy") {
+    throw new Error("protocolVersion must be auto or legacy");
+  }
+  if (definition.retryOnTransportFailure !== undefined && typeof definition.retryOnTransportFailure !== "boolean") {
+    throw new Error("retryOnTransportFailure must be a boolean");
+  }
+  if (definition.oauth && definition.oauth.skipIssuerMetadataValidation !== undefined
+    && typeof definition.oauth.skipIssuerMetadataValidation !== "boolean") {
+    throw new Error("oauth.skipIssuerMetadataValidation must be a boolean");
+  }
 }
 
 /** Only the literal boolean `true` disables a server. */

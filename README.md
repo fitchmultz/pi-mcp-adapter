@@ -111,7 +111,7 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 | `<Pi agent dir>/mcp.json` | Pi global override and compatibility imports (`~/.pi/agent/mcp.json` by default) |
 | `.pi/mcp.json` | Pi project override |
 
-Pi-specific files are the write targets for imported or shared global servers when Pi needs to persist adapter-only settings such as `directTools`.
+For imported or shared global servers, Pi saves only `directTools` selections in its own config, without copying connection details or credentials from the source file.
 
 ### SDK configuration
 
@@ -158,6 +158,26 @@ The snapshot is read-only machine-readable data with copied per-server entries. 
 
 In the configuration examples below, `30000` is illustrative only. If `requestTimeoutMs` is omitted or set to `<= 0`, the MCP SDK default timeout is used.
 
+### Transport compatibility
+
+The adapter uses official split MCP SDK 2.0.0. HTTP connections automatically negotiate protocol `2026-07-28` and fall back to older revisions using the SDK's native rules. The SDK generates protocol metadata, method/name headers, and schema-driven `Mcp-Param-*` headers. Modern HTTP supports streamed POST responses without opening a legacy standalone GET stream. Deprecated SSE is tried only when the Streamable HTTP handshake rejects the endpoint with HTTP 404, 405, 406, or 415—not after a timeout, network failure, or authentication failure.
+
+For known legacy servers, set `protocolVersion: "legacy"`. This is also the workaround for servers that answer `server/discover` with an HTTP 200 JSON-RPC error whose `id` is `null`: SDK 2.0.0 cannot negotiate that response. The adapter reports the native failure rather than inventing authentication guidance or overriding the SDK's fallback classifier. Stdio and Unix sockets remain legacy by default. Explicit `"auto"` on native stdio uses the SDK's disposable probe process before starting the session process.
+
+```json
+{
+  "mcpServers": {
+    "modern": { "url": "https://mcp.example.com/mcp" },
+    "older": { "url": "https://legacy.example.com/mcp", "protocolVersion": "legacy" },
+    "read-only": { "url": "https://reports.example.com/mcp", "retryOnTransportFailure": true }
+  }
+}
+```
+
+`retryOnTransportFailure` is off by default. When enabled, direct tools, `mcp`, and `mcp_script` make at most one new `callTool` request on the same modern HTTP client, with a fresh SDK-generated request ID. Eligible failures are a rejected tool POST fetch before response headers arrive, or an HTTP 5xx tool response without a JSON-RPC error. **The first attempt may already have run; enabling retries can duplicate side effects.** Request IDs are not idempotency keys.
+
+OAuth failures, JSON-RPC errors, tool error results, invalid responses, cancellation, and expired deadlines are not retried. A lost JSON/SSE response body may surface only as a parse error or timeout; those ambiguous failures are not replayed. The original tool deadline covers SDK subrequests and retries, and modern retry never stacks with legacy expired-session recovery. Native header-schema refresh and multi-round-trip input handling remain SDK-owned.
+
 ### Server Options
 
 ```json
@@ -181,6 +201,8 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `socket` | Explicit `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url` |
 | `env` | Environment variables; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the stdio server connects; use `!!` for a literal leading `!`. |
 | `cwd` | Working directory; supports `${VAR}`, `$env:VAR`, and `~` expansion |
+| `protocolVersion` | `"auto"` or `"legacy"`. HTTP defaults to `"auto"`; stdio and Unix sockets default to `"legacy"`. |
+| `retryOnTransportFailure` | Retry one failed modern HTTP tool request on the same client (default: `false`); see [Transport compatibility](#transport-compatibility) before enabling. |
 | `url` | HTTP endpoint (StreamableHTTP with SSE fallback); supports raw `${VAR}` and `$env:VAR` interpolation, and missing URL variables fail before any request is sent |
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the HTTP server connects or OAuth authenticates; use `!!` for a literal leading `!`. |
 | `auth` | `"bearer"` or `"oauth"` |
@@ -191,6 +213,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 | `oauth.redirectUri` | Exact localhost redirect URI for browser OAuth, including port and path, for providers that pre-register callbacks |
 | `oauth.clientName` | Client display name advertised during dynamic registration |
 | `oauth.clientUri` | Client homepage URI advertised during dynamic registration |
+| `oauth.skipIssuerMetadataValidation` | Skip only the authorization-server metadata issuer check for a known incompatible provider (default: `false`). Stored issuer and callback checks remain enforced. |
 | `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation. A leading `!` in `bearerToken` runs a command when the HTTP server connects; use `!!` for a literal leading `!`. |
 | `lifecycle` | `"lazy"` (default), `"eager"`, `"keep-alive"`, or `"lazy-keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
@@ -594,8 +617,6 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 
 When `includeSchemas` is enabled, search and describe render common JSON Schema parameters as compact TypeScript shapes like `{ query: string; limit?: number; }`, with the older schema formatter retained as a fallback for unsupported schemas.
 
-For HTTP servers, failed connects run a one-request shape probe that can turn opaque transport errors into setup hints such as `endpoint returned HTML (200) — this URL does not appear to speak MCP`. Healthy connections are not probed.
-
 Servers that provide usage guidance via the MCP `instructions` field surface it at three levels: a truncated head in the `mcp` proxy tool description itself (so the model sees it without any call), a longer preview at the end of `mcp({ server: "name" })` listings, and the full text via `mcp({ instructions: "name" })`. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection.
 
 ## Commands
@@ -620,7 +641,7 @@ In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or 
 
 ### MCP output schemas
 
-Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls.
+Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls. When content blocks are empty, any JSON structured value—including `null`, `false`, and `0`—is rendered as text. Non-empty content, including images, takes precedence.
 
 ## How It Works
 

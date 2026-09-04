@@ -1,6 +1,5 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 // A minimal MCP server that advertises tools only — no `resources`, no
 // `prompts`. Used by resources-capability.test.ts to check that the adapter
@@ -10,11 +9,11 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
+server.setRequestHandler("tools/list", async () => ({
   tools: [{ name: "noop", inputSchema: { type: "object", properties: {} } }],
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async () => ({
+server.setRequestHandler("tools/call", async () => ({
   content: [{ type: "text", text: "ok" }],
 }));
 

@@ -53,7 +53,7 @@ export function resolveMcpResultContent(result: Record<string, unknown>): Conten
   const blocks = transformMcpContent((Array.isArray(result.content) ? result.content : []) as McpContent[]);
   if (blocks.length > 0) return blocks;
 
-  if (result.structuredContent !== undefined && result.structuredContent !== null) {
+  if (result.structuredContent !== undefined) {
     return [{ type: "text" as const, text: stringifyStructuredContent(result.structuredContent) }];
   }
 

@@ -5,11 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.1.6] - 2026-08-31
+## [Unreleased]
 
 ### Fixed
 
-- Recover every concurrent Streamable HTTP request when one request discovers that their shared session expired. Requests interrupted by that proven session recovery now join it and retry once, while unrelated connection closures remain non-replayable.
+- Save direct-tool selections without copying inherited server connection details or credentials into Pi config.
+
+## [4.2.1] - 2026-09-04
+
+### Fixed
+
+- Update transitive dependencies `fast-uri` to 3.1.7 and `qs` to 6.16.0 to address URI normalization and query-string parsing security advisories.
+
+## [4.2.0] - 2026-09-04
+
+### Added
+
+- Native HTTP automatic negotiation for MCP 2026-07-28 using official split SDK 2.0.0, with a per-server `protocolVersion: "legacy"` override. Stdio and Unix sockets keep their legacy default.
+- Opt-in `retryOnTransportFailure` makes one fresh modern tool request after a lost pre-response connection or HTTP 5xx without a JSON-RPC error. It is disabled by default because retrying may duplicate side effects. Direct tools, `mcp`, and `mcp_script` share the same policy and absolute call deadline.
+- Per-server `oauth.skipIssuerMetadataValidation`, disabled by default, for providers with mismatched authorization-server metadata. Stored issuer bindings and callback issuer/state validation remain enforced.
+
+### Changed
+
+- Let the SDK own negotiation, protocol and parameter headers, schema refresh, multi-round-trip input handling, pagination, and JSON Schema dialect validation. Remove the duplicate HTTP initialization probe and raw endpoint-shape probe. Retain SDK v1 only for MCP Apps.
+- Preserve native transport identity during tracing so modern POST-stream cancellation and native stdio probing work correctly.
+- Pass OAuth callback `iss` to the SDK and retain implicit OAuth credential-store deferral until a real challenge.
+- Render valid primitive structured results, including `null`, without dropping non-empty content or images.
+
+### Compatibility
+
+- SDK 2.0.0 still rejects HTTP 200 discovery errors with a null response ID. Set `protocolVersion: "legacy"` for affected servers; the adapter does not patch native negotiation.
+- Ambiguous failures while reading JSON/SSE response bodies are not automatically replayed. Deprecated SSE fallback is limited to unsupported HTTP endpoint responses during connection.
 
 ## [4.1.5] - 2026-08-14
 

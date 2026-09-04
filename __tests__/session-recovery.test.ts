@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { SdkHttpError, SdkErrorCode } from "@modelcontextprotocol/client";
+import { ProtocolError } from "@modelcontextprotocol/client";
 import { SessionRecoveryAuthRequiredError, isTerminatedSession, withSessionRecovery } from "../session-recovery.ts";
 import type { ServerConnection } from "../server-manager.ts";
 import type { McpConfig } from "../types.ts";
@@ -19,43 +19,43 @@ function makeConnection(sessionId: string | undefined): ServerConnection {
 }
 
 describe("isTerminatedSession", () => {
-  it("is true for a 404 StreamableHTTPError carrying a session id", () => {
-    const err = new StreamableHTTPError(404, "Session not found");
+  it("is true for a 404 SdkHttpError carrying a session id", () => {
+    const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
     expect(isTerminatedSession(err, true)).toBe(true);
   });
 
   it("is false for a 404 with no session id (never initialized / wrong URL)", () => {
-    const err = new StreamableHTTPError(404, "Not found");
+    const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Not found", { status: 404 });
     expect(isTerminatedSession(err, false)).toBe(false);
   });
 
   it("is true for a server-not-initialized MCP error carrying a session id", () => {
-    const err = new McpError(-32000, "Server not initialized");
+    const err = new ProtocolError(-32000, "Server not initialized");
     expect(isTerminatedSession(err, true)).toBe(true);
   });
 
   it("is true for the SDK's bad-request server-not-initialized MCP error", () => {
-    const err = new McpError(-32000, "Bad Request: Server not initialized");
+    const err = new ProtocolError(-32000, "Bad Request: Server not initialized");
     expect(isTerminatedSession(err, true)).toBe(true);
   });
 
   it("is true for the SDK's bad-request server-not-initialized HTTP error body", () => {
-    const err = new StreamableHTTPError(400, 'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: Server not initialized"},"id":null}');
+    const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, 'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: Server not initialized"},"id":null}', { status: 400 });
     expect(isTerminatedSession(err, true)).toBe(true);
   });
 
   it("is false for other -32000 HTTP 400 error bodies", () => {
-    const err = new StreamableHTTPError(400, 'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: Mcp-Session-Id header is required"},"id":null}');
+    const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, 'Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: Mcp-Session-Id header is required"},"id":null}', { status: 400 });
     expect(isTerminatedSession(err, true)).toBe(false);
   });
 
   it("is false for server-not-initialized without a session id", () => {
-    const err = new McpError(-32000, "Server not initialized");
+    const err = new ProtocolError(-32000, "Server not initialized");
     expect(isTerminatedSession(err, false)).toBe(false);
   });
 
   it("is false for other -32000 MCP errors, even with a session id", () => {
-    const err = new McpError(-32000, "Connection closed");
+    const err = new ProtocolError(-32000, "Connection closed");
     expect(isTerminatedSession(err, true)).toBe(false);
   });
 
@@ -65,12 +65,12 @@ describe("isTerminatedSession", () => {
   });
 
   it("is false for the right message with the wrong MCP error code", () => {
-    const err = new McpError(-32603, "Server not initialized");
+    const err = new ProtocolError(-32603, "Server not initialized");
     expect(isTerminatedSession(err, true)).toBe(false);
   });
 
   it("is false for 400, even with a session id — ambiguous, never treated as expiry", () => {
-    const err = new StreamableHTTPError(400, "Bad request");
+    const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Bad request", { status: 400 });
     expect(isTerminatedSession(err, true)).toBe(false);
   });
 
@@ -115,7 +115,7 @@ describe("withSessionRecovery", () => {
 
     const fn = vi.fn(async (conn: ServerConnection) => {
       if (conn === stale) {
-        throw new StreamableHTTPError(404, "Session not found");
+        throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
       }
       return "ok";
     });
@@ -140,7 +140,7 @@ describe("withSessionRecovery", () => {
 
     const fn = vi.fn(async (conn: ServerConnection) => {
       if (conn === stale) {
-        throw new McpError(-32000, "Server not initialized");
+        throw new ProtocolError(-32000, "Server not initialized");
       }
       return "ok";
     });
@@ -155,10 +155,10 @@ describe("withSessionRecovery", () => {
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
   });
 
-  it("does not recover a generic connection close without an active session reconnect", async () => {
+  it("does not recover unrelated -32000 MCP errors", async () => {
     const connection = makeConnection("session-1");
     const manager = makeManager({ getConnection: () => connection, reconnect: async () => connection });
-    const err = new McpError(-32000, "Connection closed");
+    const err = new ProtocolError(-32000, "Connection closed");
     const fn = vi.fn().mockRejectedValue(err);
 
     await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(err);
@@ -178,7 +178,7 @@ describe("withSessionRecovery", () => {
 
     const fn = vi.fn(async (conn: ServerConnection) => {
       if (conn === stale) {
-        throw new StreamableHTTPError(404, "Session not found");
+        throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
       }
       return conn === authed ? "ok" : "wrong-connection";
     });
@@ -186,7 +186,7 @@ describe("withSessionRecovery", () => {
     const result = await withSessionRecovery({ manager: manager as any, config, onNeedsAuth }, "demo", fn);
 
     expect(result).toBe("ok");
-    expect(onNeedsAuth).toHaveBeenCalledWith("demo");
+    expect(onNeedsAuth).toHaveBeenCalledWith("demo", undefined);
     expect(fn).toHaveBeenNthCalledWith(2, authed);
   });
 
@@ -198,11 +198,31 @@ describe("withSessionRecovery", () => {
       reconnect: async () => needsAuth,
     });
     const fn = vi.fn(async () => {
-      throw new StreamableHTTPError(404, "Session not found");
+      throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
     });
 
     await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn))
       .rejects.toBeInstanceOf(SessionRecoveryAuthRequiredError);
+  });
+
+  it("passes the abort signal into reconnect", async () => {
+    const stale = makeConnection("session-1");
+    const fresh = makeConnection("session-2");
+    const signal = new AbortController().signal;
+    const manager = makeManager({
+      getConnection: () => stale,
+      reconnect: async () => fresh,
+    });
+    const fn = vi.fn(async (conn: ServerConnection) => {
+      if (conn === stale) {
+        throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
+      }
+      return "ok";
+    });
+
+    await expect(withSessionRecovery({ manager: manager as any, config, signal }, "demo", fn)).resolves.toBe("ok");
+
+    expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale, signal);
   });
 
   it("does not reconnect after the caller aborts", async () => {
@@ -215,7 +235,7 @@ describe("withSessionRecovery", () => {
     });
     const fn = vi.fn(async () => {
       controller.abort(reason);
-      throw new StreamableHTTPError(404, "Session not found");
+      throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
     });
 
     await expect(withSessionRecovery({ manager: manager as any, config, signal: controller.signal }, "demo", fn))
@@ -231,8 +251,8 @@ describe("withSessionRecovery", () => {
       reconnect: async () => fresh,
     });
 
-    const err1 = new McpError(-32000, "Server not initialized");
-    const err2 = new McpError(-32000, "Server not initialized");
+    const err1 = new ProtocolError(-32000, "Server not initialized");
+    const err2 = new ProtocolError(-32000, "Server not initialized");
     const fn = vi.fn().mockRejectedValueOnce(err1).mockRejectedValueOnce(err2);
 
     await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(err2);
@@ -249,8 +269,8 @@ describe("withSessionRecovery", () => {
       reconnect: async () => fresh,
     });
 
-    const err1 = new StreamableHTTPError(404, "Session not found");
-    const err2 = new StreamableHTTPError(404, "Session not found");
+    const err1 = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
+    const err2 = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
     const fn = vi.fn().mockRejectedValueOnce(err1).mockRejectedValueOnce(err2);
 
     await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(err2);
@@ -274,7 +294,7 @@ describe("withSessionRecovery", () => {
   it("does not recover a 404 without a session id (never initialized / wrong URL)", async () => {
     const connection = makeConnection(undefined);
     const manager = makeManager({ getConnection: () => connection, reconnect: async () => connection });
-    const err = new StreamableHTTPError(404, "Not found");
+    const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Not found", { status: 404 });
     const fn = vi.fn().mockRejectedValue(err);
 
     await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(err);
@@ -296,7 +316,7 @@ describe("withSessionRecovery", () => {
   it("does not recover a 400 (ambiguous status, never matched)", async () => {
     const connection = makeConnection("session-1");
     const manager = makeManager({ getConnection: () => connection, reconnect: async () => connection });
-    const err = new StreamableHTTPError(400, "Bad request");
+    const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Bad request", { status: 400 });
     const fn = vi.fn().mockRejectedValue(err);
 
     await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(err);
@@ -307,7 +327,7 @@ describe("withSessionRecovery", () => {
   it("rethrows the original error when the server was removed from config before reconnecting", async () => {
     const connection = makeConnection("session-1");
     const manager = makeManager({ getConnection: () => connection, reconnect: async () => connection });
-    const err = new StreamableHTTPError(404, "Session not found");
+    const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
     const fn = vi.fn().mockRejectedValue(err);
     const emptyConfig: McpConfig = { mcpServers: {} };
 
@@ -316,38 +336,37 @@ describe("withSessionRecovery", () => {
     expect(manager.reconnect).not.toHaveBeenCalled();
   });
 
-  it("caller cancellation does not cancel a shared session recovery", async () => {
+  it("concurrency: two simultaneous session failures both replay against the same fresh connection", async () => {
     const stale = makeConnection("session-1");
     const fresh = makeConnection("session-2");
-    const controller = new AbortController();
-    const reason = new Error("stop waiting");
-    let finishReconnect!: (connection: ServerConnection) => void;
-    const reconnect = new Promise<ServerConnection>((resolve) => {
-      finishReconnect = resolve;
-    });
+
+    // Simulate McpServerManager.reconnect's real single-flight contract: no
+    // matter how many callers ask, they all get the same in-flight promise
+    // resolving to the same fresh connection.
+    const sharedReconnect = Promise.resolve(fresh);
     const manager = makeManager({
       getConnection: () => stale,
-      reconnect: () => reconnect,
-    });
-    const fn = vi.fn(async (connection: ServerConnection) => {
-      if (connection === stale) throw new StreamableHTTPError(404, "Session not found");
-      return "ok";
+      reconnect: () => sharedReconnect,
     });
 
-    const cancelled = withSessionRecovery(
-      { manager: manager as any, config, signal: controller.signal },
-      "demo",
-      fn,
-    );
-    const sibling = withSessionRecovery({ manager: manager as any, config }, "demo", fn);
-    await vi.waitFor(() => expect(manager.reconnect).toHaveBeenCalledTimes(1));
+    const fn = vi.fn(async (conn: ServerConnection) => {
+      if (conn === stale) {
+        throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
+      }
+      return conn === fresh ? "ok" : "unexpected";
+    });
 
-    controller.abort(reason);
-    await expect(cancelled).rejects.toBe(reason);
-    finishReconnect(fresh);
-    await expect(sibling).resolves.toBe("ok");
+    const [r1, r2] = await Promise.all([
+      withSessionRecovery({ manager: manager as any, config }, "demo", fn),
+      withSessionRecovery({ manager: manager as any, config }, "demo", fn),
+    ]);
 
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale);
-    expect(fn).toHaveBeenCalledTimes(3);
+    expect(r1).toBe("ok");
+    expect(r2).toBe("ok");
+    // Each caller's own failure triggers its own reconnect() call, but the
+    // manager's single-flight dedupes the underlying work; both resolve to
+    // the identical fresh connection.
+    expect(manager.reconnect).toHaveBeenCalledTimes(2);
+    expect(fn).toHaveBeenCalledTimes(4); // 2 failed stale attempts + 2 successful fresh replays
   });
 });

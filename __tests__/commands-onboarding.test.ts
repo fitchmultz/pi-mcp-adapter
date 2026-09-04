@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -142,6 +142,100 @@ describe("commands onboarding", () => {
     const options = mocks.createMcpPanel.mock.calls[0]?.[6];
     expect(options.noticeLines[0]).toContain("Using standard MCP config");
     expect(loadOnboardingState().sharedConfigHintShown).toBe(true);
+  });
+
+  it.each([
+    ["shared global", ".config/mcp/mcp.json"],
+    ["agents global", ".agents/mcp.json"],
+    ["agents nested global", ".agents/mcp/mcp.json"],
+    ["explicit import", ".cursor/mcp.json"],
+    ["auto import", ".cursor/mcp.json"],
+  ])("saves directTools without copying inherited definitions from %s", async (kind, sourceFile) => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-save-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-save-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    const sourcePath = join(home, sourceFile);
+    const piPath = join(home, ".pi", "agent", "mcp.json");
+    const projectPath = join(project, ".mcp.json");
+    const projectPiPath = join(project, ".pi", "mcp.json");
+    const source = {
+      mcpServers: {
+        inherited: { url: "https://internal.example/mcp", headers: { Authorization: "Bearer source-secret" } },
+        customized: { command: "source-command", env: { TOKEN: "source-token" } },
+      },
+    };
+    const destination = {
+      imports: kind === "explicit import" ? ["cursor"] : [],
+      settings: { hostConfigDiscovery: kind === "auto import" ? "on" : "off", showStatusIcon: false },
+      mcpServers: {
+        customized: { excludeTools: ["admin"] },
+        piOwned: { command: "pi-command" },
+      },
+    };
+    writeJson(sourcePath, source);
+    writeJson(piPath, destination);
+    writeJson(projectPath, { mcpServers: { projectOwned: { command: "project-command" } } });
+    writeJson(projectPiPath, { mcpServers: { projectPiOwned: { command: "project-pi-command" } } });
+    const sourceText = readFileSync(sourcePath, "utf-8");
+    const { loadMcpConfig } = await import("../config.ts");
+    const { openMcpPanel } = await import("../commands.ts");
+    const ui = createUi();
+    const refreshed = vi.fn();
+    const changes = new Map<string, true | false | string[]>([
+      ["inherited", true],
+      ["customized", false],
+      ["piOwned", false],
+      ["projectOwned", ["search"]],
+      ["projectPiOwned", true],
+    ]);
+    mocks.createMcpPanel.mockImplementation((_config, _cache, _prov, _callbacks, _tui, done) => {
+      done({ cancelled: false, changes });
+      return { dispose() {} };
+    });
+    const save = () => openMcpPanel({
+      config: loadMcpConfig(),
+      manager: { getConnection: () => null },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+    } as any, {} as any, { hasUI: true, mode: "tui", isProjectTrusted: () => true, cwd: project, ui } as any, undefined, refreshed);
+
+    await expect(save()).resolves.toEqual({ configChanged: false });
+
+    expect(JSON.parse(readFileSync(piPath, "utf-8"))).toEqual({
+      ...destination,
+      mcpServers: {
+        inherited: { directTools: true },
+        customized: { excludeTools: ["admin"], directTools: false },
+        piOwned: { command: "pi-command", directTools: false },
+      },
+    });
+    expect(JSON.parse(readFileSync(projectPath, "utf-8"))).toEqual({
+      mcpServers: { projectOwned: { command: "project-command", directTools: ["search"] } },
+    });
+    expect(JSON.parse(readFileSync(projectPiPath, "utf-8"))).toEqual({
+      mcpServers: { projectPiOwned: { command: "project-pi-command", directTools: true } },
+    });
+    expect(readFileSync(sourcePath, "utf-8")).toBe(sourceText);
+    expect(refreshed).toHaveBeenCalledWith(changes);
+    expect(ui.notify).toHaveBeenCalledWith("Direct tools updated for this session.", "info");
+    expect(loadMcpConfig().mcpServers.inherited).toEqual({ ...source.mcpServers.inherited, directTools: true });
+
+    source.mcpServers.inherited = { url: "https://updated.example/mcp", headers: { Authorization: "Bearer updated-secret" } };
+    source.mcpServers.customized = { command: "updated-command", env: { TOKEN: "updated-token" } };
+    writeJson(sourcePath, source);
+    const updatedSourceText = readFileSync(sourcePath, "utf-8");
+    changes.clear();
+    for (const selection of [false, ["search"]] as const) {
+      changes.set("inherited", selection === false ? false : [...selection]);
+      await expect(save()).resolves.toEqual({ configChanged: false });
+      expect(JSON.parse(readFileSync(piPath, "utf-8")).mcpServers.inherited).toEqual({ directTools: selection });
+      expect(loadMcpConfig().mcpServers.inherited).toEqual({ ...source.mcpServers.inherited, directTools: selection });
+    }
+    expect(loadMcpConfig().mcpServers.customized).toEqual({
+      ...source.mcpServers.customized, excludeTools: ["admin"], directTools: false,
+    });
+    expect(readFileSync(sourcePath, "utf-8")).toBe(updatedSourceText);
   });
 
   it("clears OAuth credentials, cancels pending auth, and closes the server on logout", async () => {

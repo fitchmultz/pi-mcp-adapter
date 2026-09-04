@@ -89,6 +89,27 @@ describe("mcp-panel rendering", () => {
     panel.dispose();
   });
 
+  it.each([
+    ["server space", [" "]],
+    ["tool enter", ["\r", "\x1b[B", "\r"]],
+    ["tool space", ["\r", "\x1b[B", " "]],
+  ])("explains imported tool selections after %s", (_label, keys) => {
+    const config = createConfig();
+    const panel = createMcpPanel(
+      config,
+      createCache(config),
+      new Map([["atlassian", { path: "/pi/mcp.json", kind: "import", importKind: "cursor" }]]),
+      createCallbacks(),
+      { requestRender: () => {} },
+      () => {},
+    );
+
+    for (const key of keys) panel.handleInput(key);
+    const output = stripAnsi(panel.render(82).join("\n"));
+    expect(output).toContain("Only tool selections save to Pi config.");
+    panel.dispose();
+  });
+
   it("sanitizes OSC sequences in notice lines before styling", () => {
     const config = createConfig();
     const panel = createMcpPanel(

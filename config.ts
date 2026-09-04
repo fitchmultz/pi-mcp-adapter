@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAgentPath } from "./agent-dir.ts";
-import { isServerDisabled, type HostConfigDiscovery, type McpConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
+import { isServerDisabled, validateServerProtocolConfig, type HostConfigDiscovery, type McpConfig, type ServerEntry, type McpSettings, type ImportKind, type ServerProvenance } from "./types.ts";
 import { toStringRecord } from "./utils.ts";
 
 const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
@@ -623,6 +623,9 @@ function validateConfig(raw: unknown): McpConfig {
     return { mcpServers: {} };
   }
 
+  for (const entry of Object.values(servers)) {
+    if (entry && typeof entry === "object") validateServerProtocolConfig(entry);
+  }
   return {
     mcpServers: servers as Record<string, ServerEntry>,
     ...(Array.isArray(obj.imports) ? { imports: obj.imports as ImportKind[] } : {}),
@@ -1162,9 +1165,8 @@ export function getServerProvenance(overridePath?: string, cwd = process.cwd()):
 export function writeDirectToolsConfig(
   changes: Map<string, true | string[] | false>,
   provenance: Map<string, ServerProvenance>,
-  fullConfig: McpConfig,
 ): void {
-  const byPath = new Map<string, { name: string; value: true | string[] | false; prov: ServerProvenance }[]>();
+  const byPath = new Map<string, { name: string; value: true | string[] | false }[]>();
 
   for (const [serverName, value] of changes) {
     const prov = provenance.get(serverName);
@@ -1173,22 +1175,16 @@ export function writeDirectToolsConfig(
     const targetPath = prov.path;
 
     if (!byPath.has(targetPath)) byPath.set(targetPath, []);
-    byPath.get(targetPath)!.push({ name: serverName, value, prov });
+    byPath.get(targetPath)!.push({ name: serverName, value });
   }
 
   for (const [filePath, entries] of byPath) {
     const raw = readRawConfigObject(filePath);
     const servers = getServersObject(raw);
 
-    for (const { name, value, prov } of entries) {
-      if (prov.kind === "import") {
-        const fullDef = fullConfig.mcpServers[name];
-        if (fullDef) {
-          servers[name] = { ...fullDef, directTools: value };
-        }
-      } else if (servers[name]) {
-        servers[name] = { ...servers[name], directTools: value };
-      }
+    for (const { name, value } of entries) {
+      // Keep inherited connection details in their source file.
+      servers[name] = { ...servers[name], directTools: value };
     }
 
     setServersObject(raw, servers);

@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 
 class MockUnauthorizedError extends Error {}
 
-vi.mock("@modelcontextprotocol/sdk/client/auth.js", async (importOriginal) => ({
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   auth: mocks.sdkAuth,
   extractWWWAuthenticateParams: (response: Response) => {
@@ -139,6 +139,7 @@ describe("mcp-auth-flow explicit auth", () => {
       `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://auth.example.com")}`,
     )).resolves.toBe("authenticated");
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(2);
+    expect(mocks.sdkAuth.mock.calls[1][1].iss).toBe("https://auth.example.com");
     expect(hasPendingAuth("rfc9207-missing")).toBe(false);
   });
 
@@ -827,7 +828,8 @@ describe("mcp-auth-flow explicit auth", () => {
 
     const probeInit = mocks.fetch.mock.calls[0]?.[1] as RequestInit;
     expect(new Headers(probeInit.headers).get("x-tenant")).toBe("tenant-a");
-    expect(JSON.parse(String(probeInit.body)).params.clientInfo.name).toBe("pi-mcp-adapter");
+    expect(JSON.parse(String(probeInit.body)).method).toBe("server/discover");
+    expect(new Headers(probeInit.headers).get("mcp-protocol-version")).toBe("2026-07-28");
     expect(mocks.sdkAuth).toHaveBeenNthCalledWith(1, expect.anything(), {
       serverUrl: "https://api.example.com/mcp",
       resourceMetadataUrl: new URL(resourceMetadataUrl),

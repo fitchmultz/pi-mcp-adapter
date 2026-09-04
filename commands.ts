@@ -538,7 +538,7 @@ export async function openMcpPanel(
         return createMcpPanel(config, cache, provenanceMap, callbacks, tui, (result: McpPanelResult) => {
           void (async () => {
             if (!result.cancelled && result.changes.size > 0) {
-              writeDirectToolsConfig(result.changes, provenanceMap, config);
+              writeDirectToolsConfig(result.changes, provenanceMap);
               await onDirectToolsConfigChanged?.(result.changes);
               ctx.ui.notify("Direct tools updated for this session.", "info");
             }

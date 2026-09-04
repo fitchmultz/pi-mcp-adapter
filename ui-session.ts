@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import net from "node:net";
-import { UrlElicitationRequiredError, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { UrlElicitationRequiredError, type CallToolResult } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import {
   createUiModelContextUpdate,
@@ -99,7 +99,7 @@ function withStreamEnvelope(
     return result;
   }
 
-  const structuredContent = result.structuredContent && typeof result.structuredContent === "object" && !Array.isArray(result.structuredContent)
+  const structuredContent: Record<string, unknown> = result.structuredContent && typeof result.structuredContent === "object" && !Array.isArray(result.structuredContent)
     ? { ...result.structuredContent }
     : {};
 
