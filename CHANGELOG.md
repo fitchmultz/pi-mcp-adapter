@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.2] - 2026-09-04
+
 ### Fixed
 
 - Save direct-tool selections without copying inherited server connection details or credentials into Pi config.
 - Recover expired sessions without interrupting or replaying accepted work on the old connection; concurrent callers share a replacement while keeping their own cancellation and deadlines.
+
+### Changed
+
+- Refresh development dependencies `nanoid` to 3.3.18, `postcss` to 8.5.28, `protobufjs` to 7.6.6, and the root `undici` to 7.29.1. Update checkout/setup-node Actions to v7.0.1/v7.0.0 while keeping Node 22 tests and the Pi 0.84.0 development baseline.
+
+### Known issues
+
+- Pi 0.84.0's development dependency shrinkwrap still installs `undici` 8.9.0, affected by upstream advisories fixed in 8.10.2. This remains unresolved even when npm audit reports zero vulnerabilities. Source installs temporarily include these development dependencies to build, then prune them.
 
 ## [4.2.1] - 2026-09-04
 
