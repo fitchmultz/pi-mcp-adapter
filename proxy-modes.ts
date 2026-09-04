@@ -675,11 +675,8 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
         };
       }
       if (autoAuth.status === "success") {
-        await state.manager.close(serverName);
         throwIfAborted(ownedSignal);
-        connection = ownedSignal
-          ? await state.manager.connect(serverName, definition, ownedSignal)
-          : await state.manager.connect(serverName, definition);
+        connection = await state.manager.reconnect(serverName, definition, connection, ownedSignal);
       }
       if (connection.status === "needs-auth") {
         const message = getAuthRequiredMessage(state, serverName);
@@ -952,7 +949,8 @@ export async function executeCall(
             };
           }
           if (autoAuth.status === "success") {
-            await state.manager.close(serverName);
+            const definition = state.config.mcpServers[serverName];
+            if (definition) await state.manager.reconnect(serverName, definition, needsAuthConnection, ownedSignal);
             clearFailure(state, serverName);
             const connectedAfterAuth = await lazyConnect(state, serverName, ownedSignal);
             if (connectedAfterAuth) {
@@ -1013,7 +1011,8 @@ export async function executeCall(
       }
 
       let connected = await lazyConnect(state, configuredServer, ownedSignal);
-      if (!connected && state.manager.getConnection(configuredServer)?.status === "needs-auth" && !autoAuthAttempted) {
+      const needsAuthConnection = state.manager.getConnection(configuredServer);
+      if (!connected && needsAuthConnection?.status === "needs-auth" && !autoAuthAttempted) {
         autoAuthAttempted = true;
         const autoAuth = await attemptAutoAuth(state, configuredServer, ownedSignal);
         if (autoAuth.status === "failed") {
@@ -1023,7 +1022,8 @@ export async function executeCall(
           };
         }
         if (autoAuth.status === "success") {
-          await state.manager.close(configuredServer);
+          const definition = state.config.mcpServers[configuredServer];
+          if (definition) await state.manager.reconnect(configuredServer, definition, needsAuthConnection, ownedSignal);
           clearFailure(state, configuredServer);
           connected = await lazyConnect(state, configuredServer, ownedSignal);
         }
@@ -1094,6 +1094,7 @@ export async function executeCall(
     : { server: serverName, tool: toolMeta.originalName };
 
   let connection = state.manager.getConnection(serverName);
+  let refreshAfterAuth = false;
   if (connection?.status === "needs-auth") {
     if (!autoAuthAttempted) {
       autoAuthAttempted = true;
@@ -1105,9 +1106,10 @@ export async function executeCall(
         };
       }
       if (autoAuth.status === "success") {
-        await state.manager.close(serverName);
+        const definition = state.config.mcpServers[serverName];
+        if (definition) connection = await state.manager.reconnect(serverName, definition, connection, ownedSignal);
         clearFailure(state, serverName);
-        connection = state.manager.getConnection(serverName);
+        refreshAfterAuth = true;
       }
     }
 
@@ -1119,7 +1121,7 @@ export async function executeCall(
       };
     }
   }
-  if (!connection || connection.status !== "connected") {
+  if (!connection || connection.status !== "connected" || refreshAfterAuth) {
     const failedAgo = getFailureAgeSeconds(state, serverName);
     if (failedAgo !== null) {
       return {
@@ -1140,7 +1142,7 @@ export async function executeCall(
       if (state.ui) {
         state.ui.setStatus("mcp", formatMcpStatus(state.config, `connecting to ${serverName}...`));
       }
-      connection = await state.manager.connect(serverName, definition, ownedSignal);
+      if (connection?.status !== "connected") connection = await state.manager.connect(serverName, definition, ownedSignal);
       if (connection.status === "needs-auth") {
         if (!autoAuthAttempted) {
           autoAuthAttempted = true;
@@ -1152,8 +1154,7 @@ export async function executeCall(
             };
           }
           if (autoAuth.status === "success") {
-            await state.manager.close(serverName);
-            connection = await state.manager.connect(serverName, definition, ownedSignal);
+            connection = await state.manager.reconnect(serverName, definition, connection, ownedSignal);
           }
         }
 
@@ -1229,14 +1230,9 @@ export async function executeCall(
       if (autoAuth.status === "success") {
         const definition = state.config.mcpServers[serverName];
         if (!definition) return undefined;
-        const afterAuth = state.manager.getConnection(serverName);
-        if (afterAuth?.status === "connected") return afterAuth;
-        if (afterAuth?.status === "needs-auth") {
-          await state.manager.close(serverName);
-        }
-        throwIfAborted(recoverySignal);
+        if (!current) return undefined;
         clearFailure(state, serverName);
-        connection = await state.manager.connect(serverName, definition, recoverySignal);
+        connection = await state.manager.reconnect(serverName, definition, current, recoverySignal);
         return connection;
       }
     }

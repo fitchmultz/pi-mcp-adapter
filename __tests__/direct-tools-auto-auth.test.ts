@@ -33,7 +33,8 @@ describe("direct tools auto auth", () => {
   it("auto-authenticates and retries direct tool execution once", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
 
-    let connection: any = { status: "needs-auth" };
+    const needsAuth = { status: "needs-auth" };
+    let connection: any = needsAuth;
     const connected = {
       status: "connected",
       client: {
@@ -44,12 +45,7 @@ describe("direct tools auto auth", () => {
       },
     };
 
-    mocks.lazyConnect
-      .mockImplementationOnce(async () => false)
-      .mockImplementationOnce(async () => {
-        connection = connected;
-        return true;
-      });
+    mocks.lazyConnect.mockImplementation(async () => connection?.status === "connected");
 
     const state = {
       config: {
@@ -59,9 +55,8 @@ describe("direct tools auto auth", () => {
         },
       },
       manager: {
-        close: vi.fn(async () => {
-          connection = undefined;
-        }),
+        close: vi.fn(),
+        reconnect: vi.fn(async () => { connection = connected; return connected; }),
         getConnection: vi.fn(() => connection),
         getRequestOptions: vi.fn(() => ({ timeout: 4321 })),
         touch: vi.fn(),
@@ -102,7 +97,8 @@ describe("direct tools auto auth", () => {
       state.config.mcpServers.demo,
       { signal: controller.signal },
     );
-    expect(state.manager.close).toHaveBeenCalledWith("demo");
+    expect(state.manager.close).not.toHaveBeenCalled();
+    expect(state.manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, needsAuth, controller.signal);
     expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
     expect(connected.client.callTool).toHaveBeenCalledWith(
       {
@@ -148,7 +144,7 @@ describe("direct tools auto auth", () => {
     });
 
     const inFlight = executor("id", {}, controller.signal, undefined, undefined as any);
-    await Promise.resolve();
+    await vi.waitFor(() => expect(connection.client.callTool).toHaveBeenCalledTimes(1));
     controller.abort(new Error("request aborted"));
 
     const result = await inFlight;

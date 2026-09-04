@@ -155,16 +155,8 @@ describe("proxy auto auth", () => {
     };
 
     const manager = {
-      connect: vi
-        .fn()
-        .mockImplementationOnce(async () => {
-          current = { status: "needs-auth" };
-          return current;
-        })
-        .mockImplementationOnce(async () => {
-          current = connected;
-          return current;
-        }),
+      connect: vi.fn(async () => { current = { status: "needs-auth" }; return current; }),
+      reconnect: vi.fn(async () => { current = connected; return current; }),
       close: vi.fn(async () => {
         current = undefined;
       }),
@@ -196,8 +188,9 @@ describe("proxy auto auth", () => {
       state.config.mcpServers.demo,
       { runtime: state.oauthRuntime },
     );
-    expect(manager.close).toHaveBeenCalledWith("demo");
-    expect(manager.connect).toHaveBeenCalledTimes(2);
+    expect(manager.close).not.toHaveBeenCalled();
+    expect(manager.connect).toHaveBeenCalledTimes(1);
+    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, { status: "needs-auth" }, undefined);
     expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({
       name: "mcp__demo_search",
       originalName: "search",
@@ -305,7 +298,8 @@ describe("proxy auto auth", () => {
   it("auto-authenticates and retries executeCall once", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
 
-    let current: any = { status: "needs-auth" };
+    const needsAuth = { status: "needs-auth" };
+    let current: any = needsAuth;
     const connected = {
       status: "connected",
       client: {
@@ -319,7 +313,8 @@ describe("proxy auto auth", () => {
     };
 
     const manager = {
-      connect: vi.fn(async () => {
+      connect: vi.fn(),
+      reconnect: vi.fn(async () => {
         current = connected;
         return connected;
       }),
@@ -370,7 +365,9 @@ describe("proxy auto auth", () => {
       state.config.mcpServers.demo,
       { signal: controller.signal },
     );
-    expect(manager.connect).toHaveBeenCalledTimes(1);
+    expect(manager.connect).not.toHaveBeenCalled();
+    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, needsAuth, controller.signal);
+    expect(manager.close).not.toHaveBeenCalled();
     expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
     expect(connected.client.callTool).toHaveBeenCalledWith(
       {
@@ -552,9 +549,9 @@ describe("proxy auto auth", () => {
     expect(client.connect).toHaveBeenCalledTimes(1);
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 5000 });
     expect(client.listTools).toHaveBeenCalledTimes(1);
-    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh" });
+    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh", signal: expect.any(AbortSignal) });
     expect(client.listResources).toHaveBeenCalledTimes(1);
-    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh" });
+    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh", signal: expect.any(AbortSignal) });
     expect(client.callTool).toHaveBeenNthCalledWith(
       1,
       { name: "search", arguments: { q: "one" }, _meta: undefined },

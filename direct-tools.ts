@@ -339,7 +339,8 @@ export function createDirectToolExecutor(
     let connected = await lazyConnect(state, spec.serverName, ownedSignal);
     let autoAuthAttempted = false;
 
-    if (!connected && state.manager.getConnection(spec.serverName)?.status === "needs-auth") {
+    const needsAuthConnection = state.manager.getConnection(spec.serverName);
+    if (!connected && needsAuthConnection?.status === "needs-auth") {
       autoAuthAttempted = true;
       const autoAuth = await attemptDirectAutoAuth(state, spec.serverName, ownedSignal);
       if (autoAuth.status === "failed") {
@@ -349,7 +350,8 @@ export function createDirectToolExecutor(
         };
       }
       if (autoAuth.status === "success") {
-        await state.manager.close(spec.serverName);
+        const liveDefinition = state.config.mcpServers[spec.serverName];
+        if (liveDefinition) await state.manager.reconnect(spec.serverName, liveDefinition, needsAuthConnection, ownedSignal);
         clearFailure(state, spec.serverName);
         connected = await lazyConnect(state, spec.serverName, ownedSignal);
       }
@@ -416,12 +418,9 @@ export function createDirectToolExecutor(
           throw new SessionRecoveryAuthRequiredError(spec.serverName, autoAuth.message);
         }
         if (autoAuth.status === "success") {
-          const afterAuth = state.manager.getConnection(spec.serverName);
-          if (afterAuth?.status === "connected") return afterAuth;
-          if (afterAuth?.status === "needs-auth") {
-            await state.manager.close(spec.serverName);
-          }
-          throwIfAborted(recoverySignal);
+          const liveDefinition = state.config.mcpServers[spec.serverName];
+          if (!current || !liveDefinition) return undefined;
+          await state.manager.reconnect(spec.serverName, liveDefinition, current, recoverySignal);
           clearFailure(state, spec.serverName);
           const reconnected = await lazyConnect(state, spec.serverName, recoverySignal);
           return reconnected ? state.manager.getConnection(spec.serverName) : undefined;

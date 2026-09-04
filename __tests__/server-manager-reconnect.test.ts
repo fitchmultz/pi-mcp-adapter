@@ -12,6 +12,7 @@ type HttpTransportMock = {
 
 const mocks = vi.hoisted(() => ({
   clients: [] as any[],
+  connectGate: undefined as Promise<void> | undefined,
   httpTransports: [] as HttpTransportMock[],
 }));
 
@@ -24,7 +25,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
       onclose: undefined,
       setRequestHandler: vi.fn(),
       setNotificationHandler: vi.fn(),
-      connect: vi.fn(async () => undefined),
+      connect: vi.fn(async () => { await mocks.connectGate; }),
       listTools: vi.fn(async () => ({ tools: [] })),
       listResources: vi.fn(async () => ({ resources: [] })),
       close: vi.fn(async () => undefined),
@@ -52,6 +53,7 @@ describe("McpServerManager.reconnect", () => {
   beforeEach(() => {
     mocks.clients.length = 0;
     mocks.httpTransports.length = 0;
+    mocks.connectGate = undefined;
   });
 
   const def = { url: "https://example.test/mcp" };
@@ -101,10 +103,8 @@ describe("McpServerManager.reconnect", () => {
     const manager = new McpServerManager();
 
     const stale = await manager.connect("remote", def);
-    let releaseClose!: () => void;
-    stale.client.close = vi.fn(() => new Promise<void>((resolve) => {
-      releaseClose = resolve;
-    }));
+    let releaseConnect!: () => void;
+    mocks.connectGate = new Promise<void>(resolve => { releaseConnect = resolve; });
     const reason = new Error("stop waiting");
     const controller = new AbortController();
 
@@ -113,10 +113,8 @@ describe("McpServerManager.reconnect", () => {
     await expect(first).rejects.toBe(reason);
 
     const second = manager.reconnect("remote", def, stale);
-    releaseClose();
-    await expect(second).rejects.toBe(reason);
-
-    const fresh = await manager.reconnect("remote", def, stale);
+    releaseConnect();
+    const fresh = await second;
     expect(fresh).not.toBe(stale);
     expect(manager.getConnection("remote")).toBe(fresh);
   });

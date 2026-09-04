@@ -128,11 +128,33 @@ export async function withSessionRecovery<T>(
   if (isServerDisabled(deps.config.mcpServers[serverName])) {
     throw new Error(`MCP server "${serverName}" is disabled`);
   }
-  const connection = deps.manager.getConnection(serverName);
+  throwIfAborted(deps.signal);
+  let connection = deps.manager.getConnection(serverName);
   if (!connection) {
     throw new Error(`Server "${serverName}" is not connected`);
   }
 
+  const reconnect = async (stale: ServerConnection, error: unknown): Promise<ServerConnection> => {
+    const definition = deps.config.mcpServers[serverName];
+    if (!definition) throw error;
+    throwIfAborted(deps.signal);
+    let fresh = deps.signal
+      ? await deps.manager.reconnect(serverName, definition, stale, deps.signal)
+      : await deps.manager.reconnect(serverName, definition, stale);
+    throwIfAborted(deps.signal);
+    if (fresh.status === "needs-auth" && deps.onNeedsAuth) {
+      fresh = await abortable(deps.onNeedsAuth(serverName, deps.signal), deps.signal) ?? fresh;
+      throwIfAborted(deps.signal);
+    }
+    if (fresh.status === "needs-auth") throw new SessionRecoveryAuthRequiredError(serverName);
+    if (fresh.status !== "connected") throw error;
+    return fresh;
+  };
+
+  // Nothing has been dispatched yet: join a replacement that began during UI preparation.
+  if (connection.status === "closed") {
+    connection = await reconnect(connection, new Error(`Server "${serverName}" is not connected`));
+  }
   const hadSessionId = hasSessionId(connection);
 
   try {
@@ -149,36 +171,9 @@ export async function withSessionRecovery<T>(
       throw err;
     }
 
-    // Re-read the live definition rather than reusing the stale
-    // connection's definition, in case config changed since connect. If the
-    // server was removed from config in the meantime there is nothing to
-    // reconnect to, so surface the original error.
-    const definition = deps.config.mcpServers[serverName];
-    if (!definition) {
-      throw err;
-    }
-
-    throwIfAborted(deps.signal);
     logger.debug(`MCP session for "${serverName}" expired; reconnecting`, {
       server: serverName,
     });
-    let freshConnection = deps.signal
-      ? await deps.manager.reconnect(serverName, definition, connection, deps.signal)
-      : await deps.manager.reconnect(serverName, definition, connection);
-    throwIfAborted(deps.signal);
-
-    if (freshConnection.status === "needs-auth" && deps.onNeedsAuth) {
-      freshConnection = await abortable(deps.onNeedsAuth(serverName, deps.signal), deps.signal) ?? freshConnection;
-      throwIfAborted(deps.signal);
-    }
-
-    if (freshConnection.status === "needs-auth") {
-      throw new SessionRecoveryAuthRequiredError(serverName);
-    }
-    if (freshConnection.status !== "connected") {
-      throw err;
-    }
-
-    return fn(freshConnection);
+    return fn(await reconnect(connection, err));
   }
 }
