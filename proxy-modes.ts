@@ -724,7 +724,6 @@ interface ToolCallOptions {
   ownedSignal: AbortSignal | undefined;
   /** Caller-supplied signal, passed to the UI session rather than the MCP call. */
   signal: AbortSignal | undefined;
-  /** Proxy reconnects via manager.connect, direct tools via lazyConnect. */
   recoverAuthConnection: (serverName: string, signal?: AbortSignal) => Promise<ServerConnection | undefined>;
   authRequiredMessage: () => string;
   autoAuthAttempted: () => boolean;
