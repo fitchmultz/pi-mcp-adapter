@@ -63,7 +63,7 @@ describe("AbortSignal propagation", () => {
     );
 
     const inFlight = execute("call-1", {}, controller.signal, undefined, {} as any);
-    await Promise.resolve();
+    await vi.waitFor(() => expect(callTool).toHaveBeenCalledTimes(1));
     controller.abort(new Error("user cancelled"));
 
     const result = await inFlight;

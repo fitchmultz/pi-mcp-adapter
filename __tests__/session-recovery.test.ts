@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SdkHttpError, SdkErrorCode } from "@modelcontextprotocol/client";
+import { SdkError, SdkHttpError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { ProtocolError } from "@modelcontextprotocol/client";
 import { SessionRecoveryAuthRequiredError, isTerminatedSession, withSessionRecovery } from "../session-recovery.ts";
 import type { ServerConnection } from "../server-manager.ts";
@@ -12,6 +12,7 @@ function makeConnection(sessionId: string | undefined): ServerConnection {
     definition: { url: "https://example.test/mcp" },
     tools: [],
     resources: [],
+    prompts: [],
     lastUsedAt: Date.now(),
     inFlight: 0,
     status: "connected",
@@ -164,6 +165,34 @@ describe("withSessionRecovery", () => {
     await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(err);
     expect(fn).toHaveBeenCalledTimes(1);
     expect(manager.reconnect).not.toHaveBeenCalled();
+  });
+
+  it("does not replay SDK2 ConnectionClosed while a sibling is recovering", async () => {
+    const stale = makeConnection("session-1");
+    const fresh = makeConnection("session-2");
+    let finishReconnect!: (connection: ServerConnection) => void;
+    const manager = makeManager({
+      getConnection: () => stale,
+      reconnect: () => new Promise(resolve => { finishReconnect = resolve; }),
+    });
+    let closeSibling!: (error: Error) => void;
+    const siblingFn = vi.fn()
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { closeSibling = reject; }))
+      .mockResolvedValue("unsafe replay");
+    const sibling = withSessionRecovery({ manager: manager as any, config }, "demo", siblingFn);
+    const closed = new SdkError(SdkErrorCode.ConnectionClosed, "Connection closed");
+    const siblingResult = expect(sibling).rejects.toBe(closed);
+    const rejectedFn = vi.fn().mockRejectedValueOnce(new SdkHttpError(
+      SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 },
+    )).mockResolvedValueOnce("recovered");
+    const rejected = withSessionRecovery({ manager: manager as any, config }, "demo", rejectedFn);
+    await vi.waitFor(() => expect(manager.reconnect).toHaveBeenCalledTimes(1));
+    closeSibling(closed);
+    finishReconnect(fresh);
+    await siblingResult;
+    expect(await rejected).toBe("recovered");
+    expect(siblingFn).toHaveBeenCalledTimes(1);
+    expect(rejectedFn).toHaveBeenCalledTimes(2);
   });
 
   it("lets an auth callback replace a needs-auth reconnect before retrying", async () => {

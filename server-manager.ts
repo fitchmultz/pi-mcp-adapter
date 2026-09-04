@@ -57,6 +57,43 @@ import {
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
 const abortCleanupPromises = new WeakMap<object, Promise<void>>();
+const clientOperations = new WeakMap<Client, Set<Promise<unknown>>>();
+
+// Track complete SDK operations, including pagination and pre-request cache awaits.
+class ManagedClient extends Client {
+  private track<T>(operation: Promise<T>): Promise<T> {
+    let pending = clientOperations.get(this);
+    if (!pending) clientOperations.set(this, pending = new Set());
+    pending.add(operation);
+    const settled = () => { pending.delete(operation); };
+    void operation.then(settled, settled);
+    return operation;
+  }
+
+  override callTool(...args: Parameters<Client["callTool"]>) {
+    return this.track(super.callTool(...args));
+  }
+
+  override readResource(...args: Parameters<Client["readResource"]>) {
+    return this.track(super.readResource(...args));
+  }
+
+  override getPrompt(...args: Parameters<Client["getPrompt"]>) {
+    return this.track(super.getPrompt(...args));
+  }
+
+  override listTools(...args: Parameters<Client["listTools"]>) {
+    return this.track(super.listTools(...args));
+  }
+
+  override listResources(...args: Parameters<Client["listResources"]>) {
+    return this.track(super.listResources(...args));
+  }
+
+  override listPrompts(...args: Parameters<Client["listPrompts"]>) {
+    return this.track(super.listPrompts(...args));
+  }
+}
 
 function isUnauthorizedHttpError(error: unknown): boolean {
   return error instanceof UnauthorizedError || (error instanceof SdkHttpError && error.status === 401);
@@ -111,6 +148,8 @@ export class McpServerManager {
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private reconnectPromises = new Map<string, Promise<ServerConnection>>();
+  private retiredConnections = new Map<string, Set<ServerConnection>>();
+  private disposePromises = new WeakMap<ServerConnection, Promise<void>>();
   private uiStreamListeners = new Map<string, UiStreamListener>();
   private samplingConfig: ServerSamplingConfig | undefined;
   private metadataListChangedListener: MetadataListChangedListener | undefined;
@@ -199,6 +238,7 @@ export class McpServerManager {
     const closing = this.closePromises.get(name);
     if (closing) await abortable(closing, ownedSignal);
     throwIfAborted(ownedSignal);
+    if (this.stopped) throw new Error("MCP server manager is closed");
 
     // Dedupe concurrent connection attempts.
     if (this.connectPromises.has(name)) {
@@ -214,19 +254,21 @@ export class McpServerManager {
     const generation = this.closeGenerations.get(name) ?? 0;
     const attemptController = new AbortController();
     const attemptSignal = combineAbortSignals(ownedSignal, attemptController.signal);
-    const promise = this.createConnection(name, definition, attemptSignal, ownedSignal);
-    this.connectPromises.set(name, promise);
-    this.connectAttempts.set(name, attemptController);
-
-    try {
-      const connection = await promise;
+    const promise = this.createConnection(name, definition, attemptSignal, ownedSignal).then(async connection => {
       if (attemptController.signal.aborted || (this.closeGenerations.get(name) ?? 0) !== generation) {
         await this.disposeConnection(connection);
         throwIfAborted(attemptSignal);
         throw new Error(`MCP connection for ${name} was closed while connecting`);
       }
+      connection.inFlight = this.connections.get(name)?.inFlight ?? 0;
       this.connections.set(name, connection);
       return connection;
+    });
+    this.connectPromises.set(name, promise);
+    this.connectAttempts.set(name, attemptController);
+
+    try {
+      return await promise;
     } finally {
       if (this.connectPromises.get(name) === promise) this.connectPromises.delete(name);
       if (this.connectAttempts.get(name) === attemptController) this.connectAttempts.delete(name);
@@ -237,7 +279,7 @@ export class McpServerManager {
    * Reconnect a server whose connection was proven stale (e.g. by a 404
    * "session no longer exists" response). Single-flight per server name —
    * concurrent callers that raced to the same failure share one reconnect —
-   * and identity-guarded: `staleConnection` is only torn down if it is
+   * and identity-guarded: `staleConnection` is only retired if it is
    * still the manager's current connection for `name`. If a concurrent
    * reconnect (or an unrelated connect()) already replaced it with a fresh
    * connection, that fresh connection is returned untouched.
@@ -257,7 +299,7 @@ export class McpServerManager {
       return abortable(inFlight, ownedSignal);
     }
 
-    const promise = this.doReconnect(name, definition, staleConnection, ownedSignal).finally(() => {
+    const promise = this.doReconnect(name, definition, staleConnection, this.runtimeSignal).finally(() => {
       if (this.reconnectPromises.get(name) === promise) {
         this.reconnectPromises.delete(name);
       }
@@ -279,14 +321,30 @@ export class McpServerManager {
     // longer holds the connection we were asked to replace, someone else
     // already reconnected (or connected) first.
     if (current !== staleConnection) {
-      return current ?? this.connect(name, definition, signal);
+      if (!current) throw new Error(`Server "${name}" is not connected`);
+      return current;
     }
 
-    const staleInFlight = staleConnection.inFlight;
-    await this.close(name);
-    const fresh = await this.connect(name, definition, signal);
-    fresh.inFlight = Math.max(fresh.inFlight, staleInFlight);
-    return fresh;
+    staleConnection.status = "closed";
+    this.retireConnection(name, staleConnection);
+    return this.connect(name, definition, signal);
+  }
+
+  private retireConnection(name: string, connection: ServerConnection): void {
+    let retired = this.retiredConnections.get(name);
+    if (!retired) this.retiredConnections.set(name, retired = new Set());
+    if (retired.has(connection)) return;
+    retired.add(connection);
+    void (async () => {
+      const pending = clientOperations.get(connection.client);
+      while (pending?.size) await Promise.allSettled([...pending]);
+      await this.disposeConnection(connection);
+      retired.delete(connection);
+      if (retired.size === 0 && this.retiredConnections.get(name) === retired) this.retiredConnections.delete(name);
+    })().catch(error => {
+      // Keep failed retirement owned so explicit shutdown also reports it.
+      logger.debug(`MCP retired connection cleanup failed for ${name}: ${String(error)}`);
+    });
   }
 
   private async createConnection(
@@ -419,10 +477,11 @@ export class McpServerManager {
 
       // Discover tools, resources, and prompts. Resource and prompt listing is
       // optional: only servers advertising the capability are queried.
+      const discoveryOptions = this.buildRequestOptions(definition, signal);
       const [tools, resources, promptResult] = await Promise.all([
-        this.fetchAllTools(client, requestOptions),
-        this.fetchAllResources(client, requestOptions),
-        this.fetchAllPrompts(client, requestOptions),
+        this.fetchAllTools(client, discoveryOptions),
+        this.fetchAllResources(client, discoveryOptions),
+        this.fetchAllPrompts(client, discoveryOptions),
       ]);
       connection.tools = tools;
       connection.resources = resources;
@@ -450,7 +509,7 @@ export class McpServerManager {
       // Check for UnauthorizedError - server requires OAuth. A cleanup failure
       // remains a setup failure rather than being hidden behind needs-auth.
       if (isUnauthorizedHttpError(error) && supportsOAuth(definition) && cleanupFailures.length === 0) {
-        return {
+        const connection: ServerConnection = {
           client,
           transport,
           definition,
@@ -461,6 +520,8 @@ export class McpServerManager {
           inFlight: 0,
           status: "needs-auth",
         };
+        this.disposePromises.set(connection, Promise.resolve());
+        return connection;
       }
 
       if (stderrTail.length > 0) {
@@ -523,7 +584,7 @@ export class McpServerManager {
   private createClient(serverName: string, definition: ServerDefinition): Client {
     const capabilities = this.buildClientCapabilities();
     let client: Client;
-    client = new Client(
+    client = new ManagedClient(
       { name: `pi-mcp-${serverName}`, version: "4.2.1" },
       {
         versionNegotiation: { mode: definition.protocolVersion ?? (definition.url ? "auto" : "legacy") },
@@ -811,67 +872,58 @@ export class McpServerManager {
   async close(name: string): Promise<void> {
     this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
     this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
+    const pendingClose = this.closePromises.get(name);
+    if (pendingClose) return pendingClose;
 
+    const owned = new Set(this.retiredConnections.get(name));
     const connection = this.connections.get(name);
-    if (!connection) {
-      const pendingClose = this.closePromises.get(name);
-      if (pendingClose) {
-        await pendingClose;
-        return;
-      }
-      const pendingConnect = this.connectPromises.get(name);
-      if (pendingConnect) {
-        try {
-          await pendingConnect;
-        } catch (error) {
-          if (this.containsCleanupFailure(error)) throw error;
-        }
-      }
-      return;
-    }
-
-    // Delete before awaiting SDK cleanup so a replacement cannot be removed by
-    // an old close operation finishing later.
-    connection.status = "closed";
+    if (connection) owned.add(connection);
+    // Remove the placeholder before awaiting cleanup; stale callers cannot resurrect it.
     this.connections.delete(name);
     this.acceptedUrlElicitations.delete(name);
-    const closing = this.disposeConnection(connection).finally(() => {
+    for (const item of owned) item.status = "closed";
+    const pendingConnect = this.connectPromises.get(name);
+    const closing = (async () => {
+      const results = await Promise.allSettled([
+        ...[...owned].map(item => this.disposeConnection(item)),
+        pendingConnect?.catch(error => {
+          if (this.containsCleanupFailure(error)) throw error;
+        }),
+      ]);
+      const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      if (failures.length > 0) throw new AggregateError(failures, "MCP connection cleanup failed");
+      this.retiredConnections.delete(name);
+    })().finally(() => {
       if (this.closePromises.get(name) === closing) this.closePromises.delete(name);
     });
     this.closePromises.set(name, closing);
     return closing;
   }
 
-  private async disposeConnection(connection: ServerConnection): Promise<void> {
-    const results = await Promise.allSettled([
-      // Only client.close() is needed; the client owns the transport and will close it internally.
-      Promise.resolve().then(() => connection.client.close()),
-      this.traceWriter?.flush() ?? Promise.resolve(),
-    ]);
-    const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
-    if (failures.length > 0) throw new AggregateError(failures, "MCP connection cleanup failed");
+  private disposeConnection(connection: ServerConnection): Promise<void> {
+    const existing = this.disposePromises.get(connection);
+    if (existing) return existing;
+    const closing = (async () => {
+      const results = await Promise.allSettled([
+        // The SDK client owns its transport.
+        Promise.resolve().then(() => connection.client.close()),
+        this.traceWriter?.flush() ?? Promise.resolve(),
+      ]);
+      const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      if (failures.length > 0) throw new AggregateError(failures, "MCP connection cleanup failed");
+    })();
+    this.disposePromises.set(connection, closing);
+    return closing;
   }
 
   async closeAll(): Promise<void> {
     this.stopped = true;
-    const names = new Set([...this.connections.keys(), ...this.connectPromises.keys()]);
-    for (const name of names) {
-      this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
-      this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
-    }
-
-    const pendingConnects = [...this.connectPromises.values()];
-    const currentNames = [...this.connections.keys()];
-    const pendingResults = await Promise.allSettled(pendingConnects);
-    const results = await Promise.allSettled(currentNames.map(name => this.close(name)));
-
-    // A connect that resolved during the first close snapshot is still fenced;
-    // close any handle that was already inserted before its attempt settled.
-    const lateNames = [...this.connections.keys()];
-    const lateResults = await Promise.allSettled(lateNames.map(name => this.close(name)));
-    const failures = [...pendingResults, ...results, ...lateResults]
-      .flatMap(result => result.status === "rejected" ? [result.reason] : [])
-      .filter(error => this.containsCleanupFailure(error));
+    const names = new Set([
+      ...this.connections.keys(), ...this.retiredConnections.keys(),
+      ...this.connectPromises.keys(), ...this.closePromises.keys(),
+    ]);
+    const results = await Promise.allSettled([...names].map(name => this.close(name)));
+    const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     this.uiStreamListeners.clear();
     this.acceptedUrlElicitations.clear();
     this.samplingConfig = undefined;

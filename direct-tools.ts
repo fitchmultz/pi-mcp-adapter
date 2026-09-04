@@ -2,7 +2,7 @@ import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from 
 import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpConfig, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
-import { lazyConnect, getFailureAgeSeconds, clearFailure } from "./init.ts";
+import { lazyConnect, getFailureAgeSeconds, clearFailure, recordFailure, updateStatusBar } from "./init.ts";
 import { throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
@@ -339,7 +339,8 @@ export function createDirectToolExecutor(
     let connected = await lazyConnect(state, spec.serverName, ownedSignal);
     let autoAuthAttempted = false;
 
-    if (!connected && state.manager.getConnection(spec.serverName)?.status === "needs-auth") {
+    const needsAuthConnection = state.manager.getConnection(spec.serverName);
+    if (!connected && needsAuthConnection?.status === "needs-auth") {
       autoAuthAttempted = true;
       const autoAuth = await attemptDirectAutoAuth(state, spec.serverName, ownedSignal);
       if (autoAuth.status === "failed") {
@@ -349,9 +350,19 @@ export function createDirectToolExecutor(
         };
       }
       if (autoAuth.status === "success") {
-        await state.manager.close(spec.serverName);
         clearFailure(state, spec.serverName);
-        connected = await lazyConnect(state, spec.serverName, ownedSignal);
+        try {
+          const liveDefinition = state.config.mcpServers[spec.serverName];
+          if (liveDefinition) {
+            await state.manager.reconnect(spec.serverName, liveDefinition, needsAuthConnection, ownedSignal);
+            connected = true;
+          }
+        } catch (error) {
+          if (isAbortError(error, ownedSignal)) throwIfAborted(ownedSignal);
+          recordFailure(state, spec.serverName, error instanceof Error ? error.message : String(error));
+          updateStatusBar(state);
+        }
+        if (connected) connected = await lazyConnect(state, spec.serverName, ownedSignal);
       }
     }
 
@@ -416,12 +427,9 @@ export function createDirectToolExecutor(
           throw new SessionRecoveryAuthRequiredError(spec.serverName, autoAuth.message);
         }
         if (autoAuth.status === "success") {
-          const afterAuth = state.manager.getConnection(spec.serverName);
-          if (afterAuth?.status === "connected") return afterAuth;
-          if (afterAuth?.status === "needs-auth") {
-            await state.manager.close(spec.serverName);
-          }
-          throwIfAborted(recoverySignal);
+          const liveDefinition = state.config.mcpServers[spec.serverName];
+          if (!current || !liveDefinition) return undefined;
+          await state.manager.reconnect(spec.serverName, liveDefinition, current, recoverySignal);
           clearFailure(state, spec.serverName);
           const reconnected = await lazyConnect(state, spec.serverName, recoverySignal);
           return reconnected ? state.manager.getConnection(spec.serverName) : undefined;

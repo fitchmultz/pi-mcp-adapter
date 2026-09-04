@@ -307,8 +307,8 @@ describe("McpServerManager sampling", () => {
 
     const client = mocks.clients[0];
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 2500 });
-    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 2500, cacheMode: "refresh" });
-    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 2500, cacheMode: "refresh" });
+    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 2500, cacheMode: "refresh", signal: expect.any(AbortSignal) });
+    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 2500, cacheMode: "refresh", signal: expect.any(AbortSignal) });
   });
 
   it("prefers the per-server timeout for connect and discovery requests", async () => {
@@ -320,8 +320,8 @@ describe("McpServerManager sampling", () => {
 
     const client = mocks.clients[0];
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 5000 });
-    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh" });
-    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh" });
+    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh", signal: expect.any(AbortSignal) });
+    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh", signal: expect.any(AbortSignal) });
   });
 
   it("builds request options from global and per-server timeouts", async () => {

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Save direct-tool selections without copying inherited server connection details or credentials into Pi config.
+- Recover expired sessions without interrupting or replaying accepted work on the old connection; concurrent callers share a replacement while keeping their own cancellation and deadlines.
 
 ## [4.2.1] - 2026-09-04
 
