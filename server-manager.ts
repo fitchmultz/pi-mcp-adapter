@@ -524,7 +524,7 @@ export class McpServerManager {
     const capabilities = this.buildClientCapabilities();
     let client: Client;
     client = new Client(
-      { name: `pi-mcp-${serverName}`, version: "4.2.0" },
+      { name: `pi-mcp-${serverName}`, version: "4.2.1" },
       {
         versionNegotiation: { mode: definition.protocolVersion ?? (definition.url ? "auto" : "legacy") },
         listMaxPages: 0,
