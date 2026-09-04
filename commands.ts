@@ -135,6 +135,7 @@ export async function reconnectServer(
   state: McpExtensionState,
   ctx: ExtensionContext,
   name: string,
+  afterAuth = false,
 ): Promise<boolean> {
   const definition = state.config.mcpServers[name];
   const ui = ctx.hasUI ? ctx.ui : undefined;
@@ -151,11 +152,14 @@ export async function reconnectServer(
   }
 
   try {
-    await state.manager.close(name);
+    const previous = afterAuth ? state.manager.getConnection(name) : undefined;
+    if (!afterAuth) await state.manager.close(name);
     state.owner?.throwIfInactive();
-    const connection = signal
-      ? await state.manager.connect(name, definition, signal)
-      : await state.manager.connect(name, definition);
+    const connection = previous
+      ? await state.manager.reconnect(name, definition, previous, signal)
+      : signal
+        ? await state.manager.connect(name, definition, signal)
+        : await state.manager.connect(name, definition);
     state.owner?.throwIfInactive();
     if (connection.status === "needs-auth") {
       if (ui) {
@@ -455,7 +459,7 @@ function buildMcpPanelCallbacks(
   const authStatusFailures = new Map<string, string>();
 
   return {
-    reconnect: (serverName: string) => reconnectServer(state, ctx, serverName),
+    reconnect: (serverName, afterAuth) => reconnectServer(state, ctx, serverName, afterAuth),
     canAuthenticate: (serverName: string) => {
       const definition = config.mcpServers[serverName];
       return definition ? !isServerDisabled(definition) && supportsOAuth(definition) : false;

@@ -20,11 +20,12 @@
 //     many things other than "your session is gone"
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
-import { SdkHttpError, SdkErrorCode, ProtocolError, type FetchLike, type Transport } from "@modelcontextprotocol/client";
+import { SdkHttpError, SdkErrorCode, ProtocolError, InsufficientScopeError, UnauthorizedError, type FetchLike, type Transport } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerDisabled, type McpConfig } from "./types.ts";
 import type { McpServerManager, ServerConnection } from "./server-manager.ts";
+import { supportsOAuth } from "./mcp-auth-flow.ts";
 
 const toolTransportFailures = new WeakSet<object>();
 
@@ -107,13 +108,18 @@ export class SessionRecoveryAuthRequiredError extends Error {
   }
 }
 
+export interface AuthChallengeContext {
+  connection: ServerConnection;
+  error: Error;
+}
+
 export interface SessionRecoveryDeps {
   manager: McpServerManager;
   config: McpConfig;
   signal?: AbortSignal;
   /** Only tool calls may opt into a same-client retry of a proven modern POST transport failure. */
   retryOnTransportFailure?: boolean;
-  onNeedsAuth?: (serverName: string, signal?: AbortSignal) => Promise<ServerConnection | undefined>;
+  onNeedsAuth?: (serverName: string, signal?: AbortSignal, challenge?: AuthChallengeContext) => Promise<ServerConnection | undefined>;
 }
 
 /**
@@ -154,6 +160,56 @@ export async function withSessionRecovery<T>(
     return fresh;
   };
 
+  const isRecoverableAuth = (error: unknown, failed: ServerConnection, activating = false): error is Error => {
+    const definition = deps.config.mcpServers[serverName];
+    if (!definition || isServerDisabled(definition) || !supportsOAuth(definition)) return false;
+    if (error instanceof SdkHttpError) {
+      // A provider's exhausted native 401/M2M retry is terminal, not another consent cycle.
+      return failed.oauthProvider === false && error.status === 401 && error.code !== SdkErrorCode.ClientHttpAuthentication;
+    }
+    if (failed.oauthProvider && definition.oauth && definition.oauth.grantType === "client_credentials") return false;
+    return error instanceof InsufficientScopeError || (activating && error instanceof UnauthorizedError);
+  };
+
+  const terminalDispatch = async (fresh: ServerConnection): Promise<T> => {
+    throwIfAborted(deps.signal);
+    try {
+      return await fn(fresh);
+    } catch (error) {
+      throwIfAborted(deps.signal);
+      if (isRecoverableAuth(error, fresh)) throw new SessionRecoveryAuthRequiredError(serverName);
+      throw error;
+    }
+  };
+
+  const recoverAuth = async (failed: ServerConnection, error: Error): Promise<T> => {
+    const definition = deps.config.mcpServers[serverName]!;
+    const current = deps.manager.getConnection(serverName);
+    if (current && current !== failed && failed.oauthProvider !== false) {
+      return terminalDispatch(current.status === "connected" ? current : await reconnect(current, error));
+    }
+
+    if (failed.oauthProvider === false) {
+      // One anonymous rejection may activate the provider without asking the user to sign in.
+      failed = await deps.manager.reconnect(serverName, definition, failed, deps.signal);
+      throwIfAborted(deps.signal);
+      if (failed.status === "connected") {
+        try {
+          return await fn(failed);
+        } catch (providerError) {
+          throwIfAborted(deps.signal);
+          if (!isRecoverableAuth(providerError, failed, true)) throw providerError;
+          error = providerError;
+        }
+      }
+    }
+    if (definition.oauth && definition.oauth.grantType === "client_credentials") throw error;
+    const fresh = await abortable(deps.onNeedsAuth?.(serverName, deps.signal, { connection: failed, error }) ?? Promise.resolve(undefined), deps.signal);
+    throwIfAborted(deps.signal);
+    if (!fresh || fresh === failed || fresh.status !== "connected") throw new SessionRecoveryAuthRequiredError(serverName);
+    return terminalDispatch(fresh);
+  };
+
   // Nothing has been dispatched yet: wait for replacement/auth begun during UI preparation.
   if (connection.status !== "connected") {
     connection = await reconnect(connection, new Error(`Server "${serverName}" is not connected`));
@@ -164,11 +220,12 @@ export async function withSessionRecovery<T>(
     return await fn(connection);
   } catch (err) {
     throwIfAborted(deps.signal);
+    if (isRecoverableAuth(err, connection)) return recoverAuth(connection, err);
     if (deps.retryOnTransportFailure === true
       && deps.config.mcpServers[serverName]?.retryOnTransportFailure === true
       && connection.client.getProtocolEra?.() === "modern"
       && err instanceof Error && toolTransportFailures.has(err)) {
-      return fn(connection);
+      return terminalDispatch(connection);
     }
     if (!isTerminatedSession(err, hadSessionId)) {
       throw err;
@@ -177,6 +234,6 @@ export async function withSessionRecovery<T>(
     logger.debug(`MCP session for "${serverName}" expired; reconnecting`, {
       server: serverName,
     });
-    return fn(await reconnect(connection, err));
+    return terminalDispatch(await reconnect(connection, err));
   }
 }

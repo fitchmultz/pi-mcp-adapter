@@ -91,10 +91,10 @@ describe("mcp-auth-flow explicit auth", () => {
   it("rejects invalid manual OAuth redirect input", async () => {
     const { parseAuthorizationRedirectInput } = await import("../mcp-auth-flow.ts");
 
-    expect(() => parseAuthorizationRedirectInput(
+    expect(parseAuthorizationRedirectInput(
       "http://localhost:19876/callback?error=access_denied&error_description=Denied&state=state123",
       "state123",
-    )).toThrow("access_denied: Denied");
+    )).toEqual({ error: "access_denied", errorDescription: "Denied" });
     expect(() => parseAuthorizationRedirectInput(
       "http://localhost:19876/callback?code=abc123",
       "state123",

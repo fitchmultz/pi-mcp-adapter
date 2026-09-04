@@ -10,9 +10,14 @@ import {
   UnauthorizedError,
   Client,
   StreamableHTTPClientTransport,
+  validateAuthorizationResponseIssuer,
+  InsufficientScopeError,
+  SdkHttpError,
+  computeScopeUnion,
+  isStrictScopeSuperset,
 } from "@modelcontextprotocol/client"
 import open from "open"
-import { McpOAuthProvider, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
+import { McpOAuthProvider, issuersMatch, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -64,12 +69,33 @@ function applyConfiguredScope(discovery: AuthDiscovery, config: McpOAuthConfig):
   }
 }
 
+type CallbackIssuer = { expectedIssuer?: string | undefined; fallbackIssuer?: string; issParameterSupported?: boolean }
+
+function validateCallbackIssuer(serverName: string, context: CallbackIssuer, response: { iss?: string; error?: string }): void {
+  if (response.error && context.expectedIssuer === undefined) {
+    throw new Error("Cannot verify the OAuth error callback issuer")
+  }
+  try {
+    validateAuthorizationResponseIssuer({ expectedIssuer: context.expectedIssuer ?? context.fallbackIssuer, issParameterSupported: context.issParameterSupported === true, iss: response.iss })
+  } catch {
+    if (response.iss === undefined && context.issParameterSupported) {
+      throw new Error(
+        `The authorization server for ${serverName} requires the RFC 9207 "iss" parameter. ` +
+        "Paste the full redirect URL from the browser address bar (not just the authorization code).",
+      )
+    }
+    throw new Error(`The OAuth authorization response issuer does not match the discovered issuer for ${serverName}.`)
+  }
+}
+
 type PendingAuth = {
   serverName: string
   authProvider: McpOAuthProvider
   serverUrl: string
   authorizationUrl: string
   discovery: AuthDiscovery
+  callbackIssuer: CallbackIssuer
+  request?: OAuthRequest
   authStorageOptions: AuthStorageOptions
 }
 
@@ -80,6 +106,7 @@ type RuntimeState = {
   pendingAuthStates: Map<string, string>
   pendingAuthCleanupTimers: Map<string, ReturnType<typeof setTimeout>>
   pendingAuthentications: Map<string, Promise<AuthStatus>>
+  requests: Map<string, OAuthRequest>
 }
 
 const runtimeStates = new WeakMap<McpOAuthRuntime, RuntimeState>()
@@ -95,6 +122,7 @@ export function createOAuthRuntime(signal?: AbortSignal): McpOAuthRuntime {
     pendingAuthStates: new Map(),
     pendingAuthCleanupTimers: new Map(),
     pendingAuthentications: new Map(),
+    requests: new Map(),
   })
   activeRuntimes.add(runtime)
   return runtime
@@ -122,6 +150,47 @@ function getRuntimeState(runtime: McpOAuthRuntime): RuntimeState {
 
 function getPendingAuthKey(serverName: string, options: AuthStorageOptions): string {
   return `${serverName}|${getAuthBaseDir(options)}`
+}
+
+type OAuthRequest = {
+  serverName: string
+  serverUrl: string
+  requestedScope?: string
+  challenge?: { requiredScope?: string; resourceMetadataUrl?: URL }
+  issuer?: string
+}
+
+export function isOAuthChallenge(error: unknown): error is InsufficientScopeError | UnauthorizedError | SdkHttpError {
+  return error instanceof InsufficientScopeError || error instanceof UnauthorizedError
+    || (error instanceof SdkHttpError && error.status === 401)
+}
+
+export function getOAuthRequest(serverName: string, serverUrl: string, storageBase: string, runtime: McpOAuthRuntime = legacyRuntime): OAuthRequest | undefined {
+  if (runtime.signal.aborted) return undefined
+  const request = getRuntimeState(runtime).requests.get(JSON.stringify([serverName, storageBase]))
+  return request?.serverUrl === serverUrl ? request : undefined
+}
+
+/** Observe native challenges only; no credential reads or auth work here. */
+export function recordOAuthChallenge(serverName: string, serverUrl: string, storageBase: string, error: unknown, runtime: McpOAuthRuntime = legacyRuntime): void {
+  if (runtime.signal.aborted || !isOAuthChallenge(error)) return
+  const previous = getOAuthRequest(serverName, serverUrl, storageBase, runtime)
+  const request: OAuthRequest = { ...previous, serverName, serverUrl }
+  if (error instanceof InsufficientScopeError) {
+    const requiredScope = computeScopeUnion(previous?.challenge?.requiredScope, error.requiredScope)
+    const resourceMetadataUrl = error.resourceMetadataUrl ?? previous?.challenge?.resourceMetadataUrl
+    request.challenge = { ...(requiredScope ? { requiredScope } : {}), ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}) }
+  }
+  getRuntimeState(runtime).requests.set(JSON.stringify([serverName, storageBase]), request)
+}
+
+export function bindOAuthRequestIssuer(serverName: string, serverUrl: string, storageBase: string, issuer: string, runtime: McpOAuthRuntime = legacyRuntime): void {
+  const request = getOAuthRequest(serverName, serverUrl, storageBase, runtime)
+  if (!request) return
+  if (request.issuer && !issuersMatch(request.issuer, issuer)) {
+    throw new Error(`OAuth authorization server issuer changed for ${serverName}; clear credentials before authenticating again`)
+  }
+  request.issuer = issuer
 }
 
 export function hasPendingAuth(serverName: string, options?: AuthStorageOptions, runtime?: McpOAuthRuntime): boolean {
@@ -328,6 +397,8 @@ export async function startAuth(
     }
   }
 
+  const storageBase = getAuthBaseDir(authStorageOptions)
+  const request = getOAuthRequest(serverName, serverUrl, storageBase, runtime)
   const existingPendingAuth = runtimeState.pendingAuths.get(getPendingAuthKey(serverName, authStorageOptions))
   if (existingPendingAuth?.serverUrl === serverUrl) {
     return { authorizationUrl: existingPendingAuth.authorizationUrl }
@@ -335,12 +406,14 @@ export async function startAuth(
 
   const redirectCallback = config.redirectUri !== undefined ? parseOAuthRedirectUri(config.redirectUri) : undefined
   const oauthState = generateState()
+  const callbackIssuer: CallbackIssuer = {}
 
   try {
     await ensureCallbackServer({
       strictPort: Boolean(config.clientId) || config.redirectUri !== undefined,
       oauthState,
       reserveState: true,
+      validate: response => validateCallbackIssuer(serverName, callbackIssuer, response),
       ...(redirectCallback ? { port: redirectCallback.port, callbackHost: redirectCallback.callbackHost, callbackPath: redirectCallback.callbackPath } : {}),
     })
     throwIfAborted(signal)
@@ -355,14 +428,35 @@ export async function startAuth(
   }
 
   let capturedUrl: URL | undefined
-  const authProvider = new McpOAuthProvider(serverName, serverUrl, config, {
-    onRedirect: async (url) => {
-      capturedUrl = url
-    },
-  }, authStorageOptions, runtime.signal, oauthState)
-
+  let authProvider: McpOAuthProvider | undefined
   try {
     const storedAuth = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
+    let discovery = applyConfiguredScope(await probeAuthDiscovery(serverUrl, definition, signal), config)
+    if (request?.challenge) {
+      const scope = computeScopeUnion(discovery.scope, request.requestedScope, storedAuth?.tokens?.scope, request.challenge.requiredScope)
+      discovery = { ...discovery, ...(scope ? { scope } : {}), ...(request.challenge.resourceMetadataUrl ? { resourceMetadataUrl: request.challenge.resourceMetadataUrl } : {}) }
+    }
+    throwIfAborted(signal)
+    const flowConfig = { ...config, ...(request?.challenge && discovery.scope ? { scope: discovery.scope } : {}) }
+    authProvider = new McpOAuthProvider(serverName, serverUrl, flowConfig, {
+      onRedirect: url => {
+        capturedUrl = url
+        const requestedScope = url.searchParams.get("scope") ?? undefined
+        if (requestedScope) {
+          discovery = { ...discovery, scope: requestedScope }
+          if (request?.challenge) flowConfig.scope = requestedScope
+        }
+        const current = getOAuthRequest(serverName, serverUrl, storageBase, runtime)
+        const scope = computeScopeUnion(current?.requestedScope, requestedScope)
+        if (current && scope) current.requestedScope = scope
+      },
+      onDiscoveryState: state => {
+        callbackIssuer.expectedIssuer = state.authorizationServerMetadata?.issuer
+        callbackIssuer.fallbackIssuer = state.authorizationServerUrl
+        callbackIssuer.issParameterSupported = state.authorizationServerMetadata?.authorization_response_iss_parameter_supported === true
+        bindOAuthRequestIssuer(serverName, serverUrl, storageBase, callbackIssuer.expectedIssuer ?? state.authorizationServerUrl, runtime)
+      },
+    }, authStorageOptions, runtime.signal, oauthState)
     if (storedAuth?.clientInfo && !config.clientId) {
       if (!storedAuth.tokens) {
         clearClientInfo(serverName, authStorageOptions)
@@ -381,9 +475,10 @@ export async function startAuth(
 
     throwIfAborted(signal)
 
-    const discovery = applyConfiguredScope(await probeAuthDiscovery(serverUrl, definition, signal), config)
-    throwIfAborted(signal)
-    const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery }), signal)
+    const result = await abortable(runSdkAuth(authProvider, {
+      serverUrl, ...discovery,
+      ...(request?.challenge ? { forceReauthorization: isStrictScopeSuperset(discovery.scope, storedAuth?.tokens?.scope) } : {}),
+    }), signal)
     throwIfAborted(signal)
     if (result === "AUTHORIZED") {
       authProvider.deactivate()
@@ -394,10 +489,10 @@ export async function startAuth(
     if (!capturedUrl) {
       throw new UnauthorizedError("OAuth authorization URL was not provided")
     }
-    await setPendingAuth(runtime, serverName, { serverName, authProvider, serverUrl, authorizationUrl: capturedUrl.toString(), discovery, authStorageOptions }, oauthState, signal, generation)
+    await setPendingAuth(runtime, serverName, { serverName, authProvider, serverUrl, authorizationUrl: capturedUrl.toString(), discovery, callbackIssuer: { ...callbackIssuer }, authStorageOptions, ...(request ? { request } : {}) }, oauthState, signal, generation)
     return { authorizationUrl: capturedUrl.toString() }
   } catch (error) {
-    authProvider.deactivate()
+    authProvider?.deactivate()
     try {
       await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions)
     } catch (cleanupError) {
@@ -488,7 +583,9 @@ export interface AuthorizationCodeInput {
  * present) from either a raw code, a query string, or the full localhost
  * redirect URL copied from the browser address bar.
  */
-export function parseAuthorizationRedirectInput(input: string, expectedState?: string): AuthorizationCodeInput {
+type AuthorizationResponseInput = AuthorizationCodeInput | { error: string; errorDescription?: string; iss?: string; code?: never }
+
+export function parseAuthorizationRedirectInput(input: string, expectedState?: string): AuthorizationResponseInput {
   const trimmed = input.trim()
   if (!trimmed) {
     throw new Error("Authorization code or redirect URL is required")
@@ -496,12 +593,6 @@ export function parseAuthorizationRedirectInput(input: string, expectedState?: s
 
   const params = getSearchParamsFromInput(trimmed)
   if (params) {
-    const error = params.get("error")
-    if (error) {
-      const description = params.get("error_description")
-      throw new Error(description ? `${error}: ${description}` : error)
-    }
-
     const state = params.get("state")
     if (expectedState && !state) {
       throw new Error("OAuth state missing from redirect URL")
@@ -510,6 +601,12 @@ export function parseAuthorizationRedirectInput(input: string, expectedState?: s
       throw new Error("OAuth state mismatch - potential CSRF attack")
     }
 
+    const error = params.get("error")
+    if (error) {
+      const description = params.get("error_description")
+      const iss = params.get("iss")
+      return { error, ...(description !== null ? { errorDescription: description } : {}), ...(iss !== null ? { iss } : {}) }
+    }
     const code = params.get("code")
     if (code) {
       const iss = params.get("iss")
@@ -549,14 +646,13 @@ export async function completeAuthFromInput(
  */
 export async function completeAuth(
   serverName: string,
-  authorizationCode: string | AuthorizationCodeInput,
+  authorizationCode: string | AuthorizationResponseInput,
   options: AuthenticateOptions = {},
 ): Promise<AuthStatus> {
   const runtime = getRuntime(options)
   const runtimeState = getRuntimeState(runtime)
-  const { code, iss } = typeof authorizationCode === "string"
-    ? { code: authorizationCode, iss: undefined }
-    : authorizationCode
+  const response = typeof authorizationCode === "string" ? { code: authorizationCode } : authorizationCode
+  const { iss } = response
   const fallbackAuthStorageOptions = options.authStorageOptions ?? {}
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
@@ -573,31 +669,29 @@ export async function completeAuth(
   let keepPendingForRetry = false
   let caughtError: unknown
   try {
-    const discoveryState = await pendingAuth.authProvider.discoveryState()
-    const metadata = discoveryState?.authorizationServerMetadata
-    const expectedIssuer = metadata?.issuer ?? discoveryState?.authorizationServerUrl
-    const requiresIssuer = (metadata as { authorization_response_iss_parameter_supported?: unknown } | undefined)
-      ?.authorization_response_iss_parameter_supported === true
-    if (expectedIssuer !== undefined && iss === undefined && requiresIssuer) {
+    keepPendingForRetry = iss === undefined && pendingAuth.callbackIssuer.issParameterSupported === true
+    validateCallbackIssuer(serverName, pendingAuth.callbackIssuer, response)
+    if ("error" in response) {
       keepPendingForRetry = true
-      throw new Error(
-        `The authorization server for ${serverName} requires the RFC 9207 "iss" parameter. ` +
-        "Paste the full redirect URL from the browser address bar (not just the authorization code).",
-      )
-    }
-    if (expectedIssuer !== undefined && iss !== undefined && iss !== expectedIssuer) {
-      throw new Error(`The OAuth authorization response issuer does not match the discovered issuer for ${serverName}.`)
+      throw new Error(response.errorDescription ? `${response.error}: ${response.errorDescription}` : response.error)
     }
 
     const result = await abortable(runSdkAuth(pendingAuth.authProvider, {
       serverUrl: pendingAuth.serverUrl,
-      authorizationCode: code,
+      authorizationCode: response.code,
       ...(iss !== undefined ? { iss } : {}),
       ...pendingAuth.discovery,
     }), signal)
     throwIfAborted(signal)
     if (result !== "AUTHORIZED") {
       throw new UnauthorizedError("Failed to authorize")
+    }
+    const request = pendingAuth.request
+    const current = getOAuthRequest(serverName, pendingAuth.serverUrl, getAuthBaseDir(authStorageOptions), runtime)
+    const issuedScope = (await getAuthForUrl(serverName, pendingAuth.serverUrl, authStorageOptions))?.tokens?.scope
+    if (request && request === current && issuedScope !== undefined && request.challenge?.requiredScope
+      && !isStrictScopeSuperset(request.challenge.requiredScope, issuedScope)) {
+      delete request.challenge
     }
     return "authenticated"
   } catch (error) {
@@ -736,6 +830,9 @@ export async function removeAuth(serverName: string, options: AuthenticateOption
   }
   await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions)
   throwIfAborted(signal)
+  for (const [key, request] of getRuntimeState(runtime).requests) {
+    if (request.serverName === serverName) getRuntimeState(runtime).requests.delete(key)
+  }
   clearAllCredentials(serverName, authStorageOptions)
   await clearOAuthState(serverName, authStorageOptions)
   throwIfAborted(signal)
@@ -797,6 +894,7 @@ export async function shutdownOAuth(runtime: McpOAuthRuntime = legacyRuntime): P
     await clearPendingAuth(runtime, pendingAuth.serverName, undefined, pendingAuth.authStorageOptions)
   }
   state.pendingAuthentications.clear()
+  state.requests.clear()
   activeRuntimes.delete(runtime)
 
   if (activeRuntimes.size === 0) {

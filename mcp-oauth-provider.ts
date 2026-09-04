@@ -32,7 +32,7 @@ import {
 } from "./mcp-auth.ts"
 import { resolveCommandSecret } from "./utils.ts"
 
-function issuersMatch(first: string, second: string): boolean {
+export function issuersMatch(first: string, second: string): boolean {
   return first === second
     || (first.endsWith("/") && first.slice(0, -1) === second)
     || (second.endsWith("/") && second.slice(0, -1) === first)
@@ -113,6 +113,7 @@ function addAuthorizationParams(authorizationUrl: URL, params: Record<string, st
 /** Callbacks for OAuth flow interactions */
 export interface McpOAuthCallbacks {
   onRedirect: (url: URL) => void | Promise<void>
+  onDiscoveryState?: (state: OAuthDiscoveryState) => void
 }
 
 /**
@@ -446,6 +447,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
    */
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     this.throwIfInactive()
+    this.callbacks.onDiscoveryState?.(state)
     this.flowDiscoveryState = structuredClone(state)
   }
 

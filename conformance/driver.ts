@@ -22,7 +22,7 @@
  */
 
 import { rmSync } from "node:fs"
-import { UnauthorizedError } from "@modelcontextprotocol/client"
+import { UnauthorizedError, InsufficientScopeError } from "@modelcontextprotocol/client"
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent"
 import { McpServerManager } from "../server-manager.ts"
 import {
@@ -206,7 +206,7 @@ async function connectWithAuth() {
 }
 
 function isAuthFailure(error: unknown): boolean {
-  if (error instanceof UnauthorizedError) return true
+  if (error instanceof UnauthorizedError || error instanceof InsufficientScopeError) return true
   const message = error instanceof Error ? error.message : String(error)
   return /unauthorized|re-authentication required|insufficient_scope|invalid_token|\b40[13]\b/i.test(message)
 }

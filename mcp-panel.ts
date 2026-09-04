@@ -557,7 +557,7 @@ class McpPanel {
     server.connectionStatus = "connecting";
     this.tui.requestRender();
 
-    this.callbacks.reconnect(server.name).then((connected) => {
+    this.callbacks.reconnect(server.name, options.afterAuth).then((connected) => {
       server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
       server.failureMessage = this.callbacks.getFailureMessage?.(server.name) ?? null;
       if (server.connectionStatus === "connected") {

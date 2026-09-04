@@ -11,7 +11,7 @@ import { formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix } fr
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
 import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./utils.ts";
-import { SessionRecoveryAuthRequiredError } from "./session-recovery.ts";
+import { SessionRecoveryAuthRequiredError, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
 
@@ -414,10 +414,10 @@ export function createDirectToolExecutor(
       };
     }
 
-    const recoverAuthConnection = async (_serverName: string, recoverySignal = ownedSignal) => {
+    const recoverAuthConnection: NonNullable<SessionRecoveryDeps["onNeedsAuth"]> = async (_serverName, recoverySignal = ownedSignal, challenge) => {
       throwIfAborted(recoverySignal);
       const current = state.manager.getConnection(spec.serverName);
-      if (current?.status === "connected") return current;
+      if (current?.status === "connected" && current !== challenge?.connection) return current;
 
       if (!autoAuthAttempted) {
         autoAuthAttempted = true;
@@ -435,7 +435,7 @@ export function createDirectToolExecutor(
           return reconnected ? state.manager.getConnection(spec.serverName) : undefined;
         }
       }
-      return state.manager.getConnection(spec.serverName);
+      return challenge ? undefined : state.manager.getConnection(spec.serverName);
     };
 
     return runToolCall(state, spec.serverName, spec, params, {

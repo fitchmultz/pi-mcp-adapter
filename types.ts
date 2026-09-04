@@ -602,7 +602,7 @@ export interface MetadataCache {
 }
 
 export interface McpPanelCallbacks {
-  reconnect: (serverName: string) => Promise<boolean>;
+  reconnect: (serverName: string, afterAuth?: boolean) => Promise<boolean>;
   canAuthenticate: (serverName: string) => boolean;
   authenticate: (serverName: string) => Promise<McpAuthResult>;
   getConnectionStatus: (serverName: string) => "connected" | "idle" | "failed" | "needs-auth" | "disabled";

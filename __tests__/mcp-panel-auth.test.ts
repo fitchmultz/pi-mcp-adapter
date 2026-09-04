@@ -113,7 +113,7 @@ describe("mcp-panel auth actions", () => {
     await Promise.resolve();
 
     expect(callbacks.authenticate).toHaveBeenCalledWith("github");
-    expect(callbacks.reconnect).toHaveBeenCalledWith("github");
+    expect(callbacks.reconnect).toHaveBeenCalledWith("github", true);
     const output = stripAnsi(panel.render(100).join("\n"));
     expect(output).toContain("OAuth finished for github. Reconnected.");
     expect(output).toContain("connected");
@@ -136,7 +136,7 @@ describe("mcp-panel auth actions", () => {
     await Promise.resolve();
 
     expect(callbacks.authenticate).toHaveBeenCalledWith("github");
-    expect(callbacks.reconnect).toHaveBeenCalledWith("github");
+    expect(callbacks.reconnect).toHaveBeenCalledWith("github", true);
     const output = stripAnsi(panel.render(100).join("\n"));
     expect(output).toContain("OAuth finished for github, but reconnect did not complete. Press ctrl+r to retry.");
     panel.dispose();
@@ -154,7 +154,7 @@ describe("mcp-panel auth actions", () => {
     panel.handleInput("\x12");
     await Promise.resolve();
 
-    expect(callbacks.reconnect).toHaveBeenCalledWith("github");
+    expect(callbacks.reconnect).toHaveBeenCalledWith("github", undefined);
     expect(callbacks.authenticate).not.toHaveBeenCalled();
     panel.dispose();
   });
