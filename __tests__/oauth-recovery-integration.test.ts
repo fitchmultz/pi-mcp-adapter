@@ -4,7 +4,8 @@ import { appendFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InsufficientScopeError } from "@modelcontextprotocol/client";
+import { InsufficientScopeError, validateAuthorizationResponseIssuer } from "@modelcontextprotocol/client";
+import { ensureCallbackServer, waitForCallback } from "../mcp-callback-server.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { openMcpAuthPanel } from "../commands.ts";
 import { createMcpAdapter } from "../index.ts";
@@ -15,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOAuthRuntime, startAuth, completeAuthFromInput, authenticate, hasPendingAuth, shutdownOAuth, getOAuthRequest, removeAuth } from "../mcp-auth-flow.ts";
 import { clearAllCredentials, getAuthForUrl, getAuthBaseDir, updateTokens } from "../mcp-auth.ts";
 import { McpServerManager } from "../server-manager.ts";
-import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
+import { McpOAuthProvider, getOAuthCallbackPort } from "../mcp-oauth-provider.ts";
 import { executeAuthStart, executeAuthComplete, executeCall } from "../proxy-modes.ts";
 import type { McpExtensionState } from "../state.ts";
 import { formatToolName, type ServerEntry } from "../types.ts";
@@ -901,6 +902,37 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(scopes(f.exchanges[0].get("scope"))).toEqual(["basic", "configured", "write"]);
     expect(f.definition.oauth.scope).toBe("configured");
     expect((await f.call()).details.error).toBeUndefined();
+  });
+
+  it.each(["proxy", "direct", "script"] as const)("%s stops a denied automatic permission flow without dispatching again", async host => {
+    const f = await fixture("modern"); f.definition.auth = "oauth"; f.seed("basic");
+    f.state.config.settings!.autoAuth = true; f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+    browser.open.mockImplementation(async (authorizationUrl: string) => {
+      const authorization = new URL(authorizationUrl); const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+      callback.search = new URLSearchParams({ state: authorization.searchParams.get("state")!, iss: f.origin, error: "access_denied", error_description: "user declined" }).toString();
+      expect((await fetch(callback)).status).toBe(200);
+    });
+    await f.connect();
+    expect(await f.callHost(host)).toMatchObject({ ok: false, error: { code: "auth_required" } });
+    expect(browser.open).toHaveBeenCalledTimes(1); expect(f.exchanges).toHaveLength(0);
+    expect(f.requests.filter(request => request.method === "tools/call")).toHaveLength(1);
+    expect(f.request()?.challenge?.requiredScope).toBe("write"); expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect((await f.stored())?.tokens?.scope).toBe("basic");
+  });
+
+  it("removes the HTTP waiter's issuer context at its callback timeout", async () => {
+    await fixture(); // Own callback-server cleanup without replacing the production listener.
+    await ensureCallbackServer({ reserveState: true, oauthState: "timeout-state",
+      validate: ({ iss }) => validateAuthorizationResponseIssuer({ iss, expectedIssuer: "https://auth.example.com", issParameterSupported: true }),
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const outcome = settled(waitForCallback("timeout-state"));
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      expect(await outcome).toMatchObject({ status: "rejected", reason: { message: expect.stringContaining("callback timeout") } });
+    } finally { vi.useRealTimers(); }
+    const response = await fetch(`http://localhost:${getOAuthCallbackPort()}/callback?state=timeout-state&iss=https%3A%2F%2Fauth.example.com&error=access_denied&error_description=LATE_MARKER`);
+    expect(response.status).toBe(400); expect(await response.text()).not.toContain("LATE_MARKER");
   });
 
   it("manual completion retires only after an accepted effect body completes", async () => {
