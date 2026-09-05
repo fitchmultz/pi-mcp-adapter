@@ -62,6 +62,8 @@ describe("OpenCode environment interpolation", () => {
     )).toThrow(/^Failed to resolve test secret: command exited with code 7$/);
     expect(() => resolveCommandSecret(`!node -e ""`, "test secret"))
       .toThrow(/^Failed to resolve test secret: command returned empty output$/);
+    expect(() => resolveCommandSecret("!COMMAND_SECRET_SENTINEL\0", "test secret"))
+      .toThrow(/^Failed to resolve test secret: command failed to start$/);
   });
 
   it("rejects non-string OAuth fields before interpolation", () => {

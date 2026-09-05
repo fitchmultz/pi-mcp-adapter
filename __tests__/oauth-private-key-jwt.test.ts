@@ -238,7 +238,7 @@ it("round-trips private-key custom CIMD client_credentials without the shared do
   expect(f.documentFetches).toEqual([f.id, f.id]); expect(f.registrations).toHaveLength(0);
 });
 
-it.each(["!printf 'COMMAND_SECRET_SENTINEL' >&2; exit 7", "!true", "!printf '{PRIVATE_KEY_SENTINEL}'", "!printf 'PRIVATE_KEY_SENTINEL'", "!printf '[]'"])("fails refresh privately without token request, consent or invalidation: case %#", async source => {
+it.each(["!printf 'COMMAND_SECRET_SENTINEL' >&2; exit 7", "!true", "!printf '{PRIVATE_KEY_SENTINEL}'", "!printf 'PRIVATE_KEY_SENTINEL'", "!printf '[]'", "!printf 'COMMAND_SECRET_SENTINEL'\0"])("fails refresh privately without token request, consent or invalidation: case %#", async source => {
   const portServer = createServer(); const port = await listen(portServer); await close(portServer);
   const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback` });
   await f.login(); const before = f.stored();
