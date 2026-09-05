@@ -294,7 +294,7 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
   const timeout = normalizeRequestTimeoutMs(definition?.requestTimeoutMs) ?? 5000
   const discoverySignal = combineAbortSignals(signal, AbortSignal.timeout(Math.ceil(timeout)))
   let discovery: AuthDiscovery = {}
-  const client = new Client({ name: "pi-mcp-auth-discovery", version: "4.2.2" }, {
+  const client = new Client({ name: "pi-mcp-auth-discovery", version: "4.2.3" }, {
     versionNegotiation: { mode: definition?.protocolVersion ?? "auto" },
   })
   const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
