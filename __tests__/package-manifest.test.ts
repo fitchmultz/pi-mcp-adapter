@@ -50,6 +50,27 @@ describe("package.json files", () => {
   });
 });
 
+describe("public OAuth client metadata", () => {
+  it("defines the shared native public-client identity", () => {
+    const metadata = JSON.parse(readFileSync(join(repoRoot, "docs/client-metadata.json"), "utf-8"));
+
+    expect(metadata).toEqual({
+      client_id: "https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json",
+      client_name: "Pi MCP Adapter",
+      client_uri: "https://github.com/fitchmultz/pi-mcp-adapter",
+      redirect_uris: [
+        "http://localhost:19876/callback",
+        "http://127.0.0.1:19876/callback",
+        "http://[::1]:19876/callback",
+      ],
+      application_type: "native",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    });
+  });
+});
+
 describe("compiled extension peer resolution", () => {
   it("loads TUI panels statically so Pi resolves their host peers", () => {
     const commandsSource = readFileSync(join(repoRoot, "commands.ts"), "utf-8");
