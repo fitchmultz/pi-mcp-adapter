@@ -50,6 +50,9 @@ interface ScenarioContext {
   client_secret?: string
   private_key_pem?: string
   signing_algorithm?: string
+  idp_client_id?: string
+  idp_id_token?: string
+  idp_issuer?: string
   [key: string]: unknown
 }
 
@@ -131,6 +134,12 @@ if (scenario.startsWith("auth/client-credentials")) {
 if (scenario === "auth/client-credentials-jwt") {
   if (!context.private_key_pem || !context.signing_algorithm) throw new Error("JWT fixture credentials are missing")
   definition.oauth = { ...(definition.oauth || {}), privateKeyJwt: { privateKey: context.private_key_pem, algorithm: context.signing_algorithm } }
+}
+if (scenario === "auth/cross-app-access-complete-flow") {
+  if (!context.idp_issuer || !context.idp_client_id || !context.idp_id_token) throw new Error("CAA fixture credentials are missing")
+  definition.oauth = { ...(definition.oauth || {}), crossAppAccess: {
+    idpUrl: context.idp_issuer, clientId: context.idp_client_id, idToken: context.idp_id_token,
+  } }
 }
 // Stable 0.1.16 checks this exact fixture-owned document identity.
 if (scenario === "auth/basic-cimd") {

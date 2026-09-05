@@ -346,6 +346,22 @@ export interface OAuthPrivateKeyJwtConfig {
   claims?: Record<string, unknown>;
 }
 
+/** Enterprise OIDC token exchange. IdP credentials are separate from the MCP client identity. */
+export interface OAuthCrossAppAccessConfig {
+  /** IdP issuer used by native discovery. */
+  idpUrl: string;
+  /** IdP client ID, not the outer MCP clientId. */
+  clientId: string;
+  /** Existing OIDC ID token; environment/!command sources are resolved for each exchange. */
+  idToken: string;
+  /** Optional IdP client_secret_post credential, also resolved lazily. */
+  clientSecret?: string;
+}
+
+export function isNonInteractiveOAuth(config: OAuthConfig | false | undefined): boolean {
+  return !!config && (config.grantType === "client_credentials" || config.crossAppAccess !== undefined);
+}
+
 // OAuth configuration (SDK handles discovery and client registration)
 export interface OAuthConfig {
   /** Skip only authorization-server metadata issuer validation. Defaults to false. */
@@ -358,6 +374,8 @@ export interface OAuthConfig {
   clientSecret?: string;
   /** Private-key authentication instead of clientSecret; requires clientId or a custom clientMetadataUrl. */
   privateKeyJwt?: OAuthPrivateKeyJwtConfig;
+  /** Noninteractive ID-token -> ID-JAG -> MCP access token flow; omit grantType. */
+  crossAppAccess?: OAuthCrossAppAccessConfig;
   /** Requested OAuth scopes */
   scope?: string;
   /** Extra authorization URL parameters for provider-specific extensions. Flow-owned parameters cannot be overridden. */

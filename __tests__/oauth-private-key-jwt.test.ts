@@ -167,7 +167,7 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
   };
 }
 
-function holdNativeSigning() {
+function holdNativeSigning(transport: Pick<StreamableHTTPClientTransport, "send"> = StreamableHTTPClientTransport.prototype) {
   const events: string[] = [];
   const sends = new Set<Promise<void>>();
   let began!: () => void, release!: () => void;
@@ -178,8 +178,8 @@ function holdNativeSigning() {
     events.push("sign-start"); began(); await gate;
     const signature = await sign(...args); events.push("sign-finished"); return signature;
   });
-  const send = StreamableHTTPClientTransport.prototype.send;
-  const sender = vi.spyOn(StreamableHTTPClientTransport.prototype, "send").mockImplementation(function (...args) {
+  const send = transport.send;
+  const sender = vi.spyOn(transport, "send").mockImplementation(function (...args) {
     events.push("native-send-start");
     const pending = send.apply(this, args);
     sends.add(pending);
@@ -420,7 +420,7 @@ it.each([
 
 it("stops detached refresh after closing an established connection without replacing its tokens", async () => {
   const f = await fixture(); const connection = await f.connect(); f.expire();
-  const signing = holdNativeSigning();
+  const signing = holdNativeSigning(connection.transport);
   try {
     const pending = connection.client.callTool({ name: "echo" }).catch(error => error);
     await signing.started;

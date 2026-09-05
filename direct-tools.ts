@@ -7,7 +7,7 @@ import { throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { runToolCall } from "./proxy-modes.ts";
-import { formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
+import { formatToolName, isServerDisabled, isNonInteractiveOAuth, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
 import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./utils.ts";
@@ -30,12 +30,15 @@ function getDirectAuthRequiredMessage(
   serverName: string,
   defaultMessage = `MCP server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
 ): string {
+  const oauth = state.config.mcpServers[serverName]?.oauth;
+  if (oauth && oauth.crossAppAccess) defaultMessage = `MCP server "${serverName}" requires enterprise authorization. Check oauth.crossAppAccess IdP configuration and ID-token source, then retry.`;
   return formatAuthRequiredMessage(state.config, serverName, defaultMessage);
 }
 
 function getDirectAuthFailedMessage(state: McpExtensionState, serverName: string, message: string): string {
   const customGuidance = state.config.settings?.authRequiredMessage;
-  if (customGuidance) {
+  const oauth = state.config.mcpServers[serverName]?.oauth;
+  if (customGuidance || (oauth && oauth.crossAppAccess)) {
     return `OAuth authentication failed for "${serverName}": ${message}. ${getDirectAuthRequiredMessage(state, serverName)}`;
   }
   return `OAuth authentication failed for "${serverName}": ${message}. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
@@ -66,8 +69,7 @@ async function attemptDirectAutoAuth(
     return { status: "skipped" };
   }
 
-  const grantType = definition.oauth ? definition.oauth.grantType ?? "authorization_code" : "authorization_code";
-  if (!state.ui && grantType !== "client_credentials") {
+  if (!state.ui && !isNonInteractiveOAuth(definition.oauth)) {
     return {
       status: "failed",
       message: getDirectAuthRequiredMessage(

@@ -23,7 +23,7 @@
 import { SdkHttpError, SdkErrorCode, ProtocolError, InsufficientScopeError, UnauthorizedError, type FetchLike, type Transport } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
-import { isServerDisabled, type McpConfig } from "./types.ts";
+import { isServerDisabled, isNonInteractiveOAuth, type McpConfig } from "./types.ts";
 import type { McpServerManager, ServerConnection } from "./server-manager.ts";
 import { supportsOAuth } from "./mcp-auth-flow.ts";
 
@@ -167,7 +167,7 @@ export async function withSessionRecovery<T>(
       // A provider's exhausted native 401/M2M retry is terminal, not another consent cycle.
       return failed.oauthProvider === false && error.status === 401 && error.code !== SdkErrorCode.ClientHttpAuthentication;
     }
-    if (failed.oauthProvider && definition.oauth && definition.oauth.grantType === "client_credentials") return false;
+    if (failed.oauthProvider && isNonInteractiveOAuth(definition.oauth)) return false;
     return error instanceof InsufficientScopeError || (activating && error instanceof UnauthorizedError);
   };
 
@@ -203,7 +203,7 @@ export async function withSessionRecovery<T>(
         }
       }
     }
-    if (definition.oauth && definition.oauth.grantType === "client_credentials") throw error;
+    if (isNonInteractiveOAuth(definition.oauth)) throw error;
     const fresh = await abortable(deps.onNeedsAuth?.(serverName, deps.signal, { connection: failed, error }) ?? Promise.resolve(undefined), deps.signal);
     throwIfAborted(deps.signal);
     if (!fresh || fresh === failed || fresh.status !== "connected") throw new SessionRecoveryAuthRequiredError(serverName);
