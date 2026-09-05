@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -62,37 +63,51 @@ const clientOperations = new WeakMap<Client, Set<Promise<unknown>>>();
 
 // Track complete SDK operations, including pagination and pre-request cache awaits.
 class ManagedClient extends Client {
-  private track<T>(operation: Promise<T>): Promise<T> {
+  oauthProvider: McpOAuthProvider | undefined;
+
+  private async track<T>(start: (signal?: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const controller = this.oauthProvider ? new AbortController() : undefined;
+    let removeAbortListener = () => {};
+    const operation = this.oauthProvider
+      ? this.oauthProvider.runWithSignal(controller!.signal, () => {
+          // Native legacy cancellation notifications must retain their operation's auth context.
+          const abort = AsyncLocalStorage.bind(() => controller!.abort(signal?.reason));
+          if (signal?.aborted) abort();
+          else signal?.addEventListener("abort", abort, { once: true });
+          removeAbortListener = () => signal?.removeEventListener("abort", abort);
+          return start(controller!.signal);
+        })
+      : start(signal);
     let pending = clientOperations.get(this);
     if (!pending) clientOperations.set(this, pending = new Set());
     pending.add(operation);
-    const settled = () => { pending.delete(operation); };
-    void operation.then(settled, settled);
+    const settled = () => { pending.delete(operation); removeAbortListener(); };
+    void operation.then(settled, () => { controller?.abort(); settled(); });
     return operation;
   }
 
   override callTool(...args: Parameters<Client["callTool"]>) {
-    return this.track(super.callTool(...args));
+    return this.track(signal => super.callTool(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
   }
 
   override readResource(...args: Parameters<Client["readResource"]>) {
-    return this.track(super.readResource(...args));
+    return this.track(signal => super.readResource(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
   }
 
   override getPrompt(...args: Parameters<Client["getPrompt"]>) {
-    return this.track(super.getPrompt(...args));
+    return this.track(signal => super.getPrompt(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
   }
 
   override listTools(...args: Parameters<Client["listTools"]>) {
-    return this.track(super.listTools(...args));
+    return this.track(signal => super.listTools(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
   }
 
   override listResources(...args: Parameters<Client["listResources"]>) {
-    return this.track(super.listResources(...args));
+    return this.track(signal => super.listResources(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
   }
 
   override listPrompts(...args: Parameters<Client["listPrompts"]>) {
-    return this.track(super.listPrompts(...args));
+    return this.track(signal => super.listPrompts(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
   }
 }
 
@@ -411,7 +426,7 @@ export class McpServerManager {
       transport = stdioTransport;
     } else if (definition.url) {
       // HTTP transport with fallback
-      ({ transport, oauthProvider } = this.createHttpTransport(definition, name, false, implicitOAuth, onAuthChallenge));
+      ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, false, implicitOAuth, onAuthChallenge));
     } else {
       transport = new UnixSocketClientTransport(resolveConfigPath(definition.socket!)!);
     }
@@ -438,7 +453,7 @@ export class McpServerManager {
             legacySse = true;
             await client.close();
             client = this.createClient(name, { ...definition, protocolVersion: "legacy" });
-            ({ transport, oauthProvider } = this.createHttpTransport(definition, name, legacySse, implicitOAuth, onAuthChallenge));
+            ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
             if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
             continue;
           }
@@ -488,7 +503,7 @@ export class McpServerManager {
           implicitOAuth = true;
           await client.close();
           client = this.createClient(name, legacySse ? { ...definition, protocolVersion: "legacy" } : definition);
-          ({ transport, oauthProvider } = this.createHttpTransport(definition, name, legacySse, implicitOAuth, onAuthChallenge));
+          ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
           if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
         }
       }
@@ -588,9 +603,9 @@ export class McpServerManager {
     };
   }
 
-  private createClient(serverName: string, definition: ServerDefinition): Client {
+  private createClient(serverName: string, definition: ServerDefinition): ManagedClient {
     const capabilities = this.buildClientCapabilities(definition);
-    let client: Client;
+    let client: ManagedClient;
     client = new ManagedClient(
       { name: `pi-mcp-${serverName}`, version: "4.2.3" },
       {
@@ -721,6 +736,7 @@ export class McpServerManager {
   private createHttpTransport(
     definition: ServerDefinition,
     serverName: string,
+    client: ManagedClient,
     legacySse = false,
     implicitOAuth = false,
     onAuthChallenge?: (error: Error) => void,
@@ -782,13 +798,16 @@ export class McpServerManager {
 
     const authProvider = supportsOAuth(definition) && (definition.auth === "oauth" || implicitOAuth)
       ? createAuthProvider() : undefined;
+    client.oauthProvider = authProvider;
     const options = {
       ...(requestInit !== undefined ? { requestInit } : {}),
       ...(authProvider !== undefined ? { authProvider } : {}),
       skipIssuerMetadataValidation: definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
+      // Native resource sends carry their own signal; OAuth discovery/token requests do not.
       ...(authProvider ? { fetch: (input: Parameters<FetchLike>[0], init?: RequestInit) =>
         (definition.retryOnTransportFailure === true ? trackToolTransportFailure : fetch)(input, {
-          ...init, signal: combineAbortSignals(init?.signal ?? undefined, authProvider.signal)!,
+          ...init, signal: combineAbortSignals(init?.signal ?? undefined,
+            init?.signal ? authProvider.lifetimeSignal : authProvider.signal)!,
         }) } : definition.retryOnTransportFailure === true ? { fetch: trackToolTransportFailure } : {}),
     };
     const transport: Transport = legacySse ? new SSEClientTransport(url, options) : new StreamableHTTPClientTransport(url, {
@@ -798,7 +817,7 @@ export class McpServerManager {
     });
     if (authProvider) {
       const send = transport.send.bind(transport);
-      transport.send = (message, options) => authProvider.runWithSignal(options?.requestSignal, () => send(message, options));
+      transport.send = async (message, options) => authProvider.runWithSignal(options?.requestSignal, () => send(message, options));
       const close = transport.close.bind(transport);
       transport.close = () => {
         // Native OAuth fetches do not inherit the transport's abort signal.

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
@@ -91,6 +92,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
   const tokens = new Set<string>();
   let idToken = "", prm = true, wrongResource = false, wrongIssuer = false, wrongIdp = false, idpError: unknown, rejectTokens = false, publicMcp = false, forbidden = false, toolFailure = 0;
   let metadata = true, rejectResourceTokens = false, idpStatus = 400;
+  let heldTool: ReturnType<typeof gate> | undefined, cancelledWork = false;
   const idpServer = createServer(async (req, res) => {
     const path = req.url!;
     const row: typeof idpRequests[number] = { path, headers: req.headers }; idpRequests.push(row);
@@ -162,7 +164,12 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     if (!publicMcp && (rejectResourceTokens || !tokens.has(req.headers.authorization?.replace(/^Bearer /, "") ?? ""))) {
       res.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${resource}/.well-known/oauth-protected-resource/mcp"` }).end(); return;
     }
-    if (message.method === "notifications/initialized" || message.method === "notifications/cancelled") return void res.writeHead(202).end();
+    if (message.method === "notifications/cancelled") { cancelledWork = true; heldTool?.release(); return void res.writeHead(202).end(); }
+    if (message.method === "notifications/initialized") return void res.writeHead(202).end();
+    if (message.method === "tools/call" && heldTool) {
+      await heldTool.hold(res);
+      if (cancelledWork) return void res.writeHead(499).end();
+    }
     if (message.method === "tools/call" && forbidden) return void res.writeHead(403, { "www-authenticate": 'Bearer error="insufficient_scope", scope="extra"' }).end();
     if (message.method === "tools/call" && toolFailure++ === 0 && definition.retryOnTransportFailure) return void res.writeHead(503).end("unavailable");
     const result = message.method === "initialize" ? { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "caa", version: "1" } }
@@ -179,7 +186,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
   const definition: ServerEntry = { url: `${resource}/mcp`, auth: "oauth", headers: { "X-Resource-Only": "resource-secret" }, oauth };
   const stored = () => getAuthForUrl(name, definition.url!);
   cleanups.push(async () => {
-    for (const hold of holds.values()) hold.release();
+    for (const hold of holds.values()) hold.release(); heldTool?.release();
     await manager.closeAll(); await shutdownOAuth(runtime);
     if (process.env.CAA_PROOF_FILE) appendFileSync(process.env.CAA_PROOF_FILE, `${JSON.stringify({ test: expect.getState().currentTestName, node: process.version, execPath: process.execPath, identity,
       idpRequests: idpRequests.map(r => ({ path: r.path, formKeys: [...(r.form?.keys() ?? [])], audience: r.form?.get("audience"), resource: r.form?.get("resource"), scope: r.form?.get("scope"), hasResourceHeader: !!r.headers["x-resource-only"], hasAuthorization: !!r.headers.authorization })),
@@ -192,6 +199,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     start: (signal?: AbortSignal) => startAuth(name, definition.url!, definition, { runtime, ...(signal ? { signal } : {}) }),
     provider: () => new McpOAuthProvider(name, definition.url!, extractOAuthConfig(definition), { onRedirect: () => { browser.open(); } }, {}, runtime.signal),
     hold: (stage: Stage) => { const hold = gate(); holds.set(stage, hold); return hold; },
+    holdTool: () => { heldTool = gate(); return heldTool; }, cancelledWork: () => cancelledWork,
     expire: () => tokens.clear(), wrongResource: () => { wrongResource = true; }, wrongIssuer: () => { wrongIssuer = true; }, wrongIdp: () => { wrongIdp = true; }, noResource: () => { prm = false; }, noMetadata: () => { metadata = false; },
     rejectResource: (value: boolean) => { rejectResourceTokens = value; },
     idpError: (error: unknown, status = 400) => { idpError = error; idpStatus = status; }, rejectTokens: () => { rejectTokens = true; }, publicMcp: () => { publicMcp = true; }, forbid: () => { forbidden = true; },
@@ -333,8 +341,25 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)("cancels a modern 
   } finally { hold.release(); await sends.finish(); sends.restore(); }
 });
 
-it("keeps an already-running same-provider sibling exchange alive when the other caller cancels", async () => {
-  const sends = nativeSends(), f = await fixture(), connection = await f.connect(); f.expire();
+it.each([
+  ["idp-discovery", "abort"], ["idp-token", "abort"], ["mcp-token", "abort"],
+  ["idp-discovery", "timeout"], ["idp-token", "timeout"], ["mcp-token", "timeout"],
+] as const)("cancels established legacy %s work on native %s without late grants or writes", async (stage, mode) => {
+  const sends = nativeSends(), f = await fixture(); f.definition.protocolVersion = "legacy";
+  const connection = await f.connect(); f.expire(); const hold = f.hold(stage), controller = new AbortController();
+  try {
+    const pending = connection.client.callTool({ name: "echo" }, mode === "abort" ? { signal: controller.signal } : { timeout: 100 }).catch(error => error);
+    await hold.started; const before = structuredClone(f.stored()); if (mode === "abort") controller.abort(); expect(await pending).toBeInstanceOf(Error);
+    await Promise.race([hold.aborted, new Promise(resolve => setTimeout(resolve, 100))]); hold.release(); await sends.finish();
+    const outcome = { networkAborted: hold.wasAborted(), storageChanged: JSON.stringify(f.stored()) !== JSON.stringify(before), tokenPosts: f.exchanges.length, pendingNativeSends: sends.count() };
+    if (process.env.CAA_PROOF_FILE) appendFileSync(process.env.CAA_PROOF_FILE, `${JSON.stringify({ test: expect.getState().currentTestName, outcome })}\n`);
+    expect(outcome).toEqual({ networkAborted: true, storageChanged: false, tokenPosts: stage === "mcp-token" ? 2 : 1, pendingNativeSends: 0 });
+  } finally { hold.release(); await sends.finish(); sends.restore(); }
+});
+
+it.each(["auto", "legacy"] as const)("keeps an already-running %s same-provider sibling exchange alive when the other caller cancels", async protocolVersion => {
+  const sends = nativeSends(), f = await fixture(); f.definition.protocolVersion = protocolVersion;
+  const connection = await f.connect(); f.expire();
   const hold = f.hold("idp-token"), controller = new AbortController();
   try {
     const first = connection.client.callTool({ name: "echo" }, { signal: controller.signal }).catch(error => error);
@@ -380,6 +405,49 @@ it("does not advertise CAA or execute IdP sources on native stdio connections", 
   const result = await connection.client.callTool({ name: "caps" });
   expect(JSON.parse((result.content[0] as { text: string }).text).extensions).toBeUndefined();
   expect(existsSync(marker)).toBe(false); expect(f.idpRequests).toHaveLength(0);
+});
+
+it("delivers a legitimate legacy cancellation notification so the server stops accepted work", async () => {
+  const f = await fixture(); f.definition.protocolVersion = "legacy"; const connection = await f.connect();
+  const hold = f.holdTool(), controller = new AbortController();
+  const pending = connection.client.callTool({ name: "echo" }, { signal: controller.signal }).catch(error => error);
+  await hold.started; controller.abort(); expect(await pending).toBeInstanceOf(Error);
+  await vi.waitFor(() => expect(f.cancelledWork()).toBe(true));
+  expect(f.requests.filter(r => r.method === "notifications/cancelled")).toHaveLength(1);
+  expect(f.exchanges).toHaveLength(1); expect(f.runtime.signal.aborted).toBe(false);
+});
+
+it("returns a rejected native send Promise rather than throwing synchronously after close", async () => {
+  const f = await fixture(), connection = await f.connect(); await f.manager.close(f.name);
+  let pending: Promise<void> | undefined;
+  expect(() => { pending = connection.transport.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } }); }).not.toThrow();
+  await expect(pending).rejects.toThrow(/no longer active/);
+});
+
+it("keeps legacy cancellation sends promise-based after OAuth runtime shutdown", () => {
+  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import {createServer} from 'node:http';
+    import {McpServerManager} from './server-manager.ts';
+    import {createOAuthRuntime,shutdownOAuth} from './mcp-auth-flow.ts';
+    let uncaught=0;process.on('uncaughtException',()=>{uncaught++});
+    let entered;const started=new Promise(r=>{entered=r});
+    const server=createServer(async(req,res)=>{
+      if(req.method!=='POST')return res.writeHead(405).end();
+      let data='';for await(const chunk of req)data+=chunk;const b=JSON.parse(data);
+      if(b.method==='tools/call'){entered();return;}
+      if(b.method.startsWith('notifications/'))return res.writeHead(202).end();
+      const result=b.method==='initialize'?{protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'legacy',version:'1'}}:{tools:[{name:'hold',inputSchema:{type:'object'}}]};
+      res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({jsonrpc:'2.0',id:b.id,result}));
+    });
+    await new Promise(r=>server.listen(0,'127.0.0.1',r));const url='http://127.0.0.1:'+server.address().port+'/mcp';
+    const runtime=createOAuthRuntime(),manager=new McpServerManager();manager.setOAuthRuntime(runtime);
+    const connection=await manager.connect('legacy',{url,auth:'oauth',protocolVersion:'legacy',oauth:{clientId:'mcp',crossAppAccess:{idpUrl:url,clientId:'idp',idToken:'unused'}}});
+    const controller=new AbortController(),pending=connection.client.callTool({name:'hold'},{signal:controller.signal}).catch(()=>{});
+    await started;await shutdownOAuth(runtime);controller.abort();await new Promise(r=>setImmediate(r));
+    await manager.closeAll();await pending;server.closeAllConnections();await new Promise(r=>server.close(r));
+    console.log(JSON.stringify({uncaught}));process.exitCode=uncaught?1:0;
+  `], { encoding: "utf8", timeout: 5000 });
+  expect({ status: child.status, error: child.error?.message, stdout: child.stdout.trim(), stderr: child.stderr.trim() }).toEqual({ status: 0, error: undefined, stdout: '{"uncaught":0}', stderr: "" });
 });
 
 it("releases the native async context on deactivation and cannot re-enable it with a late send", async () => {

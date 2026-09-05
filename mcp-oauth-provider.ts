@@ -209,7 +209,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private readonly redirectUrlSnapshot: string | undefined
   readonly clientMetadataUrl?: string
   private readonly controller = new AbortController()
-  private readonly lifetimeSignal: AbortSignal
+  readonly lifetimeSignal: AbortSignal
   private readonly requestSignals = new AsyncLocalStorage<AbortSignal | undefined>()
   private flowAuthorizationServerUrl: string | undefined
   private flowResourceUrl: string | undefined
@@ -263,7 +263,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   runWithSignal<T>(signal: AbortSignal | undefined, operation: () => T): T {
     this.lifetimeSignal.throwIfAborted()
-    return this.requestSignals.run(signal, operation)
+    return this.requestSignals.run(combineAbortSignals(this.requestSignals.getStore(), signal), operation)
   }
 
   deactivate(): void {

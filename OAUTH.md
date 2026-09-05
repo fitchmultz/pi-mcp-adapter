@@ -182,7 +182,7 @@ All four nested strings support `${VAR}`, `$env:VAR`, `{env:VAR}`, `!command` an
 
 Omit `grantType`; explicitly combining it with `crossAppAccess` is an error. The SDK selects the MCP authorization-server issuer (or its selected AS URL when metadata is absent) and validates the protected-resource URL before the IdP exchange. There is no user-supplied audience/resource override. IdP discovery is strict and requires valid OAuth/OIDC metadata; `skipIssuerMetadataValidation` does not relax the IdP check. Resource-server headers and MCP client credentials are not forwarded to the IdP. Only the final MCP tokens and normal client registration enter the existing credential store.
 
-This flow opens no browser and binds no callback, including through `auth-start`, `/mcp-auth`, and headless proxy/direct tools. Native scope precedence and retry bounds remain unchanged. An IdP/source failure gives a safe setup error without erasing the MCP login or entering browser consent. Cancellation aborts IdP and MCP token HTTP requests; stopping one modern request does not stop concurrent requests sharing the connection. Auth-only connection retirement still drains accepted operations.
+This flow opens no browser and binds no callback, including through `auth-start`, `/mcp-auth`, and headless proxy/direct tools. Native scope precedence and retry bounds remain unchanged. An IdP/source failure gives a safe setup error without erasing the MCP login or entering browser consent. Cancellation aborts IdP and MCP token HTTP requests; stopping one request does not stop concurrent requests sharing the connection, in either protocol profile. Auth-only connection retirement still drains accepted operations.
 
 ## Usage
 

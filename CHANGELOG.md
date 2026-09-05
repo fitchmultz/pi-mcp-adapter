@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Native `oauth.crossAppAccess` enterprise OIDC ID-token exchange with separate IdP/MCP identities, lazy token sources, public custom-document and private-key MCP authentication, headless operation and native enterprise capabilities. IdP failures preserve the MCP login; HTTP cancellation follows the connection and individual modern request without interrupting siblings.
+- Native `oauth.crossAppAccess` enterprise OIDC ID-token exchange with separate IdP/MCP identities, lazy token sources, public custom-document and private-key MCP authentication, headless operation and native enterprise capabilities. IdP failures preserve the MCP login; HTTP cancellation follows the connection and individual request without interrupting siblings.
 - Native `oauth.privateKeyJwt` client authentication with lazy PEM/JWK environment and command sources, configured or custom-document identities, and browser code/refresh support. Configured client-credentials clients advertise the native OAuth extension. Local signing failures preserve credentials and do not trigger browser consent.
 - Native Client ID Metadata Documents (CIMD) with an automatic shared Pi MCP Adapter identity for eligible public browser clients and `oauth.clientMetadataUrl` custom URL / `false` overrides. Configured and usable stored clients keep priority; unsupported servers retain native dynamic registration.
 
