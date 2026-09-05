@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import { McpServerManager } from "../server-manager.ts";
 import { executeCall } from "../proxy-modes.ts";
@@ -190,19 +190,38 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.requests.filter(r => r.body.method === "initialize")).toHaveLength(1);
   });
 
-  it.each([401, 403, 500, "network", "timeout"])("never chooses SSE or legacy for discovery %s", async failure => {
+  it.each([401, 403, 500, "network"])("never chooses SSE or legacy for discovery %s", async failure => {
     const f = await fixture(e => {
       if (e.body.method !== "server/discover") return;
       if (failure === "network") e.req.socket.destroy();
-      else if (failure !== "timeout") e.res.writeHead(failure).end("unavailable");
+      else e.res.writeHead(failure).end("unavailable");
       return true;
     });
     const code = failure === 401 ? SdkErrorCode.ClientHttpAuthentication
       : failure === 403 ? SdkErrorCode.ClientHttpForbidden
-      : failure === "timeout" ? SdkErrorCode.RequestTimeout : SdkErrorCode.EraNegotiationFailed;
+      : SdkErrorCode.EraNegotiationFailed;
     await expect(f.connect({ requestTimeoutMs: 35 })).rejects.toMatchObject({ code });
     expect(f.manager.getConnection("local")).toBeUndefined();
     expect(f.requests.map(r => r.body.method)).toEqual(["server/discover"]);
+  });
+
+  it("never chooses SSE or legacy for discovery timeout", async () => {
+    let received!: () => void;
+    const arrived = new Promise<void>(resolve => { received = resolve; });
+    const f = await fixture(e => {
+      if (e.body.method !== "server/discover") return;
+      received();
+      return true;
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const outcome = expect(f.connect({ requestTimeoutMs: 35 })).rejects.toMatchObject({ code: SdkErrorCode.RequestTimeout });
+      await arrived;
+      await vi.advanceTimersByTimeAsync(35);
+      await outcome;
+      expect(f.manager.getConnection("local")).toBeUndefined();
+      expect(f.requests.map(r => r.body.method)).toEqual(["server/discover"]);
+    } finally { vi.useRealTimers(); }
   });
 
   it.each(["direct", "proxy", "script"])("uses one same-client fresh transport retry through %s", async entry => {
