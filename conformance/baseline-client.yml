@@ -2,8 +2,8 @@
 # Remove an entry as soon as its scenario passes. The conformance CLI treats a
 # passing baseline entry as stale and fails the run.
 client:
-  # The adapter dynamically registers instead of publishing an HTTPS Client ID
-  # Metadata Document. The scenario otherwise passes and reports one SHOULD-level warning.
+  # Stable 0.1.16 requires its hardcoded conformance-test.local client ID.
+  # The shared Pages ID completes auth/tool use but triggers that SHOULD warning.
   - auth/basic-cimd
 
   # The adapter supports client_secret_basic client credentials, but its config

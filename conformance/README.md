@@ -46,7 +46,7 @@ Current gaps:
 
 | Scenario | Reason |
 | --- | --- |
-| `auth/basic-cimd` | The adapter uses dynamic client registration rather than an HTTPS Client ID Metadata Document. |
+| `auth/basic-cimd` | Stable 0.1.16 expects exactly `https://conformance-test.local/client-metadata.json`; the adapter's shared Pages ID completes authorization and tool use but triggers that SHOULD-level warning. Real document acceptance, PKCE, refresh and MCP use are covered by `__tests__/oauth-cimd.test.ts`. |
 | `auth/client-credentials-jwt` | Private-key JWT client authentication is not configured by the adapter. |
 | `auth/cross-app-access-complete-flow` | The adapter does not implement SEP-990 token exchange and JWT bearer grants. |
 

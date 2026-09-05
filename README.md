@@ -207,12 +207,13 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the HTTP server connects or OAuth authenticates; use `!!` for a literal leading `!`. |
 | `auth` | `"bearer"` or `"oauth"` |
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
-| `oauth.clientId` | Pre-registered OAuth client ID; dynamic registration is used when omitted |
+| `oauth.clientId` | Pre-registered OAuth client ID; takes priority over stored clients and automatic registration |
 | `oauth.clientSecret` | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!` |
 | `oauth.scope` | Requested OAuth scopes |
 | `oauth.redirectUri` | Exact localhost redirect URI for browser OAuth, including port and path, for providers that pre-register callbacks |
 | `oauth.clientName` | Client display name advertised during dynamic registration |
 | `oauth.clientUri` | Client homepage URI advertised during dynamic registration |
+| `oauth.clientMetadataUrl` | Custom HTTPS Client ID Metadata Document URL, or `false` to disable automatic CIMD for new registrations; supports environment interpolation |
 | `oauth.skipIssuerMetadataValidation` | Skip only the authorization-server metadata issuer check for a known incompatible provider (default: `false`). Stored issuer and callback checks remain enforced. |
 | `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation. A leading `!` in `bearerToken` runs a command when the HTTP server connects; use `!!` for a literal leading `!`. |
 | `lifecycle` | `"lazy"` (default), `"eager"`, `"keep-alive"`, or `"lazy-keep-alive"` |
@@ -230,6 +231,14 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
 
 Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, and stdio `env` may use a leading `!command` to obtain their value at connection or authentication time. The command runs with stdin and stderr suppressed, stdout is limited to 1 MiB and trimmed, and it must finish within 10 seconds with non-empty output; failures stop the connection or authentication flow. Commands are not run during OAuth discovery or while reading, merging, previewing, hashing, or rendering configuration. Use `!!` to escape a literal leading `!`; ordinary and escaped values retain environment interpolation.
+
+### OAuth client registration
+
+Eligible browser clients automatically use the [Pi MCP Adapter client metadata document](https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json). The SDK keeps configured `clientId` and usable stored registrations first, then uses the document when the authorization server advertises `client_id_metadata_document_supported: true`. Otherwise it uses dynamic client registration (DCR), if available. An authorization server rejecting or failing to fetch a document does **not** guarantee a fallback to DCR.
+
+The shared public identity covers `/callback` on HTTP `localhost`, `127.0.0.1`, or `[::1]`, with a variable loopback port. Normal callbacks still use an OS-assigned port. A different `clientName`, `clientUri`, callback path or query keeps DCR; explicitly matching identity values remain eligible. Set `oauth.clientMetadataUrl` to your own document URL for a custom identity/callback, or `false` to opt out. Documents cannot use shared secrets; the shared browser identity is never used for `client_credentials`.
+
+Changing this option does not replace a usable stored login. Saved CIMD registrations allow only a loopback-port change during browser auth; host, scheme, path, query and issuer bindings remain enforced. To deliberately register again, use `/mcp logout <server>`. An authorization-server issuer change still requires clearing credentials; it is not silently migrated. See [OAuth configuration](OAUTH.md#client-registration-order) for details.
 
 ### Shared MCP processes with rmcp-mux
 

@@ -61,6 +61,7 @@
   },
   "files": [
     "dist",
+    "docs/client-metadata.json",
     "scripts/build.mjs",
     "scripts/prepare.mjs",
     "tsconfig.build.json",

@@ -7,6 +7,7 @@
 
 import {
   UnauthorizedError,
+  validateClientMetadataUrl,
   type AddClientAuthentication,
   type OAuthClientProvider,
   type OAuthClientInformationContext,
@@ -31,6 +32,37 @@ import {
   type StoredClientInfo,
 } from "./mcp-auth.ts"
 import { resolveCommandSecret } from "./utils.ts"
+import sharedClientMetadata from "./docs/client-metadata.json" with { type: "json" }
+
+/** Validate explicit document URLs without echoing possible credentials in errors. */
+export function validateOAuthClientMetadataUrl(value: string | false | undefined): void {
+  if (value === undefined || value === false) return
+  try {
+    if (typeof value !== "string" || !value) throw new Error()
+    validateClientMetadataUrl(value)
+    const url = new URL(value)
+    const authority = value.match(/^[^:]+:[/\\]*([^/\\?#]*)/)?.[1]
+    if (url.username || url.password || authority?.includes("@") || value.includes("#")
+      || /[/\\](?:\.|%2e){1,2}(?=[/\\?#]|$)/i.test(value)) throw new Error()
+  } catch {
+    throw new Error("OAuth clientMetadataUrl must be an HTTPS URL with a non-root path and no userinfo, fragment or dot segments")
+  }
+}
+
+/** Only the port may differ; keep raw host, path and query spelling exact. */
+export function loopbackRedirectsMatch(first: string, second: unknown): boolean {
+  if (typeof second !== "string") return false
+  const pattern = /^(http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])):\d+(\/[^#]*)$/
+  const a = first.match(pattern)
+  const b = second.match(pattern)
+  if (!a?.[2] || !b?.[2] || a[1] !== b[1] || a[2] !== b[2]) return false
+  try {
+    return new URL(first).pathname === a[2].split("?")[0]
+      && new URL(second).pathname === b[2].split("?")[0]
+  } catch {
+    return false
+  }
+}
 
 export function issuersMatch(first: string, second: string): boolean {
   return first === second
@@ -85,6 +117,8 @@ export interface McpOAuthConfig {
   redirectUri?: string
   clientName?: string
   clientUri?: string
+  /** Custom public-client document URL; false disables automatic CIMD for new registrations. */
+  clientMetadataUrl?: string | false
 }
 
 const reservedAuthorizationParams = new Set([
@@ -122,6 +156,7 @@ export interface McpOAuthCallbacks {
  */
 export class McpOAuthProvider implements OAuthClientProvider {
   private readonly redirectUrlSnapshot: string | undefined
+  readonly clientMetadataUrl?: string
   private active = true
   private flowClientInfo: StoredClientInfo | undefined
   private flowCodeVerifier: string | undefined
@@ -138,10 +173,21 @@ export class McpOAuthProvider implements OAuthClientProvider {
     private runtimeSignal?: AbortSignal,
     initialState?: string,
   ) {
+    validateOAuthClientMetadataUrl(config.clientMetadataUrl)
     this.flowState = initialState
     this.redirectUrlSnapshot = config.grantType === "client_credentials"
       ? undefined
       : config.redirectUri ?? `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}`
+    if (config.clientMetadataUrl !== false && config.clientSecret === undefined) {
+      if (config.clientMetadataUrl && config.clientMetadataUrl !== sharedClientMetadata.client_id) {
+        this.clientMetadataUrl = config.clientMetadataUrl
+      } else if (!this.usesClientCredentials
+        && (config.clientName === undefined || config.clientName === sharedClientMetadata.client_name)
+        && (config.clientUri === undefined || config.clientUri === sharedClientMetadata.client_uri)
+        && sharedClientMetadata.redirect_uris.some(uri => loopbackRedirectsMatch(uri, this.redirectUrl))) {
+        this.clientMetadataUrl = sharedClientMetadata.client_id
+      }
+    }
   }
 
   private get usesClientCredentials(): boolean {
@@ -332,13 +378,17 @@ export class McpOAuthProvider implements OAuthClientProvider {
     }
 
     const redirectUris = ("redirect_uris" in info ? info.redirect_uris : undefined)
-      ?? (this.redirectUrl ? [this.redirectUrl] : undefined)
+      ?? (this.redirectUrl ? [this.redirectUrl] : [])
     const clientInfo: StoredClientInfo = {
       clientId: info.client_id,
       ...(info.client_secret !== undefined ? { clientSecret: info.client_secret } : {}),
       ...(info.client_id_issued_at !== undefined ? { clientIdIssuedAt: info.client_id_issued_at } : {}),
       ...(info.client_secret_expires_at !== undefined ? { clientSecretExpiresAt: info.client_secret_expires_at } : {}),
-      ...(redirectUris !== undefined ? { redirectUris } : {}),
+      redirectUris,
+      // Native CIMD saves only client_id + issuer; DCR's full schema requires redirect_uris.
+      ...(info.client_id === this.clientMetadataUrl && !("redirect_uris" in info)
+        && this.flowDiscoveryState?.authorizationServerMetadata?.client_id_metadata_document_supported === true
+        ? { registrationType: "cimd" as const } : {}),
       ...(issuer !== undefined ? { issuer } : {}),
     }
     this.flowClientInfo = clientInfo

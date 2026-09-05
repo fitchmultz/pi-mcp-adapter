@@ -17,7 +17,7 @@ import {
   isStrictScopeSuperset,
 } from "@modelcontextprotocol/client"
 import open from "open"
-import { McpOAuthProvider, issuersMatch, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
+import { McpOAuthProvider, issuersMatch, loopbackRedirectsMatch, validateOAuthClientMetadataUrl, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -235,6 +235,12 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     config.clientSecret = definition.oauth.clientSecret.startsWith("!")
       ? definition.oauth.clientSecret
       : interpolateEnvVars(definition.oauth.clientSecret)
+  }
+  if (definition.oauth?.clientMetadataUrl !== undefined) {
+    const value = definition.oauth.clientMetadataUrl
+    if (value !== false && typeof value !== "string") throw new Error("OAuth clientMetadataUrl must be a string or false")
+    config.clientMetadataUrl = value === false ? false : interpolateEnvVars(value)
+    validateOAuthClientMetadataUrl(config.clientMetadataUrl)
   }
   if (definition.oauth?.scope !== undefined) {
     if (typeof definition.oauth.scope !== "string") throw new Error("OAuth scope must be a string")
@@ -464,7 +470,11 @@ export async function startAuth(
         await clearOAuthState(serverName, authStorageOptions)
       } else {
         const redirectUris = storedAuth.clientInfo.redirectUris
-        if (!Array.isArray(redirectUris) || !redirectUris.includes(authProvider.redirectUrl ?? "")) {
+        const redirectUrl = authProvider.redirectUrl ?? ""
+        const matchesRedirect = Array.isArray(redirectUris) && (redirectUris.includes(redirectUrl)
+          || (storedAuth.clientInfo.registrationType === "cimd"
+            && redirectUris.some(uri => loopbackRedirectsMatch(redirectUrl, uri))))
+        if (!matchesRedirect) {
           clearClientInfo(serverName, authStorageOptions)
           clearTokens(serverName, authStorageOptions)
           clearCodeVerifier(serverName, authStorageOptions)

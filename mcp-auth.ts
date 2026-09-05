@@ -48,6 +48,8 @@ export interface StoredClientInfo {
   clientIdIssuedAt?: number;
   clientSecretExpiresAt?: number;
   redirectUris?: string[];
+  /** Positively identified native CIMD registration; permits loopback port changes. */
+  registrationType?: "cimd";
   /** SEP-2352 authorization-server issuer binding */
   issuer?: string;
   /**
