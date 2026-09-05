@@ -51,7 +51,8 @@ describe("package.json files", () => {
 });
 
 describe("public OAuth client metadata", () => {
-  it("defines the shared native public-client identity", () => {
+  it("defines and publishes the shared native public-client identity for source consumers", () => {
+    expect(packageJson.files).toContain("docs/client-metadata.json");
     const metadata = JSON.parse(readFileSync(join(repoRoot, "docs/client-metadata.json"), "utf-8"));
 
     expect(metadata).toEqual({

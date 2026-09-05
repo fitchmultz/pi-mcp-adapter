@@ -2,10 +2,6 @@
 # Remove an entry as soon as its scenario passes. The conformance CLI treats a
 # passing baseline entry as stale and fails the run.
 client:
-  # The adapter dynamically registers instead of publishing an HTTPS Client ID
-  # Metadata Document. The scenario otherwise passes and reports one SHOULD-level warning.
-  - auth/basic-cimd
-
   # The adapter supports client_secret_basic client credentials, but its config
   # has no private-key JWT credentials or assertion signing hook.
   - auth/client-credentials-jwt

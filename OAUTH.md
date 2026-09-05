@@ -7,7 +7,8 @@ This document describes the OAuth 2.1 + PKCE authentication implementation for t
 The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, which provides:
 
 - **Automatic OAuth endpoint discovery** (RFC 9728) - No manual configuration needed
-- **Dynamic client registration** (RFC 7591) - No clientId needed for most servers
+- **Client ID Metadata Documents (CIMD)** - Shared public browser identity without per-server registration
+- **Dynamic client registration** (RFC 7591) - Native fallback when CIMD is unavailable
 - **Automatic callback handling** - Built-in HTTP server handles callbacks automatically
 - **Automatic token refresh** - SDK handles token refresh transparently
 
@@ -16,7 +17,8 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 - ✅ **PKCE (S256)** - Mandatory code challenge method for OAuth 2.1
 - ✅ **Automatic Callback Server** - Local browser redirects automatically when available
 - ✅ **Manual Remote Flow** - Copy auth URLs and pasted redirect URLs/codes for headless SSH sessions
-- ✅ **Dynamic Client Registration** - Automatically registers with OAuth servers
+- ✅ **Client ID Metadata Documents** - Uses the shared identity for compatible browser clients
+- ✅ **Dynamic Client Registration** - Registers when no configured/stored client or eligible CIMD is available
 - ✅ **Auto-Discovery** - Discovers OAuth endpoints from server metadata
 - ✅ **Automatic Token Refresh** - SDK handles expired tokens automatically
 - ✅ **State Parameter Validation** - CSRF protection
@@ -41,7 +43,7 @@ For most MCP servers, you only need the URL:
 OAuth is automatically enabled for HTTP servers. The SDK will:
 - Auto-detect if the server requires OAuth
 - Discover OAuth endpoints from the server
-- Register a dynamic client (if supported by the server)
+- Reuse a configured/stored client, use CIMD when supported, or register dynamically
 - Handle the entire OAuth flow including callback
 
 ### Optional Configuration
@@ -73,16 +75,34 @@ You can optionally provide a pre-registered client:
 - `url` - The MCP server URL (required)
 - `auth` - Set to `"oauth"` to force OAuth, `false` to disable, or omit to auto-detect
 - `oauth.grantType` - `"authorization_code"` (default, browser flow) or `"client_credentials"` (non-interactive)
-- `oauth.clientId` - Pre-registered client ID (optional, SDK tries dynamic registration if not provided)
+- `oauth.clientId` - Pre-registered client ID (optional; takes priority over stored clients, CIMD and DCR)
 - `oauth.clientSecret` - Client secret for confidential clients (optional)
 - `oauth.scope` - Requested OAuth scopes (optional)
 - `oauth.authorizationParams` - Extra authorization URL parameters for provider-specific extensions, such as Google's `{ "access_type": "offline", "prompt": "consent" }`. Flow-owned parameters like `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden.
 - `oauth.redirectUri` - Exact browser callback URI to advertise and bind, such as `http://localhost:3118/callback` (optional)
 - `oauth.clientName` - Client display name used for dynamic registration (optional, defaults to `Pi Coding Agent`)
 - `oauth.clientUri` - Client homepage URI used for dynamic registration (optional)
+- `oauth.clientMetadataUrl` - Custom HTTPS Client ID Metadata Document URL, or `false` to opt out for new registrations. Supports `${VAR}` and `$env:VAR` interpolation. URLs require a non-root path and must not contain userinfo, fragments or dot segments.
 - `oauth.skipIssuerMetadataValidation` - Skip only the SDK's metadata issuer-echo check for a known incompatible authorization server (default: `false`). This weakens metadata validation; prefer correcting the provider's metadata.
 
 Dynamic clients normally omit `oauth.redirectUri`; the adapter starts the callback server lazily on the default loopback host (`localhost`) and asks the OS for an available local port when auth begins. Use `oauth.redirectUri` when the provider requires a pre-registered callback, such as Slack MCP's Claude-compatible `http://localhost:3118/callback`. The URI must use `http://` with `localhost`, `127.0.0.1`, or `[::1]`, include an explicit port, and its host/path become the bound callback endpoint.
+
+### Client registration order
+
+The SDK selects a client in this order:
+
+1. Configured `oauth.clientId` (and `clientSecret`, when needed).
+2. A usable stored registration for this server and issuer.
+3. An eligible metadata document URL when the authorization server advertises `client_id_metadata_document_supported: true`.
+4. Dynamic client registration, when supported.
+
+The default document is [Pi MCP Adapter](https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json), with homepage `https://github.com/fitchmultz/pi-mcp-adapter`. It describes a native public browser client using `authorization_code`, `refresh_token` and token authentication method `none`. The authorization server fetches and validates the document; the adapter does not download or availability-check it.
+
+The shared identity covers HTTP loopback `/callback` redirects on `localhost`, `127.0.0.1` and `[::1]`. The document's listed port represents native loopback port variation, not a fixed runtime port. The adapter still asks the OS for a port unless an exact callback or static client is configured. Scheme, host, path and query must match; there are no wildcard callback paths.
+
+Explicit `clientName` or `clientUri` values matching the shared document remain eligible. Different values, custom callback paths/queries and configured shared secrets keep their existing registration path. To use a different public identity or callback, host your own matching document and set `oauth.clientMetadataUrl` to its HTTPS URL. A custom document must describe the actual grants, redirect URIs and authentication method. Shared-secret CIMD is not supported.
+
+Set `oauth.clientMetadataUrl: false` to disable CIMD for new registrations. Changing the URL or setting `false` does not migrate an existing login: usable stored clients keep priority. Use `/mcp logout <server>` before authenticating if you want to replace that registration deliberately. If the authorization server advertises CIMD but rejects the document or cannot fetch it, the error is surfaced; the SDK does not guarantee a DCR fallback for that rejection.
 
 ### Non-Interactive `client_credentials`
 
@@ -105,7 +125,7 @@ For machine-to-machine OAuth, configure `grantType: "client_credentials"`.
 }
 ```
 
-This flow does not open a browser or use callback handling. `oauth.redirectUri` is ignored for `client_credentials`; `oauth.clientName` and `oauth.clientUri` still apply to dynamic client registration metadata.
+This flow does not open a browser or use callback handling. `oauth.redirectUri` is ignored for `client_credentials`; `oauth.clientName` and `oauth.clientUri` still apply to dynamic client registration metadata. The shared browser document is never selected, even when its URL is explicitly configured. A custom `clientMetadataUrl` without a shared secret can identify a noninteractive client if the authorization server accepts its document and public token authentication. This is not universal machine-client support: private-key JWT and cross-app authorization are not configured by the adapter yet.
 
 ## Usage
 
@@ -122,7 +142,7 @@ Manual `/mcp-auth` is the default flow. With `settings.autoAuth: true`, proxy/di
 This will:
 1. Start the callback server lazily on an OS-assigned local port, or on the exact `oauth.redirectUri` port for pre-registered callbacks
 2. Discover OAuth endpoints automatically
-3. Register a dynamic client (if no clientId provided)
+3. Select a configured/stored client, CIMD, or dynamic registration
 4. Open your browser for authentication
 5. Wait for the automatic callback
 6. Complete the OAuth flow
@@ -210,7 +230,7 @@ The SDK attempts to discover OAuth endpoints using:
 
 ### Dynamic Client Registration
 
-If no `clientId` is provided, the SDK:
+If no configured/stored client or eligible CIMD is selected, the SDK:
 
 1. Discovers the registration endpoint from OAuth metadata
 2. Registers a new client with:
@@ -220,7 +240,7 @@ If no `clientId` is provided, the SDK:
    - `grant_types`: `["authorization_code", "refresh_token"]`
 3. Stores the registered client credentials and the redirect URIs returned by the authorization server
 
-When a fresh browser auth starts, cached dynamic client info with tokens is re-registered if its stored redirect URIs are missing or do not include the current redirect URI. Token refresh does not perform this redirect check, so existing refresh-token grants keep working even after a callback setting changes.
+When browser auth starts, cached DCR client info with tokens is re-registered if its stored redirect URIs are missing or do not include the current redirect URI. Saved CIMD registrations also allow a port-only change on the same HTTP loopback host/path/query, preserving their refresh tokens across restarts. URL-shaped DCR IDs do not get this exception. Missing or malformed redirect lists still invalidate the registration and tokens. Token refresh outside browser-auth startup does not perform this redirect check.
 
 ### Callback Server
 
@@ -245,7 +265,7 @@ On Linux, if credential access fails because Pi inherited a revoked session keyr
 
 Older versions stored plaintext entries at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json`, or under `settings.oauthDir` / `MCP_OAUTH_DIR`. On first read after upgrade, a valid legacy entry is imported into the OS credential store and the plaintext `tokens.json` file is removed. These directories are now legacy import locations, not persistent credential stores or isolation namespaces.
 
-The stored `serverUrl` field ensures credentials are invalidated if the server URL changes.
+The stored `serverUrl` field ensures credentials are invalidated if the server URL changes. Client and token issuer bindings also remain strict: a changed authorization-server issuer requires explicitly clearing credentials before authenticating again, including for CIMD. No stored-login or issuer migration is performed.
 
 ### Android / Termux
 
@@ -359,8 +379,9 @@ const transport = new StreamableHTTPClientTransport(url, {
 ## References
 
 - [MCP SDK Documentation](https://github.com/modelcontextprotocol/typescript-sdk)
-- [MCP Authorization Specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization)
-- [OAuth 2.1](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-11)
+- [MCP Authorization Specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
+- [Client ID Metadata Documents](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00)
+- [OAuth 2.1](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-13)
 - [PKCE (RFC 7636)](https://datatracker.ietf.org/doc/html/rfc7636)
 - [Dynamic Client Registration (RFC 7591)](https://datatracker.ietf.org/doc/html/rfc7591)
 - [OAuth Protected Resource Metadata (RFC 9728)](https://datatracker.ietf.org/doc/html/rfc9728)

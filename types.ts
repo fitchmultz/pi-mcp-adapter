@@ -332,13 +332,13 @@ export interface McpContent {
 // Pi content block type
 export type ContentBlock = TextContent | ImageContent;
 
-// OAuth configuration (SDK handles auto-discovery and dynamic registration)
+// OAuth configuration (SDK handles discovery and client registration)
 export interface OAuthConfig {
   /** Skip only authorization-server metadata issuer validation. Defaults to false. */
   skipIssuerMetadataValidation?: boolean;
   /** OAuth grant type (defaults to authorization_code) */
   grantType?: "authorization_code" | "client_credentials";
-  /** Pre-registered client ID (optional, dynamic registration used if not provided) */
+  /** Pre-registered client ID; takes priority over stored clients, CIMD and dynamic registration. */
   clientId?: string;
   /** Client secret for confidential clients */
   clientSecret?: string;
@@ -352,6 +352,8 @@ export interface OAuthConfig {
   clientName?: string;
   /** Client homepage URI for dynamic registration */
   clientUri?: string;
+  /** Public-client metadata document URL. Eligible browser clients default to Pi MCP Adapter's shared identity; false opts out for new registrations. Stored clients keep priority. */
+  clientMetadataUrl?: string | false;
 }
 
 // Server configuration
@@ -381,7 +383,7 @@ export interface ServerEntry {
   bearerTokenEnv?: string;
   /** 
    * OAuth configuration (optional).
-   * If not provided, the SDK will attempt dynamic client registration.
+   * Eligible browser clients use the shared client metadata document when supported, otherwise dynamic registration.
    * Set to false to explicitly disable OAuth for this server.
    */
   oauth?: OAuthConfig | false;

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Native Client ID Metadata Documents (CIMD) with an automatic shared Pi MCP Adapter identity for eligible public browser clients and `oauth.clientMetadataUrl` custom URL / `false` overrides. Configured and usable stored clients keep priority; unsupported servers retain native dynamic registration.
+
+### Fixed
+
+- Preserve saved CIMD registrations and refresh tokens when only the native loopback callback port changes, including after changing the metadata URL setting. DCR, exact callback and issuer checks remain unchanged.
+- Retain newly registered noninteractive public clients as registrations rather than legacy config stubs, so custom CIMD token requests include their actual client ID.
+
 ## [4.2.3] - 2026-09-05
 
 ### Fixed
