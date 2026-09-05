@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   clearAllCredentials,
@@ -60,6 +62,50 @@ function readRecoveryStore(storePath: string): Record<string, string> {
 }
 
 describe("OAuth credential-store diagnostics", () => {
+  // Real adapter + published loader, simulated platform only; never an OS keychain.
+  it.each(["missing", "unloadable", "working"])("diagnoses Android binding: %s", (mode) => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-android-loader-"));
+    try {
+      writeFileSync(join(home, "package.json"), '{"type":"module"}');
+      for (const file of ["mcp-auth.ts", "agent-dir.ts", "config.ts", "types.ts", "ui-stream-types.ts", "utils.ts"]) {
+        cpSync(resolve(file), join(home, file));
+      }
+      const modules = join(home, "node_modules");
+      cpSync(resolve("node_modules/@napi-rs/keyring"), join(modules, "@napi-rs/keyring"), { recursive: true });
+      for (const dependency of ["smol-toml", "strip-json-comments", "zod"]) {
+        symlinkSync(resolve("node_modules", dependency), join(modules, dependency), "dir");
+      }
+      if (mode !== "missing") {
+        const binding = join(modules, "@napi-rs/keyring-android-arm64");
+        mkdirSync(binding);
+        writeFileSync(join(binding, "package.json"), '{"version":"1.3.0","main":"index.cjs"}');
+        writeFileSync(join(binding, "index.cjs"), mode === "unloadable"
+          ? 'throw new Error("synthetic binding cannot load");'
+          : `const entries = new Map();
+module.exports = {
+  failure: undefined,
+  Entry: class Entry {
+    constructor(service, account) { this.account = service + account; }
+    getPassword() { if (module.exports.failure) throw module.exports.failure; return entries.get(this.account) ?? null; }
+    setPassword(value) { if (module.exports.failure) throw module.exports.failure; entries.set(this.account, value); }
+    deleteCredential() { if (module.exports.failure) throw module.exports.failure; return entries.delete(this.account); }
+  },
+};`);
+      }
+      const result = spawnSync(process.execPath, ["--import", createRequire(import.meta.url).resolve("tsx"), resolve("__tests__/fixtures/android-keyring-probe.mjs"), mode], {
+        cwd: home,
+        env: { HOME: home, PI_CODING_AGENT_DIR: join(home, ".pi", "agent"), PATH: dirname(process.execPath), TMPDIR: home },
+        encoding: "utf8",
+      });
+      expect(result.stderr).toBe("");
+      expect(result.status, result.stdout).toBe(0);
+      const receipt = JSON.parse(result.stdout);
+      expect(receipt).toMatchObject({ platform: "android", arch: "arm64", execPath: process.execPath, version: process.version, mode, passed: true });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("recognizes a revoked Linux keyring through the error cause chain", () => {
     const nativeError = new Error("Couldn't access platform storage: KeyRevoked", {
       cause: new Error("KeyRevoked"),

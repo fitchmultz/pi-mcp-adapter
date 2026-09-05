@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Activate implicit OAuth for protected catalogs and first tool calls after public startup, including when valid tokens are already stored.
 - Validate callback state and issuer before displaying OAuth errors on both pasted redirects and the HTTP listener.
 - Preserve accepted work during manual, automatic, command, and panel auth handoffs while keeping ordinary reconnect/reset behavior.
+- Explain missing or unloadable Android/Termux native keyring bindings in OAuth failures and credential status. Persistent OAuth still requires a supported secure store; no plaintext fallback is added.
 
 ## [4.2.2] - 2026-09-04
 

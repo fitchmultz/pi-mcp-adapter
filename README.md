@@ -271,6 +271,8 @@ You can also pass only the `code` query parameter with `args: { code: "..." }`. 
 
 New scope requirements are retained within the current runtime for the next permitted OAuth flow. URL-only servers also activate OAuth when their first protected catalog or tool is reached; valid saved tokens do not require another sign-in. Token scopes remain exactly what the authorization server issued. See [OAuth permission recovery](OAUTH.md#newly-required-permissions) for consent, cancellation, and transport limits.
 
+Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-rs/keyring` 1.3.0 ships no Android native binding. Use a supported platform with an OS credential store for OAuth; there is no plaintext fallback. Unauthenticated, header-token, and stdio servers remain available. See [Android/Termux OAuth limits](OAUTH.md#android--termux).
+
 ### Lifecycle Modes
 
 - **`lazy`** (default) — Don't connect at startup. Connect on first tool call. Disconnect after idle timeout. Cached metadata keeps search/list working without connections.

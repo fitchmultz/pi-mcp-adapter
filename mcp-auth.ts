@@ -82,7 +82,9 @@ export class OAuthCredentialStoreError extends Error {
     readonly operation: 'read' | 'write' | 'remove',
     cause: unknown,
   ) {
-    super(message, { cause });
+    super(isAndroidKeyringLoadFailure(cause)
+      ? `${message}. Android/Termux: @napi-rs/keyring could not load a native binding. Persistent OAuth requires a supported platform with an OS credential store; no plaintext fallback is used.`
+      : message, { cause });
     this.name = 'OAuthCredentialStoreError';
   }
 }
@@ -107,7 +109,12 @@ function causeChainContains(error: unknown, pattern: RegExp): boolean {
   return false;
 }
 
+function isAndroidKeyringLoadFailure(error: unknown): boolean {
+  return process.platform === 'android' && causeChainContains(error, /^Failed to load @napi-rs\/keyring;/);
+}
+
 export function formatOAuthCredentialStoreUnavailable(error: OAuthCredentialStoreError): string {
+  if (isAndroidKeyringLoadFailure(error)) return error.message;
   if (process.platform === 'linux' && causeChainContains(error, /key\s*(?:has been\s*)?revoked|keyrevoked/i)) {
     return 'OAuth credential store unavailable: the Linux session keyring may be revoked. Start Pi from a fresh login/keyring session and retry.';
   }
