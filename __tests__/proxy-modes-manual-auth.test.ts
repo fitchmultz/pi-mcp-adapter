@@ -39,7 +39,7 @@ function createState(overrides: Record<string, unknown> = {}) {
         bearer: { url: "https://api.example.com/mcp", auth: "bearer" },
       },
     },
-    manager: { close: vi.fn(async () => {}) },
+    manager: { getConnection: vi.fn(() => ({ status: "connected" })), retire: vi.fn(), close: vi.fn(async () => {}) },
     oauthRuntime: { signal: new AbortController().signal },
     toolMetadata: new Map(),
     failureTracker: new Map([["demo", Date.now()]]),
@@ -94,7 +94,7 @@ describe("manual OAuth proxy actions", () => {
     expect(result.details).toMatchObject({ error: "oauth_not_supported" });
   });
 
-  it("completes auth from a copied redirect URL and resets connection state", async () => {
+  it("completes auth from a copied redirect URL and retires the captured connection", async () => {
     const { executeAuthComplete } = await import("../proxy-modes.ts");
     const state = createState();
 
@@ -105,7 +105,8 @@ describe("manual OAuth proxy actions", () => {
       "http://localhost:19876/callback?code=abc&state=state",
       { runtime: state.oauthRuntime },
     );
-    expect(state.manager.close).toHaveBeenCalledWith("demo");
+    expect(state.manager.retire).toHaveBeenCalledWith("demo", state.manager.getConnection.mock.results[0].value);
+    expect(state.manager.close).not.toHaveBeenCalled();
     expect(state.failureTracker.has("demo")).toBe(false);
     expect(mocks.updateStatusBar).toHaveBeenCalledWith(state);
     expect(result.content[0].text).toContain("OAuth authentication successful");

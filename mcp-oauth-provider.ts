@@ -32,7 +32,7 @@ import {
 } from "./mcp-auth.ts"
 import { resolveCommandSecret } from "./utils.ts"
 
-function issuersMatch(first: string, second: string): boolean {
+export function issuersMatch(first: string, second: string): boolean {
   return first === second
     || (first.endsWith("/") && first.slice(0, -1) === second)
     || (second.endsWith("/") && second.slice(0, -1) === first)
@@ -113,6 +113,7 @@ function addAuthorizationParams(authorizationUrl: URL, params: Record<string, st
 /** Callbacks for OAuth flow interactions */
 export interface McpOAuthCallbacks {
   onRedirect: (url: URL) => void | Promise<void>
+  onDiscoveryState?: (state: OAuthDiscoveryState) => void
 }
 
 /**
@@ -226,6 +227,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
     const issuer = context?.issuer ?? this.discoveredIssuer
     const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
     this.assertStoredIssuerBindings(stored, issuer)
+    // Rejected discovery must not become the runtime's issuer binding.
+    if (this.flowDiscoveryState) this.callbacks.onDiscoveryState?.(this.flowDiscoveryState)
 
     // Check config first (pre-registered client). Store only its issuer binding.
     // The configured secret stays in config and never enters the credential store.

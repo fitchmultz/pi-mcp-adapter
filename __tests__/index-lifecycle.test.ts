@@ -1197,7 +1197,7 @@ describe("mcpAdapter session lifecycle", () => {
       expect.any(AbortSignal),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(mocks.reconnectServer).toHaveBeenCalledWith(state, expect.any(Object), "github");
+    expect(mocks.reconnectServer).toHaveBeenCalledWith(state, expect.any(Object), "github", true);
     expect(mocks.openMcpAuthPanel).not.toHaveBeenCalled();
   });
 

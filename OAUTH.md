@@ -117,7 +117,7 @@ Run the `/mcp-auth` command with the server name:
 /mcp-auth my-oauth-server
 ```
 
-Manual `/mcp-auth` is the default flow. If you set `settings.autoAuth: true`, proxy/direct tool execution will trigger OAuth automatically when a server returns `needs-auth`, then retry the original operation once.
+Manual `/mcp-auth` is the default flow. With `settings.autoAuth: true`, proxy/direct/script tool execution may authenticate when a server needs auth or rejects a call for insufficient scope. Browser authorization still requires an interactive host, and each invocation gets at most one automatic auth attempt and one post-auth retry. Initial sign-in does not grant a second automatic consent attempt in the same invocation.
 
 This will:
 1. Start the callback server lazily on an OS-assigned local port, or on the exact `oauth.redirectUri` port for pre-registered callbacks
@@ -147,6 +147,16 @@ mcp({
 ```
 
 You can also pass only the `code` query parameter with `args: { code: "..." }`. JSON-string args remain supported. Redirect URL completion validates the saved OAuth state; raw code completion is available for providers that display a code directly.
+
+### Newly required permissions
+
+A Streamable HTTP server can request additional scopes when a tool, resource, prompt, or catalog needs more permission. The adapter keeps that request in the current runtime and includes it in the next permitted automatic or manual OAuth flow. A wider request uses fresh consent rather than refreshing the old, narrower grant. Already-open authorization URLs and PKCE verifiers stay unchanged; later requirements wait for the next flow. Cancellation retains permission intent, while logout and runtime shutdown clear it.
+
+URL-only servers can first require OAuth during catalog discovery or a later tool call. The adapter activates its provider once after that challenge, so valid stored tokens work without another sign-in, even with `autoAuth` off. Fully public servers do not read the credential store just to connect.
+
+Requested scopes are not granted scopes: stored token fields come only from the authorization server. Missing or narrower token scopes are not filled in, and only a successful operation proves access. Native token refresh and machine-to-machine retry limits remain unchanged. This recovery covers both wire revisions over Streamable HTTP; deprecated SSE behavior is unchanged.
+
+Auth-only connection replacement lets accepted native operations finish on the old client. Ordinary `/mcp reconnect`, panel `ctrl+r`, logout, and shutdown keep their existing reset behavior.
 
 ### Step 2: Use the Server
 
@@ -222,7 +232,7 @@ A Node.js HTTP server runs on a loopback callback endpoint and handles the activ
 
 - Handles `code`, `state`, and `error` parameters
 - Displays success/error HTML pages
-- Validates state parameter for CSRF protection
+- Validates state and issuer before accepting codes or displaying provider errors; unverifiable errors receive a generic response
 - Has a 5-minute timeout for pending authorizations
 
 ## Token Storage
@@ -319,7 +329,7 @@ SDK 2.0.0 checks that authorization-server metadata returns the issuer advertise
 }
 ```
 
-The default remains strict, including when `protocolVersion` is `"legacy"`. The exception applies to discovery during authorization, completion, and refresh. It does not disable URL-bound credentials, stored issuer bindings, callback state, or callback `iss` validation. If the provider requires `iss`, paste the full redirect URL rather than only the authorization code; a missing issuer leaves the pending flow available for another attempt. The adapter also passes `iss` to the SDK before token exchange.
+The default remains strict, including when `protocolVersion` is `"legacy"`. The exception applies to discovery during authorization, completion, and refresh. It does not disable URL-bound credentials, stored issuer bindings, callback state, or callback `iss` validation. If the provider requires `iss`, paste the full redirect URL rather than only the authorization code; a missing issuer leaves the pending flow available for another attempt. The adapter also passes `iss` to the SDK before token exchange. Both pasted redirects and the HTTP callback listener validate error responses before presenting provider text; issuer mismatches never display the received issuer.
 
 ## SDK Integration
 

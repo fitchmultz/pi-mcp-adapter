@@ -92,11 +92,14 @@ export interface OAuthCallbackResult {
   iss?: string
 }
 
+export type ValidateOAuthCallback = (response: { iss?: string; error?: string }) => void
+
 /** Pending authorization request */
 interface PendingAuth {
   resolve: (result: OAuthCallbackResult) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
+  validate?: ValidateOAuthCallback
 }
 
 /** Server singleton state */
@@ -105,7 +108,7 @@ let bindingPromise: Promise<void> | undefined
 let stoppingPromise: Promise<void> | undefined
 let callbackGeneration = 0
 const pendingAuths = new Map<string, PendingAuth>()
-const reservedAuthStates = new Set<string>()
+const reservedAuthStates = new Map<string, ValidateOAuthCallback | undefined>()
 
 /** Timeout for callback completion (5 minutes) */
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000
@@ -117,6 +120,7 @@ interface EnsureCallbackServerOptions {
   callbackPath?: string
   oauthState?: string
   reserveState?: boolean
+  validate?: ValidateOAuthCallback
 }
 
 const DEFAULT_OAUTH_CALLBACK_HOST = "localhost"
@@ -152,15 +156,31 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   const pending = pendingAuths.get(state)
   const isReserved = reservedAuthStates.has(state)
 
-  // Handle OAuth errors only for a state that belongs to an active flow.
-  if (error) {
-    if (!pending && !isReserved) {
-      const errorMsg = "Invalid or expired state parameter - potential CSRF attack"
-      res.writeHead(400, { "Content-Type": "text/html" })
-      res.end(HTML_ERROR(errorMsg))
-      return
-    }
+  if (!pending && !isReserved) {
+    res.writeHead(400, { "Content-Type": "text/html" })
+    res.end(HTML_ERROR("Invalid or expired state parameter - potential CSRF attack"))
+    return
+  }
 
+  try {
+    const validate = pending?.validate ?? reservedAuthStates.get(state)
+    if (validate) validate({ ...(iss !== null ? { iss } : {}), ...(error ? { error } : {}) })
+    else if (error) throw new Error("Cannot verify the OAuth error callback issuer")
+  } catch (failure) {
+    const message = failure instanceof Error ? failure.message : "Invalid OAuth callback"
+    res.writeHead(400, { "Content-Type": "text/html" })
+    res.end(HTML_ERROR(message))
+    if (pending) {
+      clearTimeout(pending.timeout)
+      pendingAuths.delete(state)
+      reservedAuthStates.delete(state)
+      pending.reject(new Error(message))
+    }
+    return
+  }
+
+  // Provider error text is only trusted after state and issuer validation.
+  if (error) {
     const errorMsg = errorDescription || error
     // Send HTTP response first before rejecting promise
     res.writeHead(200, { "Content-Type": "text/html" })
@@ -172,14 +192,6 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
       pendingAuths.delete(state)
       setTimeout(() => pending.reject(new Error(errorMsg)), 0)
     }
-    return
-  }
-
-  // Validate state parameter
-  if (!pending && !isReserved) {
-    const errorMsg = "Invalid or expired state parameter - potential CSRF attack"
-    res.writeHead(400, { "Content-Type": "text/html" })
-    res.end(HTML_ERROR(errorMsg))
     return
   }
 
@@ -263,7 +275,7 @@ async function ensureCallbackServerLocked(options: EnsureCallbackServerOptions =
         setOAuthCallbackPath(requestedPath)
       }
       if (options.reserveState && options.oauthState) {
-        reservedAuthStates.add(options.oauthState)
+        reservedAuthStates.set(options.oauthState, options.validate)
         reservedState = options.oauthState
       }
       return
@@ -310,7 +322,7 @@ async function ensureCallbackServerLocked(options: EnsureCallbackServerOptions =
     setOAuthCallbackPath(requestedPath)
     server = candidateServer
     if (options.reserveState && options.oauthState) {
-      reservedAuthStates.add(options.oauthState)
+      reservedAuthStates.set(options.oauthState, options.validate)
       reservedState = options.oauthState
     }
     server.unref()
@@ -344,6 +356,7 @@ export function releaseCallbackServer(oauthState: string): void {
  * authorization server sends one, the RFC 9207 `iss` parameter.
  */
 export function waitForCallback(oauthState: string): Promise<OAuthCallbackResult> {
+  const validate = reservedAuthStates.get(oauthState)
   reservedAuthStates.delete(oauthState)
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -353,7 +366,7 @@ export function waitForCallback(oauthState: string): Promise<OAuthCallbackResult
       }
     }, CALLBACK_TIMEOUT_MS)
 
-    pendingAuths.set(oauthState, { resolve, reject, timeout })
+    pendingAuths.set(oauthState, { resolve, reject, timeout, ...(validate ? { validate } : {}) })
   })
 }
 

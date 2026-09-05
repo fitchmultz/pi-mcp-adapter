@@ -3,7 +3,6 @@ import {
   StreamableHTTPClientTransport,
   SSEClientTransport,
   SdkHttpError,
-  UnauthorizedError,
   type RequestOptions,
   type GetPromptResult,
   type ReadResourceResult,
@@ -27,8 +26,8 @@ import {
 import { resolveNpxBinary } from "./npx-resolver.ts";
 import { logger } from "./logger.ts";
 import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
-import { extractOAuthConfig, supportsOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
-import type { AuthStorageOptions } from "./mcp-auth.ts";
+import { extractOAuthConfig, supportsOAuth, isOAuthChallenge, recordOAuthChallenge, getOAuthRequest, bindOAuthRequestIssuer, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import { getAuthBaseDir, type AuthStorageOptions } from "./mcp-auth.ts";
 import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
 import {
   handleUrlElicitation,
@@ -95,10 +94,6 @@ class ManagedClient extends Client {
   }
 }
 
-function isUnauthorizedHttpError(error: unknown): boolean {
-  return error instanceof UnauthorizedError || (error instanceof SdkHttpError && error.status === 401);
-}
-
 function boundedStderrChunk(chunk: Buffer | string): Buffer {
   if (Buffer.isBuffer(chunk)) {
     const start = Math.max(0, chunk.byteLength - MAX_CAPTURED_STDERR_BYTES);
@@ -139,6 +134,8 @@ export interface ServerConnection {
   lastUsedAt: number;
   inFlight: number;
   status: "connected" | "closed" | "needs-auth";
+  /** Whether this connection was constructed with the native OAuth provider. */
+  oauthProvider?: boolean;
 }
 
 type UiStreamListener = (serverName: string, notification: ServerStreamResultPatchNotification["params"]) => void;
@@ -325,12 +322,14 @@ export class McpServerManager {
       return current;
     }
 
-    staleConnection.status = "closed";
-    this.retireConnection(name, staleConnection);
+    this.retire(name, staleConnection);
     return this.connect(name, definition, signal);
   }
 
-  private retireConnection(name: string, connection: ServerConnection): void {
+  /** Retire only the expected current client; accepted native work drains before close. */
+  retire(name: string, connection: ServerConnection): void {
+    if (this.connections.get(name) !== connection) return;
+    connection.status = "closed";
     let retired = this.retiredConnections.get(name);
     if (!retired) this.retiredConnections.set(name, retired = new Set());
     if (retired.has(connection)) return;
@@ -366,6 +365,11 @@ export class McpServerManager {
       : undefined;
 
     let transport: Transport;
+    let implicitOAuth = Boolean(definition.url && supportsOAuth(definition)
+      && getOAuthRequest(name, resolveServerUrl(definition)!, getAuthBaseDir(this.authStorageOptions), this.oauthRuntime));
+    let oauthProvider = false;
+    let authError: Error | undefined;
+    const onAuthChallenge = (error: Error) => { authError = error; };
     let stderrTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     const configuredTransports = [definition.command, definition.url, definition.socket]
       .filter(value => typeof value === "string" && value.length > 0);
@@ -405,7 +409,7 @@ export class McpServerManager {
       transport = stdioTransport;
     } else if (definition.url) {
       // HTTP transport with fallback
-      transport = this.createHttpTransport(definition, name);
+      ({ transport, oauthProvider } = this.createHttpTransport(definition, name, false, implicitOAuth, onAuthChallenge));
     } else {
       transport = new UnixSocketClientTransport(resolveConfigPath(definition.socket!)!);
     }
@@ -419,76 +423,73 @@ export class McpServerManager {
     const requestOptions = this.buildRequestOptions(definition, requestSignal);
 
     try {
-      let implicitOAuth = false;
       let legacySse = false;
       for (;;) {
+        authError = undefined;
         try {
-          await this.connectClientWithAbort(client, transport, requestOptions, signal);
-          break;
-        } catch (error) {
-          if (!definition.url || signal?.aborted) throw error;
-          if (!implicitOAuth && definition.auth === undefined && supportsOAuth(definition) && isUnauthorizedHttpError(error)) {
-            // Read credentials only after the server actually challenges us.
-            implicitOAuth = true;
-          } else if (!legacySse && error instanceof SdkHttpError && [404, 405, 406, 415].includes(error.status)) {
-            // Protocol fallback belongs to the SDK; only an unsupported HTTP
-            // endpoint at handshake permits the deprecated SSE transport.
+          try {
+            await this.connectClientWithAbort(client, transport, requestOptions, signal);
+          } catch (error) {
+            // Only handshake failures establish that the HTTP endpoint is unsupported.
+            if (!definition.url || signal?.aborted || legacySse || !(error instanceof SdkHttpError)
+              || ![404, 405, 406, 415].includes(error.status)) throw error;
             legacySse = true;
-          } else {
-            throw error;
+            await client.close();
+            client = this.createClient(name, { ...definition, protocolVersion: "legacy" });
+            ({ transport, oauthProvider } = this.createHttpTransport(definition, name, legacySse, implicitOAuth, onAuthChallenge));
+            if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
+            continue;
           }
+          this.attachAdapterNotificationHandlers(name, client);
+
+          const instructions = client.getInstructions?.();
+          const connection: ServerConnection = {
+            client,
+            transport,
+            definition,
+            tools: [],
+            resources: [],
+            prompts: [],
+            ...(instructions !== undefined ? { instructions } : {}),
+            lastUsedAt: Date.now(),
+            inFlight: 0,
+            status: "connected",
+            oauthProvider,
+          };
+
+          // The public client hook preserves native transport cleanup. An old
+          // client's late close must never change its replacement's status.
+          client.onclose = () => {
+            if (this.connections.get(name) === connection) connection.status = "closed";
+          };
+
+          const discoveryOptions = this.buildRequestOptions(definition, signal);
+          const catalogs = [
+            this.fetchAllTools(client, discoveryOptions),
+            this.fetchAllResources(client, discoveryOptions),
+            this.fetchAllPrompts(client, discoveryOptions),
+          ] as const;
+          const [toolResult] = await Promise.allSettled(catalogs);
+          throwIfAborted(signal);
+          if (toolResult.status === "rejected" && !isOAuthChallenge(toolResult.reason)) throw toolResult.reason;
+          // Optional catalogs catch their errors; the native observer still sees auth challenges.
+          if (authError) throw authError;
+          const [tools, resources, promptResult] = await Promise.all(catalogs);
+          connection.tools = tools;
+          connection.resources = resources;
+          connection.prompts = promptResult.prompts;
+          connection.promptDiscoveryFailed = promptResult.failed;
+          return connection;
+        } catch (error) {
+          if (!definition.url || signal?.aborted || implicitOAuth || definition.auth !== undefined
+            || !supportsOAuth(definition) || !isOAuthChallenge(error)) throw error;
+          implicitOAuth = true;
           await client.close();
           client = this.createClient(name, legacySse ? { ...definition, protocolVersion: "legacy" } : definition);
-          transport = this.createHttpTransport(definition, name, legacySse, implicitOAuth);
+          ({ transport, oauthProvider } = this.createHttpTransport(definition, name, legacySse, implicitOAuth, onAuthChallenge));
           if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
         }
       }
-      this.attachAdapterNotificationHandlers(name, client);
-
-      const instructions = client.getInstructions?.();
-      const connection: ServerConnection = {
-        client,
-        transport,
-        definition,
-        tools: [],
-        resources: [],
-        prompts: [],
-        ...(instructions !== undefined ? { instructions } : {}),
-        lastUsedAt: Date.now(),
-        inFlight: 0,
-        status: "connected",
-      };
-
-      // Reflect the SDK's own close signal in connection status, guarded by
-      // identity so a stale connection's late close (e.g. the old
-      // connection from before a session-recovery reconnect) can never
-      // clobber a fresh connection that has since taken its place in
-      // `this.connections`. This intentionally uses `client.onclose`
-      // (Protocol's public hook), not `transport.onclose` — the SDK's
-      // Protocol takes ownership of that one internally for pending-request
-      // rejection, and overwriting it would break that. `client.onerror` is
-      // avoided too: it can fire on benign events (e.g. the optional GET
-      // SSE stream failing) that don't mean the connection is closed.
-      client.onclose = () => {
-        if (this.connections.get(name) === connection) {
-          connection.status = "closed";
-        }
-      };
-
-      // Discover tools, resources, and prompts. Resource and prompt listing is
-      // optional: only servers advertising the capability are queried.
-      const discoveryOptions = this.buildRequestOptions(definition, signal);
-      const [tools, resources, promptResult] = await Promise.all([
-        this.fetchAllTools(client, discoveryOptions),
-        this.fetchAllResources(client, discoveryOptions),
-        this.fetchAllPrompts(client, discoveryOptions),
-      ]);
-      connection.tools = tools;
-      connection.resources = resources;
-      connection.prompts = promptResult.prompts;
-      connection.promptDiscoveryFailed = promptResult.failed;
-
-      return connection;
     } catch (error) {
       // If connectClientWithAbort closed the transport, await that exact close.
       // Otherwise the SDK client owns its transport, so client.close() is the
@@ -508,7 +509,7 @@ export class McpServerManager {
 
       // Check for UnauthorizedError - server requires OAuth. A cleanup failure
       // remains a setup failure rather than being hidden behind needs-auth.
-      if (isUnauthorizedHttpError(error) && supportsOAuth(definition) && cleanupFailures.length === 0) {
+      if (isOAuthChallenge(error) && supportsOAuth(definition) && cleanupFailures.length === 0) {
         const connection: ServerConnection = {
           client,
           transport,
@@ -519,6 +520,7 @@ export class McpServerManager {
           lastUsedAt: Date.now(),
           inFlight: 0,
           status: "needs-auth",
+          oauthProvider,
         };
         this.disposePromises.set(connection, Promise.resolve());
         return connection;
@@ -716,9 +718,16 @@ export class McpServerManager {
     serverName: string,
     legacySse = false,
     implicitOAuth = false,
-  ): Transport {
+    onAuthChallenge?: (error: Error) => void,
+  ): { transport: Transport; oauthProvider: boolean } {
     const serverUrl = resolveServerUrl(definition)!;
     const url = new URL(serverUrl);
+    const storageBase = getAuthBaseDir(this.authStorageOptions);
+    const runtime = this.oauthRuntime;
+    const generation = this.closeGenerations.get(serverName) ?? 0;
+    const active = () => !this.stopped && !this.runtimeSignal?.aborted && !runtime?.signal.aborted
+      && (this.closeGenerations.get(serverName) ?? 0) === generation;
+    let issuer: string | undefined;
 
     // Resolve secret commands only for this connection attempt, without mutating config.
     const hasCommandHeader = Object.values(definition.headers ?? {})
@@ -757,6 +766,10 @@ export class McpServerManager {
         onRedirect: async (_authUrl) => {
           // URL is captured by startAuth, no need to log
         },
+        onDiscoveryState: state => {
+          issuer = state.authorizationServerMetadata?.issuer ?? state.authorizationServerUrl;
+          if (active()) bindOAuthRequestIssuer(serverName, serverUrl, storageBase, issuer, runtime);
+        },
       },
       this.authStorageOptions,
       this.oauthRuntime?.signal,
@@ -770,9 +783,27 @@ export class McpServerManager {
       skipIssuerMetadataValidation: definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
       ...(definition.retryOnTransportFailure === true ? { fetch: trackToolTransportFailure } : {}),
     };
-    const transport = legacySse ? new SSEClientTransport(url, options) : new StreamableHTTPClientTransport(url, options);
+    const transport = legacySse ? new SSEClientTransport(url, options) : new StreamableHTTPClientTransport(url, {
+      ...options,
+      ...(supportsOAuth(definition) && !(definition.oauth && definition.oauth.grantType === "client_credentials")
+        ? { onInsufficientScope: "throw" as const } : {}),
+    });
+    if (!legacySse && supportsOAuth(definition)) {
+      const previous = transport.onerror;
+      transport.onerror = error => {
+        previous?.(error);
+        if (!active() || isServerDisabled(definition) || !supportsOAuth(definition) || !isOAuthChallenge(error)) return;
+        recordOAuthChallenge(serverName, serverUrl, storageBase, error, runtime);
+        // A known issuer was validated by the native discovery hook, never inferred from the challenge.
+        if (issuer) {
+          const request = getOAuthRequest(serverName, serverUrl, storageBase, runtime);
+          if (request && !request.issuer) request.issuer = issuer;
+        }
+        onAuthChallenge?.(error);
+      };
+    }
     if (!legacySse && definition.retryOnTransportFailure === true) trackToolHttpFailures(transport);
-    return transport;
+    return { transport, oauthProvider: authProvider !== undefined };
   }
 
   private async fetchAllTools(client: Client, requestOptions?: RequestOptions): Promise<McpTool[]> {

@@ -16,7 +16,7 @@ import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from 
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, formatMcpStatus, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
-import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "./session-recovery.ts";
+import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 
@@ -366,6 +366,7 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
   if (isServerDisabled(definition)) return disabledResult("auth-complete", serverName);
 
   try {
+    const previousConnection = state.manager.getConnection(serverName);
     const status = state.authStorageOptions
       ? ownedSignal
         ? await completeAuthFromInput(serverName, input, { authStorageOptions: state.authStorageOptions, signal: ownedSignal, runtime: state.oauthRuntime })
@@ -380,7 +381,7 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
       };
     }
 
-    await state.manager.close(serverName);
+    if (previousConnection) state.manager.retire(serverName, previousConnection);
     clearFailure(state, serverName);
     updateStatusBar(state);
     return {
@@ -724,7 +725,7 @@ interface ToolCallOptions {
   ownedSignal: AbortSignal | undefined;
   /** Caller-supplied signal, passed to the UI session rather than the MCP call. */
   signal: AbortSignal | undefined;
-  recoverAuthConnection: (serverName: string, signal?: AbortSignal) => Promise<ServerConnection | undefined>;
+  recoverAuthConnection: NonNullable<SessionRecoveryDeps["onNeedsAuth"]>;
   authRequiredMessage: () => string;
   autoAuthAttempted: () => boolean;
   onRawResult?: (result: unknown) => void;
@@ -1233,10 +1234,10 @@ export async function executeCall(
     };
   }
 
-  const recoverAuthConnection = async (_serverName: string, recoverySignal = ownedSignal) => {
+  const recoverAuthConnection: NonNullable<SessionRecoveryDeps["onNeedsAuth"]> = async (_serverName, recoverySignal = ownedSignal, challenge) => {
     throwIfAborted(recoverySignal);
     const current = state.manager.getConnection(serverName);
-    if (current?.status === "connected") return current;
+    if (current?.status === "connected" && current !== challenge?.connection) return current;
 
     if (!autoAuthAttempted) {
       autoAuthAttempted = true;
@@ -1254,7 +1255,7 @@ export async function executeCall(
         return connection;
       }
     }
-    return state.manager.getConnection(serverName);
+    return challenge ? undefined : state.manager.getConnection(serverName);
   };
 
   return runToolCall(state, serverName, toolMeta, args, {

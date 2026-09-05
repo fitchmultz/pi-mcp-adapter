@@ -176,7 +176,7 @@ For known legacy servers, set `protocolVersion: "legacy"`. This is also the work
 
 `retryOnTransportFailure` is off by default. When enabled, direct tools, `mcp`, and `mcp_script` make at most one new `callTool` request on the same modern HTTP client, with a fresh SDK-generated request ID. Eligible failures are a rejected tool POST fetch before response headers arrive, or an HTTP 5xx tool response without a JSON-RPC error. **The first attempt may already have run; enabling retries can duplicate side effects.** Request IDs are not idempotency keys.
 
-OAuth failures, JSON-RPC errors, tool error results, invalid responses, cancellation, and expired deadlines are not retried. A lost JSON/SSE response body may surface only as a parse error or timeout; those ambiguous failures are not replayed. The original tool deadline covers SDK subrequests and retries, and modern retry never stacks with legacy expired-session recovery. Native header-schema refresh and multi-round-trip input handling remain SDK-owned.
+This transport-failure option does not retry OAuth failures, JSON-RPC errors, tool error results, invalid responses, cancellation, or expired deadlines. Permission recovery uses the separate existing `autoAuth` gate, not this option. A lost JSON/SSE response body may surface only as a parse error or timeout; those ambiguous failures are not replayed. The original tool deadline covers SDK subrequests and retries, and modern retry never stacks with legacy expired-session recovery. Native header-schema refresh and multi-round-trip input handling remain SDK-owned.
 
 ### Server Options
 
@@ -267,7 +267,9 @@ mcp({
 })
 ```
 
-You can also pass only the `code` query parameter with `args: { code: "..." }`. Treat authorization URLs and codes as sensitive; they can grant access to the MCP server until the flow expires or completes.
+You can also pass only the `code` query parameter with `args: { code: "..." }`. Treat authorization URLs and codes as sensitive; they can grant access to the MCP server until the flow expires or completes. Callback state and issuer are checked before provider error text is displayed, as well as before code exchange.
+
+New scope requirements are retained within the current runtime for the next permitted OAuth flow. URL-only servers also activate OAuth when their first protected catalog or tool is reached; valid saved tokens do not require another sign-in. Token scopes remain exactly what the authorization server issued. See [OAuth permission recovery](OAUTH.md#newly-required-permissions) for consent, cancellation, and transport limits.
 
 ### Lifecycle Modes
 
@@ -635,7 +637,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 | `/mcp-auth` | Open an OAuth server picker in interactive UI sessions |
 | `/mcp-auth <server>` | OAuth setup for a specific server |
 
-If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`, and direct tool calls automatically run OAuth when needed and retry once.
+If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`, and direct/script tool calls may run OAuth when needed, with at most one automatic auth attempt per invocation and one post-auth retry. Browser authorization requires an interactive host. Auth-only replacement preserves accepted work on the old client; ordinary `/mcp reconnect` and panel `ctrl+r` remain hard resets.
 
 In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or Enter on a server that needs auth. In remote/headless sessions, use the proxy tool's `auth-start` and `auth-complete` actions to copy the authorization URL locally and paste the redirect URL back into Pi. `/mcp-auth` without a server only opens a picker in the interactive UI.
 

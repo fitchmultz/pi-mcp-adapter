@@ -4,6 +4,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert"
+import { validateAuthorizationResponseIssuer } from "@modelcontextprotocol/client"
 import { createServer } from "node:http"
 import {
   ensureCallbackServer,
@@ -224,7 +225,9 @@ describe("mcp-callback-server", () => {
     })
 
     it("should reject on error parameter", async () => {
-      await ensureCallbackServer()
+      await ensureCallbackServer({ oauthState: "test-state-error", reserveState: true,
+        validate: ({ iss }) => validateAuthorizationResponseIssuer({ iss, expectedIssuer: "https://auth.example.com", issParameterSupported: false }),
+      })
 
       const state = "test-state-error"
       const errorMsg = "access_denied"
@@ -247,7 +250,9 @@ describe("mcp-callback-server", () => {
     })
 
     it("should escape provider-controlled OAuth error details", async () => {
-      await ensureCallbackServer()
+      await ensureCallbackServer({ oauthState: "test-state-error-escaping", reserveState: true,
+        validate: ({ iss }) => validateAuthorizationResponseIssuer({ iss, expectedIssuer: "https://auth.example.com", issParameterSupported: false }),
+      })
 
       const state = "test-state-error-escaping"
       const callbackPromise = waitForCallback(state)

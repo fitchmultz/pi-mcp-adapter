@@ -4,6 +4,7 @@ import {
   releaseCallbackServer,
   stopCallbackServer,
 } from "../mcp-callback-server.ts";
+import { validateAuthorizationResponseIssuer } from "@modelcontextprotocol/client";
 import { getOAuthCallbackPath, getOAuthCallbackPort } from "../mcp-oauth-provider.ts";
 
 describe("manual OAuth callback reservations", () => {
@@ -32,7 +33,9 @@ describe("manual OAuth callback reservations", () => {
   });
 
   it("keeps reserved manual auth states after provider error callbacks", async () => {
-    await ensureCallbackServer({ oauthState: "manual-error-retry", reserveState: true });
+    await ensureCallbackServer({ oauthState: "manual-error-retry", reserveState: true,
+      validate: ({ iss }) => validateAuthorizationResponseIssuer({ iss, expectedIssuer: "https://auth.example.com", issParameterSupported: false }),
+    });
 
     const errorResponse = await fetch(
       `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}?error=access_denied&state=manual-error-retry`,

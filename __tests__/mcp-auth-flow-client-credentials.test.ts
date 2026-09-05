@@ -91,10 +91,10 @@ describe("mcp-auth-flow explicit auth", () => {
   it("rejects invalid manual OAuth redirect input", async () => {
     const { parseAuthorizationRedirectInput } = await import("../mcp-auth-flow.ts");
 
-    expect(() => parseAuthorizationRedirectInput(
+    expect(parseAuthorizationRedirectInput(
       "http://localhost:19876/callback?error=access_denied&error_description=Denied&state=state123",
       "state123",
-    )).toThrow("access_denied: Denied");
+    )).toEqual({ error: "access_denied", errorDescription: "Denied" });
     expect(() => parseAuthorizationRedirectInput(
       "http://localhost:19876/callback?code=abc123",
       "state123",
@@ -120,6 +120,7 @@ describe("mcp-auth-flow explicit auth", () => {
           authorization_response_iss_parameter_supported: true,
         },
       });
+      await provider.clientInformation();
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
@@ -158,6 +159,7 @@ describe("mcp-auth-flow explicit auth", () => {
           authorization_response_iss_parameter_supported: true,
         },
       });
+      await provider.clientInformation();
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
@@ -181,6 +183,7 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.saveDiscoveryState({
         authorizationServerUrl: "https://auth.example.com",
       });
+      await provider.clientInformation();
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
