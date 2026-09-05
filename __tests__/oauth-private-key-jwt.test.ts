@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { auth, OAuthError, OAuthErrorCode } from "@modelcontextprotocol/client";
+import { auth, OAuthError, OAuthErrorCode, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { completeAuthFromInput, createOAuthRuntime, extractOAuthConfig, shutdownOAuth, startAuth } from "../mcp-auth-flow.ts";
 import { clearAllCredentials, getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
 import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
@@ -164,6 +164,36 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
       expect((await fetch(location)).status).toBe(200);
       expect(await completeAuthFromInput(name, location, { runtime })).toBe("authenticated");
     },
+  };
+}
+
+function holdNativeSigning() {
+  const events: string[] = [];
+  const sends = new Set<Promise<void>>();
+  let began!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const sign = crypto.subtle.sign.bind(crypto.subtle);
+  const signer = vi.spyOn(crypto.subtle, "sign").mockImplementation(async (...args) => {
+    events.push("sign-start"); began(); await gate;
+    const signature = await sign(...args); events.push("sign-finished"); return signature;
+  });
+  const send = StreamableHTTPClientTransport.prototype.send;
+  const sender = vi.spyOn(StreamableHTTPClientTransport.prototype, "send").mockImplementation(function (...args) {
+    events.push("native-send-start");
+    const pending = send.apply(this, args);
+    sends.add(pending);
+    const settled = () => { sends.delete(pending); events.push("native-send-settled"); };
+    void pending.then(settled, settled);
+    return pending;
+  });
+  return { started, events, pending: () => sends.size,
+    finish: async () => {
+      release();
+      // Public connect/call promises may reject before the detached native auth exchange finishes.
+      while (sends.size) await Promise.allSettled([...sends]);
+    },
+    restore: () => { sender.mockRestore(); signer.mockRestore(); },
   };
 }
 
@@ -347,21 +377,104 @@ it("stops failed signing during ordinary browser refresh without consent or cred
   expect(f.stored()).toEqual(before); expect(browser.open).not.toHaveBeenCalled();
 });
 
-it("cancels the real manager authentication while native signing is in flight without late token or tool dispatch", async () => {
-  const f = await fixture();
-  const original = crypto.subtle.sign.bind(crypto.subtle);
-  let began!: () => void, release!: () => void, signed!: () => void;
-  const started = new Promise<void>(r => { began = r; }); const gate = new Promise<void>(r => { release = r; });
-  const finished = new Promise<void>(r => { signed = r; });
-  const spy = vi.spyOn(crypto.subtle, "sign").mockImplementation(async (...args) => { began(); await gate; const result = await original(...args); signed(); return result; });
+it.each([
+  ["auto", "close"], ["auto", "signal"], ["auto", "shutdown"],
+  ["legacy", "close"], ["legacy", "signal"], ["legacy", "shutdown"],
+] as const)("settles native %s auth after %s without late token or tool dispatch", async (protocolVersion, mode) => {
+  const f = await fixture(); f.definition.protocolVersion = protocolVersion;
+  const other = await fixture();
+  const sibling = await f.manager.connect(other.name, other.definition);
+  const controller = new AbortController();
+  const signing = holdNativeSigning();
+  let before: ReturnType<typeof f.stored>;
   try {
-    const pending = f.connect().then(c => c.client.callTool({ name: "echo" })).catch(error => error);
-    await started; const before = f.stored();
-    await shutdownOAuth(f.runtime); release(); await finished;
+    const pending = f.manager.connect(f.name, f.definition, mode === "signal" ? controller.signal : undefined)
+      .then(c => c.client.callTool({ name: "echo" })).catch(error => error);
+    await signing.started; before = structuredClone(f.stored());
+    if (mode === "close") await f.manager.close(f.name);
+    else if (mode === "signal") controller.abort(new Error("individual connect cancelled"));
+    else await shutdownOAuth(f.runtime);
+    signing.events.push("cancel-returned");
+    if (mode !== "shutdown") expect(await pending).toBeInstanceOf(Error);
+    expect(signing.pending()).toBeGreaterThan(0);
+    await signing.finish();
     expect(await pending).toBeInstanceOf(Error);
+    expect(signing.pending()).toBe(0);
+    expect(signing.events.at(-1)).toBe("native-send-settled");
     expect(f.exchanges).toHaveLength(0); expect(f.stored()).toEqual(before);
     expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(0);
-  } finally { release(); spy.mockRestore(); }
+    expect(f.manager.getConnection(f.name)).toBeUndefined();
+    expect(f.runtime.signal.aborted).toBe(mode === "shutdown");
+    if (mode !== "shutdown") {
+      other.expire();
+      expect(await sibling.client.callTool({ name: "echo" })).toMatchObject({ content: [{ text: "signed tool" }] });
+      expect(other.exchanges).toHaveLength(2); // A sibling on the same runtime can still sign and save fresh tokens.
+    }
+  } finally {
+    await signing.finish(); signing.restore();
+    if (process.env.JWT_PROOF_FILE) appendFileSync(process.env.JWT_PROOF_FILE, `${JSON.stringify({ test: expect.getState().currentTestName,
+      cancellation: mode, protocolVersion, nativeEvents: signing.events, pendingNativeSends: signing.pending(), tokenPosts: f.exchanges.length,
+      storageChanged: JSON.stringify(before) !== JSON.stringify(f.stored()), runtimeAborted: f.runtime.signal.aborted })}\n`);
+  }
+});
+
+it("stops detached refresh after closing an established connection without replacing its tokens", async () => {
+  const f = await fixture(); const connection = await f.connect(); f.expire();
+  const signing = holdNativeSigning();
+  try {
+    const pending = connection.client.callTool({ name: "echo" }).catch(error => error);
+    await signing.started;
+    const before = structuredClone(f.stored()); const requests = f.requests.length;
+    await f.manager.close(f.name);
+    expect(await pending).toBeInstanceOf(Error); expect(signing.pending()).toBeGreaterThan(0);
+    await signing.finish();
+    expect(f.exchanges).toHaveLength(1); expect(f.stored()).toEqual(before);
+    expect(f.requests).toHaveLength(requests); expect(f.runtime.signal.aborted).toBe(false);
+  } finally { await signing.finish(); signing.restore(); }
+});
+
+it("does not bind a completed connect caller's signal to the provider lifetime", async () => {
+  const f = await fixture(); const controller = new AbortController();
+  const connection = await f.manager.connect(f.name, f.definition, controller.signal);
+  controller.abort(); f.expire();
+  expect(await connection.client.callTool({ name: "echo" })).toMatchObject({ content: [{ text: "signed tool" }] });
+  expect(f.exchanges).toHaveLength(2); expect(f.runtime.signal.aborted).toBe(false);
+});
+
+it("keeps native auth alive for the surviving shared reconnect caller", async () => {
+  const f = await fixture(); const stale = await f.connect(); f.expire();
+  const controller = new AbortController(); const signing = holdNativeSigning();
+  try {
+    const first = f.manager.reconnect(f.name, f.definition, stale, controller.signal).catch(error => error);
+    await signing.started; controller.abort(new Error("stop waiting"));
+    expect(await first).toBeInstanceOf(Error); expect(signing.pending()).toBeGreaterThan(0);
+    const second = f.manager.reconnect(f.name, f.definition, stale);
+    await signing.finish(); const fresh = await second;
+    expect(fresh).not.toBe(stale); expect(f.manager.getConnection(f.name)).toBe(fresh);
+    f.expire();
+    expect(await fresh.client.callTool({ name: "echo" })).toMatchObject({ content: [{ text: "signed tool" }] });
+    expect(f.exchanges).toHaveLength(3); expect(f.runtime.signal.aborted).toBe(false);
+  } finally { await signing.finish(); signing.restore(); }
+});
+
+it("drains accepted native authentication before retiring its transport, leaving the replacement usable", async () => {
+  const f = await fixture(); const stale = await f.connect(); f.expire();
+  const signing = holdNativeSigning();
+  const closeTransport = stale.transport.close.bind(stale.transport);
+  let closed!: () => void; const didClose = new Promise<void>(resolve => { closed = resolve; });
+  const closing = vi.spyOn(stale.transport, "close").mockImplementation(async () => { await closeTransport(); closed(); });
+  try {
+    const accepted = stale.client.callTool({ name: "echo" });
+    await signing.started; f.manager.retire(f.name, stale);
+    expect(closing).not.toHaveBeenCalled();
+    await signing.finish();
+    expect(await accepted).toMatchObject({ content: [{ text: "signed tool" }] });
+    await didClose; expect(closing).toHaveBeenCalledTimes(1);
+    const fresh = await f.connect(); expect(fresh).not.toBe(stale);
+    f.expire();
+    expect(await fresh.client.callTool({ name: "echo" })).toMatchObject({ content: [{ text: "signed tool" }] });
+    expect(f.exchanges).toHaveLength(3); expect(f.runtime.signal.aborted).toBe(false);
+  } finally { await signing.finish(); signing.restore(); closing.mockRestore(); }
 });
 
 it("validates private-key configuration and identity conflicts at both public boundaries without disclosure", () => {

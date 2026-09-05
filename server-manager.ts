@@ -790,6 +790,14 @@ export class McpServerManager {
       ...(supportsOAuth(definition) && !(definition.oauth && definition.oauth.grantType === "client_credentials")
         ? { onInsufficientScope: "throw" as const } : {}),
     });
+    if (authProvider) {
+      const close = transport.close.bind(transport);
+      transport.close = () => {
+        // Native OAuth fetches do not inherit the transport's abort signal.
+        authProvider.deactivate();
+        return close();
+      };
+    }
     if (!legacySse && supportsOAuth(definition)) {
       const previous = transport.onerror;
       transport.onerror = error => {
