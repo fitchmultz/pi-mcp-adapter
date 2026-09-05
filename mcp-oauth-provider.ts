@@ -7,6 +7,9 @@
 
 import {
   UnauthorizedError,
+  OAuthError,
+  OAuthErrorCode,
+  createPrivateKeyJwtAuth,
   validateClientMetadataUrl,
   type AddClientAuthentication,
   type OAuthClientProvider,
@@ -32,6 +35,7 @@ import {
   type StoredClientInfo,
 } from "./mcp-auth.ts"
 import { resolveCommandSecret } from "./utils.ts"
+import type { OAuthPrivateKeyJwtConfig } from "./types.ts"
 import sharedClientMetadata from "./docs/client-metadata.json" with { type: "json" }
 
 /** Validate explicit document URLs without echoing possible credentials in errors. */
@@ -111,13 +115,42 @@ export interface McpOAuthConfig {
   grantType?: "authorization_code" | "client_credentials"
   clientId?: string
   clientSecret?: string
+  privateKeyJwt?: OAuthPrivateKeyJwtConfig
   scope?: string
   authorizationParams?: Record<string, string>
   redirectUri?: string
   clientName?: string
   clientUri?: string
-  /** Custom public-client document URL; false disables automatic CIMD for new registrations. */
+  /** Custom client document URL; false disables automatic CIMD for new registrations. */
   clientMetadataUrl?: string | false
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+/** Validate shapes and method conflicts without resolving or disclosing key sources. */
+export function validateOAuthPrivateKeyJwt(config: McpOAuthConfig): void {
+  const jwt = config.privateKeyJwt
+  if (jwt === undefined) return
+  if (!isRecord(jwt)) throw new Error("OAuth privateKeyJwt must be an object")
+  if (!(typeof jwt.privateKey === "string" ? jwt.privateKey.trim() : isRecord(jwt.privateKey))) {
+    throw new Error("OAuth privateKeyJwt.privateKey must be a nonempty string or JWK object")
+  }
+  if (typeof jwt.algorithm !== "string" || !jwt.algorithm.trim() || /^(?:HS|none$)/i.test(jwt.algorithm)) {
+    throw new Error("OAuth privateKeyJwt.algorithm must be an asymmetric JOSE algorithm")
+  }
+  if (jwt.audience !== undefined && (typeof jwt.audience !== "string" || !jwt.audience.trim())) {
+    throw new Error("OAuth privateKeyJwt.audience must be a nonempty string")
+  }
+  if (jwt.lifetimeSeconds !== undefined && (!Number.isSafeInteger(jwt.lifetimeSeconds) || jwt.lifetimeSeconds <= 0)) {
+    throw new Error("OAuth privateKeyJwt.lifetimeSeconds must be a positive integer")
+  }
+  if (jwt.claims !== undefined && !isRecord(jwt.claims)) throw new Error("OAuth privateKeyJwt.claims must be an object")
+  if (config.clientSecret !== undefined) throw new Error("OAuth privateKeyJwt cannot be combined with clientSecret")
+  if (!config.clientId && (typeof config.clientMetadataUrl !== "string" || config.clientMetadataUrl === sharedClientMetadata.client_id)) {
+    throw new Error("OAuth privateKeyJwt requires a configured clientId or custom clientMetadataUrl, not the shared browser identity")
+  }
 }
 
 const reservedAuthorizationParams = new Set([
@@ -173,6 +206,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     initialState?: string,
   ) {
     validateOAuthClientMetadataUrl(config.clientMetadataUrl)
+    validateOAuthPrivateKeyJwt(config)
     this.flowState = initialState
     this.redirectUrlSnapshot = config.grantType === "client_credentials"
       ? undefined
@@ -180,7 +214,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (config.clientMetadataUrl !== false && config.clientSecret === undefined) {
       if (config.clientMetadataUrl && config.clientMetadataUrl !== sharedClientMetadata.client_id) {
         this.clientMetadataUrl = config.clientMetadataUrl
-      } else if (!this.usesClientCredentials
+      } else if (!this.usesClientCredentials && !config.privateKeyJwt
         && (config.clientName === undefined || config.clientName === sharedClientMetadata.client_name)
         && (config.clientUri === undefined || config.clientUri === sharedClientMetadata.client_uri)
         && sharedClientMetadata.redirect_uris.some(uri => loopbackRedirectsMatch(uri, this.redirectUrl))) {
@@ -244,7 +278,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
         redirect_uris: [],
         grant_types: ["client_credentials"],
-        token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
+        token_endpoint_auth_method: this.config.privateKeyJwt ? "private_key_jwt" : this.config.clientSecret ? "client_secret_post" : "none",
       }
     }
 
@@ -259,7 +293,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
+      token_endpoint_auth_method: this.config.privateKeyJwt ? "private_key_jwt" : this.config.clientSecret ? "client_secret_post" : "none",
       ...(this.config.scope !== undefined ? { scope: this.config.scope } : {}),
     }
   }
@@ -321,6 +355,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
           && clientInfo.redirectUris === undefined)
       if (isConfigStub) {
         return undefined
+      }
+      if ((this.config.privateKeyJwt || this.usesClientCredentials) && clientInfo.registrationType === "cimd" && clientInfo.clientId === sharedClientMetadata.client_id) {
+        throw new OAuthError(OAuthErrorCode.InvalidRequest, `OAuth ${this.config.privateKeyJwt ? "privateKeyJwt" : "client_credentials"} cannot use the saved shared browser registration; configure its own clientId or replace that login`)
       }
       // Check if client secret has expired
       if (clientInfo.clientSecretExpiresAt && clientInfo.clientSecretExpiresAt < Date.now() / 1000) {
@@ -563,18 +600,46 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Adds configured authorization-code scope without replacing the SDK's
-   * default token endpoint authentication behavior.
+   * Adds configured scope and client authentication to native token requests.
    */
-  addClientAuthentication: AddClientAuthentication = async (headers, params, _url, metadata) => {
+  addClientAuthentication: AddClientAuthentication = async (headers, params, url, metadata) => {
     this.throwIfInactive()
     if (params.get("grant_type") === "authorization_code" && !params.has("scope") && this.config.scope) {
       params.set("scope", this.config.scope)
     }
 
-    const clientInfo = await this.clientInformation()
+    const clientInfo = await this.clientInformation(this.config.privateKeyJwt && metadata?.issuer ? { issuer: metadata.issuer } : undefined)
     this.throwIfInactive()
     if (!clientInfo) {
+      return
+    }
+
+    const jwt = this.config.privateKeyJwt
+    if (jwt) {
+      if (clientInfo.client_secret !== undefined) {
+        throw new OAuthError(OAuthErrorCode.InvalidRequest, "OAuth privateKeyJwt cannot use a shared-secret client")
+      }
+      let privateKey = jwt.privateKey
+      if (typeof privateKey === "string") {
+        try {
+          privateKey = resolveCommandSecret(privateKey, "OAuth privateKeyJwt.privateKey")
+        } catch (error) {
+          // This primitive's errors contain only the outcome, never command text or output.
+          throw new OAuthError(OAuthErrorCode.InvalidRequest, (error as Error).message)
+        }
+      }
+      try {
+        if (typeof privateKey === "string" && privateKey.trimStart().startsWith("{")) privateKey = JSON.parse(privateKey)
+        const { algorithm, ...options } = jwt
+        await createPrivateKeyJwtAuth({
+          ...options, privateKey, alg: algorithm, issuer: clientInfo.client_id, subject: clientInfo.client_id,
+        })(headers, params, url, metadata)
+      } catch {
+        // Ordinary errors fall through into browser consent on native refresh; invalid_client erases credentials.
+        throw new OAuthError(OAuthErrorCode.InvalidRequest, "OAuth privateKeyJwt could not sign an assertion; check the private key and algorithm")
+      }
+      this.throwIfInactive()
+      params.set("client_id", clientInfo.client_id)
       return
     }
 

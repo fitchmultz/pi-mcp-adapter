@@ -2,10 +2,6 @@
 # Remove an entry as soon as its scenario passes. The conformance CLI treats a
 # passing baseline entry as stale and fails the run.
 client:
-  # The adapter supports client_secret_basic client credentials, but its config
-  # has no private-key JWT credentials or assertion signing hook.
-  - auth/client-credentials-jwt
-
   # SEP-990 needs an IdP token exchange followed by a JWT bearer grant. The
   # adapter currently implements authorization_code and client_credentials only.
   - auth/cross-app-access-complete-flow

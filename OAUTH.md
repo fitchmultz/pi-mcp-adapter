@@ -77,6 +77,7 @@ You can optionally provide a pre-registered client:
 - `oauth.grantType` - `"authorization_code"` (default, browser flow) or `"client_credentials"` (non-interactive)
 - `oauth.clientId` - Pre-registered client ID (optional; takes priority over stored clients, CIMD and DCR)
 - `oauth.clientSecret` - Client secret for confidential clients (optional)
+- `oauth.privateKeyJwt` - Private-key client authentication instead of `clientSecret`; see [Private-key JWT](#private-key-jwt)
 - `oauth.scope` - Requested OAuth scopes (optional)
 - `oauth.authorizationParams` - Extra authorization URL parameters for provider-specific extensions, such as Google's `{ "access_type": "offline", "prompt": "consent" }`. Flow-owned parameters like `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden.
 - `oauth.redirectUri` - Exact browser callback URI to advertise and bind, such as `http://localhost:3118/callback` (optional)
@@ -91,7 +92,7 @@ Dynamic clients normally omit `oauth.redirectUri`; the adapter starts the callba
 
 The SDK selects a client in this order:
 
-1. Configured `oauth.clientId` (and `clientSecret`, when needed).
+1. Configured `oauth.clientId` (and `clientSecret` or `privateKeyJwt`, when needed).
 2. A usable stored registration for this server and issuer.
 3. An eligible metadata document URL when the authorization server advertises `client_id_metadata_document_supported: true`.
 4. Dynamic client registration, when supported.
@@ -125,7 +126,36 @@ For machine-to-machine OAuth, configure `grantType: "client_credentials"`.
 }
 ```
 
-This flow does not open a browser or use callback handling. `oauth.redirectUri` is ignored for `client_credentials`; `oauth.clientName` and `oauth.clientUri` still apply to dynamic client registration metadata. The shared browser document is never selected, even when its URL is explicitly configured. A custom `clientMetadataUrl` without a shared secret can identify a noninteractive client if the authorization server accepts its document and public token authentication. This is not universal machine-client support: private-key JWT and cross-app authorization are not configured by the adapter yet.
+This flow does not open a browser or use callback handling. `oauth.redirectUri` is ignored for `client_credentials`; `oauth.clientName` and `oauth.clientUri` still apply to dynamic client registration metadata. The shared browser document is never selected, even when its URL is explicitly configured. A custom `clientMetadataUrl` without a shared secret can identify a noninteractive client if the authorization server accepts its document and authentication method. Configured client-credentials clients advertise the native `io.modelcontextprotocol/oauth-client-credentials` extension, including on auth-discovery requests. Cross-app authorization remains unsupported.
+
+### Private-key JWT
+
+Set `oauth.privateKeyJwt` to authenticate native token requests with `private_key_jwt` instead of a shared secret:
+
+```json
+{
+  "grantType": "client_credentials",
+  "clientId": "registered-service-client",
+  "privateKeyJwt": {
+    "privateKey": "!cat /path/to/user-managed-private-key.pem",
+    "algorithm": "ES256"
+  }
+}
+```
+
+| Option | Meaning |
+| --- | --- |
+| `privateKey` | PKCS#8 PEM string, JWK object or JWK JSON string. Strings support `${VAR}`, `$env:VAR`, `{env:VAR}` and existing `!command` / `!!` conventions, resolved only when authenticating. |
+| `algorithm` | Required asymmetric JOSE algorithm. Native PEM import supports RS, PS and ES families; EdDSA / Ed25519 require a JWK. The SDK validates supported key/algorithm combinations. HMAC (`HS*`) and `none` are not private-key authentication. |
+| `audience` | Optional nonempty JWT audience string; defaults to the discovered authorization-server issuer, then token URL. It does not change the request destination. |
+| `lifetimeSeconds` | Optional positive integer; native default is 300 seconds. |
+| `claims` | Optional object of additional JWT claims. Native `iss`, `sub`, `aud`, `iat`, `exp` and `jti` take precedence over overlapping entries. |
+
+Keys must belong to an externally registered `clientId`, or a custom `clientMetadataUrl` whose document describes `private_key_jwt` and provides the matching public verification key. The SDK signs issuer and subject as the actual selected client ID. Configured and usable stored clients retain their existing priority. If a previous login uses the shared method-`none` browser identity or a shared secret, private-key authentication fails before key resolution instead of silently migrating or erasing that login. `clientSecret` and `privateKeyJwt` cannot be configured together. The shared Pi document cannot identify a private-key client. Explicit pre-registration and opaque DCR client IDs are not classified as shared CIMD merely because their strings resemble a document URL.
+
+Omit `grantType` (or use `authorization_code`) for private-key authentication on browser code and refresh requests; existing PKCE, callbacks and issuer validation still apply. Client-credentials requests use `grant_type=client_credentials` plus a signed client assertion, not a JWT-bearer grant. Native scope precedence is unchanged: explicit `/mcp-auth` applies configured scope, while ordinary transport authentication can prefer a server challenge or protected-resource scope. This feature does not change scope step-up or retry policy.
+
+Each actual token authentication re-resolves the key source and signs a fresh assertion. The existing command timeout/output limits apply. A local command, key or signing failure produces a non-disclosing error without retrying, deleting stored credentials or opening browser consent. Private keys and assertions are not added to stored client information, tokens or client metadata. There is no key provisioning, rotation service, key/assertion cache or extra credential store. The native signer has no custom header or `kid` option; a JWK's `kid` is not copied into the assertion header.
 
 ## Usage
 

@@ -569,8 +569,10 @@ export class McpServerManager {
     }
   }
 
-  private buildClientCapabilities() {
+  private buildClientCapabilities(definition: ServerDefinition) {
     return {
+      ...(definition.oauth && definition.oauth.grantType === "client_credentials"
+        ? { extensions: { "io.modelcontextprotocol/oauth-client-credentials": {} } } : {}),
       ...(this.samplingConfig ? { sampling: {} } : {}),
       ...(this.elicitationConfig
         ? {
@@ -584,7 +586,7 @@ export class McpServerManager {
   }
 
   private createClient(serverName: string, definition: ServerDefinition): Client {
-    const capabilities = this.buildClientCapabilities();
+    const capabilities = this.buildClientCapabilities(definition);
     let client: Client;
     client = new ManagedClient(
       { name: `pi-mcp-${serverName}`, version: "4.2.3" },
