@@ -17,7 +17,7 @@ import {
   isStrictScopeSuperset,
 } from "@modelcontextprotocol/client"
 import open from "open"
-import { McpOAuthProvider, issuersMatch, loopbackRedirectsMatch, validateOAuthClientMetadataUrl, validateOAuthPrivateKeyJwt, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
+import { McpOAuthProvider, issuersMatch, loopbackRedirectsMatch, validateOAuthClientMetadataUrl, validateOAuthPrivateKeyJwt, validateOAuthCrossAppAccess, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -36,7 +36,7 @@ import {
   getAuthBaseDir,
   type AuthStorageOptions,
 } from "./mcp-auth.ts"
-import { isServerDisabled, validateServerProtocolConfig, type ServerEntry } from "./types.ts"
+import { isServerDisabled, isNonInteractiveOAuth, validateServerProtocolConfig, type ServerEntry } from "./types.ts"
 import { formatTerminalError, interpolateEnvRecord, interpolateEnvVars, normalizeRequestTimeoutMs } from "./utils.ts"
 import { abortable, throwIfAborted } from "./abort.ts"
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts"
@@ -246,7 +246,9 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     // Keep environment and command sources lazy; each authentication resolves its own key.
     config.privateKeyJwt = definition.oauth.privateKeyJwt
   }
+  if (definition.oauth?.crossAppAccess !== undefined) config.crossAppAccess = definition.oauth.crossAppAccess
   validateOAuthPrivateKeyJwt(config)
+  validateOAuthCrossAppAccess(config)
   if (definition.oauth?.scope !== undefined) {
     if (typeof definition.oauth.scope !== "string") throw new Error("OAuth scope must be a string")
     config.scope = interpolateEnvVars(definition.oauth.scope)
@@ -307,8 +309,9 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
   let discovery: AuthDiscovery = {}
   const client = new Client({ name: "pi-mcp-auth-discovery", version: "4.2.3" }, {
     versionNegotiation: { mode: definition?.protocolVersion ?? "auto" },
-    ...(definition?.oauth && definition.oauth.grantType === "client_credentials"
-      ? { capabilities: { extensions: { "io.modelcontextprotocol/oauth-client-credentials": {} } } } : {}),
+    ...(isNonInteractiveOAuth(definition?.oauth)
+      ? { capabilities: { extensions: { [definition?.oauth && definition.oauth.crossAppAccess
+        ? "io.modelcontextprotocol/enterprise-managed-authorization" : "io.modelcontextprotocol/oauth-client-credentials"]: {} } } } : {}),
   })
   const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
     requestInit: { headers },
@@ -383,9 +386,9 @@ export async function startAuth(
   const generation = runtimeState.generation
   throwIfAborted(signal)
 
-  if (config.grantType === "client_credentials") {
+  if (isNonInteractiveOAuth(config)) {
     const storedAuth = await getAuthForUrl(serverName, serverUrl, authStorageOptions)
-    if (storedAuth?.clientInfo && !storedAuth.tokens && !config.clientId) {
+    if (!config.crossAppAccess && storedAuth?.clientInfo && !storedAuth.tokens && !config.clientId) {
       clearClientInfo(serverName, authStorageOptions)
       clearCodeVerifier(serverName, authStorageOptions)
       await clearOAuthState(serverName, authStorageOptions)
@@ -393,13 +396,13 @@ export async function startAuth(
 
     const authProvider = new McpOAuthProvider(serverName, serverUrl, config, {
       onRedirect: async () => {
-        throw new Error("Browser redirect is not used for client_credentials flow")
+        throw new Error("Browser redirect is not used for noninteractive OAuth flows")
       },
-    }, authStorageOptions, runtime.signal)
+    }, authStorageOptions, signal)
     try {
       const discovery = applyConfiguredScope(await probeAuthDiscovery(serverUrl, definition, signal), config)
       throwIfAborted(signal)
-      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery }), signal)
+      const result = await abortable(runSdkAuth(authProvider, { serverUrl, ...discovery, fetchFn: authProvider.fetch }), signal)
       throwIfAborted(signal)
       if (result !== "AUTHORIZED") {
         throw new UnauthorizedError("Failed to authorize")

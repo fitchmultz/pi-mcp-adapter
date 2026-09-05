@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type McpAuthResult, type McpConfig, type McpPanelCallbacks, type McpPanelResult, type ImportKind } from "./types.ts";
+import { isServerDisabled, isNonInteractiveOAuth, type McpAuthResult, type McpConfig, type McpPanelCallbacks, type McpPanelResult, type ImportKind } from "./types.ts";
 import {
   ensureCompatibilityImports,
   getMcpDiscoverySummary,
@@ -480,7 +480,7 @@ function buildMcpPanelCallbacks(
         definition?.auth === "oauth"
         && serverUrl
         && definition.oauth !== false
-        && definition.oauth?.grantType !== "client_credentials"
+        && !isNonInteractiveOAuth(definition.oauth)
       ) {
         const authStatus = inspectAuthForUrl(serverName, serverUrl, state.authStorageOptions);
         if (authStatus.status === "unavailable") {

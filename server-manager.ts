@@ -4,6 +4,7 @@ import {
   SSEClientTransport,
   SdkHttpError,
   type RequestOptions,
+  type FetchLike,
   type GetPromptResult,
   type ReadResourceResult,
   type UrlElicitationRequiredError,
@@ -13,6 +14,7 @@ import { UnixSocketClientTransport } from "./unix-socket-transport.ts";
 import { trackToolHttpFailures, trackToolTransportFailure } from "./session-recovery.ts";
 import {
   isServerDisabled,
+  isNonInteractiveOAuth,
   validateServerProtocolConfig,
   type McpTool,
   type McpResource,
@@ -571,8 +573,9 @@ export class McpServerManager {
 
   private buildClientCapabilities(definition: ServerDefinition) {
     return {
-      ...(supportsOAuth(definition) && definition.oauth && definition.oauth.grantType === "client_credentials"
-        ? { extensions: { "io.modelcontextprotocol/oauth-client-credentials": {} } } : {}),
+      ...(supportsOAuth(definition) && isNonInteractiveOAuth(definition.oauth)
+        ? { extensions: { [definition.oauth && definition.oauth.crossAppAccess
+          ? "io.modelcontextprotocol/enterprise-managed-authorization" : "io.modelcontextprotocol/oauth-client-credentials"]: {} } } : {}),
       ...(this.samplingConfig ? { sampling: {} } : {}),
       ...(this.elicitationConfig
         ? {
@@ -783,14 +786,19 @@ export class McpServerManager {
       ...(requestInit !== undefined ? { requestInit } : {}),
       ...(authProvider !== undefined ? { authProvider } : {}),
       skipIssuerMetadataValidation: definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
-      ...(definition.retryOnTransportFailure === true ? { fetch: trackToolTransportFailure } : {}),
+      ...(authProvider ? { fetch: (input: Parameters<FetchLike>[0], init?: RequestInit) =>
+        (definition.retryOnTransportFailure === true ? trackToolTransportFailure : fetch)(input, {
+          ...init, signal: combineAbortSignals(init?.signal ?? undefined, authProvider.signal)!,
+        }) } : definition.retryOnTransportFailure === true ? { fetch: trackToolTransportFailure } : {}),
     };
-    const transport = legacySse ? new SSEClientTransport(url, options) : new StreamableHTTPClientTransport(url, {
+    const transport: Transport = legacySse ? new SSEClientTransport(url, options) : new StreamableHTTPClientTransport(url, {
       ...options,
-      ...(supportsOAuth(definition) && !(definition.oauth && definition.oauth.grantType === "client_credentials")
+      ...(supportsOAuth(definition) && !isNonInteractiveOAuth(definition.oauth)
         ? { onInsufficientScope: "throw" as const } : {}),
     });
     if (authProvider) {
+      const send = transport.send.bind(transport);
+      transport.send = (message, options) => authProvider.runWithSignal(options?.requestSignal, () => send(message, options));
       const close = transport.close.bind(transport);
       transport.close = () => {
         // Native OAuth fetches do not inherit the transport's abort signal.

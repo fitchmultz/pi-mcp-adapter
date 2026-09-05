@@ -11,6 +11,7 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 - **Dynamic client registration** (RFC 7591) - Native fallback when CIMD is unavailable
 - **Automatic callback handling** - Built-in HTTP server handles callbacks automatically
 - **Automatic token refresh** - SDK handles token refresh transparently
+- **Enterprise cross-app authorization** - Native OIDC ID-token exchange and JWT-bearer MCP grants, without an MCP browser flow
 
 ## Features
 
@@ -78,6 +79,7 @@ You can optionally provide a pre-registered client:
 - `oauth.clientId` - Pre-registered client ID (optional; takes priority over stored clients, CIMD and DCR)
 - `oauth.clientSecret` - Client secret for confidential clients (optional)
 - `oauth.privateKeyJwt` - Private-key client authentication instead of `clientSecret`; see [Private-key JWT](#private-key-jwt)
+- `oauth.crossAppAccess` - Enterprise OIDC ID-token exchange; selects the JWT-bearer grant without `grantType`. See [Cross-app authorization](#enterprise-cross-app-authorization).
 - `oauth.scope` - Requested OAuth scopes (optional)
 - `oauth.authorizationParams` - Extra authorization URL parameters for provider-specific extensions, such as Google's `{ "access_type": "offline", "prompt": "consent" }`. Flow-owned parameters like `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden.
 - `oauth.redirectUri` - Exact browser callback URI to advertise and bind, such as `http://localhost:3118/callback` (optional)
@@ -126,7 +128,7 @@ For machine-to-machine OAuth, configure `grantType: "client_credentials"`.
 }
 ```
 
-This flow does not open a browser or use callback handling. `oauth.redirectUri` is ignored for `client_credentials`; `oauth.clientName` and `oauth.clientUri` still apply to dynamic client registration metadata. The shared browser document is never selected, even when its URL is explicitly configured. A custom `clientMetadataUrl` without a shared secret can identify a noninteractive client if the authorization server accepts its document and authentication method. Configured client-credentials clients advertise the native `io.modelcontextprotocol/oauth-client-credentials` extension, including on auth-discovery requests. Cross-app authorization remains unsupported.
+This flow does not open a browser or use callback handling. `oauth.redirectUri` is ignored for `client_credentials`; `oauth.clientName` and `oauth.clientUri` still apply to dynamic client registration metadata. The shared browser document is never selected, even when its URL is explicitly configured. A custom `clientMetadataUrl` without a shared secret can identify a noninteractive client if the authorization server accepts its document and authentication method. Configured client-credentials clients advertise the native `io.modelcontextprotocol/oauth-client-credentials` extension, including on auth-discovery requests.
 
 ### Private-key JWT
 
@@ -157,6 +159,31 @@ Omit `grantType` (or use `authorization_code`) for private-key authentication on
 
 Each actual token authentication re-resolves the key source and signs a fresh assertion. The existing command timeout/output limits apply. A local command, key or signing failure produces a non-disclosing error without retrying, deleting stored credentials or opening browser consent. Private keys and assertions are not added to stored client information, tokens or client metadata. There is no key provisioning, rotation service, key/assertion cache or extra credential store. The native signer has no custom header or `kid` option; a JWK's `kid` is not copied into the assertion header.
 
+### Enterprise cross-app authorization
+
+`oauth.crossAppAccess` exchanges an existing OIDC ID token at an enterprise identity provider (IdP), then uses the returned ID-JAG (JWT authorization grant) at the MCP authorization server. Configure:
+
+```json
+{
+  "clientId": "registered-mcp-client",
+  "privateKeyJwt": { "privateKey": "${MCP_PRIVATE_KEY}", "algorithm": "ES256" },
+  "crossAppAccess": {
+    "idpUrl": "https://idp.example.com",
+    "clientId": "registered-idp-client",
+    "idToken": "!your-id-token-command",
+    "clientSecret": "${IDP_CLIENT_SECRET}"
+  }
+}
+```
+
+The outer `clientId` and `privateKeyJwt` (or `clientSecret`) authenticate to the MCP authorization server. The nested `clientId` and optional `clientSecret` authenticate only to the IdP; omit the nested secret for a public IdP client. A custom `clientMetadataUrl` may replace the outer client ID for public or private-key authentication when accepted by the MCP authorization server. The shared browser document is never selected or reused for this mode. Existing usable registrations and issuer bindings keep their normal priority; incompatible saved shared-browser registrations fail without being erased.
+
+All four nested strings support `${VAR}`, `$env:VAR`, `{env:VAR}`, `!command` and `!!` conventions and are resolved only when acquiring an ID-JAG, not during config inspection or discovery-only probing. Obtain and renew the OIDC ID token outside the adapter. No initial enterprise login, SAML exchange, IdP refresh-token flow, IdP private-key/basic authentication, scheduler, key provisioning or separate credential store is provided. The native IdP helper uses public or `client_secret_post` authentication.
+
+Omit `grantType`; explicitly combining it with `crossAppAccess` is an error. The SDK discovers and validates the MCP authorization-server issuer and protected-resource URL before the IdP exchange. There is no user-supplied audience/resource override. IdP discovery is strict and requires valid OAuth/OIDC metadata; `skipIssuerMetadataValidation` does not relax the IdP check. Resource-server headers and MCP client credentials are not forwarded to the IdP. Only the final MCP access tokens and normal client registration enter the existing credential store.
+
+This flow opens no browser and binds no callback, including through `auth-start`, `/mcp-auth`, and headless proxy/direct tools. Native scope precedence and retry bounds remain unchanged. An IdP/source failure gives a safe setup error without erasing the MCP login or entering browser consent. Cancellation aborts IdP and MCP token HTTP requests; stopping one modern request does not stop concurrent requests sharing the connection. Auth-only connection retirement still drains accepted operations.
+
 ## Usage
 
 ### Step 1: Authenticate
@@ -169,7 +196,7 @@ Run the `/mcp-auth` command with the server name:
 
 Manual `/mcp-auth` is the default flow. With `settings.autoAuth: true`, proxy/direct/script tool execution may authenticate when a server needs auth or rejects a call for insufficient scope. Browser authorization still requires an interactive host, and each invocation gets at most one automatic auth attempt and one post-auth retry. Initial sign-in does not grant a second automatic consent attempt in the same invocation.
 
-This will:
+For browser authorization, this will:
 1. Start the callback server lazily on an OS-assigned local port, or on the exact `oauth.redirectUri` port for pre-registered callbacks
 2. Discover OAuth endpoints automatically
 3. Select a configured/stored client, CIMD, or dynamic registration
@@ -305,7 +332,7 @@ Persistent OAuth is unsupported out of the box on Android/Termux: the published 
 
 ### PKCE
 
-All OAuth flows use PKCE with the S256 method, preventing authorization code interception attacks.
+Authorization-code flows use PKCE with the S256 method, preventing authorization code interception attacks.
 
 ### State Parameter
 
@@ -408,6 +435,7 @@ const transport = new StreamableHTTPClientTransport(url, {
 
 ## References
 
+- [Enterprise Managed Authorization](https://modelcontextprotocol.io/extensions/auth/enterprise-managed-authorization)
 - [MCP SDK Documentation](https://github.com/modelcontextprotocol/typescript-sdk)
 - [MCP Authorization Specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
 - [Client ID Metadata Documents](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00)

@@ -5,11 +5,14 @@
  * Handles OAuth client registration, token storage, and authorization redirection.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks"
 import {
   UnauthorizedError,
   OAuthError,
   OAuthErrorCode,
   createPrivateKeyJwtAuth,
+  discoverAndRequestJwtAuthGrant,
+  type FetchLike,
   validateClientMetadataUrl,
   type AddClientAuthentication,
   type OAuthClientProvider,
@@ -35,7 +38,8 @@ import {
   type StoredClientInfo,
 } from "./mcp-auth.ts"
 import { resolveCommandSecret } from "./utils.ts"
-import type { OAuthPrivateKeyJwtConfig } from "./types.ts"
+import { isNonInteractiveOAuth, type OAuthPrivateKeyJwtConfig, type OAuthCrossAppAccessConfig } from "./types.ts"
+import { combineAbortSignals } from "./runtime-owner.ts"
 import sharedClientMetadata from "./docs/client-metadata.json" with { type: "json" }
 
 /** Validate explicit document URLs without echoing possible credentials in errors. */
@@ -116,6 +120,7 @@ export interface McpOAuthConfig {
   clientId?: string
   clientSecret?: string
   privateKeyJwt?: OAuthPrivateKeyJwtConfig
+  crossAppAccess?: OAuthCrossAppAccessConfig
   scope?: string
   authorizationParams?: Record<string, string>
   redirectUri?: string
@@ -151,6 +156,20 @@ export function validateOAuthPrivateKeyJwt(config: McpOAuthConfig): void {
   if (!config.clientId && (typeof config.clientMetadataUrl !== "string" || config.clientMetadataUrl === sharedClientMetadata.client_id)) {
     throw new Error("OAuth privateKeyJwt requires a configured clientId or custom clientMetadataUrl, not the shared browser identity")
   }
+}
+
+export function validateOAuthCrossAppAccess(config: McpOAuthConfig): void {
+  const crossApp = config.crossAppAccess
+  if (crossApp === undefined) return
+  if (!isRecord(crossApp)) throw new Error("OAuth crossAppAccess must be an object")
+  for (const field of ["idpUrl", "clientId", "idToken", "clientSecret"] as const) {
+    if (field === "clientSecret" && crossApp[field] === undefined) continue
+    if (typeof crossApp[field] !== "string" || !crossApp[field].trim()) {
+      throw new Error(`OAuth crossAppAccess.${field} must be a nonempty string`)
+    }
+  }
+  if (config.grantType !== undefined) throw new Error("OAuth crossAppAccess selects the JWT-bearer grant; omit grantType")
+  if ("audience" in crossApp || "resource" in crossApp) throw new Error("OAuth crossAppAccess uses the discovered MCP issuer and resource; overrides are not supported")
 }
 
 const reservedAuthorizationParams = new Set([
@@ -189,7 +208,11 @@ export interface McpOAuthCallbacks {
 export class McpOAuthProvider implements OAuthClientProvider {
   private readonly redirectUrlSnapshot: string | undefined
   readonly clientMetadataUrl?: string
-  private active = true
+  private readonly controller = new AbortController()
+  private readonly lifetimeSignal: AbortSignal
+  private readonly requestSignals = new AsyncLocalStorage<AbortSignal | undefined>()
+  private flowAuthorizationServerUrl: string | undefined
+  private flowResourceUrl: string | undefined
   private flowClientInfo: StoredClientInfo | undefined
   private flowCodeVerifier: string | undefined
   private flowDiscoveryState: OAuthDiscoveryState | undefined
@@ -202,19 +225,21 @@ export class McpOAuthProvider implements OAuthClientProvider {
     private config: McpOAuthConfig,
     private callbacks: McpOAuthCallbacks,
     private storageOptions: AuthStorageOptions = {},
-    private runtimeSignal?: AbortSignal,
+    runtimeSignal?: AbortSignal,
     initialState?: string,
   ) {
     validateOAuthClientMetadataUrl(config.clientMetadataUrl)
     validateOAuthPrivateKeyJwt(config)
+    validateOAuthCrossAppAccess(config)
+    this.lifetimeSignal = combineAbortSignals(runtimeSignal, this.controller.signal)!
     this.flowState = initialState
-    this.redirectUrlSnapshot = config.grantType === "client_credentials"
+    this.redirectUrlSnapshot = isNonInteractiveOAuth(config)
       ? undefined
       : config.redirectUri ?? `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}`
     if (config.clientMetadataUrl !== false && config.clientSecret === undefined) {
       if (config.clientMetadataUrl && config.clientMetadataUrl !== sharedClientMetadata.client_id) {
         this.clientMetadataUrl = config.clientMetadataUrl
-      } else if (!this.usesClientCredentials && !config.privateKeyJwt
+      } else if (!this.isNonInteractive && !config.privateKeyJwt
         && (config.clientName === undefined || config.clientName === sharedClientMetadata.client_name)
         && (config.clientUri === undefined || config.clientUri === sharedClientMetadata.client_uri)
         && sharedClientMetadata.redirect_uris.some(uri => loopbackRedirectsMatch(uri, this.redirectUrl))) {
@@ -223,8 +248,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  private get usesClientCredentials(): boolean {
-    return this.config.grantType === "client_credentials"
+  private get isNonInteractive(): boolean {
+    return isNonInteractiveOAuth(this.config)
   }
 
   private get discoveredIssuer(): string | undefined {
@@ -232,8 +257,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
       ?? this.flowDiscoveryState?.authorizationServerUrl
   }
 
+  get signal(): AbortSignal {
+    return combineAbortSignals(this.lifetimeSignal, this.requestSignals.getStore())!
+  }
+
+  runWithSignal<T>(signal: AbortSignal | undefined, operation: () => T): T {
+    return this.requestSignals.run(signal, operation)
+  }
+
   deactivate(): void {
-    this.active = false
+    this.controller.abort(new Error("OAuth flow is no longer active"))
   }
 
   private assertStoredIssuerBindings(entry: AuthEntry | undefined, issuer: string | undefined): void {
@@ -255,8 +288,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   private throwIfInactive(): void {
-    if (!this.active) throw new Error("OAuth flow is no longer active")
-    this.runtimeSignal?.throwIfAborted()
+    this.signal.throwIfAborted()
   }
 
   /**
@@ -272,12 +304,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Describes this client to the OAuth authorization server.
    */
   get clientMetadata(): OAuthClientMetadata {
-    if (this.usesClientCredentials) {
+    if (this.isNonInteractive) {
       return {
         client_name: this.config.clientName ?? "Pi Coding Agent",
         client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
         redirect_uris: [],
-        grant_types: ["client_credentials"],
+        grant_types: [this.config.crossAppAccess ? "urn:ietf:params:oauth:grant-type:jwt-bearer" : "client_credentials"],
         token_endpoint_auth_method: this.config.privateKeyJwt ? "private_key_jwt" : this.config.clientSecret ? "client_secret_post" : "none",
       }
     }
@@ -356,8 +388,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
       if (isConfigStub) {
         return undefined
       }
-      if ((this.config.privateKeyJwt || this.usesClientCredentials) && clientInfo.registrationType === "cimd" && clientInfo.clientId === sharedClientMetadata.client_id) {
-        throw new OAuthError(OAuthErrorCode.InvalidRequest, `OAuth ${this.config.privateKeyJwt ? "privateKeyJwt" : "client_credentials"} cannot use the saved shared browser registration; configure its own clientId or replace that login`)
+      if ((this.config.privateKeyJwt || this.isNonInteractive) && clientInfo.registrationType === "cimd" && clientInfo.clientId === sharedClientMetadata.client_id) {
+        throw new OAuthError(OAuthErrorCode.InvalidRequest, `OAuth ${this.config.privateKeyJwt ? "privateKeyJwt" : this.config.crossAppAccess ? "crossAppAccess" : "client_credentials"} cannot use the saved shared browser registration; configure its own clientId or replace that login`)
       }
       // Check if client secret has expired
       if (clientInfo.clientSecretExpiresAt && clientInfo.clientSecretExpiresAt < Date.now() / 1000) {
@@ -480,6 +512,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
     // succeeds, clear it so a later 401 re-reads PRM and can observe an
     // authorization-server migration.
     this.flowDiscoveryState = undefined
+    this.flowAuthorizationServerUrl = undefined
+    this.flowResourceUrl = undefined
   }
 
   /**
@@ -492,8 +526,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * flow, which library hosts cannot complete in-process.
    */
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    if (this.usesClientCredentials) {
-      throw new Error("redirectToAuthorization is not used for client_credentials flow")
+    if (this.isNonInteractive) {
+      throw new Error("redirectToAuthorization is not used for noninteractive OAuth flows")
     }
     // No flow-local state means we're on the post-refresh authorize fallback.
     this.throwIfInactive()
@@ -519,8 +553,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * @throws Error if no code verifier is stored
    */
   async codeVerifier(): Promise<string> {
-    if (this.usesClientCredentials) {
-      throw new Error("codeVerifier is not used for client_credentials flow")
+    if (this.isNonInteractive) {
+      throw new Error("codeVerifier is not used for noninteractive OAuth flows")
     }
     this.throwIfInactive()
     if (!this.flowCodeVerifier) {
@@ -537,6 +571,22 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.throwIfInactive()
     this.flowDiscoveryState = structuredClone(state)
   }
+
+  // Native auth calls this on every attempt, before stored issuer checks and resource selection.
+  saveAuthorizationServerUrl(issuer: string): void {
+    this.throwIfInactive()
+    this.flowAuthorizationServerUrl = issuer
+    this.flowResourceUrl = undefined
+  }
+
+  saveResourceUrl(resource: string): void {
+    this.throwIfInactive()
+    this.flowResourceUrl = resource
+  }
+
+  readonly fetch: FetchLike = (input, init) => fetch(input, {
+    ...init, signal: combineAbortSignals(init?.signal ?? undefined, this.signal)!,
+  })
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
     this.throwIfInactive()
@@ -556,8 +606,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * @throws UnauthorizedError if no flow is in progress (see redirectToAuthorization)
    */
   async state(): Promise<string> {
-    if (this.usesClientCredentials) {
-      throw new Error("state is not used for client_credentials flow")
+    if (this.isNonInteractive) {
+      throw new Error("state is not used for noninteractive OAuth flows")
     }
     this.throwIfInactive()
     if (!this.flowState) {
@@ -579,6 +629,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.flowClientInfo = undefined
         this.flowCodeVerifier = undefined
         this.flowDiscoveryState = undefined
+        this.flowAuthorizationServerUrl = undefined
+        this.flowResourceUrl = undefined
         this.flowIssuerMismatch = false
         this.flowState = undefined
         clearAllCredentials(this.serverName, this.storageOptions)
@@ -595,6 +647,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
         break
       case "discovery":
         this.flowDiscoveryState = undefined
+        this.flowAuthorizationServerUrl = undefined
+        this.flowResourceUrl = undefined
         break
     }
   }
@@ -675,8 +729,34 @@ export class McpOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  prepareTokenRequest(scope?: string): URLSearchParams | undefined {
-    if (!this.usesClientCredentials) {
+  private async prepareCrossAppRequest(scope?: string): Promise<URLSearchParams> {
+    this.throwIfInactive()
+    const audience = this.flowAuthorizationServerUrl
+    const resource = this.flowResourceUrl
+    if (!audience || !resource) throw new OAuthError(OAuthErrorCode.InvalidRequest, "OAuth crossAppAccess requires discovered MCP authorization server and protected resource metadata")
+    const config = this.config.crossAppAccess!
+    try {
+      const result = await discoverAndRequestJwtAuthGrant({
+        idpUrl: resolveCommandSecret(config.idpUrl, "OAuth crossAppAccess.idpUrl"),
+        clientId: resolveCommandSecret(config.clientId, "OAuth crossAppAccess.clientId"),
+        idToken: resolveCommandSecret(config.idToken, "OAuth crossAppAccess.idToken"),
+        ...(config.clientSecret !== undefined ? { clientSecret: resolveCommandSecret(config.clientSecret, "OAuth crossAppAccess.clientSecret") } : {}),
+        audience, resource, ...(scope ? { scope } : {}), fetchFn: this.fetch,
+      })
+      this.throwIfInactive()
+      const params = new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: result.jwtAuthGrant })
+      if (scope) params.set("scope", scope)
+      return params
+    } catch {
+      this.throwIfInactive()
+      // IdP errors must not erase the MCP login or expose token-bearing responses/commands.
+      throw new OAuthError(OAuthErrorCode.InvalidRequest, "OAuth crossAppAccess could not obtain an IdP grant; check the IdP configuration and ID-token source")
+    }
+  }
+
+  prepareTokenRequest(scope?: string): URLSearchParams | Promise<URLSearchParams> | undefined {
+    if (this.config.crossAppAccess) return this.prepareCrossAppRequest(scope ?? this.config.scope)
+    if (!this.isNonInteractive) {
       return undefined
     }
 

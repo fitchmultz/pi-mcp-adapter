@@ -4,7 +4,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MSEC, UrlElicitationRequiredError } from "@mode
 import type { McpExtensionState } from "./state.ts";
 import type { ServerConnection } from "./server-manager.ts";
 import type { ToolMetadata, McpContent } from "./types.ts";
-import { getServerPrefix, isServerDisabled, parseUiPromptHandoff, resolveToolPrefix } from "./types.ts";
+import { getServerPrefix, isServerDisabled, isNonInteractiveOAuth, parseUiPromptHandoff, resolveToolPrefix } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
@@ -43,12 +43,15 @@ function getAuthRequiredMessage(
   serverName: string,
   defaultMessage = `Server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
 ): string {
+  const oauth = state.config.mcpServers[serverName]?.oauth;
+  if (oauth && oauth.crossAppAccess) defaultMessage = `Server "${serverName}" requires enterprise authorization. Check oauth.crossAppAccess IdP configuration and ID-token source, then retry.`;
   return formatAuthRequiredMessage(state.config, serverName, defaultMessage);
 }
 
 function getAuthFailedMessage(state: McpExtensionState, serverName: string, message: string): string {
   const customGuidance = state.config.settings?.authRequiredMessage;
-  if (customGuidance) {
+  const oauth = state.config.mcpServers[serverName]?.oauth;
+  if (customGuidance || (oauth && oauth.crossAppAccess)) {
     return `OAuth authentication failed for "${serverName}": ${message}. ${getAuthRequiredMessage(state, serverName)}`;
   }
   return `OAuth authentication failed for "${serverName}": ${message}. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
@@ -111,8 +114,7 @@ async function attemptAutoAuth(
     return { status: "skipped" };
   }
 
-  const grantType = definition.oauth ? definition.oauth.grantType ?? "authorization_code" : "authorization_code";
-  if (!state.ui && grantType !== "client_credentials") {
+  if (!state.ui && !isNonInteractiveOAuth(definition.oauth)) {
     return {
       status: "failed",
       message: getAuthRequiredMessage(

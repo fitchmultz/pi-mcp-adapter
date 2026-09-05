@@ -19,6 +19,8 @@ The `auth/basic-cimd` fixture requires its own document identity, so the driver 
 
 The `auth/client-credentials-jwt` fixture supplies its throwaway client ID, PEM private key and algorithm through `oauth.clientId` and `oauth.privateKeyJwt`. Native signing, token exchange and the final MCP tool call use the adapter's real provider. `__tests__/oauth-private-key-jwt.test.ts` also covers JWK and command sources, browser code/refresh, custom documents, issuer guards and cancellation over local HTTP.
 
+The `auth/cross-app-access-complete-flow` driver uses the real `oauth.crossAppAccess` configuration and discovers the fixture's IdP issuer. The unmodified fixture remains baselined because its OIDC metadata is invalid, not because cross-app authorization is missing. Local HTTP tests in `__tests__/oauth-cross-app.test.ts` cover valid OIDC discovery, both token exchanges, identity separation, actual network cancellation and final tool use. Corrected-fixture development evidence is supplemental, never a substitute for the unchanged official CI lane.
+
 The `auth/2025-03-26-oauth-metadata-backcompat` fixture advertises an origin authorization server but returns a path-scoped issuer. That scenario explicitly enables `oauth.skipIssuerMetadataValidation`; it is not evidence of strict-default metadata acceptance. `__tests__/sdk-v2-oauth.test.ts` separately proves strict rejection, explicit opt-out, callback validation, issuer binding, and refresh with the actual SDK.
 
 It covers the four core client scenarios and the full OAuth matrix shipped by conformance 0.1.16, 26 scenarios in total. Scope step-up must finish the client and final tool call, not just pass intermediate checks. `auth/scope-retry-limit` deliberately allows a client error after its bounded retries. The OAuth driver follows the referee's authorization redirect into the adapter's real callback server, then completes the pending flow through `completeAuthFromInput()`.
@@ -50,6 +52,6 @@ Current gaps:
 
 | Scenario | Reason |
 | --- | --- |
-| `auth/cross-app-access-complete-flow` | The adapter does not implement SEP-990 token exchange and JWT bearer grants. |
+| `auth/cross-app-access-complete-flow` | Stable 0.1.16's IdP OIDC document omits required `response_types_supported`, `subject_types_supported` and `id_token_signing_alg_values_supported`; the native SDK rejects it before token exchange. |
 
 Baseline comments contain the protocol-level details. Do not add a failure caused by the driver, callback-port contention, or test setup.
