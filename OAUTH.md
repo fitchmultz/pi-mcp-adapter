@@ -247,6 +247,10 @@ Older versions stored plaintext entries at `~/.pi/agent/mcp-oauth/sha256-<server
 
 The stored `serverUrl` field ensures credentials are invalidated if the server URL changes.
 
+### Android / Termux
+
+Persistent OAuth is unsupported out of the box on Android/Termux: the published `@napi-rs/keyring` 1.3.0 package has no Android native binding. When native loading fails, authentication and credential status explain this limitation rather than suggesting that unlocking a Linux keyring will fix it. Use a supported platform with a working OS credential store for persistent OAuth; there is no plaintext fallback. Unauthenticated servers, header-token authentication, and stdio servers remain available. Public HTTP servers still defer credential-store access until an OAuth challenge.
+
 ## Security Considerations
 
 ### PKCE
