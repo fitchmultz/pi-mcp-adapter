@@ -149,7 +149,7 @@ function getRuntimeState(runtime: McpOAuthRuntime): RuntimeState {
 }
 
 function getPendingAuthKey(serverName: string, options: AuthStorageOptions): string {
-  return `${serverName}|${getAuthBaseDir(options)}`
+  return JSON.stringify([serverName, getAuthBaseDir(options)])
 }
 
 type OAuthRequest = {
@@ -730,7 +730,7 @@ export async function authenticate(
   const authStorageOptions = options.authStorageOptions ?? {}
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
-  const authKey = `${serverName}|${serverUrl}|${getAuthBaseDir(authStorageOptions)}`
+  const authKey = JSON.stringify([serverName, serverUrl, getAuthBaseDir(authStorageOptions)])
   const inFlight = runtimeState.pendingAuthentications.get(authKey)
   if (inFlight) {
     return inFlight

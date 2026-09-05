@@ -120,6 +120,7 @@ describe("mcp-auth-flow explicit auth", () => {
           authorization_response_iss_parameter_supported: true,
         },
       });
+      await provider.clientInformation();
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
@@ -158,6 +159,7 @@ describe("mcp-auth-flow explicit auth", () => {
           authorization_response_iss_parameter_supported: true,
         },
       });
+      await provider.clientInformation();
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
@@ -181,6 +183,7 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.saveDiscoveryState({
         authorizationServerUrl: "https://auth.example.com",
       });
+      await provider.clientInformation();
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });

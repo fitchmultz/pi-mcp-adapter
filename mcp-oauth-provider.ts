@@ -227,6 +227,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
     const issuer = context?.issuer ?? this.discoveredIssuer
     const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions)
     this.assertStoredIssuerBindings(stored, issuer)
+    // Rejected discovery must not become the runtime's issuer binding.
+    if (this.flowDiscoveryState) this.callbacks.onDiscoveryState?.(this.flowDiscoveryState)
 
     // Check config first (pre-registered client). Store only its issuer binding.
     // The configured secret stays in config and never enters the credential store.
@@ -447,7 +449,6 @@ export class McpOAuthProvider implements OAuthClientProvider {
    */
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     this.throwIfInactive()
-    this.callbacks.onDiscoveryState?.(state)
     this.flowDiscoveryState = structuredClone(state)
   }
 

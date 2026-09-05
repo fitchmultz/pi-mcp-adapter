@@ -496,6 +496,63 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(f.request()?.challenge?.requiredScope).toBe("write");
   });
 
+  it.each(["pending", "single-flight"])("isolates authorization ownership when delimiter-joined %s keys collide", async kind => {
+    const a = await fixture("legacy", "a");
+    const b = await fixture("legacy", kind === "pending" ? "a|/b" : `a|${a.definition.url}|/b`);
+    const storageA = { baseDir: kind === "pending" ? "/b|/c" : `/b|${a.definition.url}|/c` };
+    const storageB = { baseDir: "/c" };
+    a.manager.setAuthStorageOptions(storageA); b.manager.setAuthStorageOptions(storageB); b.manager.setOAuthRuntime(a.runtime);
+    b.definition.url = a.definition.url;
+    for (const f of [a, b]) {
+      f.definition.auth = "oauth";
+      updateTokens(f.name, { accessToken: "basic-token", scope: "basic", issuer: a.origin }, a.definition.url!);
+      const connection = await f.connect(); await expect(connection.client.callTool({ name: "write" })).rejects.toBeInstanceOf(InsufficientScopeError);
+      a.controls.requiredScope = "admin";
+    }
+    const optionsA = { runtime: a.runtime, authStorageOptions: storageA };
+    const optionsB = { runtime: a.runtime, authStorageOptions: storageB };
+    const urls = new Map<string, string>();
+    const controller = new AbortController();
+    const outcomes: Array<ReturnType<typeof settled>> = [];
+    try {
+      if (kind === "pending") {
+        urls.set(a.name, (await startAuth(a.name, a.definition.url!, a.definition, optionsA)).authorizationUrl);
+        urls.set(b.name, (await startAuth(b.name, b.definition.url!, b.definition, optionsB)).authorizationUrl);
+      } else {
+        outcomes.push(settled(authenticate(a.name, a.definition.url!, a.definition, { ...optionsA, signal: controller.signal,
+          onAuthorizationUrl: url => { urls.set(a.name, url); },
+        })));
+        outcomes.push(settled(authenticate(b.name, b.definition.url!, b.definition, { ...optionsB, signal: controller.signal,
+          onAuthorizationUrl: url => { urls.set(b.name, url); },
+        })));
+        await expect.poll(() => urls.size).toBe(2);
+      }
+      const first = new URL(urls.get(a.name)!); const second = new URL(urls.get(b.name)!);
+      expect(second.href).not.toBe(first.href);
+      expect(scopes(first.searchParams.get("scope"))).toEqual(["basic", "write"]);
+      expect(scopes(second.searchParams.get("scope"))).toEqual(["admin", "basic"]);
+      expect(second.searchParams.get("state")).not.toBe(first.searchParams.get("state"));
+      expect(second.searchParams.get("code_challenge")).not.toBe(first.searchParams.get("code_challenge"));
+      const callbackA = await a.authorize(first.href); const callbackB = await a.authorize(second.href);
+      if (kind === "pending") {
+        expect(await completeAuthFromInput(a.name, callbackA, optionsA)).toBe("authenticated");
+        expect(hasPendingAuth(b.name, storageB, a.runtime)).toBe(true);
+        expect(await completeAuthFromInput(b.name, callbackB, optionsB)).toBe("authenticated");
+      } else {
+        expect((await fetch(callbackA)).status).toBe(200); expect((await fetch(callbackB)).status).toBe(200);
+        for (const outcome of outcomes) expect(await outcome).toMatchObject({ status: "fulfilled", value: "authenticated" });
+      }
+      expect((await a.stored())?.tokens?.scope).toBe("basic write");
+      expect((await b.stored())?.tokens?.scope).toBe("basic admin");
+      expect((await b.stored())?.tokens?.accessToken).not.toBe((await a.stored())?.tokens?.accessToken);
+      expect(a.exchanges).toHaveLength(2);
+      expect(a.exchanges[0].get("code_verifier")).not.toBe(a.exchanges[1].get("code_verifier"));
+      expect(hasPendingAuth(a.name, storageA, a.runtime)).toBe(false); expect(hasPendingAuth(b.name, storageB, a.runtime)).toBe(false);
+    } finally {
+      controller.abort(new Error("tuple test finished")); await Promise.all(outcomes);
+    }
+  });
+
   it("retains only scope intent after cancellation and rejects a changed known issuer", async () => {
     const f = await fixture(); f.definition.auth = "oauth"; f.seed("basic");
     await f.connect(); await f.call();
@@ -509,6 +566,50 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     await expect(f.start()).rejects.toThrow("issuer changed");
     expect(f.exchanges).toHaveLength(0); expect(f.authorizations).toHaveLength(0);
     await removeAuth(f.name, { runtime: f.runtime }); expect(f.request()).toBeUndefined();
+  });
+
+  it("does not poison native M2M recovery with a rejected discovery issuer", async () => {
+    const f = await fixture("modern");
+    f.definition.oauth = { grantType: "client_credentials", clientId: "machine", clientSecret: "secret" }; f.seed("basic");
+    await f.connect(); expect(f.request()).toBeUndefined();
+    const before = await f.stored();
+    f.controls.issuerPath = "/changed";
+    expect((await f.call()).details.error).toBe("call_failed");
+    expect(f.authorizations).toHaveLength(0); expect(f.exchanges).toHaveLength(0);
+    expect(await f.stored()).toEqual(before);
+    expect(f.requests.filter(request => request.method === "tools/call")).toHaveLength(2);
+    f.controls.issuerPath = "";
+    await f.manager.reconnect(f.name, f.definition, f.manager.getConnection(f.name)!);
+    expect((await f.call()).details.error).toBeUndefined();
+    expect(f.request()?.issuer).toBe(f.origin);
+    expect(f.authorizations).toHaveLength(0); expect(browser.open).not.toHaveBeenCalled();
+    expect(f.exchanges).toHaveLength(1); expect(f.exchanges[0].get("grant_type")).toBe("client_credentials");
+    expect(scopes(f.exchanges[0].get("scope"))).toEqual(["basic", "write"]);
+    expect(f.requests.filter(request => request.method === "tools/call")).toHaveLength(4);
+  });
+
+  it("does not poison a fresh scope request with a rejected discovery issuer", async () => {
+    const f = await fixture(); f.definition.auth = "oauth"; f.seed("basic");
+    await f.connect(); expect((await f.call()).details.error).toBe("auth_required");
+    expect(f.request()?.issuer).toBeUndefined();
+    const before = await f.stored();
+    f.controls.issuerPath = "/changed";
+    await expect(f.start()).rejects.toThrow("issuer changed");
+    expect(f.authorizations).toHaveLength(0); expect(f.exchanges).toHaveLength(0);
+    expect(await f.stored()).toEqual(before);
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    f.controls.issuerPath = "";
+    const restarting = f.start();
+    await expect(restarting).resolves.toMatchObject({ authorizationUrl: expect.any(String) });
+    const { authorizationUrl } = await restarting;
+    expect(scopes(new URL(authorizationUrl).searchParams.get("scope"))).toEqual(["basic", "write"]);
+    expect(f.request()?.issuer).toBe(f.origin);
+    expect((await f.stored())?.tokens).toEqual(before?.tokens);
+    expect(f.authorizations).toHaveLength(0); expect(f.exchanges).toHaveLength(0);
+    await f.manual();
+    expect(f.authorizations).toHaveLength(1); expect(f.exchanges).toHaveLength(1);
+    expect((await f.stored())?.tokens?.scope).toBe("basic write");
+    expect((await f.call()).details.error).toBeUndefined();
   });
 
   it("keeps a pending URL and verifier immutable when a wider challenge arrives", async () => {
