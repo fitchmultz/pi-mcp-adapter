@@ -40,6 +40,7 @@ async function fixture(oauth: OAuthConfig = {}) {
   const authorizations: URL[] = [];
   const exchanges: URLSearchParams[] = [];
   const documentFetches: string[] = [];
+  const blockedPorts: number[] = [];
   const registrations: object[] = [];
   const requests: Array<{ method: string; token?: string }> = [];
   const codes = new Map<string, URL>();
@@ -151,7 +152,7 @@ async function fixture(oauth: OAuthConfig = {}) {
     expect((await fetch(callback)).status).toBe(200);
   });
   cleanups.push(async () => {
-    if (process.env.CIMD_PROOF_FILE) appendFileSync(process.env.CIMD_PROOF_FILE, `${JSON.stringify({ test: expect.getState().currentTestName, node: process.version, execPath: process.execPath, authorizations: authorizations.map(u => Object.fromEntries(u.searchParams)), exchanges: exchanges.map(p => Object.fromEntries(p)), documentFetches, registrations, requests, stored: getAuthForUrl(name, definition.url!) })}\n`);
+    if (process.env.CIMD_PROOF_FILE) appendFileSync(process.env.CIMD_PROOF_FILE, `${JSON.stringify({ test: expect.getState().currentTestName, node: process.version, execPath: process.execPath, authorizations: authorizations.map(u => Object.fromEntries(u.searchParams)), exchanges: exchanges.map(p => Object.fromEntries(p)), documentFetches, blockedPorts, callbackPort: getOAuthCallbackPort(), registrations, requests, stored: getAuthForUrl(name, definition.url!) })}\n`);
     await manager.closeAll(); await shutdownOAuth(runtime); clearAllCredentials(name); await close(server);
   });
   return { name, origin, definition, metadata, documents, registered, authorizations, exchanges, documentFetches, registrations, requests, manager,
@@ -159,10 +160,14 @@ async function fixture(oauth: OAuthConfig = {}) {
     login: () => authenticate(name, definition.url!, definition, { runtime, onAuthorizationUrl: () => {} }),
     expire: () => tokens.clear(),
     restart: async () => {
+      const oldPort = getOAuthCallbackPort();
+      const host = new URL(authorizations.at(-1)!.searchParams.get("redirect_uri")!).hostname;
       await manager.closeAll(); await shutdownOAuth(runtime);
-      const blocker = createServer(); await listen(blocker, getOAuthCallbackPort(), "localhost");
+      const blocker = createServer(); await listen(blocker, oldPort, host === "[::1]" ? "::1" : host);
+      blockedPorts.push(oldPort);
       cleanups.push(() => close(blocker));
       runtime = createOAuthRuntime(); manager.setOAuthRuntime(runtime);
+      return oldPort;
     },
     connect: () => manager.connect(name, definition),
   };
@@ -194,7 +199,7 @@ it.each([
   await f.login();
   const before = f.stored()!;
   const oldPort = getOAuthCallbackPort();
-  await f.restart();
+  expect(await f.restart()).toBe(oldPort);
   f.definition.oauth = { clientMetadataUrl: setting };
   expect(await f.start()).toEqual({ authorizationUrl: "" });
   expect(getOAuthCallbackPort()).not.toBe(oldPort);
@@ -269,6 +274,40 @@ it.each(["/callback", "/custom", "/callback?tenant=one"])("uses shared metadata 
   expect(f.authorizations[0].searchParams.get("redirect_uri")).toBe(redirectUri);
   expect(f.authorizations[0].searchParams.get("client_id")).toBe(path === "/callback" ? metadataDocument.client_id : "https://opaque.example/registration/1");
   expect(f.registrations).toHaveLength(path === "/callback" ? 0 : 1);
+});
+
+it.each([
+  "HTTP://LOCALHOST:PORT/callback",
+  "http://[0:0:0:0:0:0:0:1]:PORT/callback",
+  "http://localhost:PORT?tenant=one",
+])("retains custom CIMD refresh for raw port-only callback changes: %s", async template => {
+  const host = new URL(template.replace("PORT", "40001")).hostname;
+  const portServer = createServer(); const port = await listen(portServer, 0, host === "[::1]" ? "::1" : host); await close(portServer);
+  const id = "https://custom.example/ports.json";
+  const redirectUri = template.replace("PORT", String(port));
+  const f = await fixture({ clientMetadataUrl: id, redirectUri });
+  f.documents.set(id, { ...metadataDocument, client_id: id, redirect_uris: [redirectUri] });
+  expect(await f.login()).toBe("authenticated");
+  const before = f.stored()!;
+  expect(await f.restart()).toBe(port);
+  const nextPortServer = createServer(); const nextPort = await listen(nextPortServer, 0, host === "[::1]" ? "::1" : host); await close(nextPortServer);
+  expect(nextPort).not.toBe(port);
+  f.definition.oauth = { clientMetadataUrl: false, redirectUri: template.replace("PORT", String(nextPort)) };
+  expect(await f.start()).toEqual({ authorizationUrl: "" });
+  expect(getOAuthCallbackPort()).toBe(nextPort);
+  expect(f.stored()?.clientInfo).toEqual(before.clientInfo);
+  expect(f.exchanges[1].get("refresh_token")).toBe(before.tokens?.refreshToken);
+  expect(f.exchanges[1].get("client_id")).toBe(id);
+  expect(f.registrations).toHaveLength(0); expect(f.authorizations).toHaveLength(1);
+});
+
+it.each(["?return_to=/../welcome", "?next=https://other.example/a/../b"])("accepts document URLs with dot segments inside a query %s", async query => {
+  const id = `https://custom.example/client.json${query}`;
+  const f = await fixture({ clientMetadataUrl: id });
+  f.documents.set(id, { ...metadataDocument, client_id: id });
+  expect(await f.login()).toBe("authenticated");
+  expect(f.exchanges[0].get("client_id")).toBe(id);
+  expect(f.registrations).toHaveLength(0);
 });
 
 it("uses a custom document with an exact custom callback and identity", async () => {
@@ -359,6 +398,18 @@ it("validates document URLs at extraction and direct-provider boundaries without
     expect(extractOAuthConfig({ oauth: { clientMetadataUrl: "${CIMD_DOCUMENT_URL}" } }).clientMetadataUrl).toBe(process.env.CIMD_DOCUMENT_URL);
   } finally { delete process.env.CIMD_DOCUMENT_URL; }
   expect(extractOAuthConfig({ oauth: { clientMetadataUrl: false } }).clientMetadataUrl).toBe(false);
+  const credentialUrl = "https://alice:USERINFO_SECRET_SENTINEL@example.com/client.json";
+  for (const build of [
+    () => extractOAuthConfig({ oauth: { clientMetadataUrl: credentialUrl } }),
+    () => new McpOAuthProvider("validation", "https://server.example/mcp", { clientMetadataUrl: credentialUrl }, { onRedirect: () => {} }),
+  ]) {
+    let message = "";
+    try { build(); } catch (error) { message = String(error); }
+    expect(message).toContain("OAuth clientMetadataUrl must be an HTTPS URL");
+    expect(message).not.toContain("alice");
+    expect(message).not.toContain("USERINFO_SECRET_SENTINEL");
+    expect(message).not.toContain("example.com");
+  }
 });
 
 it("limits port matching to valid raw HTTP loopback endpoints", () => {
@@ -371,7 +422,10 @@ it("limits port matching to valid raw HTTP loopback endpoints", () => {
     "http://@localhost:19876/callback", "http://localhost:19876/a/../callback", "http://localhost:19876/%2e/callback"]) {
     expect(loopbackRedirectsMatch(current, other)).toBe(false);
   }
-  expect(loopbackRedirectsMatch("http://localhost:19876/a/../callback", "http://localhost:32123/a/../callback")).toBe(false);
+  expect(loopbackRedirectsMatch("http://localhost:19876/a/../callback", "http://localhost:32123/a/../callback")).toBe(true);
+  expect(loopbackRedirectsMatch("HTTP://LOCALHOST:19876/callback", "http://localhost:32123/callback")).toBe(false);
+  expect(loopbackRedirectsMatch("http://[0:0:0:0:0:0:0:1]:19876/callback", "http://[::1]:32123/callback")).toBe(false);
+  expect(loopbackRedirectsMatch("http://localhost:19876?tenant=one", "http://localhost:32123/?tenant=one")).toBe(false);
   expect(loopbackRedirectsMatch("http://localhost:19876/callback?x=1", "http://localhost:32123/callback?x=1")).toBe(true);
 });
 

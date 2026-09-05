@@ -128,6 +128,10 @@ if (context.client_id) {
 if (scenario.startsWith("auth/client-credentials")) {
   definition.oauth = { ...(definition.oauth ?? {}), grantType: "client_credentials" }
 }
+// Stable 0.1.16 checks this exact fixture-owned document identity.
+if (scenario === "auth/basic-cimd") {
+  definition.oauth = { clientMetadataUrl: "https://conformance-test.local/client-metadata.json" }
+}
 
 // This legacy fixture advertises an origin AS but returns a path-scoped issuer.
 // Exercise the explicit compatibility option, not a relaxed runtime default.

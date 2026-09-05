@@ -2,10 +2,6 @@
 # Remove an entry as soon as its scenario passes. The conformance CLI treats a
 # passing baseline entry as stale and fails the run.
 client:
-  # Stable 0.1.16 requires its hardcoded conformance-test.local client ID.
-  # The shared Pages ID completes auth/tool use but triggers that SHOULD warning.
-  - auth/basic-cimd
-
   # The adapter supports client_secret_basic client credentials, but its config
   # has no private-key JWT credentials or assertion signing hook.
   - auth/client-credentials-jwt

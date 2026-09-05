@@ -41,9 +41,9 @@ export function validateOAuthClientMetadataUrl(value: string | false | undefined
     if (typeof value !== "string" || !value) throw new Error()
     validateClientMetadataUrl(value)
     const url = new URL(value)
-    const authority = value.match(/^[^:]+:[/\\]*([^/\\?#]*)/)?.[1]
-    if (url.username || url.password || authority?.includes("@") || value.includes("#")
-      || /[/\\](?:\.|%2e){1,2}(?=[/\\?#]|$)/i.test(value)) throw new Error()
+    const raw = value.match(/^[^:]+:[/\\]*([^/\\?#]*)([^?#]*)/)
+    if (url.username || url.password || raw?.[1]?.includes("@") || value.includes("#")
+      || /[/\\](?:\.|%2e){1,2}(?=[/\\]|$)/i.test(raw?.[2] ?? "")) throw new Error()
   } catch {
     throw new Error("OAuth clientMetadataUrl must be an HTTPS URL with a non-root path and no userinfo, fragment or dot segments")
   }
@@ -52,13 +52,12 @@ export function validateOAuthClientMetadataUrl(value: string | false | undefined
 /** Only the port may differ; keep raw host, path and query spelling exact. */
 export function loopbackRedirectsMatch(first: string, second: unknown): boolean {
   if (typeof second !== "string") return false
-  const pattern = /^(http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])):\d+(\/[^#]*)$/
-  const a = first.match(pattern)
-  const b = second.match(pattern)
-  if (!a?.[2] || !b?.[2] || a[1] !== b[1] || a[2] !== b[2]) return false
+  const port = /^([^:/?#]+:\/\/[^/\\?#@]+):\d+(?=[/\\?#]|$)/
+  if (!port.test(first) || !port.test(second) || first.includes("#") || second.includes("#")) return false
   try {
-    return new URL(first).pathname === a[2].split("?")[0]
-      && new URL(second).pathname === b[2].split("?")[0]
+    return [new URL(first), new URL(second)].every(url => url.protocol === "http:"
+      && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && Number(url.port) > 0)
+      && first.replace(port, "$1") === second.replace(port, "$1")
   } catch {
     return false
   }

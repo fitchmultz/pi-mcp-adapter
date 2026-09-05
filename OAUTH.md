@@ -379,7 +379,7 @@ const transport = new StreamableHTTPClientTransport(url, {
 ## References
 
 - [MCP SDK Documentation](https://github.com/modelcontextprotocol/typescript-sdk)
-- [MCP Authorization Specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+- [MCP Authorization Specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
 - [Client ID Metadata Documents](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00)
 - [OAuth 2.1](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-13)
 - [PKCE (RFC 7636)](https://datatracker.ietf.org/doc/html/rfc7636)
