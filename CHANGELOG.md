@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.3] - 2026-09-05
+
 ### Fixed
 
 - Carry newly required OAuth scopes into the next permitted authorization flow without changing issued token scopes, automatic-auth limits, or native refresh and machine-to-machine behavior.
