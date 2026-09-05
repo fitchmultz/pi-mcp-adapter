@@ -285,7 +285,7 @@ Use an existing enterprise OIDC ID token to obtain an MCP access token without o
 
 The nested credentials belong to the IdP, not the MCP authorization server. Omit `grantType`: this option selects the JWT-bearer grant. The SDK discovers both servers, exchanges the ID token for an ID-JAG (JWT authorization grant), then exchanges that grant for the MCP access token using the outer client identity. Public custom metadata documents and `privateKeyJwt` work instead of the outer shared secret. The shared browser identity is not eligible.
 
-Initial enterprise sign-in, ID-token renewal, client registration and keys remain user-managed. The token source is re-read when a new grant is needed; no IdP tokens, secrets or grants are added to storage. The IdP supports public or `client_secret_post` authentication, not IdP private-key JWT, SAML or a built-in login/refresh flow. Headless proxy/direct tools and manual auth use the same noninteractive path. See [cross-app configuration and limits](OAUTH.md#enterprise-cross-app-authorization).
+Initial enterprise sign-in, ID-token renewal, IdP client registration and keys remain user-managed. The token source is re-read when a new grant is needed; no IdP tokens, secrets or grants are added to storage. The IdP supports public or `client_secret_post` authentication, not IdP private-key JWT, SAML or a built-in login/refresh flow. Headless proxy/direct tools and manual auth use the same noninteractive path. See [cross-app configuration and limits](OAUTH.md#enterprise-cross-app-authorization).
 
 ### Shared MCP processes with rmcp-mux
 

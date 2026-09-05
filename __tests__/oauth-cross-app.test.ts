@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -379,6 +380,18 @@ it("does not advertise CAA or execute IdP sources on native stdio connections", 
   const result = await connection.client.callTool({ name: "caps" });
   expect(JSON.parse((result.content[0] as { text: string }).text).extensions).toBeUndefined();
   expect(existsSync(marker)).toBe(false); expect(f.idpRequests).toHaveLength(0);
+});
+
+it("releases the native async context on deactivation and cannot re-enable it with a late send", async () => {
+  const f = await fixture(), provider = f.provider(), caller = new AbortController();
+  const disable = vi.spyOn(AsyncLocalStorage.prototype, "disable");
+  try {
+    provider.runWithSignal(caller.signal, () => expect(provider.signal.aborted).toBe(false));
+    provider.deactivate();
+    expect(disable).toHaveBeenCalledTimes(1);
+    const late = vi.fn(); expect(() => provider.runWithSignal(caller.signal, late)).toThrow(/no longer active/);
+    expect(late).not.toHaveBeenCalled(); expect(provider.signal.aborted).toBe(true);
+  } finally { disable.mockRestore(); }
 });
 
 it("does not retain a completed connect caller signal and lets shared reconnect outlive one waiter", async () => {

@@ -262,11 +262,13 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   runWithSignal<T>(signal: AbortSignal | undefined, operation: () => T): T {
+    this.lifetimeSignal.throwIfAborted()
     return this.requestSignals.run(signal, operation)
   }
 
   deactivate(): void {
     this.controller.abort(new Error("OAuth flow is no longer active"))
+    this.requestSignals.disable()
   }
 
   private assertStoredIssuerBindings(entry: AuthEntry | undefined, issuer: string | undefined): void {
