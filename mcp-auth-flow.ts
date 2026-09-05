@@ -17,7 +17,7 @@ import {
   isStrictScopeSuperset,
 } from "@modelcontextprotocol/client"
 import open from "open"
-import { McpOAuthProvider, issuersMatch, loopbackRedirectsMatch, validateOAuthClientMetadataUrl, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
+import { McpOAuthProvider, issuersMatch, loopbackRedirectsMatch, validateOAuthClientMetadataUrl, validateOAuthPrivateKeyJwt, type McpOAuthConfig } from "./mcp-oauth-provider.ts"
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -242,6 +242,11 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     config.clientMetadataUrl = value === false ? false : interpolateEnvVars(value)
     validateOAuthClientMetadataUrl(config.clientMetadataUrl)
   }
+  if (definition.oauth?.privateKeyJwt !== undefined) {
+    // Keep environment and command sources lazy; each authentication resolves its own key.
+    config.privateKeyJwt = definition.oauth.privateKeyJwt
+  }
+  validateOAuthPrivateKeyJwt(config)
   if (definition.oauth?.scope !== undefined) {
     if (typeof definition.oauth.scope !== "string") throw new Error("OAuth scope must be a string")
     config.scope = interpolateEnvVars(definition.oauth.scope)
@@ -302,6 +307,8 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
   let discovery: AuthDiscovery = {}
   const client = new Client({ name: "pi-mcp-auth-discovery", version: "4.2.3" }, {
     versionNegotiation: { mode: definition?.protocolVersion ?? "auto" },
+    ...(definition?.oauth && definition.oauth.grantType === "client_credentials"
+      ? { capabilities: { extensions: { "io.modelcontextprotocol/oauth-client-credentials": {} } } } : {}),
   })
   const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
     requestInit: { headers },

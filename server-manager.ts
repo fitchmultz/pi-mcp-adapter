@@ -569,8 +569,10 @@ export class McpServerManager {
     }
   }
 
-  private buildClientCapabilities() {
+  private buildClientCapabilities(definition: ServerDefinition) {
     return {
+      ...(supportsOAuth(definition) && definition.oauth && definition.oauth.grantType === "client_credentials"
+        ? { extensions: { "io.modelcontextprotocol/oauth-client-credentials": {} } } : {}),
       ...(this.samplingConfig ? { sampling: {} } : {}),
       ...(this.elicitationConfig
         ? {
@@ -584,7 +586,7 @@ export class McpServerManager {
   }
 
   private createClient(serverName: string, definition: ServerDefinition): Client {
-    const capabilities = this.buildClientCapabilities();
+    const capabilities = this.buildClientCapabilities(definition);
     let client: Client;
     client = new ManagedClient(
       { name: `pi-mcp-${serverName}`, version: "4.2.3" },
@@ -788,6 +790,14 @@ export class McpServerManager {
       ...(supportsOAuth(definition) && !(definition.oauth && definition.oauth.grantType === "client_credentials")
         ? { onInsufficientScope: "throw" as const } : {}),
     });
+    if (authProvider) {
+      const close = transport.close.bind(transport);
+      transport.close = () => {
+        // Native OAuth fetches do not inherit the transport's abort signal.
+        authProvider.deactivate();
+        return close();
+      };
+    }
     if (!legacySse && supportsOAuth(definition)) {
       const previous = transport.onerror;
       transport.onerror = error => {

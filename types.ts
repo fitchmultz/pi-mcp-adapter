@@ -332,6 +332,20 @@ export interface McpContent {
 // Pi content block type
 export type ContentBlock = TextContent | ImageContent;
 
+/** Native private_key_jwt authentication; public verification keys are provisioned separately. */
+export interface OAuthPrivateKeyJwtConfig {
+  /** PKCS#8 PEM, JWK object/JSON, or an existing environment/!command source. Resolved only when signing. */
+  privateKey: string | Record<string, unknown>;
+  /** Asymmetric JOSE algorithm, such as ES256, RS256, PS256 or EdDSA (JWK only). */
+  algorithm: string;
+  /** JWT audience override only; defaults to the discovered issuer, then token URL. */
+  audience?: string;
+  /** Positive integer assertion lifetime in seconds; native default is 300. */
+  lifetimeSeconds?: number;
+  /** Additional claims. Native iss/sub/aud/iat/exp/jti always take precedence. */
+  claims?: Record<string, unknown>;
+}
+
 // OAuth configuration (SDK handles discovery and client registration)
 export interface OAuthConfig {
   /** Skip only authorization-server metadata issuer validation. Defaults to false. */
@@ -342,6 +356,8 @@ export interface OAuthConfig {
   clientId?: string;
   /** Client secret for confidential clients */
   clientSecret?: string;
+  /** Private-key authentication instead of clientSecret; requires clientId or a custom clientMetadataUrl. */
+  privateKeyJwt?: OAuthPrivateKeyJwtConfig;
   /** Requested OAuth scopes */
   scope?: string;
   /** Extra authorization URL parameters for provider-specific extensions. Flow-owned parameters cannot be overridden. */
@@ -352,7 +368,7 @@ export interface OAuthConfig {
   clientName?: string;
   /** Client homepage URI for dynamic registration */
   clientUri?: string;
-  /** Public-client metadata document URL. Eligible browser clients default to Pi MCP Adapter's shared identity; false opts out for new registrations. Stored clients keep priority. */
+  /** Client metadata document URL. Eligible browser clients default to Pi MCP Adapter's shared identity; false opts out for new registrations. Stored clients keep priority. */
   clientMetadataUrl?: string | false;
 }
 

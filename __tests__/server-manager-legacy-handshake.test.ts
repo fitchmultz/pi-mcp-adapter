@@ -39,6 +39,24 @@ describe("McpServerManager legacy handshake", () => {
     }
   });
 
+  it("does not advertise HTTP OAuth capabilities on a native stdio connection", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mcp-stdio-capabilities-"));
+    const manager = new McpServerManager(); managers.push(manager);
+    try {
+      const requestFile = join(directory, "initialize.json");
+      const connection = await manager.connect("stdio-capabilities", {
+        command: process.execPath,
+        args: [fileURLToPath(new URL("./fixtures/legacy-no-discover-server.mjs", import.meta.url))],
+        oauth: { grantType: "client_credentials", clientId: "unused-http-client" },
+        env: { MCP_HANDSHAKE_REQUEST: requestFile },
+      });
+      expect(connection.status).toBe("connected");
+      expect(JSON.parse(await readFile(requestFile, "utf8")).params.capabilities.extensions).toBeUndefined();
+    } finally {
+      await manager.closeAll(); await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reaches classic initialize when the server rejects server/discover", async () => {
     const manager = new McpServerManager();
     managers.push(manager);

@@ -25,6 +25,7 @@ lines.on("line", line => {
     return;
   }
   if (request.method === "initialize") {
+    if (process.env.MCP_HANDSHAKE_REQUEST) appendFileSync(process.env.MCP_HANDSHAKE_REQUEST, JSON.stringify(request));
     respond(request.id, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },

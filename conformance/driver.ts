@@ -128,6 +128,10 @@ if (context.client_id) {
 if (scenario.startsWith("auth/client-credentials")) {
   definition.oauth = { ...(definition.oauth ?? {}), grantType: "client_credentials" }
 }
+if (scenario === "auth/client-credentials-jwt") {
+  if (!context.private_key_pem || !context.signing_algorithm) throw new Error("JWT fixture credentials are missing")
+  definition.oauth = { ...(definition.oauth || {}), privateKeyJwt: { privateKey: context.private_key_pem, algorithm: context.signing_algorithm } }
+}
 // Stable 0.1.16 checks this exact fixture-owned document identity.
 if (scenario === "auth/basic-cimd") {
   definition.oauth = { clientMetadataUrl: "https://conformance-test.local/client-metadata.json" }

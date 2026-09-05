@@ -209,6 +209,7 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 | `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
 | `oauth.clientId` | Pre-registered OAuth client ID; takes priority over stored clients and automatic registration |
 | `oauth.clientSecret` | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!` |
+| `oauth.privateKeyJwt` | Native private-key authentication: `privateKey` (PKCS#8 PEM, JWK object/JSON, environment or `!command` source), `algorithm`, optional `audience`, `lifetimeSeconds`, `claims`; requires a configured client ID or custom metadata document, not `clientSecret` |
 | `oauth.scope` | Requested OAuth scopes |
 | `oauth.redirectUri` | Exact localhost redirect URI for browser OAuth, including port and path, for providers that pre-register callbacks |
 | `oauth.clientName` | Client display name advertised during dynamic registration |
@@ -230,15 +231,35 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 
 For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
 
-Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, and stdio `env` may use a leading `!command` to obtain their value at connection or authentication time. The command runs with stdin and stderr suppressed, stdout is limited to 1 MiB and trimmed, and it must finish within 10 seconds with non-empty output; failures stop the connection or authentication flow. Commands are not run during OAuth discovery or while reading, merging, previewing, hashing, or rendering configuration. Use `!!` to escape a literal leading `!`; ordinary and escaped values retain environment interpolation.
+Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, `oauth.privateKeyJwt.privateKey`, and stdio `env` may use a leading `!command` to obtain their value at connection or authentication time. The command runs with stdin and stderr suppressed, stdout is limited to 1 MiB and trimmed, and it must finish within 10 seconds with non-empty output; failures stop the connection or authentication flow. Commands are not run during OAuth discovery or while reading, merging, previewing, hashing, or rendering configuration. Use `!!` to escape a literal leading `!`; ordinary and escaped values retain environment interpolation.
 
 ### OAuth client registration
 
 Eligible browser clients automatically use the [Pi MCP Adapter client metadata document](https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json). The SDK keeps configured `clientId` and usable stored registrations first, then uses the document when the authorization server advertises `client_id_metadata_document_supported: true`. Otherwise it uses dynamic client registration (DCR), if available. An authorization server rejecting or failing to fetch a document does **not** guarantee a fallback to DCR.
 
-The shared public identity covers `/callback` on HTTP `localhost`, `127.0.0.1`, or `[::1]`, with a variable loopback port. Normal callbacks still use an OS-assigned port. A different `clientName`, `clientUri`, callback path or query keeps DCR; explicitly matching identity values remain eligible. Set `oauth.clientMetadataUrl` to your own document URL for a custom identity/callback, or `false` to opt out. Documents cannot use shared secrets; the shared browser identity is never used for `client_credentials`.
+The shared public identity covers `/callback` on HTTP `localhost`, `127.0.0.1`, or `[::1]`, with a variable loopback port. Normal callbacks still use an OS-assigned port. A different `clientName`, `clientUri`, callback path or query keeps DCR; explicitly matching identity values remain eligible. Set `oauth.clientMetadataUrl` to your own document URL for a custom identity/callback, or `false` to opt out. Documents cannot use shared secrets; the shared browser identity is never used for `client_credentials` or private-key authentication.
 
 Changing this option does not replace a usable stored login. Saved CIMD registrations allow only a loopback-port change during browser auth; host, scheme, path, query and issuer bindings remain enforced. To deliberately register again, use `/mcp logout <server>`. An authorization-server issuer change still requires clearing credentials; it is not silently migrated. See [OAuth configuration](OAUTH.md#client-registration-order) for details.
+
+### Private-key OAuth
+
+Use `oauth.privateKeyJwt` with an existing registered client ID, or a custom metadata document containing the matching public verification key:
+
+```json
+{
+  "url": "https://api.example.com/mcp",
+  "oauth": {
+    "grantType": "client_credentials",
+    "clientId": "registered-service-client",
+    "privateKeyJwt": {
+      "privateKey": "${MCP_PRIVATE_KEY}",
+      "algorithm": "ES256"
+    }
+  }
+}
+```
+
+The SDK signs a fresh assertion for each token request. Keys are resolved at authentication time, never cached or added to the credential store. PEM strings must be PKCS#8 with an RS/PS/ES algorithm; EdDSA / Ed25519 use a JWK. `!command` may return PEM or JWK JSON. The same hook authenticates browser code and refresh requests when `grantType` is omitted. No keys are generated, registered or hosted for you. See [private-key options and identity rules](OAUTH.md#private-key-jwt) for details.
 
 ### Shared MCP processes with rmcp-mux
 

@@ -119,14 +119,19 @@ export function resolveCommandSecret(value: string | undefined, context: string)
   if (value.startsWith("!!")) return interpolateEnvVars(value.slice(1));
   if (!value.startsWith("!")) return interpolateEnvVars(value);
 
-  const result = spawnSync(value.slice(1), {
-    shell: true,
-    encoding: "utf8",
-    timeout: COMMAND_SECRET_TIMEOUT_MS,
-    maxBuffer: COMMAND_SECRET_MAX_OUTPUT_BYTES,
-    stdio: ["ignore", "pipe", "ignore"],
-    windowsHide: true,
-  });
+  let result;
+  try {
+    result = spawnSync(value.slice(1), {
+      shell: true,
+      encoding: "utf8",
+      timeout: COMMAND_SECRET_TIMEOUT_MS,
+      maxBuffer: COMMAND_SECRET_MAX_OUTPUT_BYTES,
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+  } catch {
+    throw new Error(`Failed to resolve ${context}: command failed to start`);
+  }
   if (result.error) {
     const code = (result.error as NodeJS.ErrnoException).code;
     const reason = code === "ETIMEDOUT"
