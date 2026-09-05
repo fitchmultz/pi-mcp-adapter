@@ -571,7 +571,7 @@ export class McpServerManager {
 
   private buildClientCapabilities(definition: ServerDefinition) {
     return {
-      ...(definition.oauth && definition.oauth.grantType === "client_credentials"
+      ...(supportsOAuth(definition) && definition.oauth && definition.oauth.grantType === "client_credentials"
         ? { extensions: { "io.modelcontextprotocol/oauth-client-credentials": {} } } : {}),
       ...(this.samplingConfig ? { sampling: {} } : {}),
       ...(this.elicitationConfig

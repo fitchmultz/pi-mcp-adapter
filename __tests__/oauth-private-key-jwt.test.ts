@@ -301,6 +301,21 @@ it.each(["auto", "legacy"] as const)("lets native %s encode configured client-cr
   }
 });
 
+it.each([
+  [false, undefined, false], ["bearer", undefined, false], [undefined, { "X-Fixture": "test" }, false],
+  [undefined, undefined, true], ["oauth", { "X-Fixture": "test" }, true],
+] as const)("advertises ordinary machine auth only when OAuth is enabled: auth=%s headers=%j", async (authMode, headers, enabled) => {
+  const f = await fixture(); f.publicMcp();
+  f.definition.auth = authMode;
+  f.definition.headers = headers;
+  expect((await f.connect()).status).toBe("connected");
+  const discover = f.requests.find(r => r.method === "server/discover")!;
+  expect(discover.params._meta["io.modelcontextprotocol/clientCapabilities"]?.extensions).toEqual(
+    enabled ? { "io.modelcontextprotocol/oauth-client-credentials": {} } : undefined,
+  );
+  expect(f.exchanges).toHaveLength(0);
+});
+
 it("does not resolve commands during discovery or declare machine auth for browser clients", async () => {
   const dir = scratch(), marker = join(dir, "ran");
   const f = await fixture({ grantType: "authorization_code", clientMetadataUrl: "https://jwt.example/browser.json",
