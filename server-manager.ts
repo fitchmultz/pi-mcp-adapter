@@ -805,10 +805,10 @@ export class McpServerManager {
       skipIssuerMetadataValidation: definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
       // Native resource sends carry their own signal; OAuth discovery/token requests do not.
       ...(authProvider ? { fetch: (input: Parameters<FetchLike>[0], init?: RequestInit) =>
-        (definition.retryOnTransportFailure === true ? trackToolTransportFailure : fetch)(input, {
+        trackToolTransportFailure(input, {
           ...init, signal: combineAbortSignals(init?.signal ?? undefined,
             init?.signal ? authProvider.lifetimeSignal : authProvider.signal)!,
-        }) } : definition.retryOnTransportFailure === true ? { fetch: trackToolTransportFailure } : {}),
+        }) } : { fetch: trackToolTransportFailure }),
     };
     const transport: Transport = legacySse ? new SSEClientTransport(url, options) : new StreamableHTTPClientTransport(url, {
       ...options,
@@ -839,7 +839,7 @@ export class McpServerManager {
         onAuthChallenge?.(error);
       };
     }
-    if (!legacySse && definition.retryOnTransportFailure === true) trackToolHttpFailures(transport);
+    if (!legacySse) trackToolHttpFailures(transport);
     return { transport, oauthProvider: authProvider !== undefined };
   }
 

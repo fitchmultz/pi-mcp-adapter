@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Settle modern HTTP tool requests after an SSE response body disconnects instead of waiting for the deadline. Retry only the affected request, once with a fresh ID, when `retryOnTransportFailure` is enabled. Preserve the original deadline, cancellation, sibling calls, native resumption, and transport shutdown tracing.
+
 ## [4.3.0] - 2026-09-05
 
 ### Added

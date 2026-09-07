@@ -20,6 +20,7 @@
 //     many things other than "your session is gone"
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
+import { AsyncLocalStorage } from "node:async_hooks";
 import { SdkHttpError, SdkErrorCode, ProtocolError, InsufficientScopeError, UnauthorizedError, type FetchLike, type Transport } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
@@ -28,11 +29,43 @@ import type { McpServerManager, ServerConnection } from "./server-manager.ts";
 import { supportsOAuth } from "./mcp-auth-flow.ts";
 
 const toolTransportFailures = new WeakSet<object>();
+type ToolSend = {
+  id: string | number;
+  streaming: boolean;
+  responseReceived: boolean;
+  bodyFailure: Error | undefined;
+  otherFailure: Error | undefined;
+  finishSend: () => void;
+};
+const toolSend = new AsyncLocalStorage<ToolSend | undefined>();
 
-/** Retain fetch-error origin without changing the SDK's errors or wire requests. */
+/** Retain fetch/body-error origin without parsing or buffering the SSE response. */
 export const trackToolTransportFailure: FetchLike = async (input, init) => {
+  const pending = toolSend.getStore();
+  if (pending) pending.bodyFailure = undefined;
   try {
-    return await fetch(input, init);
+    const response = await fetch(input, init);
+    if (!pending || !response.ok || !response.body
+      || response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") return response;
+    pending.streaming = true;
+    // The native end hook has no error argument. Only a failed body read proves loss.
+    const reader = response.body.getReader();
+    return new Response(new ReadableStream({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) { controller.close(); reader.releaseLock(); }
+          else controller.enqueue(value);
+        } catch (error) {
+          // Native intentional closure suppresses onRequestStreamEnd.
+          if (init?.signal?.aborted) pending.finishSend();
+          else if (error instanceof Error) pending.bodyFailure = error;
+          controller.error(error);
+          reader.releaseLock();
+        }
+      },
+      cancel: reason => reader.cancel(reason).finally(() => reader.releaseLock()),
+    }), response);
   } catch (error) {
     if (error instanceof Error && !init?.signal?.aborted && init?.method === "POST"
       && new Headers(init.headers).get("Mcp-Method") === "tools/call") {
@@ -44,10 +77,51 @@ export const trackToolTransportFailure: FetchLike = async (input, init) => {
 
 /** Observe only the originating tool send, not OAuth or catalog requests. */
 export function trackToolHttpFailures(transport: Transport): void {
+  const onmessage = transport.onmessage;
+  transport.onmessage = (message, extra) => {
+    const pending = toolSend.getStore();
+    if (pending && "id" in message && message.id === pending.id && ("result" in message || "error" in message)) {
+      pending.responseReceived = true;
+      pending.finishSend();
+    }
+    onmessage?.(message, extra);
+  };
+  const onerror = transport.onerror;
+  transport.onerror = error => {
+    const pending = toolSend.getStore();
+    // Reader failures are observed before the SDK reports them; earlier parser errors are not retryable.
+    if (pending && !pending.bodyFailure) pending.otherFailure ??= error;
+    onerror?.(error);
+  };
   const send = transport.send.bind(transport);
   transport.send = async (message, options) => {
     try {
-      await send(message, options);
+      if (!("method" in message && message.method === "tools/call" && "id" in message && options?.requestSignal)) {
+        return await toolSend.run(undefined, () => send(message, options));
+      }
+      const pending: ToolSend = {
+        id: message.id, streaming: false, responseReceived: false,
+        bodyFailure: undefined, otherFailure: undefined,
+        finishSend: () => {},
+      };
+      try {
+        await abortable(new Promise<void>((resolve, reject) => {
+          pending.finishSend = resolve;
+          void toolSend.run(pending, () => send(message, {
+            ...options,
+            onRequestStreamEnd: () => {
+              options.onRequestStreamEnd?.();
+              const error = pending.otherFailure ?? pending.bodyFailure;
+              if (!pending.responseReceived && error) {
+                if (!pending.otherFailure) toolTransportFailures.add(error);
+                reject(error);
+              } else resolve();
+            },
+          })).then(() => { if (!pending.streaming) resolve(); }, reject);
+        }), options.requestSignal);
+      } finally {
+        pending.finishSend = () => {};
+      }
     } catch (error) {
       if ("method" in message && message.method === "tools/call"
         && error instanceof SdkHttpError && error.code === SdkErrorCode.ClientHttpNotImplemented
