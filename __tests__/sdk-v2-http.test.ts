@@ -200,7 +200,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const code = failure === 401 ? SdkErrorCode.ClientHttpAuthentication
       : failure === 403 ? SdkErrorCode.ClientHttpForbidden
       : SdkErrorCode.EraNegotiationFailed;
-    await expect(f.connect({ requestTimeoutMs: 35 })).rejects.toMatchObject({ code });
+    await expect(f.connect()).rejects.toMatchObject({ code });
     expect(f.manager.getConnection("local")).toBeUndefined();
     expect(f.requests.map(r => r.body.method)).toEqual(["server/discover"]);
   });
@@ -241,6 +241,25 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(connection.inFlight).toBe(0);
   });
 
+  it.each(["direct", "proxy", "script"])("retries partial SSE body loss once through %s", async entry => {
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/call" || f.calls().length > 1) return;
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write(": started\n\n");
+      setTimeout(() => e.res.destroy(), 20);
+      return true;
+    });
+    const { state, connection } = await f.connect({ retryOnTransportFailure: true });
+    const started = performance.now();
+    const output = await call(state, entry);
+    expect(output.ok, JSON.stringify({ output, calls: f.calls().map(c => c.body.id), elapsedMs: performance.now() - started })).toBe(true);
+    expect(f.calls()).toHaveLength(2);
+    expect(f.calls()[0].body.id).not.toBe(f.calls()[1].body.id);
+    expect(f.manager.getConnection("local")?.client).toBe(connection.client);
+    expect(f.requests.filter(r => r.body.method === "server/discover")).toHaveLength(1);
+    expect(connection.inFlight).toBe(0);
+  });
+
   it.each([undefined, false])("does not retry unless opted in (%s)", async retryOnTransportFailure => {
     const f = await fixture(e => {
       if (e.body.method !== "tools/call") return;
@@ -251,15 +270,36 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.calls()).toHaveLength(1);
   });
 
-  it.each(["network", "http503"])("stops after the second %s failure", async failure => {
+  it.each([undefined, false])("settles partial SSE loss without retry when disabled (%s)", async retryOnTransportFailure => {
     const f = await fixture(e => {
       if (e.body.method !== "tools/call") return;
-      if (failure === "network") e.req.socket.destroy();
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write(": started\n\n");
+      setTimeout(() => e.res.destroy(), 20);
+      return true;
+    });
+    const { state } = await f.connect({ ...(retryOnTransportFailure !== undefined ? { retryOnTransportFailure } : {}) });
+    const output = await call(state, "proxy");
+    expect(output.ok).toBe(false);
+    expect(output.details.message).not.toMatch(/timeout|timed out/i);
+    expect(f.calls()).toHaveLength(1);
+  });
+
+  it.each(["network", "http503", "sse"])("stops after the second %s failure", async failure => {
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/call") return;
+      if (failure === "sse") {
+        e.res.writeHead(200, { "content-type": "text/event-stream" });
+        e.res.write(": started\n\n");
+        setTimeout(() => e.res.destroy(), 20);
+      } else if (failure === "network") e.req.socket.destroy();
       else e.res.writeHead(503).end("service unavailable");
       return true;
     });
     const { state } = await f.connect({ retryOnTransportFailure: true });
-    expect((await call(state, "proxy")).ok).toBe(false);
+    const output = await call(state, "proxy");
+    expect(output.ok).toBe(false);
+    expect(output.details.message).not.toMatch(/timeout|timed out/i);
     expect(f.calls()).toHaveLength(2);
   });
 
@@ -275,10 +315,17 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(new Set(f.calls().map(c => c.body.id)).size).toBe(2);
   });
 
-  it.each(["protocol", "http503-rpc", "http503-null-id", "tool", "invalid-json"])("does not retry %s errors", async failure => {
+  it.each(["protocol", "http401", "http403", "http503-rpc", "http503-null-id", "tool", "invalid-json", "sse-protocol", "sse-tool"])("does not retry %s errors", async failure => {
     const f = await fixture(e => {
       if (e.body.method !== "tools/call") return;
-      if (failure === "tool") result(e, { resultType: "complete", isError: true, content: [] });
+      if (failure.startsWith("sse-")) {
+        e.res.writeHead(200, { "content-type": "text/event-stream" }).end(`event: message\ndata: ${JSON.stringify({
+          jsonrpc: "2.0", id: e.body.id,
+          ...(failure === "sse-tool" ? { result: { resultType: "complete", isError: true, content: [] } }
+            : { error: { code: -32602, message: "fixture rejection" } }),
+        })}\n\n`);
+      } else if (failure === "http401" || failure === "http403") e.res.writeHead(Number(failure.slice(4))).end("denied");
+      else if (failure === "tool") result(e, { resultType: "complete", isError: true, content: [] });
       else if (failure === "invalid-json") e.res.writeHead(200, { "content-type": "application/json" }).end("not json");
       else rpcError(e, -32602, failure === "protocol" ? 200 : 503, failure === "http503-null-id" ? null : e.body.id);
       return true;
@@ -316,10 +363,45 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(trace).not.toContain('"value":"test"');
   });
 
-  it("keeps an absolute deadline across retry and does not label it caller cancellation", async () => {
+  it("settles and traces a pending SSE send on intentional manager shutdown without retry", async () => {
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/call") return;
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write(": started\n\n");
+      return true;
+    });
+    const directory = await mkdtemp(join(tmpdir(), "mcp-v2-close-trace-"));
+    cleanups.unshift(() => rm(directory, { recursive: true, force: true }));
+    const traceFile = join(directory, "trace.jsonl");
+    f.manager.setTraceConfig({ enabled: true, file: traceFile });
+    const { state, connection } = await f.connect({ retryOnTransportFailure: true });
+    const send = connection.transport.send.bind(connection.transport);
+    let settled = 0;
+    connection.transport.send = (message, options) => {
+      const pending = send(message, options);
+      return "method" in message && message.method === "tools/call"
+        ? pending.finally(() => { settled++; }) : pending;
+    };
+    const pending = call(state, "proxy");
+    await expect.poll(() => f.calls().length).toBe(1);
+    await f.manager.closeAll();
+    expect((await pending).details.message).toContain("Connection closed");
+    await expect.poll(() => settled).toBe(1);
+    expect(f.calls()).toHaveLength(1);
+    await expect.poll(() => readFile(traceFile, "utf8")).toContain('"method":"tools/call"');
+    const events = (await readFile(traceFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+    expect(events.filter(e => e.direction === "outbound" && e.method === "tools/call"))
+      .toMatchObject([{ id: f.calls()[0].body.id, status: "sent" }]);
+  });
+
+  it.each(["network", "sse"])("keeps an absolute deadline across %s retry without reporting caller cancellation", async failure => {
     const f = await fixture(async e => {
       if (e.body.method !== "tools/call") return;
       if (f.calls().length === 1) {
+        if (failure === "sse") {
+          e.res.writeHead(200, { "content-type": "text/event-stream" });
+          e.res.write(": started\n\n");
+        }
         await new Promise(resolve => setTimeout(resolve, 100));
         e.req.socket.destroy();
       }
@@ -329,15 +411,17 @@ describe("published SDK v2 over real local HTTP", () => {
     const started = performance.now();
     const output = await call(state, "proxy");
     expect(output.details.error).toBe("call_failed");
+    expect(output.details.message).toMatch(/timeout|timed out/i);
     expect(performance.now() - started).toBeLessThan(240);
     expect(f.calls()).toHaveLength(2);
   });
 
-  it("does not rerun an expired deadline or an ambiguous stream timeout", async () => {
+  it.each(["open", "closed"])("does not infer transport failure from a clean %s SSE stream", async ending => {
     const f = await fixture(e => {
       if (e.body.method !== "tools/call") return;
       e.res.writeHead(200, { "content-type": "text/event-stream" });
       e.res.write(": waiting\n\n");
+      if (ending === "closed") setTimeout(() => e.res.end(), 10);
       return true;
     });
     const { state } = await f.connect({ requestTimeoutMs: 40, retryOnTransportFailure: true });
@@ -379,6 +463,147 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(output.content).toEqual([{ type: "text", text: "streamed" }]);
     expect(patches).toEqual([{ streamToken: "stream", result: { content: [{ type: "text", text: "partial" }] } }]);
     expect(f.requests.every(r => r.req.method === "POST")).toBe(true);
+  });
+
+  it.each([["json", "end"], ["json", "destroy"], ["envelope", "end"], ["envelope", "destroy"]])(
+    "does not retry malformed SSE %s followed by %s", async (invalid, ending) => {
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/call") return;
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write(`event: message\ndata: ${invalid === "json" ? "not json" : '{"unexpected":true}'}\n\n`);
+      setTimeout(() => ending === "end" ? e.res.end() : e.res.destroy(), 20);
+      return true;
+    });
+    const { state } = await f.connect({ retryOnTransportFailure: true });
+    const output = await call(state, "proxy");
+    expect(output.ok).toBe(false);
+    expect(output.details.message).not.toMatch(/timeout|timed out|terminated/i);
+    expect(f.calls()).toHaveLength(1);
+  });
+
+  it("returns a complete result before EOF and keeps late stream notifications without replay", async () => {
+    let stream: ServerResponse;
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/call") return;
+      stream = e.res;
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: e.body.id,
+        result: { resultType: "complete", content: [{ type: "text", text: "complete" }] },
+      })}\n\n`);
+      return true;
+    });
+    const { state, connection } = await f.connect({ retryOnTransportFailure: true });
+    const patches: unknown[] = [];
+    const errors: Error[] = [];
+    connection.client.onerror = error => errors.push(error);
+    f.manager.registerUiStreamListener("late", (_name, patch) => patches.push(patch));
+    expect((await call(state, "proxy")).content).toEqual([{ type: "text", text: "complete" }]);
+    stream!.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: SERVER_STREAM_RESULT_PATCH_METHOD,
+      params: { streamToken: "late", result: { content: [{ type: "text", text: "after result" }] } },
+    })}\n\n`);
+    await expect.poll(() => patches.length).toBe(1);
+    stream!.destroy();
+    await expect.poll(() => errors.length).toBe(1);
+    expect(f.calls()).toHaveLength(1);
+    expect(connection.inFlight).toBe(0);
+  });
+
+  it("does not interrupt or replay an accepted sibling while recovering partial SSE loss", async () => {
+    let accepted: Exchange | undefined;
+    let attempts = 0;
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/call") return;
+      if (e.body.params.arguments.sibling) {
+        accepted = e;
+        e.res.writeHead(200, { "content-type": "text/event-stream" });
+        e.res.write(": accepted\n\n");
+        return true;
+      }
+      if (++attempts > 1) return;
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write(": started\n\n");
+      setTimeout(() => e.res.destroy(), 20);
+      return true;
+    });
+    const { state, connection } = await f.connect({ retryOnTransportFailure: true });
+    const sibling = executeCall(state, "local_echo", { sibling: true });
+    await expect.poll(() => accepted !== undefined).toBe(true);
+    expect((await call(state, "proxy")).ok).toBe(true);
+    expect(accepted!.res.destroyed).toBe(false);
+    accepted!.res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: accepted!.body.id,
+      result: { resultType: "complete", content: [{ type: "text", text: "sibling result" }] },
+    })}\n\n`);
+    expect((await sibling).content).toEqual([{ type: "text", text: "sibling result" }]);
+    expect(f.calls().filter(c => c.body.params.arguments.sibling)).toHaveLength(1);
+    expect(attempts).toBe(2);
+    expect(f.manager.getConnection("local")?.client).toBe(connection.client);
+    expect(connection.inFlight).toBe(0);
+  });
+
+  it("does not attribute a nested catalog's lost response to the tool stream", async () => {
+    let lists = 0;
+    const f = await fixture(e => {
+      if (e.body.method === "tools/list" && ++lists > 1) {
+        e.res.writeHead(200, { "content-type": "text/event-stream" });
+        e.res.write(": catalog\n\n");
+        setTimeout(() => e.res.destroy(), 20);
+        return true;
+      }
+      if (e.body.method !== "tools/call") return;
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: SERVER_STREAM_RESULT_PATCH_METHOD,
+        params: { streamToken: "catalog", result: { content: [] } },
+      })}\n\n`);
+      setTimeout(() => e.res.end(), 60);
+      return true;
+    });
+    const { state, connection } = await f.connect({ retryOnTransportFailure: true, requestTimeoutMs: 150 });
+    let catalog: Promise<unknown> | undefined;
+    f.manager.registerUiStreamListener("catalog", () => {
+      catalog = connection.client.listTools(undefined, { cacheMode: "refresh", timeout: 100 }).catch(error => error);
+    });
+    expect((await call(state, "proxy")).ok).toBe(false);
+    await catalog;
+    expect(lists).toBe(2);
+    expect(f.calls()).toHaveLength(1);
+  });
+
+  it.each(["end", "destroy"])("leaves native SSE resumption in charge after %s", async ending => {
+    let id: WireRequest["id"];
+    const f = await fixture(e => {
+      if (e.req.method === "GET") {
+        expect(e.req.headers["last-event-id"]).toBe("resume-token");
+        e.res.writeHead(200, { "content-type": "text/event-stream" }).end(`event: message\ndata: ${JSON.stringify({
+          jsonrpc: "2.0", id, result: { resultType: "complete", content: [{ type: "text", text: "resumed" }] },
+        })}\n\n`);
+        return true;
+      }
+      if (e.body.method !== "tools/call") return;
+      id = e.body.id;
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write("id: resume-token\nretry: 1\ndata:\n\n");
+      setTimeout(() => ending === "end" ? e.res.end() : e.res.destroy(), 20);
+      return true;
+    });
+    const { state } = await f.connect({ retryOnTransportFailure: true });
+    expect((await call(state, "proxy")).content).toEqual([{ type: "text", text: "resumed" }]);
+    expect(f.calls()).toHaveLength(1);
+    expect(f.requests.filter(r => r.req.method === "GET")).toHaveLength(1);
+  });
+
+  it.each([401, 403])("does not replace native resumption HTTP%s with a fresh tool POST", async status => {
+    const f = await fixture(e => {
+      if (e.req.method === "GET") { e.res.writeHead(status).end("denied"); return true; }
+      if (e.body.method !== "tools/call") return;
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write("id: resume-token\nretry: 1\ndata:\n\n");
+      setTimeout(() => e.res.destroy(), 20);
+      return true;
+    });
+    const { state } = await f.connect({ retryOnTransportFailure: true });
+    expect((await call(state, "proxy")).ok).toBe(false);
+    expect(f.calls()).toHaveLength(1);
+    expect(f.requests.some(r => r.req.method === "GET")).toBe(true);
   });
 
   it("refreshes modern catalogs through the native POST subscription and closes it on shutdown", async () => {

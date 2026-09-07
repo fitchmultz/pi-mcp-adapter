@@ -174,9 +174,11 @@ For known legacy servers, set `protocolVersion: "legacy"`. This is also the work
 }
 ```
 
-`retryOnTransportFailure` is off by default. When enabled, direct tools, `mcp`, and `mcp_script` make at most one new `callTool` request on the same modern HTTP client, with a fresh SDK-generated request ID. Eligible failures are a rejected tool POST fetch before response headers arrive, or an HTTP 5xx tool response without a JSON-RPC error. **The first attempt may already have run; enabling retries can duplicate side effects.** Request IDs are not idempotency keys.
+`retryOnTransportFailure` is off by default. When enabled, direct tools, `mcp`, and `mcp_script` make at most one new `callTool` request on the same modern HTTP client, with a fresh SDK-generated request ID. Eligible failures are a rejected tool POST fetch before response headers arrive, an HTTP 5xx tool response without a JSON-RPC error, or an SSE response body disconnecting before its JSON-RPC response arrives. **The first attempt may already have run; enabling retries can duplicate side effects.** Request IDs are not idempotency keys.
 
-This transport-failure option does not retry OAuth failures, JSON-RPC errors, tool error results, invalid responses, cancellation, or expired deadlines. Permission recovery uses the separate existing `autoAuth` gate, not this option. A lost JSON/SSE response body may surface only as a parse error or timeout; those ambiguous failures are not replayed. The original tool deadline covers SDK subrequests and retries, and modern retry never stacks with legacy expired-session recovery. Native header-schema refresh and multi-round-trip input handling remain SDK-owned.
+A broken SSE body fails only the affected request, even when retries are disabled. Completed responses and later stream notifications remain intact. Native SSE resumption stays SDK-owned: a server-provided event ID lets the SDK resume the existing stream before any adapter retry.
+
+This transport-failure option does not retry OAuth failures, JSON-RPC errors, tool error results, invalid responses, cancellation, or expired deadlines. Permission recovery uses the separate existing `autoAuth` gate, not this option. JSON response-body failures, clean SSE endings without a response, and streams that merely stop making progress are not replayed. The original tool deadline covers SDK subrequests and retries, and modern retry never stacks with legacy expired-session recovery. Native header-schema refresh and multi-round-trip input handling remain SDK-owned.
 
 ### Server Options
 
