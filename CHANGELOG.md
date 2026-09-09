@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Let cancelled MCP tools stop waiting for initialization immediately without cancelling shared startup or other callers. Proxy and script tools keep their existing 30-second initialization timeout.
+
 ## [4.3.1] - 2026-09-07
 
 ### Fixed

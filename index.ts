@@ -19,6 +19,7 @@ import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwne
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { runMcpScript } from "./mcp-code.ts";
 import { MAX_PAGE_SIZE, MAX_TOOL_NAME_LENGTH } from "./search-ranking.ts";
+import { abortable } from "./abort.ts";
 
 export type { McpAdapterOptions } from "./types.ts";
 export {
@@ -638,7 +639,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         const executeOwner = currentOwner;
         if (!state && initPromise) {
           try {
-            const initialized = await awaitWithTimeout(initPromise, INIT_WAIT_TIMEOUT_MS);
+            const initialized = await awaitWithTimeout(abortable(initPromise, signal), INIT_WAIT_TIMEOUT_MS);
             if (initialized === INIT_WAIT_TIMED_OUT) {
               return {
                 content: [{ type: "text" as const, text: "MCP initialization is still in progress. Try again shortly." }],
@@ -648,7 +649,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             executeOwner?.throwIfInactive();
             state = initialized;
           } catch (error) {
-            if (executeOwner && isAbortError(error, executeOwner.signal)) throw error;
+            if (signal?.aborted || (executeOwner && isAbortError(error, executeOwner.signal))) throw error;
             const message = error instanceof Error ? error.message : String(error);
             return {
               content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
@@ -748,7 +749,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
         if (!state && initPromise) {
           try {
-            const initialized = await awaitWithTimeout(initPromise, INIT_WAIT_TIMEOUT_MS);
+            const initialized = await awaitWithTimeout(abortable(initPromise, signal), INIT_WAIT_TIMEOUT_MS);
             if (initialized === INIT_WAIT_TIMED_OUT) {
               return {
                 content: [{ type: "text" as const, text: "MCP initialization is still in progress. Try again shortly." }],
@@ -758,7 +759,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             executeOwner?.throwIfInactive();
             state = initialized;
           } catch (error) {
-            if (executeOwner && isAbortError(error, executeOwner.signal)) throw error;
+            if (signal?.aborted || (executeOwner && isAbortError(error, executeOwner.signal))) throw error;
             const message = error instanceof Error ? error.message : String(error);
             return {
               content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
