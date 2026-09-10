@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Restrict opted-in modern transport retries to explicit read-only or idempotent tool annotations. Unknown write outcomes request provider readback instead of redispatch; confirmed pre-dispatch session/auth recovery remains available.
+
+### Added
+
+- An awaited `createMcpAdapter({ onToolCall })` callback before dispatch and after raw outcomes, including each script call's resolved arguments and native outer/inner identity. Hosts can checkpoint native Pi history without replaying completed calls.
+
 ## [4.3.1] - 2026-09-07
 
 ### Fixed

@@ -104,12 +104,19 @@ function parseWorkerMessage(value: unknown): WorkerMessage | null {
   return null;
 }
 
+class McpScriptCaptureError extends Error {
+  constructor(readonly recovery: unknown, message: string) {
+    super(message);
+  }
+}
+
 export async function runMcpScript(
   state: McpExtensionState,
   code: string,
   timeoutMs = DEFAULT_MCP_SCRIPT_TIMEOUT_MS,
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
+  toolCallId?: string,
 ) {
   const resolvedTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
     ? Math.floor(timeoutMs)
@@ -121,7 +128,7 @@ export async function runMcpScript(
 
   type ScriptOperation =
     | { operation: "call"; path: string; ok: true; durationMs: number }
-    | { operation: "call"; path: string; ok: false; error: string; durationMs: number }
+    | { operation: "call"; path: string; ok: false; error: string; durationMs: number; recovery?: unknown }
     | { operation: "search"; query: string; ok: true; durationMs: number }
     | { operation: "search"; query: string; ok: false; error: string; durationMs: number }
     | { operation: "describe"; path: string; ok: true; durationMs: number }
@@ -135,7 +142,7 @@ export async function runMcpScript(
       : operation.durationMs,
   }));
   let callsSnapshot: ScriptOperation[] | undefined;
-  const callTool = async (path: string, args?: Record<string, unknown>) => {
+  const callTool = async (innerCallId: number, path: string, args?: Record<string, unknown>) => {
     // Record before dispatch so calls still in flight at timeout/abort appear in the trace.
     const startedAt = Date.now();
     const index = calls.push({ operation: "call", path, ok: false, error: "incomplete", durationMs: 0, startedAt }) - 1;
@@ -144,7 +151,7 @@ export async function runMcpScript(
     const result = await executeCall(state, path, args, undefined, getPiTools, callSignal, (raw) => {
       rawResult = raw;
       hasRawResult = true;
-    });
+    }, { ...(toolCallId !== undefined ? { toolCallId } : {}), innerCallId });
     const details = result.details;
     if (details.error !== undefined) {
       const errorCode = String(details.error);
@@ -156,10 +163,15 @@ export async function runMcpScript(
         : typeof details.message === "string"
           ? details.message
           : textFromContent(result.content);
-      calls[index] = { operation: "call", path, ok: false, error: errorCode, durationMs: Date.now() - startedAt, startedAt };
+      calls[index] = {
+        operation: "call", path, ok: false, error: errorCode, durationMs: Date.now() - startedAt, startedAt,
+        ...(errorCode === "ambiguous_outcome" ? { recovery: details.recovery } : {}),
+      };
+      if (errorCode === "call_capture_failed") throw new McpScriptCaptureError(details.recovery, message);
+      if (errorCode === "ambiguous_outcome") output.push({ type: "text", text: message });
       return {
         ok: false as const,
-        error: { code: errorCode, message },
+        error: { code: errorCode, message, ...(details.recovery ? { recovery: details.recovery } : {}) },
       };
     }
     calls[index] = { operation: "call", path, ok: true, durationMs: Date.now() - startedAt, startedAt };
@@ -216,6 +228,7 @@ export async function runMcpScript(
           server,
           ...(tool.description ? { description: tool.description } : {}),
           ...(inputTypeScript ? { inputTypeScript } : {}),
+          ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
         };
       }
       const suggestions = path ? rankSuggestions(state, path, 5) : [];
@@ -241,7 +254,8 @@ export async function runMcpScript(
   let worker: Worker | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let removeAbortListener = () => {};
-  let errorCode: "timeout" | "aborted" | "script_error" | undefined;
+  let errorCode: "timeout" | "aborted" | "script_error" | "call_capture_failed" | undefined;
+  let recovery: unknown;
   let errorMessage: string | undefined;
 
   try {
@@ -278,7 +292,7 @@ export async function runMcpScript(
         void (async () => {
           let envelope: unknown;
           if (message.type === "call") {
-            envelope = await callTool(message.path, message.args as Record<string, unknown> | undefined);
+            envelope = await callTool(message.id, message.path, message.args as Record<string, unknown> | undefined);
           } else if (message.type === "search") {
             envelope = searchTools(message.input as SearchInput | undefined);
           } else {
@@ -316,7 +330,11 @@ export async function runMcpScript(
 
     await Promise.race([execution, timeout, aborted]);
   } catch (error) {
-    if (error instanceof McpScriptTimeoutError) {
+    if (error instanceof McpScriptCaptureError) {
+      errorCode = "call_capture_failed";
+      errorMessage = error.message;
+      recovery = error.recovery;
+    } else if (error instanceof McpScriptTimeoutError) {
       errorCode = "timeout";
       errorMessage = `mcp_script timed out after ${resolvedTimeoutMs}ms`;
     } else if (externalSignal?.aborted) {
@@ -350,6 +368,7 @@ export async function runMcpScript(
       mode: "script",
       ...(errorCode ? { error: errorCode, message: errorMessage } : {}),
       timeoutMs: resolvedTimeoutMs,
+      ...(recovery !== undefined ? { recovery } : {}),
       ...(callsSnapshot.length > 0 ? { calls: callsSnapshot } : {}),
       ...guardedMcpDetails(guarded),
     },

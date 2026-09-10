@@ -65,6 +65,7 @@ export interface McpTool {
   title?: SdkTool["title"];
   description?: SdkTool["description"];
   inputSchema?: SdkTool["inputSchema"]; // JSON Schema
+  annotations?: SdkTool["annotations"];
   _meta?: SdkTool["_meta"];
 }
 
@@ -400,7 +401,7 @@ export interface ServerEntry {
   cwd?: string;
   /** HTTP defaults to auto negotiation; stdio/socket default to legacy. */
   protocolVersion?: "auto" | "legacy";
-  /** Retry one modern tool POST connection failure or HTTP 5xx without a JSON-RPC error. May duplicate side effects; defaults to false. */
+  /** Trust explicit readOnlyHint/idempotentHint annotations for one modern transport retry. Defaults to false. */
   retryOnTransportFailure?: boolean;
   // HTTP fields
   url?: string;
@@ -551,9 +552,31 @@ export interface McpConfig {
   settings?: McpSettings;
 }
 
+export interface McpToolCallIdentity {
+  /** Native Pi call ID; correlation only, never a provider idempotency key. */
+  toolCallId?: string;
+  /** Existing mcp_script IPC sequence ID, scoped to toolCallId. */
+  innerCallId?: number;
+}
+
+export type McpToolCallEvent = McpToolCallIdentity & {
+  server: string;
+  tool: string;
+  args: Record<string, unknown>;
+  annotations?: McpTool["annotations"];
+  resourceUri?: string;
+  signal: AbortSignal;
+} & (
+  | { phase: "before" }
+  | { phase: "after"; result: unknown }
+  | { phase: "after"; error: unknown }
+);
+
 export interface McpAdapterOptions {
   config?: McpConfig;
   configPath?: string;
+  /** Awaited before dispatch and after its raw outcome, before any dependent script call. */
+  onToolCall?: (event: McpToolCallEvent) => Promise<void>;
 }
 
 // Alias for clarity
@@ -567,6 +590,7 @@ export interface ToolMetadata {
   uiResourceUri?: string; // For app-enabled tools: the UI resource URI
   uiVisibility?: UiToolVisibility[];
   inputSchema?: unknown;  // JSON Schema for parameters (stored for describe/errors)
+  annotations?: McpTool["annotations"];
   uiStreamMode?: UiStreamMode;
 }
 
@@ -585,6 +609,7 @@ export interface DirectToolSpec {
   prefixedName: string;
   description: string;
   inputSchema?: unknown;
+  annotations?: McpTool["annotations"];
   resourceUri?: string;
   uiResourceUri?: string;
   uiStreamMode?: UiStreamMode;
@@ -605,6 +630,7 @@ export interface CachedTool {
   name: string;
   description?: string;
   inputSchema?: unknown;
+  annotations?: McpTool["annotations"];
   uiResourceUri?: string;
   uiVisibility?: UiToolVisibility[];
   uiStreamMode?: "eager" | "stream-first";

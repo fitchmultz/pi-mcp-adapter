@@ -140,6 +140,18 @@ A supplied `config` is a complete, isolated snapshot. It is not merged with file
 
 With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` and `MCP_OAUTH_DIR` are used only as legacy plaintext import locations for older `tokens.json` files, not as credential namespaces. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
 
+### Awaited call capture
+
+`createMcpAdapter({ onToolCall: async (event) => { ... } })` supplies one optional, session-scoped callback for `mcp`, direct tools, and each resolved `mcp_script` call. Load this factory instead of also loading the default adapter. The callback is passed directly, so separate Pi/Jiti module instances do not need to share a singleton or event bus.
+
+`McpToolCallEvent` (exported from `pi-mcp-adapter/types`) contains `server`, `tool`, the actual resolved `args`, optional SDK `annotations` and `resourceUri`, and a cancellation/deadline `signal`. `toolCallId` is the outer native Pi ID; scripts additionally carry their existing numeric `innerCallId`. These IDs are correlation only, not provider idempotency keys.
+
+- `phase: "before"`: awaited after approval, before dispatch. Rejection prevents the call.
+- `phase: "after"`: contains either the raw `result` (including MCP error results) or the thrown `error`. Awaited before delivering the outcome to Pi or dependent script work. It runs once after native recovery/retry settles, not once per HTTP subrequest.
+- Capture failure returns `call_capture_failed` with the original event, excluding `signal`, in `details.recovery`. A completed result stays there; the adapter never repeats it. A script stops before consuming that result or starting dependent work. Cancellation remains `aborted`.
+
+The host owns `pi.appendEntry()` and the awaited checkpoint of that same native JSONL. Exclude `signal`, serialize thrown errors explicitly, redact sensitive checkpoint bytes, and honor the signal and session/attempt fence. `pi.appendEntry()` alone only persists locally; `pi.events.emit()` is not an awaited barrier. Custom entries do not enter model context automatically: the host must provide truthful recovered results or readback instructions when resuming. The adapter stores no separate transcript or receipts, does not replay scripts, and does not invent provider operation keys.
+
 ### Runtime status snapshots
 
 Extensions can subscribe to the adapter's versioned shared event-bus channel instead of parsing `/mcp` or `mcp({})` output:
@@ -174,7 +186,9 @@ For known legacy servers, set `protocolVersion: "legacy"`. This is also the work
 }
 ```
 
-`retryOnTransportFailure` is off by default. When enabled, direct tools, `mcp`, and `mcp_script` make at most one new `callTool` request on the same modern HTTP client, with a fresh SDK-generated request ID. Eligible failures are a rejected tool POST fetch before response headers arrive, an HTTP 5xx tool response without a JSON-RPC error, or an SSE response body disconnecting before its JSON-RPC response arrives. **The first attempt may already have run; enabling retries can duplicate side effects.** Request IDs are not idempotency keys.
+`retryOnTransportFailure` is off by default. Enabling it trusts the configured server's explicit `readOnlyHint: true` or `idempotentHint: true` tool annotations for at most one new `callTool` request on the same modern HTTP client. Annotations are retained in live/cached metadata and describe output; the live catalog takes precedence over frozen direct-tool metadata. Eligible failures are a rejected tool POST fetch before response headers arrive, an HTTP 5xx tool response without a JSON-RPC error, or an SSE response body disconnecting before its JSON-RPC response arrives. The first attempt may already have run. Fresh SDK request IDs are not idempotency keys.
+
+Unknown or non-idempotent tools remain callable but are never automatically redispatched after those failures. An unresolved transport failure returns internal `ambiguous_outcome` details with server/tool/call identity and readback instructions. Use the original saved arguments and the provider's supported operation/resource identity to read the prior result, then continue the remaining work; do not blindly repeat a write or rerun its whole script. Missing annotations are not permission denial. Confirmed pre-dispatch legacy-session and authentication recovery remain available.
 
 A broken SSE body fails only the affected request, even when retries are disabled. Completed responses and later stream notifications remain intact. Native SSE resumption stays SDK-owned: a server-provided event ID lets the SDK resume the existing stream before any adapter retry.
 
@@ -204,7 +218,7 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 | `env` | Environment variables; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the stdio server connects; use `!!` for a literal leading `!`. |
 | `cwd` | Working directory; supports `${VAR}`, `$env:VAR`, and `~` expansion |
 | `protocolVersion` | `"auto"` or `"legacy"`. HTTP defaults to `"auto"`; stdio and Unix sockets default to `"legacy"`. |
-| `retryOnTransportFailure` | Retry one failed modern HTTP tool request on the same client (default: `false`); see [Transport compatibility](#transport-compatibility) before enabling. |
+| `retryOnTransportFailure` | Trust explicit read-only/idempotent annotations for one modern transport retry (default: `false`); see [Transport compatibility](#transport-compatibility) before enabling. |
 | `url` | HTTP endpoint (StreamableHTTP with SSE fallback); supports raw `${VAR}` and `$env:VAR` interpolation, and missing URL variables fail before any request is sent |
 | `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the HTTP server connects or OAuth authenticates; use `!!` for a literal leading `!`. |
 | `auth` | `"bearer"` or `"oauth"` |

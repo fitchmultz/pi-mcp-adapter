@@ -1,12 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import { McpServerManager } from "../server-manager.ts";
-import { executeCall } from "../proxy-modes.ts";
-import { createDirectToolExecutor } from "../direct-tools.ts";
+import { executeCall, executeDescribe } from "../proxy-modes.ts";
+import { computeServerHash, reconstructToolMetadata, serializeTools } from "../metadata-cache.ts";
+import { buildToolMetadata } from "../tool-metadata.ts";
+import { createDirectToolExecutor, resolveDirectTools } from "../direct-tools.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import type { McpExtensionState } from "../state.ts";
 import { SERVER_STREAM_RESULT_PATCH_METHOD, type ServerEntry } from "../types.ts";
@@ -19,7 +22,7 @@ afterEach(async () => {
 
 type WireRequest = { id?: string | number | null; method?: string; params?: any };
 type Exchange = { req: IncomingMessage; res: ServerResponse; body: WireRequest };
-const tool = { name: "echo", inputSchema: { type: "object", properties: {} } };
+const tool = { name: "echo", annotations: { readOnlyHint: true }, inputSchema: { type: "object", properties: {} } };
 const modern = {
   resultType: "complete", supportedVersions: ["2026-07-28"], capabilities: { tools: {} },
   instructions: "Local fixture instructions",
@@ -74,7 +77,7 @@ async function fixture(handler: (exchange: Exchange) => boolean | void | Promise
     const connection = await manager.connect("local", definition);
     const state = {
       manager, config: { mcpServers: { local: definition }, settings: {} },
-      toolMetadata: new Map([["local", [{ name: "local_echo", originalName: "echo", description: "Echo" }]]]),
+      toolMetadata: new Map([["local", buildToolMetadata(connection.tools, [], definition, "local", "server").metadata]]),
       failureTracker: new Map(), serverInstructions: new Map(), completedUiSessions: [],
     } as unknown as McpExtensionState;
     return { connection, state };
@@ -259,6 +262,242 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.requests.filter(r => r.body.method === "server/discover")).toHaveLength(1);
     expect(connection.inFlight).toBe(0);
   });
+
+  it.each(["direct", "proxy", "script"])("reconciles a committed mutation after lost response through %s without replay", async entry => {
+    const receipts = new Map<string, unknown>();
+    let mutations = 0;
+    const f = await fixture(e => {
+      if (e.body.method === "tools/list") {
+        result(e, { resultType: "complete", tools: [
+          { name: "echo", inputSchema: tool.inputSchema, annotations: { readOnlyHint: false, idempotentHint: false } },
+          { ...tool, name: "readback" },
+        ] });
+        return true;
+      }
+      if (e.body.method !== "tools/call") return;
+      if (e.body.params.name === "readback") {
+        result(e, { resultType: "complete", content: [], structuredContent: receipts.get(e.body.params.arguments.value) });
+      } else {
+        mutations++;
+        receipts.set(e.body.params.arguments.value, { id: "original-resource", version: mutations });
+        e.res.writeHead(200, { "content-type": "text/event-stream" });
+        e.res.write(": committed\n\n");
+        setTimeout(() => e.res.destroy(), 20);
+      }
+      return true;
+    });
+    const { state } = await f.connect({ retryOnTransportFailure: true });
+    const captured: any[] = [];
+    state.onToolCall = async event => { captured.push(event); };
+    const output = await call(state, entry);
+    expect(mutations).toBe(1);
+    expect(entry === "script" ? output.error.code : output.details.error).toBe("ambiguous_outcome");
+    expect(captured.map(e => e.phase)).toEqual(["before", "after"]);
+    expect(captured[0].args).toEqual({ value: "test" });
+    expect(captured[1].error).toBeInstanceOf(Error);
+    if (entry === "script") expect(captured[0].innerCallId).toBe(1);
+    const readback = await executeCall(state, "local_readback", { value: "test" });
+    expect(readback.details.mcpResult).toMatchObject({ structuredContent: { id: "original-resource", version: 1 } });
+    expect(mutations).toBe(1);
+  });
+
+  it.each([undefined, {}, { readOnlyHint: false }, { idempotentHint: true }, { readOnlyHint: true }])(
+    "uses only explicit replay-safe annotations for transport retry: %j", async annotations => {
+      const f = await fixture(e => {
+        if (e.body.method === "tools/list") {
+          result(e, { resultType: "complete", tools: [{ name: "echo", inputSchema: tool.inputSchema, annotations }] });
+          return true;
+        }
+        if (e.body.method === "tools/call" && f.calls().length === 1) { e.req.socket.destroy(); return true; }
+      });
+      const { state } = await f.connect({ retryOnTransportFailure: true });
+      // A frozen direct tool can still have old read-only hints; live hints win.
+      const output = await createDirectToolExecutor(() => state, () => null, {
+        serverName: "local", originalName: "echo", prefixedName: "local_echo", description: "Echo",
+        annotations: { readOnlyHint: true },
+      })("outer-id", { secret: "not-in-error-text" }, undefined, undefined, {} as any);
+      const safe = annotations?.readOnlyHint === true || annotations?.idempotentHint === true;
+      expect(f.calls()).toHaveLength(safe ? 2 : 1);
+      expect(output.details.error).toBe(safe ? undefined : "ambiguous_outcome");
+      if (!safe) {
+        expect(output.details.recovery).toMatchObject({ server: "local", tool: "echo", toolCallId: "outer-id", action: "readback" });
+        expect(JSON.stringify(output)).not.toContain("not-in-error-text");
+      }
+    },
+  );
+
+  it("preserves native annotations through cached metadata, direct tools and both describe paths", async () => {
+    const f = await fixture();
+    const { state, connection } = await f.connect({ directTools: true });
+    const definition = state.config.mcpServers.local;
+    const entry = { configHash: computeServerHash(definition), tools: serializeTools(connection.tools), resources: [], cachedAt: Date.now() };
+    const metadata = reconstructToolMetadata("local", entry, "server", definition);
+    expect(metadata).toEqual(state.toolMetadata.get("local"));
+    const specs = resolveDirectTools(state.config, { version: 1, servers: { local: entry } }, "server");
+    expect(specs[0].annotations).toEqual({ readOnlyHint: true });
+    expect(executeDescribe(state, "local_echo").content[0]).toMatchObject({ text: expect.stringContaining('"readOnlyHint":true') });
+    const script = await runMcpScript(state, 'return tools.describe({ path: "local_echo" });');
+    expect(JSON.parse(script.content[0].text).annotations).toEqual({ readOnlyHint: true });
+    expect(f.calls()).toHaveLength(0);
+  });
+
+  it("awaits native Pi factory capture across Jiti and restores inner arguments and results without script replay", async () => {
+    const piPath = process.env.PI_PACKAGE_DIR;
+    const { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } = piPath
+      ? await import(/* @vite-ignore */ pathToFileURL(join(piPath, "dist/index.js")).href)
+      : await import("@earendil-works/pi-coding-agent");
+    const root = await mkdtemp(join(process.env.PI_MCP_NATIVE_TEST_ROOT ?? tmpdir(), "mcp-native-capture-"));
+    const agentDir = join(root, "agent");
+    await mkdir(agentDir);
+    const previousEnv = { HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, MCP_DIRECT_TOOLS: process.env.MCP_DIRECT_TOOLS };
+    process.env.HOME = root;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    delete process.env.MCP_DIRECT_TOOLS;
+    cleanups.unshift(async () => {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      // Preserve native fixture histories for inspection; never delete Pi sessions.
+    });
+    const captures: Array<{ event: any; bytes: string; res: ServerResponse }> = [];
+    let mode = "hold";
+    let effects = 0;
+    const receipts = new Map<string, unknown>();
+    const f = await fixture(e => {
+      if (e.req.url === "/capture") {
+        const { event, bytes } = e.body as any;
+        captures.push({ event, bytes, res: e.res });
+        if (mode === "hold" && event.innerCallId === 1) return true;
+        e.res.writeHead(mode === `reject-${event.phase}` ? 503 : 200).end();
+        return true;
+      }
+      if (e.body.method === "tools/list") {
+        result(e, { resultType: "complete", tools: [{ name: "echo", inputSchema: tool.inputSchema }, { ...tool, name: "readback" }] });
+        return true;
+      }
+      if (e.body.method === "tools/call") {
+        const value = e.body.params.arguments.value;
+        if (e.body.params.name !== "readback") receipts.set(value, { id: `resource-${++effects}`, value });
+        if (value === "lose-response" && e.body.params.name === "echo") {
+          e.res.writeHead(200, { "content-type": "text/event-stream" });
+          e.res.write(": committed\n\n");
+          setTimeout(() => e.res.destroy(), 20);
+        } else result(e, { resultType: "complete", content: [], structuredContent: receipts.get(value) });
+        return true;
+      }
+    });
+    const wrapper = join(root, "capture-extension.ts");
+    await writeFile(wrapper, `
+      import { readFileSync } from "node:fs";
+      import { createMcpAdapter } from ${JSON.stringify(resolve("dist/index.js"))};
+      export default function (pi) {
+        let sessionManager;
+        pi.on("session_start", (_event, ctx) => { sessionManager = ctx.sessionManager; });
+        createMcpAdapter({
+          config: { mcpServers: { local: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "eager", directTools: true, retryOnTransportFailure: true, requestTimeoutMs: 5000 } }, settings: { sampling: false, elicitation: false } },
+          onToolCall: async ({ signal, ...event }) => {
+            pi.appendEntry("fixture-mcp-call", event);
+            const bytes = readFileSync(sessionManager.getSessionFile(), "utf8");
+            const response = await fetch(${JSON.stringify(new URL("/capture", f.url).href)}, {
+              method: "POST", body: JSON.stringify({ event, bytes }), signal,
+            });
+            if (!response.ok) throw new Error("capture unavailable: synthetic-secret-must-not-leak");
+          },
+        })(pi);
+      }
+    `);
+    const settingsManager = SettingsManager.inMemory();
+    const loader = new DefaultResourceLoader({
+      cwd: root, agentDir, settingsManager, noExtensions: true, noSkills: true, noPromptTemplates: true,
+      agentsFilesOverride: () => ({ agentsFiles: [] }), additionalExtensionPaths: [wrapper],
+    });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    const modelRuntime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null });
+    const sessionManager = SessionManager.create(root, join(root, "sessions"));
+    const model = { id: "fixture", name: "fixture", api: "test", provider: "fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 };
+    const { session } = await createAgentSession({ cwd: root, agentDir, resourceLoader: loader, sessionManager, settingsManager, modelRuntime, model });
+    cleanups.push(async () => {
+      await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      session.dispose();
+    });
+    await session.bindExtensions({ mode: "print", onError: (error: any) => { throw new Error(error.error); } });
+    const script = `const first = await tools.local_echo({ value: ["first"].join("") }); await tools.local_echo({ value: first.data.structuredContent.id });`;
+    let modelCalls = 0;
+    session.agent.streamFunction = async () => {
+      const message = { role: "assistant", api: "test", provider: "fixture", model: "fixture", timestamp: Date.now(),
+        content: ++modelCalls === 1 ? [{ type: "toolCall", id: "native-outer", name: "mcp_script", arguments: { code: script } }] : [{ type: "text", text: "done" }],
+        stopReason: modelCalls === 1 ? "toolUse" : "stop",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      };
+      return { async *[Symbol.asyncIterator]() { yield { type: "done", reason: message.stopReason, message }; }, result: async () => message };
+    };
+    const pending = session.agent.prompt("fixture: complete both effects");
+    await expect.poll(() => captures.length).toBe(1);
+    expect(effects).toBe(0);
+    expect(captures[0].event).toMatchObject({ phase: "before", toolCallId: "native-outer", innerCallId: 1, args: { value: "first" } });
+    expect(captures[0].bytes).toContain('"name":"mcp_script"');
+    captures[0].res.writeHead(200).end();
+    await expect.poll(() => captures.length).toBe(2);
+    expect(effects).toBe(1);
+    const checkpoint = captures[1].bytes;
+    expect(captures[1].event.result.structuredContent).toEqual({ id: "resource-1", value: "first" });
+    captures[1].res.writeHead(200).end();
+    await pending;
+    await session.waitForIdle();
+    expect(effects).toBe(2);
+    expect(captures[2].event).toMatchObject({ toolCallId: "native-outer", innerCallId: 2, args: { value: "resource-1" } });
+    const restoredPath = join(root, "restored.jsonl");
+    await writeFile(restoredPath, checkpoint);
+    const restored = SessionManager.open(restoredPath);
+    const entries = restored.getEntries().filter((e: any) => e.type === "custom");
+    expect(entries.map((e: any) => e.data.phase)).toEqual(["before", "after"]);
+    expect(entries[1].data.result.structuredContent.id).toBe("resource-1");
+    expect(effects).toBe(2); // Opening native history does not replay its script.
+
+    const registered = session.extensionRunner.getAllRegisteredTools();
+    const execute = (name: string, id: string, params: unknown, signal?: AbortSignal) => registered.find((t: any) => t.definition.name === name)!.definition.execute(id, params, signal);
+    mode = "reject-before";
+    const blocked = await execute("local_echo", "blocked-outer", { value: "never" });
+    expect(blocked.details).toMatchObject({ error: "call_capture_failed", recovery: { phase: "before", toolCallId: "blocked-outer" } });
+    expect(effects).toBe(2);
+    expect(JSON.stringify(blocked)).not.toContain("synthetic-secret-must-not-leak");
+    mode = "reject-after";
+    const interrupted = await execute("mcp_script", "interrupted-outer", { code: script });
+    expect(interrupted.details).toMatchObject({ error: "call_capture_failed", recovery: {
+      phase: "after", toolCallId: "interrupted-outer", innerCallId: 1, args: { value: "first" }, result: { structuredContent: { id: "resource-3" } },
+    } });
+    expect(effects).toBe(3); // Never hands an uncheckpointed result to dependent script work.
+    expect(JSON.stringify(interrupted)).not.toContain("synthetic-secret-must-not-leak");
+    mode = "hold";
+    const controller = new AbortController();
+    const captureCount = captures.length;
+    const stopped = execute("mcp_script", "stopped-outer", { code: script }, controller.signal);
+    await expect.poll(() => captures.length).toBe(captureCount + 1);
+    controller.abort(new Error("Stop"));
+    expect((await stopped).details.error).toBe("aborted");
+    expect(effects).toBe(3);
+    mode = "pass";
+    const proxy = await execute("mcp", "proxy-outer", { tool: "local_echo", args: { value: "proxy" } });
+    expect(proxy.details.error).toBeUndefined();
+    expect(captures.at(-1).event).toMatchObject({ phase: "after", toolCallId: "proxy-outer", args: { value: "proxy" } });
+    expect(captures.at(-1).event.innerCallId).toBeUndefined();
+    expect(effects).toBe(4);
+    const lost = await execute("mcp_script", "lost-outer", { code: 'await tools.local_echo({ value: ["lose", "response"].join("-") });' });
+    expect(lost.details.calls[0]).toMatchObject({ error: "ambiguous_outcome", recovery: { toolCallId: "lost-outer", innerCallId: 1, action: "readback" } });
+    expect(lost.content[0].text).toContain("Read back the original operation");
+    expect(effects).toBe(5);
+    const lostPath = join(root, "lost-response.jsonl");
+    await writeFile(lostPath, captures.at(-1).bytes);
+    const lostHistory = SessionManager.open(lostPath).getEntries().filter((e: any) => e.type === "custom");
+    const intent = lostHistory.at(-2).data;
+    expect(intent).toMatchObject({ phase: "before", toolCallId: "lost-outer", innerCallId: 1, args: { value: "lose-response" } });
+    const readback = await execute("mcp", "readback-outer", { tool: "local_readback", args: intent.args });
+    expect(readback.details.mcpResult.structuredContent).toEqual({ id: "resource-5", value: "lose-response" });
+    expect(captures.at(-1).event.result.structuredContent.id).toBe("resource-5");
+    expect(effects).toBe(5);
+  }, 20000);
 
   it.each([undefined, false])("does not retry unless opted in (%s)", async retryOnTransportFailure => {
     const f = await fixture(e => {

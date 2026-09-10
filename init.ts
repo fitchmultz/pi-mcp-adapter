@@ -180,6 +180,7 @@ export async function initializeMcp(
       pi.sendMessage(message as unknown as Parameters<typeof pi.sendMessage>[0], options);
     },
     ...(options.statusEvents !== undefined ? { statusEvents: options.statusEvents } : {}),
+    ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
   };
   if (ownsOAuthRuntime) owner.addCleanup(() => shutdownOAuth(oauthRuntime));
   manager.setMetadataListChangedListener?.((serverName, reason) => {
