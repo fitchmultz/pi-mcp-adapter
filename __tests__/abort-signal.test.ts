@@ -82,7 +82,7 @@ describe("AbortSignal propagation", () => {
     const state = connectedState({ callTool });
 
     const inFlight = executeCall(state, "demo_slow", {}, undefined, undefined, controller.signal);
-    await Promise.resolve();
+    await vi.waitFor(() => expect(callTool).toHaveBeenCalledTimes(1));
     controller.abort(new Error("user cancelled"));
 
     const result = await inFlight;
@@ -92,6 +92,24 @@ describe("AbortSignal propagation", () => {
       { name: "slow", arguments: {}, _meta: undefined },
       { signal: expect.any(AbortSignal) },
     );
+    expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
+  });
+
+  it("proxy cancellation during call capture prevents dispatch", async () => {
+    const controller = new AbortController();
+    const callTool = vi.fn();
+    const state = connectedState({ callTool });
+    const capture = vi.fn(() => new Promise<void>(() => {}));
+    state.onToolCall = capture;
+
+    const inFlight = executeCall(state, "demo_slow", {}, undefined, undefined, controller.signal);
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ phase: "before" }));
+    controller.abort(new Error("user cancelled"));
+
+    const result = await inFlight;
+    expect(result.details.error).toBe("aborted");
+    expect(callTool).not.toHaveBeenCalled();
     expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
   });
 
