@@ -892,7 +892,9 @@ describe("published SDK v2 over real local HTTP", () => {
       return true;
     });
     const { state } = await f.connect({ retryOnTransportFailure: true });
-    expect((await call(state, "proxy")).ok).toBe(true);
+    const started = performance.now();
+    const output = await call(state, "proxy");
+    expect(output.ok, JSON.stringify({ output, elapsedMs: performance.now() - started, calls: f.calls().map(({ body }) => body) })).toBe(true);
     expect(f.calls()).toHaveLength(2);
     expect(f.calls()[1].body.params.requestState).toBe("opaque-state");
     expect(f.calls()[0].body.id).not.toBe(f.calls()[1].body.id);
