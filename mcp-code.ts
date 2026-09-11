@@ -8,7 +8,7 @@ import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts"
 import type { McpExtensionState } from "./state.ts";
 import { findToolByName } from "./tool-metadata.ts";
 import { renderTsShape } from "./ts-shape.ts";
-import type { ContentBlock } from "./types.ts";
+import type { ContentBlock, McpOperationContext } from "./types.ts";
 
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 
@@ -117,7 +117,7 @@ export async function runMcpScript(
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
   toolCallId?: string,
-  beforeDispatch?: (signal?: AbortSignal) => Promise<void>,
+  beforeDispatch?: (signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>,
 ) {
   const resolvedTimeoutMs = timeoutMs === null ? null : Number.isFinite(timeoutMs) && timeoutMs > 0
     ? Math.floor(timeoutMs)

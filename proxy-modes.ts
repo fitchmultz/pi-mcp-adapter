@@ -3,7 +3,7 @@ import type { Client } from "@modelcontextprotocol/client";
 import { DEFAULT_REQUEST_TIMEOUT_MSEC, UrlElicitationRequiredError } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import type { ServerConnection } from "./server-manager.ts";
-import type { ToolMetadata, McpContent, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
+import type { ToolMetadata, McpContent, McpOperationContext, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
 import { getServerPrefix, isServerDisabled, isNonInteractiveOAuth, parseUiPromptHandoff, resolveToolPrefix } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
@@ -723,7 +723,7 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
 type ToolCallTarget = Pick<ToolMetadata, "originalName" | "inputSchema" | "annotations" | "resourceUri" | "uiResourceUri" | "uiStreamMode">;
 
 interface ToolCallOptions extends McpToolCallIdentity {
-  beforeDispatch?: (signal?: AbortSignal) => Promise<void>;
+  beforeDispatch?: (signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>;
   /** Spread into every details payload: identity, and `mode` for proxy calls. */
   detailsBase: Record<string, unknown>;
   ownedSignal: AbortSignal | undefined;
@@ -762,6 +762,7 @@ export async function runToolCall(
     ...(options.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
     ...(options.innerCallId !== undefined ? { innerCallId: options.innerCallId } : {}),
   };
+  let beforeDispatchPending = false;
   let captureFailure: McpToolCallEvent | undefined;
   const capture = async (event: McpToolCallEvent) => {
     if (!state.onToolCall) return;
@@ -790,25 +791,31 @@ export async function runToolCall(
         })
       : null;
 
-    await options.beforeDispatch?.(callerSignal);
-    throwIfAborted(callerSignal);
-
-    // Start at dispatch, not UI preparation. Keep this deadline across every retry.
-    const ownedSignal = combineAbortSignals(callerSignal, AbortSignal.timeout(Math.ceil(configuredOptions?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC)))!;
-    const requestOptions = { ...configuredOptions, signal: ownedSignal };
-    const recovery = { manager: state.manager, config: state.config, signal: ownedSignal, onNeedsAuth: recoverAuthConnection };
-
     // Frozen direct-tool schemas may be older than the live catalog. Never use
     // stale cached hints in preference to the connected server's annotations.
     const liveTools = state.manager.getConnection(serverName)?.tools;
     const annotations = liveTools
       ? liveTools.find(tool => tool.name === target.originalName)?.annotations
       : target.annotations;
-    const call = {
-      ...identity, args: args ?? {}, signal: ownedSignal,
+    const operation = {
+      ...identity, args: args ?? {},
       ...(annotations !== undefined ? { annotations } : {}),
       ...(target.resourceUri ? { resourceUri: target.resourceUri } : {}),
     };
+    if (options.beforeDispatch) {
+      beforeDispatchPending = true;
+      await abortable(options.beforeDispatch(callerSignal, {
+        ...operation, annotationsTrusted: state.config.mcpServers[serverName]?.retryOnTransportFailure === true,
+      }), callerSignal);
+      beforeDispatchPending = false;
+    }
+    throwIfAborted(callerSignal);
+
+    // Host checkpoints and UI preparation do not consume the service deadline.
+    const ownedSignal = combineAbortSignals(callerSignal, AbortSignal.timeout(Math.ceil(configuredOptions?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC)))!;
+    const requestOptions = { ...configuredOptions, signal: ownedSignal };
+    const recovery = { manager: state.manager, config: state.config, signal: ownedSignal, onNeedsAuth: recoverAuthConnection };
+    const call = { ...operation, signal: ownedSignal };
     await capture({ ...call, phase: "before" });
     throwIfAborted(ownedSignal);
     const dispatch = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -880,6 +887,7 @@ export async function runToolCall(
     const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: result });
     return { content: guarded.content, details: { ...detailsBase, ...guardedMcpDetails(guarded) } };
   } catch (error) {
+    if (beforeDispatchPending) throw error;
     if (captureFailure) {
       const { signal: _signal, ...context } = captureFailure;
       const message = captureFailure.phase === "before"
@@ -948,7 +956,7 @@ export async function executeCall(
   signal?: AbortSignal,
   onRawResult?: (result: unknown) => void,
   identity: McpToolCallIdentity = {},
-  beforeDispatch?: (signal?: AbortSignal) => Promise<void>,
+  beforeDispatch?: (signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>,
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);

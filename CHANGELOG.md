@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional resolved `McpOperationContext` in the existing `beforeExecute` callback for direct, proxy, script and resource calls. It exposes live annotations and the existing annotation-trust opt-in before the individual service deadline, without changing native before/after events or requiring new configuration. Two-argument callbacks and conservative non-call proxy checkpoints remain supported.
 - Optional `createMcpAdapter({ outputDirectory })` for host-managed oversized tool/resource text, raw MCP JSON, and final script output. Unconfigured adapters keep the system temp directory; limits, live results, random file names, and private file permissions are unchanged.
 - An awaited `createMcpAdapter({ onToolCall })` callback before dispatch and after raw outcomes, including each script call's resolved arguments and native outer/inner identity. Hosts can checkpoint native Pi history without replaying completed calls.
 - Optional `createMcpAdapter({ beforeExecute })` for awaited host checkpoints before direct/proxy execution and each resolved script call. Supplying it selects Pi's native sequential sibling scheduling; Stop, output directories, and default request/script limits remain unchanged.

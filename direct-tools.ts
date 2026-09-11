@@ -1,6 +1,6 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import type { DirectToolSpec, McpConfig, ToolPrefix } from "./types.ts";
+import type { DirectToolSpec, McpAdapterOptions, McpConfig, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds, clearFailure, recordFailure, updateStatusBar } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
@@ -303,9 +303,10 @@ type DirectToolExecute = (
 export function createDirectToolExecutor(
   getState: () => McpExtensionState | null,
   getInitPromise: () => Promise<McpExtensionState> | null,
-  spec: DirectToolSpec
+  spec: DirectToolSpec,
+  beforeExecute?: McpAdapterOptions["beforeExecute"],
 ): DirectToolExecute {
-  return async function execute(toolCallId, params, signal) {
+  return async function execute(toolCallId, params, signal, _onUpdate, ctx) {
     throwIfAborted(signal);
     let state = getState();
     const initPromise = getInitPromise();
@@ -444,6 +445,7 @@ export function createDirectToolExecutor(
 
     return runToolCall(state, spec.serverName, spec, params, {
       toolCallId,
+      ...(beforeExecute ? { beforeDispatch: (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) } : {}),
       detailsBase: spec.resourceUri
         ? { server: spec.serverName, resourceUri: spec.resourceUri }
         : { server: spec.serverName, tool: spec.originalName },

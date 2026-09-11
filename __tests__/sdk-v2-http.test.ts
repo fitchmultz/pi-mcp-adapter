@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import type { ToolCall } from "@earendil-works/pi-ai";
@@ -13,7 +14,7 @@ import { buildToolMetadata } from "../tool-metadata.ts";
 import { createDirectToolExecutor, resolveDirectTools } from "../direct-tools.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import type { McpExtensionState } from "../state.ts";
-import { SERVER_STREAM_RESULT_PATCH_METHOD, type ServerEntry } from "../types.ts";
+import { SERVER_STREAM_RESULT_PATCH_METHOD, type McpOperationContext, type ServerEntry } from "../types.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -363,7 +364,7 @@ describe("published SDK v2 over real local HTTP", () => {
       // Preserve native fixture histories for inspection; never delete Pi sessions.
     });
     const captures: Array<{ event: any; bytes: string; res: ServerResponse }> = [];
-    const checkpoints: Array<{ toolCallId: string; bytes: string; workspace: string | null; artifacts: string[]; res: ServerResponse }> = [];
+    const checkpoints: Array<{ toolCallId: string; operation?: McpOperationContext; bytes: string; workspace: string | null; artifacts: string[]; res: ServerResponse }> = [];
     const outputDirectory = join(root, "output");
     const largeOutput = "saved detail: π\n".repeat(10_000);
     let checkpointMode = "hold";
@@ -371,6 +372,8 @@ describe("published SDK v2 over real local HTTP", () => {
     let mode = "hold";
     let effects = 0;
     const receipts = new Map<string, unknown>();
+    let readbackAnnotations: { readOnlyHint: boolean } | undefined = { readOnlyHint: true };
+    const resourceUri = "fixture://saved-data";
     const f = await fixture(e => {
       if (e.req.url === "/writer") { writer = e.res; return true; }
       if (e.req.url === "/checkpoint") {
@@ -386,8 +389,24 @@ describe("published SDK v2 over real local HTTP", () => {
         e.res.writeHead(mode === `reject-${event.phase}` ? 503 : 200).end();
         return true;
       }
+      if (e.body.method === "server/discover") {
+        result(e, { ...modern, capabilities: { tools: {}, resources: {} } });
+        return true;
+      }
+      if (e.body.method === "resources/list") {
+        result(e, { resultType: "complete", resources: [{ name: "saved_data", uri: resourceUri }] });
+        return true;
+      }
+      if (e.body.method === "resources/read") {
+        result(e, { resultType: "complete", ttlMs: 0, cacheScope: "private", contents: [{ uri: resourceUri, text: "saved resource" }] });
+        return true;
+      }
       if (e.body.method === "tools/list") {
-        result(e, { resultType: "complete", tools: [{ name: "echo", inputSchema: tool.inputSchema }, { ...tool, name: "readback" }] });
+        result(e, { resultType: "complete", tools: [
+          { name: "echo", inputSchema: tool.inputSchema },
+          { ...tool, name: "readback", annotations: readbackAnnotations },
+          { name: "upsert", inputSchema: tool.inputSchema, annotations: { readOnlyHint: false, idempotentHint: true } },
+        ] });
         return true;
       }
       if (e.body.method === "tools/call") {
@@ -422,18 +441,21 @@ describe("published SDK v2 over real local HTTP", () => {
         });
         createMcpAdapter({
           outputDirectory,
-          beforeExecute: async (toolCallId, ctx) => {
+          beforeExecute: async (toolCallId, ctx, operation) => {
             const artifacts = existsSync(outputDirectory)
               ? readdirSync(outputDirectory, { recursive: true }).filter(name => name.endsWith(".txt"))
                 .map(name => readFileSync(join(outputDirectory, name), "utf8")) : [];
             const response = await fetch(${JSON.stringify(new URL("/checkpoint", f.url).href)}, {
               method: "POST", signal: ctx.signal,
-              body: JSON.stringify({ toolCallId, bytes: readFileSync(ctx.sessionManager.getSessionFile(), "utf8"),
+              body: JSON.stringify({ toolCallId, operation, bytes: readFileSync(ctx.sessionManager.getSessionFile(), "utf8"),
                 workspace: existsSync(workspaceFile) ? readFileSync(workspaceFile, "utf8") : null, artifacts }),
             });
             if (!response.ok) throw new Error("checkpoint unavailable");
           },
-          config: { mcpServers: { local: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "eager", directTools: true, retryOnTransportFailure: true, requestTimeoutMs: 5000 } }, settings: { sampling: false, elicitation: false } },
+          config: { mcpServers: {
+            local: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "eager", directTools: true, retryOnTransportFailure: true, requestTimeoutMs: 1000 },
+            untrusted: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "eager", directTools: true, requestTimeoutMs: 1000 },
+          }, settings: { sampling: false, elicitation: false, freezeDirectTools: true } },
           onToolCall: async ({ signal, ...event }) => {
             pi.appendEntry("fixture-mcp-call", event);
             const bytes = readFileSync(sessionManager.getSessionFile(), "utf8");
@@ -484,7 +506,12 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(effects).toBe(0);
     writer!.writeHead(200).end();
     await expect.poll(() => checkpoints.length).toBe(1);
-    expect(checkpoints[0]).toMatchObject({ toolCallId: "native-outer", workspace: "writer finished", artifacts: [] });
+    expect(checkpoints[0]).toMatchObject({ toolCallId: "native-outer", workspace: "writer finished", artifacts: [], operation: {
+      toolCallId: "native-outer", innerCallId: 1, server: "local", tool: "echo", args: { value: "first" }, annotationsTrusted: true,
+    } });
+    expect(checkpoints[0].operation.annotations).toBeUndefined();
+    // A real wait longer than the 1s service deadline must not consume that deadline.
+    await delay(1200);
     expect(checkpoints[0].bytes).toContain('"role":"toolResult","toolCallId":"native-writer"');
     expect(captures).toHaveLength(0);
     expect(effects).toBe(0);
@@ -500,7 +527,9 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(captures[1].event.result.structuredContent).toEqual({ id: "resource-1", value: "first" });
     captures[1].res.writeHead(200).end();
     await expect.poll(() => checkpoints.length).toBe(2);
-    expect(checkpoints[1].toolCallId).toBe("native-outer");
+    expect(checkpoints[1]).toMatchObject({ toolCallId: "native-outer", operation: {
+      toolCallId: "native-outer", innerCallId: 2, args: { value: "resource-1" },
+    } });
     expect(checkpoints[1].artifacts).toContain(largeOutput);
     expect(checkpoints[1].artifacts.map(bytes => bytes.startsWith("{") ? JSON.parse(bytes) : null))
       .toContainEqual(expect.objectContaining({ content: [{ type: "text", text: largeOutput }], structuredContent: { id: "resource-1", value: "first" } }));
@@ -596,6 +625,74 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(captures).toHaveLength(captureCount);
       expect(effects).toBe(5);
     }
+
+    checkpointMode = "pass";
+    mode = "pass";
+    for (const entry of ["direct", "proxy", "script"]) {
+      for (const name of ["readback", "upsert", "read_saved_data"]) {
+        const id = `${entry}-${name}`;
+        const beforeCount = checkpoints.length;
+        const captureCount = captures.length;
+        const args = { value: id };
+        const output = await execute(entry === "direct" ? `local_${name}` : entry === "proxy" ? "mcp" : "mcp_script", id,
+          entry === "direct" ? args : entry === "proxy" ? { tool: `local_${name}`, args }
+            : { code: `return await tools.local_${name}(${JSON.stringify(args)});` });
+        expect(output.details.error, JSON.stringify({ id, details: output.details })).toBeUndefined();
+        expect(checkpoints).toHaveLength(beforeCount + 1);
+        const operation = checkpoints.at(-1)!.operation;
+        expect(operation).toEqual({
+          toolCallId: id, ...(entry === "script" ? { innerCallId: 1 } : {}),
+          server: "local", tool: name, args, annotationsTrusted: true,
+          ...(name === "readback" ? { annotations: { readOnlyHint: true } }
+            : name === "upsert" ? { annotations: { readOnlyHint: false, idempotentHint: true } } : { resourceUri }),
+        });
+        const { annotationsTrusted: _trust, ...nativeFields } = operation;
+        expect(captures.slice(captureCount).map(c => c.event.phase)).toEqual(["before", "after"]);
+        expect(captures[captureCount].event).toEqual({ ...nativeFields, phase: "before" });
+        expect(captures.at(-1)!.event).toMatchObject({ ...nativeFields, phase: "after" });
+        expect(captures.at(-1)!.event).not.toHaveProperty("annotationsTrusted");
+      }
+    }
+    await execute("untrusted_readback", "untrusted-read", { value: "untrusted" });
+    expect(checkpoints.at(-1)!.operation).toEqual({
+      toolCallId: "untrusted-read", server: "untrusted", tool: "readback", args: { value: "untrusted" },
+      annotationsTrusted: false, annotations: { readOnlyHint: true },
+    });
+
+    // Keep invoking the old direct definition while the native live connection refreshes.
+    for (const annotations of [undefined, { readOnlyHint: false }]) {
+      readbackAnnotations = annotations;
+      await execute("mcp", "refresh", { connect: "local" });
+      expect(checkpoints.at(-1)!.operation).toBeUndefined();
+      await execute("local_readback", "stale-direct", { value: "stale" });
+      expect(checkpoints.at(-1)!.operation.annotations).toEqual(annotations);
+      expect(captures.at(-1)!.event.annotations).toEqual(annotations);
+    }
+    for (const params of [{}, { search: "echo" }, { action: "auth-start" }]) {
+      const count = captures.length;
+      await execute("mcp", "unresolved-mode", params);
+      expect(checkpoints.at(-1)!.operation).toBeUndefined();
+      expect(captures).toHaveLength(count);
+    }
+
+    // Inner calls stay parallel, with independent IDs and args even under one outer ID.
+    checkpointMode = "hold";
+    const checkpointCount = checkpoints.length;
+    const parallelCaptureCount = captures.length;
+    const parallel = execute("mcp_script", "parallel-outer", { code: `return Promise.all([
+      tools.local_echo({ value: "parallel-first" }), tools.local_upsert({ value: "parallel-second" })
+    ]);` });
+    await expect.poll(() => checkpoints.length).toBe(checkpointCount + 2);
+    const pair = checkpoints.slice(checkpointCount);
+    expect(pair.map(c => [c.operation.toolCallId, c.operation.innerCallId, c.operation.args.value])).toEqual([
+      ["parallel-outer", 1, "parallel-first"], ["parallel-outer", 2, "parallel-second"],
+    ]);
+    pair[1].res.writeHead(200).end();
+    await expect.poll(() => captures.length).toBe(parallelCaptureCount + 2);
+    expect(captures.slice(parallelCaptureCount).map(c => c.event.innerCallId)).toEqual([2, 2]);
+    pair[0].res.writeHead(200).end();
+    expect((await parallel).details.calls).toMatchObject([{ ok: true }, { ok: true }]);
+    expect(captures.slice(parallelCaptureCount).map(c => c.event.innerCallId)).toEqual([2, 2, 1, 1]);
   }, 20000);
 
   it.each([undefined, false])("does not retry unless opted in (%s)", async retryOnTransportFailure => {
