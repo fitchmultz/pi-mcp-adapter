@@ -578,6 +578,8 @@ export interface McpAdapterOptions {
   beforeExecute?: (toolCallId: string, ctx: ExtensionContext) => Promise<void>;
   config?: McpConfig;
   configPath?: string;
+  /** Default overall mcp_script timeout: integer 1–2,147,483,647ms, or null to disable. Omit for 30,000ms. */
+  defaultScriptTimeoutMs?: number | null;
   /** Parent directory for oversized text/raw results, including script output. Defaults to the system temp directory. */
   outputDirectory?: string;
   /** Awaited before dispatch and after its raw outcome, before any dependent script call. */

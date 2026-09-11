@@ -17,7 +17,7 @@ import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolR
 import { toolErrorOverride } from "./error-signal.ts";
 import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
-import { runMcpScript } from "./mcp-code.ts";
+import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS, runMcpScript } from "./mcp-code.ts";
 import { MAX_PAGE_SIZE, MAX_TOOL_NAME_LENGTH } from "./search-ranking.ts";
 import { abortable } from "./abort.ts";
 
@@ -642,7 +642,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
       parameters: Type.Object({
         code: Type.String({ description: "Trusted JavaScript MCP script. Use tools.<prefixedToolName>(args) and emit(value)." }),
-        timeoutMs: Type.Optional(Type.Number({ minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" })),
+        timeoutMs: Type.Optional(Type.Number({ minimum: 1, description: options.defaultScriptTimeoutMs === null
+          ? "Execution timeout in milliseconds (no default deadline)"
+          : `Execution timeout in milliseconds (default: ${options.defaultScriptTimeoutMs ?? DEFAULT_MCP_SCRIPT_TIMEOUT_MS})` })),
       }),
       renderResult: renderMcpToolResult,
       async execute(toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
@@ -674,7 +676,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           };
         }
         executeOwner?.throwIfInactive();
-        return runMcpScript(state, params.code, params.timeoutMs, getPiTools, signal, toolCallId,
+        return runMcpScript(state, params.code, params.timeoutMs ?? options.defaultScriptTimeoutMs, getPiTools, signal, toolCallId,
           beforeExecute ? (callSignal) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }) : undefined);
       },
     });
@@ -881,10 +883,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 }
 
 export function createMcpAdapter(options: McpAdapterOptions = {}) {
+  const { defaultScriptTimeoutMs } = options;
+  if (defaultScriptTimeoutMs !== undefined && defaultScriptTimeoutMs !== null
+    && (!Number.isInteger(defaultScriptTimeoutMs) || defaultScriptTimeoutMs < 1 || defaultScriptTimeoutMs > 2_147_483_647)) {
+    throw new RangeError("defaultScriptTimeoutMs must be an integer from 1 to 2147483647, or null");
+  }
   const factoryConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
   return function mcpAdapter(pi: ExtensionAPI) {
     installMcpAdapter(pi, {
       ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
+      ...(defaultScriptTimeoutMs !== undefined ? { defaultScriptTimeoutMs } : {}),
       ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
       ...(options.beforeExecute ? { beforeExecute: options.beforeExecute } : {}),

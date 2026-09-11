@@ -113,13 +113,13 @@ class McpScriptCaptureError extends Error {
 export async function runMcpScript(
   state: McpExtensionState,
   code: string,
-  timeoutMs = DEFAULT_MCP_SCRIPT_TIMEOUT_MS,
+  timeoutMs: number | null = DEFAULT_MCP_SCRIPT_TIMEOUT_MS,
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
   toolCallId?: string,
   beforeDispatch?: (signal?: AbortSignal) => Promise<void>,
 ) {
-  const resolvedTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
+  const resolvedTimeoutMs = timeoutMs === null ? null : Number.isFinite(timeoutMs) && timeoutMs > 0
     ? Math.floor(timeoutMs)
     : DEFAULT_MCP_SCRIPT_TIMEOUT_MS;
   const output: ContentBlock[] = [];
@@ -308,8 +308,9 @@ export async function runMcpScript(
         if (!completed && code !== 0) reject(new Error(`mcp_script worker exited with code ${code}`));
       });
     });
-    const timeoutError = new McpScriptTimeoutError(resolvedTimeoutMs);
     const timeout = new Promise<never>((_resolve, reject) => {
+      if (resolvedTimeoutMs === null) return;
+      const timeoutError = new McpScriptTimeoutError(resolvedTimeoutMs);
       timer = setTimeout(() => {
         callsSnapshot = snapshotCalls();
         timeoutController.abort(timeoutError);
