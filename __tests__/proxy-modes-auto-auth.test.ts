@@ -444,7 +444,7 @@ describe("proxy auto auth", () => {
     } as any;
 
     const inFlight = executeCall(state, "demo_search", {}, "demo", undefined, controller.signal);
-    await Promise.resolve();
+    await vi.waitFor(() => expect(connection.client.callTool).toHaveBeenCalledTimes(1));
     controller.abort(new Error("request aborted"));
 
     const result = await inFlight;

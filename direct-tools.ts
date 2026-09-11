@@ -3,7 +3,7 @@ import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpConfig, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds, clearFailure, recordFailure, updateStatusBar } from "./init.ts";
-import { throwIfAborted } from "./abort.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { runToolCall } from "./proxy-modes.ts";
@@ -165,6 +165,7 @@ export function resolveDirectTools(
         prefixedName,
         description: tool.description ?? "",
         ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+        ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
         ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
         ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
       });
@@ -304,15 +305,16 @@ export function createDirectToolExecutor(
   getInitPromise: () => Promise<McpExtensionState> | null,
   spec: DirectToolSpec
 ): DirectToolExecute {
-  return async function execute(_toolCallId, params, signal) {
+  return async function execute(toolCallId, params, signal) {
     throwIfAborted(signal);
     let state = getState();
     const initPromise = getInitPromise();
 
     if (!state && initPromise) {
       try {
-        state = await initPromise;
+        state = await abortable(initPromise, signal);
       } catch (error) {
+        throwIfAborted(signal);
         const message = error instanceof Error ? error.message : String(error);
         return {
           content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
@@ -441,6 +443,7 @@ export function createDirectToolExecutor(
     };
 
     return runToolCall(state, spec.serverName, spec, params, {
+      toolCallId,
       detailsBase: spec.resourceUri
         ? { server: spec.serverName, resourceUri: spec.resourceUri }
         : { server: spec.serverName, tool: spec.originalName },

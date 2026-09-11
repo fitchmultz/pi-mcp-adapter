@@ -3,7 +3,7 @@ import type { ConsentManager } from "./consent-manager.ts";
 import type { McpLifecycleManager } from "./lifecycle.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { AuthStorageOptions } from "./mcp-auth.ts";
-import type { ToolMetadata, PromptMetadata, McpConfig, UiSessionMessages, UiStreamSummary } from "./types.ts";
+import type { ToolMetadata, PromptMetadata, McpConfig, McpAdapterOptions, UiSessionMessages, UiStreamSummary } from "./types.ts";
 import type { UiResourceHandler } from "./ui-resource-handler.ts";
 import type { UiServerHandle } from "./ui-server.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
@@ -43,6 +43,7 @@ export interface McpExtensionState {
   config: McpConfig;
   programmaticConfig?: boolean;
   outputDirectory?: string;
+  onToolCall?: McpAdapterOptions["onToolCall"];
   oauthRuntime: McpOAuthRuntime;
   authStorageOptions: AuthStorageOptions;
   metadataCacheEnabled: boolean;

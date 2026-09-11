@@ -19,8 +19,9 @@ import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwne
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { runMcpScript } from "./mcp-code.ts";
 import { MAX_PAGE_SIZE, MAX_TOOL_NAME_LENGTH } from "./search-ranking.ts";
+import { abortable } from "./abort.ts";
 
-export type { McpAdapterOptions } from "./types.ts";
+export type { McpAdapterOptions, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
 export {
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
@@ -55,6 +56,7 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Prom
 }
 
 function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
+  const beforeExecute = options.beforeExecute;
   const sessionConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
   const programmaticConfig = sessionConfig !== undefined;
   let state: McpExtensionState | null = null;
@@ -124,6 +126,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       prefixedName: spec.prefixedName,
       description: spec.description,
       inputSchema: spec.inputSchema,
+      annotations: spec.annotations,
       resourceUri: spec.resourceUri,
       uiResourceUri: spec.uiResourceUri,
       uiStreamMode: spec.uiStreamMode,
@@ -131,13 +134,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   function registerDirectTool(spec: DirectToolSpec): void {
+    const execute = createDirectToolExecutor(() => state, () => initPromise, spec);
     pi.registerTool({
+      ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: spec.prefixedName,
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: Type.Unsafe<Record<string, unknown>>(normalizeDirectToolInputSchema(spec.inputSchema)),
-      execute: createDirectToolExecutor(() => state, () => initPromise, spec),
+      execute: beforeExecute ? async (id, args, signal, update, ctx) => {
+        await beforeExecute(id, ctx);
+        return execute(id, args, signal, update, ctx);
+      } : execute,
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
       renderResult: renderMcpToolResult,
     });
@@ -268,6 +276,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       oauthRuntime,
       statusEvents: pi.events,
+      ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
     });
     initPromise = promise;
 
@@ -626,6 +635,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function registerScriptTool(): void {
     if (scriptToolRegistered) return;
     pi.registerTool({
+      ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp_script",
       label: "MCP Script",
       description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } }; data is the raw MCP result: tool calls usually return { content, structuredContent? }, while resource reads return { contents }. The sandbox has no Node, filesystem, or network globals. Use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
@@ -635,11 +645,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         timeoutMs: Type.Optional(Type.Number({ minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" })),
       }),
       renderResult: renderMcpToolResult,
-      async execute(_toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined) {
+      async execute(toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
         const executeOwner = currentOwner;
         if (!state && initPromise) {
           try {
-            const initialized = await awaitWithTimeout(initPromise, INIT_WAIT_TIMEOUT_MS);
+            const initialized = await awaitWithTimeout(abortable(initPromise, signal), INIT_WAIT_TIMEOUT_MS);
             if (initialized === INIT_WAIT_TIMED_OUT) {
               return {
                 content: [{ type: "text" as const, text: "MCP initialization is still in progress. Try again shortly." }],
@@ -649,7 +659,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             executeOwner?.throwIfInactive();
             state = initialized;
           } catch (error) {
-            if (executeOwner && isAbortError(error, executeOwner.signal)) throw error;
+            if (signal?.aborted || (executeOwner && isAbortError(error, executeOwner.signal))) throw error;
             const message = error instanceof Error ? error.message : String(error);
             return {
               content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
@@ -664,7 +674,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           };
         }
         executeOwner?.throwIfInactive();
-        return runMcpScript(state, params.code, params.timeoutMs, getPiTools, signal);
+        return runMcpScript(state, params.code, params.timeoutMs, getPiTools, signal, toolCallId,
+          beforeExecute ? (callSignal) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }) : undefined);
       },
     });
     scriptToolRegistered = true;
@@ -685,6 +696,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function registerProxyTool(description: string): void {
     pi.registerTool({
+      ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp",
       label: "MCP",
       description,
@@ -710,7 +722,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages', 'auth-start', or 'auth-complete'" })),
       }),
       renderResult: renderMcpToolResult,
-      async execute(_toolCallId: string, params: {
+      async execute(toolCallId: string, params: {
         tool?: string;
         args?: string | Record<string, unknown>;
         connect?: string;
@@ -722,7 +734,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         offset?: number;
         server?: string;
         action?: string;
-      }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, _ctx: ExtensionContext) {
+      }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
+        await beforeExecute?.(toolCallId, ctx);
         const executeOwner = currentOwner;
         let parsedArgs: Record<string, unknown> | undefined;
         if (params.args !== undefined && params.args !== "") {
@@ -749,7 +762,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
         if (!state && initPromise) {
           try {
-            const initialized = await awaitWithTimeout(initPromise, INIT_WAIT_TIMEOUT_MS);
+            const initialized = await awaitWithTimeout(abortable(initPromise, signal), INIT_WAIT_TIMEOUT_MS);
             if (initialized === INIT_WAIT_TIMED_OUT) {
               return {
                 content: [{ type: "text" as const, text: "MCP initialization is still in progress. Try again shortly." }],
@@ -759,7 +772,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             executeOwner?.throwIfInactive();
             state = initialized;
           } catch (error) {
-            if (executeOwner && isAbortError(error, executeOwner.signal)) throw error;
+            if (signal?.aborted || (executeOwner && isAbortError(error, executeOwner.signal))) throw error;
             const message = error instanceof Error ? error.message : String(error);
             return {
               content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
@@ -808,11 +821,11 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             : executeAuthComplete(state, params.server, input);
         }
         if (params.tool) {
-          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal);
+          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, { toolCallId });
         }
         if (params.connect) {
           const result = await executeConnect(state, params.connect, signal);
-          syncToolSurface(_ctx as ExtensionContext);
+          syncToolSurface(ctx);
           return result;
         }
         if (params.describe) {
@@ -874,6 +887,8 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
       ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
       ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
+      ...(options.beforeExecute ? { beforeExecute: options.beforeExecute } : {}),
+      ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
     });
   };
 }

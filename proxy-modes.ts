@@ -3,7 +3,7 @@ import type { Client } from "@modelcontextprotocol/client";
 import { DEFAULT_REQUEST_TIMEOUT_MSEC, UrlElicitationRequiredError } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import type { ServerConnection } from "./server-manager.ts";
-import type { ToolMetadata, McpContent } from "./types.ts";
+import type { ToolMetadata, McpContent, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
 import { getServerPrefix, isServerDisabled, isNonInteractiveOAuth, parseUiPromptHandoff, resolveToolPrefix } from "./types.ts";
 import { lazyConnect, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateServerMetadata, updateMetadataCache, getFailureAgeSeconds, updateStatusBar, clearFailure, recordFailure } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
@@ -16,7 +16,7 @@ import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from 
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, formatMcpStatus, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
-import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
+import { isToolTransportFailure, SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 
@@ -437,6 +437,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string): Pro
     text += `Type: Resource (reads from ${toolMeta.resourceUri})\n`;
   }
   text += `\n${toolMeta.description || "(no description)"}\n`;
+  if (toolMeta.annotations) text += `\nAnnotations: ${JSON.stringify(toolMeta.annotations)}\n`;
 
   if (toolMeta.inputSchema && !toolMeta.resourceUri) {
     const shape = renderTsShape(toolMeta.inputSchema);
@@ -719,9 +720,10 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
 }
 
 /** The part of a tool call that is identical for proxy and direct tools. */
-type ToolCallTarget = Pick<ToolMetadata, "originalName" | "inputSchema" | "resourceUri" | "uiResourceUri" | "uiStreamMode">;
+type ToolCallTarget = Pick<ToolMetadata, "originalName" | "inputSchema" | "annotations" | "resourceUri" | "uiResourceUri" | "uiStreamMode">;
 
-interface ToolCallOptions {
+interface ToolCallOptions extends McpToolCallIdentity {
+  beforeDispatch?: (signal?: AbortSignal) => Promise<void>;
   /** Spread into every details payload: identity, and `mode` for proxy calls. */
   detailsBase: Record<string, unknown>;
   ownedSignal: AbortSignal | undefined;
@@ -755,6 +757,22 @@ export async function runToolCall(
   // on the error paths that actually print it.
   const schemaSuffix = () => target.inputSchema ? `\n\nExpected parameters:\n${formatSchema(target.inputSchema)}` : "";
   let uiSession: UiSessionRuntime | null = null;
+  const identity = {
+    server: serverName, tool: target.originalName,
+    ...(options.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
+    ...(options.innerCallId !== undefined ? { innerCallId: options.innerCallId } : {}),
+  };
+  let captureFailure: McpToolCallEvent | undefined;
+  const capture = async (event: McpToolCallEvent) => {
+    if (!state.onToolCall) return;
+    try {
+      await abortable(state.onToolCall(event), event.signal);
+      throwIfAborted(event.signal);
+    } catch (error) {
+      captureFailure = event;
+      throw error;
+    }
+  };
 
   try {
     state.manager.touch(serverName);
@@ -772,17 +790,45 @@ export async function runToolCall(
         })
       : null;
 
+    await options.beforeDispatch?.(callerSignal);
+    throwIfAborted(callerSignal);
+
     // Start at dispatch, not UI preparation. Keep this deadline across every retry.
     const ownedSignal = combineAbortSignals(callerSignal, AbortSignal.timeout(Math.ceil(configuredOptions?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC)))!;
     const requestOptions = { ...configuredOptions, signal: ownedSignal };
     const recovery = { manager: state.manager, config: state.config, signal: ownedSignal, onNeedsAuth: recoverAuthConnection };
 
+    // Frozen direct-tool schemas may be older than the live catalog. Never use
+    // stale cached hints in preference to the connected server's annotations.
+    const liveTools = state.manager.getConnection(serverName)?.tools;
+    const annotations = liveTools
+      ? liveTools.find(tool => tool.name === target.originalName)?.annotations
+      : target.annotations;
+    const call = {
+      ...identity, args: args ?? {}, signal: ownedSignal,
+      ...(annotations !== undefined ? { annotations } : {}),
+      ...(target.resourceUri ? { resourceUri: target.resourceUri } : {}),
+    };
+    await capture({ ...call, phase: "before" });
+    throwIfAborted(ownedSignal);
+    const dispatch = async <T>(fn: () => Promise<T>): Promise<T> => {
+      let result: T;
+      try {
+        result = await fn();
+      } catch (error) {
+        await capture({ ...call, phase: "after", error });
+        throw error;
+      }
+      await capture({ ...call, phase: "after", result });
+      return result;
+    };
+
     if (target.resourceUri) {
-      const result = await withSessionRecovery(
+      const result = await dispatch(() => withSessionRecovery(
         recovery,
         serverName,
         (conn) => conn.client.readResource({ uri: target.resourceUri! }, requestOptions),
-      );
+      ));
       onRawResult?.(result);
       const contents = (result.contents ?? []).map(c => ({
         type: "text" as const,
@@ -792,15 +838,15 @@ export async function runToolCall(
       return { content: guarded.content, details: { ...detailsBase, ...guardedMcpDetails(guarded) } };
     }
 
-    const result = await withSessionRecovery<ClientCallToolResult>(
-      { ...recovery, retryOnTransportFailure: true },
+    const result = await dispatch(() => withSessionRecovery<ClientCallToolResult>(
+      { ...recovery, retryOnTransportFailure: annotations?.readOnlyHint === true || annotations?.idempotentHint === true },
       serverName,
       (conn) => abortable(conn.client.callTool({
         name: target.originalName,
         arguments: args ?? {},
         _meta: uiSession?.requestMeta,
       }, requestOptions), ownedSignal),
-    );
+    ));
     uiSession?.sendToolResult(result);
 
     if (result.isError) {
@@ -834,6 +880,25 @@ export async function runToolCall(
     const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: result });
     return { content: guarded.content, details: { ...detailsBase, ...guardedMcpDetails(guarded) } };
   } catch (error) {
+    if (captureFailure) {
+      const { signal: _signal, ...context } = captureFailure;
+      const message = captureFailure.phase === "before"
+        ? "MCP call capture failed before dispatch; the tool did not run. Restore capture before continuing."
+        : "MCP outcome capture failed. Use the retained outcome to continue the original work; do not repeat a completed call or rerun the script.";
+      uiSession?.sendToolCancelled(message);
+      return {
+        content: [{ type: "text", text: message }],
+        details: { ...detailsBase, error: isAbortError(error, callerSignal) ? "aborted" : "call_capture_failed", message, recovery: context },
+      };
+    }
+    if (isToolTransportFailure(error)) {
+      const message = `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after transport loss. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call or rerun its script.`;
+      uiSession?.sendToolCancelled(message);
+      return {
+        content: [{ type: "text", text: message }],
+        details: { ...detailsBase, error: "ambiguous_outcome", message, recovery: { ...identity, action: "readback" } },
+      };
+    }
     if (error instanceof SessionRecoveryAuthRequiredError) {
       const message = error.authMessage ?? authRequiredMessage();
       uiSession?.sendToolCancelled(message);
@@ -882,6 +947,8 @@ export async function executeCall(
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
   onRawResult?: (result: unknown) => void,
+  identity: McpToolCallIdentity = {},
+  beforeDispatch?: (signal?: AbortSignal) => Promise<void>,
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
@@ -1261,6 +1328,8 @@ export async function executeCall(
   };
 
   return runToolCall(state, serverName, toolMeta, args, {
+    ...identity,
+    ...(beforeDispatch ? { beforeDispatch } : {}),
     detailsBase: { mode: "call", ...callIdentity },
     ownedSignal,
     signal,

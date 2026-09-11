@@ -50,6 +50,7 @@ export function buildToolMetadata(
       originalName: tool.name,
       description: tool.description ?? "",
       ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+      ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
       ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
       ...(uiVisibility !== undefined ? { uiVisibility } : {}),
       ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),

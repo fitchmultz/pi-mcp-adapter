@@ -604,6 +604,8 @@ describe("mcpAdapter session lifecycle", () => {
       undefined,
       expect.any(Function),
       undefined,
+      undefined,
+      { toolCallId: "call-1" },
     );
   });
 
@@ -690,6 +692,8 @@ describe("mcpAdapter session lifecycle", () => {
       undefined,
       expect.any(Function),
       controller.signal,
+      undefined,
+      { toolCallId: "call-1" },
     );
   });
 

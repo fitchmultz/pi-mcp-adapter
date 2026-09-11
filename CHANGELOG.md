@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Restrict opted-in modern transport retries to explicit read-only or idempotent tool annotations. Unknown write outcomes request provider readback instead of redispatch; confirmed pre-dispatch session/auth recovery remains available.
+- Let cancelled MCP tools stop waiting for initialization immediately without cancelling shared startup or other callers. Proxy and script tools keep their existing 30-second initialization timeout.
+
 ### Added
 
 - Optional `createMcpAdapter({ outputDirectory })` for host-managed oversized tool/resource text, raw MCP JSON, and final script output. Unconfigured adapters keep the system temp directory; limits, live results, random file names, and private file permissions are unchanged.
+- An awaited `createMcpAdapter({ onToolCall })` callback before dispatch and after raw outcomes, including each script call's resolved arguments and native outer/inner identity. Hosts can checkpoint native Pi history without replaying completed calls.
+- Optional `createMcpAdapter({ beforeExecute })` for awaited host checkpoints before direct/proxy execution and each resolved script call. Supplying it selects Pi's native sequential sibling scheduling; Stop, output directories, and default request/script limits remain unchanged.
 
 ## [4.3.1] - 2026-09-07
 

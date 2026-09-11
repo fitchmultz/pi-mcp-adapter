@@ -459,17 +459,20 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     it.each([403, 401, 404, 503, 0])(`${era} post-auth %s is terminal without stacking transport/session retries`, async second => {
       const f = await fixture(era); f.definition.auth = "oauth"; f.definition.retryOnTransportFailure = true; f.seed("basic");
       f.controls.toolStatuses = [403, second]; f.signIn(); f.state.config.settings!.autoAuth = true; f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
-      await f.connect(); expect((await f.call()).details.error).toBe(second === 403 ? "auth_required" : "call_failed");
+      await f.connect(); expect((await f.call()).details.error).toBe(second === 403 ? "auth_required"
+        : second === 503 || (era === "modern" && second === 0) ? "ambiguous_outcome" : "call_failed");
       expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(2);
       expect(browser.open).toHaveBeenCalledTimes(1); expect(f.exchanges).toHaveLength(1);
     });
-    it(`${era} terminal transport/session retry retains scope without restarting auth`, async () => {
+    it(`${era} transport/session recovery never replays an unknown write or restarts auth`, async () => {
       const f = await fixture(era); f.definition.auth = "oauth"; f.definition.retryOnTransportFailure = true; f.seed("basic");
       f.controls.toolStatuses = [era === "legacy" ? 404 : 503, 403]; f.signIn();
       f.state.config.settings!.autoAuth = true; f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
-      await f.connect(); expect((await f.call()).details.error).toBe("auth_required");
-      expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(2);
-      expect(browser.open).not.toHaveBeenCalled(); expect(f.request()?.challenge?.requiredScope).toBe("write");
+      await f.connect(); expect((await f.call()).details.error).toBe(era === "legacy" ? "auth_required" : "ambiguous_outcome");
+      expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(era === "legacy" ? 2 : 1);
+      expect(browser.open).not.toHaveBeenCalled();
+      if (era === "legacy") expect(f.request()?.challenge?.requiredScope).toBe("write");
+      else expect(f.request()).toBeUndefined();
     });
   }
 
