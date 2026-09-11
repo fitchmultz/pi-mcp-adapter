@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional `createMcpAdapter({ outputDirectory })` for host-managed oversized tool/resource text, raw MCP JSON, and final script output. Unconfigured adapters keep the system temp directory; limits, live results, random file names, and private file permissions are unchanged.
+
 ## [4.3.1] - 2026-09-07
 
 ### Fixed

@@ -159,6 +159,7 @@ export async function initializeMcp(
     serverInstructions,
     config,
     programmaticConfig: options.config !== undefined,
+    ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
     oauthRuntime,
     authStorageOptions,
     metadataCacheEnabled,

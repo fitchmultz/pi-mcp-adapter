@@ -265,6 +265,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   ): Promise<void> {
     const promise = initializeMcp(pi, ctx, owner, {
       ...(programmaticConfig ? { config: sessionConfig } : { resolvedConfig: runtimeConfig }),
+      ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       oauthRuntime,
       statusEvents: pi.events,
     });
@@ -871,6 +872,7 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
   return function mcpAdapter(pi: ExtensionAPI) {
     installMcpAdapter(pi, {
       ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
+      ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
     });
   };

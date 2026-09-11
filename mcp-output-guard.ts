@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ContentBlock, McpSettings } from "./types.ts";
 
 export const DEFAULT_MCP_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -42,6 +42,7 @@ export interface McpResultSummary {
 
 export interface McpOutputGuardOptions {
   enabled?: boolean;
+  outputDirectory?: string;
   prefix?: string;
   suffix?: string;
   emptyTextFallback?: string;
@@ -63,11 +64,12 @@ export interface GuardedMcpOutput {
   mcpResult?: unknown;
 }
 
-export function resolveMcpOutputGuardOptions(settings?: McpSettings): Pick<McpOutputGuardOptions, "enabled" | "maxBytes" | "maxLines" | "detailsMaxBytes"> {
+export function resolveMcpOutputGuardOptions(settings?: McpSettings, outputDirectory?: string): Pick<McpOutputGuardOptions, "enabled" | "maxBytes" | "maxLines" | "detailsMaxBytes" | "outputDirectory"> {
   const configured = settings?.outputGuard;
   const tuning = typeof configured === "object" && configured !== null ? configured : undefined;
   return {
     enabled: envKillSwitch("MCP_OUTPUT_GUARD") ?? configured !== false,
+    ...(outputDirectory !== undefined ? { outputDirectory } : {}),
     maxBytes: positiveInt(tuning?.maxBytes) ?? DEFAULT_MCP_OUTPUT_MAX_BYTES,
     maxLines: positiveInt(tuning?.maxLines) ?? DEFAULT_MCP_OUTPUT_MAX_LINES,
     detailsMaxBytes: positiveInt(tuning?.detailsMaxBytes) ?? DEFAULT_MCP_DETAILS_MAX_BYTES,
@@ -123,7 +125,7 @@ export async function guardMcpOutput(
   let outputGuard: McpOutputGuardDetails | undefined;
 
   if (stats.bytes > maxBytes || stats.lines > maxLines) {
-    const { path: fullOutputPath, error: writeError } = await saveArtifact("output", composedOutput);
+    const { path: fullOutputPath, error: writeError } = await saveArtifact("output", composedOutput, options.outputDirectory);
     const notice = formatTruncationNotice(stats, fullOutputPath, writeError);
     const previewBudget = reserveBudget(maxBytes, maxLines, notice);
     const preview = truncateHead(composedOutput, previewBudget.maxBytes, previewBudget.maxLines);
@@ -145,7 +147,7 @@ export async function guardMcpOutput(
 
   const mcpResult = options.rawMcpResult === undefined
     ? undefined
-    : await boundMcpResult(options.rawMcpResult, detailsMaxBytes);
+    : await boundMcpResult(options.rawMcpResult, detailsMaxBytes, options.outputDirectory);
 
   return {
     content: guardedContent,
@@ -265,15 +267,15 @@ function formatTruncationNotice(
  * detailsMaxBytes; otherwise replace it with a compact summary and spill the
  * raw JSON to a temp file.
  */
-async function boundMcpResult(result: unknown, detailsMaxBytes: number): Promise<unknown> {
+async function boundMcpResult(result: unknown, detailsMaxBytes: number, outputDirectory?: string): Promise<unknown> {
   const raw = safeStringify(result);
   const rawBytes = byteLength(raw);
   if (rawBytes <= detailsMaxBytes) return result;
-  return summarizeMcpResult(result, raw, rawBytes);
+  return summarizeMcpResult(result, raw, rawBytes, outputDirectory);
 }
 
-async function summarizeMcpResult(result: unknown, raw: string, rawBytes: number): Promise<McpResultSummary> {
-  const { path: fullResultPath, error: resultWriteError } = await saveArtifact("mcp-result", raw);
+async function summarizeMcpResult(result: unknown, raw: string, rawBytes: number, outputDirectory?: string): Promise<McpResultSummary> {
+  const { path: fullResultPath, error: resultWriteError } = await saveArtifact("mcp-result", raw, outputDirectory);
 
   const record = asRecord(result);
   const content = Array.isArray(record?.content) ? record.content : [];
@@ -355,9 +357,11 @@ function truncateKey(key: string): string {
   return key.length <= KEY_MAX_CHARS ? key : `${key.slice(0, KEY_MAX_CHARS - 1)}…`;
 }
 
-async function saveArtifact(kind: string, text: string): Promise<{ path?: string; error?: string }> {
+async function saveArtifact(kind: string, text: string, outputDirectory?: string): Promise<{ path?: string; error?: string }> {
   try {
-    const dir = await mkdtemp(join(tmpdir(), "pi-mcp-output-"));
+    const parent = outputDirectory === undefined ? tmpdir() : resolve(outputDirectory);
+    if (outputDirectory !== undefined) await mkdir(parent, { recursive: true, mode: 0o700 });
+    const dir = await mkdtemp(join(parent, "pi-mcp-output-"));
     const path = join(dir, `${kind}-${randomBytes(4).toString("hex")}.txt`);
     await writeFile(path, text, { encoding: "utf8", mode: 0o600 });
     return { path };

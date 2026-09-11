@@ -42,6 +42,7 @@ export interface McpExtensionState {
   serverInstructions: Map<string, string>;
   config: McpConfig;
   programmaticConfig?: boolean;
+  outputDirectory?: string;
   oauthRuntime: McpOAuthRuntime;
   authStorageOptions: AuthStorageOptions;
   metadataCacheEnabled: boolean;
