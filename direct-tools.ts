@@ -3,7 +3,7 @@ import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpConfig, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds, clearFailure, recordFailure, updateStatusBar } from "./init.ts";
-import { throwIfAborted } from "./abort.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { runToolCall } from "./proxy-modes.ts";
@@ -312,8 +312,9 @@ export function createDirectToolExecutor(
 
     if (!state && initPromise) {
       try {
-        state = await initPromise;
+        state = await abortable(initPromise, signal);
       } catch (error) {
+        throwIfAborted(signal);
         const message = error instanceof Error ? error.message : String(error);
         return {
           content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],

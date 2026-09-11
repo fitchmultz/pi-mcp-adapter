@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Restrict opted-in modern transport retries to explicit read-only or idempotent tool annotations. Unknown write outcomes request provider readback instead of redispatch; confirmed pre-dispatch session/auth recovery remains available.
+- Let cancelled MCP tools stop waiting for initialization immediately without cancelling shared startup or other callers. Proxy and script tools keep their existing 30-second initialization timeout.
 
 ### Added
 
