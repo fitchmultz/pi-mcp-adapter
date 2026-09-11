@@ -887,7 +887,8 @@ export async function runToolCall(
     const guarded = await guardMcpOutput(outputContent, { ...outputGuardOptions, rawMcpResult: result });
     return { content: guarded.content, details: { ...detailsBase, ...guardedMcpDetails(guarded) } };
   } catch (error) {
-    if (beforeDispatchPending) throw error;
+    // Direct/proxy host errors throw; scripts retain their failed-call envelope.
+    if (beforeDispatchPending && options.innerCallId === undefined) throw error;
     if (captureFailure) {
       const { signal: _signal, ...context } = captureFailure;
       const message = captureFailure.phase === "before"

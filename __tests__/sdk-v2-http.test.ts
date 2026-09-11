@@ -605,6 +605,18 @@ describe("published SDK v2 over real local HTTP", () => {
     checkpointMode = "reject";
     await expect(execute("local_echo", "checkpoint-rejected", { value: "never" })).rejects.toThrow("checkpoint unavailable");
     expect(effects).toBe(5);
+    const beforeRejectedScript = captures.length;
+    const rejectedScript = await execute("mcp_script", "checkpoint-script-rejected", { code: `
+      const failed = await tools.local_echo({ value: "never" });
+      const catalog = await tools.describe({ path: "local_echo" });
+      return { failed, name: catalog.name };
+    ` });
+    expect(rejectedScript.details.error).toBeUndefined();
+    expect(JSON.parse(rejectedScript.content[0].text)).toMatchObject({
+      failed: { ok: false, error: { code: "call_failed" } }, name: "echo",
+    });
+    expect(captures).toHaveLength(beforeRejectedScript);
+    expect(effects).toBe(5);
 
     for (const name of ["local_echo", "mcp", "mcp_script"]) {
       checkpointMode = "hold";
