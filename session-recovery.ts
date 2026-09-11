@@ -29,6 +29,9 @@ import type { McpServerManager, ServerConnection } from "./server-manager.ts";
 import { supportsOAuth } from "./mcp-auth-flow.ts";
 
 const toolTransportFailures = new WeakSet<object>();
+export function isToolTransportFailure(error: unknown): boolean {
+  return error instanceof Error && toolTransportFailures.has(error);
+}
 type ToolSend = {
   id: string | number;
   streaming: boolean;
@@ -191,7 +194,7 @@ export interface SessionRecoveryDeps {
   manager: McpServerManager;
   config: McpConfig;
   signal?: AbortSignal;
-  /** Only tool calls may opt into a same-client retry of a proven modern POST transport failure. */
+  /** Only replay-safe tool calls may opt into a same-client retry of a proven modern POST transport failure. */
   retryOnTransportFailure?: boolean;
   onNeedsAuth?: (serverName: string, signal?: AbortSignal, challenge?: AuthChallengeContext) => Promise<ServerConnection | undefined>;
 }
@@ -298,7 +301,7 @@ export async function withSessionRecovery<T>(
     if (deps.retryOnTransportFailure === true
       && deps.config.mcpServers[serverName]?.retryOnTransportFailure === true
       && connection.client.getProtocolEra?.() === "modern"
-      && err instanceof Error && toolTransportFailures.has(err)) {
+      && isToolTransportFailure(err)) {
       return terminalDispatch(connection);
     }
     if (!isTerminatedSession(err, hadSessionId)) {

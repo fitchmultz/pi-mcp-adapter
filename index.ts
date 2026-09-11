@@ -20,7 +20,7 @@ import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { runMcpScript } from "./mcp-code.ts";
 import { MAX_PAGE_SIZE, MAX_TOOL_NAME_LENGTH } from "./search-ranking.ts";
 
-export type { McpAdapterOptions } from "./types.ts";
+export type { McpAdapterOptions, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
 export {
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
@@ -124,6 +124,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       prefixedName: spec.prefixedName,
       description: spec.description,
       inputSchema: spec.inputSchema,
+      annotations: spec.annotations,
       resourceUri: spec.resourceUri,
       uiResourceUri: spec.uiResourceUri,
       uiStreamMode: spec.uiStreamMode,
@@ -268,6 +269,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       oauthRuntime,
       statusEvents: pi.events,
+      ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
     });
     initPromise = promise;
 
@@ -635,7 +637,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         timeoutMs: Type.Optional(Type.Number({ minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" })),
       }),
       renderResult: renderMcpToolResult,
-      async execute(_toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined) {
+      async execute(toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined) {
         const executeOwner = currentOwner;
         if (!state && initPromise) {
           try {
@@ -664,7 +666,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           };
         }
         executeOwner?.throwIfInactive();
-        return runMcpScript(state, params.code, params.timeoutMs, getPiTools, signal);
+        return runMcpScript(state, params.code, params.timeoutMs, getPiTools, signal, toolCallId);
       },
     });
     scriptToolRegistered = true;
@@ -710,7 +712,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         action: Type.Optional(Type.String({ description: "Action: 'ui-messages', 'auth-start', or 'auth-complete'" })),
       }),
       renderResult: renderMcpToolResult,
-      async execute(_toolCallId: string, params: {
+      async execute(toolCallId: string, params: {
         tool?: string;
         args?: string | Record<string, unknown>;
         connect?: string;
@@ -808,7 +810,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             : executeAuthComplete(state, params.server, input);
         }
         if (params.tool) {
-          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal);
+          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, { toolCallId });
         }
         if (params.connect) {
           const result = await executeConnect(state, params.connect, signal);
@@ -874,6 +876,7 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
       ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
       ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
+      ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
     });
   };
 }
