@@ -342,7 +342,7 @@ export async function runMcpScript(
   // Snapshot before the asynchronous output guard; the terminated worker can no longer emit.
   const guarded = await guardMcpOutput(
     output.length > 0 ? [...output] : [{ type: "text", text: "(no output)" }],
-    resolveMcpOutputGuardOptions(state.config.settings),
+    resolveMcpOutputGuardOptions(state.config.settings, state.outputDirectory),
   );
   return {
     content: guarded.content,

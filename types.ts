@@ -554,6 +554,8 @@ export interface McpConfig {
 export interface McpAdapterOptions {
   config?: McpConfig;
   configPath?: string;
+  /** Parent directory for oversized text/raw results, including script output. Defaults to the system temp directory. */
+  outputDirectory?: string;
 }
 
 // Alias for clarity

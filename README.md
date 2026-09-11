@@ -140,6 +140,8 @@ A supplied `config` is a complete, isolated snapshot. It is not merged with file
 
 With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` and `MCP_OAUTH_DIR` are used only as legacy plaintext import locations for older `tokens.json` files, not as credential namespaces. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
 
+Set `createMcpAdapter({ outputDirectory: "/workspace/internal/mcp-output" })` to keep oversized tool/resource text, raw MCP JSON, and final `mcp_script` output beneath a host-owned directory. The directory is created on the first spill; each file still uses a random subdirectory/name and mode `0600`. Relative paths resolve from the process working directory when written; prefer an absolute path for hosts that change directories. This runtime option works with either configuration mode and does not change live results, output limits, or cleanup. The host owns retention, access, and any redaction of saved copies; files may contain sensitive data. Omitting it keeps the system temp directory.
+
 ### Runtime status snapshots
 
 Extensions can subscribe to the adapter's versioned shared event-bus channel instead of parsing `/mcp` or `mcp({})` output:
@@ -410,7 +412,7 @@ Oversized MCP tool/resource results are guarded by default so a single huge resp
 
 - Inline text output is capped at **50 KiB / 2,000 lines** (matching Pi's built-in `bash` guard). Larger output is truncated to a head preview and the full text is saved to a temp file whose path is included in the result, so the agent can `read`/`grep` it.
 - **Image content blocks pass through unchanged** — only text output is guarded. Images are delivered to the provider as native image content.
-- In proxy mode, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results are replaced with a compact summary (block counts, sizes, key previews) and the raw JSON is saved to a temp file. Direct tools keep their lean details and never carry `mcpResult`.
+- In proxy and direct modes, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results are replaced with a compact summary (block counts, sizes, key previews) and the raw JSON is saved to a file.
 
 Tune the limits with the object form:
 
@@ -422,7 +424,7 @@ Tune the limits with the object form:
 }
 ```
 
-Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — to disable the guard and restore raw output behavior. Saved temp files are created with mode `0600` under the system temp directory and are not cleaned up automatically; note that spilled MCP output may contain sensitive data.
+Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — to disable the guard and restore raw output behavior. Saved files are created with mode `0600` under the system temp directory (or the SDK host's `outputDirectory`) and are not cleaned up automatically; note that spilled MCP output may contain sensitive data.
 
 ### MCP Scripting
 

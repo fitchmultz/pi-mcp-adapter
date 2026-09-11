@@ -750,7 +750,7 @@ export async function runToolCall(
   const { detailsBase, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted, onRawResult } = options;
   const configuredOptions = state.manager.getRequestOptions?.(serverName, options.ownedSignal);
   const callerSignal = combineAbortSignals(configuredOptions?.signal, options.ownedSignal);
-  const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings);
+  const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings, state.outputDirectory);
   // Lazy: formatSchema recurses, so only pay for it (and only risk it throwing)
   // on the error paths that actually print it.
   const schemaSuffix = () => target.inputSchema ? `\n\nExpected parameters:\n${formatSchema(target.inputSchema)}` : "";
