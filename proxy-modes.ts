@@ -723,6 +723,7 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
 type ToolCallTarget = Pick<ToolMetadata, "originalName" | "inputSchema" | "annotations" | "resourceUri" | "uiResourceUri" | "uiStreamMode">;
 
 interface ToolCallOptions extends McpToolCallIdentity {
+  beforeDispatch?: (signal?: AbortSignal) => Promise<void>;
   /** Spread into every details payload: identity, and `mode` for proxy calls. */
   detailsBase: Record<string, unknown>;
   ownedSignal: AbortSignal | undefined;
@@ -788,6 +789,9 @@ export async function runToolCall(
           onNeedsAuth: recoverAuthConnection,
         })
       : null;
+
+    await options.beforeDispatch?.(callerSignal);
+    throwIfAborted(callerSignal);
 
     // Start at dispatch, not UI preparation. Keep this deadline across every retry.
     const ownedSignal = combineAbortSignals(callerSignal, AbortSignal.timeout(Math.ceil(configuredOptions?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC)))!;
@@ -944,6 +948,7 @@ export async function executeCall(
   signal?: AbortSignal,
   onRawResult?: (result: unknown) => void,
   identity: McpToolCallIdentity = {},
+  beforeDispatch?: (signal?: AbortSignal) => Promise<void>,
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
@@ -1324,6 +1329,7 @@ export async function executeCall(
 
   return runToolCall(state, serverName, toolMeta, args, {
     ...identity,
+    ...(beforeDispatch ? { beforeDispatch } : {}),
     detailsBase: { mode: "call", ...callIdentity },
     ownedSignal,
     signal,

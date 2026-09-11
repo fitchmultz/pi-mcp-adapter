@@ -1,10 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
+import type { ToolCall } from "@earendil-works/pi-ai";
 import { McpServerManager } from "../server-manager.ts";
 import { executeCall, executeDescribe } from "../proxy-modes.ts";
 import { computeServerHash, reconstructToolMetadata, serializeTools } from "../metadata-cache.ts";
@@ -41,8 +42,9 @@ async function fixture(handler: (exchange: Exchange) => boolean | void | Promise
   const requests: Exchange[] = [];
   let sessions = 0;
   const server = createServer(async (req, res) => {
-    let data = "";
-    for await (const chunk of req) data += chunk;
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const data = Buffer.concat(chunks).toString("utf8");
     const exchange = { req, res, body: data ? JSON.parse(data) : {} };
     requests.push(exchange);
     if (await handler(exchange)) return;
@@ -341,7 +343,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.calls()).toHaveLength(0);
   });
 
-  it("awaits native Pi factory capture across Jiti and restores inner arguments and results without script replay", async () => {
+  it("awaits native Pi factory checkpoints and capture across Jiti without replaying completed effects", async () => {
     const piPath = process.env.PI_PACKAGE_DIR;
     const { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } = piPath
       ? await import(/* @vite-ignore */ pathToFileURL(join(piPath, "dist/index.js")).href)
@@ -361,10 +363,22 @@ describe("published SDK v2 over real local HTTP", () => {
       // Preserve native fixture histories for inspection; never delete Pi sessions.
     });
     const captures: Array<{ event: any; bytes: string; res: ServerResponse }> = [];
+    const checkpoints: Array<{ toolCallId: string; bytes: string; workspace: string | null; artifacts: string[]; res: ServerResponse }> = [];
+    const outputDirectory = join(root, "output");
+    const largeOutput = "saved detail: π\n".repeat(10_000);
+    let checkpointMode = "hold";
+    let writer: ServerResponse | undefined;
     let mode = "hold";
     let effects = 0;
     const receipts = new Map<string, unknown>();
     const f = await fixture(e => {
+      if (e.req.url === "/writer") { writer = e.res; return true; }
+      if (e.req.url === "/checkpoint") {
+        checkpoints.push({ ...e.body as any, res: e.res });
+        if (checkpointMode === "hold") return true;
+        e.res.writeHead(checkpointMode === "reject" ? 503 : 200).end();
+        return true;
+      }
       if (e.req.url === "/capture") {
         const { event, bytes } = e.body as any;
         captures.push({ event, bytes, res: e.res });
@@ -383,18 +397,42 @@ describe("published SDK v2 over real local HTTP", () => {
           e.res.writeHead(200, { "content-type": "text/event-stream" });
           e.res.write(": committed\n\n");
           setTimeout(() => e.res.destroy(), 20);
-        } else result(e, { resultType: "complete", content: [], structuredContent: receipts.get(value) });
+        } else result(e, { resultType: "complete", content: value === "first" ? [{ type: "text", text: largeOutput }] : [], structuredContent: receipts.get(value) });
         return true;
       }
     });
     const wrapper = join(root, "capture-extension.ts");
     await writeFile(wrapper, `
-      import { readFileSync } from "node:fs";
+      import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      import { Type } from "typebox";
       import { createMcpAdapter } from ${JSON.stringify(resolve("dist/index.js"))};
       export default function (pi) {
         let sessionManager;
         pi.on("session_start", (_event, ctx) => { sessionManager = ctx.sessionManager; });
+        const outputDirectory = ${JSON.stringify(outputDirectory)};
+        const workspaceFile = ${JSON.stringify(join(root, "work.txt"))};
+        pi.registerTool({
+          name: "fixture_writer", label: "Writer", description: "Finish a workspace write", parameters: Type.Object({}),
+          async execute(_id, _args, signal) {
+            await fetch(${JSON.stringify(new URL("/writer", f.url).href)}, { method: "POST", signal });
+            writeFileSync(workspaceFile, "writer finished");
+            return { content: [{ type: "text", text: "writer finished" }], details: {} };
+          },
+        });
         createMcpAdapter({
+          outputDirectory,
+          beforeExecute: async (toolCallId, ctx) => {
+            const artifacts = existsSync(outputDirectory)
+              ? readdirSync(outputDirectory, { recursive: true }).filter(name => name.endsWith(".txt"))
+                .map(name => readFileSync(join(outputDirectory, name), "utf8")) : [];
+            const response = await fetch(${JSON.stringify(new URL("/checkpoint", f.url).href)}, {
+              method: "POST", signal: ctx.signal,
+              body: JSON.stringify({ toolCallId, bytes: readFileSync(ctx.sessionManager.getSessionFile(), "utf8"),
+                workspace: existsSync(workspaceFile) ? readFileSync(workspaceFile, "utf8") : null, artifacts }),
+            });
+            if (!response.ok) throw new Error("checkpoint unavailable");
+          },
           config: { mcpServers: { local: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "eager", directTools: true, retryOnTransportFailure: true, requestTimeoutMs: 5000 } }, settings: { sampling: false, elicitation: false } },
           onToolCall: async ({ signal, ...event }) => {
             pi.appendEntry("fixture-mcp-call", event);
@@ -423,17 +461,34 @@ describe("published SDK v2 over real local HTTP", () => {
       session.dispose();
     });
     await session.bindExtensions({ mode: "print", onError: (error: any) => { throw new Error(error.error); } });
-    const script = `const first = await tools.local_echo({ value: ["first"].join("") }); await tools.local_echo({ value: first.data.structuredContent.id });`;
+    const script = `const first = await tools.local_echo({ value: ["first"].join("") }); await tools.local_echo({ value: first.data.structuredContent.id }); emit(first.data.content[0].text);`;
+    let nativeCalls: ToolCall[] = [
+      { type: "toolCall", id: "native-writer", name: "fixture_writer", arguments: {} },
+      { type: "toolCall", id: "native-outer", name: "mcp_script", arguments: { code: script } },
+    ];
     let modelCalls = 0;
-    session.agent.streamFunction = async () => {
+    session.agent.streamFunction = async (_model: unknown, _context: unknown, options: { signal?: AbortSignal }) => {
+      const aborted = options.signal?.aborted;
       const message = { role: "assistant", api: "test", provider: "fixture", model: "fixture", timestamp: Date.now(),
-        content: ++modelCalls === 1 ? [{ type: "toolCall", id: "native-outer", name: "mcp_script", arguments: { code: script } }] : [{ type: "text", text: "done" }],
-        stopReason: modelCalls === 1 ? "toolUse" : "stop",
+        content: aborted ? [] : ++modelCalls === 1 ? nativeCalls : [{ type: "text", text: "done" }],
+        stopReason: aborted ? "aborted" : modelCalls === 1 ? "toolUse" : "stop",
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       };
-      return { async *[Symbol.asyncIterator]() { yield { type: "done", reason: message.stopReason, message }; }, result: async () => message };
+      return { async *[Symbol.asyncIterator]() { yield aborted
+        ? { type: "error", reason: "aborted", error: message }
+        : { type: "done", reason: message.stopReason, message }; }, result: async () => message };
     };
-    const pending = session.agent.prompt("fixture: complete both effects");
+    const pending = session.agent.prompt("fixture: finish the workspace write and both effects");
+    await expect.poll(() => writer !== undefined).toBe(true);
+    expect(checkpoints).toHaveLength(0);
+    expect(effects).toBe(0);
+    writer!.writeHead(200).end();
+    await expect.poll(() => checkpoints.length).toBe(1);
+    expect(checkpoints[0]).toMatchObject({ toolCallId: "native-outer", workspace: "writer finished", artifacts: [] });
+    expect(checkpoints[0].bytes).toContain('"role":"toolResult","toolCallId":"native-writer"');
+    expect(captures).toHaveLength(0);
+    expect(effects).toBe(0);
+    checkpoints[0].res.writeHead(200).end();
     await expect.poll(() => captures.length).toBe(1);
     expect(effects).toBe(0);
     expect(captures[0].event).toMatchObject({ phase: "before", toolCallId: "native-outer", innerCallId: 1, args: { value: "first" } });
@@ -444,10 +499,23 @@ describe("published SDK v2 over real local HTTP", () => {
     const checkpoint = captures[1].bytes;
     expect(captures[1].event.result.structuredContent).toEqual({ id: "resource-1", value: "first" });
     captures[1].res.writeHead(200).end();
+    await expect.poll(() => checkpoints.length).toBe(2);
+    expect(checkpoints[1].toolCallId).toBe("native-outer");
+    expect(checkpoints[1].artifacts).toContain(largeOutput);
+    expect(checkpoints[1].artifacts.map(bytes => bytes.startsWith("{") ? JSON.parse(bytes) : null))
+      .toContainEqual(expect.objectContaining({ content: [{ type: "text", text: largeOutput }], structuredContent: { id: "resource-1", value: "first" } }));
+    expect(captures).toHaveLength(2);
+    expect(effects).toBe(1);
+    checkpointMode = "pass";
+    checkpoints[1].res.writeHead(200).end();
     await pending;
     await session.waitForIdle();
     expect(effects).toBe(2);
     expect(captures[2].event).toMatchObject({ toolCallId: "native-outer", innerCallId: 2, args: { value: "resource-1" } });
+    const scriptResult = sessionManager.getEntries().find((e: any) => e.type === "message" && e.message.role === "toolResult" && e.message.toolCallId === "native-outer");
+    const finalPath = scriptResult.message.details.outputGuard.fullOutputPath;
+    expect(dirname(dirname(finalPath))).toBe(outputDirectory);
+    expect(await readFile(finalPath, "utf8")).toBe(largeOutput);
     const restoredPath = join(root, "restored.jsonl");
     await writeFile(restoredPath, checkpoint);
     const restored = SessionManager.open(restoredPath);
@@ -457,7 +525,12 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(effects).toBe(2); // Opening native history does not replay its script.
 
     const registered = session.extensionRunner.getAllRegisteredTools();
-    const execute = (name: string, id: string, params: unknown, signal?: AbortSignal) => registered.find((t: any) => t.definition.name === name)!.definition.execute(id, params, signal);
+    for (const name of ["local_echo", "mcp", "mcp_script"]) {
+      expect(registered.find((t: any) => t.definition.name === name).definition.executionMode).toBe("sequential");
+    }
+    const execute = (name: string, id: string, params: unknown, signal?: AbortSignal) => registered.find((t: any) => t.definition.name === name)!.definition.execute(
+      id, params, signal, undefined, { ...session.extensionRunner.createContext(), signal },
+    );
     mode = "reject-before";
     const blocked = await execute("local_echo", "blocked-outer", { value: "never" });
     expect(blocked.details).toMatchObject({ error: "call_capture_failed", recovery: { phase: "before", toolCallId: "blocked-outer" } });
@@ -497,6 +570,32 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(readback.details.mcpResult.structuredContent).toEqual({ id: "resource-5", value: "lose-response" });
     expect(captures.at(-1).event.result.structuredContent.id).toBe("resource-5");
     expect(effects).toBe(5);
+    expect(checkpoints.map(c => c.toolCallId)).toEqual([
+      "native-outer", "native-outer", "blocked-outer", "interrupted-outer", "stopped-outer", "proxy-outer", "lost-outer", "readback-outer",
+    ]);
+    checkpointMode = "reject";
+    await expect(execute("local_echo", "checkpoint-rejected", { value: "never" })).rejects.toThrow("checkpoint unavailable");
+    expect(effects).toBe(5);
+
+    for (const name of ["local_echo", "mcp", "mcp_script"]) {
+      checkpointMode = "hold";
+      const beforeCount = checkpoints.length;
+      const captureCount = captures.length;
+      const id = `native-stop-${name}`;
+      nativeCalls = [{ type: "toolCall", id, name, arguments: name === "mcp_script" ? { code: script }
+        : name === "mcp" ? { tool: "local_echo", args: { value: "never" } } : { value: "never" } }];
+      modelCalls = 0;
+      const stopping = session.agent.prompt(`fixture: stop ${name} during its checkpoint`);
+      await expect.poll(() => checkpoints.length).toBe(beforeCount + 1);
+      expect(checkpoints.at(-1).toolCallId).toBe(id);
+      await session.abort();
+      await stopping;
+      await session.waitForIdle();
+      checkpoints.at(-1).res.end();
+      expect(modelCalls).toBe(1);
+      expect(captures).toHaveLength(captureCount);
+      expect(effects).toBe(5);
+    }
   }, 20000);
 
   it.each([undefined, false])("does not retry unless opted in (%s)", async retryOnTransportFailure => {

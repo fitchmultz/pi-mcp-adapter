@@ -55,6 +55,7 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Prom
 }
 
 function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
+  const beforeExecute = options.beforeExecute;
   const sessionConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
   const programmaticConfig = sessionConfig !== undefined;
   let state: McpExtensionState | null = null;
@@ -132,13 +133,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   function registerDirectTool(spec: DirectToolSpec): void {
+    const execute = createDirectToolExecutor(() => state, () => initPromise, spec);
     pi.registerTool({
+      ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: spec.prefixedName,
       label: `MCP: ${spec.originalName}`,
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: Type.Unsafe<Record<string, unknown>>(normalizeDirectToolInputSchema(spec.inputSchema)),
-      execute: createDirectToolExecutor(() => state, () => initPromise, spec),
+      execute: beforeExecute ? async (id, args, signal, update, ctx) => {
+        await beforeExecute(id, ctx);
+        return execute(id, args, signal, update, ctx);
+      } : execute,
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
       renderResult: renderMcpToolResult,
     });
@@ -628,6 +634,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function registerScriptTool(): void {
     if (scriptToolRegistered) return;
     pi.registerTool({
+      ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp_script",
       label: "MCP Script",
       description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } }; data is the raw MCP result: tool calls usually return { content, structuredContent? }, while resource reads return { contents }. The sandbox has no Node, filesystem, or network globals. Use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
@@ -637,7 +644,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         timeoutMs: Type.Optional(Type.Number({ minimum: 1, description: "Execution timeout in milliseconds (default: 30000)" })),
       }),
       renderResult: renderMcpToolResult,
-      async execute(toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined) {
+      async execute(toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
         const executeOwner = currentOwner;
         if (!state && initPromise) {
           try {
@@ -666,7 +673,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           };
         }
         executeOwner?.throwIfInactive();
-        return runMcpScript(state, params.code, params.timeoutMs, getPiTools, signal, toolCallId);
+        return runMcpScript(state, params.code, params.timeoutMs, getPiTools, signal, toolCallId,
+          beforeExecute ? (callSignal) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }) : undefined);
       },
     });
     scriptToolRegistered = true;
@@ -687,6 +695,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   function registerProxyTool(description: string): void {
     pi.registerTool({
+      ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp",
       label: "MCP",
       description,
@@ -724,7 +733,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         offset?: number;
         server?: string;
         action?: string;
-      }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, _ctx: ExtensionContext) {
+      }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
+        await beforeExecute?.(toolCallId, ctx);
         const executeOwner = currentOwner;
         let parsedArgs: Record<string, unknown> | undefined;
         if (params.args !== undefined && params.args !== "") {
@@ -814,7 +824,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         if (params.connect) {
           const result = await executeConnect(state, params.connect, signal);
-          syncToolSurface(_ctx as ExtensionContext);
+          syncToolSurface(ctx);
           return result;
         }
         if (params.describe) {
@@ -876,6 +886,7 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
       ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
       ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
+      ...(options.beforeExecute ? { beforeExecute: options.beforeExecute } : {}),
       ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
     });
   };

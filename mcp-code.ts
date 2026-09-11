@@ -117,6 +117,7 @@ export async function runMcpScript(
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
   toolCallId?: string,
+  beforeDispatch?: (signal?: AbortSignal) => Promise<void>,
 ) {
   const resolvedTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
     ? Math.floor(timeoutMs)
@@ -151,7 +152,7 @@ export async function runMcpScript(
     const result = await executeCall(state, path, args, undefined, getPiTools, callSignal, (raw) => {
       rawResult = raw;
       hasRawResult = true;
-    }, { ...(toolCallId !== undefined ? { toolCallId } : {}), innerCallId });
+    }, { ...(toolCallId !== undefined ? { toolCallId } : {}), innerCallId }, beforeDispatch);
     const details = result.details;
     if (details.error !== undefined) {
       const errorCode = String(details.error);

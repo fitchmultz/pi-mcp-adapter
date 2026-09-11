@@ -7,6 +7,7 @@ import type {
   ListToolsResult,
 } from "@modelcontextprotocol/client";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { UiStreamMode } from "./ui-stream-types.ts";
 import type { UiToolVisibility } from "./ui-tool-visibility.ts";
 
@@ -573,6 +574,8 @@ export type McpToolCallEvent = McpToolCallIdentity & {
 );
 
 export interface McpAdapterOptions {
+  /** Awaited before direct/proxy execution and each resolved script call; selects native sequential sibling scheduling. Honor ctx.signal. */
+  beforeExecute?: (toolCallId: string, ctx: ExtensionContext) => Promise<void>;
   config?: McpConfig;
   configPath?: string;
   /** Parent directory for oversized text/raw results, including script output. Defaults to the system temp directory. */
