@@ -695,7 +695,8 @@ describe("published SDK v2 over real local HTTP", () => {
       tools.local_echo({ value: "parallel-first" }), tools.local_upsert({ value: "parallel-second" })
     ]);` });
     await expect.poll(() => checkpoints.length).toBe(checkpointCount + 2);
-    const pair = checkpoints.slice(checkpointCount);
+    // Parallel HTTP arrivals need not match the script's native call order.
+    const pair = checkpoints.slice(checkpointCount).sort((a, b) => a.operation!.innerCallId! - b.operation!.innerCallId!);
     expect(pair.map(c => [c.operation.toolCallId, c.operation.innerCallId, c.operation.args.value])).toEqual([
       ["parallel-outer", 1, "parallel-first"], ["parallel-outer", 2, "parallel-second"],
     ]);
