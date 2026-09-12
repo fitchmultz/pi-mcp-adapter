@@ -573,9 +573,15 @@ export type McpToolCallEvent = McpToolCallIdentity & {
   | { phase: "after"; error: unknown }
 );
 
+/** Resolved operation facts before the service deadline; no connection/configuration objects. */
+export type McpOperationContext = Omit<Extract<McpToolCallEvent, { phase: "before" }>, "phase" | "signal"> & {
+  /** The configured server opted into trusting annotations via retryOnTransportFailure. */
+  annotationsTrusted: boolean;
+};
+
 export interface McpAdapterOptions {
-  /** Awaited before direct/proxy execution and each resolved script call; selects native sequential sibling scheduling. Honor ctx.signal. */
-  beforeExecute?: (toolCallId: string, ctx: ExtensionContext) => Promise<void>;
+  /** Awaited before the service deadline for each resolved call; operation is absent for other proxy modes. Honor ctx.signal. Selects native sequential sibling scheduling. */
+  beforeExecute?: (toolCallId: string, ctx: ExtensionContext, operation?: McpOperationContext) => Promise<void>;
   config?: McpConfig;
   configPath?: string;
   /** Default overall mcp_script timeout: integer 1–2,147,483,647ms, or null to disable. Omit for 30,000ms. */

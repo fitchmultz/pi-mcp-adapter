@@ -21,7 +21,7 @@ import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS, runMcpScript } from "./mcp-code.ts";
 import { MAX_PAGE_SIZE, MAX_TOOL_NAME_LENGTH } from "./search-ranking.ts";
 import { abortable } from "./abort.ts";
 
-export type { McpAdapterOptions, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
+export type { McpAdapterOptions, McpOperationContext, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
 export {
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
@@ -134,7 +134,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   function registerDirectTool(spec: DirectToolSpec): void {
-    const execute = createDirectToolExecutor(() => state, () => initPromise, spec);
+    const execute = createDirectToolExecutor(() => state, () => initPromise, spec, beforeExecute);
     pi.registerTool({
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: spec.prefixedName,
@@ -142,10 +142,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       description: spec.description || "(no description)",
       promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
       parameters: Type.Unsafe<Record<string, unknown>>(normalizeDirectToolInputSchema(spec.inputSchema)),
-      execute: beforeExecute ? async (id, args, signal, update, ctx) => {
-        await beforeExecute(id, ctx);
-        return execute(id, args, signal, update, ctx);
-      } : execute,
+      execute,
       renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
       renderResult: renderMcpToolResult,
     });
@@ -677,7 +674,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         executeOwner?.throwIfInactive();
         return runMcpScript(state, params.code, params.timeoutMs ?? options.defaultScriptTimeoutMs, getPiTools, signal, toolCallId,
-          beforeExecute ? (callSignal) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }) : undefined);
+          beforeExecute ? (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) : undefined);
       },
     });
     scriptToolRegistered = true;
@@ -737,7 +734,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         server?: string;
         action?: string;
       }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
-        await beforeExecute?.(toolCallId, ctx);
+        // Non-call modes have no resolved MCP operation; hosts keep their conservative policy.
+        if (!params.tool || params.action === "ui-messages" || params.action === "auth-start" || params.action === "auth-complete") {
+          await beforeExecute?.(toolCallId, ctx);
+        }
         const executeOwner = currentOwner;
         let parsedArgs: Record<string, unknown> | undefined;
         if (params.args !== undefined && params.args !== "") {
@@ -823,7 +823,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             : executeAuthComplete(state, params.server, input);
         }
         if (params.tool) {
-          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, { toolCallId });
+          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, { toolCallId },
+            beforeExecute ? (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) : undefined);
         }
         if (params.connect) {
           const result = await executeConnect(state, params.connect, signal);
