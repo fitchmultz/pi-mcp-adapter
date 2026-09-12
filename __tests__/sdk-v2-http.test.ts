@@ -1094,19 +1094,34 @@ describe("published SDK v2 over real local HTTP", () => {
     await expect.poll(() => closed).toBe(true);
   });
 
-  it("preserves native multi-round-trip state and fresh IDs", async () => {
+  it.each([2000, 150])("preserves native multi-round-trip state, IDs and the %ims service deadline", async requestTimeoutMs => {
+    const timeline: Array<{ phase: string; elapsedMs: number }> = [];
+    let started = 0;
+    const mark = (phase: string) => { timeline.push({ phase, elapsedMs: performance.now() - started }); };
     const f = await fixture(e => {
-      if (e.body.method !== "tools/call" || f.calls().length > 1) return;
+      if (e.body.method !== "tools/call") return;
+      mark("tools/call");
+      if (f.calls().length > 1) return;
       result(e, { resultType: "input_required", requestState: "opaque-state", inputRequests: {} });
+      mark("input_required sent");
       return true;
     });
-    const { state } = await f.connect({ retryOnTransportFailure: true });
-    const started = performance.now();
+    // The SDK paces requestState-only legs by 250ms. Test state/IDs with room
+    // for that native pause, and separately prove it cannot reset the deadline.
+    const { state } = await f.connect({ retryOnTransportFailure: true, requestTimeoutMs });
+    started = performance.now();
+    mark("call started");
     const output = await call(state, "proxy");
-    expect(output.ok, JSON.stringify({ output, elapsedMs: performance.now() - started, calls: f.calls().map(({ body }) => body) })).toBe(true);
-    expect(f.calls()).toHaveLength(2);
-    expect(f.calls()[1].body.params.requestState).toBe("opaque-state");
-    expect(f.calls()[0].body.id).not.toBe(f.calls()[1].body.id);
+    mark("call settled");
+    expect(output.ok, JSON.stringify({ output, timeline, calls: f.calls().map(({ body }) => body) })).toBe(requestTimeoutMs === 2000);
+    if (requestTimeoutMs === 150) {
+      expect(output.details).toMatchObject({ error: "call_failed", message: expect.stringMatching(/timeout|timed out/i) });
+      expect(f.calls()).toHaveLength(1);
+    } else {
+      expect(f.calls()).toHaveLength(2);
+      expect(f.calls()[1].body.params.requestState).toBe("opaque-state");
+      expect(f.calls()[0].body.id).not.toBe(f.calls()[1].body.id);
+    }
   });
 
   it.each([404, 405, 406, 415])("connects deprecated SSE only after HTTP%s endpoint rejection", async status => {
