@@ -52,162 +52,44 @@ describe("buildProxyDescription", () => {
       },
     };
 
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: computeServerHash(config.mcpServers.demo),
-          cachedAt: Date.now(),
-          tools: [
-            {
-              name: "launch_app",
-              description: "Launch the demo app",
-              inputSchema: { type: "object", properties: {} },
-            },
-          ],
-          resources: [],
-        },
-      },
-    };
-
-    const description = buildProxyDescription(config, cache, []);
+    const description = buildProxyDescription(config);
 
     expect(description).toContain('mcp({ action: "ui-messages" })');
     expect(description).toContain("Retrieve accumulated messages from completed UI sessions");
     expect(description).toContain("server status, tool search/describe, auth, and single MCP tool calls");
     expect(description).toContain("When one request needs several MCP calls with logic between them, use mcp_script.");
     expect(description).toContain("Search MCP tools by name/description");
-    expect(description).toContain("Cached server catalogs (call mcp({}) for live status)");
+    expect(description).toContain("Configured servers (call mcp({}) for live status): demo");
+    expect(description).toContain('mcp({ instructions: "name" })');
     expect(description).toContain('mcp({ server: "name", limit: 12 })');
     expect(description).toContain("Non-MCP Pi tools should be called directly, not through mcp.");
     expect(description).not.toContain("MCP + pi");
   });
 
-  it("excludes configured tools from proxy summaries", () => {
-    const config: McpConfig = {
-      settings: { toolPrefix: "server" },
-      mcpServers: {
-        figma: {
-          command: "npx",
-          args: ["-y", "figma"],
-          excludeTools: ["read_figjam", "figma_get_screenshot"],
-        },
-      },
-    };
+  it("lists configured servers without needing cached metadata and distinguishes disabled servers", () => {
+    const description = buildProxyDescription({ mcpServers: {
+      figma: { command: "figma", excludeTools: ["get_screenshot"] },
+      disabled: { command: "disabled", disabled: true },
+      docs: { url: "https://example.test/mcp" },
+    } });
 
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        figma: {
-          configHash: computeServerHash(config.mcpServers.figma),
-          cachedAt: Date.now(),
-          tools: [
-            { name: "get_screenshot", description: "Take screenshot" },
-            { name: "get_nodes", description: "Get nodes" },
-          ],
-          resources: [
-            { name: "figjam", uri: "ui://figjam", description: "FigJam" },
-          ],
-        },
-      },
-    };
-
-    const description = buildProxyDescription(config, cache, []);
-
-    expect(description).toContain("Cached server catalogs (call mcp({}) for live status): figma (1 tools)");
-    expect(description).not.toContain("figma (3 tools)");
+    expect(description).toContain("Configured servers (call mcp({}) for live status): docs, figma\n");
+    expect(description).toContain("Disabled servers (enable with /mcp enable <server> and /reload): disabled\n");
+    expect(description).not.toContain("get_screenshot");
   });
 
-  it("treats missing cached arrays as empty", () => {
-    const config: McpConfig = { mcpServers: { demo: { command: "demo" } } };
-    const cache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: computeServerHash(config.mcpServers.demo),
-          cachedAt: Date.now(),
-        },
-      },
-    } as unknown as MetadataCache;
-
-    expect(() => buildProxyDescription(config, cache, [])).not.toThrow();
-    expect(buildProxyDescription(config, cache, [])).not.toContain("demo (");
-  });
-
-  it("omits stale cache entries from proxy summaries", () => {
-    const config: McpConfig = {
-      mcpServers: { demo: { command: "npx", args: ["changed"] } },
-    };
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: "stale",
-          cachedAt: Date.now(),
-          tools: [{ name: "old_tool", description: "Old" }],
-          resources: [],
-          instructions: "Old instructions",
-        },
-      },
+  it("keeps the description unchanged when connection credentials and URLs change", () => {
+    const config: McpConfig = { mcpServers: {
+      demo: { url: "https://example.test/mcp?session=old", headers: { Authorization: "Bearer old" } },
+    } };
+    const before = buildProxyDescription(config);
+    config.mcpServers.demo = {
+      url: "https://example.test/mcp?session=new", headers: { Authorization: "Bearer new" },
     };
 
-    const description = buildProxyDescription(config, cache, []);
-
-    expect(description).not.toContain("demo (1 tools)");
-    expect(description).not.toContain("Old instructions");
-  });
-
-  it("includes a truncated instructions snippet for servers that provide one", () => {
-    const config: McpConfig = {
-      mcpServers: {
-        demo: { command: "npx", args: ["-y", "demo-server"] },
-      },
-    };
-
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: computeServerHash(config.mcpServers.demo),
-          cachedAt: Date.now(),
-          tools: [{ name: "read_skill", description: "Read a skill" }],
-          resources: [],
-          instructions: `Skills catalog.\n\nAvailable skills:\n${Array.from({ length: 30 }, (_, i) => `- skill-${i}: does thing ${i}`).join("\n")}`,
-        },
-      },
-    };
-
-    const description = buildProxyDescription(config, cache, []);
-
-    expect(description).toContain('Server instructions (truncated - full text via mcp({ instructions: "name" })):');
-    expect(description).toContain("demo: Skills catalog. Available skills: - skill-0:");
-    expect(description).toContain("...");
-    expect(description).not.toContain("skill-29");
-  });
-
-  it("omits the instructions section when no server provides instructions", () => {
-    const config: McpConfig = {
-      mcpServers: {
-        demo: { command: "npx", args: ["-y", "demo-server"] },
-      },
-    };
-
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        demo: {
-          configHash: computeServerHash(config.mcpServers.demo),
-          cachedAt: Date.now(),
-          tools: [{ name: "read_skill", description: "Read a skill" }],
-          resources: [],
-        },
-      },
-    };
-
-    const description = buildProxyDescription(config, cache, []);
-
-    expect(description).not.toContain("Server instructions");
-    expect(description).toContain('mcp({ instructions: "name" })');
+    expect(buildProxyDescription(config)).toBe(before);
+    expect(before).not.toContain("Bearer");
+    expect(before).not.toContain("https://");
   });
 });
 

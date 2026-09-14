@@ -10,13 +10,12 @@ import { runToolCall } from "./proxy-modes.ts";
 import { formatToolName, isServerDisabled, isNonInteractiveOAuth, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
-import { formatAuthRequiredMessage, resolveServerUrl, truncateAtWord } from "./utils.ts";
+import { formatAuthRequiredMessage, resolveServerUrl } from "./utils.ts";
 import { SessionRecoveryAuthRequiredError, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { ensureToolCallApproved } from "./tool-approval.ts";
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
-const INSTRUCTIONS_SNIPPET_LENGTH = 150;
 export const DIRECT_TOOLS_ADVISORY_THRESHOLD = 75;
 const advisedDirectToolSets = new Set<string>();
 
@@ -206,52 +205,17 @@ export function resolveDirectTools(
   return specs;
 }
 
-export function buildProxyDescription(
-  config: McpConfig,
-  cache: MetadataCache | null,
-  directSpecs: DirectToolSpec[],
-): string {
-  const prefix = config.settings?.toolPrefix ?? "server";
+export function buildProxyDescription(config: McpConfig): string {
   let desc = `MCP gateway — server status, tool search/describe, auth, and single MCP tool calls. When one request needs several MCP calls with logic between them, use mcp_script. Non-MCP Pi tools should be called directly, not through mcp.\n`;
 
-  const directByServer = new Map<string, number>();
-  for (const spec of directSpecs) {
-    directByServer.set(spec.serverName, (directByServer.get(spec.serverName) ?? 0) + 1);
-  }
-  if (directByServer.size > 0) {
-    const parts = [...directByServer.entries()].map(
-      ([server, count]) => `${server} (${count})`,
-    );
-    desc += `\nDirect tools available (call as normal tools): ${parts.join(", ")}\n`;
-  }
-
-  const serverSummaries: string[] = [];
-  for (const serverName of Object.keys(config.mcpServers)) {
-    const definition = config.mcpServers[serverName];
-    if (!definition || isServerDisabled(definition)) continue;
-    const entry = cache?.servers?.[serverName];
-    if (!entry || !isServerCacheValid(entry, definition)) continue;
-    const effectivePrefix = resolveToolPrefix(definition, prefix);
-    const toolCount = (entry.tools ?? []).filter(
-      (tool) => isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools),
-    ).length;
-    const resourceCount = definition.exposeResources !== false
-      ? (entry.resources ?? []).filter((resource) => {
-          const baseName = `read_${resourceNameToToolName(resource.name)}`;
-          return isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools);
-        }).length
-      : 0;
-    const totalItems = toolCount + resourceCount;
-    if (totalItems === 0) continue;
-    const directCount = directByServer.get(serverName) ?? 0;
-    const proxyCount = totalItems - directCount;
-    if (proxyCount > 0) {
-      serverSummaries.push(`${serverName} (${proxyCount} tools)`);
-    }
-  }
-
-  if (serverSummaries.length > 0) {
-    desc += `\nCached server catalogs (call mcp({}) for live status): ${serverSummaries.join(", ")}\n`;
+  // Catalog counts and instruction previews change on connect and break prompt caching.
+  // Keep this directory config-only; discovery and instructions belong in tool results.
+  const enabledServers = Object.entries(config.mcpServers)
+    .filter(([, definition]) => !isServerDisabled(definition))
+    .map(([serverName]) => serverName)
+    .sort();
+  if (enabledServers.length > 0) {
+    desc += `\nConfigured servers (call mcp({}) for live status): ${enabledServers.join(", ")}\n`;
   }
 
   const disabledServers = Object.entries(config.mcpServers)
@@ -259,21 +223,6 @@ export function buildProxyDescription(
     .map(([serverName]) => serverName);
   if (disabledServers.length > 0) {
     desc += `\nDisabled servers (enable with /mcp enable <server> and /reload): ${disabledServers.join(", ")}\n`;
-  }
-
-  const instructionSummaries: string[] = [];
-  for (const serverName of Object.keys(config.mcpServers)) {
-    const definition = config.mcpServers[serverName];
-    if (!definition || isServerDisabled(definition)) continue;
-    const entry = cache?.servers?.[serverName];
-    if (!entry || !isServerCacheValid(entry, definition)) continue;
-    const instructions = entry.instructions;
-    if (!instructions) continue;
-    const snippet = truncateAtWord(instructions.replace(/\s+/g, " ").trim(), INSTRUCTIONS_SNIPPET_LENGTH);
-    instructionSummaries.push(`  ${serverName}: ${snippet}`);
-  }
-  if (instructionSummaries.length > 0) {
-    desc += `\nServer instructions (truncated - full text via mcp({ instructions: "name" })):\n${instructionSummaries.join("\n")}\n`;
   }
 
   desc += `\nUsage:\n`;
