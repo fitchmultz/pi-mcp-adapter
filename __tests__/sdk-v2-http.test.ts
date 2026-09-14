@@ -344,6 +344,92 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.calls()).toHaveLength(0);
   });
 
+  it("keeps Pi's provider prompt stable while proxy discovery and instructions refresh", async () => {
+    let discoveries = 0;
+    const instructions = "Read the data guide before querying. ".repeat(20);
+    const f = await fixture(e => {
+      if (e.body.method === "server/discover") {
+        result(e, { ...modern, instructions: ++discoveries === 1 ? "Original guidance" : instructions });
+        return true;
+      }
+      if (e.body.method === "tools/list") {
+        result(e, { resultType: "complete", tools: [
+          { ...tool, description: "Read the original data" },
+          ...(discoveries > 1 ? [{ ...tool, name: "second", description: "Read newly available data" }] : []),
+        ] });
+        return true;
+      }
+    });
+    const piPath = process.env.PI_PACKAGE_DIR;
+    const { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } = piPath
+      ? await import(/* @vite-ignore */ pathToFileURL(join(piPath, "dist/index.js")).href)
+      : await import("@earendil-works/pi-coding-agent");
+    const root = await mkdtemp(join(process.env.PI_MCP_NATIVE_TEST_ROOT ?? tmpdir(), "mcp-stable-prompt-"));
+    const agentDir = join(root, "agent");
+    await mkdir(agentDir);
+    const previousEnv = { HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, MCP_DIRECT_TOOLS: process.env.MCP_DIRECT_TOOLS };
+    process.env.HOME = root;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    delete process.env.MCP_DIRECT_TOOLS;
+    cleanups.unshift(async () => {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      // The Pi session is in memory; no native session files are removed.
+      await rm(root, { recursive: true, force: true });
+    });
+    const wrapper = join(root, "extension.ts");
+    await writeFile(wrapper, `
+      import { createMcpAdapter } from ${JSON.stringify(resolve("dist/index.js"))};
+      export default createMcpAdapter({ config: {
+        mcpServers: { local: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "lazy" } },
+        settings: { sampling: false, elicitation: false },
+      } });
+    `);
+    const settingsManager = SettingsManager.inMemory();
+    const loader = new DefaultResourceLoader({
+      cwd: root, agentDir, settingsManager, noExtensions: true, noSkills: true, noPromptTemplates: true,
+      agentsFilesOverride: () => ({ agentsFiles: [] }), additionalExtensionPaths: [wrapper],
+    });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    const modelRuntime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null });
+    const model = { id: "fixture", name: "fixture", api: "test", provider: "fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 };
+    const { session } = await createAgentSession({ cwd: root, agentDir, resourceLoader: loader,
+      sessionManager: SessionManager.inMemory(root), settingsManager, modelRuntime, model });
+    cleanups.push(async () => {
+      await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      session.dispose();
+    });
+    await session.bindExtensions({ mode: "print", onError: (error: any) => { throw new Error(error.error); } });
+    const steps = [
+      { connect: "local" }, { search: "echo" }, { connect: "local" },
+      { instructions: "local" }, { describe: "local_second" }, { tool: "local_second", args: {} },
+    ];
+    const prefixes: string[] = [];
+    session.agent.streamFunction = async (_model: unknown, context: any) => {
+      prefixes.push(JSON.stringify({ systemPrompt: context.systemPrompt, tools: context.tools }));
+      const step = steps[prefixes.length - 1];
+      const message = { role: "assistant", api: "test", provider: "fixture", model: "fixture", timestamp: Date.now(),
+        content: step ? [{ type: "toolCall", id: `call-${prefixes.length}`, name: "mcp", arguments: step }] : [{ type: "text", text: "done" }],
+        stopReason: step ? "toolUse" : "stop",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      };
+      return { async *[Symbol.asyncIterator]() { yield { type: "done", reason: message.stopReason, message }; }, result: async () => message };
+    };
+    await session.agent.prompt("Read the server guidance and discover the newly available tool.");
+    const outputs = session.messages.filter((message: any) => message.role === "toolResult");
+    expect(outputs).toHaveLength(steps.length);
+    expect(outputs.every((message: any) => !message.isError && !message.details?.error)).toBe(true);
+    expect(JSON.stringify(outputs[1].content)).toContain("Read the original data");
+    expect(outputs[3].content[0].text).toBe(`local instructions:\n\n${instructions}`);
+    expect(JSON.stringify(outputs[4].content)).toContain("Read newly available data");
+    expect(f.calls().map(e => e.body.params.name)).toEqual(["second"]);
+    expect(prefixes).toHaveLength(steps.length + 1);
+    expect(new Set(prefixes).size).toBe(1);
+  }, 20_000);
+
   it("awaits native Pi factory checkpoints and capture across Jiti without replaying completed effects", async () => {
     const piPath = process.env.PI_PACKAGE_DIR;
     const { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } = piPath

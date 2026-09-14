@@ -705,7 +705,9 @@ Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_li
 
 When `includeSchemas` is enabled, search and describe render common JSON Schema parameters as compact TypeScript shapes like `{ query: string; limit?: number; }`, with the older schema formatter retained as a fallback for unsupported schemas.
 
-Servers that provide usage guidance via the MCP `instructions` field surface it at three levels: a truncated head in the `mcp` proxy tool description itself (so the model sees it without any call), a longer preview at the end of `mcp({ server: "name" })` listings, and the full text via `mcp({ instructions: "name" })`. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection.
+The `mcp` tool description contains usage guidance and configured server names, not changing catalog counts or server-instruction previews. Connecting, refreshing metadata, or renewing credentials therefore does not rewrite that description. Status, search, describe, and connect results still reflect current metadata; explicitly configured direct tools keep their normal refresh behavior.
+
+Servers that provide usage guidance via the MCP `instructions` field surface it as a preview at the end of `mcp({ server: "name" })` listings and in full via `mcp({ instructions: "name" })`. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection. No extra discovery call is required when the needed details are already in the conversation.
 
 ## Commands
 
