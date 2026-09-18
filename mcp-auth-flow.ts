@@ -24,6 +24,7 @@ import {
   cancelPendingCallback,
   stopCallbackServer,
   releaseCallbackServer,
+  takeCallbackResult,
 } from "./mcp-callback-server.ts"
 import {
   getAuthForUrl,
@@ -642,11 +643,11 @@ export function parseAuthorizationRedirectInput(input: string, expectedState?: s
 }
 
 /**
- * Complete OAuth authentication from manual user input.
+ * Complete OAuth authentication from pasted input or a captured browser callback.
  */
 export async function completeAuthFromInput(
   serverName: string,
-  input: string,
+  input?: string,
   options: AuthenticateOptions = {},
 ): Promise<AuthStatus> {
   const runtime = getRuntime(options)
@@ -657,22 +658,20 @@ export async function completeAuthFromInput(
   const key = getPendingAuthKey(serverName, fallbackAuthStorageOptions)
   const oauthState = runtimeState.pendingAuthStates.get(key)
   throwIfAborted(signal)
-  const parsed = parseAuthorizationRedirectInput(input, oauthState)
+  const parsed = input === undefined ? undefined : parseAuthorizationRedirectInput(input, oauthState)
   return completeAuth(serverName, parsed, options)
 }
 
 /**
- * Complete OAuth authentication with the authorization code.
+ * Complete OAuth authentication with an explicit code or a captured callback.
  */
 export async function completeAuth(
   serverName: string,
-  authorizationCode: string | AuthorizationResponseInput,
+  authorizationCode?: string | AuthorizationResponseInput,
   options: AuthenticateOptions = {},
 ): Promise<AuthStatus> {
   const runtime = getRuntime(options)
   const runtimeState = getRuntimeState(runtime)
-  const response = typeof authorizationCode === "string" ? { code: authorizationCode } : authorizationCode
-  const { iss } = response
   const fallbackAuthStorageOptions = options.authStorageOptions ?? {}
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
@@ -680,11 +679,20 @@ export async function completeAuth(
   const pendingAuth = runtimeState.pendingAuths.get(key)
   const authStorageOptions = pendingAuth?.authStorageOptions ?? fallbackAuthStorageOptions
   if (!pendingAuth) {
-    throw new Error(`No pending OAuth flow for server: ${serverName}`)
+    throw new Error(`No pending OAuth flow for server: ${serverName}. Run auth-start for this server first.`)
   }
 
   const oauthState = runtimeState.pendingAuthStates.get(key)
   throwIfAborted(signal)
+  const response: AuthorizationResponseInput | undefined = typeof authorizationCode === "string" ? { code: authorizationCode }
+    : authorizationCode ?? (oauthState ? takeCallbackResult(oauthState) : undefined)
+  if (!response) {
+    throw new Error(
+      `No OAuth callback received yet for ${serverName}. Finish authorization in the browser, then retry auth-complete. ` +
+      "If the browser cannot reach this Pi session's callback, pass args: { redirectUrl: \"FULL_REDIRECT_URL\" } instead.",
+    )
+  }
+  const { iss } = response
 
   let keepPendingForRetry = false
   let caughtError: unknown

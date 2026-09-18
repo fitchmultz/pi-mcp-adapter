@@ -228,7 +228,7 @@ export async function runMcpScript(
           name: tool.originalName,
           server,
           ...(tool.description ? { description: tool.description } : {}),
-          ...(inputTypeScript ? { inputTypeScript } : {}),
+          ...(inputTypeScript ? { inputTypeScript } : tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
           ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
         };
       }

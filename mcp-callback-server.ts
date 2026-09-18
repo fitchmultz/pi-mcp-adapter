@@ -50,7 +50,7 @@ const HTML_MANUAL_SUCCESS = `<!DOCTYPE html>
 <body>
   <div class="container">
     <h1>Authorization Received</h1>
-    <p>Copy the full callback URL from your browser address bar and paste it back into Pi with auth-complete.</p>
+    <p>Return to Pi and run auth-complete for this server. No callback URL or code is needed.</p>
   </div>
 </body>
 </html>`
@@ -108,7 +108,11 @@ let bindingPromise: Promise<void> | undefined
 let stoppingPromise: Promise<void> | undefined
 let callbackGeneration = 0
 const pendingAuths = new Map<string, PendingAuth>()
-const reservedAuthStates = new Map<string, ValidateOAuthCallback | undefined>()
+type ReservedAuth = {
+  validate: ValidateOAuthCallback | undefined
+  result?: OAuthCallbackResult | { error: string; iss?: string }
+}
+const reservedAuthStates = new Map<string, ReservedAuth>()
 
 /** Timeout for callback completion (5 minutes) */
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000
@@ -154,16 +158,16 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   }
 
   const pending = pendingAuths.get(state)
-  const isReserved = reservedAuthStates.has(state)
+  const reserved = reservedAuthStates.get(state)
 
-  if (!pending && !isReserved) {
+  if (!pending && !reserved) {
     res.writeHead(400, { "Content-Type": "text/html" })
     res.end(HTML_ERROR("Invalid or expired state parameter - potential CSRF attack"))
     return
   }
 
   try {
-    const validate = pending?.validate ?? reservedAuthStates.get(state)
+    const validate = pending?.validate ?? reserved?.validate
     if (validate) validate({ ...(iss !== null ? { iss } : {}), ...(error ? { error } : {}) })
     else if (error) throw new Error("Cannot verify the OAuth error callback issuer")
   } catch (failure) {
@@ -191,6 +195,9 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
       clearTimeout(pending.timeout)
       pendingAuths.delete(state)
       setTimeout(() => pending.reject(new Error(errorMsg)), 0)
+    } else if (reserved) {
+      // Keep provider-controlled callback payloads out of tool output.
+      reserved.result = { error: "OAuth authorization was denied or failed. Finish authorization in the browser, then retry auth-complete.", ...(iss !== null ? { iss } : {}) }
     }
     return
   }
@@ -203,6 +210,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   }
 
   if (!pending) {
+    if (reserved) reserved.result = { code, ...(iss !== null ? { iss } : {}) }
     res.writeHead(200, { "Content-Type": "text/html" })
     res.end(HTML_MANUAL_SUCCESS)
     return
@@ -275,7 +283,7 @@ async function ensureCallbackServerLocked(options: EnsureCallbackServerOptions =
         setOAuthCallbackPath(requestedPath)
       }
       if (options.reserveState && options.oauthState) {
-        reservedAuthStates.set(options.oauthState, options.validate)
+        reservedAuthStates.set(options.oauthState, { validate: options.validate })
         reservedState = options.oauthState
       }
       return
@@ -322,7 +330,7 @@ async function ensureCallbackServerLocked(options: EnsureCallbackServerOptions =
     setOAuthCallbackPath(requestedPath)
     server = candidateServer
     if (options.reserveState && options.oauthState) {
-      reservedAuthStates.set(options.oauthState, options.validate)
+      reservedAuthStates.set(options.oauthState, { validate: options.validate })
       reservedState = options.oauthState
     }
     server.unref()
@@ -350,14 +358,28 @@ export function releaseCallbackServer(oauthState: string): void {
   reservedAuthStates.delete(oauthState)
 }
 
+/** Consume a validated manual callback without releasing the flow's reservation. */
+export function takeCallbackResult(oauthState: string): ReservedAuth["result"] {
+  const reserved = reservedAuthStates.get(oauthState)
+  const result = reserved?.result
+  if (reserved) delete reserved.result
+  return result
+}
+
 /**
  * Wait for a callback with the given OAuth state.
  * Returns a promise that resolves with the authorization code and, when the
  * authorization server sends one, the RFC 9207 `iss` parameter.
  */
 export function waitForCallback(oauthState: string): Promise<OAuthCallbackResult> {
-  const validate = reservedAuthStates.get(oauthState)
+  const reserved = reservedAuthStates.get(oauthState)
   reservedAuthStates.delete(oauthState)
+  if (reserved?.result) {
+    return "error" in reserved.result
+      ? Promise.reject(new Error(reserved.result.error))
+      : Promise.resolve(reserved.result)
+  }
+  const validate = reserved?.validate
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       if (pendingAuths.has(oauthState)) {

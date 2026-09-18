@@ -584,6 +584,9 @@ export interface McpAdapterOptions {
   beforeExecute?: (toolCallId: string, ctx: ExtensionContext, operation?: McpOperationContext) => Promise<void>;
   config?: McpConfig;
   configPath?: string;
+  /** Synchronously transform a clone of the resolved config once per session_start, before registration/initialization.
+   * The result is cloned for session ownership. Ambient config/trust and panels remain enabled unless config is supplied. */
+  transformConfig?: (config: McpConfig, ctx: ExtensionContext) => McpConfig;
   /** Default overall mcp_script timeout: integer 1–2,147,483,647ms, or null to disable. Omit for 30,000ms. */
   defaultScriptTimeoutMs?: number | null;
   /** Parent directory for oversized text/raw results, including script output. Defaults to the system temp directory. */

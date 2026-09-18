@@ -7,14 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-09-18
+
 ### Fixed
 
+- Return the original input schema from `mcp_script` discovery when its TypeScript shape cannot be represented, so tool parameters and constraints remain available. Representable schemas keep the compact TypeScript description.
+- Honor `limit` and `offset` when listing tools after an explicit `mcp({ connect })` request.
 - Keep the `mcp` gateway description stable across metadata refreshes and credential changes. Configured server names and usage guidance stay visible; catalog counts and server instructions remain available through tool results without rewriting the prompt prefix. Direct-tool refresh and connection behavior are unchanged.
 - Restrict opted-in modern transport retries to explicit read-only or idempotent tool annotations. Unknown write outcomes request provider readback instead of redispatch; confirmed pre-dispatch session/auth recovery remains available.
 - Let cancelled MCP tools stop waiting for initialization immediately without cancelling shared startup or other callers. Proxy and script tools keep their existing 30-second initialization timeout.
 
 ### Added
 
+- Complete a manual OAuth flow with `auth-complete` after the authenticated browser reaches this Pi session's callback, without copying the authorization code into a tool call. Existing pasted URLs/codes, callback validation, cancellation and expiry remain supported; receiving the callback alone does not exchange tokens.
+- Optional `createMcpAdapter({ transformConfig })` to extend a freshly resolved configuration with session context before initialization and tool registration, preserving ambient configuration and project trust boundaries.
+- Optional `createMcpAdapter({ defaultScriptTimeoutMs })` to change or disable the host's overall script deadline. Explicit per-script deadlines take precedence; individual service deadlines, cancellation and owner shutdown remain unchanged.
 - Optional resolved `McpOperationContext` in the existing `beforeExecute` callback for direct, proxy, script and resource calls. It exposes live annotations and the existing annotation-trust opt-in before the individual service deadline, without changing native before/after events or requiring new configuration. Two-argument callbacks and conservative non-call proxy checkpoints remain supported.
 - Optional `createMcpAdapter({ outputDirectory })` for host-managed oversized tool/resource text, raw MCP JSON, and final script output. Unconfigured adapters keep the system temp directory; limits, live results, random file names, and private file permissions are unchanged.
 - An awaited `createMcpAdapter({ onToolCall })` callback before dispatch and after raw outcomes, including each script call's resolved arguments and native outer/inner identity. Hosts can checkpoint native Pi history without replaying completed calls.

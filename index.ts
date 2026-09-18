@@ -252,7 +252,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     registerPromptCommands([...(state?.promptMetadata?.values() ?? [])].flat());
   }
 
-  registerPromptCommands(resolveCachedPrompts(earlyConfig, false));
+  if (!options.transformConfig) registerPromptCommands(resolveCachedPrompts(earlyConfig, false));
 
   const getPiTools = (): ToolInfo[] => pi.getAllTools();
 
@@ -269,7 +269,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     generation: number,
   ): Promise<void> {
     const promise = initializeMcp(pi, ctx, owner, {
-      ...(programmaticConfig ? { config: sessionConfig } : { resolvedConfig: runtimeConfig }),
+      ...(programmaticConfig ? { config: runtimeConfig } : { resolvedConfig: runtimeConfig }),
       ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       oauthRuntime,
       statusEvents: pi.events,
@@ -367,6 +367,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         ctx.cwd,
         { includeProject: ctx.isProjectTrusted() },
       );
+    }
+    if (options.transformConfig) {
+      runtimeConfig = cloneMcpConfig(options.transformConfig(cloneMcpConfig(runtimeConfig), ctx));
     }
     const metadataCacheEnabled = ctx.isProjectTrusted()
       || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
@@ -635,7 +638,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp_script",
       label: "MCP Script",
-      description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } }; data is the raw MCP result: tool calls usually return { content, structuredContent? }, while resource reads return { contents }. The sandbox has no Node, filesystem, or network globals. Use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
+      description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript when representable, otherwise the original JSON inputSchema, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } }; data is the raw MCP result: tool calls usually return { content, structuredContent? }, while resource reads return { contents }. The sandbox has no Node, filesystem, or network globals. Use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
       parameters: Type.Object({
         code: Type.String({ description: "Trusted JavaScript MCP script. Use tools.<prefixedToolName>(args) and emit(value)." }),
@@ -812,9 +815,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             };
           }
           const input = parsedArgs?.redirectUrl ?? parsedArgs?.code ?? parsedArgs?.input;
-          if (typeof input !== "string" || input.trim().length === 0) {
+          if (input !== undefined && (typeof input !== "string" || input.trim().length === 0)) {
             return {
-              content: [{ type: "text" as const, text: "auth-complete requires args with `redirectUrl`, `code`, or `input`." }],
+              content: [{ type: "text" as const, text: "auth-complete accepts a non-empty `redirectUrl`, `code`, or `input`, or no args to use the browser callback." }],
               details: { mode: "auth-complete", error: "missing_input" },
             };
           }
@@ -827,7 +830,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             beforeExecute ? (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) : undefined);
         }
         if (params.connect) {
-          const result = await executeConnect(state, params.connect, signal);
+          const result = await executeConnect(state, params.connect, signal, params.limit, params.offset);
           syncToolSurface(ctx);
           return result;
         }
@@ -878,9 +881,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (proxyToolRegistered) deactivateTools(["mcp"]);
   }
 
-  const initialDirectTools = syncDirectTools(earlyConfig, earlyCache).specs;
-  syncProxyTool(earlyConfig, earlyCache, initialDirectTools);
-  syncScriptTool(earlyConfig);
+  // A transform needs the session context before any configured tool surface is registered.
+  if (!options.transformConfig) {
+    const initialDirectTools = syncDirectTools(earlyConfig, earlyCache).specs;
+    syncProxyTool(earlyConfig, earlyCache, initialDirectTools);
+    syncScriptTool(earlyConfig);
+  }
 }
 
 export function createMcpAdapter(options: McpAdapterOptions = {}) {
@@ -897,6 +903,7 @@ export function createMcpAdapter(options: McpAdapterOptions = {}) {
       ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
       ...(factoryConfig !== undefined ? { config: cloneMcpConfig(factoryConfig) } : {}),
       ...(options.beforeExecute ? { beforeExecute: options.beforeExecute } : {}),
+      ...(options.transformConfig ? { transformConfig: options.transformConfig } : {}),
       ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
     });
   };

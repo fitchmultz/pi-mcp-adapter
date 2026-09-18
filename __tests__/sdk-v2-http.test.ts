@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import type { ToolCall } from "@earendil-works/pi-ai";
+import { createMcpAdapter } from "../index.ts";
 import { McpServerManager } from "../server-manager.ts";
 import { executeCall, executeDescribe } from "../proxy-modes.ts";
 import { computeServerHash, reconstructToolMetadata, serializeTools } from "../metadata-cache.ts";
@@ -328,6 +329,70 @@ describe("published SDK v2 over real local HTTP", () => {
       }
     },
   );
+
+  it("describes complete native input schemas when TypeScript rendering is unsupported", async () => {
+    const inputSchema = {
+      type: "object",
+      properties: {
+        value: { type: "string", description: "Value to echo", minLength: 1 },
+        count: { type: "integer", minimum: 1, default: 1 },
+      },
+      required: ["value"],
+      additionalProperties: false,
+    };
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/list") return;
+      result(e, { resultType: "complete", tools: [
+        { ...tool, inputSchema },
+        { ...tool, name: "compact", inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] } },
+      ] });
+      return true;
+    });
+    const { state } = await f.connect();
+    const script = await runMcpScript(state, `
+      const native = await tools.describe({ path: "local_echo" });
+      const compact = await tools.describe({ path: "local_compact" });
+      return { native, compact, called: await tools.call(native.path, { value: "test" }) };
+    `);
+    expect(script.details).not.toHaveProperty("error");
+    const described = JSON.parse(script.content[0].text);
+    expect(described.native.inputSchema).toEqual(inputSchema);
+    expect(described.native).not.toHaveProperty("inputTypeScript");
+    expect(described.compact.inputTypeScript).toBe("{ value: string; }");
+    expect(described.compact).not.toHaveProperty("inputSchema");
+    expect(described.called).toMatchObject({ ok: true, data: { structuredContent: { value: "test" } } });
+    expect(f.calls()[0].body.params.arguments).toEqual({ value: "test" });
+  });
+
+  it("applies public proxy connect pagination to the discovered server list", async () => {
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/list") return;
+      result(e, { resultType: "complete", tools: [tool, { ...tool, name: "second" }, { ...tool, name: "third" }] });
+      return true;
+    });
+    const root = await mkdtemp(join(tmpdir(), "mcp-connect-page-"));
+    vi.stubEnv("PI_CODING_AGENT_DIR", join(root, "agent"));
+    vi.stubEnv("MCP_DIRECT_TOOLS", "__none__");
+    cleanups.push(async () => { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); });
+    const tools = new Map<string, any>();
+    const handlers = new Map<string, any>();
+    const api = {
+      registerTool: (tool: any) => tools.set(tool.name, tool),
+      registerCommand: () => {}, registerFlag: () => {}, getFlag: () => undefined,
+      on: (name: string, handler: any) => handlers.set(name, handler),
+      getAllTools: () => [...tools.values()], getActiveTools: () => [...tools.keys()], setActiveTools: () => {},
+    } as any;
+    const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true } as any;
+    createMcpAdapter({ config: {
+      mcpServers: { local: { url: f.url, auth: false, lifecycle: "lazy" } },
+      settings: { sampling: false, elicitation: false },
+    } })(api);
+    cleanups.push(() => handlers.get("session_shutdown")({}, ctx));
+    await handlers.get("session_start")({}, ctx);
+    const page = await tools.get("mcp").execute("connect-page", { connect: "local", limit: 1, offset: 1 }, undefined, undefined, ctx);
+    expect(page.details).toMatchObject({ mode: "list", server: "local", tools: ["local_second"], count: 3, hasMore: true, nextOffset: 2 });
+    expect(page.content[0].text).toContain('2-2 of 3 — mcp({ server: "local", limit: 1, offset: 2 }) for more');
+  });
 
   it("preserves native annotations through cached metadata, direct tools and both describe paths", async () => {
     const f = await fixture();

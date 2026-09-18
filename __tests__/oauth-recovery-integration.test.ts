@@ -716,6 +716,118 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(f.exchanges).toHaveLength(1);
   });
 
+  it("completes a captured manual callback only on explicit auth-complete without exposing callback secrets", async () => {
+    const f = await fixture();
+    const started = await executeAuthStart(f.state, f.name);
+    const authorizationUrl = started.details.authorizationUrl as string;
+    const early = await executeAuthComplete(f.state, f.name);
+    expect(early.details.error).toBe("auth_complete_failed");
+    expect(early.content[0].text).toContain("No OAuth callback received yet");
+    expect(early.content[0].text).toContain("redirectUrl");
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+    expect((await f.start()).authorizationUrl).toBe(authorizationUrl);
+
+    const callback = new URL(await f.authorize(authorizationUrl));
+    const response = await fetch(callback);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("auth-complete");
+    expect(html).not.toContain(callback.searchParams.get("code")!);
+    expect(f.exchanges).toHaveLength(0);
+    expect((await f.stored())?.tokens).toBeUndefined();
+
+    const cancelled = new AbortController(); cancelled.abort(new Error("completion cancelled"));
+    await expect(executeAuthComplete(f.state, f.name, undefined, cancelled.signal)).rejects.toThrow("completion cancelled");
+    const completed = await executeAuthComplete(f.state, f.name);
+    expect(completed.details.authenticated).toBe(true);
+    expect(f.exchanges).toHaveLength(1);
+    expect(f.exchanges[0].get("code")).toBe(callback.searchParams.get("code"));
+    expect((await f.stored())?.tokens?.issuer).toBe(f.origin);
+    for (const secret of [callback.href, callback.searchParams.get("code")!, callback.searchParams.get("state")!]) {
+      expect(JSON.stringify(completed)).not.toContain(secret);
+    }
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect((await executeAuthComplete(f.state, f.name)).details.error).toBe("auth_complete_failed");
+    expect((await fetch(callback)).status).toBe(400);
+    expect(f.exchanges).toHaveLength(1);
+    expect(browser.open).not.toHaveBeenCalled();
+  });
+
+  it.each(["state", "issuer", "missing-issuer", "code", "path"])("does not capture a manual callback with invalid %s", async invalid => {
+    const f = await fixture();
+    const { authorizationUrl } = await f.start();
+    const callback = new URL(await f.authorize(authorizationUrl));
+    const bad = new URL(callback);
+    if (invalid === "state") bad.searchParams.set("state", "wrong-state");
+    if (invalid === "issuer") bad.searchParams.set("iss", "https://wrong.invalid");
+    if (invalid === "missing-issuer") bad.searchParams.delete("iss");
+    if (invalid === "code") bad.searchParams.delete("code");
+    if (invalid === "path") bad.pathname = "/wrong";
+    expect((await fetch(bad)).status).toBe(invalid === "path" ? 404 : 400);
+    await expect(completeAuthFromInput(f.name, undefined, { runtime: f.runtime })).rejects.toThrow("No OAuth callback received yet");
+    expect(f.exchanges).toHaveLength(0);
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+    expect((await fetch(callback)).status).toBe(200);
+    expect(await completeAuthFromInput(f.name, undefined, { runtime: f.runtime })).toBe("authenticated");
+  });
+
+  it("reports a captured denial without callback payloads and allows consent to be retried", async () => {
+    const f = await fixture();
+    const { authorizationUrl } = await f.start();
+    const callback = new URL(await f.authorize(authorizationUrl));
+    const denied = new URL(callback);
+    denied.searchParams.set("error", "access_denied");
+    denied.searchParams.set("error_description", `denied ${callback.href}`);
+    const response = await fetch(denied);
+    expect(await response.text()).toContain("Authorization Failed");
+    const result = await executeAuthComplete(f.state, f.name);
+    expect(result.details.error).toBe("auth_complete_failed");
+    expect(result.details.authenticated).toBeUndefined();
+    expect(result.content[0].text).toContain("denied or failed");
+    expect(JSON.stringify(result)).not.toContain(callback.href);
+    expect(JSON.stringify(result)).not.toContain(callback.searchParams.get("code")!);
+    expect(f.exchanges).toHaveLength(0);
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+    expect((await fetch(callback)).status).toBe(200);
+    expect((await executeAuthComplete(f.state, f.name)).details.authenticated).toBe(true);
+  });
+
+  it("keeps a newer captured flow when an older code exchange settles", async () => {
+    const a = await fixture(); const b = await fixture("legacy", a.name);
+    const callbackA = await a.authorize((await a.start()).authorizationUrl);
+    expect((await fetch(callbackA)).status).toBe(200);
+    a.controls.holdToken = true;
+    const older = settled(completeAuthFromInput(a.name, undefined, { runtime: a.runtime }));
+    await expect.poll(() => a.exchanges.length).toBe(1);
+    const newer = await startAuth(a.name, b.definition.url!, b.definition, { runtime: a.runtime });
+    expect((await fetch(await b.authorize(newer.authorizationUrl))).status).toBe(200);
+    a.controls.releaseToken();
+    expect((await older).status).toBe("rejected");
+    expect(hasPendingAuth(a.name, undefined, a.runtime)).toBe(true);
+    expect(await completeAuthFromInput(a.name, undefined, { runtime: a.runtime })).toBe("authenticated");
+    expect(b.exchanges).toHaveLength(1);
+  });
+
+  it.each(["logout", "shutdown", "timeout"])("discards captured callbacks on %s without clearing another runtime", async cleanup => {
+    const a = await fixture(); const b = await fixture();
+    const callbackB = await b.authorize((await b.start()).authorizationUrl);
+    expect((await fetch(callbackB)).status).toBe(200);
+    let callbackA: string;
+    if (cleanup === "timeout") vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      callbackA = await a.authorize((await a.start()).authorizationUrl);
+      expect((await fetch(callbackA)).status).toBe(200);
+      if (cleanup === "logout") await removeAuth(a.name, { runtime: a.runtime });
+      if (cleanup === "shutdown") await shutdownOAuth(a.runtime);
+      if (cleanup === "timeout") await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    } finally { vi.useRealTimers(); }
+    expect(hasPendingAuth(a.name, undefined, a.runtime)).toBe(false);
+    expect((await fetch(callbackA)).status).toBe(400);
+    expect((await executeAuthComplete(a.state, a.name)).details.authenticated).toBeUndefined();
+    expect((await executeAuthComplete(b.state, b.name)).details.authenticated).toBe(true);
+    expect(a.exchanges).toHaveLength(0); expect(b.exchanges).toHaveLength(1);
+  });
+
   for (const path of ["url", "query", "fragment", "http", "automatic"] as const) {
     it.each(["wrong-state", "missing-state", "wrong-issuer", "missing-issuer", "trailing-slash", "unexpected-issuer"])(`${path} validates callback errors before presentation: %s`, async invalid => {
       const f = await fixture(); if (invalid === "unexpected-issuer") f.controls.issuerRequired = false;
