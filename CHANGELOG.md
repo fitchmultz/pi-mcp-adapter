@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Publish generated TypeScript declarations so installed SDK consumers do not compile adapter implementation files or require its development-only types.
+- Update `smol-toml` to 1.8.0 and the locked `hono` dependency to 4.13.8, including fixes for the published malformed-TOML denial of service and Hono parsing/static-generation advisories.
 - Return the original input schema from `mcp_script` discovery when its TypeScript shape cannot be represented, so tool parameters and constraints remain available. Representable schemas keep the compact TypeScript description.
 - Honor `limit` and `offset` when listing tools after an explicit `mcp({ connect })` request.
 - Keep the `mcp` gateway description stable across metadata refreshes and credential changes. Configured server names and usage guidance stay visible; catalog counts and server instructions remain available through tool results without rewriting the prompt prefix. Direct-tool refresh and connection behavior are unchanged.

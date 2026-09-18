@@ -31,7 +31,7 @@ jobs:
       - run: npm run test:oauth
       - run: npm run test:conformance
       - run: npm pack --dry-run
-      - name: Git-install lifecycle smoke (npm install --omit=dev builds and prunes)
+      - name: Git-install lifecycle smoke (build, prune, and consumer types)
         run: |
           git clone --quiet . /tmp/omit-dev-smoke
           cd /tmp/omit-dev-smoke
@@ -44,3 +44,4 @@ jobs:
           test -f dist/mcp-script-worker.mjs
           test -f dist/app-bridge.bundle.js
           test ! -d node_modules/typescript
+          node "$GITHUB_WORKSPACE/scripts/check-consumer-types.mjs" "$PWD"
