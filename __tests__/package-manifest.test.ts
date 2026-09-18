@@ -22,16 +22,16 @@ const hostPeerPackages = {
 };
 
 describe("package.json files", () => {
-  it("exports the TypeScript source entry for SDK consumers", () => {
-    expect(packageJson.types).toBe("./index.ts");
+  it("exports generated declarations while retaining source runtime entries", () => {
+    expect(packageJson.types).toBe("./dist/index.d.ts");
     expect(packageJson.exports).toMatchObject({
       ".": {
-        types: "./index.ts",
+        types: "./dist/index.d.ts",
         import: "./index.ts",
         default: "./index.ts",
       },
       "./types": {
-        types: "./types.ts",
+        types: "./dist/types.d.ts",
         import: "./types.ts",
         default: "./types.ts",
       },
