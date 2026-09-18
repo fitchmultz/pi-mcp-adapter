@@ -12,6 +12,7 @@ import {
   cancelPendingCallback,
   stopCallbackServer,
   releaseCallbackServer,
+  takeCallbackResult,
 } from "./mcp-callback-server.ts"
 import { getConfiguredOAuthCallbackPort, getOAuthCallbackPath, getOAuthCallbackPort } from "./mcp-oauth-provider.ts"
 
@@ -173,6 +174,32 @@ describe("mcp-callback-server", () => {
       } finally {
         await new Promise<void>((resolve) => blocker.close(() => resolve()))
       }
+    })
+  })
+
+  describe("manual callbacks", () => {
+    it("retains a validated result for one-shot consumption while keeping the reservation", async () => {
+      const state = "manual-state"
+      const iss = "https://auth.example.com"
+      await ensureCallbackServer({ oauthState: state, reserveState: true,
+        validate: response => validateAuthorizationResponseIssuer({ iss: response.iss, expectedIssuer: iss, issParameterSupported: true }),
+      })
+      assert.strictEqual(takeCallbackResult(state), undefined)
+      const callback = `http://localhost:${getOAuthCallbackPort()}/callback?state=${state}&code=manual-code&iss=${encodeURIComponent(iss)}`
+      assert.strictEqual((await fetch(callback)).status, 200)
+      assert.deepStrictEqual(takeCallbackResult(state), { code: "manual-code", iss })
+      assert.strictEqual(takeCallbackResult(state), undefined)
+      await assert.rejects(ensureCallbackServer({ callbackPath: "/other" }), /cannot be switched/)
+      releaseCallbackServer(state)
+      assert.strictEqual((await fetch(callback)).status, 400)
+    })
+
+    it("uses an already captured callback when an interactive waiter takes over", async () => {
+      await ensureCallbackServer({ oauthState: "manual-to-waiter", reserveState: true })
+      const response = await fetch(`http://localhost:${getOAuthCallbackPort()}/callback?state=manual-to-waiter&code=ready`)
+      assert.strictEqual(response.status, 200)
+      assert.deepStrictEqual(await waitForCallback("manual-to-waiter"), { code: "ready" })
+      assert.strictEqual(takeCallbackResult("manual-to-waiter"), undefined)
     })
   })
 

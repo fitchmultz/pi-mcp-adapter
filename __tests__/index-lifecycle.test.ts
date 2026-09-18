@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { McpConfig } from "../types.ts";
 
 const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn(),
@@ -660,6 +662,20 @@ describe("mcpAdapter session lifecycle", () => {
       "demo",
       "http://localhost:19876/callback?code=abc&state=state",
     );
+
+    const signal = new AbortController().signal;
+    await proxyTool.execute("call-3", { action: "auth-complete", server: "demo" }, signal);
+    expect(mocks.executeAuthComplete).toHaveBeenLastCalledWith(state, "demo", undefined, signal);
+    for (const args of [{}, "{}", { code: "raw-code" }, { input: "raw-code" }]) {
+      await proxyTool.execute("call-4", { action: "auth-complete", server: "demo", args });
+      expect(mocks.executeAuthComplete).toHaveBeenLastCalledWith(state, "demo", typeof args === "object" && Object.keys(args).length ? "raw-code" : undefined);
+    }
+    const calls = mocks.executeAuthComplete.mock.calls.length;
+    for (const args of [{ code: "" }, { redirectUrl: 42 }, { input: "  " }]) {
+      const result = await proxyTool.execute("call-5", { action: "auth-complete", server: "demo", args });
+      expect(result.details.error).toBe("missing_input");
+    }
+    expect(mocks.executeAuthComplete).toHaveBeenCalledTimes(calls);
   });
 
   it("forwards the proxy tool AbortSignal into executeCall", async () => {
@@ -756,6 +772,161 @@ describe("mcpAdapter session lifecycle", () => {
       expect.objectContaining({ config: expect.objectContaining({ mcpServers: config.mcpServers }) }),
     );
     expect(mocks.initializeMcp.mock.calls[0][3].config).not.toBe(config);
+  });
+
+  it.each([false, true])("transforms each session's resolved config before registration and initialization (snapshot=%s)", async (snapshot) => {
+    const source: McpConfig = {
+      mcpServers: { docs: { command: "docs-server", env: { ORIGINAL: "yes" } } },
+      settings: { autoAuth: true, scriptMode: true },
+    };
+    const original = structuredClone(source);
+    const sharedSettings = { autoAuth: false, scriptMode: false };
+    const inputs: McpConfig[] = [];
+    const states: ReturnType<typeof createState>[] = [];
+    const transformConfig = vi.fn((config: McpConfig, ctx: ExtensionContext): McpConfig => {
+      inputs.push(structuredClone(config));
+      // Hosts may modify their input clone and return objects shared with their own config.
+      config.mcpServers.docs!.env!.ORIGINAL = "transformed";
+      return {
+        ...config,
+        settings: sharedSettings,
+        mcpServers: {
+          ...config.mcpServers,
+          ephemeral: { command: "session-server", lifecycle: "lazy", env: { SESSION: ctx.sessionManager.getSessionId() } },
+        },
+      };
+    });
+    mocks.loadMcpConfig.mockReturnValue(source);
+    const { buildProxyDescription } = await vi.importActual<typeof import("../direct-tools.ts")>("../direct-tools.ts");
+    mocks.buildProxyDescription.mockImplementation(buildProxyDescription);
+    mocks.initializeMcp.mockImplementation(async (pi, _ctx, _owner, options) => {
+      const tools = pi.registerTool.mock.calls.map(([tool]: any[]) => tool);
+      expect(tools.map((tool: any) => tool.name)).toEqual(["mcp"]);
+      expect(tools[0].description).toContain("ephemeral");
+      const state = createState();
+      state.config = options.config ?? options.resolvedConfig;
+      states.push(state);
+      return state;
+    });
+
+    const { createMcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    createMcpAdapter({ ...(snapshot ? { config: source } : {}), transformConfig })(api);
+    expect(api.registerTool).not.toHaveBeenCalled();
+    expect(transformConfig).not.toHaveBeenCalled();
+
+    for (const [index, reason] of ["startup", "reload", "new"].entries()) {
+      const sessionManager = { getSessionId: () => `session-${index}` };
+      await handlers.get("session_start")?.({ reason }, { sessionManager });
+      await Promise.resolve();
+      const options = mocks.initializeMcp.mock.calls[index]![3];
+      const runtimeConfig = snapshot ? options.config : options.resolvedConfig;
+      expect(options).not.toHaveProperty(snapshot ? "resolvedConfig" : "config");
+      expect(runtimeConfig).toEqual({
+        mcpServers: {
+          docs: { command: "docs-server", env: { ORIGINAL: "transformed" } },
+          ephemeral: { command: "session-server", lifecycle: "lazy", env: { SESSION: `session-${index}` } },
+        },
+        settings: { autoAuth: false, scriptMode: false },
+      });
+      expect(transformConfig.mock.calls[index]![1]).toBe(mocks.initializeMcp.mock.calls[index]![1]);
+      expect(transformConfig.mock.calls[index]![1].sessionManager).toBe(sessionManager);
+      expect(mocks.buildProxyDescription.mock.calls.some(([config]) => config === runtimeConfig)).toBe(true);
+      const proxy = api.registerTool.mock.calls.filter(([tool]: any[]) => tool.name === "mcp").at(-1)![0];
+      expect(proxy.description).toContain("ephemeral");
+      expect(proxy.description).toContain("docs");
+      expect(api.registerTool.mock.calls.map(([tool]: any[]) => tool.name)).toEqual(["mcp"]);
+      expect(transformConfig).toHaveBeenCalledTimes(index + 1);
+
+      // Runtime edits must not leak into a retained hook result or the next session.
+      states[index].config.settings.scriptMode = true;
+      states[index].config.mcpServers.ephemeral.env.SESSION = "runtime-edit";
+      expect(transformConfig.mock.results[index]!.value.settings.scriptMode).toBe(false);
+      expect(transformConfig.mock.results[index]!.value.mcpServers.ephemeral.env.SESSION).toBe(`session-${index}`);
+    }
+    expect(inputs).toEqual([original, original, original]);
+    expect(source).toEqual(original);
+    expect(sharedSettings).toEqual({ autoAuth: false, scriptMode: false });
+    if (snapshot) expect(mocks.loadMcpConfig).not.toHaveBeenCalled();
+    await handlers.get("session_shutdown")?.();
+  });
+
+  it("keeps ambient trust resolution and configuration panels when transforming config", async () => {
+    const globalConfig: McpConfig = { mcpServers: { global: { command: "global-server" } } };
+    const trustedConfig: McpConfig = {
+      mcpServers: { ...globalConfig.mcpServers, project: { command: "project-server" } },
+    };
+    mocks.loadMcpConfig.mockImplementation((_path, _cwd, options) => options.includeProject ? trustedConfig : globalConfig);
+    mocks.writeProjectServerDisabledOverride.mockReturnValue({ path: "/project/.pi/mcp.json", changed: true });
+    mocks.initializeMcp.mockImplementation(async (_pi, _ctx, _owner, options) => ({
+      ...createState(), config: options.resolvedConfig,
+    }));
+    const transformConfig = vi.fn((config: McpConfig) => config);
+    const { createMcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    createMcpAdapter({ configPath: "/host/mcp.json", transformConfig })(api);
+    const command = api.registerCommand.mock.calls.find(([name]: any[]) => name === "mcp")![1];
+    const auth = api.registerCommand.mock.calls.find(([name]: any[]) => name === "mcp-auth")![1];
+    const ctx = { cwd: "/project", hasUI: true, ui: { notify: vi.fn() }, isProjectTrusted: () => false };
+    await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+    await command.handler("disable global", ctx);
+    expect(mocks.writeProjectServerDisabledOverride).not.toHaveBeenCalled();
+    expect(transformConfig.mock.calls[0]![0]).toEqual(globalConfig);
+    expect(mocks.loadMcpConfig).toHaveBeenLastCalledWith("/host/mcp.json", "/project", { includeProject: false });
+
+    ctx.isProjectTrusted = () => true;
+    await handlers.get("session_start")?.({ reason: "reload" }, ctx);
+    expect(transformConfig.mock.calls[1]![0]).toEqual(trustedConfig);
+    expect(mocks.loadMcpConfig).toHaveBeenLastCalledWith("/host/mcp.json", "/project", { includeProject: true });
+    await command.handler("status", ctx);
+    await command.handler("setup", ctx);
+    await command.handler("disable project", ctx);
+    await auth.handler("", ctx);
+    expect(mocks.openMcpPanel).toHaveBeenCalledWith(expect.any(Object), api, expect.any(Object), "/host/mcp.json", expect.any(Function));
+    expect(mocks.openMcpSetup).toHaveBeenCalledWith(expect.any(Object), api, expect.any(Object), "/host/mcp.json", "setup");
+    expect(mocks.openMcpAuthPanel).toHaveBeenCalledWith(expect.any(Object), expect.any(Object), "/host/mcp.json");
+    expect(mocks.writeProjectServerDisabledOverride).toHaveBeenCalledWith("/host/mcp.json", "/project", "project", true);
+    await handlers.get("session_shutdown")?.();
+  });
+
+  it("keeps only proxy/script tools with MCP_DIRECT_TOOLS=__none__ through lazy connections and metadata updates", async () => {
+    process.env.MCP_DIRECT_TOOLS = "__none__";
+    const config: McpConfig = {
+      mcpServers: {
+        demo: { command: "demo-server", lifecycle: "lazy", directTools: true },
+        other: { command: "other-server", lifecycle: "lazy", directTools: true },
+      },
+      settings: { directTools: true, disableProxyTool: true },
+    };
+    const state = createState();
+    state.config = config;
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.initializeMcp.mockResolvedValue(state);
+    mocks.resolveDirectTools.mockReturnValue([
+      { serverName: "demo", originalName: "search", prefixedName: "demo_search", description: "Search demo" },
+      { serverName: "other", originalName: "search", prefixedName: "other_search", description: "Search other" },
+    ]);
+    mocks.executeConnect.mockImplementation(async (currentState, server) => {
+      currentState.onToolMetadataUpdated(server, "lazy-connect");
+      return { content: [{ type: "text", text: `Connected ${server}` }] };
+    });
+    mocks.executeCall.mockResolvedValue({ content: [{ type: "text", text: "Search result" }] });
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    api.setActiveTools(["mcp", "mcp_script"]);
+    mcpAdapter(api);
+    await handlers.get("session_start")?.({}, {});
+    const proxy = api.registerTool.mock.calls.find(([tool]: any[]) => tool.name === "mcp")![0];
+    for (const server of ["demo", "other"]) {
+      expect(await proxy.execute(`connect-${server}`, { connect: server })).toEqual({ content: [{ type: "text", text: `Connected ${server}` }] });
+      state.onToolMetadataUpdated(server, "tools-list-changed");
+      expect(await proxy.execute(`call-${server}`, { tool: `${server}_search`, server })).toEqual({ content: [{ type: "text", text: "Search result" }] });
+      expect(mocks.executeCall).toHaveBeenLastCalledWith(state, `${server}_search`, undefined, server, expect.any(Function), undefined, undefined, { toolCallId: `call-${server}` }, undefined);
+      expect(api.registerTool.mock.calls.map(([tool]: any[]) => tool.name)).toEqual(["mcp", "mcp_script"]);
+      expect(api.getActiveTools()).toEqual(["mcp", "mcp_script"]);
+    }
+    expect(mocks.initializeMcp.mock.calls[0]![3].resolvedConfig).toEqual(config);
+    await handlers.get("session_shutdown")?.();
   });
 
   it("snapshots caller config and isolates separate factories", async () => {

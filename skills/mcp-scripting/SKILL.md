@@ -26,7 +26,7 @@ return result.data?.structuredContent ?? result.data;
 ## Workflow
 
 1. Find candidate tools with `await tools.search({ query, server?, limit?, offset? })`. `limit` defaults to 12 and is capped at 100.
-2. Inspect the exact returned path with `await tools.describe({ path })`.
+2. Inspect the exact returned path with `await tools.describe({ path })`. Arguments are described by `inputTypeScript` when representable, otherwise by the original JSON Schema in `inputSchema`; only one is included.
 3. Call it with `tools.call(path, args)`.
 
 Calls resolve to `{ ok: true, data }` or `{ ok: false, error }`; handle failed calls instead of expecting them to stop the script. Successful `data` is the raw MCP result: tool calls usually return `{ content, structuredContent? }`, while resource reads return `{ contents }`. Prefer `structuredContent` when present, and only parse a text block when that server documents JSON text. `emit(value)` adds user-visible output before the final `return` value. `console` output is captured too.

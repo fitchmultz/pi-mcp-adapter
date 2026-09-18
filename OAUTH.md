@@ -17,7 +17,7 @@ The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, wh
 
 - ✅ **PKCE (S256)** - Mandatory code challenge method for OAuth 2.1
 - ✅ **Automatic Callback Server** - Local browser redirects automatically when available
-- ✅ **Manual Remote Flow** - Copy auth URLs and pasted redirect URLs/codes for headless SSH sessions
+- ✅ **Manual Remote Flow** - Explicit completion from a captured browser callback or pasted redirect URL/code
 - ✅ **Client ID Metadata Documents** - Uses the shared identity for compatible browser clients
 - ✅ **Dynamic Client Registration** - Registers when no configured/stored client or eligible CIMD is available
 - ✅ **Auto-Discovery** - Discovers OAuth endpoints from server metadata
@@ -213,7 +213,15 @@ When Pi runs over SSH or in a headless environment, use the proxy tool to retrie
 mcp({ action: "auth-start", server: "my-oauth-server" })
 ```
 
-Open the returned URL in your local browser. After approval, copy the full redirected localhost URL from the browser address bar (the page may fail to load locally) and complete the same pending auth flow:
+Open the returned URL in an authenticated browser, including a headless browser that can reach Pi's localhost callback. `auth-start` never launches a browser. Once approval reaches the callback, complete the same pending flow without passing the callback URL or code through tool arguments:
+
+```
+mcp({ action: "auth-complete", server: "my-oauth-server" })
+```
+
+The callback validates state and issuer and keeps the result in memory; token exchange happens only when `auth-complete` is called. Calling it before the callback arrives preserves the pending flow and explains how to finish. A denied callback reports failure, with no token exchange. Captured results are consumed once and cleared with the flow on completion, cancellation, timeout or runtime shutdown. The existing five-minute deadline still applies after the callback arrives.
+
+If the browser cannot reach Pi's callback, copy the full redirected localhost URL from its address bar (the page may fail to load locally) and complete with pasted input:
 
 ```
 mcp({
@@ -310,6 +318,7 @@ A Node.js HTTP server runs on a loopback callback endpoint and handles the activ
 - Handles `code`, `state`, and `error` parameters
 - Displays success/error HTML pages
 - Validates state and issuer before accepting codes or displaying provider errors; unverifiable errors receive a generic response
+- Retains validated manual callbacks in memory for explicit `auth-complete`, without returning callback secrets in tool results
 - Has a 5-minute timeout for pending authorizations
 
 ## Token Storage

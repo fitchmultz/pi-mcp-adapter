@@ -144,6 +144,26 @@ Set `createMcpAdapter({ outputDirectory: "/workspace/internal/mcp-output" })` to
 
 Set `createMcpAdapter({ defaultScriptTimeoutMs: null })` to remove the default overall `mcp_script` deadline for that host only. Omitting the option keeps 30,000ms; a numeric default must be an integer from 1 to 2,147,483,647 milliseconds. Each script's explicit `timeoutMs` takes precedence. This is a factory option, not an MCP config or global Pi setting. It does not change initialization waits, individual MCP request deadlines, Stop/AbortSignal, session-owner shutdown, or unfinished-call cleanup. Without an overall deadline, a script can run until it completes or is stopped. Script result `details.timeoutMs` is `null` when no overall deadline applies.
 
+### Session configuration
+
+Use `createMcpAdapter({ transformConfig: (config, ctx) => ... })` to add session-specific servers or settings in memory. The synchronous hook runs once per `session_start`, including reloads and new sessions, after normal config merging and project trust checks, before tool/metadata registration and initialization. It receives a fresh config clone and the current `ExtensionContext`; its result is cloned for session ownership. No config files are rewritten. Without an explicit `config`, normal status, setup, disable/enable, and auth panels remain available. With `config`, the hook transforms that isolated snapshot and its panel limitations still apply.
+
+```ts
+const extension = createMcpAdapter({
+  transformConfig(config, ctx) {
+    config.mcpServers.session = {
+      command: "my-mcp-server",
+      lifecycle: "lazy",
+      env: { SESSION_ID: ctx.sessionManager.getSessionId() },
+    };
+    config.settings = { ...config.settings, autoAuth: false };
+    return config;
+  },
+});
+```
+
+Hosts that share a server within a root session can supply their root-session ID in `env` instead. Load this factory instead of also loading the default adapter.
+
 ### Execution checkpoints and call capture
 
 `createMcpAdapter({ beforeExecute: async (toolCallId, ctx, operation) => { ... } })` lets a host finish its workspace/native-session checkpoint before the next MCP action. For direct tools, actual `mcp` calls and every resolved `mcp_script` inner call, it runs after target resolution, connection, approval and UI preparation but **before the individual service deadline** and `onToolCall` capture. Any configured overall script deadline still applies. A second awaited script call reaches this boundary after the first call's output files have finished writing. The callback receives the native Pi call ID and that invocation's `ExtensionContext`, with its caller/owner/script cancellation signal in `ctx.signal`. Pass it to checkpoint I/O and throw if the checkpoint cannot complete. Rejection prevents that call: direct/proxy execution throws, while scripts keep their failed-call envelope so they can handle preparation failures. Existing two-argument callbacks remain supported.
@@ -341,7 +361,15 @@ On Linux, if credential access fails because Pi inherited a revoked session keyr
 mcp({ action: "auth-start", server: "linear-server" })
 ```
 
-Open the returned authorization URL in your local browser. After approval, your browser redirects to a localhost URL. On a remote server that local page may fail to load; copy the full URL from the browser address bar anyway and complete the flow in the same Pi session:
+Open the returned authorization URL in an authenticated browser. This can be a headless browser that can reach Pi's localhost callback; the adapter does not open a browser for `auth-start`. After approval reaches the callback, complete the flow in the same Pi session without copying the callback URL or code:
+
+```js
+mcp({ action: "auth-complete", server: "linear-server" })
+```
+
+The validated callback stays in memory until explicit completion or the pending flow's five-minute timeout. Calling `auth-complete` before the callback arrives gives guidance and leaves the flow available. A denied callback reports failure without exchanging a code.
+
+If the browser cannot reach Pi's callback (for example, Pi runs on a remote server), copy the full redirected localhost URL from the address bar even if the page fails to load:
 
 ```js
 mcp({
@@ -482,6 +510,8 @@ emit({ tool: details.path, completed: true });
 return result.data;
 ```
 
+`tools.describe` returns argument information as `inputTypeScript` when representable, otherwise as the original JSON Schema in `inputSchema`. Only one is included; inspect it before constructing arguments.
+
 See the bundled `mcp-scripting` skill for the complete workflow guide. The API is `await tools.search({ query, server?, limit?, offset? })`, `await tools.describe({ path })`, `tools.call(path, args)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each operation, its path or query, outcome, and duration. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds unless the SDK host overrides it with `defaultScriptTimeoutMs`; an explicit per-script `timeoutMs` always wins. Each script runs in a worker thread that is terminated on timeout or cancellation, including for infinite loops.
 
 For a tool-restricted subagent, launch the child Pi with its tool allowlist set to `["mcp_script"]`. Have the parent discover MCP tool names with `mcp({ search: "..." })` and include the relevant prefixed names in the child's task; the child can then loop, filter, and chain those MCP calls without filesystem, shell, or edit tools. The adapter's ordinary lazy connection, authentication, output guard, abort handling, and approval gates still apply to every call.
@@ -555,6 +585,8 @@ To set a global default for all servers:
 ```
 
 Per-server `directTools` overrides the global setting. The example above registers direct tools for every server except `huge-server`.
+
+Set `MCP_DIRECT_TOOLS=__none__` before loading the adapter to suppress all direct-tool registration, including after lazy connections and metadata updates. With default scripting enabled, only `mcp` and `mcp_script` are exposed by the adapter. Configured servers remain available through those tools; normal tool filters and disabled-server settings still apply.
 
 To expose only a subset of a noisy server, add `includeTools` on the server. Values can be exact original names, generated resource names such as `read_<resource>`, prefixed names, or simple glob patterns:
 
@@ -690,12 +722,12 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/mcp.json` only 
 | Describe | `mcp({ describe: "tool_name" })` |
 | Instructions | `mcp({ instructions: "name" })` |
 | Call | `mcp({ tool: "...", args: { key: "value" } })` |
-| Connect | `mcp({ connect: "server-name" })` |
+| Connect | `mcp({ connect: "server-name", limit: 12, offset: 0 })` |
 | UI messages | `mcp({ action: "ui-messages" })` |
 | Auth start | `mcp({ action: "auth-start", server: "name" })` |
-| Auth complete | `mcp({ action: "auth-complete", server: "name", args: { redirectUrl: "..." } })` |
+| Auth complete | `mcp({ action: "auth-complete", server: "name" })` after the browser callback, or supply `args: { redirectUrl: "..." }` |
 
-`mcp({ connect: "server-name" })` refreshes an already connected server, so new tools, resources, prompts, and instructions can load without restarting Pi.
+`mcp({ connect: "server-name" })` refreshes an already connected server, so new tools, resources, prompts, and instructions can load without restarting Pi. Its returned server listing accepts the same `limit` and `offset` options as list mode.
 
 MCP proxy and direct-tool results render compactly by default: long text shows the first three terminal-wrapped lines plus Pi's configured `app.tools.expand` keybinding hint, while the full result remains available when expanded and is still returned unchanged to the model.
 
@@ -727,7 +759,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 
 If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`, and direct/script tool calls may run OAuth when needed, with at most one automatic auth attempt per invocation and one post-auth retry. Browser authorization requires an interactive host. Auth-only replacement preserves accepted work on the old client; ordinary `/mcp reconnect` and panel `ctrl+r` remain hard resets.
 
-In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or Enter on a server that needs auth. In remote/headless sessions, use the proxy tool's `auth-start` and `auth-complete` actions to copy the authorization URL locally and paste the redirect URL back into Pi. `/mcp-auth` without a server only opens a picker in the interactive UI.
+In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or Enter on a server that needs auth. In remote/headless sessions, use the proxy tool's `auth-start` and `auth-complete` actions. Complete without arguments when the browser reaches Pi's callback, or paste the redirect URL when it cannot. `/mcp-auth` without a server only opens a picker in the interactive UI.
 
 ### MCP output schemas
 

@@ -81,7 +81,10 @@ function formatManualAuthInstructions(serverName: string, authorizationUrl: stri
     "",
     authorizationUrl,
     "",
-    "After approving, copy the full redirected localhost URL from your browser address bar and send it back with:",
+    "After approval reaches this Pi session's callback, complete without copying the callback URL or code:",
+    `mcp({ action: "auth-complete", server: "${serverName}" })`,
+    "",
+    "If the browser cannot reach the callback, copy the full redirected localhost URL from your address bar and send it back with:",
     `mcp({ action: "auth-complete", server: "${serverName}", args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" } })`,
     "",
     'You can also pass just the `code` query parameter as `args: { code: "PASTE_CODE_HERE" }`. JSON-string args remain supported.',
@@ -355,7 +358,7 @@ export async function executeAuthStart(state: McpExtensionState, serverName: str
   }
 }
 
-export async function executeAuthComplete(state: McpExtensionState, serverName: string, input: string, signal?: AbortSignal): Promise<ProxyToolResult> {
+export async function executeAuthComplete(state: McpExtensionState, serverName: string, input?: string, signal?: AbortSignal): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
   const definition = state.config.mcpServers[serverName];
@@ -650,7 +653,13 @@ export function executeInstructions(state: McpExtensionState, server: string): P
   };
 }
 
-export async function executeConnect(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<ProxyToolResult> {
+export async function executeConnect(
+  state: McpExtensionState,
+  serverName: string,
+  signal?: AbortSignal,
+  limit?: number,
+  offset?: number,
+): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
   const definition = state.config.mcpServers[serverName];
@@ -707,7 +716,7 @@ export async function executeConnect(state: McpExtensionState, serverName: strin
     markKeepAliveAfterConnect(state, serverName);
     clearFailure(state, serverName);
     updateStatusBar(state);
-    return executeList(state, serverName);
+    return executeList(state, serverName, limit, offset);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!isAbortError(error, ownedSignal)) recordFailure(state, serverName, message);
