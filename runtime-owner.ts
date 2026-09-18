@@ -1,3 +1,4 @@
+import type { McpCheckpointEvent } from "./checkpoint.ts";
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { formatTerminalError } from "./utils.ts";
 
@@ -7,12 +8,16 @@ export interface McpRuntimeOwner {
   addCleanup(cleanup: () => void | Promise<void>): void;
   stop(reason?: string): Promise<void>;
   throwIfInactive(): void;
+  beforeActivity(): void;
+  holdCheckpoint(event: McpCheckpointEvent): () => void;
 }
 
 export function createMcpRuntimeOwner(): McpRuntimeOwner {
   const controller = new AbortController();
   const cleanups: Array<() => void | Promise<void>> = [];
   let stopPromise: Promise<void> | undefined;
+  let checkpoint: McpCheckpointEvent | undefined;
+  const beforeActivity = () => checkpoint?.invalidate();
 
   const reportCleanupFailure = (error: unknown, late: boolean) => {
     console.error(`MCP: ${late ? "late " : ""}runtime cleanup failed: ${formatTerminalError(error)}`);
@@ -20,6 +25,12 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
 
   return {
     signal: controller.signal,
+    beforeActivity,
+    holdCheckpoint: event => {
+      if (checkpoint) throw new Error("MCP checkpoint is already held");
+      checkpoint = event;
+      return () => { if (checkpoint === event) checkpoint = undefined; };
+    },
     isActive: () => !controller.signal.aborted,
     addCleanup: cleanup => {
       if (controller.signal.aborted) {
@@ -30,6 +41,7 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
     },
     stop: (reason = "MCP extension runtime stopped") => {
       if (stopPromise) return stopPromise;
+      beforeActivity();
       controller.abort(new Error(reason));
       const pendingCleanups = cleanups.splice(0).reverse().map(cleanup =>
         Promise.resolve().then(cleanup),
@@ -44,7 +56,7 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
       });
       return stopPromise;
     },
-    throwIfInactive: () => controller.signal.throwIfAborted(),
+    throwIfInactive: () => { beforeActivity(); controller.signal.throwIfAborted(); },
   };
 }
 

@@ -184,6 +184,16 @@ Supplying `beforeExecute` marks the adapter's tools `executionMode: "sequential"
 
 The two callbacks serve different boundaries: `beforeExecute` saves completed workspace writes; `onToolCall` captures the resolved operation and its raw outcome. The host owns `pi.appendEntry()` and the awaited checkpoint of that same native JSONL. Exclude `signal`, serialize thrown errors explicitly, redact sensitive checkpoint bytes, and honor the signal and session/attempt fence. `pi.appendEntry()` alone only persists locally; `pi.events.emit()` is not an awaited barrier. Custom entries do not enter model context automatically: the host must provide truthful recovered results or readback instructions when resuming. The adapter stores no separate transcript or receipts, does not replay scripts, and does not invent provider operation keys.
 
+### Native working-session checkpoints
+
+On hosts that emit the optional awaited `session_checkpoint` event, the adapter can acknowledge an **idle, stateless Streamable HTTP** runtime. Older Pi hosts continue normally and never invoke this hook. The host still owns native session capture, coherent filesystem capture, private credential retention, and commit-before-sleep.
+
+For this supported boundary, sampling and elicitation must not be enabled in the runtime (in the TUI, set `settings.sampling: false` and `settings.elicitation: false`). HTTP connections with session IDs, legacy SSE, stdio/Unix servers, remote-task/subscription/extra negotiated capabilities, pending initialization/requests/refresh/health checks, browser OAuth flows, UI sessions/messages, active scripts, host `beforeExecute`/`onToolCall` callbacks, and unpersisted approvals or OAuth scope/issuer intent return a named `sleepReady: false`. These remain usable while compute stays running; the hook does not cancel accepted work to manufacture readiness.
+
+Before any asynchronous flush, the adapter fences owned activity and pauses its existing health-check timer. New requests or incoming transport callbacks invalidate the host's hold **before** dispatch or mutation. Completed refreshes use the existing native OS credential store; no token file or second auth store is introduced. Metadata and trace persistence errors reject capture. Release/cancellation resumes the same clients and timer, without replaying tools, reauthenticating, or running shutdown. Cold startup uses normal discovery and native credentials; only a new explicit tool invocation sends a new tool request.
+
+`session_shutdown` separately performs best-effort cleanup and propagates persistence/cleanup failures through the host's ordinary extension error contract. A clean-exit host must not infer success after a failed handler. No callback/process memory recovery is promised.
+
 ### Runtime status snapshots
 
 Extensions can subscribe to the adapter's versioned shared event-bus channel instead of parsing `/mcp` or `mcp({})` output:

@@ -74,6 +74,7 @@
     "utils.ts",
     "abort.ts",
     "runtime-owner.ts",
+    "checkpoint.ts",
     "tool-metadata.ts",
     "ts-shape.ts",
     "search-ranking.ts",

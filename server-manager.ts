@@ -1,3 +1,4 @@
+import type { McpCheckpointEvent } from "./checkpoint.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   Client,
@@ -64,8 +65,10 @@ const clientOperations = new WeakMap<Client, Set<Promise<unknown>>>();
 // Track complete SDK operations, including pagination and pre-request cache awaits.
 class ManagedClient extends Client {
   oauthProvider: McpOAuthProvider | undefined;
+  beforeActivity: () => void = () => {};
 
   private async track<T>(start: (signal?: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    this.beforeActivity();
     const controller = this.oauthProvider ? new AbortController() : undefined;
     let removeAbortListener = () => {};
     const operation = this.oauthProvider
@@ -179,6 +182,56 @@ export class McpServerManager {
   private traceSettings: McpTraceSettings | undefined;
   private traceWriter: McpTraceWriter | undefined;
   private stopped = false;
+  private checkpoint: McpCheckpointEvent | undefined;
+  private readonly beforeActivity = () => this.checkpoint?.invalidate();
+
+  holdCheckpoint(event: McpCheckpointEvent): () => void {
+    if (this.checkpoint) throw new Error("MCP manager checkpoint is already held");
+    this.checkpoint = event;
+    return () => { if (this.checkpoint === event) this.checkpoint = undefined; };
+  }
+
+  getCheckpointBlocker(): string | undefined {
+    if (this.stopped) return "MCP manager is stopped";
+    if (this.connectPromises.size || this.reconnectPromises.size || this.closePromises.size || this.retiredConnections.size)
+      return "MCP connection/discovery/retirement is active";
+    if (this.samplingConfig || this.elicitationConfig)
+      return "MCP sampling/elicitation callbacks are not checkpoint-supported; disable them for HTTP checkpointing";
+    if (this.acceptedUrlElicitations.size || this.uiStreamListeners.size)
+      return "MCP browser elicitation/UI stream is pending";
+    for (const [name, connection] of this.connections) {
+      if (connection.inFlight || clientOperations.get(connection.client)?.size) return `MCP ${name}: request/refresh is active`;
+      if (!(connection.transport instanceof StreamableHTTPClientTransport)) return `MCP ${name}: only stateless Streamable HTTP is checkpoint-supported`;
+      if (connection.transport.sessionId !== undefined) return `MCP ${name}: HTTP session state is not reconstructible`;
+      const capabilities = connection.client.getServerCapabilities();
+      if (capabilities && (Object.keys(capabilities).some(key => !["tools", "resources", "prompts"].includes(key)) || capabilities.resources?.subscribe))
+        return `MCP ${name}: remote tasks/subscriptions/extra capabilities are not checkpoint-supported`;
+    }
+    return undefined;
+  }
+
+  async flushForCheckpoint(): Promise<void> { await this.traceWriter?.flush(true); }
+
+  /** Fence before SDK callbacks AND before trace observers; retain native transport identity.
+   * Preserve existing property setters (including tracing) rather than replacing their behavior. */
+  private fenceTransport(transport: Transport): void {
+    for (const key of ["onmessage", "onerror", "onclose"] as const) {
+      const descriptor = Object.getOwnPropertyDescriptor(transport, key);
+      let value = transport[key];
+      Object.defineProperty(transport, key, {
+        configurable: true,
+        get: () => {
+          const handler = descriptor?.get ? descriptor.get.call(transport) : value;
+          return handler ? (...args: unknown[]) => { this.beforeActivity(); return handler(...args); } : undefined;
+        },
+        set: next => { if (descriptor?.set) descriptor.set.call(transport, next); else value = next; },
+      });
+    }
+    if (typeof transport.send === "function") {
+      const send = transport.send.bind(transport);
+      transport.send = (...args) => { this.beforeActivity(); return send(...args); };
+    }
+  }
 
   /** Default cwd for stdio servers without an explicit config `cwd`. */
   constructor(private readonly defaultCwd?: string) {}
@@ -245,6 +298,7 @@ export class McpServerManager {
   }
 
   async connect(name: string, definition: ServerDefinition, signal?: AbortSignal): Promise<ServerConnection> {
+    this.beforeActivity();
     if (isServerDisabled(definition)) throw new Error(`MCP server "${name}" is disabled`);
     if (this.stopped) throw new Error("MCP server manager is closed");
     const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
@@ -345,6 +399,7 @@ export class McpServerManager {
 
   /** Retire only the expected current client; accepted native work drains before close. */
   retire(name: string, connection: ServerConnection): void {
+    this.beforeActivity();
     if (this.connections.get(name) !== connection) return;
     connection.status = "closed";
     let retired = this.retiredConnections.get(name);
@@ -563,6 +618,7 @@ export class McpServerManager {
     signal?: AbortSignal,
   ): Promise<void> {
     throwIfAborted(signal);
+    this.fenceTransport(transport);
     let abortCleanup: Promise<void> | undefined;
     const closeTransport = () => {
       abortCleanup = Promise.resolve().then(() => transport.close());
@@ -631,6 +687,7 @@ export class McpServerManager {
         },
       },
     );
+    client.beforeActivity = this.beforeActivity;
     if (this.samplingConfig) {
       registerSamplingHandler(client, { ...this.samplingConfig, serverName });
     }
@@ -661,6 +718,7 @@ export class McpServerManager {
     error: Error | null,
     tools: McpTool[] | null,
   ): void {
+    this.beforeActivity();
     if (error) {
       logger.debug(`MCP: tools/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
@@ -678,6 +736,7 @@ export class McpServerManager {
     error: Error | null,
     prompts: McpPrompt[] | null,
   ): void {
+    this.beforeActivity();
     if (error) {
       logger.debug(`MCP: prompts/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
@@ -696,6 +755,7 @@ export class McpServerManager {
     error: Error | null,
     resources: McpResource[] | null,
   ): void {
+    this.beforeActivity();
     if (error) {
       logger.debug(`MCP: resources/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
@@ -938,6 +998,7 @@ export class McpServerManager {
   }
 
   async close(name: string): Promise<void> {
+    this.beforeActivity();
     this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
     this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
     const pendingClose = this.closePromises.get(name);
@@ -996,7 +1057,7 @@ export class McpServerManager {
     this.acceptedUrlElicitations.clear();
     this.samplingConfig = undefined;
     this.elicitationConfig = undefined;
-    await this.traceWriter?.flush();
+    try { await this.flushForCheckpoint(); } catch (error) { failures.push(error); }
     if (failures.length > 0) throw new AggregateError(failures, "MCP manager cleanup failed");
   }
 

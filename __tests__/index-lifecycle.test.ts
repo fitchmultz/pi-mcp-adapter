@@ -1118,6 +1118,35 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
+  it("reports shutdown persistence failures only after all cleanup has finished", async () => {
+    const state = createState();
+    const cleanup = createDeferred<void>();
+    state.lifecycle.gracefulShutdown.mockReturnValue(cleanup.promise);
+    state.uiServer = { close: vi.fn(() => { throw new Error("UI cleanup failed"); }) };
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: adapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    adapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    mocks.flushMetadataCache.mockImplementation(() => { throw new Error("metadata persistence failed"); });
+    mocks.shutdownOAuth.mockRejectedValue(new Error("OAuth cleanup failed"));
+    const done = vi.fn();
+    const stopping = Promise.resolve(handlers.get("session_shutdown")?.());
+    const observed = stopping.then(done, error => { done(); return error; });
+    await Promise.resolve();
+    expect(state.uiServer).toBeNull();
+    expect(state.lifecycle.gracefulShutdown).toHaveBeenCalledOnce();
+    expect(mocks.shutdownOAuth).toHaveBeenCalled();
+    expect(done).not.toHaveBeenCalled();
+    cleanup.resolve();
+    const error = await observed;
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.message).toContain("persistence/cleanup failed");
+    expect(error.errors).toHaveLength(2);
+    expect(error.errors[0].errors.map((cause: Error) => cause.message)).toEqual(["UI cleanup failed", "metadata persistence failed"]);
+  });
+
   it("shuts down OAuth on session_shutdown", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);

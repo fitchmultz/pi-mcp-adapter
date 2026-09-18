@@ -110,7 +110,15 @@ class McpScriptCaptureError extends Error {
   }
 }
 
-export async function runMcpScript(
+export const runMcpScript: typeof runMcpScriptOperation = async (...args) => {
+  const state = args[0];
+  state.owner?.beforeActivity();
+  state.activeScripts = (state.activeScripts ?? 0) + 1;
+  try { return await runMcpScriptOperation(...args); }
+  finally { state.activeScripts--; }
+};
+
+async function runMcpScriptOperation(
   state: McpExtensionState,
   code: string,
   timeoutMs: number | null = DEFAULT_MCP_SCRIPT_TIMEOUT_MS,
