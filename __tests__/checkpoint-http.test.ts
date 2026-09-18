@@ -38,6 +38,10 @@ function hold() {
   const event: McpCheckpointEvent = { boundary: "settled", signal: controller.signal, invalidate };
   return { event, invalidate, release: () => controller.abort() };
 }
+async function readiness(state: Parameters<typeof prepareMcpCheckpoint>[0]) {
+  const cut = hold();
+  try { return await prepareMcpCheckpoint(state, cut.event); } finally { cut.release(); }
+}
 function host() {
   const handlers = new Map<string, (...args: any[]) => any>();
   const tools = new Map<string, any>();
@@ -97,6 +101,7 @@ async function wire(options: { oauth?: boolean; capabilities?: object; session?:
       const response = JSON.parse(text);
       if (response.method === undefined && response.id) {
         replies.get(String(response.id))?.(response); replies.delete(String(response.id));
+        if (delayMethod === "callback-reply") { started = true; await blocked!.promise; }
         res.writeHead(202).end(); return;
       }
     }
@@ -361,13 +366,28 @@ it.each(["sampling", "elicitation"] as const)("owns real inbound %s promises wit
   expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining(`${kind} callback`) });
   gate.resolve();
   expect((await request.response).error).toBeUndefined();
-  const answered = hold(); expect(await prepareMcpCheckpoint(state, answered.event)).toEqual({ sleepReady: true }); answered.release();
+  await expect.poll(() => readiness(state)).toEqual({ sleepReady: true });
   await state.manager.getConnection(f.name)!.client.callTool({ name: "echo", arguments: {} });
   const before = f.calls(); await state.owner.stop();
   const restored = await runtime(f.config, host());
   expect(f.calls()).toBe(before); // ordinary startup discovery, never replay the old tool/callback
   await restored.manager.getConnection(f.name)!.client.callTool({ name: "echo", arguments: {} });
   expect(f.calls()).toBe(before + 1);
+});
+
+it("keeps the SDK's callback reply HTTP send owned after the handler itself has returned", async () => {
+  const f = await wire({ inbound: true }); const state = await runtime(f.config);
+  await expect.poll(f.streamReady).toBe(true);
+  f.delay("callback-reply");
+  const request = f.callback("elicitation/create", elicitationRequest);
+  expect((await request.response).result.action).toBe("accept");
+  expect(f.started()).toBe(true);
+  // The form is answered and its promise is done, but the native reply's HTTP/auth work is not.
+  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("request/refresh") });
+  f.release();
+  await expect.poll(async () => {
+    const cut = hold(); const result = await prepareMcpCheckpoint(state, cut.event); cut.release(); return result;
+  }).toEqual({ sleepReady: true });
 });
 
 it.each(["sampling", "elicitation"] as const)("invalidates before a late %s callback touches auth/UI", async kind => {
@@ -500,7 +520,7 @@ it("vetoes an actual resource subscription, not just advertisement of subscripti
   const rejected = expect(attempted).rejects.toThrow();
   await expect.poll(f.started).toBe(true);
   controller.abort(new Error("lost subscription response")); await rejected; f.release();
-  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("active or unresolved") });
+  await expect.poll(() => readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("active or unresolved") });
   await client.unsubscribeResource({ uri: "synthetic://uncertain" });
   const cleared = hold(); expect(await prepareMcpCheckpoint(state, cleared.event)).toEqual({ sleepReady: true }); cleared.release();
 });

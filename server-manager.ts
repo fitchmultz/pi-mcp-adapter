@@ -73,8 +73,17 @@ async function drainClientCallbacks(client: Client): Promise<void> {
   }
 }
 
+async function drainClientOperations(client: Client): Promise<void> {
+  for (;;) {
+    const pending = [...(clientOperations.get(client)?.keys() ?? [])];
+    if (!pending.length) return;
+    await Promise.allSettled(pending);
+  }
+}
+
 // Track complete SDK operations, including pagination and pre-request cache awaits.
 class ManagedClient extends Client {
+  serverName = "";
   oauthProvider: McpOAuthProvider | undefined;
   beforeActivity: () => void = () => {};
   readonly resourceSubscriptions = new Set<string>();
@@ -86,6 +95,12 @@ class ManagedClient extends Client {
     const settled = () => { pending.delete(operation); };
     void operation.then(settled, settled);
     return operation;
+  }
+
+  ownSend(run: () => Promise<void>): Promise<void> {
+    this.beforeActivity();
+    // SDK-generated callback replies also perform HTTP/auth work, without calling callTool().
+    return this.own(Promise.resolve().then(run), "request/refresh");
   }
 
   ownCallback<T>(kind: "sampling callback" | "elicitation callback", run: () => Promise<T>): Promise<T> {
@@ -219,6 +234,9 @@ type UiStreamListener = (serverName: string, notification: ServerStreamResultPat
 type MetadataListChangedListener = (serverName: string, reason: string) => void;
 
 export class McpServerManager {
+  // Includes native clients whose public connect/close facade ended before their send/auth tail.
+  // Their operation promises remain in the same clientOperations authority until settlement.
+  private ownedClients = new Set<ManagedClient>();
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private reconnectPromises = new Map<string, Promise<ServerConnection>>();
@@ -254,11 +272,15 @@ export class McpServerManager {
       return "MCP connection/discovery/retirement is active";
     if (this.acceptedUrlElicitations.size || this.uiStreamListeners.size)
       return "MCP browser elicitation/UI stream is pending";
+    for (const client of this.ownedClients) {
+      const kinds = [...(clientOperations.get(client)?.values() ?? [])];
+      const callback = kinds.find(kind => kind === "sampling callback" || kind === "elicitation callback");
+      if (callback) return `MCP ${client.serverName}: ${callback} is active`;
+      if (kinds.includes("request/refresh")) return `MCP ${client.serverName}: request/refresh is active`;
+      if (kinds.includes("subscription")) return `MCP ${client.serverName}: subscription is active`;
+    }
     for (const [name, connection] of this.connections) {
-      const pending = clientOperations.get(connection.client);
-      const callback = [...(pending?.values() ?? [])].find(kind => kind !== "request/refresh");
-      if (callback) return `MCP ${name}: ${callback} is active`;
-      if (connection.inFlight || pending?.size) return `MCP ${name}: request/refresh is active`;
+      if (connection.inFlight) return `MCP ${name}: request/refresh is active`;
       if (connection.client instanceof ManagedClient && connection.client.resourceSubscriptions.size)
         return `MCP ${name}: resource subscription is active or unresolved`;
       if (!(connection.transport instanceof StreamableHTTPClientTransport)) return `MCP ${name}: only stateless Streamable HTTP is checkpoint-supported`;
@@ -273,9 +295,13 @@ export class McpServerManager {
 
   async flushForCheckpoint(): Promise<void> { await this.traceWriter?.flush(true); }
 
+  private releaseClientWhenSettled(client: Client): void {
+    if (client instanceof ManagedClient) void drainClientOperations(client).then(() => this.ownedClients.delete(client));
+  }
+
   /** Fence before SDK callbacks AND before trace observers; retain native transport identity.
    * Preserve existing property setters (including tracing) rather than replacing their behavior. */
-  private fenceTransport(transport: Transport): void {
+  private fenceTransport(transport: Transport, client: Client): void {
     for (const key of ["onmessage", "onerror", "onclose"] as const) {
       const descriptor = Object.getOwnPropertyDescriptor(transport, key);
       let value = transport[key];
@@ -290,7 +316,10 @@ export class McpServerManager {
     }
     if (typeof transport.send === "function") {
       const send = transport.send.bind(transport);
-      transport.send = (...args) => { this.beforeActivity(); return send(...args); };
+      transport.send = (...args) => {
+        this.beforeActivity();
+        return client instanceof ManagedClient ? client.ownSend(() => send(...args)) : send(...args);
+      };
     }
   }
 
@@ -572,6 +601,7 @@ export class McpServerManager {
               || ![404, 405, 406, 415].includes(error.status)) throw error;
             legacySse = true;
             await client.close();
+            this.releaseClientWhenSettled(client);
             client = this.createClient(name, { ...definition, protocolVersion: "legacy" });
             ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
             if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
@@ -622,6 +652,7 @@ export class McpServerManager {
             || !supportsOAuth(definition) || !isOAuthChallenge(error)) throw error;
           implicitOAuth = true;
           await client.close();
+          this.releaseClientWhenSettled(client);
           client = this.createClient(name, legacySse ? { ...definition, protocolVersion: "legacy" } : definition);
           ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
           if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
@@ -639,6 +670,7 @@ export class McpServerManager {
             abortCleanup ?? Promise.resolve().then(() => client.close()),
           ]);
       await drainClientCallbacks(client);
+      this.releaseClientWhenSettled(client);
       const cleanupFailures = cleanupResults.flatMap(result => result.status === "rejected" ? [result.reason] : []);
       let reportedError: unknown = error;
       if (cleanupFailures.length > 0) {
@@ -684,7 +716,7 @@ export class McpServerManager {
     signal?: AbortSignal,
   ): Promise<void> {
     throwIfAborted(signal);
-    this.fenceTransport(transport);
+    this.fenceTransport(transport, client);
     let abortCleanup: Promise<void> | undefined;
     const closeTransport = () => {
       abortCleanup = Promise.resolve().then(() => transport.close());
@@ -753,6 +785,8 @@ export class McpServerManager {
         },
       },
     );
+    client.serverName = serverName;
+    this.ownedClients.add(client);
     client.beforeActivity = this.beforeActivity;
     if (this.samplingConfig) {
       registerSamplingHandler(client, { ...this.samplingConfig, serverName }, run => client.ownCallback("sampling callback", run));
@@ -1107,8 +1141,10 @@ export class McpServerManager {
         this.traceWriter?.flush() ?? Promise.resolve(),
       ]);
       const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
-      // SDK close cancels responses, not arbitrary handler/UI/model promises. Never lose their tails.
+      // Keep ordinary per-server cancellation prompt, but retain native send/auth tails for
+      // readiness and final shutdown. Inbound handler promises still drain before disposal.
       await drainClientCallbacks(connection.client);
+      this.releaseClientWhenSettled(connection.client);
       if (failures.length > 0) throw new AggregateError(failures, "MCP connection cleanup failed");
     })();
     this.disposePromises.set(connection, closing);
@@ -1127,6 +1163,7 @@ export class McpServerManager {
     this.acceptedUrlElicitations.clear();
     this.samplingConfig = undefined;
     this.elicitationConfig = undefined;
+    await Promise.all([...this.ownedClients].map(client => drainClientOperations(client)));
     try { await this.flushForCheckpoint(); } catch (error) { failures.push(error); }
     if (failures.length > 0) throw new AggregateError(failures, "MCP manager cleanup failed");
   }
