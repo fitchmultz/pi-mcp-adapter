@@ -10,6 +10,8 @@ export interface McpRuntimeOwner {
   throwIfInactive(): void;
   beforeActivity(): void;
   holdCheckpoint(event: McpCheckpointEvent): () => void;
+  runCallback<T>(kind: "beforeExecute" | "onToolCall", run: () => Promise<T>): Promise<T>;
+  getCheckpointBlocker(): string | undefined;
 }
 
 export function createMcpRuntimeOwner(): McpRuntimeOwner {
@@ -18,6 +20,14 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
   let stopPromise: Promise<void> | undefined;
   let checkpoint: McpCheckpointEvent | undefined;
   const beforeActivity = () => checkpoint?.invalidate();
+  // These two host hooks can outlive abortable() at their call sites. Count their underlying
+  // promises through settlement, without cancelling, serializing, or replaying callback work.
+  const callbacks = { beforeExecute: 0, onToolCall: 0 };
+  const getCheckpointBlocker = () => {
+    if (callbacks.beforeExecute) return "MCP beforeExecute callback is pending";
+    if (callbacks.onToolCall) return "MCP onToolCall callback is pending";
+    return undefined;
+  };
 
   const reportCleanupFailure = (error: unknown, late: boolean) => {
     console.error(`MCP: ${late ? "late " : ""}runtime cleanup failed: ${formatTerminalError(error)}`);
@@ -26,6 +36,14 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
   return {
     signal: controller.signal,
     beforeActivity,
+    getCheckpointBlocker,
+    runCallback: async (kind, run) => {
+      beforeActivity();
+      // Invocation/cancellation policy stays at the call site. In particular, an accepted
+      // tool's outcome callback may still need to persist its result during shutdown.
+      callbacks[kind]++;
+      try { return await run(); } finally { callbacks[kind]--; }
+    },
     holdCheckpoint: event => {
       if (checkpoint) throw new Error("MCP checkpoint is already held");
       checkpoint = event;
@@ -48,6 +66,8 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
       );
       stopPromise = Promise.allSettled(pendingCleanups).then(results => {
         const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+        const pendingCallback = getCheckpointBlocker();
+        if (pendingCallback) failures.push(new Error(pendingCallback));
         if (failures.length > 0) {
           const aggregate = new AggregateError(failures, "MCP runtime cleanup failed");
           console.error(`MCP: runtime cleanup failed: ${formatTerminalError(aggregate)}`);

@@ -22,10 +22,13 @@ export interface SamplingHandlerOptions {
 
 export type ServerSamplingConfig = Omit<SamplingHandlerOptions, "serverName">;
 
-export function registerSamplingHandler(client: Client, options: SamplingHandlerOptions): void {
-  client.setRequestHandler("sampling/createMessage", request => {
-    return handleSamplingRequest(options, request);
-  });
+export function registerSamplingHandler(
+  client: Client,
+  options: SamplingHandlerOptions,
+  own: (run: () => Promise<CreateMessageResult>) => Promise<CreateMessageResult> = run => run(),
+): void {
+  // Own the handler's real promise, not the SDK caller's cancellable response facade.
+  client.setRequestHandler("sampling/createMessage", request => own(() => handleSamplingRequest(options, request)));
 }
 
 export async function handleSamplingRequest(

@@ -776,7 +776,8 @@ export async function runToolCall(
   const capture = async (event: McpToolCallEvent) => {
     if (!state.onToolCall) return;
     try {
-      await abortable(state.onToolCall(event), event.signal);
+      const run = () => state.onToolCall!(event);
+      await abortable(state.owner ? state.owner.runCallback("onToolCall", run) : run(), event.signal);
       throwIfAborted(event.signal);
     } catch (error) {
       captureFailure = event;
@@ -813,9 +814,10 @@ export async function runToolCall(
     };
     if (options.beforeDispatch) {
       beforeDispatchPending = true;
-      await abortable(options.beforeDispatch(callerSignal, {
+      const run = () => options.beforeDispatch!(callerSignal, {
         ...operation, annotationsTrusted: state.config.mcpServers[serverName]?.retryOnTransportFailure === true,
-      }), callerSignal);
+      });
+      await abortable(state.owner ? state.owner.runCallback("beforeExecute", run) : run(), callerSignal);
       beforeDispatchPending = false;
     }
     throwIfAborted(callerSignal);

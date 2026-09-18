@@ -378,8 +378,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   });
 
   onSessionCheckpoint(pi, async event => {
-    // abortable host callbacks may outlive cancellation; their host needs its own persistence contract.
-    if (beforeExecute || options.onToolCall) return { sleepReady: false, reason: "MCP host execution/capture callbacks are not checkpoint-supported" };
     if (initPromise) return { sleepReady: false, reason: "MCP initialization is active" };
     if (!state || !currentOwner?.isActive()) return { sleepReady: false, reason: "MCP runtime is not initialized" };
     return prepareMcpCheckpoint(state, event);
@@ -726,7 +724,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
         // Non-call modes have no resolved MCP operation; hosts keep their conservative policy.
         if (!params.tool || params.action === "ui-messages" || params.action === "auth-start" || params.action === "auth-complete") {
-          await beforeExecute?.(toolCallId, ctx);
+          if (beforeExecute) {
+            if (currentOwner) await currentOwner.runCallback("beforeExecute", () => beforeExecute(toolCallId, ctx));
+            else await beforeExecute(toolCallId, ctx);
+          }
         }
         const executeOwner = currentOwner;
         let parsedArgs: Record<string, unknown> | undefined;

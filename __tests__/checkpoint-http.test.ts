@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { SUBSCRIPTION_ID_META_KEY } from "@modelcontextprotocol/client";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -11,6 +12,7 @@ import { getAuthForUrl, saveAuthEntry, updateTokens } from "../mcp-auth.ts";
 import { startAuth, hasPendingAuth } from "../mcp-auth-flow.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { McpTraceWriter } from "../mcp-trace.ts";
+import { executeCall } from "../proxy-modes.ts";
 import type { McpConfig } from "../types.ts";
 
 let directory: string;
@@ -47,18 +49,35 @@ function host() {
     getAllTools: () => [...tools.values()], getActiveTools: () => active, setActiveTools: (names: string[]) => { active = names; },
     events: { emit: () => {} },
   };
-  const ctx = { cwd: directory, mode: "print", hasUI: false, isProjectTrusted: () => true, modelRegistry: {} };
-  return { pi: pi as any, ctx: ctx as any, handlers, tools };
+  const model = { id: "synthetic", provider: "synthetic", name: "Synthetic local fixture" };
+  const ui = {
+    setStatus: vi.fn(), notify: vi.fn(),
+    confirm: vi.fn(async () => true),
+    select: vi.fn(async (title: string) => title.startsWith("Review") ? "Submit" : "Continue"),
+    input: vi.fn(async () => "synthetic"),
+  };
+  const modelRegistry = {
+    getAvailable: () => [model], getApiKeyAndHeaders: async () => ({ ok: true }),
+    complete: vi.fn(async () => ({ role: "assistant", content: [{ type: "text", text: "SYNTHETIC-SAMPLE" }], provider: "synthetic", model: "synthetic", stopReason: "stop" })),
+  };
+  const ctx = { cwd: directory, mode: "tui", hasUI: true, isProjectTrusted: () => true, modelRegistry, model, ui };
+  return { pi: pi as any, ctx: ctx as any, handlers, tools, ui, modelRegistry };
 }
-async function wire(options: { oauth?: boolean; capabilities?: object; session?: boolean; legacy?: boolean } = {}) {
+async function wire(options: { oauth?: boolean; capabilities?: object; session?: boolean; legacy?: boolean; inbound?: boolean; input?: "sampling" | "elicitation" } = {}) {
   let origin = "";
   let token = "SYNTHETIC-INITIAL";
+  let input = options.input;
   let delayMethod: string | undefined;
   let blocked: ReturnType<typeof deferred> | undefined;
   let started = false;
   let callCount = 0;
   let refreshCount = 0;
   const methods: string[] = [];
+  let stream: import("node:http").ServerResponse | undefined;
+  let callbackId = 0;
+  let advertisedClientCapabilities: unknown;
+  const replies = new Map<string, (value: any) => void>();
+  const notifications: string[] = [];
   const server = createServer(async (req, res) => {
     res.on("error", () => {});
     if (req.url?.startsWith("/.well-known/oauth-protected-resource")) {
@@ -67,8 +86,20 @@ async function wire(options: { oauth?: boolean; capabilities?: object; session?:
     if (req.url?.startsWith("/.well-known/oauth-authorization-server")) {
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ issuer: origin, authorization_endpoint: origin + "/authorize", token_endpoint: origin + "/token", response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] })); return;
     }
+    if (req.method === "GET" && options.inbound) {
+      stream = res;
+      res.writeHead(200, { "content-type": "text/event-stream" }); res.flushHeaders();
+      return;
+    }
     if (req.method !== "POST") { res.writeHead(405).end(); return; }
     let text = ""; for await (const chunk of req) text += chunk;
+    if (req.url !== "/token") {
+      const response = JSON.parse(text);
+      if (response.method === undefined && response.id) {
+        replies.get(String(response.id))?.(response); replies.delete(String(response.id));
+        res.writeHead(202).end(); return;
+      }
+    }
     const method = req.url === "/token" ? "token" : JSON.parse(text).method;
     methods.push(method);
     if (method === delayMethod) { started = true; await blocked!.promise; }
@@ -80,14 +111,25 @@ async function wire(options: { oauth?: boolean; capabilities?: object; session?:
       res.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` }).end(); return;
     }
     const body = JSON.parse(text);
-    if (method === "notifications/initialized") { res.writeHead(202).end(); return; }
+    if (method.startsWith("notifications/")) { res.writeHead(202).end(); return; }
+    if (method === "subscriptions/listen") {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/subscriptions/acknowledged", params: { notifications: body.params.notifications, _meta: { [SUBSCRIPTION_ID_META_KEY]: body.id } } })}\n\n`);
+      return;
+    }
+    if (method === "initialize") advertisedClientCapabilities = body.params.capabilities;
     if (method === "tools/call") callCount++;
     const result = method === "initialize"
       ? { protocolVersion: "2025-11-25", capabilities: options.capabilities ?? { tools: {} }, serverInfo: { name: "synthetic", version: "1" } }
       : method === "server/discover"
       ? { resultType: "complete", supportedVersions: ["2026-07-28"], capabilities: options.capabilities ?? { tools: {} } }
+      : method === "tools/call" && input && !body.params.inputResponses
+        ? { resultType: "input_required", requestState: "synthetic-state", inputRequests: { answer: { method: input === "sampling" ? "sampling/createMessage" : "elicitation/create", params: input === "sampling" ? samplingRequest : elicitationRequest } } }
       : method === "tools/list"
         ? { resultType: "complete", ttlMs: 1000, cacheScope: "private", tools: [{ name: "echo", inputSchema: { type: "object" } }] }
+        : method === "resources/list" ? { resultType: "complete", resources: [] }
+        : method === "completion/complete" ? { resultType: "complete", completion: { values: ["synthetic"], total: 1, hasMore: false } }
+        : ["logging/setLevel", "resources/subscribe", "resources/unsubscribe"].includes(method) ? { resultType: "complete" }
         : { resultType: "complete", content: [{ type: "text", text: "SYNTHETIC-OK" }] };
     res.writeHead(200, { "content-type": "application/json", ...(options.session ? { "mcp-session-id": "synthetic-session" } : {}) }).end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
   });
@@ -98,19 +140,33 @@ async function wire(options: { oauth?: boolean; capabilities?: object; session?:
   const name = "fixture-" + crypto.randomUUID();
   const url = origin + "/mcp";
   const definition = { url, auth: options.oauth ? "oauth" as const : false as const, requestTimeoutMs: 3000,
-    ...(options.legacy || options.session ? { protocolVersion: "legacy" as const } : {}),
+    ...(options.legacy || options.session || options.inbound ? { protocolVersion: "legacy" as const } : {}),
     ...(options.oauth ? { oauth: { clientId: "SYNTHETIC-CLIENT", clientSecret: "SYNTHETIC-CLIENT-SECRET" } } : {}) };
-  const config: McpConfig = { mcpServers: { [name]: definition }, settings: { toolPrefix: "none", sampling: false, elicitation: false, trace: { enabled: true, file: join(directory, "trace.jsonl") } } };
+  const config: McpConfig = { mcpServers: { [name]: definition }, settings: { toolPrefix: "none", trace: { enabled: true, file: join(directory, "trace.jsonl") } } };
   if (options.oauth) saveAuthEntry(name, { tokens: { accessToken: token, refreshToken: "SYNTHETIC-REFRESH", expiresAt: Date.now() / 1000 + 3600, issuer: origin } }, url);
+  const notify = (method: string, params: object) => {
+    if (!stream) throw new Error("No native GET stream");
+    notifications.push(method);
+    stream.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method, params })}\n\n`);
+  };
   return { name, url, origin, config, definition, methods, calls: () => callCount, refreshes: () => refreshCount,
+    streamReady: () => stream !== undefined, notify, notifications,
+    clientCapabilities: () => advertisedClientCapabilities,
+    finishInput: () => { input = undefined; },
+    callback: (method: string, params: object) => {
+      if (!stream) throw new Error("No native GET stream");
+      const id = `callback-${++callbackId}`;
+      const response = new Promise<any>(resolve => replies.set(id, resolve));
+      stream.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n\n`);
+      return { response, cancel: () => notify("notifications/cancelled", { requestId: id, reason: "synthetic cancellation" }) };
+    },
     delay: (method: string) => { delayMethod = method; blocked = deferred(); started = false; },
     started: () => started,
     release: () => { delayMethod = undefined; blocked?.resolve(); },
     expire: () => { token = "SYNTHETIC-UPDATED"; updateTokens(name, { accessToken: "SYNTHETIC-INITIAL", refreshToken: "SYNTHETIC-REFRESH", expiresAt: 1, issuer: origin }, url); },
   };
 }
-async function runtime(config: McpConfig) {
-  const h = host();
+async function runtime(config: McpConfig, h = host()) {
   const owner = createMcpRuntimeOwner();
   const state = await initializeMcp(h.pi, h.ctx, owner, { config });
   cleanups.push(() => owner.stop());
@@ -139,10 +195,14 @@ it("registers the optional actual adapter hook, qualifies connected HTTP, and re
   expect(f.calls()).toBe(2);
 });
 
-it("does not bless host callbacks whose abortable work can outlive cancellation", async () => {
+it("qualifies configured but idle host callbacks", async () => {
   const h = host();
-  createMcpAdapter({ config: { mcpServers: {} }, beforeExecute: async () => {} })(h.pi);
-  expect(await h.handlers.get("session_checkpoint")!(hold().event)).toEqual({ sleepReady: false, reason: "MCP host execution/capture callbacks are not checkpoint-supported" });
+  createMcpAdapter({ config: { mcpServers: {} }, beforeExecute: async () => {}, onToolCall: async () => {} })(h.pi);
+  cleanups.push(() => h.handlers.get("session_shutdown")!());
+  await h.handlers.get("session_start")!({}, h.ctx);
+  await expect.poll(async () => {
+    const cut = hold(); const result = await h.handlers.get("session_checkpoint")!(cut.event); cut.release(); return result;
+  }).toEqual({ sleepReady: true });
 });
 
 it("vetoes a delayed actual SDK request without cancelling it, then qualifies completion", async () => {
@@ -243,12 +303,11 @@ it("keeps a completed auth-start browser callback wait explicitly non-resumable"
 });
 
 it.each([
-  ["sampling", { sampling: true, samplingAutoApprove: true }, "sampling/elicitation"],
-  ["stdio", undefined, "stdio/Unix"],
-  ["approvals", undefined, "approvals"],
-  ["UI", undefined, "UI session"],
-] as const)("names unsupported %s state", async (kind, settings, reason) => {
-  const f = await wire(); if (settings) Object.assign(f.config.settings!, settings);
+  ["stdio", "stdio/Unix"],
+  ["approvals", "approvals"],
+  ["UI", "UI session"],
+] as const)("names unsupported %s state", async (kind, reason) => {
+  const f = await wire();
   const state = await runtime(f.config);
   if (kind === "stdio") state.config.mcpServers.other = { command: "never-started" };
   if (kind === "approvals") state.approvedToolCalls.set("fixture", true);
@@ -279,6 +338,180 @@ it("does not qualify a script that still owns computation/output work", async ()
   const pending = runMcpScript(state, 'const until=Date.now()+100; while(Date.now()<until){}; return 1', 2000);
   expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("script") });
   await pending;
+  const cut = hold(); expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true }); cut.release();
+});
+
+const samplingRequest = { messages: [{ role: "user", content: { type: "text", text: "Synthetic sample" } }], maxTokens: 8 };
+const elicitationRequest = { mode: "form", message: "Synthetic question", requestedSchema: { type: "object", properties: {} } };
+
+it.each(["sampling", "elicitation"] as const)("owns real inbound %s promises with default TUI features, then qualifies the answered request", async kind => {
+  const f = await wire({ inbound: true }); const h = host();
+  const gate = deferred(); const entered = deferred();
+  if (kind === "sampling") h.ui.confirm.mockImplementationOnce(async () => { entered.resolve(); await gate.promise; return true; });
+  else h.ui.select.mockImplementationOnce(async () => { entered.resolve(); await gate.promise; return "Continue"; });
+  const state = await runtime(f.config, h);
+  cleanups.push(async () => gate.resolve());
+  await expect.poll(f.streamReady).toBe(true);
+  expect(f.clientCapabilities()).toMatchObject({ sampling: {}, elicitation: { form: {}, url: {} } });
+  const idle = hold(); expect(await prepareMcpCheckpoint(state, idle.event)).toEqual({ sleepReady: true }); idle.release();
+  const request = f.callback(kind === "sampling" ? "sampling/createMessage" : "elicitation/create", kind === "sampling" ? samplingRequest : elicitationRequest);
+  await entered.promise;
+  state.manager.getConnection(f.name)!.lastUsedAt = 0;
+  expect(state.manager.isIdle(f.name, 1)).toBe(false);
+  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining(`${kind} callback`) });
+  gate.resolve();
+  expect((await request.response).error).toBeUndefined();
+  const answered = hold(); expect(await prepareMcpCheckpoint(state, answered.event)).toEqual({ sleepReady: true }); answered.release();
+  await state.manager.getConnection(f.name)!.client.callTool({ name: "echo", arguments: {} });
+  const before = f.calls(); await state.owner.stop();
+  const restored = await runtime(f.config, host());
+  expect(f.calls()).toBe(before); // ordinary startup discovery, never replay the old tool/callback
+  await restored.manager.getConnection(f.name)!.client.callTool({ name: "echo", arguments: {} });
+  expect(f.calls()).toBe(before + 1);
+});
+
+it.each(["sampling", "elicitation"] as const)("invalidates before a late %s callback touches auth/UI", async kind => {
+  const f = await wire({ inbound: true }); const h = host();
+  const state = await runtime(f.config, h); await expect.poll(f.streamReady).toBe(true);
+  const cut = hold(); expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true });
+  h.modelRegistry.getApiKeyAndHeaders = async () => { expect(cut.invalidate).toHaveBeenCalledOnce(); return { ok: true }; };
+  h.ui.select.mockImplementation(async () => { expect(cut.invalidate).toHaveBeenCalledOnce(); return "Decline"; });
+  const request = f.callback(kind === "sampling" ? "sampling/createMessage" : "elicitation/create", kind === "sampling" ? samplingRequest : elicitationRequest);
+  const response = await request.response;
+  expect(response.error).toBeUndefined();
+  if (kind === "elicitation") expect(response.result.action).toBe("decline");
+  expect(cut.event.signal.aborted).toBe(true);
+});
+
+it.each(["sampling", "elicitation"] as const)("does not lose a cancelled %s callback tail on transport close", async kind => {
+  const f = await wire({ inbound: true }); const h = host();
+  const gate = deferred(); const entered = deferred();
+  const state = await runtime(f.config, h);
+  // Cleanup releases the real handler before owner.stop tries to drain it.
+  cleanups.push(async () => gate.resolve());
+  if (kind === "sampling") h.modelRegistry.complete.mockImplementationOnce(async () => {
+    entered.resolve(); await gate.promise;
+    return { role: "assistant", content: [{ type: "text", text: "SYNTHETIC-LATE" }], provider: "synthetic", model: "synthetic", stopReason: "stop" };
+  });
+  else h.ui.select.mockImplementationOnce(async () => { entered.resolve(); await gate.promise; return "Decline"; });
+  await expect.poll(f.streamReady).toBe(true);
+  const request = f.callback(kind === "sampling" ? "sampling/createMessage" : "elicitation/create", kind === "sampling" ? samplingRequest : elicitationRequest);
+  await entered.promise;
+  const transport = state.manager.getConnection(f.name)!.transport;
+  const receive = transport.onmessage;
+  let cancellationDispatched = false;
+  transport.onmessage = (message, extra) => {
+    receive?.(message, extra);
+    if ("method" in message && message.method === "notifications/cancelled") cancellationDispatched = true;
+  };
+  request.cancel();
+  await expect.poll(() => cancellationDispatched).toBe(true);
+  // A real SDK roundtrip, not an arbitrary sleep, then checks the still-running handler.
+  await state.manager.getConnection(f.name)!.client.callTool({ name: "echo", arguments: {} });
+  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining(`${kind} callback`) });
+  const closed = vi.fn(); const closing = state.manager.close(f.name).then(closed);
+  await Promise.resolve(); expect(closed).not.toHaveBeenCalled();
+  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false });
+  gate.resolve(); await closing;
+  const settled = hold(); expect(await prepareMcpCheckpoint(state, settled.event)).toEqual({ sleepReady: true }); settled.release();
+});
+
+it.each(["sampling", "elicitation"] as const)("owns a cancelled modern input-required %s handler beyond the tool's abortable facade", async kind => {
+  const f = await wire({ input: kind }); const h = host(); const gate = deferred(); const entered = deferred();
+  const state = await runtime(f.config, h); cleanups.push(async () => gate.resolve());
+  if (kind === "sampling") h.ui.confirm.mockImplementationOnce(async () => { entered.resolve(); await gate.promise; return true; });
+  else h.ui.select.mockImplementationOnce(async () => { entered.resolve(); await gate.promise; return "Decline"; });
+  const controller = new AbortController();
+  const call = executeCall(state, "echo", {}, f.name, undefined, controller.signal);
+  await entered.promise;
+  controller.abort(new Error("synthetic modern cancellation"));
+  expect((await call).details.error).toBe("aborted");
+  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining(`${kind} callback`) });
+  gate.resolve();
+  await expect.poll(async () => {
+    const cut = hold(); const result = await prepareMcpCheckpoint(state, cut.event); cut.release(); return result;
+  }).toEqual({ sleepReady: true });
+  expect(f.calls()).toBe(1); // cancelled input continuation was not dispatched after the late answer
+  f.finishInput();
+  expect((await executeCall(state, "echo", {}, f.name)).details.error).toBeUndefined();
+  expect(f.calls()).toBe(2);
+});
+
+it.each(["beforeExecute", "onToolCall"] as const)("owns the underlying %s callback beyond abortable cancellation", async kind => {
+  const f = await wire(); const h = host(); const gate = deferred(); const entered = deferred();
+  let armed = false;
+  const callback = async () => {
+    if (!armed) return;
+    entered.resolve(); await gate.promise;
+    await writeFile(join(directory, kind + ".persisted"), "SYNTHETIC-CALLBACK-COMPLETED");
+  };
+  createMcpAdapter({ config: f.config,
+    ...(kind === "beforeExecute" ? { beforeExecute: callback } : { onToolCall: async (event: { phase: string }) => { if (event.phase === "after") await callback(); } }),
+  })(h.pi);
+  cleanups.push(async () => { gate.resolve(); await h.handlers.get("session_shutdown")!(); });
+  await h.handlers.get("session_start")!({}, h.ctx);
+  const tool = h.tools.get("mcp");
+  await tool.execute("connect", { connect: f.name }, undefined, undefined, h.ctx);
+  armed = true;
+  const controller = new AbortController();
+  const operation = tool.execute("call", { tool: "echo", server: f.name }, controller.signal, undefined, h.ctx);
+  const observed = Promise.resolve(operation).catch(error => error);
+  await entered.promise;
+  expect(await h.handlers.get("session_checkpoint")!(hold().event)).toEqual({ sleepReady: false, reason: `MCP ${kind} callback is pending` });
+  controller.abort(new Error("synthetic cancellation")); await observed;
+  expect(await h.handlers.get("session_checkpoint")!(hold().event)).toEqual({ sleepReady: false, reason: `MCP ${kind} callback is pending` });
+  gate.resolve();
+  await expect.poll(async () => {
+    const cut = hold(); const result = await h.handlers.get("session_checkpoint")!(cut.event); cut.release(); return result;
+  }).toEqual({ sleepReady: true });
+  expect(await readFile(join(directory, kind + ".persisted"), "utf8")).toBe("SYNTHETIC-CALLBACK-COMPLETED");
+  const prior = f.calls(); armed = false;
+  await tool.execute("next", { tool: "echo", server: f.name }, undefined, undefined, h.ctx);
+  expect(f.calls()).toBe(prior + 1);
+});
+
+it("qualifies ordinary logging/completion capabilities while owning actual requests and notifications", async () => {
+  const f = await wire({ inbound: true, capabilities: { tools: {}, logging: {}, completions: {} } });
+  const state = await runtime(f.config); await expect.poll(f.streamReady).toBe(true);
+  const client = state.manager.getConnection(f.name)!.client;
+  await client.setLoggingLevel("info");
+  f.delay("completion/complete");
+  const completion = client.complete({ ref: { type: "ref/prompt", name: "synthetic" }, argument: { name: "value", value: "syn" } });
+  await expect.poll(f.started).toBe(true);
+  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("request/refresh") });
+  f.release(); expect((await completion).completion.values).toEqual(["synthetic"]);
+  const cut = hold(); expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true });
+  f.notify("notifications/message", { level: "info", data: "SYNTHETIC-LOG" });
+  await expect.poll(() => cut.invalidate.mock.calls.length).toBe(1);
+  const next = hold(); expect(await prepareMcpCheckpoint(state, next.event)).toEqual({ sleepReady: true }); next.release();
+});
+
+it("vetoes an actual resource subscription, not just advertisement of subscription support", async () => {
+  const f = await wire({ legacy: true, capabilities: { tools: {}, resources: { subscribe: true } } });
+  const state = await runtime(f.config); const client = state.manager.getConnection(f.name)!.client;
+  const idle = hold(); expect(await prepareMcpCheckpoint(state, idle.event)).toEqual({ sleepReady: true }); idle.release();
+  await client.subscribeResource({ uri: "synthetic://resource" });
+  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("resource subscription") });
+  await client.unsubscribeResource({ uri: "synthetic://resource" });
+  const done = hold(); expect(await prepareMcpCheckpoint(state, done.event)).toEqual({ sleepReady: true }); done.release();
+  f.delay("resources/subscribe");
+  const controller = new AbortController();
+  const attempted = client.subscribeResource({ uri: "synthetic://uncertain" }, { signal: controller.signal });
+  const rejected = expect(attempted).rejects.toThrow();
+  await expect.poll(f.started).toBe(true);
+  controller.abort(new Error("lost subscription response")); await rejected; f.release();
+  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("active or unresolved") });
+  await client.unsubscribeResource({ uri: "synthetic://uncertain" });
+  const cleared = hold(); expect(await prepareMcpCheckpoint(state, cleared.event)).toEqual({ sleepReady: true }); cleared.release();
+});
+
+it("owns the SDK's actual auto-opened modern subscription through its native closed promise", async () => {
+  const f = await wire({ capabilities: { tools: { listChanged: true } } }); const state = await runtime(f.config);
+  const client = state.manager.getConnection(f.name)!.client;
+  const subscription = client.autoOpenedSubscription!;
+  expect(subscription.honoredFilter).toEqual({ toolsListChanged: true });
+  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("subscription is active") });
+  await subscription.close(); await subscription.closed;
   const cut = hold(); expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true }); cut.release();
 });
 

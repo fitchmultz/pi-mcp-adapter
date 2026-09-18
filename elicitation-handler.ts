@@ -26,9 +26,12 @@ export interface ElicitationHandlerOptions {
 
 export type ServerElicitationConfig = Omit<ElicitationHandlerOptions, "serverName" | "onUrlAccepted">;
 
-export function registerElicitationHandler(client: Client, options: ElicitationHandlerOptions): void {
-  client.setRequestHandler("elicitation/create", request =>
-    handleElicitationRequest(options, request));
+export function registerElicitationHandler(
+  client: Client,
+  options: ElicitationHandlerOptions,
+  own: (run: () => Promise<ElicitResult>) => Promise<ElicitResult> = run => run(),
+): void {
+  client.setRequestHandler("elicitation/create", request => own(() => handleElicitationRequest(options, request)));
 }
 
 export async function handleElicitationRequest(

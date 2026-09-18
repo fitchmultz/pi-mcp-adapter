@@ -60,12 +60,39 @@ import {
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
 const abortCleanupPromises = new WeakMap<object, Promise<void>>();
-const clientOperations = new WeakMap<Client, Set<Promise<unknown>>>();
+type ClientOperation = "request/refresh" | "sampling callback" | "elicitation callback" | "subscription";
+const clientOperations = new WeakMap<Client, Map<Promise<unknown>, ClientOperation>>();
+
+async function drainClientCallbacks(client: Client): Promise<void> {
+  for (;;) {
+    const pending = [...(clientOperations.get(client) ?? [])]
+      .filter(([, kind]) => kind === "sampling callback" || kind === "elicitation callback")
+      .map(([operation]) => operation);
+    if (!pending.length) return;
+    await Promise.allSettled(pending);
+  }
+}
 
 // Track complete SDK operations, including pagination and pre-request cache awaits.
 class ManagedClient extends Client {
   oauthProvider: McpOAuthProvider | undefined;
   beforeActivity: () => void = () => {};
+  readonly resourceSubscriptions = new Set<string>();
+
+  private own<T>(operation: Promise<T>, kind: ClientOperation): Promise<T> {
+    let pending = clientOperations.get(this);
+    if (!pending) clientOperations.set(this, pending = new Map());
+    pending.set(operation, kind);
+    const settled = () => { pending.delete(operation); };
+    void operation.then(settled, settled);
+    return operation;
+  }
+
+  ownCallback<T>(kind: "sampling callback" | "elicitation callback", run: () => Promise<T>): Promise<T> {
+    this.beforeActivity();
+    // Insert before dispatch. Cancellation/close of the SDK response does not settle this promise.
+    return this.own(Promise.resolve().then(run), kind);
+  }
 
   private async track<T>(start: (signal?: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
     this.beforeActivity();
@@ -81,12 +108,8 @@ class ManagedClient extends Client {
           return start(controller!.signal);
         })
       : start(signal);
-    let pending = clientOperations.get(this);
-    if (!pending) clientOperations.set(this, pending = new Set());
-    pending.add(operation);
-    const settled = () => { pending.delete(operation); removeAbortListener(); };
-    void operation.then(settled, () => { controller?.abort(); settled(); });
-    return operation;
+    void operation.then(removeAbortListener, () => { controller?.abort(); removeAbortListener(); });
+    return this.own(operation, "request/refresh");
   }
 
   override callTool(...args: Parameters<Client["callTool"]>) {
@@ -111,6 +134,40 @@ class ManagedClient extends Client {
 
   override listPrompts(...args: Parameters<Client["listPrompts"]>) {
     return this.track(signal => super.listPrompts(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
+  }
+
+  override complete(...args: Parameters<Client["complete"]>) {
+    return this.track(signal => super.complete(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
+  }
+
+  override setLoggingLevel(...args: Parameters<Client["setLoggingLevel"]>) {
+    return this.track(signal => super.setLoggingLevel(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
+  }
+
+  override listen(...args: Parameters<Client["listen"]>) {
+    return this.track(async signal => {
+      const subscription = await super.listen(args[0], { ...args[1], ...(signal ? { signal } : {}) });
+      this.own(subscription.closed, "subscription");
+      return subscription;
+    }, args[1]?.signal);
+  }
+
+  override subscribeResource(...args: Parameters<Client["subscribeResource"]>) {
+    return this.track(async signal => {
+      throwIfAborted(signal);
+      // A cancelled/lost response does not prove the server rejected the subscription.
+      // Retain the attempted URI until an explicit unsubscribe succeeds or the connection is discarded.
+      if (this.getServerCapabilities()?.resources?.subscribe) this.resourceSubscriptions.add(args[0].uri);
+      return super.subscribeResource(args[0], { ...args[1], ...(signal ? { signal } : {}) });
+    }, args[1]?.signal);
+  }
+
+  override unsubscribeResource(...args: Parameters<Client["unsubscribeResource"]>) {
+    return this.track(async signal => {
+      const result = await super.unsubscribeResource(args[0], { ...args[1], ...(signal ? { signal } : {}) });
+      this.resourceSubscriptions.delete(args[0].uri);
+      return result;
+    }, args[1]?.signal);
   }
 }
 
@@ -195,17 +252,21 @@ export class McpServerManager {
     if (this.stopped) return "MCP manager is stopped";
     if (this.connectPromises.size || this.reconnectPromises.size || this.closePromises.size || this.retiredConnections.size)
       return "MCP connection/discovery/retirement is active";
-    if (this.samplingConfig || this.elicitationConfig)
-      return "MCP sampling/elicitation callbacks are not checkpoint-supported; disable them for HTTP checkpointing";
     if (this.acceptedUrlElicitations.size || this.uiStreamListeners.size)
       return "MCP browser elicitation/UI stream is pending";
     for (const [name, connection] of this.connections) {
-      if (connection.inFlight || clientOperations.get(connection.client)?.size) return `MCP ${name}: request/refresh is active`;
+      const pending = clientOperations.get(connection.client);
+      const callback = [...(pending?.values() ?? [])].find(kind => kind !== "request/refresh");
+      if (callback) return `MCP ${name}: ${callback} is active`;
+      if (connection.inFlight || pending?.size) return `MCP ${name}: request/refresh is active`;
+      if (connection.client instanceof ManagedClient && connection.client.resourceSubscriptions.size)
+        return `MCP ${name}: resource subscription is active or unresolved`;
       if (!(connection.transport instanceof StreamableHTTPClientTransport)) return `MCP ${name}: only stateless Streamable HTTP is checkpoint-supported`;
       if (connection.transport.sessionId !== undefined) return `MCP ${name}: HTTP session state is not reconstructible`;
       const capabilities = connection.client.getServerCapabilities();
-      if (capabilities && (Object.keys(capabilities).some(key => !["tools", "resources", "prompts"].includes(key)) || capabilities.resources?.subscribe))
-        return `MCP ${name}: remote tasks/subscriptions/extra capabilities are not checkpoint-supported`;
+      if (capabilities?.tasks) return `MCP ${name}: negotiated remote task state is not checkpoint-supported`;
+      const opaque = Object.keys(capabilities ?? {}).find(key => !["tools", "resources", "prompts", "logging", "completions"].includes(key));
+      if (opaque) return `MCP ${name}: unsupported negotiated capability ${opaque}`;
     }
     return undefined;
   }
@@ -407,8 +468,12 @@ export class McpServerManager {
     if (retired.has(connection)) return;
     retired.add(connection);
     void (async () => {
-      const pending = clientOperations.get(connection.client);
-      while (pending?.size) await Promise.allSettled([...pending]);
+      for (;;) {
+        const pending = [...(clientOperations.get(connection.client) ?? [])]
+          .filter(([, kind]) => kind !== "subscription").map(([operation]) => operation);
+        if (!pending.length) break;
+        await Promise.allSettled(pending);
+      }
       await this.disposeConnection(connection);
       retired.delete(connection);
       if (retired.size === 0 && this.retiredConnections.get(name) === retired) this.retiredConnections.delete(name);
@@ -573,6 +638,7 @@ export class McpServerManager {
         : await Promise.allSettled([
             abortCleanup ?? Promise.resolve().then(() => client.close()),
           ]);
+      await drainClientCallbacks(client);
       const cleanupFailures = cleanupResults.flatMap(result => result.status === "rejected" ? [result.reason] : []);
       let reportedError: unknown = error;
       if (cleanupFailures.length > 0) {
@@ -689,14 +755,14 @@ export class McpServerManager {
     );
     client.beforeActivity = this.beforeActivity;
     if (this.samplingConfig) {
-      registerSamplingHandler(client, { ...this.samplingConfig, serverName });
+      registerSamplingHandler(client, { ...this.samplingConfig, serverName }, run => client.ownCallback("sampling callback", run));
     }
     if (this.elicitationConfig) {
       registerElicitationHandler(client, {
         ...this.elicitationConfig,
         serverName,
         onUrlAccepted: elicitationId => this.rememberUrlElicitation(serverName, elicitationId),
-      });
+      }, run => client.ownCallback("elicitation callback", run));
       if (this.elicitationConfig.allowUrl) {
         client.setNotificationHandler("notifications/elicitation/complete", notification => {
           if (this.runtimeSignal?.aborted) return;
@@ -1007,6 +1073,8 @@ export class McpServerManager {
     const owned = new Set(this.retiredConnections.get(name));
     const connection = this.connections.get(name);
     if (connection) owned.add(connection);
+    // Keep failed cleanup/callback tails owned even after removal from the active connection map.
+    if (owned.size) this.retiredConnections.set(name, owned);
     // Remove the placeholder before awaiting cleanup; stale callers cannot resurrect it.
     this.connections.delete(name);
     this.acceptedUrlElicitations.delete(name);
@@ -1039,6 +1107,8 @@ export class McpServerManager {
         this.traceWriter?.flush() ?? Promise.resolve(),
       ]);
       const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      // SDK close cancels responses, not arbitrary handler/UI/model promises. Never lose their tails.
+      await drainClientCallbacks(connection.client);
       if (failures.length > 0) throw new AggregateError(failures, "MCP connection cleanup failed");
     })();
     this.disposePromises.set(connection, closing);
@@ -1110,6 +1180,9 @@ export class McpServerManager {
     const connection = this.connections.get(name);
     if (!connection || connection.status !== "connected") return false;
     if (connection.inFlight > 0) return false;
+    // Background subscriptions keep their existing idle policy, but accepted requests and
+    // callbacks (including cancellation tails) must not be closed as idle while unfinished.
+    if ([...(clientOperations.get(connection.client)?.values() ?? [])].some(kind => kind !== "subscription")) return false;
     return (Date.now() - connection.lastUsedAt) > timeoutMs;
   }
 }

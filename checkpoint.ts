@@ -34,7 +34,8 @@ export async function prepareMcpCheckpoint(state: McpExtensionState, event: McpC
     for (const [name, definition] of Object.entries(state.config.mcpServers)) {
       if (!isServerDisabled(definition) && !definition.url) return blocked(`MCP ${name}: stdio/Unix server state is not reconstructible`);
     }
-    if (state.onToolCall) return blocked("MCP host capture callback is not checkpoint-supported");
+    const callback = state.owner.getCheckpointBlocker();
+    if (callback) return blocked(callback);
     if (state.activeScripts) return blocked("MCP script is active");
     if (state.uiServer || state.completedUiSessions.length) return blocked("MCP UI session/messages require the running runtime");
     if (state.approvedToolCalls.size || state.consentManager.hasDecisions()) return blocked("MCP session approvals are not persisted");
