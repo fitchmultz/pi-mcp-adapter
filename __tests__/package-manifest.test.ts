@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")) as {
+  name?: string;
+  bin?: Record<string, string>;
+  repository?: { url?: string };
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   files?: string[];
@@ -22,6 +25,13 @@ const hostPeerPackages = {
 };
 
 describe("package.json files", () => {
+  it("uses the owned package, helper executable and repository", () => {
+    expect(packageJson.name).toBe("@fitchmultz/pi-mcp-adapter");
+    expect(packageJson.bin).toEqual({ "fitch-mcp-adapter": "cli.js" });
+    expect(packageJson.repository?.url).toBe("git+https://github.com/fitchmultz/pi-mcp-adapter.git");
+    expect(packageJson.files).toContain("OAUTH.md");
+  });
+
   it("exports generated declarations while retaining source runtime entries", () => {
     expect(packageJson.types).toBe("./dist/index.d.ts");
     expect(packageJson.exports).toMatchObject({
@@ -57,7 +67,7 @@ describe("public OAuth client metadata", () => {
 
     expect(metadata).toEqual({
       client_id: "https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json",
-      client_name: "Pi MCP Adapter",
+      client_name: "Fitch MCP Adapter",
       client_uri: "https://github.com/fitchmultz/pi-mcp-adapter",
       redirect_uris: [
         "http://localhost:19876/callback",

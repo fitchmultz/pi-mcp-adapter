@@ -1,6 +1,6 @@
 {
   "client_id": "https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json",
-  "client_name": "Pi MCP Adapter",
+  "client_name": "Fitch MCP Adapter",
   "client_uri": "https://github.com/fitchmultz/pi-mcp-adapter",
   "redirect_uris": [
     "http://localhost:19876/callback",

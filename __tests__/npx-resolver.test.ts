@@ -27,7 +27,7 @@ describe("npx-resolver", () => {
     }
   });
 
-  it("writes mcp-npx-cache.json to PI_CODING_AGENT_DIR", async () => {
+  it("writes mcp-npx-cache.json to the owned root under PI_CODING_AGENT_DIR", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
     const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
@@ -42,8 +42,8 @@ describe("npx-resolver", () => {
     const result = await resolveNpxBinary("npx", ["-y", "demo-pkg"]);
 
     expect(result).not.toBeNull();
-    expect(existsSync(join(agentDir, "mcp-npx-cache.json"))).toBe(true);
-    expect(existsSync(join(home, ".pi", "agent", "mcp-npx-cache.json"))).toBe(false);
+    expect(existsSync(join(agentDir, "fitch-mcp-adapter", "mcp-npx-cache.json"))).toBe(true);
+    expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp-npx-cache.json"))).toBe(false);
   });
 
   it("uses cross-spawn to read npm's cache directory", async () => {
@@ -224,8 +224,9 @@ describe("npx-resolver", () => {
 
     const correctBin = writeCachedPackage(npmCache, "plainpkg", "2.0.0", "correct");
     const wrongBin = writeCachedPackage(npmCache, "plainpkg", "1.0.0", "old");
+    mkdirSync(join(agentDir, "fitch-mcp-adapter"), { recursive: true });
     writeFileSync(
-      join(agentDir, "mcp-npx-cache.json"),
+      join(agentDir, "fitch-mcp-adapter", "mcp-npx-cache.json"),
       JSON.stringify({
         version: 1,
         entries: {
@@ -242,7 +243,7 @@ describe("npx-resolver", () => {
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
     const result = await resolveNpxBinary("npx", ["-y", "plainpkg@2.0.0"]);
-    const cache = JSON.parse(readFileSync(join(agentDir, "mcp-npx-cache.json"), "utf-8"));
+    const cache = JSON.parse(readFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-npx-cache.json"), "utf-8"));
 
     expect(result?.binPath).toBe(correctBin);
     expect(cache.entries[JSON.stringify(["npx", "-y", "plainpkg@2.0.0"])]?.packageVersion).toBe("2.0.0");

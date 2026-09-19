@@ -48,7 +48,7 @@ describe("cli init helper", () => {
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
 
-    const piConfigPath = join(home, ".pi", "agent", "mcp.json");
+    const piConfigPath = join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json");
     expect(existsSync(piConfigPath)).toBe(true);
     const config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
     expect(config.imports).toContain("claude-code");
@@ -74,7 +74,7 @@ describe("cli init helper", () => {
     expect(errors).toEqual([]);
     expect(logs.join("\n")).toContain(`codex: ${codexConfigPath}`);
     expect(logs.join("\n")).toContain("Detected host configs to import into Pi: codex");
-    expect(existsSync(join(home, ".pi", "agent", "mcp.json"))).toBe(false);
+    expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"))).toBe(false);
   });
 
   it("loads existing Pi config as JSONC and lists .agents standard paths", async () => {
@@ -83,8 +83,8 @@ describe("cli init helper", () => {
     process.env.HOME = home;
     process.chdir(project);
 
-    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
-    writeFileSync(join(home, ".pi", "agent", "mcp.json"), `{
+    mkdirSync(join(home, ".pi", "agent", "fitch-mcp-adapter"), { recursive: true });
+    writeFileSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), `{
       // Existing config stays editable by humans.
       "imports": ["vscode",],
       "mcpServers": {
@@ -121,7 +121,7 @@ describe("cli init helper", () => {
 
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
-    const piConfigPath = join(home, ".pi", "agent", "mcp.json");
+    const piConfigPath = join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json");
     expect(JSON.parse(readFileSync(piConfigPath, "utf-8")).settings).toEqual({ hostConfigDiscovery: "on" });
     expect(readFileSync(hostPath, "utf-8")).toContain("cursorServer");
     expect(logs.join("\n")).toContain("Opting in to host-specific fallback discovery");
@@ -149,9 +149,9 @@ describe("cli init helper", () => {
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
 
-    const piConfigPath = join(agentDir, "mcp.json");
+    const piConfigPath = join(agentDir, "fitch-mcp-adapter", "mcp.json");
     expect(existsSync(piConfigPath)).toBe(true);
-    expect(existsSync(join(home, ".pi", "agent", "mcp.json"))).toBe(false);
+    expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"))).toBe(false);
     const config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
     expect(config.imports).toContain("claude-code");
     expect(logs.join("\n")).toContain(piConfigPath);
@@ -160,7 +160,7 @@ describe("cli init helper", () => {
   it("runs when invoked through a symlinked bin path", () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-home-"));
     const binDir = mkdtempSync(join(tmpdir(), "pi-mcp-cli-bin-"));
-    const symlinkPath = join(binDir, "pi-mcp-adapter");
+    const symlinkPath = join(binDir, "fitch-mcp-adapter");
     symlinkSync(resolve("cli.js"), symlinkPath);
 
     const result = spawnSync(process.execPath, [symlinkPath, "init", "--dry-run"], {
@@ -186,7 +186,7 @@ describe("cli init helper", () => {
     const exitCode = await main(["install"], (line) => logs.push(line), (line) => errors.push(line));
 
     expect(exitCode).toBe(1);
-    expect(errors.join("\n")).toContain("Use `pi install npm:pi-mcp-adapter` instead");
+    expect(errors.join("\n")).toContain("Use `pi install npm:@fitchmultz/pi-mcp-adapter` instead");
     expect(logs).toEqual([]);
   });
 });

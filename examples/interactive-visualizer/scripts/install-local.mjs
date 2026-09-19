@@ -1,11 +1,17 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const distServer = path.join(root, "dist", "server.js");
-const configPath = path.join(process.env.HOME ?? process.cwd(), ".pi", "agent", "mcp.json");
+const configuredAgentDir = process.env.PI_CODING_AGENT_DIR?.trim();
+const agentDir = !configuredAgentDir ? path.join(homedir(), ".pi", "agent")
+  : configuredAgentDir === "~" ? homedir()
+  : configuredAgentDir.startsWith("~/") ? path.resolve(homedir(), configuredAgentDir.slice(2))
+  : path.resolve(configuredAgentDir);
+const configPath = path.join(agentDir, "fitch-mcp-adapter", "mcp.json");
 const serverName = "interactive-visualizer";
 
 function isInstalledExample(entry) {

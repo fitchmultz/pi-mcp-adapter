@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
-import { getAgentPath } from "./agent-dir.ts";
+import { getAdapterPath } from "./agent-dir.ts";
 
 export interface McpOnboardingState {
   version: 1;
@@ -15,7 +15,7 @@ const DEFAULT_STATE: McpOnboardingState = {
 };
 
 export function getOnboardingStatePath(): string {
-  return getAgentPath("mcp-onboarding.json");
+  return getAdapterPath("mcp-onboarding.json");
 }
 
 export function loadOnboardingState(): McpOnboardingState {

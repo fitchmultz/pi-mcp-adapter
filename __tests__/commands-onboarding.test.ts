@@ -23,7 +23,7 @@ vi.mock("../mcp-setup-panel.ts", () => ({
 
 describe("commands onboarding", () => {
   const originalHome = process.env.HOME;
-  const originalOAuthDir = process.env.MCP_OAUTH_DIR;
+  const originalOAuthDir = process.env.FITCH_MCP_OAUTH_DIR;
   const originalCwd = process.cwd();
 
   beforeEach(() => {
@@ -41,9 +41,9 @@ describe("commands onboarding", () => {
   afterEach(() => {
     process.env.HOME = originalHome;
     if (originalOAuthDir === undefined) {
-      delete process.env.MCP_OAUTH_DIR;
+      delete process.env.FITCH_MCP_OAUTH_DIR;
     } else {
-      process.env.MCP_OAUTH_DIR = originalOAuthDir;
+      process.env.FITCH_MCP_OAUTH_DIR = originalOAuthDir;
     }
     process.chdir(originalCwd);
   });
@@ -156,9 +156,9 @@ describe("commands onboarding", () => {
     process.env.HOME = home;
     process.chdir(project);
     const sourcePath = join(home, sourceFile);
-    const piPath = join(home, ".pi", "agent", "mcp.json");
+    const piPath = join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json");
     const projectPath = join(project, ".mcp.json");
-    const projectPiPath = join(project, ".pi", "mcp.json");
+    const projectPiPath = join(project, ".pi", "fitch-mcp-adapter", "mcp.json");
     const source = {
       mcpServers: {
         inherited: { url: "https://internal.example/mcp", headers: { Authorization: "Bearer source-secret" } },
@@ -239,7 +239,7 @@ describe("commands onboarding", () => {
   });
 
   it("clears OAuth credentials, cancels pending auth, and closes the server on logout", async () => {
-    process.env.MCP_OAUTH_DIR = mkdtempSync(join(tmpdir(), "pi-mcp-commands-logout-"));
+    process.env.FITCH_MCP_OAUTH_DIR = mkdtempSync(join(tmpdir(), "pi-mcp-commands-logout-"));
     const ui = createUi();
     const close = vi.fn();
     const { getAuthEntry, saveAuthEntry } = await import("../mcp-auth.ts");
@@ -268,7 +268,7 @@ describe("commands onboarding", () => {
   });
 
   it("marks explicit OAuth servers as needs-auth when only stale URL tokens exist", async () => {
-    process.env.MCP_OAUTH_DIR = mkdtempSync(join(tmpdir(), "pi-mcp-commands-oauth-"));
+    process.env.FITCH_MCP_OAUTH_DIR = mkdtempSync(join(tmpdir(), "pi-mcp-commands-oauth-"));
     const ui = createUi();
     const { updateTokens } = await import("../mcp-auth.ts");
     const { openMcpPanel } = await import("../commands.ts");

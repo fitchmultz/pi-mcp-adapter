@@ -36,7 +36,7 @@ describe("config discovery", () => {
     process.env.HOME = home;
     process.env.PI_CODING_AGENT_DIR = join(home, ".pi", "agent");
     process.chdir(home);
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { mcpServers: { invalid: { url: "https://example.invalid/mcp", ...invalid } } });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { mcpServers: { invalid: { url: "https://example.invalid/mcp", ...invalid } } });
     const { loadMcpConfig } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers).toEqual({});
   });
@@ -56,7 +56,7 @@ describe("config discovery", () => {
       },
     });
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       settings: { toolPrefix: "short", directTools: true },
       mcpServers: {
         shared: { command: "pi-global" },
@@ -72,7 +72,7 @@ describe("config discovery", () => {
       },
     });
 
-    writeJson(join(project, ".pi", "mcp.json"), {
+    writeJson(join(project, ".pi", "fitch-mcp-adapter", "mcp.json"), {
       settings: { autoAuth: true, oauthDir: ".pi/oauth", showStatusIcon: false },
       mcpServers: {
         shared: { command: "project-pi" },
@@ -105,7 +105,7 @@ describe("config discovery", () => {
     process.env.HOME = home;
     process.chdir(project);
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       imports: ["cursor", "vscode", "opencode"],
       settings: { hostConfigDiscovery: "on" },
       mcpServers: { global: { command: "global-server" } },
@@ -113,7 +113,7 @@ describe("config discovery", () => {
     writeJson(join(project, ".mcp.json"), {
       mcpServers: { project: { command: "project-server" } },
     });
-    writeJson(join(project, ".pi", "mcp.json"), {
+    writeJson(join(project, ".pi", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: { projectPi: { command: "project-pi-server" } },
     });
     writeJson(join(project, ".vscode", "mcp.json"), {
@@ -138,12 +138,12 @@ describe("config discovery", () => {
       vscode: { command: "vscode-server" },
       opencode: { command: "opencode-server" },
     });
-    expect(loadMcpConfig(join(project, ".pi", "mcp.json"), project, { includeProject: false }).mcpServers)
+    expect(loadMcpConfig(join(project, ".pi", "fitch-mcp-adapter", "mcp.json"), project, { includeProject: false }).mcpServers)
       .not.toHaveProperty("projectPi");
 
     const projectAlias = `${project}-alias`;
     symlinkSync(project, projectAlias, "dir");
-    expect(loadMcpConfig(join(projectAlias, ".pi", "mcp.json"), project, { includeProject: false }).mcpServers)
+    expect(loadMcpConfig(join(projectAlias, ".pi", "fitch-mcp-adapter", "mcp.json"), project, { includeProject: false }).mcpServers)
       .not.toHaveProperty("projectPi");
 
     const dotDotNamedDirectory = join(project, "..mcp");
@@ -163,7 +163,7 @@ describe("config discovery", () => {
       .not.toHaveProperty("linkedProject");
 
     process.env.PI_CODING_AGENT_DIR = join(project, ".pi-agent");
-    writeJson(join(project, ".pi-agent", "mcp.json"), {
+    writeJson(join(project, ".pi-agent", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: { projectAgentDir: { command: "project-server" } },
     });
     expect(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers)
@@ -177,10 +177,10 @@ describe("config discovery", () => {
     mkdirSync(join(project, ".git"), { recursive: true });
     process.chdir(project);
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: { global: { command: "global-server" } },
     });
-    writeJson(join(project, ".pi", "mcp.json"), {
+    writeJson(join(project, ".pi", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: { project: { command: "project-server" } },
     });
 
@@ -198,7 +198,7 @@ describe("config discovery", () => {
     writeJson(join(home, ".config", "mcp", "mcp.json"), {
       mcpServers: { sharedGlobal: { command: "shared-global" } },
     });
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: { piGlobal: { command: "pi-global" } },
     });
 
@@ -220,12 +220,12 @@ describe("config discovery", () => {
     mkdirSync(join(project, ".git"), { recursive: true });
     mkdirSync(nested, { recursive: true });
     symlinkSync(nested, cwdAlias, "dir");
-    writeJson(join(projectAgentDir, "mcp.json"), {
+    writeJson(join(projectAgentDir, "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: { projectAgent: { command: "project-server" } },
     });
 
     const { isPathInsideProject, loadMcpConfig } = await import("../config.ts");
-    expect(isPathInsideProject(join(projectAgentDir, "mcp-cache.json"), cwdAlias)).toBe(true);
+    expect(isPathInsideProject(join(projectAgentDir, "fitch-mcp-adapter", "mcp-cache.json"), cwdAlias)).toBe(true);
     expect(loadMcpConfig(undefined, cwdAlias, { includeProject: false }).mcpServers)
       .not.toHaveProperty("projectAgent");
   });
@@ -242,7 +242,7 @@ describe("config discovery", () => {
     symlinkSync(projectAgentDir, globalDir, "dir");
 
     const { isPathInsideProject } = await import("../config.ts");
-    expect(isPathInsideProject(join(globalDir, "mcp-cache.json"), project)).toBe(true);
+    expect(isPathInsideProject(join(globalDir, "fitch-mcp-adapter", "mcp-cache.json"), project)).toBe(true);
   });
 
   it("excludes nominally global import paths located inside an untrusted project", async () => {
@@ -282,7 +282,7 @@ describe("config discovery", () => {
       imports: ["opencode"],
       mcpServers: { global: { command: "global-server" } },
     });
-    writeJson(join(project, ".pi-agent", "mcp.json"), {
+    writeJson(join(project, ".pi-agent", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: { parentAgent: { command: "project-server" } },
     });
     writeJson(join(project, "opencode.json"), {
@@ -308,7 +308,7 @@ describe("config discovery", () => {
         toUrl: { socket: "/old.sock" },
       },
     });
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: {
         toSocket: { socket: "/shared.sock" },
         toCommand: { command: "new" },
@@ -349,7 +349,7 @@ describe("config discovery", () => {
         agentsNestedOnly: { command: "agents-nested-only" },
       },
     });
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: {
         shared: { command: "pi-global" },
         piOnly: { command: "pi-only" },
@@ -382,9 +382,9 @@ describe("config discovery", () => {
     process.chdir(project);
     const realProject = realpathSync(project);
 
-    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+    mkdirSync(join(home, ".pi", "agent", "fitch-mcp-adapter"), { recursive: true });
     writeFileSync(
-      join(home, ".pi", "agent", "mcp.json"),
+      join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"),
       `{
         // Import editor configs with documented servers.
         "imports": ["vscode",],
@@ -441,9 +441,9 @@ describe("config discovery", () => {
     process.env.HOME = home;
     process.chdir(project);
 
-    mkdirSync(join(project, ".pi"), { recursive: true });
+    mkdirSync(join(project, ".pi", "fitch-mcp-adapter"), { recursive: true });
     writeFileSync(
-      join(project, ".pi", "mcp.json"),
+      join(project, ".pi", "fitch-mcp-adapter", "mcp.json"),
       `{
         // Keep this file easy to hand edit.
         "mcp-servers": {
@@ -457,10 +457,10 @@ describe("config discovery", () => {
 
     const { writeProjectServerDisabledOverride } = await import("../config.ts");
     expect(writeProjectServerDisabledOverride(undefined, project, "server", true)).toEqual({
-      path: join(project, ".pi", "mcp.json"),
+      path: join(project, ".pi", "fitch-mcp-adapter", "mcp.json"),
       changed: true,
     });
-    expect(JSON.parse(readFileSync(join(project, ".pi", "mcp.json"), "utf-8"))).toEqual({
+    expect(JSON.parse(readFileSync(join(project, ".pi", "fitch-mcp-adapter", "mcp.json"), "utf-8"))).toEqual({
       "mcp-servers": {
         server: {
           command: "original",
@@ -549,7 +549,7 @@ describe("config discovery", () => {
       expect.objectContaining({ kind: "cursor", active: false, serverCount: 2 }),
     ]);
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       settings: { hostConfigDiscovery: "on" },
       mcpServers: {},
     });
@@ -567,7 +567,7 @@ describe("config discovery", () => {
       }),
     ]);
     expect(getServerProvenance().get("hostOnly")).toEqual({
-      path: join(home, ".pi", "agent", "mcp.json"),
+      path: join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"),
       kind: "import",
       importKind: "cursor",
     });
@@ -586,7 +586,7 @@ describe("config discovery", () => {
     writeJson(join(home, ".codex", "config.json"), {
       mcp_servers: { same: { command: "codex-server" } },
     });
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       settings: { hostConfigDiscovery: "on" },
       mcpServers: {},
     });
@@ -594,7 +594,7 @@ describe("config discovery", () => {
     const { getServerProvenance, loadMcpConfig } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers.same).toEqual({ command: "codex-server" });
     expect(getServerProvenance().get("same")).toEqual({
-      path: join(home, ".pi", "agent", "mcp.json"),
+      path: join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"),
       kind: "import",
       importKind: "codex",
     });
@@ -607,7 +607,7 @@ describe("config discovery", () => {
     process.chdir(project);
 
     const sharedPath = join(home, ".config", "mcp", "mcp.json");
-    const projectPiPath = join(process.cwd(), ".pi", "mcp.json");
+    const projectPiPath = join(process.cwd(), ".pi", "fitch-mcp-adapter", "mcp.json");
     writeJson(sharedPath, { mcpServers: { same: { command: "shared-server" } } });
     writeJson(projectPiPath, { mcpServers: { same: { command: "project-pi-server" } } });
 
@@ -631,7 +631,7 @@ describe("config discovery", () => {
     process.env.HOME = home;
     process.chdir(project);
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       imports: ["codex"],
       mcpServers: {},
     });
@@ -662,7 +662,7 @@ describe("config discovery", () => {
       expect.objectContaining({ kind: "codex", path: join(home, ".codex", "config.toml"), serverCount: 2 }),
     ]);
     expect(getServerProvenance().get("context7")).toEqual({
-      path: join(home, ".pi", "agent", "mcp.json"),
+      path: join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"),
       kind: "import",
       importKind: "codex",
     });
@@ -674,7 +674,7 @@ describe("config discovery", () => {
     process.env.HOME = home;
     process.chdir(project);
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["codex"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { imports: ["codex"], mcpServers: {} });
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(
       join(home, ".codex", "config.toml"),
@@ -706,7 +706,7 @@ describe("config discovery", () => {
     process.chdir(project);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["codex"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { imports: ["codex"], mcpServers: {} });
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(join(home, ".codex", "config.toml"), "[mcp_servers.exa\\nurl = \\\"broken\\\"\\n");
     writeJson(join(home, ".codex", "config.json"), {
@@ -715,7 +715,7 @@ describe("config discovery", () => {
 
     const { getServerProvenance } = await import("../config.ts");
     expect(getServerProvenance().get("exa")).toEqual({
-      path: join(home, ".pi", "agent", "mcp.json"),
+      path: join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"),
       kind: "import",
       importKind: "codex",
     });
@@ -754,7 +754,7 @@ describe("config discovery", () => {
     process.env.HOME = home;
     process.chdir(project);
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["codex"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { imports: ["codex"], mcpServers: {} });
     writeJson(join(home, ".codex", "config.json"), {
       mcpServers: { exa: { url: "https://mcp.exa.ai/mcp" } },
     });
@@ -786,7 +786,7 @@ describe("config discovery", () => {
       },
     });
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       imports: ["cursor"],
       mcpServers: {
         sharedServer: { directTools: true },
@@ -820,7 +820,7 @@ describe("config discovery", () => {
 
   // SECURITY: credential/url binding in mergeServerMaps. A lower-precedence
   // source (~/.config/mcp/mcp.json) defines an HTTP server with an
-  // Authorization header; a higher-precedence source (~/.pi/agent/mcp.json)
+  // Authorization header; a higher-precedence source (~/.pi/agent/fitch-mcp-adapter/mcp.json)
   // overrides it. Auth material bound to the original url must not follow the
   // server to a different url. See config.ts mergeServerMaps.
   const URL_A = "https://litellm.internal/mcp/";
@@ -839,7 +839,7 @@ describe("config discovery", () => {
       mcpServers: { litellm: baked },
     });
     // Higher precedence — the (potentially untrusted) override.
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: { litellm: override },
     });
   }
@@ -997,7 +997,7 @@ describe("config discovery", () => {
     });
     // Middle precedence (pi-global): re-supplies auth but NO url — inherited
     // against the still-url-A accumulated entry.
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: { litellm: { headers: { Authorization: "Bearer secret-vk" } } },
     });
     // Highest precedence (shared-project): repoints the url, supplies no auth.
@@ -1027,7 +1027,7 @@ describe("config discovery", () => {
       },
     });
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       imports: ["cursor"],
       mcpServers: {
         userServer: { command: "user" },
@@ -1046,7 +1046,7 @@ describe("config discovery", () => {
       },
     });
 
-    writeJson(join(project, ".pi", "mcp.json"), {
+    writeJson(join(project, ".pi", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: {
         projectPiServer: { command: "project-pi" },
       },
@@ -1077,7 +1077,7 @@ describe("config discovery", () => {
       importKind: undefined,
     });
     expect(provenance.get("projectPiServer")).toEqual({
-      path: resolve(realProject, ".pi", "mcp.json"),
+      path: resolve(realProject, ".pi", "fitch-mcp-adapter", "mcp.json"),
       kind: "project",
       importKind: undefined,
     });
@@ -1134,7 +1134,7 @@ describe("config discovery", () => {
       },
     });
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: {},
     });
 
@@ -1168,7 +1168,7 @@ describe("config discovery", () => {
     process.env.HOME = home;
     process.chdir(project);
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       imports: ["cursor"],
       mcpServers: {
         existing: { command: "demo" },
@@ -1181,7 +1181,7 @@ describe("config discovery", () => {
     } = await import("../config.ts");
 
     const importsPreview = previewCompatibilityImports(["cursor", "codex"]);
-    expect(importsPreview.path).toContain(".pi/agent/mcp.json");
+    expect(importsPreview.path).toContain(".pi/agent/fitch-mcp-adapter/mcp.json");
     expect(importsPreview.changed).toBe(true);
     expect(importsPreview.diffText).toContain("+++ after");
     expect(importsPreview.diffText).toContain('+     "codex"');
@@ -1202,7 +1202,7 @@ describe("config discovery", () => {
     process.env.HOME = home;
     process.chdir(project);
 
-    writeJson(join(home, ".pi", "agent", "mcp.json"), {
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       settings: { toolPrefix: "mcp" },
       mcpServers: { demo: { command: "demo" } },
     });
@@ -1234,7 +1234,7 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-global-project-"));
     process.env.HOME = home;
     process.chdir(project);
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
     writeJson(join(home, ".config", "opencode", "opencode.json"), {
       mcp: {
         local: { type: "local", command: ["node", "server.js"], environment: { TOKEN: "global" }, cwd: "./servers" },
@@ -1267,7 +1267,7 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-project-project-"));
     process.env.HOME = home;
     process.chdir(project);
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
     writeJson(join(project, "opencode.json"), {
       mcp: { projectOnly: { type: "local", command: ["npx", "project-server"] } },
     });
@@ -1285,7 +1285,7 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-merge-project-"));
     process.env.HOME = home;
     process.chdir(project);
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
     writeJson(join(home, ".config", "opencode", "opencode.json"), {
       mcp: {
         shared: {
@@ -1339,7 +1339,7 @@ describe("config discovery", () => {
     mkdirSync(join(project, ".git"));
     mkdirSync(nested, { recursive: true });
     process.chdir(nested);
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
     writeJson(join(project, "opencode.json"), {
       mcp: { projectRoot: { type: "local", command: ["root-server"] } },
     });
@@ -1357,7 +1357,7 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-identity-project-"));
     process.env.HOME = home;
     process.chdir(project);
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
     writeJson(join(home, ".config", "opencode", "opencode.json"), {
       mcp: {
         remote: {
@@ -1393,7 +1393,7 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-malformed-project-"));
     process.env.HOME = home;
     process.chdir(project);
-    writeJson(join(home, ".pi", "agent", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
+    writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), { imports: ["opencode"], mcpServers: {} });
     const globalPath = join(home, ".config", "opencode", "opencode.json");
     writeJson(globalPath, {
       mcp: { globalOnly: { type: "local", command: ["global"] } },

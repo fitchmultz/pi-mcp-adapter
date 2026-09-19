@@ -554,9 +554,9 @@ export class McpSetupPanel {
           "1. ~/.config/mcp/mcp.json",
           "2. ~/.agents/mcp.json",
           "3. ~/.agents/mcp/mcp.json",
-          "4. <Pi agent dir>/mcp.json",
+          "4. <Pi agent dir>/fitch-mcp-adapter/mcp.json",
           "5. .mcp.json",
-          "6. .pi/mcp.json",
+          "6. .pi/fitch-mcp-adapter/mcp.json",
           `Host discovery: ${this.discovery.hostConfigDiscovery}. Conflicts reported: ${this.discovery.conflicts.length}.`,
           ...this.discovery.conflicts.slice(0, 8).map((conflict) =>
             `${conflict.serverName}: ${conflict.sources.map((source) => source.path).join(" -> ")} (winner: ${conflict.winner.path})`,

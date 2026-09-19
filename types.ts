@@ -14,7 +14,7 @@ import type { UiToolVisibility } from "./ui-tool-visibility.ts";
 export type Transport = McpTransport;
 
 /** Versioned shared-event-bus channel for read-only MCP runtime snapshots. */
-export const MCP_STATUS_EVENT = "pi-mcp-adapter/status/v1";
+export const MCP_STATUS_EVENT = "fitch-mcp-adapter/status/v1";
 
 export const MCP_STATUS_SNAPSHOT_VERSION = 1 as const;
 
@@ -536,8 +536,8 @@ export interface McpSettings {
   /**
    * Legacy OAuth tokens.json import directory.
    * Relative paths are resolved from the project root (cwd).
-   * Takes precedence over the agent's mcp-oauth/ legacy import directory but
-   * can still be overridden by the MCP_OAUTH_DIR env variable.
+   * Takes precedence over the adapter's mcp-oauth/ legacy import directory but
+   * can still be overridden by the FITCH_MCP_OAUTH_DIR env variable.
    *
    * Persistent OAuth credentials are stored in the operating system credential
    * store, not this directory. Existing plaintext tokens.json files found here

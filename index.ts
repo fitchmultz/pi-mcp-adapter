@@ -33,7 +33,7 @@ export {
 
 const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
-const inactiveDirectToolsKey = Symbol.for("pi-mcp-adapter.inactive-direct-tools");
+const inactiveDirectToolsKey = Symbol.for("fitch-mcp-adapter.inactive-direct-tools");
 const inactiveDirectToolsBySession = (() => {
   const shared = globalThis as typeof globalThis & {
     [inactiveDirectToolsKey]?: Map<string, Set<string>>;

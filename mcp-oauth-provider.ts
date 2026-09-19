@@ -309,7 +309,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (this.isNonInteractive) {
       return {
         client_name: this.config.clientName ?? "Pi Coding Agent",
-        client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
+        client_uri: this.config.clientUri ?? "https://github.com/fitchmultz/pi-mcp-adapter",
         redirect_uris: [],
         grant_types: [this.config.crossAppAccess ? "urn:ietf:params:oauth:grant-type:jwt-bearer" : "client_credentials"],
         token_endpoint_auth_method: this.config.privateKeyJwt ? "private_key_jwt" : this.config.clientSecret ? "client_secret_post" : "none",
@@ -324,7 +324,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return {
       redirect_uris: [redirectUrl],
       client_name: this.config.clientName ?? "Pi Coding Agent",
-      client_uri: this.config.clientUri ?? "https://github.com/nicobailon/pi-mcp-adapter",
+      client_uri: this.config.clientUri ?? "https://github.com/fitchmultz/pi-mcp-adapter",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: this.config.privateKeyJwt ? "private_key_jwt" : this.config.clientSecret ? "client_secret_post" : "none",

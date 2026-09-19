@@ -124,7 +124,7 @@ module.exports = {
 
 describe("mcp-auth storage paths", () => {
   const originalEnv = {
-    MCP_OAUTH_DIR: process.env.MCP_OAUTH_DIR,
+    FITCH_MCP_OAUTH_DIR: process.env.FITCH_MCP_OAUTH_DIR,
     PI_MCP_ADAPTER_TEST_AUTH_STORE: process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE,
     PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY: process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY,
     PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL: process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL,
@@ -136,7 +136,7 @@ describe("mcp-auth storage paths", () => {
 
   beforeEach(() => {
     authDir = mkdtempSync(join(tmpdir(), "pi-mcp-auth-storage-"));
-    process.env.MCP_OAUTH_DIR = authDir;
+    process.env.FITCH_MCP_OAUTH_DIR = authDir;
   });
 
   afterEach(() => {
@@ -174,7 +174,7 @@ describe("mcp-auth storage paths", () => {
   });
 
   it("uses configured oauthDir as the legacy import source", () => {
-    delete process.env.MCP_OAUTH_DIR;
+    delete process.env.FITCH_MCP_OAUTH_DIR;
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
     const options = getAuthStorageOptions(".pi/oauth", project);
     const filePath = getAuthEntryFilePath("configured", options);
@@ -204,7 +204,7 @@ describe("mcp-auth storage paths", () => {
   });
 
   it("does not use configured oauthDir values as secure-store namespaces", () => {
-    delete process.env.MCP_OAUTH_DIR;
+    delete process.env.FITCH_MCP_OAUTH_DIR;
     const projectA = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-a-"));
     const projectB = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-b-"));
     const optionsA = getAuthStorageOptions(".pi/oauth", projectA);
@@ -219,7 +219,7 @@ describe("mcp-auth storage paths", () => {
     rmSync(projectB, { recursive: true, force: true });
   });
 
-  it("keeps MCP_OAUTH_DIR as the explicit override over settings.oauthDir", () => {
+  it("keeps FITCH_MCP_OAUTH_DIR as the explicit override over settings.oauthDir", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
     const options = getAuthStorageOptions(".pi/oauth", project);
 

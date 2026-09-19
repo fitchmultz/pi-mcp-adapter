@@ -18,8 +18,8 @@ describe("direct tools in child Pi processes", () => {
     roots.push(root);
     const agentDir = join(root, "agent");
     const projectDir = join(root, "project");
-    await Promise.all([mkdir(agentDir), mkdir(projectDir)]);
-    const configPath = join(agentDir, "mcp.json");
+    await Promise.all([mkdir(join(agentDir, "fitch-mcp-adapter"), { recursive: true }), mkdir(projectDir)]);
+    const configPath = join(agentDir, "fitch-mcp-adapter", "mcp.json");
     await writeFile(configPath, JSON.stringify({
       mcpServers: {
         demo: {

@@ -349,7 +349,7 @@ it("vetoes remote task capabilities and stateful HTTP sessions", async () => {
 
 it("rejects metadata persistence failure, unwinds the hold and keeps future explicit requests usable", async () => {
   const f = await wire(); const state = await runtime(f.config);
-  const cache = join(directory, "mcp-cache.json"); await rm(cache); await mkdir(cache);
+  const cache = join(directory, "fitch-mcp-adapter", "mcp-cache.json"); await rm(cache); await mkdir(cache);
   await expect(prepareMcpCheckpoint(state, hold().event)).rejects.toThrow();
   await rm(cache, { recursive: true });
   await state.manager.getConnection(f.name)!.client.callTool({ name: "echo", arguments: {} });

@@ -1,6 +1,6 @@
 # Interactive Visualizer Example
 
-A minimal MCP server example for `pi-mcp-adapter` that demonstrates:
+A minimal MCP server example for `@fitchmultz/pi-mcp-adapter` that demonstrates:
 
 1. **Charts** — Renders bar, line, pie, and doughnut charts via Chart.js
 2. **Bidirectional communication** — Send messages from the UI back to the agent
@@ -15,7 +15,7 @@ npm run build
 npm run install-local
 ```
 
-Restart pi. The `show_chart` tool will be available via the MCP proxy.
+The helper writes only `<Pi agent dir>/fitch-mcp-adapter/mcp.json` (`~/.pi/agent/fitch-mcp-adapter/mcp.json` by default, honoring `PI_CODING_AGENT_DIR`). Restart Pi; `show_chart` will be available via the MCP proxy.
 
 ## Usage
 
