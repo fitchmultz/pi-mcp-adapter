@@ -68,6 +68,7 @@ export function recordFailure(state: McpExtensionState, serverName: string, mess
       getFailureExpiryTimers(state).delete(serverName);
       return;
     }
+    state.owner.beforeActivity();
     if (state.failureTracker.get(serverName) === failedAt) {
       state.failureTracker.delete(serverName);
       state.failureMessages?.delete(serverName);
@@ -170,6 +171,7 @@ export async function initializeMcp(
     consentManager,
     uiServer: null,
     completedUiSessions: [],
+    activeScripts: 0,
     openBrowser: async (url: string) => {
       owner.throwIfInactive();
       await openUrl(pi, url, process.env.BROWSER, owner.signal);

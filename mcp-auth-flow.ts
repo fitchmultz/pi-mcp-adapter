@@ -45,6 +45,8 @@ import { combineAbortSignals, isAbortError } from "./runtime-owner.ts"
 /** Auth status for a server */
 export type AuthStatus = "authenticated" | "expired" | "not_authenticated"
 
+import type { McpCheckpointEvent } from "./checkpoint.ts"
+
 export interface McpOAuthRuntime {
   readonly signal: AbortSignal
 }
@@ -103,6 +105,8 @@ type PendingAuth = {
 type RuntimeState = {
   controller: AbortController
   generation: number
+  activeOperations: number
+  checkpoint?: McpCheckpointEvent | undefined
   pendingAuths: Map<string, PendingAuth>
   pendingAuthStates: Map<string, string>
   pendingAuthCleanupTimers: Map<string, ReturnType<typeof setTimeout>>
@@ -119,6 +123,7 @@ export function createOAuthRuntime(signal?: AbortSignal): McpOAuthRuntime {
   runtimeStates.set(runtime, {
     controller,
     generation: 0,
+    activeOperations: 0,
     pendingAuths: new Map(),
     pendingAuthStates: new Map(),
     pendingAuthCleanupTimers: new Map(),
@@ -149,6 +154,30 @@ function getRuntimeState(runtime: McpOAuthRuntime): RuntimeState {
   return state
 }
 
+export function holdOAuthCheckpoint(runtime: McpOAuthRuntime, event: McpCheckpointEvent): () => void {
+  const state = getRuntimeState(runtime)
+  if (state.checkpoint) throw new Error("MCP OAuth checkpoint is already held")
+  state.checkpoint = event
+  return () => { if (state.checkpoint === event) state.checkpoint = undefined }
+}
+
+export function getOAuthCheckpointBlocker(runtime: McpOAuthRuntime): string | undefined {
+  const state = getRuntimeState(runtime)
+  if (state.activeOperations || state.pendingAuthentications.size) return "MCP OAuth operation is active"
+  if (state.pendingAuths.size || state.pendingAuthStates.size || state.pendingAuthCleanupTimers.size) return "MCP browser OAuth callback/flow is pending"
+  // requests caches server challenges/discovery, not a pending user callback.
+  // Cold connect re-challenges; granted scopes and issuer bindings live in the
+  // native credential store. Actual interactive/auth operations veto above.
+  return undefined
+}
+
+async function withOAuthOperation<T>(runtime: McpOAuthRuntime, run: () => Promise<T>): Promise<T> {
+  const state = getRuntimeState(runtime)
+  state.checkpoint?.invalidate()
+  state.activeOperations++
+  try { return await run() } finally { state.activeOperations-- }
+}
+
 function getPendingAuthKey(serverName: string, options: AuthStorageOptions): string {
   return JSON.stringify([serverName, getAuthBaseDir(options)])
 }
@@ -175,6 +204,7 @@ export function getOAuthRequest(serverName: string, serverUrl: string, storageBa
 /** Observe native challenges only; no credential reads or auth work here. */
 export function recordOAuthChallenge(serverName: string, serverUrl: string, storageBase: string, error: unknown, runtime: McpOAuthRuntime = legacyRuntime): void {
   if (runtime.signal.aborted || !isOAuthChallenge(error)) return
+  getRuntimeState(runtime).checkpoint?.invalidate()
   const previous = getOAuthRequest(serverName, serverUrl, storageBase, runtime)
   const request: OAuthRequest = { ...previous, serverName, serverUrl }
   if (error instanceof InsufficientScopeError) {
@@ -372,7 +402,10 @@ function parseOAuthRedirectUri(redirectUri: string): { port: number; callbackHos
  * Start OAuth authentication flow for a server.
  * Returns the authorization URL when browser authorization is required.
  */
-export async function startAuth(
+export const startAuth: typeof startAuthOperation = async (...args) =>
+  withOAuthOperation(getRuntime(args[3]), () => startAuthOperation(...args))
+
+async function startAuthOperation(
   serverName: string,
   serverUrl: string,
   definition?: ServerEntry,
@@ -547,7 +580,11 @@ async function setPendingAuth(
   state.pendingAuthCleanupTimers.set(key, cleanupTimer)
 }
 
-async function clearPendingAuth(runtime: McpOAuthRuntime, serverName: string, oauthState?: string, fallbackStorageOptions: AuthStorageOptions = {}): Promise<void> {
+function clearPendingAuth(...args: Parameters<typeof clearPendingAuthOperation>): Promise<void> {
+  return withOAuthOperation(args[0], () => clearPendingAuthOperation(...args))
+}
+
+async function clearPendingAuthOperation(runtime: McpOAuthRuntime, serverName: string, oauthState?: string, fallbackStorageOptions: AuthStorageOptions = {}): Promise<void> {
   const state = getRuntimeState(runtime)
   const key = getPendingAuthKey(serverName, fallbackStorageOptions)
   const pendingAuth = state.pendingAuths.get(key)
@@ -665,7 +702,10 @@ export async function completeAuthFromInput(
 /**
  * Complete OAuth authentication with an explicit code or a captured callback.
  */
-export async function completeAuth(
+export const completeAuth: typeof completeAuthOperation = async (...args) =>
+  withOAuthOperation(getRuntime(args[2]), () => completeAuthOperation(...args))
+
+async function completeAuthOperation(
   serverName: string,
   authorizationCode?: string | AuthorizationResponseInput,
   options: AuthenticateOptions = {},
@@ -845,7 +885,10 @@ export async function authenticate(
  * 
  * @param serverName - The name of the MCP server
  */
-export async function removeAuth(serverName: string, options: AuthenticateOptions = {}): Promise<void> {
+export const removeAuth: typeof removeAuthOperation = async (...args) =>
+  withOAuthOperation(getRuntime(args[1]), () => removeAuthOperation(...args))
+
+async function removeAuthOperation(serverName: string, options: AuthenticateOptions = {}): Promise<void> {
   const runtime = getRuntime(options)
   const signal = combineAbortSignals(runtime.signal, options.signal)
   throwIfAborted(signal)
@@ -914,17 +957,19 @@ export async function initializeOAuth(
 export async function shutdownOAuth(runtime: McpOAuthRuntime = legacyRuntime): Promise<void> {
   const state = getRuntimeState(runtime)
   if (state.controller.signal.aborted) return
+  state.checkpoint?.invalidate()
   state.generation += 1
   state.controller.abort(new Error("OAuth runtime stopped"))
   for (const callbackState of Array.from(state.pendingAuthStates.values())) cancelPendingCallback(callbackState)
-  for (const pendingAuth of Array.from(state.pendingAuths.values())) {
-    await clearPendingAuth(runtime, pendingAuth.serverName, undefined, pendingAuth.authStorageOptions)
-  }
+  const results = await Promise.allSettled(Array.from(state.pendingAuths.values(), pendingAuth =>
+    clearPendingAuth(runtime, pendingAuth.serverName, undefined, pendingAuth.authStorageOptions)))
+  const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : [])
   state.pendingAuthentications.clear()
   state.requests.clear()
   activeRuntimes.delete(runtime)
 
   if (activeRuntimes.size === 0) {
-    await stopCallbackServer()
+    try { await stopCallbackServer() } catch (error) { failures.push(error) }
   }
+  if (failures.length) throw new AggregateError(failures, "MCP OAuth cleanup failed")
 }

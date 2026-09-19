@@ -130,6 +130,7 @@ export class McpTraceWriter {
   private queue = Promise.resolve();
   private disabled = false;
   private initializationFailed = false;
+  private persistenceError: unknown;
   private readonly fileReady: Promise<void>;
 
   constructor(private readonly options: McpTraceWriterOptions) {
@@ -147,8 +148,9 @@ export class McpTraceWriter {
     });
     this.fileReady = this.makeDirectory(dirname(this.options.filePath), { recursive: true })
       .then(() => this.resetFile(this.options.filePath, "", { encoding: "utf8" }))
-      .catch(() => {
+      .catch(error => {
         // Tracing must never change MCP request/response behavior.
+        this.persistenceError = error;
         this.initializationFailed = true;
         this.disabled = true;
       });
@@ -187,15 +189,17 @@ export class McpTraceWriter {
       await this.fileReady;
       if (this.initializationFailed) return;
       await this.append(this.options.filePath, line, { encoding: "utf8" });
-    }).catch(() => {
+    }).catch(error => {
       // Tracing must never change MCP request/response behavior.
+      this.persistenceError ??= error;
       this.disabled = true;
     });
   }
 
-  async flush(): Promise<void> {
+  async flush(strict = false): Promise<void> {
     await this.fileReady;
     await this.queue;
+    if (strict && this.persistenceError !== undefined) throw this.persistenceError;
   }
 }
 

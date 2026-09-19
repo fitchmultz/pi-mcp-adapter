@@ -1,9 +1,14 @@
+import type { McpCheckpointEvent } from "./checkpoint.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   Client,
   StreamableHTTPClientTransport,
   SSEClientTransport,
   SdkHttpError,
+  auth,
+  extractWWWAuthenticateParams,
+  UnauthorizedError,
+  type AuthProvider,
   type RequestOptions,
   type FetchLike,
   type GetPromptResult,
@@ -59,13 +64,62 @@ import {
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
 const abortCleanupPromises = new WeakMap<object, Promise<void>>();
-const clientOperations = new WeakMap<Client, Set<Promise<unknown>>>();
+type ClientOperation = "request/refresh" | "sampling callback" | "elicitation callback" | "subscription";
+const clientOperations = new WeakMap<Client, Map<Promise<unknown>, ClientOperation>>();
+
+async function drainClientCallbacks(client: Client): Promise<void> {
+  for (;;) {
+    const pending = [...(clientOperations.get(client) ?? [])]
+      .filter(([, kind]) => kind === "sampling callback" || kind === "elicitation callback")
+      .map(([operation]) => operation);
+    if (!pending.length) return;
+    await Promise.allSettled(pending);
+  }
+}
+
+async function drainClientOperations(client: Client): Promise<void> {
+  for (;;) {
+    const pending = [...(clientOperations.get(client)?.keys() ?? [])];
+    if (!pending.length) return;
+    await Promise.allSettled(pending);
+  }
+}
 
 // Track complete SDK operations, including pagination and pre-request cache awaits.
 class ManagedClient extends Client {
+  serverName = "";
   oauthProvider: McpOAuthProvider | undefined;
+  beforeActivity: () => void = () => {};
+  readonly resourceSubscriptions = new Set<string>();
+
+  private own<T>(operation: Promise<T>, kind: ClientOperation): Promise<T> {
+    let pending = clientOperations.get(this);
+    if (!pending) clientOperations.set(this, pending = new Map());
+    pending.set(operation, kind);
+    const settled = () => { pending.delete(operation); };
+    void operation.then(settled, settled);
+    return operation;
+  }
+
+  ownNative<T>(run: () => Promise<T>): Promise<T> {
+    this.beforeActivity();
+    return this.own(run(), "request/refresh");
+  }
+
+  ownSend(run: () => Promise<void>): Promise<void> {
+    this.beforeActivity();
+    // SDK-generated callback replies also perform HTTP/auth work, without calling callTool().
+    return this.own(Promise.resolve().then(run), "request/refresh");
+  }
+
+  ownCallback<T>(kind: "sampling callback" | "elicitation callback", run: () => Promise<T>): Promise<T> {
+    this.beforeActivity();
+    // Insert before dispatch. Cancellation/close of the SDK response does not settle this promise.
+    return this.own(Promise.resolve().then(run), kind);
+  }
 
   private async track<T>(start: (signal?: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    this.beforeActivity();
     const controller = this.oauthProvider ? new AbortController() : undefined;
     let removeAbortListener = () => {};
     const operation = this.oauthProvider
@@ -78,12 +132,8 @@ class ManagedClient extends Client {
           return start(controller!.signal);
         })
       : start(signal);
-    let pending = clientOperations.get(this);
-    if (!pending) clientOperations.set(this, pending = new Set());
-    pending.add(operation);
-    const settled = () => { pending.delete(operation); removeAbortListener(); };
-    void operation.then(settled, () => { controller?.abort(); settled(); });
-    return operation;
+    void operation.then(removeAbortListener, () => { controller?.abort(); removeAbortListener(); });
+    return this.own(operation, "request/refresh");
   }
 
   override callTool(...args: Parameters<Client["callTool"]>) {
@@ -108,6 +158,40 @@ class ManagedClient extends Client {
 
   override listPrompts(...args: Parameters<Client["listPrompts"]>) {
     return this.track(signal => super.listPrompts(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
+  }
+
+  override complete(...args: Parameters<Client["complete"]>) {
+    return this.track(signal => super.complete(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
+  }
+
+  override setLoggingLevel(...args: Parameters<Client["setLoggingLevel"]>) {
+    return this.track(signal => super.setLoggingLevel(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
+  }
+
+  override listen(...args: Parameters<Client["listen"]>) {
+    return this.track(async signal => {
+      const subscription = await super.listen(args[0], { ...args[1], ...(signal ? { signal } : {}) });
+      this.own(subscription.closed, "subscription");
+      return subscription;
+    }, args[1]?.signal);
+  }
+
+  override subscribeResource(...args: Parameters<Client["subscribeResource"]>) {
+    return this.track(async signal => {
+      throwIfAborted(signal);
+      // A cancelled/lost response does not prove the server rejected the subscription.
+      // Retain the attempted URI until an explicit unsubscribe succeeds or the connection is discarded.
+      if (this.getServerCapabilities()?.resources?.subscribe) this.resourceSubscriptions.add(args[0].uri);
+      return super.subscribeResource(args[0], { ...args[1], ...(signal ? { signal } : {}) });
+    }, args[1]?.signal);
+  }
+
+  override unsubscribeResource(...args: Parameters<Client["unsubscribeResource"]>) {
+    return this.track(async signal => {
+      const result = await super.unsubscribeResource(args[0], { ...args[1], ...(signal ? { signal } : {}) });
+      this.resourceSubscriptions.delete(args[0].uri);
+      return result;
+    }, args[1]?.signal);
   }
 }
 
@@ -159,6 +243,9 @@ type UiStreamListener = (serverName: string, notification: ServerStreamResultPat
 type MetadataListChangedListener = (serverName: string, reason: string) => void;
 
 export class McpServerManager {
+  // Includes native clients whose public connect/close facade ended before their send/auth tail.
+  // Their operation promises remain in the same clientOperations authority until settlement.
+  private ownedClients = new Set<ManagedClient>();
   private connections = new Map<string, ServerConnection>();
   private connectPromises = new Map<string, Promise<ServerConnection>>();
   private reconnectPromises = new Map<string, Promise<ServerConnection>>();
@@ -179,6 +266,78 @@ export class McpServerManager {
   private traceSettings: McpTraceSettings | undefined;
   private traceWriter: McpTraceWriter | undefined;
   private stopped = false;
+  private checkpoint: McpCheckpointEvent | undefined;
+  private readonly beforeActivity = () => this.checkpoint?.invalidate();
+
+  holdCheckpoint(event: McpCheckpointEvent): () => void {
+    if (this.checkpoint) throw new Error("MCP manager checkpoint is already held");
+    this.checkpoint = event;
+    return () => { if (this.checkpoint === event) this.checkpoint = undefined; };
+  }
+
+  getCheckpointBlocker(): string | undefined {
+    if (this.stopped) return "MCP manager is stopped";
+    if (this.connectPromises.size || this.reconnectPromises.size || this.closePromises.size || this.retiredConnections.size)
+      return "MCP connection/discovery/retirement is active";
+    if (this.acceptedUrlElicitations.size || this.uiStreamListeners.size)
+      return "MCP browser elicitation/UI stream is pending";
+    for (const client of this.ownedClients) {
+      // Only the SDK's exact auto-opened catalog handle reconstructs during connect().
+      // An explicit consumer listen(), even with the same filter, still owns private state.
+      const kinds = [...(clientOperations.get(client) ?? [])]
+        .filter(([operation, kind]) => kind !== "subscription" || operation !== client.autoOpenedSubscription?.closed)
+        .map(([, kind]) => kind);
+      const callback = kinds.find(kind => kind === "sampling callback" || kind === "elicitation callback");
+      if (callback) return `MCP ${client.serverName}: ${callback} is active`;
+      if (kinds.includes("request/refresh")) return `MCP ${client.serverName}: request/refresh is active`;
+      if (kinds.includes("subscription")) return `MCP ${client.serverName}: subscription is active`;
+    }
+    for (const [name, connection] of this.connections) {
+      if (connection.inFlight) return `MCP ${name}: request/refresh is active`;
+      if (connection.client instanceof ManagedClient && connection.client.resourceSubscriptions.size)
+        return `MCP ${name}: resource subscription is active or unresolved`;
+      if (!(connection.transport instanceof StreamableHTTPClientTransport)) return `MCP ${name}: only stateless Streamable HTTP is checkpoint-supported`;
+      if (connection.transport.sessionId !== undefined) return `MCP ${name}: HTTP session state is not reconstructible`;
+      const capabilities = connection.client.getServerCapabilities();
+      if (capabilities?.tasks) return `MCP ${name}: negotiated remote task state is not checkpoint-supported`;
+      const opaque = Object.keys(capabilities ?? {}).find(key =>
+        !["tools", "resources", "prompts", "logging", "completions"].includes(key)
+        && !(key === "experimental" && Object.keys(capabilities?.experimental ?? {}).length === 0));
+      if (opaque) return `MCP ${name}: unsupported negotiated capability ${opaque}`;
+    }
+    return undefined;
+  }
+
+  // Diagnostics are best-effort, not session authority or a clean-exit prerequisite.
+  async flushForCheckpoint(): Promise<void> { await this.traceWriter?.flush(); }
+
+  private releaseClientWhenSettled(client: Client): void {
+    if (client instanceof ManagedClient) void drainClientOperations(client).then(() => this.ownedClients.delete(client));
+  }
+
+  /** Fence before SDK callbacks AND before trace observers; retain native transport identity.
+   * Preserve existing property setters (including tracing) rather than replacing their behavior. */
+  private fenceTransport(transport: Transport, client: Client): void {
+    for (const key of ["onmessage", "onerror", "onclose"] as const) {
+      const descriptor = Object.getOwnPropertyDescriptor(transport, key);
+      let value = transport[key];
+      Object.defineProperty(transport, key, {
+        configurable: true,
+        get: () => {
+          const handler = descriptor?.get ? descriptor.get.call(transport) : value;
+          return handler ? (...args: unknown[]) => { this.beforeActivity(); return handler(...args); } : undefined;
+        },
+        set: next => { if (descriptor?.set) descriptor.set.call(transport, next); else value = next; },
+      });
+    }
+    if (typeof transport.send === "function") {
+      const send = transport.send.bind(transport);
+      transport.send = (...args) => {
+        this.beforeActivity();
+        return client instanceof ManagedClient ? client.ownSend(() => send(...args)) : send(...args);
+      };
+    }
+  }
 
   /** Default cwd for stdio servers without an explicit config `cwd`. */
   constructor(private readonly defaultCwd?: string) {}
@@ -245,6 +404,7 @@ export class McpServerManager {
   }
 
   async connect(name: string, definition: ServerDefinition, signal?: AbortSignal): Promise<ServerConnection> {
+    this.beforeActivity();
     if (isServerDisabled(definition)) throw new Error(`MCP server "${name}" is disabled`);
     if (this.stopped) throw new Error("MCP server manager is closed");
     const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
@@ -345,6 +505,7 @@ export class McpServerManager {
 
   /** Retire only the expected current client; accepted native work drains before close. */
   retire(name: string, connection: ServerConnection): void {
+    this.beforeActivity();
     if (this.connections.get(name) !== connection) return;
     connection.status = "closed";
     let retired = this.retiredConnections.get(name);
@@ -352,8 +513,12 @@ export class McpServerManager {
     if (retired.has(connection)) return;
     retired.add(connection);
     void (async () => {
-      const pending = clientOperations.get(connection.client);
-      while (pending?.size) await Promise.allSettled([...pending]);
+      for (;;) {
+        const pending = [...(clientOperations.get(connection.client) ?? [])]
+          .filter(([, kind]) => kind !== "subscription").map(([operation]) => operation);
+        if (!pending.length) break;
+        await Promise.allSettled(pending);
+      }
       await this.disposeConnection(connection);
       retired.delete(connection);
       if (retired.size === 0 && this.retiredConnections.get(name) === retired) this.retiredConnections.delete(name);
@@ -452,6 +617,7 @@ export class McpServerManager {
               || ![404, 405, 406, 415].includes(error.status)) throw error;
             legacySse = true;
             await client.close();
+            this.releaseClientWhenSettled(client);
             client = this.createClient(name, { ...definition, protocolVersion: "legacy" });
             ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
             if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
@@ -502,6 +668,7 @@ export class McpServerManager {
             || !supportsOAuth(definition) || !isOAuthChallenge(error)) throw error;
           implicitOAuth = true;
           await client.close();
+          this.releaseClientWhenSettled(client);
           client = this.createClient(name, legacySse ? { ...definition, protocolVersion: "legacy" } : definition);
           ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
           if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
@@ -518,6 +685,8 @@ export class McpServerManager {
         : await Promise.allSettled([
             abortCleanup ?? Promise.resolve().then(() => client.close()),
           ]);
+      await drainClientCallbacks(client);
+      this.releaseClientWhenSettled(client);
       const cleanupFailures = cleanupResults.flatMap(result => result.status === "rejected" ? [result.reason] : []);
       let reportedError: unknown = error;
       if (cleanupFailures.length > 0) {
@@ -563,6 +732,7 @@ export class McpServerManager {
     signal?: AbortSignal,
   ): Promise<void> {
     throwIfAborted(signal);
+    this.fenceTransport(transport, client);
     let abortCleanup: Promise<void> | undefined;
     const closeTransport = () => {
       abortCleanup = Promise.resolve().then(() => transport.close());
@@ -631,20 +801,24 @@ export class McpServerManager {
         },
       },
     );
+    client.serverName = serverName;
+    this.ownedClients.add(client);
+    client.beforeActivity = this.beforeActivity;
     if (this.samplingConfig) {
-      registerSamplingHandler(client, { ...this.samplingConfig, serverName });
+      registerSamplingHandler(client, { ...this.samplingConfig, serverName }, run => client.ownCallback("sampling callback", run));
     }
     if (this.elicitationConfig) {
       registerElicitationHandler(client, {
         ...this.elicitationConfig,
         serverName,
         onUrlAccepted: elicitationId => this.rememberUrlElicitation(serverName, elicitationId),
-      });
+      }, run => client.ownCallback("elicitation callback", run));
       if (this.elicitationConfig.allowUrl) {
         client.setNotificationHandler("notifications/elicitation/complete", notification => {
           if (this.runtimeSignal?.aborted) return;
           const accepted = this.acceptedUrlElicitations.get(serverName);
           if (!accepted?.delete(notification.params.elicitationId)) return;
+          if (accepted.size === 0) this.acceptedUrlElicitations.delete(serverName);
           this.elicitationConfig?.ui.notify(
             `MCP browser interaction for ${serverName} completed. You can retry the tool now.`,
             "info",
@@ -661,6 +835,7 @@ export class McpServerManager {
     error: Error | null,
     tools: McpTool[] | null,
   ): void {
+    this.beforeActivity();
     if (error) {
       logger.debug(`MCP: tools/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
@@ -678,6 +853,7 @@ export class McpServerManager {
     error: Error | null,
     prompts: McpPrompt[] | null,
   ): void {
+    this.beforeActivity();
     if (error) {
       logger.debug(`MCP: prompts/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
@@ -696,6 +872,7 @@ export class McpServerManager {
     error: Error | null,
     resources: McpResource[] | null,
   ): void {
+    this.beforeActivity();
     if (error) {
       logger.debug(`MCP: resources/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
@@ -799,32 +976,89 @@ export class McpServerManager {
     const authProvider = supportsOAuth(definition) && (definition.auth === "oauth" || implicitOAuth)
       ? createAuthProvider() : undefined;
     client.oauthProvider = authProvider;
+    let transportClosed = false;
+    // The SDK launches legacy GET bootstrap/reconnect outside send(). Fence every
+    // provider entry and own its ACTUAL promise (including signing/storage after
+    // cancellation). Keep the OAuthClientProvider shape: native 401/403 behavior,
+    // issuer validation and noninteractive grants remain SDK-owned.
+    const ownedProvider = authProvider && new Proxy(authProvider, {
+      get: (provider, key) => {
+        const value = Reflect.get(provider, key, provider);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => client.ownNative(async () => {
+          provider.lifetimeSignal.throwIfAborted();
+          return Reflect.apply(value, provider, args);
+        });
+      },
+    });
+    const fetch: FetchLike = (input, init) => client.ownNative(async () => {
+      if (transportClosed) throw new Error("MCP transport is closed");
+      const response = await trackToolTransportFailure(input, authProvider ? {
+        ...init, signal: combineAbortSignals(init?.signal ?? undefined,
+          init?.signal ? authProvider.lifetimeSignal : authProvider.signal)!,
+      } : init);
+      // Fetch resolves at headers. Native auth/discovery subsequently consumes
+      // text/JSON bodies; keep those real reads owned too. Never count the idle
+      // SSE body as a perpetual request: its messages use the ingress fence.
+      for (const method of ["text", "json"] as const) {
+        const read = response[method].bind(response);
+        response[method] = () => client.ownNative(read);
+      }
+      return response;
+    });
+    // Interactive transports already throw on insufficient_scope rather than
+    // running SDK step-up. The supported minimal AuthProvider seam lets us own
+    // the ENTIRE native 401 auth promise, including PKCE computation between
+    // provider calls. Noninteractive transports retain OAuthClientProvider so
+    // the SDK's 403 scope-union/retry policy is unchanged; all their asynchronous
+    // effects are provider calls (including JWT signing) and fetch/body reads.
+    const transportAuth: (AuthProvider & Pick<McpOAuthProvider, "redirectUrl" | "clientMetadata">) | McpOAuthProvider | undefined = ownedProvider
+      && !isNonInteractiveOAuth(definition.oauth) && !legacySse ? {
+        // Preserve transport configuration introspection; auth() uses this same provider.
+        get redirectUrl() { return ownedProvider.redirectUrl; },
+        get clientMetadata() { return ownedProvider.clientMetadata; },
+        token: () => client.ownNative(async () => (await ownedProvider.tokens())?.access_token),
+        onUnauthorized: context => client.ownNative(async () => {
+          const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(context.response);
+          const result = await auth(ownedProvider, {
+            serverUrl: context.serverUrl, fetchFn: context.fetchFn,
+            ...(resourceMetadataUrl !== undefined ? { resourceMetadataUrl } : {}),
+            ...(scope !== undefined ? { scope } : {}),
+            skipIssuerMetadataValidation: definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
+          });
+          if (result !== "AUTHORIZED") throw new UnauthorizedError();
+        }),
+      } : ownedProvider;
     const options = {
       ...(requestInit !== undefined ? { requestInit } : {}),
-      ...(authProvider !== undefined ? { authProvider } : {}),
+      ...(transportAuth !== undefined ? { authProvider: transportAuth } : {}),
       skipIssuerMetadataValidation: definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
-      // Native resource sends carry their own signal; OAuth discovery/token requests do not.
-      ...(authProvider ? { fetch: (input: Parameters<FetchLike>[0], init?: RequestInit) =>
-        trackToolTransportFailure(input, {
-          ...init, signal: combineAbortSignals(init?.signal ?? undefined,
-            init?.signal ? authProvider.lifetimeSignal : authProvider.signal)!,
-        }) } : { fetch: trackToolTransportFailure }),
+      fetch,
     };
     const transport: Transport = legacySse ? new SSEClientTransport(url, options) : new StreamableHTTPClientTransport(url, {
       ...options,
+      reconnectionScheduler: (reconnect, delay) => {
+        const timer = setTimeout(() => {
+          if (transportClosed) return;
+          this.beforeActivity();
+          reconnect();
+        }, delay);
+        return () => clearTimeout(timer);
+      },
       ...(supportsOAuth(definition) && !isNonInteractiveOAuth(definition.oauth)
         ? { onInsufficientScope: "throw" as const } : {}),
     });
     if (authProvider) {
       const send = transport.send.bind(transport);
       transport.send = async (message, options) => authProvider.runWithSignal(options?.requestSignal, () => send(message, options));
-      const close = transport.close.bind(transport);
-      transport.close = () => {
-        // Native OAuth fetches do not inherit the transport's abort signal.
-        authProvider.deactivate();
-        return close();
-      };
     }
+    const close = transport.close.bind(transport);
+    transport.close = () => {
+      transportClosed = true;
+      // Native OAuth fetches do not inherit the transport's abort signal.
+      authProvider?.deactivate();
+      return close();
+    };
     if (!legacySse && supportsOAuth(definition)) {
       const previous = transport.onerror;
       transport.onerror = error => {
@@ -938,6 +1172,7 @@ export class McpServerManager {
   }
 
   async close(name: string): Promise<void> {
+    this.beforeActivity();
     this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
     this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
     const pendingClose = this.closePromises.get(name);
@@ -946,6 +1181,8 @@ export class McpServerManager {
     const owned = new Set(this.retiredConnections.get(name));
     const connection = this.connections.get(name);
     if (connection) owned.add(connection);
+    // Keep failed cleanup/callback tails owned even after removal from the active connection map.
+    if (owned.size) this.retiredConnections.set(name, owned);
     // Remove the placeholder before awaiting cleanup; stale callers cannot resurrect it.
     this.connections.delete(name);
     this.acceptedUrlElicitations.delete(name);
@@ -978,9 +1215,19 @@ export class McpServerManager {
         this.traceWriter?.flush() ?? Promise.resolve(),
       ]);
       const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      // Keep ordinary per-server cancellation prompt, but retain native send/auth tails for
+      // readiness and final shutdown. Inbound handler promises still drain before disposal.
+      await drainClientCallbacks(connection.client);
       if (failures.length > 0) throw new AggregateError(failures, "MCP connection cleanup failed");
+      this.releaseClientWhenSettled(connection.client);
     })();
     this.disposePromises.set(connection, closing);
+    void closing.catch(() => {
+      // Native close retains its transport until onclose. Retry only on an
+      // explicit later close, retaining the connection/operations veto meanwhile.
+      if (connection.client.transport === connection.transport && this.disposePromises.get(connection) === closing)
+        this.disposePromises.delete(connection);
+    });
     return closing;
   }
 
@@ -996,7 +1243,8 @@ export class McpServerManager {
     this.acceptedUrlElicitations.clear();
     this.samplingConfig = undefined;
     this.elicitationConfig = undefined;
-    await this.traceWriter?.flush();
+    await Promise.all([...this.ownedClients].map(client => drainClientOperations(client)));
+    try { await this.flushForCheckpoint(); } catch (error) { failures.push(error); }
     if (failures.length > 0) throw new AggregateError(failures, "MCP manager cleanup failed");
   }
 
@@ -1049,6 +1297,9 @@ export class McpServerManager {
     const connection = this.connections.get(name);
     if (!connection || connection.status !== "connected") return false;
     if (connection.inFlight > 0) return false;
+    // Background subscriptions keep their existing idle policy, but accepted requests and
+    // callbacks (including cancellation tails) must not be closed as idle while unfinished.
+    if ([...(clientOperations.get(connection.client)?.values() ?? [])].some(kind => kind !== "subscription")) return false;
     return (Date.now() - connection.lastUsedAt) > timeoutMs;
   }
 }

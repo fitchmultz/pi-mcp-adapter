@@ -18,6 +18,30 @@ describe("MCP runtime ownership", () => {
     consoleError.mockRestore();
   });
 
+  it("invalidates before host callback dispatch and refuses clean shutdown while its real promise is pending", async () => {
+    const owner = createMcpRuntimeOwner();
+    const controller = new AbortController();
+    const invalidate = vi.fn(() => controller.abort());
+    const release = owner.holdCheckpoint({ boundary: "settled", signal: controller.signal, invalidate });
+    controller.signal.addEventListener("abort", release, { once: true });
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const callback = owner.runCallback("onToolCall", async () => {
+      expect(invalidate).toHaveBeenCalledOnce();
+      await gate;
+    });
+    const cleanup = vi.fn(); owner.addCleanup(cleanup);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(owner.getCheckpointBlocker()).toContain("onToolCall");
+      await expect(owner.stop()).rejects.toThrow(AggregateError);
+      expect(cleanup).toHaveBeenCalledOnce();
+    } finally {
+      finish(); await callback; consoleError.mockRestore();
+    }
+    expect(owner.getCheckpointBlocker()).toBeUndefined();
+  });
+
   it("does not invoke nested UI methods after the owner stops", async () => {
     const owner = createMcpRuntimeOwner();
     const ui = { notify: vi.fn(), theme: { fg: vi.fn((_color: string, text: string) => text) } } as any;

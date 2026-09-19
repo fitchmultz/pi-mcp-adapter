@@ -427,7 +427,9 @@ it("stops detached refresh after closing an established connection without repla
     const before = structuredClone(f.stored()); const requests = f.requests.length;
     await f.manager.close(f.name);
     expect(await pending).toBeInstanceOf(Error); expect(signing.pending()).toBeGreaterThan(0);
+    expect(f.manager.getCheckpointBlocker()).toContain("request/refresh");
     await signing.finish();
+    await expect.poll(() => f.manager.getCheckpointBlocker()).toBeUndefined();
     expect(f.exchanges).toHaveLength(1); expect(f.stored()).toEqual(before);
     expect(f.requests).toHaveLength(requests); expect(f.runtime.signal.aborted).toBe(false);
   } finally { await signing.finish(); signing.restore(); }

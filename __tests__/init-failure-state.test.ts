@@ -8,7 +8,7 @@ describe("MCP failure state", () => {
   it("bounds messages and removes diagnostics after the backoff TTL", () => {
     vi.useFakeTimers();
     const state = {
-      owner: { isActive: () => true },
+      owner: createMcpRuntimeOwner(),
       failureTracker: new Map<string, number>(),
       failureMessages: new Map<string, string>(),
     } as any;
@@ -29,7 +29,7 @@ describe("MCP failure state", () => {
   it("clears a prior expiry timer when a failure recovers", () => {
     vi.useFakeTimers();
     const state = {
-      owner: { isActive: () => true },
+      owner: createMcpRuntimeOwner(),
       failureTracker: new Map<string, number>(),
       failureMessages: new Map<string, string>(),
     } as any;
@@ -40,6 +40,23 @@ describe("MCP failure state", () => {
 
     expect(state.failureTracker.size).toBe(0);
     expect(state.failureMessages.size).toBe(0);
+  });
+
+  it("invalidates a held checkpoint before a failure-expiry callback changes state", () => {
+    vi.useFakeTimers();
+    const owner = createMcpRuntimeOwner();
+    const state = { owner, failureTracker: new Map(), failureMessages: new Map() } as any;
+    recordFailure(state, "demo", "failed");
+    const controller = new AbortController();
+    const invalidate = vi.fn(() => {
+      expect(state.failureTracker.has("demo")).toBe(true);
+      controller.abort();
+    });
+    const release = owner.holdCheckpoint({ boundary: "settled", signal: controller.signal, invalidate });
+    controller.signal.addEventListener("abort", release, { once: true });
+    vi.advanceTimersByTime(60_000);
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(state.failureTracker.size).toBe(0);
   });
 
   it("does not publish failure expiry after the runtime owner stops", async () => {

@@ -55,6 +55,7 @@ export interface McpExtensionState {
   consentManager: ConsentManager;
   uiServer: UiServerHandle | null;
   completedUiSessions: CompletedUiSession[];
+  activeScripts: number;
   openBrowser: (url: string) => Promise<void>;
   ui?: ExtensionContext["ui"];
   sendMessage?: SendMessageFn;

@@ -4,6 +4,8 @@ export class ConsentManager {
   private decisions = new Map<string, boolean>();
   private log = logger.child({ component: "ConsentManager" });
 
+  hasDecisions(): boolean { return this.decisions.size > 0; }
+
   requiresPrompt(serverName: string): boolean {
     return this.decisions.get(serverName) !== true;
   }

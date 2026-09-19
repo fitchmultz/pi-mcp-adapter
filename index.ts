@@ -20,6 +20,7 @@ import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS, runMcpScript } from "./mcp-code.ts";
 import { MAX_PAGE_SIZE, MAX_TOOL_NAME_LENGTH } from "./search-ranking.ts";
 import { abortable } from "./abort.ts";
+import { onSessionCheckpoint, prepareMcpCheckpoint } from "./checkpoint.ts";
 
 export type { McpAdapterOptions, McpOperationContext, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
 export {
@@ -72,37 +73,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       return;
     }
 
-    publishMcpStatusShutdown(currentState.statusEvents);
-
-    if (currentState.uiServer) {
-      currentState.uiServer.close(reason);
-      currentState.uiServer = null;
-    }
-
-    let flushError: unknown;
+    const failures: unknown[] = [];
+    try { publishMcpStatusShutdown(currentState.statusEvents); } catch (error) { failures.push(error); }
+    try { currentState.uiServer?.close(reason); } catch (error) { failures.push(error); }
+    currentState.uiServer = null;
+    try { flushMetadataCache(currentState); } catch (error) { failures.push(error); }
     try {
-      flushMetadataCache(currentState);
-    } catch (error) {
-      flushError = error;
-    }
-
-    try {
-      if (currentState.owner) {
-        await currentState.owner.stop(reason);
-      } else {
-        await currentState.lifecycle.gracefulShutdown();
-      }
-    } catch (error) {
-      if (flushError) {
-        console.error(`MCP: graceful shutdown failed after metadata flush error: ${formatTerminalError(error)}`);
-      } else {
-        throw error;
-      }
-    }
-
-    if (flushError) {
-      throw flushError;
-    }
+      if (currentState.owner) await currentState.owner.stop(reason);
+      else await currentState.lifecycle.gracefulShutdown();
+    } catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError(failures, "MCP state persistence/cleanup failed");
   }
 
   const earlyConfig = programmaticConfig
@@ -397,6 +377,12 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   });
 
+  onSessionCheckpoint(pi, async event => {
+    if (initPromise) return { sleepReady: false, reason: "MCP initialization is active" };
+    if (!state || !currentOwner?.isActive()) return { sleepReady: false, reason: "MCP runtime is not initialized" };
+    return prepareMcpCheckpoint(state, event);
+  });
+
   pi.on("session_shutdown", async () => {
     if (activationKey) {
       const activeTools = new Set(pi.getActiveTools());
@@ -418,15 +404,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     // Abort before awaiting cleanup so delayed initialization cannot touch stale
     // Pi context after session shutdown.
     const stopOwner = owner?.stop("MCP extension session shutdown") ?? Promise.resolve();
-    try {
-      await Promise.all([
-        stopOwner,
-        shutdownState(currentState, "session_shutdown"),
-        oauthRuntime ? shutdownOAuth(oauthRuntime) : Promise.resolve(),
-      ]);
-    } catch (error) {
-      console.error(`MCP: session shutdown cleanup failed: ${formatTerminalError(error)}`);
-    }
+    const results = await Promise.allSettled([
+      stopOwner,
+      shutdownState(currentState, "session_shutdown"),
+      oauthRuntime ? shutdownOAuth(oauthRuntime) : Promise.resolve(),
+    ]);
+    const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    // Ordinary extension error handling owns reporting. Strict clean-exit hosts must see failure.
+    if (failures.length) throw new AggregateError(failures, "MCP session shutdown persistence/cleanup failed");
   });
 
   // Re-flag returned MCP tool failures so pi registers them as errors (see toolErrorOverride).
@@ -739,7 +724,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
         // Non-call modes have no resolved MCP operation; hosts keep their conservative policy.
         if (!params.tool || params.action === "ui-messages" || params.action === "auth-start" || params.action === "auth-complete") {
-          await beforeExecute?.(toolCallId, ctx);
+          if (beforeExecute) {
+            if (currentOwner) await currentOwner.runCallback("beforeExecute", () => beforeExecute(toolCallId, ctx));
+            else await beforeExecute(toolCallId, ctx);
+          }
         }
         const executeOwner = currentOwner;
         let parsedArgs: Record<string, unknown> | undefined;
