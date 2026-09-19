@@ -534,14 +534,12 @@ export interface McpSettings {
    */
   authRequiredMessage?: string;
   /**
-   * Legacy OAuth tokens.json import directory.
-   * Relative paths are resolved from the project root (cwd).
-   * Takes precedence over the adapter's mcp-oauth/ legacy import directory but
-   * can still be overridden by the FITCH_MCP_OAUTH_DIR env variable.
-   *
-   * Persistent OAuth credentials are stored in the operating system credential
-   * store, not this directory. Existing plaintext tokens.json files found here
-   * are imported once and removed.
+   * Parent of the fitch-mcp-adapter/ legacy OAuth import directory.
+   * Relative paths resolve from the project root (cwd). Explicit v4 migration
+   * reads the original directory; runtime never consumes those source files.
+   * FITCH_MCP_OAUTH_DIR overrides the final runtime import path.
+   * Persistent credentials live in the OS credential store. Plaintext files
+   * in the runtime import directory are imported once and removed.
    */
   oauthDir?: string;
 }

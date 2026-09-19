@@ -358,7 +358,7 @@ function linuxKeyringRecoveryAuthSecretStore(service = AUTH_SECRET_SERVICE): Aut
 
 export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): AuthStorageOptions {
   const baseDir = resolveConfiguredOAuthDir(oauthDir, cwd);
-  return baseDir ? { baseDir } : {};
+  return baseDir ? { baseDir: join(baseDir, 'fitch-mcp-adapter') } : {};
 }
 
 export function getAuthBaseDir(options: AuthStorageOptions = {}): string {

@@ -45,7 +45,7 @@ If Pi's package bin is not on your `PATH`, use `npx --package @fitchmultz/pi-mcp
 
 Migration copies v4's global `mcp.json`, `mcp-cache.json`, `mcp-onboarding.json` and `mcp-npx-cache.json` into `<Pi agent dir>/fitch-mcp-adapter/`, and the current project's `.pi/mcp.json` into `.pi/fitch-mcp-adapter/mcp.json`. Existing destinations are reported and left unchanged, without merging. Repeat in each project that has an old override. Use the same `PI_CODING_AGENT_DIR` as your Pi installation.
 
-For configured HTTP servers, migration copies an existing OAuth entry from the old OS credential namespace or legacy token file only when the new namespace has no entry. It preserves URL/issuer bindings, client registration and tokens, verifies the copy, and never prints plaintext credentials. All old sources remain untouched. Dry-run lists file actions without reading the keychain or writing anything; repeated migration skips already-copied destinations.
+For configured HTTP servers, migration copies an existing OAuth entry from the old OS credential namespace or legacy token file only when the new namespace has no entry. It preserves URL/issuer bindings, client registration and tokens, verifies the copy, and never prints plaintext credentials. All old sources remain untouched. A configured `settings.oauthDir` uses a `fitch-mcp-adapter/` child directory during normal operation, keeping the original import files separate. Dry-run lists file actions without reading the keychain or writing anything; repeated migration skips already-copied destinations.
 
 Normal startup never falls back to old adapter-owned defaults or the old credential namespace, so logout cannot resurrect old credentials. Migration copies an existing provider grant; it does not create an independent grant. To use both distributions with independent provider grants, sign in separately. Shared standard MCP files and explicit `configPath`/imports retain their behavior. See [OAuth storage](OAUTH.md#token-storage).
 
@@ -163,7 +163,7 @@ The package ships TypeScript source for Pi's source-loader and SDK integrations.
 
 A supplied `config` is a complete, isolated snapshot. It is not merged with files, imports, global config, project config, or `--mcp-config`, and it is never mutated. Each adapter factory and session receives its own clone, so separate integrations can use different servers and settings safely. In this mode, server status, reconnect, explicit `/mcp-auth <server>`, proxy calls, and direct tools continue to work; setup and no-argument auth/status panels report the limitation instead of discovering or writing ambient config.
 
-With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` and `FITCH_MCP_OAUTH_DIR` are used only as legacy plaintext import locations for older `tokens.json` files, not as credential namespaces. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
+With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` selects the parent of a `fitch-mcp-adapter/` legacy plaintext import directory; `FITCH_MCP_OAUTH_DIR` explicitly overrides the final import path. Neither changes the OS credential namespace. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
 
 Set `createMcpAdapter({ outputDirectory: "/workspace/internal/mcp-output" })` to keep oversized tool/resource text, raw MCP JSON, and final `mcp_script` output beneath a host-owned directory. The directory is created on the first spill; each file still uses a random subdirectory/name and mode `0600`. Relative paths resolve from the process working directory when written; prefer an absolute path for hosts that change directories. This runtime option works with either configuration mode and does not change live results, output limits, or cleanup. The host owns retention, access, and any redaction of saved copies; files may contain sensitive data. Omitting it keeps the system temp directory.
 
@@ -441,7 +441,7 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
     "mcpFooterStatus": "compact",
     "hostConfigDiscovery": "off",
     "approveTools": ["github_delete_*", "notion_update_*"],
-    "oauthDir": ".pi/fitch-mcp-adapter/mcp-oauth",
+    "oauthDir": ".pi/mcp-oauth",
     "trace": {
       "enabled": true,
       "file": ".pi/fitch-mcp-adapter/traces/mcp.jsonl",
@@ -462,7 +462,7 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
 | `mcpFooterStatus` | MCP footer verbosity: `"compact"` (default) for `MCP connected/enabled`, `"full"` for enabled/connected/disabled detail, or `"off"` to clear the persistent footer status. `/mcp status` remains available. |
 | `hostConfigDiscovery` | Host-specific config policy: `"off"` (default) or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
 | `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
-| `oauthDir` | Legacy OAuth `tokens.json` import directory for this MCP config. Relative paths resolve from the active project cwd. `FITCH_MCP_OAUTH_DIR` wins when set; the old `MCP_OAUTH_DIR` is read only by explicit migration. Persistent OAuth credentials are stored in the OS credential store, not this directory. |
+| `oauthDir` | Parent directory for legacy OAuth imports. Runtime uses its `fitch-mcp-adapter/` child; explicit v4 migration reads the original directory. Relative paths resolve from the active project cwd. `FITCH_MCP_OAUTH_DIR` overrides the final runtime import path; the old `MCP_OAUTH_DIR` is read only by explicit migration. Persistent credentials live in the OS credential store. |
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ connect: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false. |

@@ -173,7 +173,7 @@ describe("mcp-auth storage paths", () => {
     expect(() => getAuthEntryFilePath(undefined as unknown as string)).toThrow(/Invalid MCP server name/);
   });
 
-  it("uses configured oauthDir as the legacy import source", () => {
+  it("namespaces the configured oauthDir legacy import source", () => {
     delete process.env.FITCH_MCP_OAUTH_DIR;
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
     const options = getAuthStorageOptions(".pi/oauth", project);
@@ -182,7 +182,7 @@ describe("mcp-auth storage paths", () => {
     writeFileSync(filePath, JSON.stringify({ tokens: { accessToken: "legacy-token" }, serverUrl: "https://example.com/mcp" }), "utf-8");
 
     expect(getAuthEntry("configured", options)?.tokens?.accessToken).toBe("legacy-token");
-    expect(filePath.startsWith(join(project, ".pi", "oauth"))).toBe(true);
+    expect(filePath.startsWith(join(project, ".pi", "oauth", "fitch-mcp-adapter"))).toBe(true);
     expect(existsSync(filePath)).toBe(false);
     expect(getAuthEntry("configured", options)?.tokens?.accessToken).toBe("legacy-token");
     rmSync(project, { recursive: true, force: true });

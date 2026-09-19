@@ -105,6 +105,33 @@ describe("explicit pre-v5 state migration", () => {
     expect(existsSync(join(project, ".pi", "fitch-mcp-adapter"))).toBe(false);
   });
 
+  it("keeps a custom legacy directory intact through runtime reads, refresh and logout", async () => {
+    write(join(agent, "mcp.json"), JSON.stringify({
+      mcpServers: { oauth: { url: "https://example.com/mcp" } },
+      settings: { oauthDir: ".pi/mcp-oauth" },
+    }));
+    const account = `sha256-${createHash("sha256").update("oauth").digest("hex")}`;
+    const source = join(project, ".pi", "mcp-oauth", account, "tokens.json");
+    const entry = { serverUrl: "https://example.com/mcp", tokens: { accessToken: "original-token" } };
+    const original = JSON.stringify(entry);
+    write(source, original);
+
+    const { migrateLegacyState } = await import("../legacy-migration.ts");
+    const { loadMcpConfig } = await import("../config.ts");
+    const { getAuthStorageOptions, getAuthForUrl, updateTokens, clearAllCredentials } = await import("../mcp-auth.ts");
+    expect(migrateLegacyState({ cwd: project }).credentials).toEqual([{ server: "oauth", status: "copied" }]);
+    const config = loadMcpConfig(undefined, project);
+    const options = getAuthStorageOptions(config.settings?.oauthDir, project);
+    expect(getAuthForUrl("oauth", entry.serverUrl, options)).toEqual(entry);
+    expect(readFileSync(source, "utf8")).toBe(original);
+    updateTokens("oauth", { accessToken: "refreshed-token" }, entry.serverUrl, options);
+    expect(getAuthForUrl("oauth", entry.serverUrl, options)?.tokens?.accessToken).toBe("refreshed-token");
+    expect(readFileSync(source, "utf8")).toBe(original);
+    clearAllCredentials("oauth", options);
+    expect(getAuthForUrl("oauth", entry.serverUrl, options)).toBeUndefined();
+    expect(readFileSync(source, "utf8")).toBe(original);
+  });
+
   it("imports configured legacy plaintext credentials once without deleting or falling back to them", async () => {
     write(join(agent, "mcp.json"), '{"mcpServers":{"oauth":{"url":"https://example.com/mcp"}}}');
     const account = `sha256-${createHash("sha256").update("oauth").digest("hex")}`;
