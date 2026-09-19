@@ -1,6 +1,6 @@
 # MCP client conformance tests
 
-This directory runs the official `@modelcontextprotocol/conformance` client suite against pi-mcp-adapter.
+This directory runs the official `@modelcontextprotocol/conformance` client suite against `@fitchmultz/pi-mcp-adapter`.
 
 The driver uses the adapter's own code rather than constructing a bare SDK client:
 

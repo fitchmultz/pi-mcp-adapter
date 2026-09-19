@@ -1,7 +1,7 @@
 // npx-resolver.ts - Resolve npx/npm exec binaries to avoid npm parent processes
 import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
 import { join, dirname, extname, resolve, sep } from "node:path";
-import { getAgentPath } from "./agent-dir.ts";
+import { getAdapterPath } from "./agent-dir.ts";
 import { throwIfAborted } from "./abort.ts";
 import crossSpawn from "cross-spawn";
 
@@ -431,7 +431,7 @@ function getNpmCacheDir(): string | null {
 }
 
 function getNpxCachePath(): string {
-  return getAgentPath("mcp-npx-cache.json");
+  return getAdapterPath("mcp-npx-cache.json");
 }
 
 function loadCache(): NpxCache | null {

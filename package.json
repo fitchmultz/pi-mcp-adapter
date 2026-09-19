@@ -1,7 +1,7 @@
 {
-  "name": "pi-mcp-adapter",
-  "version": "4.4.0",
-  "description": "MCP (Model Context Protocol) adapter extension for Pi coding agent",
+  "name": "@fitchmultz/pi-mcp-adapter",
+  "version": "5.0.0",
+  "description": "Fitch's independently maintained MCP adapter for Pi coding agent",
   "type": "module",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -17,12 +17,16 @@
     }
   },
   "license": "MIT",
-  "author": "Nico Bailon",
+  "author": "Mitch Fultz",
+  "contributors": ["Nico Bailon"],
+  "homepage": "https://github.com/fitchmultz/pi-mcp-adapter",
+  "bugs": "https://github.com/fitchmultz/pi-mcp-adapter/issues",
+  "publishConfig": { "access": "public" },
   "engines": {
     "node": ">=22.19.0"
   },
   "bin": {
-    "pi-mcp-adapter": "cli.js"
+    "fitch-mcp-adapter": "cli.js"
   },
   "scripts": {
     "build": "node ./scripts/build.mjs",
@@ -37,7 +41,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-mcp-adapter.git"
+    "url": "git+https://github.com/fitchmultz/pi-mcp-adapter.git"
   },
   "keywords": [
     "pi-package",
@@ -57,7 +61,7 @@
     "skills": [
       "./skills"
     ],
-    "video": "https://github.com/nicobailon/pi-mcp-adapter/raw/refs/heads/main/pi-mcp.mp4"
+    "video": "https://github.com/fitchmultz/pi-mcp-adapter/raw/refs/heads/main/pi-mcp.mp4"
   },
   "files": [
     "dist",
@@ -68,6 +72,7 @@
     "tsconfig.json",
     "cli.js",
     "agent-dir.ts",
+    "legacy-migration.ts",
     "index.ts",
     "error-signal.ts",
     "state.ts",
@@ -124,6 +129,7 @@
     "banner.png",
     "skills",
     "README.md",
+    "OAUTH.md",
     "CHANGELOG.md",
     "LICENSE"
   ],

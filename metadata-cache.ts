@@ -1,7 +1,7 @@
 // metadata-cache.ts - Persistent MCP metadata cache
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { getAgentPath } from "./agent-dir.ts";
+import { getAdapterPath } from "./agent-dir.ts";
 import { createHash } from "node:crypto";
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
@@ -36,7 +36,7 @@ const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export type { CachedPrompt, CachedResource, CachedTool, MetadataCache, ServerCacheEntry } from "./types.ts";
 
 export function getMetadataCachePath(): string {
-  return getAgentPath("mcp-cache.json");
+  return getAdapterPath("mcp-cache.json");
 }
 
 export function loadMetadataCache(enabled = true): MetadataCache | null {

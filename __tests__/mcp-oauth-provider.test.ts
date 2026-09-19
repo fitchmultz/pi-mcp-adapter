@@ -31,21 +31,21 @@ describe("McpOAuthProvider clientMetadata scope", () => {
 });
 
 describe("McpOAuthProvider addClientAuthentication", () => {
-  const originalOAuthDir = process.env.MCP_OAUTH_DIR;
+  const originalOAuthDir = process.env.FITCH_MCP_OAUTH_DIR;
   const serverUrl = "https://api.example.com/mcp";
   let authDir: string;
 
   beforeEach(() => {
     authDir = mkdtempSync(join(tmpdir(), "pi-mcp-oauth-auth-"));
-    process.env.MCP_OAUTH_DIR = authDir;
+    process.env.FITCH_MCP_OAUTH_DIR = authDir;
   });
 
   afterEach(() => {
     rmSync(authDir, { recursive: true, force: true });
     if (originalOAuthDir === undefined) {
-      delete process.env.MCP_OAUTH_DIR;
+      delete process.env.FITCH_MCP_OAUTH_DIR;
     } else {
-      process.env.MCP_OAUTH_DIR = originalOAuthDir;
+      process.env.FITCH_MCP_OAUTH_DIR = originalOAuthDir;
     }
   });
 
@@ -179,21 +179,21 @@ describe("McpOAuthProvider addClientAuthentication", () => {
 });
 
 describe("McpOAuthProvider discovery state", () => {
-  const originalOAuthDir = process.env.MCP_OAUTH_DIR;
+  const originalOAuthDir = process.env.FITCH_MCP_OAUTH_DIR;
   const serverUrl = "https://api.example.com/mcp";
   let authDir: string;
 
   beforeEach(() => {
     authDir = mkdtempSync(join(tmpdir(), "pi-mcp-oauth-discovery-"));
-    process.env.MCP_OAUTH_DIR = authDir;
+    process.env.FITCH_MCP_OAUTH_DIR = authDir;
   });
 
   afterEach(() => {
     rmSync(authDir, { recursive: true, force: true });
     if (originalOAuthDir === undefined) {
-      delete process.env.MCP_OAUTH_DIR;
+      delete process.env.FITCH_MCP_OAUTH_DIR;
     } else {
-      process.env.MCP_OAUTH_DIR = originalOAuthDir;
+      process.env.FITCH_MCP_OAUTH_DIR = originalOAuthDir;
     }
   });
 
@@ -436,21 +436,21 @@ describe("McpOAuthProvider discovery state", () => {
 });
 
 describe("McpOAuthProvider authorization fallback", () => {
-  const originalOAuthDir = process.env.MCP_OAUTH_DIR;
+  const originalOAuthDir = process.env.FITCH_MCP_OAUTH_DIR;
   const serverUrl = "https://api.example.com/mcp";
   let authDir: string;
 
   beforeEach(() => {
     authDir = mkdtempSync(join(tmpdir(), "pi-mcp-oauth-provider-"));
-    process.env.MCP_OAUTH_DIR = authDir;
+    process.env.FITCH_MCP_OAUTH_DIR = authDir;
   });
 
   afterEach(() => {
     rmSync(authDir, { recursive: true, force: true });
     if (originalOAuthDir === undefined) {
-      delete process.env.MCP_OAUTH_DIR;
+      delete process.env.FITCH_MCP_OAUTH_DIR;
     } else {
-      process.env.MCP_OAUTH_DIR = originalOAuthDir;
+      process.env.FITCH_MCP_OAUTH_DIR = originalOAuthDir;
     }
   });
 

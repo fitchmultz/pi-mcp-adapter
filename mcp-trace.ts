@@ -212,7 +212,7 @@ export function createMcpTraceWriter(
   const configuredPath = settings.file;
   const filePath = configuredPath
     ? (isAbsolute(configuredPath) ? configuredPath : resolve(sessionCwd ?? process.cwd(), configuredPath))
-    : resolve(sessionCwd ?? process.cwd(), ".pi", "mcp-traces", `mcp-${timestamp}-${randomSuffix}.jsonl`);
+    : resolve(sessionCwd ?? process.cwd(), ".pi", "fitch-mcp-adapter", "traces", `mcp-${timestamp}-${randomSuffix}.jsonl`);
   return new McpTraceWriter({
     filePath,
     ...(settings.maxBytes !== undefined ? { maxBytes: settings.maxBytes } : {}),

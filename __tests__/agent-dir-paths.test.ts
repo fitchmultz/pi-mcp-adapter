@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 describe("Pi agent dir paths", () => {
   const originalHome = process.env.HOME;
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const originalOAuthDir = process.env.MCP_OAUTH_DIR;
+  const originalOAuthDir = process.env.FITCH_MCP_OAUTH_DIR;
 
   beforeEach(() => {
     vi.resetModules();
@@ -20,9 +20,9 @@ describe("Pi agent dir paths", () => {
       process.env.PI_CODING_AGENT_DIR = originalAgentDir;
     }
     if (originalOAuthDir === undefined) {
-      delete process.env.MCP_OAUTH_DIR;
+      delete process.env.FITCH_MCP_OAUTH_DIR;
     } else {
-      process.env.MCP_OAUTH_DIR = originalOAuthDir;
+      process.env.FITCH_MCP_OAUTH_DIR = originalOAuthDir;
     }
   });
 
@@ -31,7 +31,7 @@ describe("Pi agent dir paths", () => {
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-"));
     process.env.HOME = home;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    delete process.env.MCP_OAUTH_DIR;
+    delete process.env.FITCH_MCP_OAUTH_DIR;
 
     const { getAgentDir } = await import("../agent-dir.ts");
     const { getPiGlobalConfigPath } = await import("../config.ts");
@@ -40,15 +40,15 @@ describe("Pi agent dir paths", () => {
     const { getAuthEntryFilePath, saveAuthEntry } = await import("../mcp-auth.ts");
 
     expect(getAgentDir()).toBe(agentDir);
-    expect(getPiGlobalConfigPath()).toBe(join(agentDir, "mcp.json"));
-    expect(getMetadataCachePath()).toBe(join(agentDir, "mcp-cache.json"));
-    expect(getOnboardingStatePath()).toBe(join(agentDir, "mcp-onboarding.json"));
+    expect(getPiGlobalConfigPath()).toBe(join(agentDir, "fitch-mcp-adapter", "mcp.json"));
+    expect(getMetadataCachePath()).toBe(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"));
+    expect(getOnboardingStatePath()).toBe(join(agentDir, "fitch-mcp-adapter", "mcp-onboarding.json"));
 
     saveAuthEntry("demo", { tokens: { accessToken: "token" } }, "https://example.com/mcp");
     expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
-    expect(getAuthEntryFilePath("demo").startsWith(join(agentDir, "mcp-oauth"))).toBe(true);
-    expect(existsSync(join(agentDir, "mcp-oauth", "demo", "tokens.json"))).toBe(false);
-    expect(existsSync(join(home, ".pi", "agent", "mcp-oauth", "demo", "tokens.json"))).toBe(false);
+    expect(getAuthEntryFilePath("demo").startsWith(join(agentDir, "fitch-mcp-adapter", "mcp-oauth"))).toBe(true);
+    expect(existsSync(join(agentDir, "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json"))).toBe(false);
+    expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json"))).toBe(false);
   });
 
   it("expands tilde in PI_CODING_AGENT_DIR", async () => {
@@ -61,13 +61,13 @@ describe("Pi agent dir paths", () => {
     expect(getAgentDir()).toBe(join(home, "custom-pi-agent"));
   });
 
-  it("keeps MCP_OAUTH_DIR as the explicit OAuth storage override", async () => {
+  it("keeps FITCH_MCP_OAUTH_DIR as the explicit legacy OAuth import override", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-"));
     const oauthDir = mkdtempSync(join(tmpdir(), "pi-mcp-oauth-dir-"));
     process.env.HOME = home;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.MCP_OAUTH_DIR = oauthDir;
+    process.env.FITCH_MCP_OAUTH_DIR = oauthDir;
 
     const { getAuthEntryFilePath, saveAuthEntry } = await import("../mcp-auth.ts");
 
@@ -75,6 +75,6 @@ describe("Pi agent dir paths", () => {
     expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
     expect(getAuthEntryFilePath("demo").startsWith(oauthDir)).toBe(true);
     expect(existsSync(join(oauthDir, "demo", "tokens.json"))).toBe(false);
-    expect(existsSync(join(agentDir, "mcp-oauth", "demo", "tokens.json"))).toBe(false);
+    expect(existsSync(join(agentDir, "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json"))).toBe(false);
   });
 });

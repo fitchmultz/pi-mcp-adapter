@@ -18,7 +18,7 @@ try {
   writeFileSync(join(consumer, "package.json"), JSON.stringify({
     private: true,
     type: "module",
-    dependencies: { "pi-mcp-adapter": `file:${installed}` },
+    dependencies: { "@fitchmultz/pi-mcp-adapter": `file:${installed}` },
   }));
   // npm owns the link; the adapter's dependency tree stays production-only.
   execFileSync("npm", ["install", "--ignore-scripts", "--omit=dev", "--install-links=false",

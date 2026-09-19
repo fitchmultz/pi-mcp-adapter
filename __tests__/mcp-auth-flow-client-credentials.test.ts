@@ -44,12 +44,12 @@ vi.mock("open", () => ({
 }));
 
 describe("mcp-auth-flow explicit auth", () => {
-  const originalOAuthDir = process.env.MCP_OAUTH_DIR;
+  const originalOAuthDir = process.env.FITCH_MCP_OAUTH_DIR;
   let authDir: string;
 
   beforeEach(() => {
     authDir = mkdtempSync(join(tmpdir(), "pi-mcp-auth-flow-"));
-    process.env.MCP_OAUTH_DIR = authDir;
+    process.env.FITCH_MCP_OAUTH_DIR = authDir;
     vi.resetModules();
     mocks.ensureCallbackServer.mockReset();
     mocks.waitForCallback.mockReset();
@@ -66,9 +66,9 @@ describe("mcp-auth-flow explicit auth", () => {
     vi.unstubAllGlobals();
     rmSync(authDir, { recursive: true, force: true });
     if (originalOAuthDir === undefined) {
-      delete process.env.MCP_OAUTH_DIR;
+      delete process.env.FITCH_MCP_OAUTH_DIR;
     } else {
-      process.env.MCP_OAUTH_DIR = originalOAuthDir;
+      process.env.FITCH_MCP_OAUTH_DIR = originalOAuthDir;
     }
   });
 
@@ -352,7 +352,7 @@ describe("mcp-auth-flow explicit auth", () => {
   });
 
   it("keeps same-name pending OAuth flows isolated while sharing secure-store credentials by server name", async () => {
-    delete process.env.MCP_OAUTH_DIR;
+    delete process.env.FITCH_MCP_OAUTH_DIR;
     const projectA = mkdtempSync(join(tmpdir(), "pi-mcp-auth-flow-a-"));
     const projectB = mkdtempSync(join(tmpdir(), "pi-mcp-auth-flow-b-"));
     const authStorageOptionsA = { baseDir: join(projectA, ".pi", "oauth") };

@@ -1,10 +1,10 @@
 # OAuth 2.1 Authentication for MCP
 
-This document describes the OAuth 2.1 + PKCE authentication implementation for the Pi MCP Adapter using the official MCP SDK.
+This document describes the OAuth 2.1 + PKCE authentication implementation for the Fitch MCP Adapter using the official MCP SDK.
 
 ## Overview
 
-The Pi MCP Adapter uses the official MCP SDK's built-in OAuth implementation, which provides:
+The Fitch MCP Adapter uses the official MCP SDK's built-in OAuth implementation, which provides:
 
 - **Automatic OAuth endpoint discovery** (RFC 9728) - No manual configuration needed
 - **Client ID Metadata Documents (CIMD)** - Shared public browser identity without per-server registration
@@ -84,7 +84,7 @@ You can optionally provide a pre-registered client:
 - `oauth.authorizationParams` - Extra authorization URL parameters for provider-specific extensions, such as Google's `{ "access_type": "offline", "prompt": "consent" }`. Flow-owned parameters like `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden.
 - `oauth.redirectUri` - Exact browser callback URI to advertise and bind, such as `http://localhost:3118/callback` (optional)
 - `oauth.clientName` - Client display name used for dynamic registration (optional, defaults to `Pi Coding Agent`)
-- `oauth.clientUri` - Client homepage URI used for dynamic registration (optional)
+- `oauth.clientUri` - Client homepage URI used for dynamic registration (defaults to `https://github.com/fitchmultz/pi-mcp-adapter`)
 - `oauth.clientMetadataUrl` - Custom HTTPS Client ID Metadata Document URL, or `false` to opt out for new registrations. Supports `${VAR}` and `$env:VAR` interpolation. URLs require a non-root path and must not contain userinfo, fragments or dot segments.
 - `oauth.skipIssuerMetadataValidation` - Skip only the SDK's metadata issuer-echo check for a known incompatible authorization server (default: `false`). This weakens metadata validation; prefer correcting the provider's metadata.
 
@@ -99,7 +99,7 @@ The SDK selects a client in this order:
 3. An eligible metadata document URL when the authorization server advertises `client_id_metadata_document_supported: true`.
 4. Dynamic client registration, when supported.
 
-The default document is [Pi MCP Adapter](https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json), with homepage `https://github.com/fitchmultz/pi-mcp-adapter`. It describes a native public browser client using `authorization_code`, `refresh_token` and token authentication method `none`. The authorization server fetches and validates the document; the adapter does not download or availability-check it.
+The default document is [Fitch MCP Adapter](https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json), with homepage `https://github.com/fitchmultz/pi-mcp-adapter`. It describes a native public browser client using `authorization_code`, `refresh_token` and token authentication method `none`. The authorization server fetches and validates the document; the adapter does not download or availability-check it.
 
 The shared identity covers HTTP loopback `/callback` redirects on `localhost`, `127.0.0.1` and `[::1]`. The document's listed port represents native loopback port variation, not a fixed runtime port. The adapter still asks the OS for a port unless an exact callback or static client is configured. Scheme, host, path and query must match; there are no wildcard callback paths.
 
@@ -153,7 +153,7 @@ Set `oauth.privateKeyJwt` to authenticate native token requests with `private_ke
 | `lifetimeSeconds` | Optional positive integer; native default is 300 seconds. |
 | `claims` | Optional object of additional JWT claims. Native `iss`, `sub`, `aud`, `iat`, `exp` and `jti` take precedence over overlapping entries. |
 
-Keys must belong to an externally registered `clientId`, or a custom `clientMetadataUrl` whose document describes `private_key_jwt` and provides the matching public verification key. The SDK signs issuer and subject as the actual selected client ID. Configured and usable stored clients retain their existing priority. If a previous login uses the shared method-`none` browser identity or a shared secret, private-key authentication fails before key resolution instead of silently migrating or erasing that login. `clientSecret` and `privateKeyJwt` cannot be configured together. The shared Pi document cannot identify a private-key client. Explicit pre-registration and opaque DCR client IDs are not classified as shared CIMD merely because their strings resemble a document URL.
+Keys must belong to an externally registered `clientId`, or a custom `clientMetadataUrl` whose document describes `private_key_jwt` and provides the matching public verification key. The SDK signs issuer and subject as the actual selected client ID. Configured and usable stored clients retain their existing priority. If a previous login uses the shared method-`none` browser identity or a shared secret, private-key authentication fails before key resolution instead of silently migrating or erasing that login. `clientSecret` and `privateKeyJwt` cannot be configured together. The shared Fitch document cannot identify a private-key client. Explicit pre-registration and opaque DCR client IDs are not classified as shared CIMD merely because their strings resemble a document URL.
 
 Omit `grantType` (or use `authorization_code`) for private-key authentication on browser code and refresh requests; existing PKCE, callbacks and issuer validation still apply. Client-credentials requests use `grant_type=client_credentials` plus a signed client assertion, not a JWT-bearer grant. Native scope precedence is unchanged: explicit `/mcp-auth` applies configured scope, while ordinary transport authentication can prefer a server challenge or protected-resource scope. This feature does not change scope step-up or retry policy.
 
@@ -323,7 +323,7 @@ A Node.js HTTP server runs on a loopback callback endpoint and handles the activ
 
 ## Token Storage
 
-Persistent OAuth entries are stored per configured server name in the operating system credential store, using macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
+Persistent OAuth entries are stored in service `fitch-mcp-adapter.oauth`, with the account `sha256-<hash of configured server name>`, using macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
 
 The adapter fails closed when the OS credential store is unavailable. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth; the adapter does not silently fall back to plaintext token files.
 
@@ -331,9 +331,15 @@ The optional native working-session checkpoint barrier acknowledges completed re
 
 On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path requires `keyctl` and `node` on `PATH`; missing, locked, or otherwise unavailable credential stores still fail closed.
 
-Older versions stored plaintext entries at `~/.pi/agent/mcp-oauth/sha256-<server-hash>/tokens.json`, or under `settings.oauthDir` / `MCP_OAUTH_DIR`. On first read after upgrade, a valid legacy entry is imported into the OS credential store and the plaintext `tokens.json` file is removed. These directories are now legacy import locations, not persistent credential stores or isolation namespaces.
+Normal runtime uses `<Pi agent dir>/fitch-mcp-adapter/mcp-oauth/sha256-<server-hash>/tokens.json` only for legacy plaintext imports. An explicit `settings.oauthDir` or `FITCH_MCP_OAUTH_DIR` can select another import directory; the environment variable takes precedence. A valid entry in these locations is imported on first read and its plaintext file removed. These directories do not change the OS credential namespace.
 
-The stored `serverUrl` field ensures credentials are invalidated if the server URL changes. Client and token issuer bindings also remain strict: a changed authorization-server issuer requires explicitly clearing credentials before authenticating again, including for CIMD. No stored-login or issuer migration is performed.
+Version 5 never automatically reads v4's `pi-mcp-adapter.oauth` service, old default `~/.pi/agent/mcp-oauth/` directory, or `MCP_OAUTH_DIR`. After installation and before restarting Pi, run `fitch-mcp-adapter migrate --dry-run`, then `fitch-mcp-adapter migrate` from each project with an old override. See [upgrade instructions](README.md#upgrading-from-v4).
+
+Explicit migration copies configured HTTP servers' old OS entries or legacy token files into the new service only when no destination credential exists. It preserves URL/issuer bindings, client registration and tokens, verifies each copy, prints no plaintext secrets, and leaves all old sources untouched. Dry-run lists file actions without reading the keychain or writing. Existing destinations are never overwritten or merged; repeated migration skips them. The old `MCP_OAUTH_DIR` is honored only for this explicit migration.
+
+Logging out removes the new namespace's entry; normal runtime cannot restore it from the old namespace. Migration preserves the existing provider grant rather than creating a second grant. Using both distributions with independent provider grants requires separate sign-ins.
+
+The stored `serverUrl` field ensures credentials are invalidated if the server URL changes. Client and token issuer bindings also remain strict: a changed authorization-server issuer requires explicitly clearing credentials before authenticating again, including for CIMD. Normal authentication never silently changes stored-login or issuer bindings.
 
 ### Android / Termux
 
@@ -351,7 +357,7 @@ A cryptographically secure random state parameter is generated for each flow and
 
 ### OS Credential Store
 
-Persistent OAuth credentials are written to the OS credential store. Legacy plaintext files are read only for one-way migration and are removed after successful import. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
+Persistent OAuth credentials are written to the OS credential store. Normal legacy imports remove their plaintext source after successful import; the explicit v4 migration leaves all old sources untouched. On Linux, revoked session-keyring errors can be retried once through a fresh `keyctl session` helper during explicit re-authentication.
 
 ### URL Validation
 
