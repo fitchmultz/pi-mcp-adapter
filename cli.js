@@ -17,12 +17,12 @@ function expandHome(input) {
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR?.trim()
   ? expandHome(process.env.PI_CODING_AGENT_DIR.trim())
   : path.join(HOME, ".pi", "agent");
-const PI_CONFIG_PATH = path.join(AGENT_DIR, "mcp.json");
+const PI_CONFIG_PATH = path.join(AGENT_DIR, "fitch-mcp-adapter", "mcp.json");
 const GENERIC_GLOBAL_CONFIG_PATH = path.join(HOME, ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATH = path.join(HOME, ".agents", "mcp.json");
 const AGENTS_NESTED_GLOBAL_CONFIG_PATH = path.join(HOME, ".agents", "mcp", "mcp.json");
 const PROJECT_CONFIG_PATH = path.resolve(process.cwd(), ".mcp.json");
-const PROJECT_PI_CONFIG_PATH = path.resolve(process.cwd(), ".pi", "mcp.json");
+const PROJECT_PI_CONFIG_PATH = path.resolve(process.cwd(), ".pi", "fitch-mcp-adapter", "mcp.json");
 
 const IMPORT_PATHS = {
   cursor: [path.join(HOME, ".cursor", "mcp.json")],
@@ -45,13 +45,14 @@ const IMPORT_PATHS = {
 };
 
 function printHelp(log = console.log) {
-  log("pi-mcp-adapter helper\n");
+  log("Fitch MCP Adapter helper\n");
   log("Install the package with:");
-  log("  pi install npm:pi-mcp-adapter\n");
+  log("  pi install npm:@fitchmultz/pi-mcp-adapter\n");
   log("Then optionally run:");
-  log("  pi-mcp-adapter init       Detect host configs and scaffold Pi imports");
-  log("  pi-mcp-adapter init --dry-run");
-  log("  pi-mcp-adapter init --discover-host-configs  Opt in to host config fallback discovery");
+  log("  fitch-mcp-adapter init       Detect host configs and scaffold Pi imports");
+  log("  fitch-mcp-adapter init --dry-run");
+  log("  fitch-mcp-adapter init --discover-host-configs  Opt in to host config fallback discovery");
+  log("  fitch-mcp-adapter migrate [--dry-run]  Copy pre-v5 state without changing its sources");
 }
 
 function readJsonFile(filePath) {
@@ -183,12 +184,24 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
 
   if (command === "install") {
     error("The custom downloader has been retired.");
-    error("Use `pi install npm:pi-mcp-adapter` instead, then optionally run `pi-mcp-adapter init`.");
+    error("Use `pi install npm:@fitchmultz/pi-mcp-adapter` instead, then optionally run `fitch-mcp-adapter init`.");
     return 1;
   }
 
   if (command === "init") {
     return runInit(rest, log);
+  }
+
+  if (command === "migrate") {
+    const { migrateLegacyState } = await import("./dist/legacy-migration.js");
+    const dryRun = rest.includes("--dry-run");
+    const result = migrateLegacyState({ dryRun });
+    for (const file of result.files) log(`${file.status}: ${file.source} -> ${file.destination}`);
+    for (const credential of result.credentials) log(`OAuth ${credential.server}: ${credential.status}`);
+    log(dryRun
+      ? "Dry run: no files changed and no credential store accessed."
+      : "Migration complete. Existing destinations and all source files/credentials were left intact. Restart Pi to use the independent adapter.");
+    return 0;
   }
 
   error(`Unknown command: ${command}`);

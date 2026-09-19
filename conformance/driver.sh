@@ -11,7 +11,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-export MCP_OAUTH_DIR="$AUTH_DIR"
+export FITCH_MCP_OAUTH_DIR="$AUTH_DIR"
 export PI_MCP_ADAPTER_TEST_AUTH_STORE=memory
 
 # Pre-registered browser clients require an exact callback port. Allocate one

@@ -12,7 +12,7 @@ import Module from "node:module"
 
 // Set up isolated temp directory for tests
 const TEST_DIR = join(tmpdir(), `mcp-oauth-test-${randomBytes(4).toString('hex')}`)
-process.env.MCP_OAUTH_DIR = TEST_DIR
+process.env.FITCH_MCP_OAUTH_DIR = TEST_DIR
 
 import {
   getAuthEntry,

@@ -77,7 +77,7 @@ async function createReloadHarness() {
   const cwd = join(root, "project");
   await writeFile(join(root, "placeholder"), "ok");
   await Promise.all([
-    mkdir(agentDir, { recursive: true }),
+    mkdir(join(agentDir, "fitch-mcp-adapter"), { recursive: true }),
     mkdir(cwd, { recursive: true }),
   ]);
   const pidDir = join(root, "pids");
@@ -90,12 +90,12 @@ async function createReloadHarness() {
     lifecycle: "eager" as const,
     directTools: true,
   };
-  const configPath = join(agentDir, "mcp.json");
+  const configPath = join(agentDir, "fitch-mcp-adapter", "mcp.json");
   await writeFile(configPath, JSON.stringify({
     mcpServers: { delayed: definition },
     settings: { sampling: false, elicitation: false },
   }));
-  await writeFile(join(agentDir, "mcp-cache.json"), JSON.stringify({
+  await writeFile(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"), JSON.stringify({
     version: 1,
     servers: {
       delayed: {
@@ -211,7 +211,7 @@ describe("Pi registered extension reload real path", () => {
     const pidDir = join(root, "pids");
     await Promise.all([
       mkdir(join(cwd, ".git"), { recursive: true }),
-      mkdir(agentDir, { recursive: true }),
+      mkdir(join(agentDir, "fitch-mcp-adapter"), { recursive: true }),
       mkdir(pidDir, { recursive: true }),
     ]);
     process.env.HOME = root;
@@ -229,7 +229,7 @@ describe("Pi registered extension reload real path", () => {
       mcpServers: { demo: definition },
       settings: { sampling: false, elicitation: false },
     }));
-    const cachePath = join(agentDir, "mcp-cache.json");
+    const cachePath = join(agentDir, "fitch-mcp-adapter", "mcp-cache.json");
     await writeFile(cachePath, JSON.stringify({
       version: 1,
       servers: {

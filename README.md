@@ -2,9 +2,11 @@
   <img src="banner.png" alt="pi-mcp-adapter" width="1100">
 </p>
 
-# Pi MCP Adapter
+# Fitch MCP Adapter
 
 Use MCP servers with [Pi](https://github.com/badlogic/pi-mono/) without burning your context window.
+
+An independently maintained distribution of [Nico's Pi MCP Adapter](https://github.com/nicobailon/pi-mcp-adapter), under the original MIT license.
 
 https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a
 
@@ -21,10 +23,31 @@ But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter
 Requires Pi 0.84.0 or later and Node.js 22.19.0 or later.
 
 ```bash
-pi install npm:pi-mcp-adapter
+pi install npm:@fitchmultz/pi-mcp-adapter
 ```
 
-Restart Pi after installation.
+Or install from Git: `pi install git:github.com/fitchmultz/pi-mcp-adapter`.
+
+Restart Pi after installation. Existing v4 users should migrate first.
+
+### Upgrading from v4
+
+Version 5 uses its own package, state paths and OAuth credential namespace. Remove the previous adapter package entry from Pi settings (for example, `pi remove npm:pi-mcp-adapter` for the unscoped npm source), then install the distribution above. Keep only one adapter loaded in a Pi host.
+
+After installation, **before restarting Pi**, run from your project directory:
+
+```bash
+fitch-mcp-adapter migrate --dry-run
+fitch-mcp-adapter migrate
+```
+
+If Pi's package bin is not on your `PATH`, use `npx --package @fitchmultz/pi-mcp-adapter fitch-mcp-adapter migrate` (append `--dry-run` to preview).
+
+Migration copies v4's global `mcp.json`, `mcp-cache.json`, `mcp-onboarding.json` and `mcp-npx-cache.json` into `<Pi agent dir>/fitch-mcp-adapter/`, and the current project's `.pi/mcp.json` into `.pi/fitch-mcp-adapter/mcp.json`. Existing destinations are reported and left unchanged, without merging. Repeat in each project that has an old override. Use the same `PI_CODING_AGENT_DIR` as your Pi installation.
+
+For configured HTTP servers, migration copies an existing OAuth entry from the old OS credential namespace or legacy token file only when the new namespace has no entry. It preserves URL/issuer bindings, client registration and tokens, verifies the copy, and never prints plaintext credentials. All old sources remain untouched. A configured `settings.oauthDir` uses a `fitch-mcp-adapter/` child directory during normal operation, keeping the original import files separate. Dry-run lists file actions without reading the keychain or writing anything; repeated migration skips already-copied destinations.
+
+Normal startup never falls back to old adapter-owned defaults or the old credential namespace, so logout cannot resurrect old credentials. Migration copies an existing provider grant; it does not create an independent grant. To use both distributions with independent provider grants, sign in separately. Shared standard MCP files and explicit `configPath`/imports retain their behavior. See [OAuth storage](OAUTH.md#token-storage).
 
 ## What happens on first run
 
@@ -36,7 +59,7 @@ The adapter reads standard MCP files automatically. No extra setup needed if you
 | Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
 | Nothing configured yet | Run `/mcp setup` to scaffold a minimal `.mcp.json`, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
 
-If you prefer the terminal, you can also run `pi-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to the Pi agent dir (`~/.pi/agent/mcp.json` by default, or `$PI_CODING_AGENT_DIR/mcp.json` when set).
+If you prefer the terminal, run `fitch-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to `~/.pi/agent/fitch-mcp-adapter/mcp.json` (or `$PI_CODING_AGENT_DIR/fitch-mcp-adapter/mcp.json` when set).
 
 ## Quick Start
 
@@ -57,23 +80,23 @@ Preferred user-global shared config: `~/.config/mcp/mcp.json`. Pi also reads the
 
 Pi also reads Pi-owned override files for settings and host-specific compatibility:
 
-- `<Pi agent dir>/mcp.json` — Pi global override (`~/.pi/agent/mcp.json` by default)
-- `.pi/mcp.json` — Pi project override
+- `<Pi agent dir>/fitch-mcp-adapter/mcp.json` — adapter global override (`~/.pi/agent/fitch-mcp-adapter/mcp.json` by default)
+- `.pi/fitch-mcp-adapter/mcp.json` — adapter project override
 
-Host-specific configs are detected and shown by `/mcp setup` and `pi-mcp-adapter init`, but they are not loaded automatically. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `pi-mcp-adapter init --discover-host-configs`. The default is `"off"`. Host configs are lower precedence than every shared and Pi-owned source, and `/mcp setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
+Host-specific configs are detected and shown by `/mcp setup` and `fitch-mcp-adapter init`, but they are not loaded automatically. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `fitch-mcp-adapter init --discover-host-configs`. The default is `"off"`. Host configs are lower precedence than every shared and Pi-owned source, and `/mcp setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
 
 Precedence is:
 
 1. `~/.config/mcp/mcp.json`
 2. `~/.agents/mcp.json`
 3. `~/.agents/mcp/mcp.json`
-4. `<Pi agent dir>/mcp.json`
+4. `<Pi agent dir>/fitch-mcp-adapter/mcp.json`
 5. `.mcp.json`
-6. `.pi/mcp.json`
+6. `.pi/fitch-mcp-adapter/mcp.json`
 
 Project layers and project-local host imports are read only after Pi marks the project trusted. Until then, the adapter uses global configuration only, does not start project-defined servers, and blocks project configuration panels and writes.
 
-`/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
+`/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/fitch-mcp-adapter/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
 
 Servers are **lazy by default** — they won't connect until you actually call one of their tools. The adapter caches tool metadata so search and describe work without live connections.
 
@@ -108,8 +131,10 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 | `~/.agents/mcp.json` | User-global tool-agnostic MCP config |
 | `~/.agents/mcp/mcp.json` | User-global tool-agnostic MCP config |
 | `.mcp.json` | Project-local shared MCP config |
-| `<Pi agent dir>/mcp.json` | Pi global override and compatibility imports (`~/.pi/agent/mcp.json` by default) |
-| `.pi/mcp.json` | Pi project override |
+| `<Pi agent dir>/fitch-mcp-adapter/mcp.json` | Adapter global override and compatibility imports |
+| `.pi/fitch-mcp-adapter/mcp.json` | Adapter project override |
+
+The Pi agent dir defaults to `~/.pi/agent` and honors `PI_CODING_AGENT_DIR`. The owned `fitch-mcp-adapter/` root also contains `mcp-cache.json`, `mcp-onboarding.json`, `mcp-npx-cache.json`, and the `mcp-oauth/` legacy import directory.
 
 For imported or shared global servers, Pi saves only `directTools` selections in its own config, without copying connection details or credentials from the source file.
 
@@ -118,7 +143,7 @@ For imported or shared global servers, Pi saves only `directTools` selections in
 Use `createMcpAdapter` when an SDK or server integration already owns its MCP configuration:
 
 ```ts
-import { createMcpAdapter } from "pi-mcp-adapter";
+import { createMcpAdapter } from "@fitchmultz/pi-mcp-adapter";
 
 const extension = createMcpAdapter({
   config: {
@@ -138,7 +163,7 @@ The package ships TypeScript source for Pi's source-loader and SDK integrations.
 
 A supplied `config` is a complete, isolated snapshot. It is not merged with files, imports, global config, project config, or `--mcp-config`, and it is never mutated. Each adapter factory and session receives its own clone, so separate integrations can use different servers and settings safely. In this mode, server status, reconnect, explicit `/mcp-auth <server>`, proxy calls, and direct tools continue to work; setup and no-argument auth/status panels report the limitation instead of discovering or writing ambient config.
 
-With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` and `MCP_OAUTH_DIR` are used only as legacy plaintext import locations for older `tokens.json` files, not as credential namespaces. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
+With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` selects the parent of a `fitch-mcp-adapter/` legacy plaintext import directory; `FITCH_MCP_OAUTH_DIR` explicitly overrides the final import path. Neither changes the OS credential namespace. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
 
 Set `createMcpAdapter({ outputDirectory: "/workspace/internal/mcp-output" })` to keep oversized tool/resource text, raw MCP JSON, and final `mcp_script` output beneath a host-owned directory. The directory is created on the first spill; each file still uses a random subdirectory/name and mode `0600`. Relative paths resolve from the process working directory when written; prefer an absolute path for hosts that change directories. This runtime option works with either configuration mode and does not change live results, output limits, or cleanup. The host owns retention, access, and any redaction of saved copies; files may contain sensitive data. Omitting it keeps the system temp directory.
 
@@ -176,7 +201,7 @@ Supplying `beforeExecute` marks the adapter's tools `executionMode: "sequential"
 
 `createMcpAdapter({ onToolCall: async (event) => { ... } })` supplies one optional, session-scoped callback for `mcp`, direct tools, and each resolved `mcp_script` call. Load this factory instead of also loading the default adapter. The callback is passed directly, so separate Pi/Jiti module instances do not need to share a singleton or event bus.
 
-`McpToolCallEvent` (exported from `pi-mcp-adapter/types`) contains `server`, `tool`, the actual resolved `args`, optional SDK `annotations` and `resourceUri`, and a cancellation/deadline `signal`. `toolCallId` is the outer native Pi ID; scripts additionally carry their existing numeric `innerCallId`. These IDs are correlation only, not provider idempotency keys.
+`McpToolCallEvent` (exported from `@fitchmultz/pi-mcp-adapter/types`) contains `server`, `tool`, the actual resolved `args`, optional SDK `annotations` and `resourceUri`, and a cancellation/deadline `signal`. `toolCallId` is the outer native Pi ID; scripts additionally carry their existing numeric `innerCallId`. These IDs are correlation only, not provider idempotency keys.
 
 - `phase: "before"`: awaited after approval, before dispatch. Rejection prevents the call.
 - `phase: "after"`: contains either the raw `result` (including MCP error results) or the thrown `error`. Awaited before delivering the outcome to Pi or dependent script work. It runs once after native recovery/retry settles, not once per HTTP subrequest. Output spill files are written **after** this callback; they are complete when the tool or awaited script call resolves, not at the after event.
@@ -201,7 +226,7 @@ Before any asynchronous flush, the adapter fences owned activity and pauses its 
 Extensions can subscribe to the adapter's versioned shared event-bus channel instead of parsing `/mcp` or `mcp({})` output:
 
 ```ts
-import { MCP_STATUS_EVENT, type McpStatusSnapshot } from "pi-mcp-adapter";
+import { MCP_STATUS_EVENT, type McpStatusSnapshot } from "@fitchmultz/pi-mcp-adapter";
 
 pi.events.on(MCP_STATUS_EVENT, (snapshot) => {
   const status = snapshot as McpStatusSnapshot;
@@ -210,7 +235,7 @@ pi.events.on(MCP_STATUS_EVENT, (snapshot) => {
 });
 ```
 
-The snapshot is read-only machine-readable data with copied per-server entries. It includes `totalTools`, `totalResources`, `connectedCount`, and `disabledCount`; each server includes `name`, `status`, `toolCount`, and `disabled`, with `resourceCount` when known and `failedAgoSeconds` only for an active failure. Reading status never connects a lazy server, starts authentication, or exposes SDK clients, transports, credentials, or server definitions. An initial snapshot is emitted after initialization, updates are emitted for status and metadata changes, and an empty snapshot is emitted when the session shuts down.
+`MCP_STATUS_EVENT` is `fitch-mcp-adapter/status/v1`. The snapshot is read-only machine-readable data with copied per-server entries. It includes `totalTools`, `totalResources`, `connectedCount`, and `disabledCount`; each server includes `name`, `status`, `toolCount`, and `disabled`, with `resourceCount` when known and `failedAgoSeconds` only for an active failure. Reading status never connects a lazy server, starts authentication, or exposes SDK clients, transports, credentials, or server definitions. An initial snapshot is emitted after initialization, updates are emitted for status and metadata changes, and an empty snapshot is emitted when the session shuts down.
 
 In the configuration examples below, `30000` is illustrative only. If `requestTimeoutMs` is omitted or set to `<= 0`, the MCP SDK default timeout is used.
 
@@ -296,7 +321,7 @@ Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, `oauth.privateK
 
 ### OAuth client registration
 
-Eligible browser clients automatically use the [Pi MCP Adapter client metadata document](https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json). The SDK keeps configured `clientId` and usable stored registrations first, then uses the document when the authorization server advertises `client_id_metadata_document_supported: true`. Otherwise it uses dynamic client registration (DCR), if available. An authorization server rejecting or failing to fetch a document does **not** guarantee a fallback to DCR.
+Eligible browser clients automatically use the [Fitch MCP Adapter client metadata document](https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json). The SDK keeps configured `clientId` and usable stored registrations first, then uses the document when the authorization server advertises `client_id_metadata_document_supported: true`. Otherwise it uses dynamic client registration (DCR), if available. An authorization server rejecting or failing to fetch a document does **not** guarantee a fallback to DCR.
 
 The shared public identity covers `/callback` on HTTP `localhost`, `127.0.0.1`, or `[::1]`, with a variable loopback port. Normal callbacks still use an OS-assigned port. A different `clientName`, `clientUri`, callback path or query keeps DCR; explicitly matching identity values remain eligible. Set `oauth.clientMetadataUrl` to your own document URL for a custom identity/callback, or `false` to opt out. Documents cannot use shared secrets; the shared browser identity is never used for `client_credentials`, cross-app or private-key authentication.
 
@@ -419,7 +444,7 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
     "oauthDir": ".pi/mcp-oauth",
     "trace": {
       "enabled": true,
-      "file": ".pi/mcp-traces/mcp.jsonl",
+      "file": ".pi/fitch-mcp-adapter/traces/mcp.jsonl",
       "maxBytes": 262144,
       "maxEvents": 10000
     }
@@ -437,7 +462,7 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
 | `mcpFooterStatus` | MCP footer verbosity: `"compact"` (default) for `MCP connected/enabled`, `"full"` for enabled/connected/disabled detail, or `"off"` to clear the persistent footer status. `/mcp status` remains available. |
 | `hostConfigDiscovery` | Host-specific config policy: `"off"` (default) or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
 | `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
-| `oauthDir` | Legacy OAuth `tokens.json` import directory for this MCP config. Relative paths resolve from the active project cwd. `MCP_OAUTH_DIR` still wins when set. Persistent OAuth credentials are stored in the OS credential store, not this directory. |
+| `oauthDir` | Parent directory for legacy OAuth imports. Runtime uses its `fitch-mcp-adapter/` child; explicit v4 migration reads the original directory. Relative paths resolve from the active project cwd. `FITCH_MCP_OAUTH_DIR` overrides the final runtime import path; the old `MCP_OAUTH_DIR` is read only by explicit migration. Persistent credentials live in the OS credential store. |
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
 | `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ connect: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false. |
@@ -448,7 +473,7 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
 | `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
 | `elicitation` | Allow MCP servers to request user input through Pi dialogs (default: true when Pi UI is available). |
 | `outputGuard` | Guard oversized MCP output: `true` (default), `false`, or `{ maxBytes, maxLines, detailsMaxBytes }`. See [Output Guard](#output-guard). |
-| `trace` | Opt-in metadata-only protocol tracing. Set `{ enabled: true }` globally or `trace: true` on a server. The per-session JSONL file defaults to `.pi/mcp-traces/`; `file`, `maxBytes` (default 262144), and `maxEvents` (default 10000) can be set. Raw MCP payloads, prompts, tool arguments/results, auth data, and URLs are never persisted. |
+| `trace` | Opt-in metadata-only protocol tracing. Set `{ enabled: true }` globally or `trace: true` on a server. The per-session JSONL file defaults to `.pi/fitch-mcp-adapter/traces/`; `file`, `maxBytes` (default 262144), and `maxEvents` (default 10000) can be set. Raw MCP payloads, prompts, tool arguments/results, auth data, and URLs are never persisted. |
 
 Per-server `idleTimeout`, `requestTimeoutMs`, and `approveTools` override the global settings. `debug` remains stderr display and is unrelated to protocol tracing.
 
@@ -499,7 +524,7 @@ The bundled `mcp-scripting` skill is a separate Pi package resource. To hide tha
 ```json
 {
   "packages": [
-    { "source": "npm:pi-mcp-adapter", "skills": [] }
+    { "source": "npm:@fitchmultz/pi-mcp-adapter", "skills": [] }
   ]
 }
 ```
@@ -632,7 +657,7 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
 
 Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`. If 75+ direct tools resolve, the adapter prints a warning but still registers the tools you configured.
 
-Direct tools register from the metadata cache in the Pi agent dir (`~/.pi/agent/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only while the cache populates, then the extension hot-loads the refreshed direct tools into the current session. Servers that advertise MCP list-change notifications refresh the current session when their tool or resource list changes. Stale direct tools are deactivated from the active tool set and reactivated if a later refresh restores them. To force a refresh: `/mcp reconnect <server>`.
+Direct tools register from the metadata cache (`~/.pi/agent/fitch-mcp-adapter/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/fitch-mcp-adapter/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only while the cache populates, then the extension hot-loads the refreshed direct tools into the current session. Servers that advertise MCP list-change notifications refresh the current session when their tool or resource list changes. Stale direct tools are deactivated from the active tool set and reactivated if a later refresh restores them. To force a refresh: `/mcp reconnect <server>`.
 
 If prompt-cache stability matters more than automatic direct-tool hot-loading, set `settings.freezeDirectTools` to `true`. The initial direct-tool sync still runs, but later automatic reconnects, lazy-connects, and list-change notifications keep the registered tool surface unchanged. Deliberate refreshes through `mcp({ connect: "server" })` or `/mcp reconnect <server>` still update direct tools.
 
@@ -652,7 +677,7 @@ MCP servers can ship interactive UIs via the [MCP UI](https://github.com/MCP-UI-
 
 1. Agent calls a tool like `launch_dashboard`
 2. The tool's metadata includes `_meta.ui.resourceUri` pointing to a UI resource
-3. pi-mcp-adapter fetches the UI HTML and opens it in an iframe
+3. The adapter fetches the UI HTML and opens it in an iframe
 4. The UI can call MCP tools and send messages back to the agent
 
 **Native rendering:** On macOS, if [Glimpse](https://github.com/hazat/glimpse) is installed (`pi install npm:glimpseui`), UIs open in a native WKWebView window instead of a browser tab. Set `MCP_UI_VIEWER=browser` to force the browser, `MCP_UI_VIEWER=glimpse` to require native rendering, or `MCP_UI_VIEWER=none` (also accepts `off` / `disabled`) to suppress the window entirely — the tool still runs and its inline result is returned to the agent, but no browser or native window opens. This is useful for headless setups, CI, or users who want the tool output delivered inline as text only. When suppressed, a one-line info notification shows the UI URL so it can still be opened manually if needed.
@@ -718,11 +743,11 @@ Shared MCP files are loaded automatically. Use `imports` only for host-specific 
 
 Supported compatibility imports: `cursor`, `claude-code`, `claude-desktop`, `opencode`, `vscode`, `windsurf`, `codex`
 
-`pi-mcp-adapter init` detects these host-specific configs and adds missing imports to the Pi agent dir config for you. The `opencode` import reads OpenCode V1 `mcp` entries from both `~/.config/opencode/opencode.json` and the project `opencode.json`, with project fields taking precedence. It is explicit-import only; OpenCode V2, inline content, managed configs, and remote discovery are not supported.
+`fitch-mcp-adapter init` detects these host-specific configs and adds missing imports to the adapter-owned global config for you. The `opencode` import reads OpenCode V1 `mcp` entries from both `~/.config/opencode/opencode.json` and the project `opencode.json`, with project fields taking precedence. It is explicit-import only; OpenCode V2, inline content, managed configs, and remote discovery are not supported.
 
 ### Project Config
 
-Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/mcp.json` only when you need a Pi-specific project override. Project files override both user-global shared MCP config and Pi global overrides.
+Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/fitch-mcp-adapter/mcp.json` only when you need an adapter-specific project override. Project files override both user-global shared MCP config and Pi global overrides.
 
 ## Usage
 
@@ -763,7 +788,7 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 | `/mcp prompts` | List all MCP prompts registered as slash commands |
 | `/mcp reconnect` | Reconnect all servers |
 | `/mcp reconnect <server>` | Connect or reconnect a single server |
-| `/mcp disable <server>` | Disable a server in the project-local `.pi/mcp.json` (requires `/reload` to apply) |
+| `/mcp disable <server>` | Disable a server in the project-local `.pi/fitch-mcp-adapter/mcp.json` (requires `/reload` to apply) |
 | `/mcp enable <server>` | Enable through the project-local override layer (requires `/reload` to apply) |
 | `/mcp logout <server>` | Clear stored OAuth credentials for a server and disconnect it |
 | `/mcp-auth` | Open an OAuth server picker in interactive UI sessions |

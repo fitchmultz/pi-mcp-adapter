@@ -132,7 +132,7 @@ describe("MCP prompt regressions", () => {
 
     updateMetadataCache(current, "demo");
 
-    expect(JSON.parse(readFileSync(join(agentDir, "mcp-cache.json"), "utf8")).servers.demo.prompts).toEqual([
+    expect(JSON.parse(readFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"), "utf8")).servers.demo.prompts).toEqual([
       { name: "brief", description: "cached" },
     ]);
   });

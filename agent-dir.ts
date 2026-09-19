@@ -18,3 +18,7 @@ export function getAgentDir(): string {
 export function getAgentPath(...segments: string[]): string {
   return join(getAgentDir(), ...segments);
 }
+
+export function getAdapterPath(...segments: string[]): string {
+  return getAgentPath("fitch-mcp-adapter", ...segments);
+}

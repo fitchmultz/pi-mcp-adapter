@@ -2,7 +2,7 @@
  * Conformance client driver.
  *
  * Spawned by `@modelcontextprotocol/conformance` once per scenario (via
- * conformance/driver.sh, which provisions an isolated MCP_OAUTH_DIR):
+ * conformance/driver.sh, which provisions an isolated FITCH_MCP_OAUTH_DIR):
  *
  *   MCP_CONFORMANCE_SCENARIO=<scenario> node --import tsx conformance/driver.ts <server-url>
  *
@@ -35,11 +35,11 @@ import type { ServerEntry } from "../types.ts"
 
 const scenario = process.env.MCP_CONFORMANCE_SCENARIO ?? ""
 const serverUrl = process.argv[2] ?? ""
-const authDir = process.env.MCP_OAUTH_DIR ?? ""
+const authDir = process.env.FITCH_MCP_OAUTH_DIR ?? ""
 
 if (!scenario || !serverUrl || !authDir) {
   console.error(
-    "Usage: MCP_OAUTH_DIR=<tmpdir> MCP_CONFORMANCE_SCENARIO=<scenario> driver.ts <server-url>",
+    "Usage: FITCH_MCP_OAUTH_DIR=<tmpdir> MCP_CONFORMANCE_SCENARIO=<scenario> driver.ts <server-url>",
   )
   process.exit(1)
 }

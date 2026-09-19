@@ -82,7 +82,7 @@ describe("initializeMcp elicitation config", () => {
     });
   });
 
-  it("binds oauthDir storage to the active context cwd", async () => {
+  it("binds the owned oauthDir import path to the active context cwd", async () => {
     mocks.loadMcpConfig.mockReturnValue({ mcpServers: {}, settings: { oauthDir: ".pi/oauth" } });
     const { initializeMcp } = await import("../init.ts");
     const ctx = context();
@@ -90,7 +90,7 @@ describe("initializeMcp elicitation config", () => {
     await initializeMcp(extensionApi(), ctx);
 
     expect(mocks.managers[0].setAuthStorageOptions).toHaveBeenCalledWith({
-      baseDir: "/tmp/project/.pi/oauth",
+      baseDir: "/tmp/project/.pi/oauth/fitch-mcp-adapter",
     });
   });
 

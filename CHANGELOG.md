@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-09-19
+
+### Changed
+
+- **BREAKING:** Independently maintained package identity is now `@fitchmultz/pi-mcp-adapter`, with CLI `fitch-mcp-adapter` and repository `fitchmultz/pi-mcp-adapter`. Original Nico MIT attribution is retained.
+- **BREAKING:** Adapter-owned config, metadata/onboarding/npx caches and legacy OAuth imports now live under `<Pi agent dir>/fitch-mcp-adapter/`. The project override is `.pi/fitch-mcp-adapter/mcp.json`; default traces use `.pi/fitch-mcp-adapter/traces/`. Shared standard MCP files and explicit config paths/imports remain supported unchanged.
+- **BREAKING:** OAuth uses service `fitch-mcp-adapter.oauth` and normal legacy imports use `FITCH_MCP_OAUTH_DIR`. Old adapter-owned defaults and credentials are never imported implicitly; `MCP_OAUTH_DIR` is read only by explicit migration. Other operational `MCP_*` and `PI_MCP_ADAPTER_*` controls remain compatible.
+- The private runtime registry and exported status channel use the `fitch-mcp-adapter` prefix (`MCP_STATUS_EVENT` is `fitch-mcp-adapter/status/v1`). Public `mcp`, `mcp_script`, slash commands and wire-stream metadata remain unchanged.
+- Default DCR homepage points to the Fitch repository; the public client metadata document is named `Fitch MCP Adapter` at its existing URL. Existing client registrations retain priority.
+
+### Migration
+
+- Replace the previous package entry with `pi install npm:@fitchmultz/pi-mcp-adapter` (or the Fitch Git source). Load only one adapter in a Pi host.
+- After installation, before restarting Pi, run `fitch-mcp-adapter migrate --dry-run`, then `fitch-mcp-adapter migrate`. Repeat from each project with a v4 `.pi/mcp.json` override. See [full upgrade instructions](README.md#upgrading-from-v4).
+- Migration copies global owned files, the current project override, and configured HTTP servers' OAuth entries only when destinations are absent. It preserves URL/issuer/client/token data, verifies credential copies, reports existing destinations without merging, prints no plaintext secrets, and leaves old sources untouched. Dry-run never reads the keychain or writes; repeated migration skips existing destinations.
+- The copied OAuth grant remains the same provider grant. Separate sign-ins are required for independent grants across distributions. Normal runtime never falls back to the old namespace after logout.
+
 ## [4.4.0] - 2026-09-18
 
 ### Fixed

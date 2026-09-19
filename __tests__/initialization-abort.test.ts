@@ -28,7 +28,7 @@ let connect: MockInstance<Client["connect"]>;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "pi-mcp-init-abort-"));
   const agentDir = join(root, "agent");
-  await mkdir(agentDir);
+  await mkdir(join(agentDir, "fitch-mcp-adapter"), { recursive: true });
   vi.stubEnv("HOME", root);
   vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
   vi.stubEnv("MCP_DIRECT_TOOLS", undefined);
@@ -58,7 +58,7 @@ beforeEach(async () => {
     return nativeConnect.call(this, clientTransport, options);
   });
   const definition = { url: "https://unused.invalid/mcp", auth: false as const, lifecycle: "eager" as const, directTools: true };
-  await writeFile(join(agentDir, "mcp-cache.json"), JSON.stringify({
+  await writeFile(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"), JSON.stringify({
     version: 1,
     servers: { demo: { configHash: computeServerHash(definition), tools, resources: [], cachedAt: Date.now() } },
   }));

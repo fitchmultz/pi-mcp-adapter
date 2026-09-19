@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
   openMcpAuthPanel: vi.fn(),
   openMcpPanel: vi.fn(),
   openMcpSetup: vi.fn(),
-  writeProjectServerDisabledOverride: vi.fn(() => ({ path: "/tmp/project/.pi/mcp.json", changed: true })),
+  writeProjectServerDisabledOverride: vi.fn(() => ({ path: "/tmp/project/.pi/fitch-mcp-adapter/mcp.json", changed: true })),
   executeAuthComplete: vi.fn(),
   executeAuthStart: vi.fn(),
   executeCall: vi.fn(),
@@ -857,7 +857,7 @@ describe("mcpAdapter session lifecycle", () => {
       mcpServers: { ...globalConfig.mcpServers, project: { command: "project-server" } },
     };
     mocks.loadMcpConfig.mockImplementation((_path, _cwd, options) => options.includeProject ? trustedConfig : globalConfig);
-    mocks.writeProjectServerDisabledOverride.mockReturnValue({ path: "/project/.pi/mcp.json", changed: true });
+    mocks.writeProjectServerDisabledOverride.mockReturnValue({ path: "/project/.pi/fitch-mcp-adapter/mcp.json", changed: true });
     mocks.initializeMcp.mockImplementation(async (_pi, _ctx, _owner, options) => ({
       ...createState(), config: options.resolvedConfig,
     }));

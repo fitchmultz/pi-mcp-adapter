@@ -11,7 +11,7 @@ import { randomBytes } from "crypto"
 
 // Set up isolated temp directory for tests
 const TEST_DIR = join(tmpdir(), `mcp-oauth-test-${randomBytes(4).toString('hex')}`)
-process.env.MCP_OAUTH_DIR = TEST_DIR
+process.env.FITCH_MCP_OAUTH_DIR = TEST_DIR
 
 import {
   getOAuthCallbackPath,
@@ -103,7 +103,7 @@ describe("McpOAuthProvider", () => {
 
       assert.deepStrictEqual(metadata.redirect_uris, ["http://localhost:19876/callback"])
       assert.strictEqual(metadata.client_name, "Pi Coding Agent")
-      assert.strictEqual(metadata.client_uri, "https://github.com/nicobailon/pi-mcp-adapter")
+      assert.strictEqual(metadata.client_uri, "https://github.com/fitchmultz/pi-mcp-adapter")
       assert.deepStrictEqual(metadata.grant_types, ["authorization_code", "refresh_token"])
       assert.deepStrictEqual(metadata.response_types, ["code"])
       assert.strictEqual(metadata.token_endpoint_auth_method, "none")

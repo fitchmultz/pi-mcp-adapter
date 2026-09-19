@@ -4,8 +4,8 @@ import adapter, {
   MCP_STATUS_SNAPSHOT_VERSION,
   type McpAdapterOptions,
   type McpStatusSnapshot,
-} from "pi-mcp-adapter";
-import { extractUiPromptText, type McpConfig, type McpToolCallEvent } from "pi-mcp-adapter/types";
+} from "@fitchmultz/pi-mcp-adapter";
+import { extractUiPromptText, type McpConfig, type McpToolCallEvent } from "@fitchmultz/pi-mcp-adapter/types";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const config: McpConfig = { mcpServers: {} };
@@ -32,7 +32,7 @@ const options: McpAdapterOptions = {
 };
 const extension: (pi: ExtensionAPI) => void = createMcpAdapter(options);
 const defaultExtension: typeof extension = adapter;
-const channel: "pi-mcp-adapter/status/v1" = MCP_STATUS_EVENT;
+const channel: "fitch-mcp-adapter/status/v1" = MCP_STATUS_EVENT;
 const snapshot: McpStatusSnapshot = {
   version: MCP_STATUS_SNAPSHOT_VERSION,
   servers: [], totalTools: 0, totalResources: 0, connectedCount: 0, disabledCount: 0,

@@ -5,8 +5,8 @@
  * and legacy PKCE state for MCP servers.
  *
  * Persistent OAuth entries are stored in the operating system credential store.
- * Legacy plaintext entries are imported from $MCP_OAUTH_DIR/sha256-<server-hash>/tokens.json
- * when set, otherwise <Pi agent dir>/mcp-oauth/sha256-<server-hash>/tokens.json,
+ * Legacy plaintext entries are imported from $FITCH_MCP_OAUTH_DIR/sha256-<server-hash>/tokens.json
+ * when set, otherwise <Pi agent dir>/fitch-mcp-adapter/mcp-oauth/sha256-<server-hash>/tokens.json,
  * then the plaintext file is removed.
  */
 
@@ -16,11 +16,12 @@ import { createRequire } from 'module';
 import { readFileSync, existsSync, rmSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { getAgentPath } from './agent-dir.ts';
+import { getAdapterPath, getAgentPath } from './agent-dir.ts';
 import { resolveConfiguredOAuthDir } from './config.ts';
 
 const require = createRequire(import.meta.url);
-const AUTH_SECRET_SERVICE = 'pi-mcp-adapter.oauth';
+const AUTH_SECRET_SERVICE = 'fitch-mcp-adapter.oauth';
+const LEGACY_AUTH_SECRET_SERVICE = 'pi-mcp-adapter.oauth';
 const TEST_AUTH_STORE_ENV = 'PI_MCP_ADAPTER_TEST_AUTH_STORE';
 const AUTH_SECRET_CHUNK_SIZE = 1800;
 const KEYRING_RECOVERY_DISABLED_ENV = 'PI_MCP_ADAPTER_DISABLE_KEYRING_RECOVERY';
@@ -148,29 +149,33 @@ interface AuthEntryChunkManifest {
 let KeyringEntryClass: KeyringEntryConstructor | undefined;
 const memoryAuthEntries = new Map<string, string>();
 
-const memoryAuthSecretStore: AuthSecretStore = {
-  read(account) {
-    return memoryAuthEntries.get(account);
-  },
-  write(account, payload) {
-    memoryAuthEntries.set(account, payload);
-  },
-  remove(account) {
-    memoryAuthEntries.delete(account);
-  },
-};
+function memoryAuthSecretStore(service: string): AuthSecretStore {
+  return {
+    read(account) {
+      return memoryAuthEntries.get(`${service}\0${account}`);
+    },
+    write(account, payload) {
+      memoryAuthEntries.set(`${service}\0${account}`, payload);
+    },
+    remove(account) {
+      memoryAuthEntries.delete(`${service}\0${account}`);
+    },
+  };
+}
 
-const keyringAuthSecretStore: AuthSecretStore = {
-  read(account) {
-    return getKeyringEntry(account).getPassword() ?? undefined;
-  },
-  write(account, payload) {
-    getKeyringEntry(account).setPassword(payload);
-  },
-  remove(account) {
-    getKeyringEntry(account).deleteCredential();
-  },
-};
+function keyringAuthSecretStore(service: string): AuthSecretStore {
+  return {
+    read(account) {
+      return getKeyringEntry(account, service).getPassword() ?? undefined;
+    },
+    write(account, payload) {
+      getKeyringEntry(account, service).setPassword(payload);
+    },
+    remove(account) {
+      getKeyringEntry(account, service).deleteCredential();
+    },
+  };
+}
 
 const unavailableAuthSecretStore: AuthSecretStore = {
   read() {
@@ -200,17 +205,17 @@ const keyRevokedAuthSecretStore: AuthSecretStore = {
   },
 };
 
-function getAuthSecretStore(): AuthSecretStore {
-  if (process.env[TEST_AUTH_STORE_ENV] === 'memory') return memoryAuthSecretStore;
+function getAuthSecretStore(service = AUTH_SECRET_SERVICE): AuthSecretStore {
+  if (process.env[TEST_AUTH_STORE_ENV] === 'memory') return memoryAuthSecretStore(service);
   if (process.env[TEST_AUTH_STORE_ENV] === 'unavailable') return unavailableAuthSecretStore;
   if (process.env[TEST_AUTH_STORE_ENV] === 'keyrevoked') return keyRevokedAuthSecretStore;
-  return keyringAuthSecretStore;
+  return keyringAuthSecretStore(service);
 }
 
-function getKeyringEntry(account: string): KeyringEntry {
+function getKeyringEntry(account: string, service: string): KeyringEntry {
   try {
     KeyringEntryClass ??= loadKeyringEntryClass();
-    return new KeyringEntryClass(AUTH_SECRET_SERVICE, account);
+    return new KeyringEntryClass(service, account);
   } catch (error) {
     throw new Error('OAuth secure credential storage is unavailable. Configure the OS credential store and retry authentication.', { cause: error });
   }
@@ -296,12 +301,12 @@ function shouldAttemptLinuxKeyringRecovery(error: unknown): boolean {
     && causeChainContains(error, /key\s*(?:has been\s*)?revoked|keyrevoked/i);
 }
 
-function runLinuxKeyringRecoveryOperation(operation: KeyringRecoveryOperation, account: string, payload?: string): KeyringRecoveryResponse {
+function runLinuxKeyringRecoveryOperation(operation: KeyringRecoveryOperation, account: string, payload: string | undefined, service: string): KeyringRecoveryResponse {
   const keyctl = process.env[KEYRING_RECOVERY_KEYCTL_ENV]?.trim() || 'keyctl';
   const node = process.env[KEYRING_RECOVERY_NODE_ENV]?.trim() || 'node';
   const helper = process.env[KEYRING_RECOVERY_HELPER_ENV]?.trim()
     || fileURLToPath(new URL('./mcp-keyring-helper.cjs', import.meta.url));
-  const request = JSON.stringify({ operation, service: AUTH_SECRET_SERVICE, account, payload });
+  const request = JSON.stringify({ operation, service, account, payload });
   const result = spawnSync(keyctl, ['session', '-', node, helper], {
     input: `${request}\n`,
     encoding: 'utf8',
@@ -336,28 +341,30 @@ function runLinuxKeyringRecoveryOperation(operation: KeyringRecoveryOperation, a
   return typedResponse;
 }
 
-const linuxKeyringRecoveryAuthSecretStore: AuthSecretStore = {
-  read(account) {
-    const response = runLinuxKeyringRecoveryOperation('read', account);
-    return response.ok && response.found === true ? response.value : undefined;
-  },
-  write(account, payload) {
-    runLinuxKeyringRecoveryOperation('write', account, payload);
-  },
-  remove(account) {
-    runLinuxKeyringRecoveryOperation('remove', account);
-  },
-};
+function linuxKeyringRecoveryAuthSecretStore(service = AUTH_SECRET_SERVICE): AuthSecretStore {
+  return {
+    read(account) {
+      const response = runLinuxKeyringRecoveryOperation('read', account, undefined, service);
+      return response.ok && response.found === true ? response.value : undefined;
+    },
+    write(account, payload) {
+      runLinuxKeyringRecoveryOperation('write', account, payload, service);
+    },
+    remove(account) {
+      runLinuxKeyringRecoveryOperation('remove', account, undefined, service);
+    },
+  };
+}
 
 export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): AuthStorageOptions {
   const baseDir = resolveConfiguredOAuthDir(oauthDir, cwd);
-  return baseDir ? { baseDir } : {};
+  return baseDir ? { baseDir: join(baseDir, 'fitch-mcp-adapter') } : {};
 }
 
 export function getAuthBaseDir(options: AuthStorageOptions = {}): string {
-  const override = process.env.MCP_OAUTH_DIR?.trim();
+  const override = process.env.FITCH_MCP_OAUTH_DIR?.trim();
   if (override) return override;
-  return options.baseDir ?? getAgentPath('mcp-oauth');
+  return options.baseDir ?? getAdapterPath('mcp-oauth');
 }
 
 /**
@@ -531,20 +538,11 @@ function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
     writeSecureAuthEntryToStore(getAuthSecretStore(), serverName, entry);
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
-    writeSecureAuthEntryToStore(linuxKeyringRecoveryAuthSecretStore, serverName, entry);
+    writeSecureAuthEntryToStore(linuxKeyringRecoveryAuthSecretStore(), serverName, entry);
   }
 }
 
-/**
- * Read the auth entry for a server from the OS secure store, importing and
- * deleting a legacy plaintext entry when present.
- */
-function readAuthEntryFromStore(
-  store: AuthSecretStore,
-  serverName: string,
-  options?: AuthStorageOptions,
-  behavior: { migrateLegacy?: boolean } = {},
-): AuthEntry | undefined {
+function readSecureAuthEntryFromStore(store: AuthSecretStore, serverName: string): AuthEntry | undefined {
   const account = getAuthEntryAccount(serverName);
   let payload: string | undefined;
   try {
@@ -557,21 +555,20 @@ function readAuthEntryFromStore(
     );
   }
 
-  if (payload !== undefined) {
-    const manifest = readChunkManifestFromPayload(serverName, payload, 'OS secure credential store');
-    const entry = manifest
-      ? readChunkedAuthEntry(store, serverName, account, manifest)
-      : parseAuthEntryPayload(serverName, payload, 'OS secure credential store');
-    removeLegacyAuthEntry(serverName, options);
-    return entry;
-  }
+  if (payload === undefined) return undefined;
+  const manifest = readChunkManifestFromPayload(serverName, payload, 'OS secure credential store');
+  return manifest
+    ? readChunkedAuthEntry(store, serverName, account, manifest)
+    : parseAuthEntryPayload(serverName, payload, 'OS secure credential store');
+}
 
-  const legacyEntry = readLegacyAuthEntry(serverName, options);
-  if (!legacyEntry) return undefined;
-  if (behavior.migrateLegacy === false) return legacyEntry;
-  writeSecureAuthEntryToStore(store, serverName, legacyEntry);
-  removeLegacyAuthEntry(serverName, options);
-  return legacyEntry;
+function readSecureAuthEntry(serverName: string, service = AUTH_SECRET_SERVICE): AuthEntry | undefined {
+  try {
+    return readSecureAuthEntryFromStore(getAuthSecretStore(service), serverName);
+  } catch (error) {
+    if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
+    return readSecureAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore(service), serverName);
+  }
 }
 
 function readAuthEntry(
@@ -579,12 +576,38 @@ function readAuthEntry(
   options?: AuthStorageOptions,
   behavior: { migrateLegacy?: boolean } = {},
 ): AuthEntry | undefined {
-  try {
-    return readAuthEntryFromStore(getAuthSecretStore(), serverName, options, behavior);
-  } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
-    return readAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore, serverName, options, behavior);
+  const entry = readSecureAuthEntry(serverName);
+  if (entry !== undefined) {
+    if (behavior.migrateLegacy !== false) removeLegacyAuthEntry(serverName, options);
+    return entry;
   }
+  const legacyEntry = readLegacyAuthEntry(serverName, options);
+  if (!legacyEntry || behavior.migrateLegacy === false) return legacyEntry;
+  writeSecureAuthEntry(serverName, legacyEntry);
+  removeLegacyAuthEntry(serverName, options);
+  return legacyEntry;
+}
+
+/** Explicit copy-only upgrade. Normal reads and logout never access the old service. */
+export function migrateLegacyAuthEntry(
+  serverName: string,
+  legacyDirectory = process.env.MCP_OAUTH_DIR?.trim() || getAgentPath('mcp-oauth'),
+): 'copied' | 'existing' | 'absent' {
+  if (readSecureAuthEntry(serverName) !== undefined) return 'existing';
+  let entry = readSecureAuthEntry(serverName, LEGACY_AUTH_SECRET_SERVICE);
+  if (entry === undefined) {
+    const path = join(legacyDirectory, getAuthEntryAccount(serverName), 'tokens.json');
+    if (!existsSync(path)) return 'absent';
+    entry = parseAuthEntryPayload(serverName, readFileSync(path, 'utf8'), path);
+  }
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error(`Invalid legacy OAuth entry for ${serverName}`);
+  }
+  writeSecureAuthEntry(serverName, entry);
+  if (JSON.stringify(readSecureAuthEntry(serverName)) !== JSON.stringify(entry)) {
+    throw new Error(`Failed to verify migrated OAuth credentials for ${serverName}`);
+  }
+  return 'copied';
 }
 
 /**
@@ -667,7 +690,7 @@ export function removeAuthEntry(serverName: string, options?: AuthStorageOptions
     removeAuthEntryFromStore(getAuthSecretStore(), serverName);
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
-    removeAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore, serverName);
+    removeAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore(), serverName);
   }
   removeLegacyAuthEntry(serverName, options);
 }
