@@ -12,6 +12,7 @@ import { getAuthForUrl, saveAuthEntry, updateTokens } from "../mcp-auth.ts";
 import { startAuth, hasPendingAuth } from "../mcp-auth-flow.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { McpTraceWriter } from "../mcp-trace.ts";
+import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
 import { executeCall } from "../proxy-modes.ts";
 import type { McpConfig } from "../types.ts";
 
@@ -24,6 +25,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await rm(directory, { recursive: true, force: true });
 });
@@ -76,9 +78,13 @@ async function wire(options: { oauth?: boolean; capabilities?: object; session?:
   let started = false;
   let callCount = 0;
   let refreshCount = 0;
+  let getCount = 0;
+  let unauthorizedCount = 0;
+  let rejectGet = false;
   const methods: string[] = [];
   let stream: import("node:http").ServerResponse | undefined;
   let callbackId = 0;
+  let subscriptionId: number | undefined;
   let advertisedClientCapabilities: unknown;
   const replies = new Map<string, (value: any) => void>();
   const notifications: string[] = [];
@@ -91,6 +97,12 @@ async function wire(options: { oauth?: boolean; capabilities?: object; session?:
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ issuer: origin, authorization_endpoint: origin + "/authorize", token_endpoint: origin + "/token", response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] })); return;
     }
     if (req.method === "GET" && options.inbound) {
+      getCount++;
+      if (delayMethod === "GET") { started = true; await blocked!.promise; }
+      if (rejectGet) {
+        rejectGet = false;
+        res.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` }).end(); return;
+      }
       stream = res;
       res.writeHead(200, { "content-type": "text/event-stream" }); res.flushHeaders();
       return;
@@ -113,11 +125,13 @@ async function wire(options: { oauth?: boolean; capabilities?: object; session?:
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ access_token: token, refresh_token: "SYNTHETIC-REFRESH-UPDATED", token_type: "Bearer", expires_in: 3600 })); return;
     }
     if (options.oauth && req.headers.authorization !== `Bearer ${token}`) {
+      unauthorizedCount++;
       res.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` }).end(); return;
     }
     const body = JSON.parse(text);
     if (method.startsWith("notifications/")) { res.writeHead(202).end(); return; }
     if (method === "subscriptions/listen") {
+      stream = res; subscriptionId = body.id;
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/subscriptions/acknowledged", params: { notifications: body.params.notifications, _meta: { [SUBSCRIPTION_ID_META_KEY]: body.id } } })}\n\n`);
       return;
@@ -152,10 +166,15 @@ async function wire(options: { oauth?: boolean; capabilities?: object; session?:
   const notify = (method: string, params: object) => {
     if (!stream) throw new Error("No native GET stream");
     notifications.push(method);
-    stream.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method, params })}\n\n`);
+    stream.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method, params: { ...params,
+      ...(subscriptionId !== undefined ? { _meta: { [SUBSCRIPTION_ID_META_KEY]: subscriptionId } } : {}),
+    } })}\n\n`);
   };
   return { name, url, origin, config, definition, methods, calls: () => callCount, refreshes: () => refreshCount,
     streamReady: () => stream !== undefined, notify, notifications,
+    gets: () => getCount, unauthorized: () => unauthorizedCount,
+    rejectNextGet: () => { rejectGet = true; },
+    endStream: () => { stream!.end("retry: 1\n\n"); },
     clientCapabilities: () => advertisedClientCapabilities,
     finishInput: () => { input = undefined; },
     callback: (method: string, params: object) => {
@@ -525,14 +544,171 @@ it("vetoes an actual resource subscription, not just advertisement of subscripti
   const cleared = hold(); expect(await prepareMcpCheckpoint(state, cleared.event)).toEqual({ sleepReady: true }); cleared.release();
 });
 
-it("owns the SDK's actual auto-opened modern subscription through its native closed promise", async () => {
+it("reconstructs native catalog subscriptions but vetoes explicit consumer listen handles", async () => {
   const f = await wire({ capabilities: { tools: { listChanged: true } } }); const state = await runtime(f.config);
   const client = state.manager.getConnection(f.name)!.client;
   const subscription = client.autoOpenedSubscription!;
   expect(subscription.honoredFilter).toEqual({ toolsListChanged: true });
-  expect(await prepareMcpCheckpoint(state, hold().event)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("subscription is active") });
+  expect(await readiness(state)).toEqual({ sleepReady: true });
+  const ingress = hold(); expect(await prepareMcpCheckpoint(state, ingress.event)).toEqual({ sleepReady: true });
+  f.notify("notifications/tools/list_changed", {});
+  await expect.poll(() => ingress.invalidate.mock.calls.length).toBe(1);
+  await expect.poll(() => readiness(state)).toEqual({ sleepReady: true });
+  const explicit = await client.listen({ toolsListChanged: true });
+  expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("subscription is active") });
+  await explicit.close(); await explicit.closed;
+  expect(await readiness(state)).toEqual({ sleepReady: true });
   await subscription.close(); await subscription.closed;
   const cut = hold(); expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true }); cut.release();
+  await state.owner.stop();
+  const restored = await runtime(f.config);
+  expect(restored.manager.getConnection(f.name)!.client.autoOpenedSubscription?.honoredFilter).toEqual({ toolsListChanged: true });
+  expect(await readiness(restored)).toEqual({ sleepReady: true });
+  expect(f.calls()).toBe(0);
+});
+
+it.each(["readiness", "final shutdown"])("owns initial detached GET token reads beyond connect: %s", async check => {
+  const f = await wire({ oauth: true, inbound: true });
+  const gate = deferred(); let entered = false;
+  const tokens = McpOAuthProvider.prototype.tokens;
+  vi.spyOn(McpOAuthProvider.prototype, "tokens").mockImplementation(async function (...args) {
+    // Native initialized send launches GET synchronously before returning to discovery.
+    if (!entered && f.methods.includes("notifications/initialized")) {
+      entered = true; await gate.promise;
+    }
+    return tokens.apply(this, args);
+  });
+  const state = await runtime(f.config); cleanups.push(async () => gate.resolve());
+  expect(entered).toBe(true); expect(f.gets()).toBe(0);
+  if (check === "readiness") expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("request/refresh") });
+  await state.manager.close(f.name);
+  if (check === "readiness") expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("request/refresh") });
+  let stopped = false; const stopping = state.manager.closeAll().then(() => { stopped = true; });
+  await new Promise(resolve => setImmediate(resolve)); expect(stopped).toBe(false);
+  gate.resolve(); await stopping;
+});
+
+it("invalidates before clean-EOF reconnect GET effects, owns headers, and permits idle SSE", async () => {
+  const f = await wire({ inbound: true }); const state = await runtime(f.config);
+  await expect.poll(f.streamReady).toBe(true);
+  await expect.poll(() => readiness(state)).toEqual({ sleepReady: true });
+  const cut = hold(); expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true });
+  f.delay("GET"); f.endStream();
+  await expect.poll(f.started).toBe(true);
+  expect(f.gets()).toBe(2); expect(cut.invalidate).toHaveBeenCalledOnce();
+  expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("request/refresh") });
+  f.release(); await expect.poll(() => readiness(state)).toEqual({ sleepReady: true });
+});
+
+it.each([false, true])("fences reconnect auth and joins post-401 persistence (client_credentials=%s)", async noninteractive => {
+  const f = await wire({ oauth: true, inbound: true });
+  if (noninteractive) Object.assign(f.definition.oauth!, { grantType: "client_credentials" });
+  const state = await runtime(f.config);
+  await expect.poll(f.streamReady).toBe(true);
+  await expect.poll(() => readiness(state)).toEqual({ sleepReady: true });
+  const gate = deferred(); let entered = false;
+  cleanups.push(async () => gate.resolve());
+  const cut = hold(); expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true });
+  let readBeforeInvalidation = false;
+  const tokens = McpOAuthProvider.prototype.tokens;
+  vi.spyOn(McpOAuthProvider.prototype, "tokens").mockImplementation(function (...args) {
+    if (!cut.event.signal.aborted) readBeforeInvalidation = true;
+    return tokens.apply(this, args);
+  });
+  const saveTokens = McpOAuthProvider.prototype.saveTokens;
+  vi.spyOn(McpOAuthProvider.prototype, "saveTokens").mockImplementation(async function (...args) {
+    entered = true; await gate.promise;
+    return saveTokens.apply(this, args);
+  });
+  f.rejectNextGet(); f.endStream();
+  await expect.poll(() => entered).toBe(true);
+  expect(readBeforeInvalidation).toBe(false);
+  expect(cut.invalidate).toHaveBeenCalledOnce();
+  expect(f.refreshes()).toBe(1);
+  expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("request/refresh") });
+  await state.manager.close(f.name);
+  let stopped = false; const stopping = state.manager.closeAll().then(() => { stopped = true; });
+  await new Promise(resolve => setImmediate(resolve)); expect(stopped).toBe(false);
+  gate.resolve(); await stopping;
+  expect(getAuthForUrl(f.name, f.url)?.tokens?.refreshToken).toBe("SYNTHETIC-REFRESH");
+});
+
+it("owns a background auth response body after fetch headers have arrived", async () => {
+  const f = await wire({ oauth: true, inbound: true }); const state = await runtime(f.config);
+  await expect.poll(f.streamReady).toBe(true);
+  const read = Response.prototype.json; const gate = deferred(); let entered = false;
+  cleanups.push(async () => gate.resolve());
+  vi.spyOn(Response.prototype, "json").mockImplementation(async function () {
+    if (this.url === f.origin + "/token") { entered = true; await gate.promise; }
+    return read.call(this);
+  });
+  f.rejectNextGet(); f.endStream();
+  await expect.poll(() => entered).toBe(true);
+  expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("request/refresh") });
+  await state.manager.close(f.name);
+  let stopped = false; const stopping = state.manager.closeAll().then(() => { stopped = true; });
+  await new Promise(resolve => setImmediate(resolve)); expect(stopped).toBe(false);
+  gate.resolve(); await stopping;
+});
+
+it("clears completed URL IDs only after the last actual completion notification", async () => {
+  const f = await wire({ inbound: true }); const h = host(); const state = await runtime(f.config, h);
+  await expect.poll(f.streamReady).toBe(true);
+  const manager = state.manager as unknown as { rememberUrlElicitation(name: string, id: string): void };
+  // Exact post-accept state, without launching a real browser.
+  manager.rememberUrlElicitation(f.name, "first"); manager.rememberUrlElicitation(f.name, "second");
+  f.notify("notifications/elicitation/complete", { elicitationId: "first" });
+  await expect.poll(() => h.ui.notify.mock.calls.filter(([text]) => text.includes("completed")).length).toBe(1);
+  expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("browser elicitation") });
+  f.notify("notifications/elicitation/complete", { elicitationId: "second" });
+  await expect.poll(() => h.ui.notify.mock.calls.filter(([text]) => text.includes("completed")).length).toBe(2);
+  expect(await readiness(state)).toEqual({ sleepReady: true });
+});
+
+it("reconstructs implicit OAuth challenge caches on a fresh runtime without replay", async () => {
+  const f = await wire({ oauth: true }); delete (f.definition as { auth?: unknown }).auth;
+  const saved = getAuthForUrl(f.name, f.url)!.tokens!;
+  updateTokens(f.name, { ...saved, scope: "synthetic.read" }, f.url);
+  const state = await runtime(f.config);
+  expect(f.unauthorized()).toBe(1);
+  expect(await readiness(state)).toEqual({ sleepReady: true });
+  await state.owner.stop();
+  const restored = await runtime(f.config);
+  expect(f.unauthorized()).toBe(2);
+  expect(await readiness(restored)).toEqual({ sleepReady: true });
+  expect(f.calls()).toBe(0); expect(f.refreshes()).toBe(0);
+  expect(getAuthForUrl(f.name, f.url)?.tokens).toMatchObject({ issuer: f.origin, scope: "synthetic.read" });
+});
+
+it.each([{}, { opaqueFeature: {} }])("only permits empty experimental metadata: %j", async experimental => {
+  const f = await wire({ legacy: true, capabilities: { tools: {}, experimental } }); const state = await runtime(f.config);
+  expect(await readiness(state)).toMatchObject(Object.keys(experimental).length
+    ? { sleepReady: false, reason: expect.stringContaining("experimental") } : { sleepReady: true });
+});
+
+it("does not couple optional trace path failures to repeated recovery or clean shutdown", async () => {
+  const f = await wire(); const parent = join(directory, "not-a-directory"); await writeFile(parent, "fixture");
+  f.config.settings!.trace = { enabled: true, file: join(parent, "trace.jsonl") };
+  const state = await runtime(f.config);
+  for (let i = 0; i < 3; i++) {
+    const cut = hold(); cut.event.boundary = "turn";
+    expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true }); cut.release();
+  }
+  await state.manager.getConnection(f.name)!.client.callTool({ name: "echo", arguments: {} });
+  await expect(state.owner.stop()).resolves.toBeUndefined();
+});
+
+it("retains failed native disposal until an explicit close really retries cleanup", async () => {
+  const f = await wire(); const state = await runtime(f.config);
+  const transport = state.manager.getConnection(f.name)!.transport;
+  const close = vi.spyOn(transport, "close").mockRejectedValueOnce(new Error("synthetic close failure"));
+  await expect(state.manager.close(f.name)).rejects.toThrow("cleanup failed");
+  expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("retirement") });
+  await state.manager.connect(f.name, f.definition);
+  expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("retirement") });
+  await expect(state.manager.close(f.name)).resolves.toBeUndefined();
+  expect(close).toHaveBeenCalledTimes(2);
+  expect(await readiness(state)).toEqual({ sleepReady: true });
 });
 
 it("makes trace persistence failures observable only at strict persistence boundaries", async () => {

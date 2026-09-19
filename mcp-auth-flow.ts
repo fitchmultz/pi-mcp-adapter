@@ -165,7 +165,9 @@ export function getOAuthCheckpointBlocker(runtime: McpOAuthRuntime): string | un
   const state = getRuntimeState(runtime)
   if (state.activeOperations || state.pendingAuthentications.size) return "MCP OAuth operation is active"
   if (state.pendingAuths.size || state.pendingAuthStates.size || state.pendingAuthCleanupTimers.size) return "MCP browser OAuth callback/flow is pending"
-  if (state.requests.size) return "MCP OAuth scope/issuer intent is runtime-only"
+  // requests caches server challenges/discovery, not a pending user callback.
+  // Cold connect re-challenges; granted scopes and issuer bindings live in the
+  // native credential store. Actual interactive/auth operations veto above.
   return undefined
 }
 

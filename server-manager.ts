@@ -5,6 +5,10 @@ import {
   StreamableHTTPClientTransport,
   SSEClientTransport,
   SdkHttpError,
+  auth,
+  extractWWWAuthenticateParams,
+  UnauthorizedError,
+  type AuthProvider,
   type RequestOptions,
   type FetchLike,
   type GetPromptResult,
@@ -95,6 +99,11 @@ class ManagedClient extends Client {
     const settled = () => { pending.delete(operation); };
     void operation.then(settled, settled);
     return operation;
+  }
+
+  ownNative<T>(run: () => Promise<T>): Promise<T> {
+    this.beforeActivity();
+    return this.own(run(), "request/refresh");
   }
 
   ownSend(run: () => Promise<void>): Promise<void> {
@@ -273,7 +282,11 @@ export class McpServerManager {
     if (this.acceptedUrlElicitations.size || this.uiStreamListeners.size)
       return "MCP browser elicitation/UI stream is pending";
     for (const client of this.ownedClients) {
-      const kinds = [...(clientOperations.get(client)?.values() ?? [])];
+      // Only the SDK's exact auto-opened catalog handle reconstructs during connect().
+      // An explicit consumer listen(), even with the same filter, still owns private state.
+      const kinds = [...(clientOperations.get(client) ?? [])]
+        .filter(([operation, kind]) => kind !== "subscription" || operation !== client.autoOpenedSubscription?.closed)
+        .map(([, kind]) => kind);
       const callback = kinds.find(kind => kind === "sampling callback" || kind === "elicitation callback");
       if (callback) return `MCP ${client.serverName}: ${callback} is active`;
       if (kinds.includes("request/refresh")) return `MCP ${client.serverName}: request/refresh is active`;
@@ -287,13 +300,16 @@ export class McpServerManager {
       if (connection.transport.sessionId !== undefined) return `MCP ${name}: HTTP session state is not reconstructible`;
       const capabilities = connection.client.getServerCapabilities();
       if (capabilities?.tasks) return `MCP ${name}: negotiated remote task state is not checkpoint-supported`;
-      const opaque = Object.keys(capabilities ?? {}).find(key => !["tools", "resources", "prompts", "logging", "completions"].includes(key));
+      const opaque = Object.keys(capabilities ?? {}).find(key =>
+        !["tools", "resources", "prompts", "logging", "completions"].includes(key)
+        && !(key === "experimental" && Object.keys(capabilities?.experimental ?? {}).length === 0));
       if (opaque) return `MCP ${name}: unsupported negotiated capability ${opaque}`;
     }
     return undefined;
   }
 
-  async flushForCheckpoint(): Promise<void> { await this.traceWriter?.flush(true); }
+  // Diagnostics are best-effort, not session authority or a clean-exit prerequisite.
+  async flushForCheckpoint(): Promise<void> { await this.traceWriter?.flush(); }
 
   private releaseClientWhenSettled(client: Client): void {
     if (client instanceof ManagedClient) void drainClientOperations(client).then(() => this.ownedClients.delete(client));
@@ -802,6 +818,7 @@ export class McpServerManager {
           if (this.runtimeSignal?.aborted) return;
           const accepted = this.acceptedUrlElicitations.get(serverName);
           if (!accepted?.delete(notification.params.elicitationId)) return;
+          if (accepted.size === 0) this.acceptedUrlElicitations.delete(serverName);
           this.elicitationConfig?.ui.notify(
             `MCP browser interaction for ${serverName} completed. You can retry the tool now.`,
             "info",
@@ -959,32 +976,89 @@ export class McpServerManager {
     const authProvider = supportsOAuth(definition) && (definition.auth === "oauth" || implicitOAuth)
       ? createAuthProvider() : undefined;
     client.oauthProvider = authProvider;
+    let transportClosed = false;
+    // The SDK launches legacy GET bootstrap/reconnect outside send(). Fence every
+    // provider entry and own its ACTUAL promise (including signing/storage after
+    // cancellation). Keep the OAuthClientProvider shape: native 401/403 behavior,
+    // issuer validation and noninteractive grants remain SDK-owned.
+    const ownedProvider = authProvider && new Proxy(authProvider, {
+      get: (provider, key) => {
+        const value = Reflect.get(provider, key, provider);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => client.ownNative(async () => {
+          provider.lifetimeSignal.throwIfAborted();
+          return Reflect.apply(value, provider, args);
+        });
+      },
+    });
+    const fetch: FetchLike = (input, init) => client.ownNative(async () => {
+      if (transportClosed) throw new Error("MCP transport is closed");
+      const response = await trackToolTransportFailure(input, authProvider ? {
+        ...init, signal: combineAbortSignals(init?.signal ?? undefined,
+          init?.signal ? authProvider.lifetimeSignal : authProvider.signal)!,
+      } : init);
+      // Fetch resolves at headers. Native auth/discovery subsequently consumes
+      // text/JSON bodies; keep those real reads owned too. Never count the idle
+      // SSE body as a perpetual request: its messages use the ingress fence.
+      for (const method of ["text", "json"] as const) {
+        const read = response[method].bind(response);
+        response[method] = () => client.ownNative(read);
+      }
+      return response;
+    });
+    // Interactive transports already throw on insufficient_scope rather than
+    // running SDK step-up. The supported minimal AuthProvider seam lets us own
+    // the ENTIRE native 401 auth promise, including PKCE computation between
+    // provider calls. Noninteractive transports retain OAuthClientProvider so
+    // the SDK's 403 scope-union/retry policy is unchanged; all their asynchronous
+    // effects are provider calls (including JWT signing) and fetch/body reads.
+    const transportAuth: (AuthProvider & Pick<McpOAuthProvider, "redirectUrl" | "clientMetadata">) | McpOAuthProvider | undefined = ownedProvider
+      && !isNonInteractiveOAuth(definition.oauth) && !legacySse ? {
+        // Preserve transport configuration introspection; auth() uses this same provider.
+        get redirectUrl() { return ownedProvider.redirectUrl; },
+        get clientMetadata() { return ownedProvider.clientMetadata; },
+        token: () => client.ownNative(async () => (await ownedProvider.tokens())?.access_token),
+        onUnauthorized: context => client.ownNative(async () => {
+          const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(context.response);
+          const result = await auth(ownedProvider, {
+            serverUrl: context.serverUrl, fetchFn: context.fetchFn,
+            ...(resourceMetadataUrl !== undefined ? { resourceMetadataUrl } : {}),
+            ...(scope !== undefined ? { scope } : {}),
+            skipIssuerMetadataValidation: definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
+          });
+          if (result !== "AUTHORIZED") throw new UnauthorizedError();
+        }),
+      } : ownedProvider;
     const options = {
       ...(requestInit !== undefined ? { requestInit } : {}),
-      ...(authProvider !== undefined ? { authProvider } : {}),
+      ...(transportAuth !== undefined ? { authProvider: transportAuth } : {}),
       skipIssuerMetadataValidation: definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
-      // Native resource sends carry their own signal; OAuth discovery/token requests do not.
-      ...(authProvider ? { fetch: (input: Parameters<FetchLike>[0], init?: RequestInit) =>
-        trackToolTransportFailure(input, {
-          ...init, signal: combineAbortSignals(init?.signal ?? undefined,
-            init?.signal ? authProvider.lifetimeSignal : authProvider.signal)!,
-        }) } : { fetch: trackToolTransportFailure }),
+      fetch,
     };
     const transport: Transport = legacySse ? new SSEClientTransport(url, options) : new StreamableHTTPClientTransport(url, {
       ...options,
+      reconnectionScheduler: (reconnect, delay) => {
+        const timer = setTimeout(() => {
+          if (transportClosed) return;
+          this.beforeActivity();
+          reconnect();
+        }, delay);
+        return () => clearTimeout(timer);
+      },
       ...(supportsOAuth(definition) && !isNonInteractiveOAuth(definition.oauth)
         ? { onInsufficientScope: "throw" as const } : {}),
     });
     if (authProvider) {
       const send = transport.send.bind(transport);
       transport.send = async (message, options) => authProvider.runWithSignal(options?.requestSignal, () => send(message, options));
-      const close = transport.close.bind(transport);
-      transport.close = () => {
-        // Native OAuth fetches do not inherit the transport's abort signal.
-        authProvider.deactivate();
-        return close();
-      };
     }
+    const close = transport.close.bind(transport);
+    transport.close = () => {
+      transportClosed = true;
+      // Native OAuth fetches do not inherit the transport's abort signal.
+      authProvider?.deactivate();
+      return close();
+    };
     if (!legacySse && supportsOAuth(definition)) {
       const previous = transport.onerror;
       transport.onerror = error => {
@@ -1144,10 +1218,16 @@ export class McpServerManager {
       // Keep ordinary per-server cancellation prompt, but retain native send/auth tails for
       // readiness and final shutdown. Inbound handler promises still drain before disposal.
       await drainClientCallbacks(connection.client);
-      this.releaseClientWhenSettled(connection.client);
       if (failures.length > 0) throw new AggregateError(failures, "MCP connection cleanup failed");
+      this.releaseClientWhenSettled(connection.client);
     })();
     this.disposePromises.set(connection, closing);
+    void closing.catch(() => {
+      // Native close retains its transport until onclose. Retry only on an
+      // explicit later close, retaining the connection/operations veto meanwhile.
+      if (connection.client.transport === connection.transport && this.disposePromises.get(connection) === closing)
+        this.disposePromises.delete(connection);
+    });
     return closing;
   }
 
