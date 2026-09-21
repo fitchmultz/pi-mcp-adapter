@@ -15,6 +15,8 @@ describe("cli init helper", () => {
   const originalCwd = process.cwd();
 
   beforeEach(() => {
+    // Cases that exercise an explicit agentDir set it after choosing their HOME.
+    delete process.env.PI_CODING_AGENT_DIR;
     vi.resetModules();
   });
 

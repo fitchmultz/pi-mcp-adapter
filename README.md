@@ -18,6 +18,12 @@ His take: skip MCP entirely, write simple CLI tools instead.
 
 But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter gives you access without the bloat. One proxy tool (~200 tokens) instead of hundreds. The agent discovers what it needs on-demand. Servers only start when you actually use them.
 
+## Pi release qualification
+
+The development baseline is official Pi **0.86.1**; host peers remain wildcard. `npm run check:compat` verifies the installed selected SDK and manifest CLI identity, builds/typechecks, runs the existing Vitest and memory-only OAuth suites, then packs and loads a runtime-only consumer through native SDK startup/reload and the actual bundled RPC CLI. Existing real reload/direct-tool tests retain their local MCP servers and cleanup assertions. The fork lane requires native checkpoint tests for both an idle adapter and a live stdio server (which must block sleep without being stopped).
+
+This credential-free Pi gate excludes only the separately built interactive-visualizer example's three tests. To qualify that example, retain the existing CI steps: install its dependencies, run `npm run --prefix examples/interactive-visualizer build`, then run the complete `npm test`. MCP protocol conformance remains a separate `npm run test:conformance` gate. None of these checks should read live server configs, launch an authenticated browser, or use real OAuth credentials. Use an empty HOME/agent directory and disposable working directory.
+
 ## Install
 
 Requires Pi 0.84.0 or later and Node.js 22.19.0 or later.

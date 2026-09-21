@@ -31,6 +31,7 @@
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "prepare": "node ./scripts/prepare.mjs",
+    "check:compat": "node scripts/compat-host.mjs && npm run build && npm run typecheck && vitest run --exclude __tests__/interactive-visualizer-server.test.ts && npm run test:oauth && node scripts/compat-package-smoke.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -167,9 +168,9 @@
     }
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.84.0",
-    "@earendil-works/pi-coding-agent": "0.84.0",
-    "@earendil-works/pi-tui": "0.84.0",
+    "@earendil-works/pi-ai": "0.86.1",
+    "@earendil-works/pi-coding-agent": "0.86.1",
+    "@earendil-works/pi-tui": "0.86.1",
     "@modelcontextprotocol/conformance": "0.1.16",
     "@modelcontextprotocol/server": "2.0.0",
     "@types/cross-spawn": "6.0.6",

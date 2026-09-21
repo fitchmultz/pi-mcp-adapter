@@ -18,9 +18,9 @@ const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf
 };
 
 const hostPeerPackages = {
-  "@earendil-works/pi-ai": "0.84.0",
-  "@earendil-works/pi-coding-agent": "0.84.0",
-  "@earendil-works/pi-tui": "0.84.0",
+  "@earendil-works/pi-ai": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
+  "@earendil-works/pi-coding-agent": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
+  "@earendil-works/pi-tui": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
   "typebox": "1.3.7",
 };
 
@@ -100,6 +100,7 @@ describe("package.json dependency policy", () => {
       expect(packageJson.peerDependencies?.[name]).toBe("*");
       expect(packageJson.peerDependenciesMeta?.[name]?.optional).toBe(true);
       expect(packageJson.dependencies?.[name]).toBeUndefined();
+      expect(exactVersion).toMatch(/^\d+\.\d+\.\d+$/);
       expect(packageJson.devDependencies?.[name]).toBe(exactVersion);
     }
   });

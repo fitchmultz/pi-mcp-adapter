@@ -14,6 +14,8 @@ describe("config discovery", () => {
   const originalCwd = process.cwd();
 
   beforeEach(() => {
+    // Each case supplies its own HOME; do not retain a runner's unrelated agentDir.
+    delete process.env.PI_CODING_AGENT_DIR;
     vi.resetModules();
   });
 

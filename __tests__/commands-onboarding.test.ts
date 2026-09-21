@@ -23,10 +23,12 @@ vi.mock("../mcp-setup-panel.ts", () => ({
 
 describe("commands onboarding", () => {
   const originalHome = process.env.HOME;
+  const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalOAuthDir = process.env.FITCH_MCP_OAUTH_DIR;
   const originalCwd = process.cwd();
 
   beforeEach(() => {
+    delete process.env.PI_CODING_AGENT_DIR;
     vi.resetModules();
     mocks.createMcpPanel.mockReset().mockImplementation((_config, _cache, _prov, _callbacks, _tui, done) => {
       done({ cancelled: true, changes: new Map() });
@@ -40,6 +42,8 @@ describe("commands onboarding", () => {
 
   afterEach(() => {
     process.env.HOME = originalHome;
+    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
     if (originalOAuthDir === undefined) {
       delete process.env.FITCH_MCP_OAUTH_DIR;
     } else {
