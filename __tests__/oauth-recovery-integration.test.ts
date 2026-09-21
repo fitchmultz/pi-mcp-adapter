@@ -813,7 +813,10 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const callbackB = await b.authorize((await b.start()).authorizationUrl);
     expect((await fetch(callbackB)).status).toBe(200);
     let callbackA: string;
-    if (cleanup === "timeout") vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // Keep native HTTP progressing while installing the real auth expiry timer.
+    // Node 24.20's fetch uses setTimeout for idle-socket validation; freezing it
+    // deadlocks startAuth before this test can advance the five-minute clock.
+    if (cleanup === "timeout") vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     try {
       callbackA = await a.authorize((await a.start()).authorizationUrl);
       expect((await fetch(callbackA)).status).toBe(200);
