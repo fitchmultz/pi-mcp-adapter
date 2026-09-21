@@ -96,9 +96,11 @@ async function wire(options: { oauth?: boolean; capabilities?: object; session?:
     if (req.url?.startsWith("/.well-known/oauth-authorization-server")) {
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ issuer: origin, authorization_endpoint: origin + "/authorize", token_endpoint: origin + "/token", response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] })); return;
     }
-    if (req.method === "GET" && options.inbound) {
+    if (req.method === "GET") {
       getCount++;
       if (delayMethod === "GET") { started = true; await blocked!.promise; }
+    }
+    if (req.method === "GET" && options.inbound) {
       if (rejectGet) {
         rejectGet = false;
         res.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` }).end(); return;
@@ -681,8 +683,15 @@ it("reconstructs implicit OAuth challenge caches on a fresh runtime without repl
 });
 
 it.each([{}, { opaqueFeature: {} }])("only permits empty experimental metadata: %j", async experimental => {
-  const f = await wire({ legacy: true, capabilities: { tools: {}, experimental } }); const state = await runtime(f.config);
-  expect(await readiness(state)).toMatchObject(Object.keys(experimental).length
+  const f = await wire({ legacy: true, capabilities: { tools: {}, experimental } });
+  // Legacy SDK connect launches a detached GET. Connected does not mean idle:
+  // hold its real HTTP response to prove the blocker, then await readiness.
+  f.delay("GET");
+  const state = await runtime(f.config);
+  await expect.poll(f.started).toBe(true);
+  expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("request/refresh") });
+  f.release();
+  await expect.poll(() => readiness(state)).toMatchObject(Object.keys(experimental).length
     ? { sleepReady: false, reason: expect.stringContaining("experimental") } : { sleepReady: true });
 });
 

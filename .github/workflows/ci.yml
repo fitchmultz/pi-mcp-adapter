@@ -1,4 +1,4 @@
-name: CI
+name: MCP product contracts
 
 on:
   pull_request:
@@ -14,10 +14,12 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.19.0'
           cache: npm
 
       - run: npm ci
@@ -25,12 +27,11 @@ jobs:
         run: |
           npm install --prefix examples/interactive-visualizer --no-package-lock --no-audit --no-fund
           npm run --prefix examples/interactive-visualizer build
-      - name: Typecheck
-        run: npm run typecheck
-      - run: npm test
-      - run: npm run test:oauth
+      # Shared check:compat owns types, ordinary tests, OAuth and native pack/load.
+      # This visualizer case needs its separately built example and is excluded there.
+      - name: Interactive visualizer server
+        run: npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts
       - run: npm run test:conformance
-      - run: npm pack --dry-run
       - name: Git-install lifecycle smoke (build, prune, and consumer types)
         run: |
           git clone --quiet . /tmp/omit-dev-smoke

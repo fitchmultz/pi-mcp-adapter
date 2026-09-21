@@ -5,13 +5,17 @@ import { tmpdir } from "node:os";
 
 describe("onboarding state", () => {
   const originalHome = process.env.HOME;
+  const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 
   beforeEach(() => {
+    delete process.env.PI_CODING_AGENT_DIR;
     vi.resetModules();
   });
 
   afterEach(() => {
     process.env.HOME = originalHome;
+    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
   });
 
   it("returns the default state when no file exists", async () => {
