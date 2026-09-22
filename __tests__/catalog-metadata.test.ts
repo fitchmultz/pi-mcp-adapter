@@ -131,8 +131,9 @@ describe("canonical tool catalog", () => {
     ];
     const entry = { ...cacheEntry([{ name: "get_guide" }], definition), resources: serializeResources(resources) };
     expect(entry.resources).toEqual(resources);
+    expect(reconstructToolMetadata("demo", entry, "server", definition).find(tool => tool.resourceUri)?.resourceDescriptor).toEqual(resources[0]);
     expect(reconstructToolMetadata("demo", entry, "server", definition)).toContainEqual({
-      name: "demo_read_guide", originalName: "read_guide", description: "Read resource: docs://guide", resourceUri: "docs://guide",
+      name: "demo_read_guide", originalName: "read_guide", description: "Read resource: docs://guide", resourceUri: "docs://guide", resourceDescriptor: resources[0],
     });
     expect(resolveDirectTools({ mcpServers: { demo: definition } }, { version: 1, servers: { demo: entry } }, "server").map(tool => tool.originalName)).toEqual(["get_guide"]);
     expect(resolveDirectTools({ mcpServers: { demo: definition } }, { version: 1, servers: { demo: entry } }, "server", ["demo/read_guide"])).toEqual([]);

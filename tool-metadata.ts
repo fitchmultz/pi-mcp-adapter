@@ -66,6 +66,7 @@ export function buildToolMetadata(
         originalName: baseName,
         description: resource.description ?? `Read resource: ${resource.uri}`,
         resourceUri: resource.uri,
+        resourceDescriptor: resource,
       });
     }
   }
@@ -82,7 +83,7 @@ export function totalToolCount(state: McpExtensionState): number {
 }
 
 export function toToolDescriptor(server: string, tool: ToolMetadata) {
-  const { name: path, originalName: name, resourceUri: _resourceUri, uiResourceUri: _uiResourceUri, uiVisibility: _uiVisibility, uiStreamMode: _uiStreamMode, ...descriptor } = tool;
+  const { name: path, originalName: name, resourceUri: _resourceUri, resourceDescriptor: _resourceDescriptor, uiResourceUri: _uiResourceUri, uiVisibility: _uiVisibility, uiStreamMode: _uiStreamMode, ...descriptor } = tool;
   return { ...descriptor, server, path, name };
 }
 

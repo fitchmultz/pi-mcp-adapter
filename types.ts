@@ -30,6 +30,8 @@ export interface McpServerStatusSnapshot {
   readonly name: string;
   readonly status: McpServerRuntimeStatus;
   readonly toolCount: number;
+  /** False means the server has not been discovered, rather than an empty inventory. */
+  readonly catalogKnown?: boolean;
   readonly resourceCount?: number;
   readonly failedAgoSeconds?: number;
   readonly disabled: boolean;
@@ -588,7 +590,8 @@ export interface ToolMetadata extends Omit<McpTool, "name" | "description"> {
   name: string;           // Prefixed tool name (e.g., "xcodebuild_list_sims")
   originalName: string;   // Original MCP tool name (e.g., "list_sims")
   description: string;
-  resourceUri?: string;   // For resource tools: the URI to read
+  resourceUri?: string;   // Legacy resource alias; new calls address server + URI.
+  resourceDescriptor?: McpResource;
   uiResourceUri?: string; // For app-enabled tools: the UI resource URI
   uiVisibility?: UiToolVisibility[];
   uiStreamMode?: UiStreamMode;

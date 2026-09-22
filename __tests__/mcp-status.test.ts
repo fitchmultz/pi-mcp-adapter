@@ -24,7 +24,7 @@ function createState() {
     manager,
     toolMetadata: new Map([
       ["connected", [{ name: "search" }]],
-      ["cached", [{ name: "cached_search" }, { name: "read_doc" }]],
+      ["cached", [{ name: "cached_search" }, { name: "read_doc", resourceUri: "docs://doc" }]],
       ["idle", [{ name: "old_search" }]],
     ]),
     resourceCounts: new Map([["connected", 2], ["cached", 1]]),
@@ -53,18 +53,18 @@ describe("MCP status snapshots", () => {
     const snapshot = createMcpStatusSnapshot(state);
     expect(snapshot).toMatchObject({
       version: 1,
-      totalTools: 4,
+      totalTools: 3,
       totalResources: 3,
       connectedCount: 1,
       disabledCount: 1,
     });
     expect(snapshot.servers).toEqual(expect.arrayContaining([
-      { name: "connected", status: "connected", toolCount: 1, resourceCount: 2, disabled: false },
-      { name: "cached", status: "cached", toolCount: 2, resourceCount: 1, disabled: false },
+      { name: "connected", status: "connected", toolCount: 1, resourceCount: 2, disabled: false, catalogKnown: true },
+      { name: "cached", status: "cached", toolCount: 1, resourceCount: 1, disabled: false, catalogKnown: true },
       expect.objectContaining({ name: "failed", status: "failed", toolCount: 0, disabled: false }),
-      { name: "auth", status: "needs-auth", toolCount: 0, disabled: false },
-      { name: "idle", status: "cached", toolCount: 1, disabled: false },
-      { name: "disabled", status: "disabled", toolCount: 0, disabled: true },
+      { name: "auth", status: "needs-auth", toolCount: 0, disabled: false, catalogKnown: false },
+      { name: "idle", status: "cached", toolCount: 1, disabled: false, catalogKnown: true },
+      { name: "disabled", status: "disabled", toolCount: 0, disabled: true, catalogKnown: false },
     ]));
     const failed = snapshot.servers.find(server => server.name === "failed");
     expect(failed?.failedAgoSeconds).toBeGreaterThanOrEqual(4);
