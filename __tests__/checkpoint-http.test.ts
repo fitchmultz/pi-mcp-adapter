@@ -52,6 +52,7 @@ function host() {
     on: (name: string, handler: (...args: any[]) => any) => { handlers.set(name, handler); return () => handlers.delete(name); },
     registerTool: (tool: any) => { tools.set(tool.name, tool); if (!active.includes(tool.name)) active.push(tool.name); },
     registerFlag: () => {}, registerCommand: () => {}, getFlag: () => undefined,
+    registerEntryRenderer: () => {}, appendEntry: () => {},
     getAllTools: () => [...tools.values()], getActiveTools: () => active, setActiveTools: (names: string[]) => { active = names; },
     events: { emit: () => {} },
   };
@@ -66,7 +67,7 @@ function host() {
     getAvailable: () => [model], getApiKeyAndHeaders: async () => ({ ok: true }),
     complete: vi.fn(async () => ({ role: "assistant", content: [{ type: "text", text: "SYNTHETIC-SAMPLE" }], provider: "synthetic", model: "synthetic", stopReason: "stop" })),
   };
-  const ctx = { cwd: directory, mode: "tui", hasUI: true, isProjectTrusted: () => true, modelRegistry, model, ui };
+  const ctx = { cwd: directory, mode: "tui", hasUI: true, isProjectTrusted: () => true, modelRegistry, model, ui, sessionManager: { getBranch: () => [] } };
   return { pi: pi as any, ctx: ctx as any, handlers, tools, ui, modelRegistry };
 }
 async function wire(options: { oauth?: boolean; capabilities?: object; session?: boolean; legacy?: boolean; inbound?: boolean; input?: "sampling" | "elicitation" } = {}) {
@@ -297,6 +298,7 @@ it("vetoes active health discovery and pauses future ticks until release", async
 
 it("vetoes initialization and active browser OAuth rather than pretending callbacks were saved", async () => {
   const f = await wire({ oauth: true }); const h = host();
+  f.config.mcpServers[f.name]!.lifecycle = "eager";
   f.delay("server/discover"); createMcpAdapter({ config: f.config })(h.pi);
   cleanups.push(() => h.handlers.get("session_shutdown")!());
   await h.handlers.get("session_start")!({}, h.ctx);
@@ -351,7 +353,7 @@ it("vetoes remote task capabilities and stateful HTTP sessions", async () => {
 
 it("rejects metadata persistence failure, unwinds the hold and keeps future explicit requests usable", async () => {
   const f = await wire(); const state = await runtime(f.config);
-  const cache = join(directory, "fitch-mcp-adapter", "mcp-cache.json"); await rm(cache); await mkdir(cache);
+  const cache = join(directory, "fitch-mcp-adapter", "mcp-cache.json"); await rm(cache, { force: true }); await mkdir(cache, { recursive: true });
   await expect(prepareMcpCheckpoint(state, hold().event)).rejects.toThrow();
   await rm(cache, { recursive: true });
   await state.manager.getConnection(f.name)!.client.callTool({ name: "echo", arguments: {} });

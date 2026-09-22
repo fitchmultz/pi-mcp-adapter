@@ -140,7 +140,7 @@ describe("proxy auto auth", () => {
     expect(manager.connect).not.toHaveBeenCalled();
     expect(result.details).toMatchObject({ mode: "list", server: "demo", count: 13 });
     expect(result.content[0].text).toContain("demo_fresh");
-    expect(result.content[0].text).toContain('mcp({ server: "demo", limit: 12, offset: 12 })');
+    expect(result.content[0].text).toContain('mcp({ action: "list", server: "demo", limit: 12, offset: 12 })');
     expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({ originalName: "fresh" });
   });
 

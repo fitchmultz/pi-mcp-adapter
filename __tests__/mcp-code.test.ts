@@ -22,6 +22,7 @@ describe("runMcpScript", () => {
     createMcpAdapter({ config: { settings: {}, mcpServers: {} } })({
       registerTool,
       registerFlag: vi.fn(),
+      registerEntryRenderer: vi.fn(),
       registerCommand: vi.fn(),
       on: vi.fn(),
       getAllTools: vi.fn(() => []),
@@ -29,7 +30,7 @@ describe("runMcpScript", () => {
 
     expect(registerTool).toHaveBeenCalledWith(expect.objectContaining({
       name: "mcp_script",
-      description: expect.stringContaining("multiple MCP tool calls in one request"),
+      description: expect.stringContaining("Compose MCP calls with trusted JavaScript"),
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
     }));
   });
@@ -39,6 +40,7 @@ describe("runMcpScript", () => {
     createMcpAdapter({ config: { settings: { scriptMode: false }, mcpServers: {} } })({
       registerTool,
       registerFlag: vi.fn(),
+      registerEntryRenderer: vi.fn(),
       registerCommand: vi.fn(),
       on: vi.fn(),
       getAllTools: vi.fn(() => []),

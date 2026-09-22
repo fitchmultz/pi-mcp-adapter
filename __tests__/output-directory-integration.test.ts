@@ -30,6 +30,7 @@ async function startAdapter(outputDirectory?: string) {
   const pi = {
     registerTool: (tool: ToolDefinition) => { tools.set(tool.name, tool); },
     registerCommand: () => {},
+    registerEntryRenderer: () => {}, appendEntry: () => {},
     registerFlag: () => {},
     getFlag: () => undefined,
     on: (name: string, handler: Function) => { handlers.set(name, handler); },
@@ -37,7 +38,7 @@ async function startAdapter(outputDirectory?: string) {
     getActiveTools: () => activeTools,
     setActiveTools: (names: string[]) => { activeTools = names; },
   } as unknown as ExtensionAPI;
-  const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true } as ExtensionContext;
+  const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getBranch: () => [] } } as unknown as ExtensionContext;
   const options: McpAdapterOptions = {
     config: {
       mcpServers: { output: {
