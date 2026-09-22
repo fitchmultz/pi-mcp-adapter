@@ -552,9 +552,17 @@ it("reconstructs native catalog subscriptions but vetoes explicit consumer liste
   const subscription = client.autoOpenedSubscription!;
   expect(subscription.honoredFilter).toEqual({ toolsListChanged: true });
   expect(await readiness(state)).toEqual({ sleepReady: true });
+  const metadataUpdated = vi.fn();
+  state.onToolMetadataUpdated = metadataUpdated;
+  // Notification ingress precedes the SDK's debounced catalog refresh.
+  f.delay("tools/list");
   const ingress = hold(); expect(await prepareMcpCheckpoint(state, ingress.event)).toEqual({ sleepReady: true });
   f.notify("notifications/tools/list_changed", {});
   await expect.poll(() => ingress.invalidate.mock.calls.length).toBe(1);
+  await expect.poll(f.started).toBe(true);
+  expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("request/refresh") });
+  f.release();
+  await expect.poll(() => metadataUpdated).toHaveBeenCalledWith(f.name, "tools-list-changed");
   await expect.poll(() => readiness(state)).toEqual({ sleepReady: true });
   const explicit = await client.listen({ toolsListChanged: true });
   expect(await readiness(state)).toMatchObject({ sleepReady: false, reason: expect.stringContaining("subscription is active") });
