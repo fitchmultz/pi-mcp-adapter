@@ -36,7 +36,9 @@ export function createToolLoader(
   getInitPromise: () => Promise<McpExtensionState> | null,
   beforeExecute?: McpAdapterOptions["beforeExecute"],
 ) {
-  const native = !!(pi.registerToolSearch && pi.getActiveToolReferences && pi.setActiveToolReferences);
+  const native = typeof pi.registerToolSearch === "function"
+    && typeof pi.getActiveToolReferences === "function"
+    && typeof pi.setActiveToolReferences === "function";
   pi.registerEntryRenderer(ENTRY, () => undefined);
   const registered = new Map<string, { selection: Selection; ref: Reference; fingerprint: string; pinned: boolean }>();
   let available = new Set<string>();
