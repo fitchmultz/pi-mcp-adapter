@@ -12,7 +12,7 @@ import { truncateAtWord } from "./utils.ts";
 
 /**
  * Resolve prompt metadata for slash-command registration at extension load
- * time. Mirrors `resolveDirectTools`: reads the persistent metadata cache so
+ * time. Like typed tool registration, reads the persistent metadata cache so
  * commands are available before any server connects.
  */
 export function resolveCachedPrompts(config: McpConfig, cacheEnabled = true): PromptMetadata[] {

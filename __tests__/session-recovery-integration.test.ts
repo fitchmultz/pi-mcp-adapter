@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../init.ts", () => ({
   lazyConnect: mocks.lazyConnect,
   getFailureAgeSeconds: vi.fn(() => null),
+  markKeepAliveAfterConnect: vi.fn(),
 }));
 
 describe("session recovery — Streamable HTTP wire path", () => {
@@ -343,6 +344,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const state = {
       config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
       manager,
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
@@ -394,6 +396,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const state = {
       config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
       manager,
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
@@ -441,6 +444,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const state = {
       config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
       manager,
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;

@@ -115,8 +115,9 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("marks no-cache bootstrap spawns for health-check reconnects", async () => {
+  it("leaves uncached lazy servers disconnected until selected", async () => {
     mocks.cache = null;
+    mocks.config.mcpServers.srv.directTools = false;
     const { initializeMcp } = await import("../init.ts");
 
     const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
@@ -129,7 +130,8 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     mocks.manager.clear();
     await (state.lifecycle as any).checkConnections();
 
-    expect(mocks.manager.connect).toHaveBeenCalledTimes(2);
+    expect(mocks.manager.connect).not.toHaveBeenCalled();
+    expect(state.toolMetadata.has("srv")).toBe(false);
   });
 
   it("records direct-tool bootstrap failures", async () => {
@@ -251,6 +253,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
   });
 
   it("does not preserve stale cached resources after authoritative list-change removal", async () => {
+    mocks.config.mcpServers.srv.lifecycle = "eager";
     const { initializeMcp, updateMetadataCache } = await import("../init.ts");
 
     const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {

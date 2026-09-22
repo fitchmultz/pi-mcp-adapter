@@ -80,7 +80,6 @@ describe("manual OAuth proxy actions", () => {
     expect(result.content[0].text).toContain('mcp({ action: "auth-complete", server: "demo" })');
     expect(result.content[0].text).toContain('args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" }');
     expect(result.content[0].text).toContain('args: { code: "PASTE_CODE_HERE" }');
-    expect(result.content[0].text).toContain("JSON-string args remain supported");
     expect(result.details).toMatchObject({ mode: "auth-start", server: "demo" });
   });
 

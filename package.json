@@ -1,6 +1,6 @@
 {
   "name": "@fitchmultz/pi-mcp-adapter",
-  "version": "5.0.0",
+  "version": "6.0.0",
   "description": "Fitch's independently maintained MCP adapter for Pi coding agent",
   "type": "module",
   "types": "./dist/index.d.ts",
@@ -30,6 +30,7 @@
   },
   "scripts": {
     "build": "node ./scripts/build.mjs",
+    "build:bridge": "node ./scripts/build-app-bridge.mjs",
     "prepare": "node ./scripts/prepare.mjs",
     "check:compat": "node scripts/compat-host.mjs && npm run build && npm run typecheck && vitest run --exclude __tests__/interactive-visualizer-server.test.ts && npm run test:oauth && node scripts/compat-package-smoke.mjs",
     "typecheck": "tsc --noEmit",
@@ -68,6 +69,7 @@
     "dist",
     "docs/client-metadata.json",
     "scripts/build.mjs",
+    "scripts/build-app-bridge.mjs",
     "scripts/prepare.mjs",
     "tsconfig.build.json",
     "tsconfig.json",
@@ -75,6 +77,8 @@
     "agent-dir.ts",
     "legacy-migration.ts",
     "index.ts",
+    "tool-loader.ts",
+    "gateway-arguments.ts",
     "error-signal.ts",
     "state.ts",
     "utils.ts",
@@ -82,7 +86,6 @@
     "runtime-owner.ts",
     "checkpoint.ts",
     "tool-metadata.ts",
-    "ts-shape.ts",
     "search-ranking.ts",
     "tool-approval.ts",
     "init.ts",
@@ -137,21 +140,21 @@
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/core": "2.0.0",
-    "@modelcontextprotocol/ext-apps": "^1.7.5",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/ext-apps": "2.0.0",
     "@napi-rs/keyring": "^1.3.0",
     "cross-spawn": "^7.0.6",
+    "minisearch": "^7.2.0",
     "open": "^10.2.0",
     "smol-toml": "^1.8.0",
     "strip-json-comments": "^5.0.3",
-    "zod": "^3.25.0 || ^4.0.0"
+    "zod": "^4.6.5"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*",
-    "zod": "^3.25.0 || ^4.0.0"
+    "zod": "^4.6.5"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
@@ -175,6 +178,7 @@
     "@modelcontextprotocol/server": "2.0.0",
     "@types/cross-spawn": "6.0.6",
     "@types/node": "20.19.43",
+    "esbuild": "^0.28.2",
     "tsx": "^4.21.0",
     "typebox": "1.3.7",
     "typescript": "5.9.3",

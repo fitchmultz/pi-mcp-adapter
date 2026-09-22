@@ -5,20 +5,24 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, authenticateServer, logoutServer, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
 import { cloneMcpConfig, isPathInsideProject, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
-import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.ts";
-import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
-import { getMetadataCachePath, loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
+import { buildProxyDescription, directToolSelection, getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
+import { flushMetadataCache, initializeMcp, lazyConnect, updateStatusBar } from "./init.ts";
+import { getMetadataCachePath, isServerCacheValid, loadMetadataCache, reconstructToolMetadata, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
 import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, executeDescribe, executeInstructions, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
-import { formatTerminalError, normalizeDirectToolInputSchema, truncateAtWord } from "./utils.ts";
+import { formatTerminalError } from "./utils.ts";
 import { createOAuthRuntime, shutdownOAuth } from "./mcp-auth-flow.ts";
-import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
+import { renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
 import { toolErrorOverride } from "./error-signal.ts";
 import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS, runMcpScript } from "./mcp-code.ts";
-import { MAX_PAGE_SIZE, MAX_TOOL_NAME_LENGTH } from "./search-ranking.ts";
+import { MAX_PAGE_SIZE, paginate, rankToolMatches } from "./search-ranking.ts";
+import { createToolLoader, supportsNativeAsync, type SearchAPI } from "./tool-loader.ts";
+import { gatewayParameters, prepareGatewayArguments, type GatewayArguments } from "./gateway-arguments.ts";
+import { executeResourceList, executeResourceRead } from "./resource-tools.ts";
+import { guardMcpOutput, guardedMcpDetails, readMcpResult, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { abortable } from "./abort.ts";
 import { onSessionCheckpoint, prepareMcpCheckpoint } from "./checkpoint.ts";
 
@@ -33,13 +37,7 @@ export {
 
 const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_WAIT_TIMED_OUT: unique symbol = Symbol("init-wait-timed-out");
-const inactiveDirectToolsKey = Symbol.for("fitch-mcp-adapter.inactive-direct-tools");
-const inactiveDirectToolsBySession = (() => {
-  const shared = globalThis as typeof globalThis & {
-    [inactiveDirectToolsKey]?: Map<string, Set<string>>;
-  };
-  return shared[inactiveDirectToolsKey] ??= new Map<string, Set<string>>();
-})();
+
 
 async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -91,54 +89,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const earlyCache: MetadataCache | null = null;
   const envRaw = process.env.MCP_DIRECT_TOOLS;
   const envDirectToolOverride = envRaw?.split(",").map(s => s.trim()).filter(Boolean);
-  const registeredDirectTools = new Map<string, string>();
+  const toolLoader = createToolLoader(pi, () => state, () => initPromise, beforeExecute);
   const deactivatedTools = new Set<string>();
-  const preservedInactiveTools = new Set<string>();
-  let activationKey: string | null = null;
+  let runtimeCwd: string | undefined;
+  let nativeAsyncSupported = false;
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
   let directToolsFrozen = false;
-
-  function directToolFingerprint(spec: DirectToolSpec): string {
-    return JSON.stringify({
-      serverName: spec.serverName,
-      originalName: spec.originalName,
-      prefixedName: spec.prefixedName,
-      description: spec.description,
-      inputSchema: spec.inputSchema,
-      annotations: spec.annotations,
-      resourceUri: spec.resourceUri,
-      uiResourceUri: spec.uiResourceUri,
-      uiStreamMode: spec.uiStreamMode,
-    });
-  }
-
-  function registerDirectTool(spec: DirectToolSpec): void {
-    const execute = createDirectToolExecutor(() => state, () => initPromise, spec, beforeExecute);
-    pi.registerTool({
-      ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
-      name: spec.prefixedName,
-      label: `MCP: ${spec.originalName}`,
-      description: spec.description || "(no description)",
-      promptSnippet: truncateAtWord(spec.description, 100) || `MCP tool from ${spec.serverName}`,
-      parameters: Type.Unsafe<Record<string, unknown>>(normalizeDirectToolInputSchema(spec.inputSchema)),
-      execute,
-      renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
-      renderResult: renderMcpToolResult,
-    });
-    if (preservedInactiveTools.has(spec.prefixedName)) {
-      const activeTools = pi.getActiveTools();
-      if (activeTools.includes(spec.prefixedName)) {
-        pi.setActiveTools(activeTools.filter((name) => name !== spec.prefixedName));
-      }
-    }
-  }
-
-  function resolveCurrentDirectTools(config: McpConfig, cache: MetadataCache | null): DirectToolSpec[] {
-    if (envRaw === "__none__") return [];
-    const prefix = config.settings?.toolPrefix ?? "server";
-    return resolveDirectTools(config, cache, prefix, envDirectToolOverride);
-  }
 
   function deactivateTools(toolNames: string[]): void {
     if (toolNames.length === 0) return;
@@ -153,44 +110,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
   }
 
-  function syncDirectTools(config: McpConfig, cache: MetadataCache | null): {
-    specs: DirectToolSpec[];
-    added: string[];
-    updated: string[];
-    deactivated: string[];
-  } {
-    const specs = resolveCurrentDirectTools(config, cache);
-    const nextNames = new Set(specs.map((spec) => spec.prefixedName));
-    const added: string[] = [];
-    const updated: string[] = [];
-    const deactivated: string[] = [];
-
-    for (const spec of specs) {
-      const fingerprint = directToolFingerprint(spec);
-      const previous = registeredDirectTools.get(spec.prefixedName);
-      if (previous !== fingerprint) {
-        registerDirectTool(spec);
-        registeredDirectTools.set(spec.prefixedName, fingerprint);
-        if (deactivatedTools.delete(spec.prefixedName)) {
-          const activeTools = pi.getActiveTools();
-          if (!activeTools.includes(spec.prefixedName)) {
-            pi.setActiveTools([...activeTools, spec.prefixedName]);
-          }
-        }
-        (previous ? updated : added).push(spec.prefixedName);
-      }
-    }
-
-    for (const toolName of [...registeredDirectTools.keys()]) {
-      if (nextNames.has(toolName)) continue;
-      registeredDirectTools.delete(toolName);
-      deactivated.push(toolName);
-    }
-
-    deactivateTools(deactivated);
-    return { specs, added, updated, deactivated };
-  }
-
   function applyDirectToolConfigChanges(changes: Map<string, true | string[] | false>): void {
     if (!state) return;
     for (const [serverName, value] of changes) {
@@ -203,16 +122,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function syncToolSurface(ctx?: ExtensionContext): void {
     const config = state?.config ?? earlyConfig;
     const cache = loadMetadataCache(state?.metadataCacheEnabled ?? false);
-    const result = syncDirectTools(config, cache);
-    syncProxyTool(config, cache, result.specs);
-    syncScriptTool(config);
-    const changed = result.added.length + result.updated.length + result.deactivated.length;
-    if (changed > 0 && ctx?.hasUI) {
-      ctx.ui.notify(
-        `MCP: direct tools refreshed (+${result.added.length}, ~${result.updated.length}, -${result.deactivated.length})`,
-        "info",
-      );
-    }
+    toolLoader.sync(config, cache, envRaw === "__none__" ? null : envDirectToolOverride, nativeAsyncSupported, specs => {
+      syncProxyTool(config, cache, specs);
+      syncScriptTool(config);
+    });
   }
 
   const registeredPromptCommands = new Set<string>();
@@ -277,13 +190,17 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         }
         syncToolSurface(ctx);
       };
+      for (const server of toolLoader.selectedServers()) {
+        if (!nextState.toolMetadata.has(server) && nextState.config.mcpServers[server]) await lazyConnect(nextState, server, owner.signal);
+      }
+      owner.throwIfInactive();
       syncPromptCommands();
       syncToolSurface(ctx);
       updateStatusBar(nextState);
       initPromise = null;
       if (nextState.config.settings?.freezeDirectTools === true) {
         directToolsFrozen = true;
-        logger.info("MCP: direct tools frozen after initial sync — reconnects won't rebuild the system prompt; use mcp({ connect: \"server\" }) to rediscover");
+        logger.info("MCP: direct tools frozen after initial sync — reconnects won't rebuild the system prompt; use mcp({ action: \"connect\", server: \"server\" }) to rediscover");
       }
     }).catch(async err => {
       if (!owner.isActive() || generation !== lifecycleGeneration) {
@@ -307,7 +224,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     });
   }
 
-  pi.on("session_start", async (_event, ctx) => {
+  async function startSession(ctx: ExtensionContext) {
+    runtimeCwd = ctx.cwd;
+    nativeAsyncSupported = supportsNativeAsync(ctx);
+    directToolsFrozen = false;
     const generation = ++lifecycleGeneration;
     const previousState = state;
     const previousOwner = currentOwner;
@@ -353,16 +273,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     const metadataCacheEnabled = ctx.isProjectTrusted()
       || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
-    activationKey = `${ctx.cwd}\0${currentConfigPath ?? ""}`;
-    preservedInactiveTools.clear();
-    for (const toolName of inactiveDirectToolsBySession.get(activationKey) ?? []) {
-      preservedInactiveTools.add(toolName);
-    }
+    toolLoader.restore(ctx);
     registerPromptCommands(resolveCachedPrompts(runtimeConfig, metadataCacheEnabled));
     const runtimeCache = loadMetadataCache(metadataCacheEnabled);
-    const cachedDirectTools = syncDirectTools(runtimeConfig, runtimeCache).specs;
-    syncProxyTool(runtimeConfig, runtimeCache, cachedDirectTools);
-    syncScriptTool(runtimeConfig);
+    toolLoader.sync(runtimeConfig, runtimeCache, envRaw === "__none__" ? null : envDirectToolOverride, nativeAsyncSupported, specs => {
+      syncProxyTool(runtimeConfig, runtimeCache, specs);
+      syncScriptTool(runtimeConfig);
+    });
 
     const initialization = startInitialization(ctx, owner, oauthRuntime, runtimeConfig, generation);
     if (envRaw !== undefined && envRaw !== "__none__") {
@@ -375,6 +292,19 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         await initialization;
       }
     }
+  }
+
+  pi.on("session_start", (_event, ctx) => startSession(ctx));
+  pi.on("session_tree", (_event, ctx) => {
+    toolLoader.restore(ctx);
+    syncToolSurface(ctx);
+  });
+  pi.on("model_select", (_event, ctx) => {
+    nativeAsyncSupported = supportsNativeAsync(ctx);
+    if (state) syncToolSurface(ctx);
+  });
+  pi.on("before_agent_start", async (_event, ctx) => {
+    if (ctx.cwd !== runtimeCwd) await startSession(ctx);
   });
 
   onSessionCheckpoint(pi, async event => {
@@ -384,14 +314,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   });
 
   pi.on("session_shutdown", async () => {
-    if (activationKey) {
-      const activeTools = new Set(pi.getActiveTools());
-      const inactiveTools = new Set(
-        [...registeredDirectTools.keys()].filter((name) => !activeTools.has(name)),
-      );
-      if (inactiveTools.size > 0) inactiveDirectToolsBySession.set(activationKey, inactiveTools);
-      else inactiveDirectToolsBySession.delete(activationKey);
-    }
+    // Cached tool selections exist before background server initialization finishes.
+    toolLoader.persist();
     ++lifecycleGeneration;
     const currentState = state;
     const owner = currentOwner;
@@ -615,6 +539,68 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     },
   });
 
+  async function getToolState(signal?: AbortSignal) {
+    const owner = currentOwner;
+    if (!state && initPromise) {
+      try {
+        const initialized = await awaitWithTimeout(abortable(initPromise, signal), INIT_WAIT_TIMEOUT_MS);
+        if (initialized === INIT_WAIT_TIMED_OUT) return {
+          content: [{ type: "text" as const, text: "MCP initialization is still in progress. Try again shortly." }],
+          details: { error: "init_timeout", timeoutMs: INIT_WAIT_TIMEOUT_MS },
+        };
+        owner?.throwIfInactive();
+        state = initialized;
+      } catch (error) {
+        if (signal?.aborted || (owner && isAbortError(error, owner.signal))) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }], details: { error: "init_failed", message } };
+      }
+    }
+    owner?.throwIfInactive();
+    return state ?? { content: [{ type: "text" as const, text: "MCP not initialized" }], details: { error: "not_initialized" } };
+  }
+
+  async function searchAndLoad(params: { query: string; server?: string; limit?: number; offset?: number }, signal: AbortSignal | undefined, ctx: ExtensionContext) {
+    const ready = await getToolState(signal);
+    if ("content" in ready) return { ...ready, tools: [] };
+    if (params.server && !ready.toolMetadata.has(params.server)) {
+      const discovery = await executeConnect(ready, params.server, signal);
+      if (discovery.details.error) return { ...discovery, tools: [] };
+    }
+    syncToolSurface(ctx);
+    const matches = params.query.trim() ? rankToolMatches(ready, params.query, params.server)
+      : params.server ? (ready.toolMetadata.get(params.server) ?? []).filter(tool => !tool.resourceUri).map(tool => ({ server: params.server!, tool })).sort((a, b) => a.tool.name.localeCompare(b.tool.name)) : [];
+    const page = paginate(matches, params.offset ?? 0, params.limit ?? 5);
+    const tools = toolLoader.activate(page.items);
+    const result = executeSearch(ready, params.query, params.server, tools.length < page.items.length, params.limit ?? 5, params.offset);
+    const guarded = await guardMcpOutput([
+      ...result.content,
+      { type: "text", text: tools.length ? `Loaded for the next request: ${JSON.stringify(tools)}` : "No direct tools loaded. Use mcp action call or tools.call in mcp_script with the returned exact names." },
+    ], resolveMcpOutputGuardOptions(ready.config.settings, ready.outputDirectory));
+    return { content: guarded.content, details: { ...result.details, ...guardedMcpDetails(guarded), loaded: tools }, tools };
+  }
+
+  const searchDefinition = {
+    name: "mcp_search", label: "MCP Search",
+    description: "Discover MCP tools by name, description, and parameter guidance, and load matching tools with their complete schemas for the next request. Start with a specific task query. Specify server to discover an uncached server; an empty query with server browses it. Results report incomplete catalog coverage. Resources use mcp action resources/read-resource.",
+    parameters: Type.Object({
+      query: Type.String(),
+      server: Type.Optional(Type.String()),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_PAGE_SIZE, description: "Tools to load (default 5)." })),
+      offset: Type.Optional(Type.Integer({ minimum: 0 })),
+    }),
+    renderResult: renderMcpToolResult,
+    async execute(toolCallId: string, params: { query: string; server?: string; limit?: number; offset?: number }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
+      if (beforeExecute) {
+        if (currentOwner) await currentOwner.runCallback("beforeExecute", () => beforeExecute(toolCallId, ctx));
+        else await beforeExecute(toolCallId, ctx);
+      }
+      return searchAndLoad(params, signal, ctx);
+    },
+  };
+  if (toolLoader.native) (pi as SearchAPI).registerToolSearch!(searchDefinition);
+  else pi.registerTool(searchDefinition);
+
   let scriptToolRegistered = false;
 
   function registerScriptTool(): void {
@@ -623,7 +609,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp_script",
       label: "MCP Script",
-      description: "Run trusted JavaScript that makes multiple MCP tool calls in one request — loop, filter, chain, or fan out between calls. For a single MCP call, search, describe, status check, or auth action, use the mcp tool instead. Discover with await tools.search({ query }) — resolves to { items: [{ path, name, server, description? }], total, hasMore, nextOffset }, not an { ok, data } envelope. Inspect with await tools.describe({ path }) — resolves to the tool descriptor with inputTypeScript when representable, otherwise the original JSON inputSchema, or { path, error: { code, message, suggestions } }. Then call tools.call(path, args) — resolves to { ok: true, data } or { ok: false, error: { code, message } }; data is the raw MCP result: tool calls usually return { content, structuredContent? }, while resource reads return { contents }. The sandbox has no Node, filesystem, or network globals. Use direct flat calls when the name is already known; use emit(value) for user-visible output. Load the mcp-scripting skill for the full workflow guide.",
+      description: "Compose MCP calls with trusted JavaScript: await tools.search({query, server?}), tools.describe({path}), tools.call(path,args). Describe returns complete JSON schemas. Calls return {ok,data} with raw MCP results, or {ok:false,error,data?}. Resources: tools.resources({server}), tools.readResource({server,uri}). Saved results: tools.readResult({ref,path?,fields?,offset?,limit?}); never repeats a remote call. Use emit(value) to return selected data or content blocks. No Node, filesystem, or network globals. Prefer a direct tool for one call; use scripts for loops, filtering and chains.",
       promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
       parameters: Type.Object({
         code: Type.String({ description: "Trusted JavaScript MCP script. Use tools.<prefixedToolName>(args) and emit(value)." }),
@@ -633,35 +619,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       }),
       renderResult: renderMcpToolResult,
       async execute(toolCallId: string, params: { code: string; timeoutMs?: number }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
-        const executeOwner = currentOwner;
-        if (!state && initPromise) {
-          try {
-            const initialized = await awaitWithTimeout(abortable(initPromise, signal), INIT_WAIT_TIMEOUT_MS);
-            if (initialized === INIT_WAIT_TIMED_OUT) {
-              return {
-                content: [{ type: "text" as const, text: "MCP initialization is still in progress. Try again shortly." }],
-                details: { mode: "script", error: "init_timeout", timeoutMs: INIT_WAIT_TIMEOUT_MS },
-              };
-            }
-            executeOwner?.throwIfInactive();
-            state = initialized;
-          } catch (error) {
-            if (signal?.aborted || (executeOwner && isAbortError(error, executeOwner.signal))) throw error;
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-              content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
-              details: { mode: "script", error: "init_failed", message },
-            };
-          }
-        }
-        if (!state) {
-          return {
-            content: [{ type: "text" as const, text: "MCP not initialized" }],
-            details: { mode: "script", error: "not_initialized" },
-          };
-        }
-        executeOwner?.throwIfInactive();
-        return runMcpScript(state, params.code, params.timeoutMs ?? options.defaultScriptTimeoutMs, getPiTools, signal, toolCallId,
+        const ready = await getToolState(signal);
+        if ("content" in ready) return ready;
+        return runMcpScript(ready, params.code, params.timeoutMs ?? options.defaultScriptTimeoutMs, getPiTools, signal, toolCallId,
           beforeExecute ? (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) : undefined);
       },
     });
@@ -684,157 +644,55 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function registerProxyTool(description: string): void {
     pi.registerTool({
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
-      name: "mcp",
-      label: "MCP",
-      description,
-      promptSnippet: "MCP gateway — status, search, describe, auth, and single MCP tool calls",
+      name: "mcp", label: "MCP", description,
+      promptSnippet: "MCP server operations, resources, saved result readback, and fallback tool calls",
       renderCall: renderMcpProxyToolCall,
-      parameters: Type.Object({
-        tool: Type.Optional(Type.String({ maxLength: MAX_TOOL_NAME_LENGTH, description: "Tool name to call (e.g., 'xcodebuild_list_sims')" })),
-        args: Type.Optional(Type.Union([
-          Type.String({ description: "Arguments as a JSON string (e.g., '{\"key\": \"value\"}')" }),
-          Type.Object({}, {
-            additionalProperties: true,
-            description: 'Arguments as a JSON object (e.g., { "key": "value" })',
-          }),
-        ], { description: "Tool arguments as a JSON object, or as a JSON string encoding one" })),
-        connect: Type.Optional(Type.String({ description: "Server name to connect (lazy connect + metadata refresh)" })),
-        describe: Type.Optional(Type.String({ maxLength: MAX_TOOL_NAME_LENGTH, description: "Tool name to describe (shows parameters)" })),
-        instructions: Type.Optional(Type.String({ description: "Server name to show that server's usage instructions" })),
-        search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
-        includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas in search results (default: true)" })),
-        limit: Type.Optional(Type.Number({ minimum: 1, maximum: MAX_PAGE_SIZE, description: "Maximum search or server-list results to return (default: 12, max: 100)" })),
-        offset: Type.Optional(Type.Number({ minimum: 0, description: "Search or server-list result offset (default: 0)" })),
-        server: Type.Optional(Type.String({ description: "Filter to specific server (also disambiguates tool calls)" })),
-        action: Type.Optional(Type.String({ description: "Action: 'ui-messages', 'auth-start', or 'auth-complete'" })),
-      }),
+      parameters: gatewayParameters,
+      prepareArguments: prepareGatewayArguments,
       renderResult: renderMcpToolResult,
-      async execute(toolCallId: string, params: {
-        tool?: string;
-        args?: string | Record<string, unknown>;
-        connect?: string;
-        describe?: string;
-        instructions?: string;
-        search?: string;
-        includeSchemas?: boolean;
-        limit?: number;
-        offset?: number;
-        server?: string;
-        action?: string;
-      }, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
-        // Non-call modes have no resolved MCP operation; hosts keep their conservative policy.
-        if (!params.tool || params.action === "ui-messages" || params.action === "auth-start" || params.action === "auth-complete") {
-          if (beforeExecute) {
-            if (currentOwner) await currentOwner.runCallback("beforeExecute", () => beforeExecute(toolCallId, ctx));
-            else await beforeExecute(toolCallId, ctx);
-          }
+      async execute(toolCallId: string, rawParams: GatewayArguments, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
+        const params = prepareGatewayArguments(rawParams);
+        if (beforeExecute && params.action !== "call" && params.action !== "read-resource") {
+          if (currentOwner) await currentOwner.runCallback("beforeExecute", () => beforeExecute(toolCallId, ctx));
+          else await beforeExecute(toolCallId, ctx);
         }
-        const executeOwner = currentOwner;
-        let parsedArgs: Record<string, unknown> | undefined;
-        if (params.args !== undefined && params.args !== "") {
-          let args: unknown;
-          if (typeof params.args === "string") {
-            try {
-              args = JSON.parse(params.args);
-            } catch (error) {
-              if (error instanceof SyntaxError) {
-                throw new Error(`Invalid args JSON: ${error.message}`, { cause: error });
-              }
-              throw error;
-            }
-          } else {
-            args = params.args;
-          }
-
-          if (typeof args !== "object" || args === null || Array.isArray(args)) {
-            const gotType = Array.isArray(args) ? "array" : args === null ? "null" : typeof args;
-            throw new Error(`Invalid args: expected a JSON object, got ${gotType}`);
-          }
-          parsedArgs = args as Record<string, unknown>;
-        }
-
-        if (!state && initPromise) {
-          try {
-            const initialized = await awaitWithTimeout(abortable(initPromise, signal), INIT_WAIT_TIMEOUT_MS);
-            if (initialized === INIT_WAIT_TIMED_OUT) {
-              return {
-                content: [{ type: "text" as const, text: "MCP initialization is still in progress. Try again shortly." }],
-                details: { error: "init_timeout", timeoutMs: INIT_WAIT_TIMEOUT_MS },
-              };
-            }
-            executeOwner?.throwIfInactive();
-            state = initialized;
-          } catch (error) {
-            if (signal?.aborted || (executeOwner && isAbortError(error, executeOwner.signal))) throw error;
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-              content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
-              details: { error: "init_failed", message },
-            };
-          }
-        }
-        if (!state) {
-          return {
-            content: [{ type: "text" as const, text: "MCP not initialized" }],
-            details: { error: "not_initialized" },
-          };
-        }
-        executeOwner?.throwIfInactive();
-
-        if (params.action === "ui-messages") {
-          return executeUiMessages(state);
-        }
-        if (params.action === "auth-start") {
-          if (!params.server) {
-            return {
-              content: [{ type: "text" as const, text: "auth-start requires `server`. Example: mcp({ action: \"auth-start\", server: \"linear-server\" })" }],
-              details: { mode: "auth-start", error: "missing_server" },
-            };
-          }
-          return signal
-            ? executeAuthStart(state, params.server, signal)
-            : executeAuthStart(state, params.server);
-        }
-        if (params.action === "auth-complete") {
-          if (!params.server) {
-            return {
-              content: [{ type: "text" as const, text: "auth-complete requires `server`." }],
-              details: { mode: "auth-complete", error: "missing_server" },
-            };
-          }
-          const input = parsedArgs?.redirectUrl ?? parsedArgs?.code ?? parsedArgs?.input;
-          if (input !== undefined && (typeof input !== "string" || input.trim().length === 0)) {
-            return {
-              content: [{ type: "text" as const, text: "auth-complete accepts a non-empty `redirectUrl`, `code`, or `input`, or no args to use the browser callback." }],
-              details: { mode: "auth-complete", error: "missing_input" },
-            };
-          }
-          return signal
-            ? executeAuthComplete(state, params.server, input, signal)
-            : executeAuthComplete(state, params.server, input);
-        }
-        if (params.tool) {
-          return executeCall(state, params.tool, parsedArgs, params.server, getPiTools, signal, undefined, { toolCallId },
-            beforeExecute ? (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) : undefined);
-        }
-        if (params.connect) {
-          const result = await executeConnect(state, params.connect, signal, params.limit, params.offset);
+        const ready = await getToolState(signal);
+        if ("content" in ready) return ready;
+        const present = async (result: Awaited<ReturnType<typeof executeCall>>) => {
+          const guarded = await guardMcpOutput(result.content, resolveMcpOutputGuardOptions(ready.config.settings, ready.outputDirectory));
+          return { content: guarded.content, details: { ...result.details, ...guardedMcpDetails(guarded) } };
+        };
+        const beforeDispatch = beforeExecute
+          ? (callSignal: AbortSignal | undefined, operation: import("./types.ts").McpOperationContext) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)
+          : undefined;
+        if (params.server && ["list", "search", "describe", "instructions"].includes(params.action) && !ready.toolMetadata.has(params.server)) {
+          const discovery = await executeConnect(ready, params.server, signal);
+          if (discovery.details.error) return discovery;
           syncToolSurface(ctx);
-          return result;
         }
-        if (params.describe) {
-          return executeDescribe(state, params.describe);
+        switch (params.action) {
+          case "ui-messages": return executeUiMessages(ready);
+          case "auth-start": return executeAuthStart(ready, params.server!, signal);
+          case "auth-complete": {
+            const input = params.args?.redirectUrl ?? params.args?.code ?? params.args?.input;
+            if (input !== undefined && (typeof input !== "string" || input.trim().length === 0)) throw new Error("auth-complete requires a non-empty redirectUrl, code, or input");
+            return executeAuthComplete(ready, params.server!, input, signal);
+          }
+          case "call": return executeCall(ready, params.tool!, params.args, params.server, getPiTools, signal, { toolCallId }, beforeDispatch);
+          case "connect": {
+            const result = await executeConnect(ready, params.server!, signal, params.limit, params.offset);
+            syncToolSurface(ctx);
+            return present(result);
+          }
+          case "describe": return present(executeDescribe(ready, params.tool!, params.server));
+          case "instructions": return present(executeInstructions(ready, params.server!));
+          case "search": return present(executeSearch(ready, params.query!, params.server, params.includeSchemas, params.limit, params.offset));
+          case "list": return present(executeList(ready, params.server!, params.limit, params.offset));
+          case "resources": return present(await executeResourceList(ready, params.server!, params.limit, params.offset, signal));
+          case "read-resource": return executeResourceRead(ready, params.server!, params.uri!, signal, { toolCallId }, beforeDispatch);
+          case "read-result": return readMcpResult({ ref: params.ref!, ...(params.path !== undefined ? { path: params.path } : {}), ...(params.fields ? { fields: params.fields } : {}), ...(params.offset !== undefined ? { offset: params.offset } : {}), ...(params.limit !== undefined ? { limit: params.limit } : {}) }, resolveMcpOutputGuardOptions(ready.config.settings, ready.outputDirectory));
+          case "status": return present(executeStatus(ready));
         }
-        if (params.instructions) {
-          return executeInstructions(state, params.instructions);
-        }
-        if (params.search !== undefined) {
-          return executeSearch(state, params.search, params.server, params.includeSchemas, params.limit, params.offset);
-        }
-        if (params.server) {
-          return executeList(state, params.server, params.limit, params.offset);
-        }
-        return executeStatus(state);
       },
     });
     proxyToolRegistered = true;
@@ -847,8 +705,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       cache,
       envRaw === undefined || envRaw === "__none__" ? undefined : envDirectToolOverride,
     );
+    const hasPinnedResources = envRaw !== "__none__" && Object.entries(config.mcpServers).some(([server, definition]) => {
+      if (definition.disabled === true) return false;
+      const selection = directToolSelection(config, server, envDirectToolOverride);
+      if (!selection) return false;
+      const entry = cache?.servers[server];
+      const metadata = state?.toolMetadata.get(server) ?? (entry && isServerCacheValid(entry, definition)
+        ? reconstructToolMetadata(server, entry, config.settings?.toolPrefix ?? "server", definition) : []);
+      return metadata.some(tool => tool.resourceUri && (selection === true || selection.includes(tool.originalName)));
+    });
     const shouldRegisterProxyTool =
       config.settings?.disableProxyTool !== true
+      || hasPinnedResources
       || directSpecs.length === 0
       || missingConfiguredDirectToolServers.length > 0;
 
@@ -871,8 +739,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   // A transform needs the session context before any configured tool surface is registered.
   if (!options.transformConfig) {
-    const initialDirectTools = syncDirectTools(earlyConfig, earlyCache).specs;
-    syncProxyTool(earlyConfig, earlyCache, initialDirectTools);
+    syncProxyTool(earlyConfig, earlyCache, []);
     syncScriptTool(earlyConfig);
   }
 }

@@ -39,7 +39,7 @@ describe("proxy instructions", () => {
     const result = executeList(createState({ instructions: SHORT_INSTRUCTIONS }), "demo");
 
     expect(result.content[0].text).toContain(`Server instructions:\n${SHORT_INSTRUCTIONS}`);
-    expect(result.content[0].text).not.toContain("mcp({ instructions:");
+    expect(result.content[0].text).not.toContain('mcp({ action: "instructions"');
     expect(result.details).toMatchObject({ mode: "list", hasInstructions: true });
   });
 
@@ -48,7 +48,7 @@ describe("proxy instructions", () => {
 
     expect(result.content[0].text).toContain("Server instructions:");
     expect(result.content[0].text).not.toContain(LONG_INSTRUCTIONS);
-    expect(result.content[0].text).toContain('Use mcp({ instructions: "demo" }) for the full text.');
+    expect(result.content[0].text).toContain('Use mcp({ action: "instructions", server: "demo" }) for the full text.');
   });
 
   it("leaves the listing unchanged when a server has no instructions", () => {
@@ -94,7 +94,7 @@ describe("proxy instructions", () => {
   it("suggests connecting when no instructions are cached", () => {
     const result = executeInstructions(createState(), "demo");
 
-    expect(result.content[0].text).toContain('mcp({ connect: "demo" })');
+    expect(result.content[0].text).toContain('mcp({ action: "connect", server: "demo" })');
     expect(result.details).toMatchObject({ mode: "instructions", error: "not_connected" });
   });
 });

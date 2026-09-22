@@ -104,7 +104,7 @@ async function oauthFixture() {
       toolMetadata: new Map([[name, [{ name: "local_echo", originalName: "echo", description: "Echo" }]]]),
       failureTracker: new Map(), completedUiSessions: [],
     } as unknown as McpExtensionState;
-    return () => executeCall(state, "local_echo", {}, name);
+    return () => executeCall(state, "echo", {}, name);
   };
   return { name, origin, runtime, definition, start, complete, connect, tokenRequests,
     toolCalls: () => toolCalls,

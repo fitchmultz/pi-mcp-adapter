@@ -957,9 +957,10 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const tools = new Map<string, any>(); const commands = new Map<string, any>(); const handlers = new Map<string, any>();
     const api = { events: new EventEmitter(), registerTool: (tool: any) => tools.set(tool.name, tool), registerCommand: (name: string, command: any) => commands.set(name, command),
       registerFlag: () => {}, on: (name: string, handler: any) => handlers.set(name, handler), getFlag: () => undefined,
+      registerEntryRenderer: () => {}, appendEntry: () => {},
       getActiveTools: () => [...tools.keys()], setActiveTools: () => {}, getAllTools: () => [], sendMessage: () => {},
     } as any;
-    const ctx = { hasUI: true, mode: "tui", cwd: process.env.HOME!, isProjectTrusted: () => true, ui: { setStatus: vi.fn(), notify: vi.fn() } } as any;
+    const ctx = { hasUI: true, mode: "tui", cwd: process.env.HOME!, isProjectTrusted: () => true, ui: { setStatus: vi.fn(), notify: vi.fn() }, sessionManager: { getBranch: () => [] } } as any;
     const connecting = vi.spyOn(McpServerManager.prototype, "connect");
     createMcpAdapter({ config: { mcpServers: { [f.name]: f.definition }, settings: { sampling: false, elicitation: false } } })(api);
     await handlers.get("session_start")({}, ctx);

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "../direct-tools.ts";
+import { createDirectToolExecutor, getMissingConfiguredDirectToolServers } from "../direct-tools.ts";
+import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
 import { executeAuthStart, executeCall, executeConnect, executeDescribe, executeInstructions, executeList, executeSearch, executeStatus } from "../proxy-modes.ts";
 import { initializeMcp, updateStatusBar } from "../init.ts";
 import { loadMcpConfig, writeProjectServerDisabledOverride } from "../config.ts";
@@ -74,7 +75,7 @@ describe("disabled MCP servers", () => {
       },
     };
 
-    expect(resolveDirectTools(config, directCache, "server").map((spec) => spec.serverName).sort()).toEqual(["enabled", "string"]);
+    expect(resolvePinnedTools(config, directCache, "server").map((spec) => spec.serverName).sort()).toEqual(["enabled", "string"]);
     expect(getMissingConfiguredDirectToolServers(config, directCache)).not.toContain("disabled");
   });
 

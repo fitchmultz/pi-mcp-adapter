@@ -33,7 +33,7 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
     const disabled = definition?.disabled === true;
     const connection = disabled ? undefined : state.manager.getConnection(name);
     const metadata = disabled ? undefined : state.toolMetadata.get(name);
-    const toolCount = metadata?.length ?? (connection?.status === "connected" ? connection.tools.length : 0);
+    const toolCount = metadata?.filter(tool => !tool.resourceUri).length ?? (connection?.status === "connected" ? connection.tools.length : 0);
     const resourceCount = disabled
       ? undefined
       : state.resourceCounts?.get(name) ?? (connection?.status === "connected" ? connection.resources.length : undefined);
@@ -60,6 +60,7 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
       name,
       status,
       toolCount,
+      catalogKnown: metadata !== undefined || connection?.status === "connected",
       ...(resourceCount !== undefined ? { resourceCount } : {}),
       ...(status === "failed" && failedAgoSeconds !== undefined ? { failedAgoSeconds } : {}),
       disabled,

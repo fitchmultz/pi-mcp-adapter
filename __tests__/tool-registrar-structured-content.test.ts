@@ -2,13 +2,13 @@ import { describe, it, expect } from "vitest";
 import { resolveMcpResultContent } from "../tool-registrar.ts";
 
 describe("resolveMcpResultContent", () => {
-  it("returns transformed content blocks when content is present", () => {
+  it("preserves human and structured content together", () => {
     const blocks = resolveMcpResultContent({
       content: [{ type: "text", text: "hello" }],
-      structuredContent: { ignored: true },
+      structuredContent: { extra: true },
     });
 
-    expect(blocks).toEqual([{ type: "text", text: "hello" }]);
+    expect(blocks).toEqual([{ type: "text", text: "hello" }, { type: "text", text: JSON.stringify({ extra: true }, null, 2) }]);
   });
 
   it("falls back to structuredContent when content is empty", () => {
@@ -49,13 +49,13 @@ describe("resolveMcpResultContent", () => {
     ).toEqual([{ type: "text", text: "{}" }]);
   });
 
-  it("does not fall back when content has a non-text block", () => {
+  it("preserves images beside structured content", () => {
     const blocks = resolveMcpResultContent({
       content: [{ type: "image", data: "abc", mimeType: "image/png" }],
-      structuredContent: { should: "not appear" },
+      structuredContent: { caption: "image" },
     });
 
-    expect(blocks).toEqual([{ type: "image", data: "abc", mimeType: "image/png" }]);
+    expect(blocks).toEqual([{ type: "image", data: "abc", mimeType: "image/png" }, { type: "text", text: JSON.stringify({ caption: "image" }, null, 2) }]);
   });
 
   it("degrades gracefully when structuredContent is not serializable", () => {
@@ -68,12 +68,12 @@ describe("resolveMcpResultContent", () => {
     expect(blocks[0]).toMatchObject({ type: "text" });
   });
 
-  it("prefers real content over structuredContent even for a single block", () => {
+  it("does not hide structured content behind a short status", () => {
     const blocks = resolveMcpResultContent({
       content: [{ type: "text", text: "real" }],
-      structuredContent: { fallback: "should not appear" },
+      structuredContent: { id: "saved" },
     });
 
-    expect(blocks).toEqual([{ type: "text", text: "real" }]);
+    expect(blocks).toEqual([{ type: "text", text: "real" }, { type: "text", text: JSON.stringify({ id: "saved" }, null, 2) }]);
   });
 });

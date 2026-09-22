@@ -30,6 +30,8 @@ export interface McpServerStatusSnapshot {
   readonly name: string;
   readonly status: McpServerRuntimeStatus;
   readonly toolCount: number;
+  /** False means the server has not been discovered, rather than an empty inventory. */
+  readonly catalogKnown?: boolean;
   readonly resourceCount?: number;
   readonly failedAgoSeconds?: number;
   readonly disabled: boolean;
@@ -59,24 +61,12 @@ type SdkResource = ListResourcesResult["resources"][number];
 type SdkPrompt = ListPromptsResult["prompts"][number];
 type SdkPromptArgument = NonNullable<SdkPrompt["arguments"]>[number];
 
-// MCP wire definitions derive their field types from the installed SDK while
-// retaining the adapter's deliberately smaller public surface.
-export interface McpTool {
-  name: SdkTool["name"];
-  title?: SdkTool["title"];
-  description?: SdkTool["description"];
-  inputSchema?: SdkTool["inputSchema"]; // JSON Schema
-  annotations?: SdkTool["annotations"];
-  _meta?: SdkTool["_meta"];
+// Legacy cache records may omit inputSchema; otherwise retain the native descriptor.
+export interface McpTool extends Omit<SdkTool, "inputSchema"> {
+  inputSchema?: SdkTool["inputSchema"];
 }
 
-export interface McpResource {
-  uri: SdkResource["uri"];
-  name: SdkResource["name"];
-  description?: SdkResource["description"];
-  mimeType?: SdkResource["mimeType"];
-  _meta?: SdkResource["_meta"];
-}
+export type McpResource = SdkResource;
 
 export interface McpPromptArgument {
   name: SdkPromptArgument["name"];
@@ -509,7 +499,7 @@ export interface McpSettings {
   /** Freeze direct-tool registration after the initial sync. Automatic metadata updates
    * (reconnects, lazy-connect, tool-list-changed) won't rebuild the system prompt,
    * preserving the prompt-cache prefix. The agent rediscovers explicitly via
-   * mcp({ connect: "server" }). Default: false. */
+   * mcp({ action: "connect", server: "server" }). Default: false. */
   freezeDirectTools?: boolean;
   autoAuth?: boolean;
   sampling?: boolean;
@@ -596,15 +586,14 @@ export interface McpAdapterOptions {
 // Alias for clarity
 export type ServerDefinition = ServerEntry;
 
-export interface ToolMetadata {
+export interface ToolMetadata extends Omit<McpTool, "name" | "description"> {
   name: string;           // Prefixed tool name (e.g., "xcodebuild_list_sims")
   originalName: string;   // Original MCP tool name (e.g., "list_sims")
   description: string;
-  resourceUri?: string;   // For resource tools: the URI to read
+  resourceUri?: string;   // Legacy resource alias; new calls address server + URI.
+  resourceDescriptor?: McpResource;
   uiResourceUri?: string; // For app-enabled tools: the UI resource URI
   uiVisibility?: UiToolVisibility[];
-  inputSchema?: unknown;  // JSON Schema for parameters (stored for describe/errors)
-  annotations?: McpTool["annotations"];
   uiStreamMode?: UiStreamMode;
 }
 
@@ -617,16 +606,9 @@ export interface PromptMetadata {
   arguments: McpPromptArgument[];
 }
 
-export interface DirectToolSpec {
+export interface DirectToolSpec extends Omit<ToolMetadata, "name"> {
   serverName: string;
-  originalName: string;
   prefixedName: string;
-  description: string;
-  inputSchema?: unknown;
-  annotations?: McpTool["annotations"];
-  resourceUri?: string;
-  uiResourceUri?: string;
-  uiStreamMode?: UiStreamMode;
 }
 
 export interface ServerProvenance {
@@ -640,21 +622,14 @@ export interface McpAuthResult {
   message?: string;
 }
 
-export interface CachedTool {
-  name: string;
-  description?: string;
-  inputSchema?: unknown;
-  annotations?: McpTool["annotations"];
+export interface CachedTool extends McpTool {
+  // Version-1 caches stored flattened UI fields instead of the raw _meta.
   uiResourceUri?: string;
   uiVisibility?: UiToolVisibility[];
-  uiStreamMode?: "eager" | "stream-first";
+  uiStreamMode?: UiStreamMode;
 }
 
-export interface CachedResource {
-  uri: string;
-  name: string;
-  description?: string;
-}
+export type CachedResource = McpResource;
 
 export interface CachedPrompt {
   name: string;

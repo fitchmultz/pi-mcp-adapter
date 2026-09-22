@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DIRECT_TOOLS_ADVISORY_THRESHOLD, buildProxyDescription, resolveDirectTools } from "../direct-tools.ts";
+import { buildProxyDescription } from "../direct-tools.ts";
+import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
 import {
   computeServerHash,
   getMissingConfiguredDirectToolServers,
@@ -54,27 +55,23 @@ describe("buildProxyDescription", () => {
 
     const description = buildProxyDescription(config);
 
-    expect(description).toContain('mcp({ action: "ui-messages" })');
-    expect(description).toContain("Retrieve accumulated messages from completed UI sessions");
-    expect(description).toContain("server status, tool search/describe, auth, and single MCP tool calls");
-    expect(description).toContain("When one request needs several MCP calls with logic between them, use mcp_script.");
-    expect(description).toContain("Search MCP tools by name/description");
-    expect(description).toContain("Configured servers (call mcp({}) for live status): demo");
-    expect(description).toContain('mcp({ instructions: "name" })');
-    expect(description).toContain('mcp({ server: "name", limit: 12 })');
-    expect(description).toContain("Non-MCP Pi tools should be called directly, not through mcp.");
-    expect(description).not.toContain("MCP + pi");
+    expect(description).toContain("ui-messages");
+    expect(description).toContain("mcp_search");
+    expect(description).toContain("mcp_script");
+    expect(description).toContain("read-result");
+    expect(description).toContain("Configured servers: demo");
+    expect(description).toContain("Native Pi tools are called directly");
   });
 
-  it("lists configured servers without needing cached metadata and distinguishes disabled servers", () => {
+  it("lists enabled servers without requiring cached metadata or exposing filters", () => {
     const description = buildProxyDescription({ mcpServers: {
       figma: { command: "figma", excludeTools: ["get_screenshot"] },
       disabled: { command: "disabled", disabled: true },
       docs: { url: "https://example.test/mcp" },
     } });
 
-    expect(description).toContain("Configured servers (call mcp({}) for live status): docs, figma\n");
-    expect(description).toContain("Disabled servers (enable with /mcp enable <server> and /reload): disabled\n");
+    expect(description).toContain("Configured servers: docs, figma.");
+    expect(description).not.toContain("disabled");
     expect(description).not.toContain("get_screenshot");
   });
 
@@ -147,7 +144,7 @@ describe("metadata cache hashing", () => {
       },
     };
 
-    expect(resolveDirectTools(config, cache, "server")).toEqual([]);
+    expect(resolvePinnedTools(config, cache, "server")).toEqual([]);
   });
 
   it("hashes interpolated cwd", () => {
@@ -373,7 +370,7 @@ describe("excludeTools filtering", () => {
     ]);
   });
 
-  it("keeps the first raw tool when sanitized live metadata names collide", () => {
+  it("retains distinct raw identities when live metadata aliases collide", () => {
     const { metadata } = buildToolMetadata(
       [
         { name: "namespace.tool", description: "Dotted" },
@@ -388,11 +385,13 @@ describe("excludeTools filtering", () => {
 
     expect(metadata.map((tool) => [tool.name, tool.originalName, tool.description])).toEqual([
       ["demo_namespace_tool", "namespace.tool", "Dotted"],
+      ["demo_namespace_tool", "namespace_tool", "Underscored"],
       ["demo_read_namespace_tool", "read_namespace.tool", "Tool before colliding resource"],
+      ["demo_read_namespace_tool", "read_namespace_tool", "Resource"],
     ]);
   });
 
-  it("keeps the first raw tool when sanitized cached metadata names collide", () => {
+  it("retains distinct raw identities when cached metadata aliases collide", () => {
     const reconstructed = reconstructToolMetadata(
       "demo",
       {
@@ -411,7 +410,9 @@ describe("excludeTools filtering", () => {
 
     expect(reconstructed.map((tool) => [tool.name, tool.originalName, tool.description])).toEqual([
       ["demo_namespace_tool", "namespace.tool", "Dotted"],
+      ["demo_namespace_tool", "namespace_tool", "Underscored"],
       ["demo_read_namespace_tool", "read_namespace.tool", "Tool before colliding resource"],
+      ["demo_read_namespace_tool", "read_namespace_tool", "Resource"],
     ]);
   });
 
@@ -445,7 +446,7 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolveDirectTools(config, cache, "server");
+    const specs = resolvePinnedTools(config, cache, "server");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes"]);
   });
@@ -475,46 +476,9 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolveDirectTools(config, cache, "none");
+    const specs = resolvePinnedTools(config, cache, "none");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["github_search"]);
-  });
-
-  it("warns without capping when resolved direct tools exceed the README threshold", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const tools = Array.from({ length: DIRECT_TOOLS_ADVISORY_THRESHOLD }, (_, index) => ({
-      name: `tool_${index}`,
-      description: `Tool ${index}`,
-    }));
-    const config: McpConfig = {
-      mcpServers: {
-        huge: {
-          command: "npx",
-          args: ["-y", "huge"],
-          directTools: true,
-        },
-      },
-    };
-    const cache: MetadataCache = {
-      version: 1,
-      servers: {
-        huge: {
-          configHash: computeServerHash(config.mcpServers.huge),
-          cachedAt: Date.now(),
-          tools,
-          resources: [],
-        },
-      },
-    };
-
-    const specs = resolveDirectTools(config, cache, "server");
-    const reordered = structuredClone(cache);
-    reordered.servers.huge!.tools.reverse();
-    resolveDirectTools(structuredClone(config), reordered, "server");
-
-    expect(specs).toHaveLength(DIRECT_TOOLS_ADVISORY_THRESHOLD);
-    expect(warn).toHaveBeenCalledOnce();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("75+ direct tools"));
   });
 
   it("filters included tools during direct tool registration from cache", () => {
@@ -547,9 +511,9 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolveDirectTools(config, cache, "server");
+    const specs = resolvePinnedTools(config, cache, "server");
 
-    expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes", "figma_read_figjam"]);
+    expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes"]);
   });
 
   it("matches mcp-prefixed exclusions when toolPrefix is mcp", () => {
@@ -580,7 +544,7 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolveDirectTools(config, cache, "mcp");
+    const specs = resolvePinnedTools(config, cache, "mcp");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["mcp__my_server_other_tool"]);
   });
@@ -613,7 +577,7 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolveDirectTools(config, cache, "none");
+    const specs = resolvePinnedTools(config, cache, "none");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["get_nodes"]);
   });

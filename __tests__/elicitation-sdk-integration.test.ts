@@ -104,8 +104,8 @@ describe("elicitation with the real MCP SDK", () => {
   it.each([
     ["proxy tool", { originalName: "url-required" }, "proxy"],
     ["direct tool", { originalName: "url-required" }, "direct"],
-    ["proxy resource", { originalName: "resource", resourceUri: "test://url-required" }, "proxy"],
-    ["direct resource", { originalName: "resource", resourceUri: "test://url-required" }, "direct"],
+    ["proxy resource", { originalName: "read_url_required_resource", resourceUri: "test://url-required" }, "proxy"],
+    ["direct resource", { originalName: "read_url_required_resource", resourceUri: "test://url-required" }, "direct"],
     ["proxy UI resource", { originalName: "app", uiResourceUri: "ui://url-required" }, "proxy"],
     ["direct UI resource", { originalName: "app", uiResourceUri: "ui://url-required" }, "direct"],
   ] as const)("handles real -32042 errors from a %s", async (_label, spec, adapter) => {

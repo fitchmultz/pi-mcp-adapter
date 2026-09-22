@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMcpAdapter } from "../index.ts";
+import { formatMcpResultReference } from "../mcp-output-guard.ts";
 import type { McpAdapterOptions } from "../types.ts";
 
 let root: string;
@@ -29,6 +30,7 @@ async function startAdapter(outputDirectory?: string) {
   const pi = {
     registerTool: (tool: ToolDefinition) => { tools.set(tool.name, tool); },
     registerCommand: () => {},
+    registerEntryRenderer: () => {}, appendEntry: () => {},
     registerFlag: () => {},
     getFlag: () => undefined,
     on: (name: string, handler: Function) => { handlers.set(name, handler); },
@@ -36,7 +38,7 @@ async function startAdapter(outputDirectory?: string) {
     getActiveTools: () => activeTools,
     setActiveTools: (names: string[]) => { activeTools = names; },
   } as unknown as ExtensionAPI;
-  const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true } as ExtensionContext;
+  const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getBranch: () => [] } } as unknown as ExtensionContext;
   const options: McpAdapterOptions = {
     config: {
       mcpServers: { output: {
@@ -90,24 +92,27 @@ describe("factory output directory", () => {
         const text = `${mode}: π\n`.repeat(10_000);
         const result = await adapter.call(mode === "direct" ? "output_echo" : "mcp", mode === "direct" ? { text } : { tool: "output_echo", args: { text } });
         const details = result.details as any;
-        await check(details.outputGuard.fullOutputPath, text);
+        await check(details.outputGuard.fullOutputPath, `${text}\n${JSON.stringify({ echo: text }, null, 2)}`);
         await check(details.mcpResult.fullResultPath, JSON.stringify({ content: [{ type: "text", text }], structuredContent: { echo: text } }));
       }
       const resource = await adapter.call("mcp", { tool: "output_read_large" });
       await check((resource.details as any).outputGuard.fullOutputPath, "resource\n".repeat(10_000));
+      const resourceRaw = JSON.parse(await readFile((resource.details as any).resultRef, "utf8"));
+      expect(resourceRaw.contents[0].text).toBe("resource\n".repeat(10_000));
+      paths.push((resource.details as any).resultRef);
       const text = "script-inner: π\n".repeat(10_000);
       const final = `script-final:${text}`;
       const script = await adapter.call("mcp_script", { code: `const r = await tools.output_echo({ text: ${JSON.stringify(text)} }); if (!r.ok || r.data.structuredContent.echo !== ${JSON.stringify(text)}) throw new Error("raw result changed"); emit("script-final:" + r.data.content[0].text);` });
       expect((script.details as any).error).toBeUndefined();
-      await check((script.details as any).outputGuard.fullOutputPath, final);
+      await check((script.details as any).outputGuard.fullOutputPath, `${final}\n${formatMcpResultReference((script.details as any).resultRefs[0])}`);
       const files = (await readdir(expectedParent, { recursive: true })).filter(name => name.endsWith(".txt")).map(name => join(expectedParent, name));
       expect(files).toHaveLength(8);
       expect(new Set(files).size).toBe(8);
       const innerFiles = files.filter(path => !paths.includes(path));
-      expect((await Promise.all(innerFiles.map(path => readFile(path, "utf8")))).sort()).toEqual([
-        text,
+      // Raw script calls retain their JSON but never create unused rendered-text spills.
+      expect(await Promise.all(innerFiles.map(path => readFile(path, "utf8")))).toEqual([
         JSON.stringify({ content: [{ type: "text", text }], structuredContent: { echo: text } }),
-      ].sort());
+      ]);
     } finally {
       await adapter.stop();
     }

@@ -38,7 +38,8 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     }
     const connection = state.manager.getConnection(name);
     const metadata = state.toolMetadata.get(name);
-    const toolCount = metadata?.length ?? 0;
+    const toolCount = metadata?.filter(tool => tool.resourceUri === undefined).length ?? 0;
+    const resourceCount = metadata?.filter(tool => tool.resourceUri !== undefined).length ?? 0;
     const failedAgo = getFailureAgeSeconds(state, name);
     let status = "not connected";
     let statusIcon = "○";
@@ -59,7 +60,9 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
       status = "cached";
     }
 
-    const toolSuffix = failed ? "" : ` (${toolCount} tools${status === "cached" ? ", cached" : ""})`;
+    const toolSuffix = failed ? "" : metadata === undefined
+      ? " (undiscovered)"
+      : ` (${toolCount} tool${toolCount === 1 ? "" : "s"}, ${resourceCount} resource${resourceCount === 1 ? "" : "s"}${status === "cached" ? ", cached" : ""})`;
     lines.push(`${statusIcon} ${name}: ${status}${toolSuffix}`);
   }
 
@@ -113,19 +116,19 @@ export async function showTools(state: McpExtensionState, ctx: ExtensionContext)
 
   const allTools = [...state.toolMetadata.entries()]
     .filter(([serverName]) => !isServerDisabled(state.config.mcpServers[serverName]))
-    .flatMap(([, metadata]) => metadata.map(m => m.name));
+    .flatMap(([, metadata]) => metadata.filter(tool => tool.resourceUri === undefined).map(tool => tool.name));
 
   if (allTools.length === 0) {
-    ctx.ui.notify("No MCP tools available", "info");
+    ctx.ui.notify("No MCP tools discovered. Use mcp_search to discover tools.", "info");
     return;
   }
 
   const lines = [
-    "MCP Tools:",
+    "Discovered MCP Tools:",
     "",
     ...allTools.map(t => `  ${t}`),
     "",
-    `Total: ${allTools.length} tools`,
+    `Total: ${allTools.length} tool${allTools.length === 1 ? "" : "s"}`,
   ];
 
   ctx.ui.notify(lines.join("\n"), "info");

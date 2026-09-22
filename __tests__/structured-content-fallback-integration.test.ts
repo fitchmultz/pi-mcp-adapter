@@ -13,6 +13,7 @@ vi.mock("../init.ts", () => ({
   updateServerMetadata: vi.fn(),
   updateMetadataCache: vi.fn(),
   updateStatusBar: vi.fn(),
+  markKeepAliveAfterConnect: vi.fn(),
 }));
 
 function textOf(result: any): string {
@@ -51,7 +52,7 @@ describe("structuredContent fallback — direct tool executor", () => {
   it("surfaces structuredContent to the model when content is empty", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
     const structured = { status: "available", summary: "## Notes" };
-    const state = makeState({ isError: false, content: [], structuredContent: structured });
+    const state = makeState({ isError: false, content: [], structuredContent: structured }, "get-summary");
 
     const executor = createDirectToolExecutor(
       () => state,
@@ -61,13 +62,14 @@ describe("structuredContent fallback — direct tool executor", () => {
 
     const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
 
-    expect(textOf(result)).toBe(JSON.stringify(structured, null, 2));
+    expect(result.content[0].text).toBe(JSON.stringify(structured, null, 2));
+    expect(textOf(result)).toContain(result.details.resultRef);
     expect(textOf(result)).not.toContain("(empty result)");
   });
 
   it("still shows (empty result) when both content and structuredContent are empty", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const state = makeState({ isError: false, content: [] });
+    const state = makeState({ isError: false, content: [] }, "noop");
 
     const executor = createDirectToolExecutor(
       () => state,

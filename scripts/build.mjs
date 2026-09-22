@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Purpose: Produce the compiled runtime files that the Pi extension manifest loads.
- * Responsibilities: Run TypeScript emit into a staging directory, copy runtime assets
+ * Responsibilities: Run TypeScript emit and bundle the browser bridge into staging, copy runtime assets
  * that modules resolve as dist-relative siblings, then atomically swap it into dist/
  * so a failed TypeScript emit never destroys a previously working dist.
  * Usage: `npm run build`; also invoked by scripts/prepare.mjs during install lifecycles.
@@ -25,7 +25,7 @@ const RENAME_RETRY_MS = 50;
 const tscPath = join(process.cwd(), "node_modules", "typescript", "bin", "tsc");
 // Runtime siblings resolved relative to the compiled module directory
 // (mcp-auth.ts, mcp-code.ts, ui-server.ts).
-const RUNTIME_ASSETS = ["mcp-keyring-helper.cjs", "mcp-script-worker.mjs", "app-bridge.bundle.js"];
+const RUNTIME_ASSETS = ["mcp-keyring-helper.cjs", "mcp-script-worker.mjs"];
 
 async function discardStaging(path) {
 	try {
@@ -75,6 +75,7 @@ async function compileToStaging(cwd, stagingDir) {
 		);
 		if (stdout) process.stdout.write(stdout);
 		if (stderr) process.stderr.write(stderr);
+		await execFile(process.execPath, [join(cwd, "scripts", "build-app-bridge.mjs"), join(stagingDir, "app-bridge.bundle.js")], { cwd });
 		for (const asset of RUNTIME_ASSETS) await copyFile(join(cwd, asset), join(stagingDir, asset));
 	} catch (error) {
 		if (error?.stdout) process.stdout.write(error.stdout);

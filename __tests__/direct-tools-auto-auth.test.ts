@@ -13,6 +13,9 @@ vi.mock("../init.ts", () => ({
   lazyConnect: mocks.lazyConnect,
   getFailureAgeSeconds: mocks.getFailureAgeSeconds,
   clearFailure: mocks.clearFailure,
+  updateStatusBar: vi.fn(),
+  markKeepAliveAfterConnect: vi.fn(),
+  recordFailure: vi.fn(),
 }));
 
 vi.mock("../mcp-auth-flow.ts", () => ({
@@ -63,6 +66,7 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],
@@ -76,6 +80,7 @@ describe("direct tools auto auth", () => {
       "server",
     );
     const [tool] = metadata;
+    state.toolMetadata.set("demo", metadata);
 
     const executor = createDirectToolExecutor(
       () => state,
@@ -131,6 +136,7 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
@@ -175,6 +181,7 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],
@@ -214,6 +221,7 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
       failureTracker: new Map(),
       ui: undefined,
       completedUiSessions: [],
@@ -261,6 +269,7 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
@@ -299,6 +308,7 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
+      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
       failureTracker: new Map(),
       ui: undefined,
       completedUiSessions: [],

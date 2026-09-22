@@ -12,8 +12,10 @@ import { McpServerManager } from "../server-manager.ts";
 import { executeCall, executeDescribe } from "../proxy-modes.ts";
 import { computeServerHash, reconstructToolMetadata, serializeTools } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
-import { createDirectToolExecutor, resolveDirectTools } from "../direct-tools.ts";
+import { createDirectToolExecutor } from "../direct-tools.ts";
+import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
 import { runMcpScript } from "../mcp-code.ts";
+import { formatMcpResultReference } from "../mcp-output-guard.ts";
 import type { McpExtensionState } from "../state.ts";
 import { SERVER_STREAM_RESULT_PATCH_METHOD, type McpOperationContext, type ServerEntry } from "../types.ts";
 
@@ -92,7 +94,7 @@ async function fixture(handler: (exchange: Exchange) => boolean | void | Promise
 async function call(state: McpExtensionState, entry: string, signal?: AbortSignal) {
   if (entry === "script") {
     const output = await runMcpScript(state, 'return await tools.local_echo({ value: "test" });', 2000, undefined, signal);
-    const text = output.content.filter(c => c.type === "text").at(-1);
+    const text = output.content.filter(c => c.type === "text" && !c.text.startsWith("[MCP result saved:")).at(-1);
     return text?.type === "text" ? JSON.parse(text.text) : undefined;
   }
   const output = entry === "direct"
@@ -330,7 +332,7 @@ describe("published SDK v2 over real local HTTP", () => {
     },
   );
 
-  it("describes complete native input schemas when TypeScript rendering is unsupported", async () => {
+  it("describes complete native input schemas without a lossy TypeScript projection", async () => {
     const inputSchema = {
       type: "object",
       properties: {
@@ -358,8 +360,8 @@ describe("published SDK v2 over real local HTTP", () => {
     const described = JSON.parse(script.content[0].text);
     expect(described.native.inputSchema).toEqual(inputSchema);
     expect(described.native).not.toHaveProperty("inputTypeScript");
-    expect(described.compact.inputTypeScript).toBe("{ value: string; }");
-    expect(described.compact).not.toHaveProperty("inputSchema");
+    expect(described.compact.inputSchema).toEqual({ type: "object", properties: { value: { type: "string" } }, required: ["value"] });
+    expect(described.compact).not.toHaveProperty("inputTypeScript");
     expect(described.called).toMatchObject({ ok: true, data: { structuredContent: { value: "test" } } });
     expect(f.calls()[0].body.params.arguments).toEqual({ value: "test" });
   });
@@ -379,10 +381,11 @@ describe("published SDK v2 over real local HTTP", () => {
     const api = {
       registerTool: (tool: any) => tools.set(tool.name, tool),
       registerCommand: () => {}, registerFlag: () => {}, getFlag: () => undefined,
+      registerEntryRenderer: () => {}, appendEntry: () => {},
       on: (name: string, handler: any) => handlers.set(name, handler),
       getAllTools: () => [...tools.values()], getActiveTools: () => [...tools.keys()], setActiveTools: () => {},
     } as any;
-    const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true } as any;
+    const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getBranch: () => [] } } as any;
     createMcpAdapter({ config: {
       mcpServers: { local: { url: f.url, auth: false, lifecycle: "lazy" } },
       settings: { sampling: false, elicitation: false },
@@ -391,7 +394,7 @@ describe("published SDK v2 over real local HTTP", () => {
     await handlers.get("session_start")({}, ctx);
     const page = await tools.get("mcp").execute("connect-page", { connect: "local", limit: 1, offset: 1 }, undefined, undefined, ctx);
     expect(page.details).toMatchObject({ mode: "list", server: "local", tools: ["local_second"], count: 3, hasMore: true, nextOffset: 2 });
-    expect(page.content[0].text).toContain('2-2 of 3 — mcp({ server: "local", limit: 1, offset: 2 }) for more');
+    expect(page.content[0].text).toContain('2-2 of 3 — mcp({ action: "list", server: "local", limit: 1, offset: 2 }) for more');
   });
 
   it("preserves native annotations through cached metadata, direct tools and both describe paths", async () => {
@@ -401,9 +404,9 @@ describe("published SDK v2 over real local HTTP", () => {
     const entry = { configHash: computeServerHash(definition), tools: serializeTools(connection.tools), resources: [], cachedAt: Date.now() };
     const metadata = reconstructToolMetadata("local", entry, "server", definition);
     expect(metadata).toEqual(state.toolMetadata.get("local"));
-    const specs = resolveDirectTools(state.config, { version: 1, servers: { local: entry } }, "server");
+    const specs = resolvePinnedTools(state.config, { version: 1, servers: { local: entry } }, "server");
     expect(specs[0].annotations).toEqual({ readOnlyHint: true });
-    expect(executeDescribe(state, "local_echo").content[0]).toMatchObject({ text: expect.stringContaining('"readOnlyHint":true') });
+    expect(JSON.parse(executeDescribe(state, "local_echo").content[0].text!)).toMatchObject({ annotations: { readOnlyHint: true } });
     const script = await runMcpScript(state, 'return tools.describe({ path: "local_echo" });');
     expect(JSON.parse(script.content[0].text).annotations).toEqual({ readOnlyHint: true });
     expect(f.calls()).toHaveLength(0);
@@ -447,7 +450,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const wrapper = join(root, "extension.ts");
     await writeFile(wrapper, `
       import { createMcpAdapter } from ${JSON.stringify(resolve("dist/index.js"))};
-      export default createMcpAdapter({ config: {
+      export default createMcpAdapter({ outputDirectory: ${JSON.stringify(join(root, "output"))}, config: {
         mcpServers: { local: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "lazy" } },
         settings: { sampling: false, elicitation: false },
       } });
@@ -494,9 +497,44 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.calls().map(e => e.body.params.name)).toEqual(["second"]);
     expect(prefixes).toHaveLength(steps.length + 1);
     const prefix = JSON.parse(prefixes[0]!);
-    expect(prefix.systemPrompt).toContain("MCP gateway");
+    expect(prefix.systemPrompt).toContain("MCP server operations");
     expect(prefix.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(["mcp", "mcp_script"]));
     expect(new Set(prefixes).size).toBe(1);
+
+    let stage = 0;
+    session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
+      expect(getCurrentSystemPrompt(context.messages)).toBe(prefix.systemPrompt);
+      const active = getCurrentTools(context.messages);
+      const selected = active.find(candidate => candidate.description === "Read newly available data") as { name: string; namespace?: string; parameters: unknown } | undefined;
+      let next: { name: string; namespace?: string; arguments: Record<string, unknown> } | undefined;
+      if (stage === 0) {
+        expect(selected).toBeUndefined();
+        next = { name: "mcp_search", arguments: { query: "newly available", server: "local", limit: 1 } };
+      } else if (stage === 1) {
+        expect(selected?.parameters).toEqual(tool.inputSchema);
+        next = { name: selected!.name, ...(selected!.namespace ? { namespace: selected!.namespace } : {}), arguments: { value: "typed" } };
+      } else if (stage === 2) {
+        const response = context.messages.filter(message => message.role === "toolResult").at(-1)!;
+        const text = response.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+        const reference = /\[MCP result saved: (".*?")\./.exec(text)?.[1];
+        expect(reference).toBeDefined();
+        next = { name: "mcp", arguments: { action: "read-result", ref: JSON.parse(reference!), path: "/structuredContent" } };
+      }
+      stage++;
+      const message = { role: "assistant", api: "openai-completions", provider: "fixture", model: "fixture", timestamp: Date.now(),
+        content: next ? [{ type: "toolCall", id: `loaded-${stage}`, ...next }] : [{ type: "text", text: "done" }],
+        stopReason: next ? "toolUse" : "stop",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      };
+      return { async *[Symbol.asyncIterator]() { yield { type: "done", reason: message.stopReason, message }; }, result: async () => message };
+    };
+    await session.prompt("Load the matching typed tool, call it, then inspect its saved structured data without another remote call.");
+    expect(stage).toBe(4);
+    const readback = session.messages.filter((message: any) => message.role === "toolResult").at(-1)!;
+    expect(readback.isError).toBe(false);
+    expect(JSON.parse(readback.content[0].text)).toEqual({ value: "typed" });
+    expect(f.calls().map(e => e.body.params.name)).toEqual(["second", "second"]);
+    expect(session.sessionManager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "mcp-tool-selection").at(-1).data.selected).toEqual([{ server: "local", tool: "second" }]);
   }, 20_000);
 
   it("awaits native Pi factory checkpoints and capture across Jiti without replaying completed effects", async () => {
@@ -686,7 +724,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(checkpoints[1]).toMatchObject({ toolCallId: "native-outer", operation: {
       toolCallId: "native-outer", innerCallId: 2, args: { value: "resource-1" },
     } });
-    expect(checkpoints[1].artifacts).toContain(largeOutput);
+    expect(checkpoints[1].artifacts).not.toContain(largeOutput); // Scripts retain raw JSON, without unused rendered-text work.
     expect(checkpoints[1].artifacts.map(bytes => bytes.startsWith("{") ? JSON.parse(bytes) : null))
       .toContainEqual(expect.objectContaining({ content: [{ type: "text", text: largeOutput }], structuredContent: { id: "resource-1", value: "first" } }));
     expect(captures).toHaveLength(2);
@@ -700,7 +738,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const scriptResult = sessionManager.getEntries().find((e: any) => e.type === "message" && e.message.role === "toolResult" && e.message.toolCallId === "native-outer");
     const finalPath = scriptResult.message.details.outputGuard.fullOutputPath;
     expect(dirname(dirname(finalPath))).toBe(outputDirectory);
-    expect(await readFile(finalPath, "utf8")).toBe(largeOutput);
+    expect(await readFile(finalPath, "utf8")).toBe([largeOutput, ...scriptResult.message.details.resultRefs.map(formatMcpResultReference)].join("\n"));
     const restoredPath = join(root, "restored.jsonl");
     await writeFile(restoredPath, checkpoint);
     const restored = SessionManager.open(restoredPath);
@@ -796,8 +834,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
     checkpointMode = "pass";
     mode = "pass";
+    expect(registered.some((t: any) => t.definition.name === "local_read_saved_data")).toBe(false);
     for (const entry of ["direct", "proxy", "script"]) {
-      for (const name of ["readback", "upsert", "read_saved_data"]) {
+      for (const name of entry === "direct" ? ["readback", "upsert"] : ["readback", "upsert", "read_saved_data"]) {
         const id = `${entry}-${name}`;
         const beforeCount = checkpoints.length;
         const captureCount = captures.length;
@@ -836,7 +875,7 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(checkpoints.at(-1)!.operation.annotations).toEqual(annotations);
       expect(captures.at(-1)!.event.annotations).toEqual(annotations);
     }
-    for (const params of [{}, { search: "echo" }, { action: "auth-start" }]) {
+    for (const params of [{ }, { search: "echo" }, { action: "ui-messages" }]) {
       const count = captures.length;
       await execute("mcp", "unresolved-mode", params);
       expect(checkpoints.at(-1)!.operation).toBeUndefined();
@@ -1334,7 +1373,10 @@ describe("published SDK v2 over real local HTTP", () => {
     const output = await call(state, entry);
     expect(output.ok, JSON.stringify(output)).toBe(true);
     if (entry === "script") expect(output.data.structuredContent).toBeNull();
-    else expect(output.content).toEqual([{ type: "text", text: "null" }]);
+    else {
+      expect(output.content[0]).toEqual({ type: "text", text: "null" });
+      expect(output.content[1].text).toContain(output.details.resultRef);
+    }
   });
 
   it("preserves catalogs longer than the native default 64-page cap", async () => {

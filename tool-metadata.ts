@@ -1,7 +1,7 @@
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
-import { formatToolName, isToolAllowed, resolveToolPrefix } from "./types.ts";
+import { formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
@@ -15,7 +15,7 @@ export function buildToolMetadata(
 ): { metadata: ToolMetadata[]; failedTools: string[] } {
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
-  const seenNames = new Set<string>();
+  if (isServerDisabled(definition)) return { metadata, failedTools };
   const effectivePrefix = resolveToolPrefix(definition, prefix);
 
   for (const tool of tools) {
@@ -28,16 +28,11 @@ export function buildToolMetadata(
     }
 
     const name = formatToolName(tool.name, serverName, effectivePrefix);
-    if (seenNames.has(name)) {
-      continue;
-    }
 
     const uiVisibility = extractUiToolVisibility(tool._meta);
     if (!isUiToolVisibleToModel(uiVisibility)) {
       continue;
     }
-    seenNames.add(name);
-
     let uiResourceUri: string | undefined;
     try {
       uiResourceUri = getToolUiResourceUri({ _meta: tool._meta });
@@ -46,11 +41,10 @@ export function buildToolMetadata(
     }
     const uiStreamMode = extractToolUiStreamMode(tool._meta);
     metadata.push({
+      ...tool,
       name,
       originalName: tool.name,
       description: tool.description ?? "",
-      ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
-      ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
       ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
       ...(uiVisibility !== undefined ? { uiVisibility } : {}),
       ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
@@ -59,22 +53,20 @@ export function buildToolMetadata(
 
   if (definition.exposeResources !== false) {
     for (const resource of resources) {
+      if (!resource?.name || !resource?.uri) continue;
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
       if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) {
         continue;
       }
 
       const name = formatToolName(baseName, serverName, effectivePrefix);
-      if (seenNames.has(name)) {
-        continue;
-      }
-      seenNames.add(name);
 
       metadata.push({
         name,
         originalName: baseName,
         description: resource.description ?? `Read resource: ${resource.uri}`,
         resourceUri: resource.uri,
+        resourceDescriptor: resource,
       });
     }
   }
@@ -85,17 +77,30 @@ export function buildToolMetadata(
 export function totalToolCount(state: McpExtensionState): number {
   let count = 0;
   for (const metadata of state.toolMetadata.values()) {
-    count += metadata.length;
+    count += metadata.filter(tool => tool.resourceUri === undefined).length;
   }
   return count;
 }
 
+export function toToolDescriptor(server: string, tool: ToolMetadata) {
+  const { name: path, originalName: name, resourceUri: _resourceUri, resourceDescriptor: _resourceDescriptor, uiResourceUri: _uiResourceUri, uiVisibility: _uiVisibility, uiStreamMode: _uiStreamMode, ...descriptor } = tool;
+  return { ...descriptor, server, path, name };
+}
+
+export function catalogCoverage(state: McpExtensionState, server?: string) {
+  const servers = Object.keys(state.config.mcpServers).filter(name => (!server || name === server) && !isServerDisabled(state.config.mcpServers[name]));
+  const knownServers = servers.filter(name => state.toolMetadata.has(name));
+  const unknownServers = servers.filter(name => !state.toolMetadata.has(name));
+  return { complete: unknownServers.length === 0, knownServers, unknownServers };
+}
+
 export function findToolByName(metadata: ToolMetadata[] | undefined, toolName: string): ToolMetadata | undefined {
   if (!metadata) return undefined;
-  const exact = metadata.find(m => m.name === toolName);
-  if (exact) return exact;
+  const exact = metadata.filter(m => m.name === toolName);
+  if (exact.length > 0) return exact.length === 1 ? exact[0] : undefined;
   const normalized = toolName.replace(/-/g, "_");
-  return metadata.find(m => m.name.replace(/-/g, "_") === normalized);
+  const matches = metadata.filter(m => m.name.replace(/-/g, "_") === normalized);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function formatSchema(schema: unknown, indent = "  "): string {

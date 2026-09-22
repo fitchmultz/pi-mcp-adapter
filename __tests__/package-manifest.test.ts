@@ -15,6 +15,7 @@ const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   exports?: Record<string, unknown>;
   types?: string;
+  scripts?: Record<string, string>;
 };
 
 const hostPeerPackages = {
@@ -105,14 +106,36 @@ describe("package.json dependency policy", () => {
     }
   });
 
-  it("pins stable split SDK v2 and retains SDK v1 only for Apps", () => {
-    expect(packageJson.dependencies?.["@modelcontextprotocol/ext-apps"]).toBeDefined();
-    expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBe("^1.30.0");
+  it("uses stable split SDK v2 and Apps v2 without SDK v1", () => {
+    expect(packageJson.dependencies?.["@modelcontextprotocol/ext-apps"]).toBe("2.0.0");
+    expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBeUndefined();
     expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBe("2.0.0");
     expect(packageJson.dependencies?.["@modelcontextprotocol/core"]).toBe("2.0.0");
     expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBe("2.0.0");
-    expect(packageJson.dependencies?.zod).toBeDefined();
+    expect(packageJson.dependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
+    expect(packageJson.peerDependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
+    expect(packageJson.dependencies?.zod).toBe("^4.6.5");
+    expect(packageJson.peerDependencies?.zod).toBe("^4.6.5");
+    expect(packageJson.dependencies?.minisearch).toBe("^7.2.0");
     expect(packageJson.dependencies?.ajv).toBeUndefined();
     expect(packageJson.dependencies?.["ajv-formats"]).toBeUndefined();
+  });
+
+  it("publishes a reproducible bridge builder with development-only esbuild", () => {
+    expect(packageJson.files).toContain("scripts/build-app-bridge.mjs");
+    expect(packageJson.files).toContain("app-bridge.bundle.js");
+    expect(packageJson.scripts?.["build:bridge"]).toBe("node ./scripts/build-app-bridge.mjs");
+    expect(packageJson.devDependencies?.esbuild).toBe("^0.28.2");
+    expect(packageJson.dependencies?.esbuild).toBeUndefined();
+  });
+
+  it("uses the same Apps v2 graph in the interactive visualizer", () => {
+    const example = JSON.parse(readFileSync(join(repoRoot, "examples/interactive-visualizer/package.json"), "utf-8"));
+    for (const name of ["client", "core", "ext-apps", "server"]) {
+      expect(example.dependencies[`@modelcontextprotocol/${name}`]).toBe("2.0.0");
+    }
+    expect(example.dependencies["@modelcontextprotocol/sdk"]).toBeUndefined();
+    expect(example.dependencies.zod).toBe(packageJson.dependencies?.zod);
+    expect(example.devDependencies.esbuild).toBe(packageJson.devDependencies?.esbuild);
   });
 });

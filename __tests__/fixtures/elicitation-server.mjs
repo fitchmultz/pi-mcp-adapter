@@ -24,6 +24,7 @@ server.setRequestHandler("tools/list", async () => ({
     { name: "form", inputSchema: { type: "object", properties: {} } },
     { name: "url", inputSchema: { type: "object", properties: {} } },
     { name: "url-required", inputSchema: { type: "object", properties: {} } },
+    { name: "app", inputSchema: { type: "object", properties: {} }, _meta: { ui: { resourceUri: "ui://url-required" } } },
   ],
 }));
 

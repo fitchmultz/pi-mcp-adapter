@@ -34,7 +34,7 @@ export interface McpExtensionState {
   manager: McpServerManager;
   lifecycle: McpLifecycleManager;
   toolMetadata: Map<string, ToolMetadata[]>;
-  /** Resource counts retained separately because tool metadata includes resource tools. */
+  /** Native resource counts, separate from callable tools. */
   resourceCounts: Map<string, number>;
   promptMetadata: Map<string, PromptMetadata[]>;
   /** Servers whose prompt inventory came from successful live discovery. */

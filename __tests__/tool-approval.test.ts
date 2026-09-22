@@ -141,7 +141,7 @@ describe("tool approval", () => {
   it("marks gated tools in describe and search output without hiding them", () => {
     const { state } = createState({ approveTools: true });
 
-    expect(executeDescribe(state, tool.name).content[0].text).toContain("search-records (requires approval)");
+    expect(JSON.parse(executeDescribe(state, tool.name).content[0].text!)).toMatchObject({ name: "search-records", approvalRequired: true });
     expect(executeSearch(state, "search", undefined, false).content[0].text).toContain("(requires approval)");
   });
 });

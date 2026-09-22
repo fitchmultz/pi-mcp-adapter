@@ -231,7 +231,7 @@ mcp({
 })
 ```
 
-You can also pass only the `code` query parameter with `args: { code: "..." }`. JSON-string args remain supported. Redirect URL completion validates the saved OAuth state; raw code completion is available for providers that display a code directly.
+You can also pass only the `code` query parameter with `args: { code: "..." }`. Use object arguments; JSON-string arguments are accepted only by the stored-v5-call ingress compatibility path. Redirect URL completion validates the saved OAuth state; raw code completion is available for providers that display a code directly.
 
 ### Newly required permissions
 
@@ -248,8 +248,8 @@ Auth-only connection replacement lets accepted native operations finish on the o
 Once authenticated, use the server normally:
 
 ```
-mcp({ server: "my-oauth-server" })
-mcp({ tool: "my-tool", args: { key: "value" } })
+mcp({ action: "list", server: "my-oauth-server" })
+mcp({ action: "call", server: "my-oauth-server", tool: "my-tool", args: { key: "value" } })
 ```
 
 The SDK automatically:

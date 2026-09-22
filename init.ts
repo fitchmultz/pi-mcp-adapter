@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type McpAdapterOptions, type McpConfig, type PromptMetadata, type ToolMetadata } from "./types.ts";
-import { existsSync } from "node:fs";
 import { cloneMcpConfig, isPathInsideProject, loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
 import { McpLifecycleManager } from "./lifecycle.ts";
@@ -214,18 +213,7 @@ export async function initializeMcp(
   const idleSetting = typeof config.settings?.idleTimeout === "number" ? config.settings.idleTimeout : 10;
   lifecycle.setGlobalIdleTimeout(idleSetting);
 
-  const cachePath = getMetadataCachePath();
-  const cacheFileExists = metadataCacheEnabled && existsSync(cachePath);
-  let cache = loadMetadataCache(metadataCacheEnabled);
-  let bootstrapAll = false;
-
-  if (!cacheFileExists) {
-    bootstrapAll = true;
-    saveMetadataCache({ version: 1, servers: {} }, metadataCacheEnabled);
-  } else if (!cache) {
-    cache = { version: 1, servers: {} };
-    saveMetadataCache(cache, metadataCacheEnabled);
-  }
+  const cache = loadMetadataCache(metadataCacheEnabled);
 
   const prefix = config.settings?.toolPrefix ?? "server";
 
@@ -258,12 +246,10 @@ export async function initializeMcp(
     }
   }
 
-  const startupServers = bootstrapAll
-    ? serverEntries
-    : serverEntries.filter(([, definition]) => {
-        const mode = definition.lifecycle ?? "lazy";
-        return mode === "keep-alive" || mode === "eager";
-      });
+  const startupServers = serverEntries.filter(([, definition]) => {
+    const mode = definition.lifecycle ?? "lazy";
+    return mode === "keep-alive" || mode === "eager";
+  });
 
   if (ui && startupServers.length > 0) {
     const status = formatMcpStatus(state.config, `connecting to ${startupServers.length} servers...`);
@@ -376,7 +362,7 @@ export async function initializeMcp(
       const bootstrapped = bootstrapResults.filter(r => r.ok).map(r => r.name);
       owner.throwIfInactive();
       if (bootstrapped.length > 0 && ui) {
-        ui.notify(`MCP: direct tools for ${bootstrapped.join(", ")} will be available after restart`, "info");
+        ui.notify(`MCP: tools discovered for ${bootstrapped.join(", ")}`, "info");
       }
     }
   }

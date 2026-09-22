@@ -144,9 +144,10 @@ it("lets an opted-in factory cross 30 seconds once while an unconfigured factory
   expect(optedIn.result.details).not.toHaveProperty("error");
   expect(optedIn.result.details).toMatchObject({ timeoutMs: null, calls: [{ ok: true }, { ok: true }] });
   expect(optedIn.elapsedMs).toBeGreaterThanOrEqual(31_000);
-  expect(optedIn.result.content).toEqual([
+  expect(optedIn.result.content.slice(0, 3)).toEqual([
     { type: "text", text: "opted-in-one" }, { type: "text", text: "opted-in-two" }, { type: "text", text: "complete" },
   ]);
+  expect(optedIn.result.details?.resultRefs).toHaveLength(2);
   expect(optedIn.captured.map(event => [event.phase, event.toolCallId, event.innerCallId, event.args.id])).toEqual([
     ["before", "opted-in", 1, "opted-in-one"], ["after", "opted-in", 1, "opted-in-one"],
     ["before", "opted-in", 2, "opted-in-two"], ["after", "opted-in", 2, "opted-in-two"],
@@ -226,7 +227,8 @@ it("cancels an already-dispatched unfinished call on early script return", async
   ` }, undefined);
   expect(result.details).not.toHaveProperty("error");
   expect(result.details).toMatchObject({ timeoutMs: null, calls: [{ ok: false, error: "incomplete" }, { ok: true }] });
-  expect(result.content).toEqual([{ type: "text", text: "early" }]);
+  expect(result.content[0]).toEqual({ type: "text", text: "early" });
+  expect(result.content[1]).toMatchObject({ text: expect.stringContaining("[MCP result saved:") });
   expect(calls).toEqual([{ name: "hang", args: { id: "straggler" } }, { name: "echo", args: { id: "joined" } }]);
   await expect.poll(() => closed).toContain("straggler");
 });

@@ -5,7 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [6.0.0] - 2026-09-22
+
+### Breaking changes
+
+- New gateway calls require an explicit `action` (`status`, `search`, `list`, `describe`, `call`, `connect`, `instructions`, `resources`, `read-resource`, `read-result`, `auth-start`, `auth-complete`, or `ui-messages`) and object arguments. Stored v5 optional-mode calls and JSON-string arguments are normalized only at ingress.
+- `mcp_search` discovers and loads full typed tool schemas for the next request, without executing a hit. `directTools` pins the initial active set; other eligible tools remain available for later discovery. Host tool allowlists and `MCP_DIRECT_TOOLS=__none__` remain binding.
+- Resources are listed and read explicitly by server and URI, not registered as synthetic functions. The panel shows separate resource counts and only real-tool pin choices. Legacy resource aliases remain gateway/script-callable; old resource pins keep the gateway available even with `disableProxyTool` enabled.
+- Script `tools.describe` preserves complete JSON Schema and raw descriptor fields rather than returning `inputTypeScript`. Update consumers to use `inputSchema` and optional `outputSchema`.
+- Cold caches no longer trigger connections to every lazy server. Global search reports partial catalog coverage; selected server discovery, configured pins, and eager/keep-alive startup remain intentional connection paths.
+- Metadata cache format 2 preserves raw tool/resource descriptors and reads legacy format 1. Downgrading to v5 ignores format 2 and requires rediscovery. Config paths and the OAuth namespace are unchanged from v5; see [migration](README.md#upgrading-from-v5).
+
+### Added
+
+- Branch-scoped typed-tool selection in native Pi session entries, restored on resume, reload, tree navigation, and working-directory changes. Optional native tool-search hosts use exact namespaced lazy references; official Pi 0.87.0 uses the ordinary loader with the same discover-then-call workflow. Existing pins keep flat names.
+- Conditional native asynchronous execution for typed tools when the host and selected model route both support it, excluding configured approval, MCP App UI, and sequential checkpoint flows.
+- Gateway `resources`, `read-resource`, and `read-result` actions; script `tools.resources`, `tools.readResource`, and `tools.readResult` methods. Resource access retains exposure, filtering, authentication, and approval policy.
+- Model-visible references to retained raw results for structured, media, resource, oversized, and extra-field payloads. Saved-result readback selects JSON Pointers/fields before bounded character paging and never repeats a server call. Artifacts respect the SDK host's `outputDirectory`.
+
+### Changed
+
+- Search uses MiniSearch over tool names, descriptions, and parameter guidance. Discovery and descriptions retain canonical descriptors, including output schemas, annotations, and `_meta`; app-only tools stay hidden from the model and panel.
+- Typed, gateway, and script calls share dispatch, authentication, approvals, and call capture. Scripts receive raw MCP results, including error-result data, without rendering unused text artifacts. Tiny plain-text results remain inline.
+- Render `structuredContent` alongside content blocks instead of suppressing it when text or images are present. Existing output byte/line limits still bound model-facing text.
+- MCP Apps uses 2.0.0 alongside the split MCP SDK 2.0.0 runtime, removing the runtime SDK 1 dependency.
+- Panel and command status distinguish real tools, resources, startup pins, and undiscovered catalogs while retaining authentication, reconnect, and error controls.
 
 ## [5.0.0] - 2026-09-19
 

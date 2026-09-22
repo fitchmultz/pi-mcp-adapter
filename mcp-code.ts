@@ -1,14 +1,14 @@
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import { formatWithOptions } from "node:util";
 import { Worker } from "node:worker_threads";
-import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
-import { executeCall } from "./proxy-modes.ts";
+import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions, readMcpResult, formatMcpResultReference, formatMcpPayloadFile, type McpPayloadFile, type ReadMcpResultInput } from "./mcp-output-guard.ts";
+import { executeCall, executeConnect } from "./proxy-modes.ts";
+import { executeResourceList, executeResourceRead } from "./resource-tools.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import type { McpExtensionState } from "./state.ts";
-import { findToolByName } from "./tool-metadata.ts";
-import { renderTsShape } from "./ts-shape.ts";
-import type { ContentBlock, McpOperationContext } from "./types.ts";
+import { catalogCoverage, toToolDescriptor } from "./tool-metadata.ts";
+import { isServerDisabled, type ContentBlock, type McpOperationContext } from "./types.ts";
 
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 
@@ -20,12 +20,12 @@ class McpScriptTimeoutError extends Error {
 }
 
 type SearchInput = { query?: unknown; server?: unknown; limit?: unknown; offset?: unknown };
-type DescribeInput = { path?: unknown };
+type DescribeInput = { path?: unknown; server?: unknown };
 type WorkerMessage =
   | { type: "emit"; block: unknown }
-  | { type: "call"; id: number; path: string; args?: unknown }
+  | { type: "call"; id: number; path: string; args?: unknown; server?: string }
   | { type: "search"; id: number; input?: unknown }
-  | { type: "describe"; id: number; input?: unknown }
+  | { type: "describe" | "resources" | "readResource" | "readResult"; id: number; input?: unknown }
   | { type: "done"; returnBlock?: unknown }
   | { type: "error"; message: string };
 
@@ -86,11 +86,9 @@ function parseWorkerMessage(value: unknown): WorkerMessage | null {
   const message = value as Record<string, unknown>;
   if (message.type === "emit" && "block" in message) return { type: "emit", block: message.block };
   if (message.type === "call" && typeof message.id === "number" && typeof message.path === "string") {
-    return "args" in message
-      ? { type: "call", id: message.id, path: message.path, args: message.args }
-      : { type: "call", id: message.id, path: message.path };
+    return { type: "call", id: message.id, path: message.path, ...(message.args !== undefined ? { args: message.args } : {}), ...(typeof message.server === "string" ? { server: message.server } : {}) };
   }
-  if ((message.type === "search" || message.type === "describe") && typeof message.id === "number") {
+  if ((message.type === "search" || message.type === "describe" || message.type === "resources" || message.type === "readResource" || message.type === "readResult") && typeof message.id === "number") {
     return "input" in message
       ? { type: message.type, id: message.id, input: message.input }
       : { type: message.type, id: message.id };
@@ -151,17 +149,17 @@ async function runMcpScriptOperation(
       : operation.durationMs,
   }));
   let callsSnapshot: ScriptOperation[] | undefined;
-  const callTool = async (innerCallId: number, path: string, args?: Record<string, unknown>) => {
+  const resultRefs = new Set<string>();
+  const payloadNotices = new Set<string>();
+  const recordCall = async (path: string, dispatch: () => ReturnType<typeof executeCall>) => {
     // Record before dispatch so calls still in flight at timeout/abort appear in the trace.
     const startedAt = Date.now();
     const index = calls.push({ operation: "call", path, ok: false, error: "incomplete", durationMs: 0, startedAt }) - 1;
-    let rawResult: unknown;
-    let hasRawResult = false;
-    const result = await executeCall(state, path, args, undefined, getPiTools, callSignal, (raw) => {
-      rawResult = raw;
-      hasRawResult = true;
-    }, { ...(toolCallId !== undefined ? { toolCallId } : {}), innerCallId }, beforeDispatch);
+    const result = await dispatch();
     const details = result.details;
+    if (typeof details.resultRef === "string") resultRefs.add(details.resultRef);
+    if (typeof details.resultWriteError === "string") payloadNotices.add(`[MCP result could not be saved: ${details.resultWriteError}]`);
+    for (const file of (details.payloadFiles ?? []) as McpPayloadFile[]) payloadNotices.add(formatMcpPayloadFile(file));
     if (details.error !== undefined) {
       const errorCode = String(details.error);
       const suggestions = Array.isArray(details.suggestions)
@@ -180,30 +178,45 @@ async function runMcpScriptOperation(
       if (errorCode === "ambiguous_outcome") output.push({ type: "text", text: message });
       return {
         ok: false as const,
+        ...(details.mcpResult !== undefined ? { data: details.mcpResult } : {}),
+        ...(details.resultRef ? { resultRef: details.resultRef } : {}),
         error: { code: errorCode, message, ...(details.recovery ? { recovery: details.recovery } : {}) },
       };
     }
     calls[index] = { operation: "call", path, ok: true, durationMs: Date.now() - startedAt, startedAt };
     return {
       ok: true as const,
-      data: hasRawResult ? rawResult : details.mcpResult !== undefined ? details.mcpResult : textFromContent(result.content),
+      data: details.mcpResult !== undefined ? details.mcpResult : textFromContent(result.content),
+      ...(details.resultRef ? { resultRef: details.resultRef } : {}),
     };
   };
 
-  const searchTools = (input?: SearchInput) => {
+  const callIdentity = (innerCallId: number) => ({ ...(toolCallId !== undefined ? { toolCallId } : {}), innerCallId });
+  const callTool = (innerCallId: number, path: string, args?: Record<string, unknown>, server?: string) => recordCall(path,
+    () => executeCall(state, path, args, server, getPiTools, callSignal, callIdentity(innerCallId), beforeDispatch, { raw: true }));
+
+  const discoverServer = async (server?: string) => {
+    if (!server) return undefined;
+    if (isServerDisabled(state.config.mcpServers[server])) return { code: "server_disabled", message: `Server "${server}" is disabled.` };
+    if (state.config.mcpServers[server] && state.toolMetadata.has(server)) return undefined;
+    const result = await executeConnect(state, server, callSignal);
+    return result.details.error ? { code: result.details.error, message: textFromContent(result.content) } : undefined;
+  };
+  const searchTools = async (input?: SearchInput) => {
     const startedAt = Date.now();
     const query = typeof input?.query === "string" ? input.query : "";
     let error: unknown;
     try {
-      if (query.trim() === "") {
-        return { items: [], total: 0, hasMore: false, nextOffset: null };
-      }
       const server = typeof input?.server === "string" ? input.server : undefined;
+      const discoveryError = await discoverServer(server);
+      const coverage = catalogCoverage(state, server);
+      if (discoveryError) { error = discoveryError.code; return { error: discoveryError, coverage }; }
+      if (query.trim() === "") return { items: [], total: 0, hasMore: false, nextOffset: null, coverage };
       const limit = typeof input?.limit === "number" ? input.limit : 12;
       const offset = typeof input?.offset === "number" ? input.offset : 0;
-      const page = paginate(rankToolMatches(state, query, server), offset, limit);
+      const page = paginate(rankToolMatches(state, query, server).filter(match => !match.tool.resourceUri), offset, limit);
       return {
-        ...page,
+        ...page, coverage,
         items: page.items.map(({ server: matchServer, tool, score }) => ({
           path: tool.name,
           name: tool.originalName,
@@ -222,25 +235,23 @@ async function runMcpScriptOperation(
     }
   };
 
-  const describeTool = (input?: DescribeInput) => {
+  const describeTool = async (input?: DescribeInput) => {
     const startedAt = Date.now();
     const path = typeof input?.path === "string" ? input.path : "";
     let error: unknown;
     try {
-      for (const [server, metadata] of state.toolMetadata) {
-        const tool = findToolByName(metadata, path);
-        if (!tool) continue;
-        const inputTypeScript = tool.inputSchema ? renderTsShape(tool.inputSchema) : null;
-        return {
-          path: tool.name,
-          name: tool.originalName,
-          server,
-          ...(tool.description ? { description: tool.description } : {}),
-          ...(inputTypeScript ? { inputTypeScript } : tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
-          ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
-        };
-      }
-      const suggestions = path ? rankSuggestions(state, path, 5) : [];
+      const selectedServer = typeof input?.server === "string" ? input.server : undefined;
+      const discoveryError = await discoverServer(selectedServer);
+      if (discoveryError) { error = discoveryError.code; return { path, error: discoveryError }; }
+      const matches = [...state.toolMetadata].flatMap(([server, metadata]) => {
+        if ((selectedServer && server !== selectedServer) || !state.config.mcpServers[server] || isServerDisabled(state.config.mcpServers[server])) return [];
+        const tools = metadata.filter(tool => !tool.resourceUri);
+        const originals = selectedServer ? tools.filter(tool => tool.originalName === path) : [];
+        return (originals.length ? originals : tools.filter(tool => tool.name === path)).map(tool => toToolDescriptor(server, tool));
+      });
+      if (matches.length === 1) return matches[0];
+      if (matches.length > 1) { error = "ambiguous_tool"; return { path, error: { code: "ambiguous_tool", message: "Specify server and exact tool name." } }; }
+      const suggestions = path ? rankSuggestions(state, path, 5, selectedServer) : [];
       error = "tool_not_found";
       return {
         path,
@@ -301,11 +312,25 @@ async function runMcpScriptOperation(
         void (async () => {
           let envelope: unknown;
           if (message.type === "call") {
-            envelope = await callTool(message.id, message.path, message.args as Record<string, unknown> | undefined);
+            envelope = await callTool(message.id, message.path, message.args as Record<string, unknown> | undefined, message.server);
           } else if (message.type === "search") {
-            envelope = searchTools(message.input as SearchInput | undefined);
+            envelope = await searchTools(message.input as SearchInput | undefined);
+          } else if (message.type === "describe") {
+            envelope = await describeTool(message.input as DescribeInput | undefined);
+          } else if (message.type === "readResult") {
+            envelope = await readMcpResult(message.input as ReadMcpResultInput, resolveMcpOutputGuardOptions(state.config.settings, state.outputDirectory));
           } else {
-            envelope = describeTool(message.input as DescribeInput | undefined);
+            const input = message.input as { server?: unknown; uri?: unknown; limit?: unknown; offset?: unknown } | undefined;
+            if (typeof input?.server !== "string" || !input.server || (message.type === "readResource" && (typeof input.uri !== "string" || !input.uri))) {
+              envelope = { error: { code: "invalid_arguments", message: "Specify server and, for reads, resource uri." } };
+            } else if (message.type === "resources") {
+              const result = await executeResourceList(state, input.server, typeof input.limit === "number" ? input.limit : 12, typeof input.offset === "number" ? input.offset : 0, callSignal);
+              envelope = result.details.error ? { error: { code: result.details.error, message: textFromContent(result.content) } } : result.details;
+            } else {
+              const server = input.server;
+              const uri = input.uri as string;
+              envelope = await recordCall(`${server}:${uri}`, () => executeResourceRead(state, server, uri, callSignal, callIdentity(message.id), beforeDispatch, true));
+            }
           }
           const response: WorkerResultMessage = { type: "result", id: message.id, envelope };
           activeWorker.postMessage(response);
@@ -369,13 +394,14 @@ async function runMcpScriptOperation(
 
   // Snapshot before the asynchronous output guard; the terminated worker can no longer emit.
   const guarded = await guardMcpOutput(
-    output.length > 0 ? [...output] : [{ type: "text", text: "(no output)" }],
+    [...(output.length > 0 ? output : [{ type: "text" as const, text: "(no output)" }]), ...[...payloadNotices].map(text => ({ type: "text" as const, text })), ...[...resultRefs].map(ref => ({ type: "text" as const, text: formatMcpResultReference(ref) }))],
     resolveMcpOutputGuardOptions(state.config.settings, state.outputDirectory),
   );
   return {
     content: guarded.content,
     details: {
       mode: "script",
+      ...(resultRefs.size ? { resultRefs: [...resultRefs] } : {}),
       ...(errorCode ? { error: errorCode, message: errorMessage } : {}),
       timeoutMs: resolvedTimeoutMs,
       ...(recovery !== undefined ? { recovery } : {}),
