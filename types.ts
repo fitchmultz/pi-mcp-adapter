@@ -499,7 +499,7 @@ export interface McpSettings {
   /** Freeze direct-tool registration after the initial sync. Automatic metadata updates
    * (reconnects, lazy-connect, tool-list-changed) won't rebuild the system prompt,
    * preserving the prompt-cache prefix. The agent rediscovers explicitly via
-   * mcp({ connect: "server" }). Default: false. */
+   * mcp({ action: "connect", server: "server" }). Default: false. */
   freezeDirectTools?: boolean;
   autoAuth?: boolean;
   sampling?: boolean;

@@ -17,6 +17,9 @@ export interface McpProxyToolCallInput {
   connect?: string;
   describe?: string;
   search?: string;
+  query?: string;
+  uri?: string;
+  ref?: string;
   includeSchemas?: boolean;
   server?: string;
   action?: string;
@@ -112,7 +115,13 @@ export function formatMcpProxyToolCallLines(
   args: McpProxyToolCallInput,
   maxInputChars = DEFAULT_MAX_CALL_INPUT_CHARS,
 ): string[] {
-  if (args.action === "ui-messages") return [`mcp ${args.action}`];
+  if (args.action === "ui-messages" || args.action === "status") return [`mcp ${args.action}`];
+  if (args.action) {
+    const target = args.tool ?? args.query ?? args.uri ?? args.ref;
+    let line = `mcp ${args.action}${target ? ` ${target}` : ""}${args.server ? `${target ? " @" : ""} ${args.server}` : ""}`;
+    if (args.action === "search" && args.includeSchemas === false) line += " (schemas hidden)";
+    return args.action === "call" && args.args ? [line, formatJsonish(args.args, maxInputChars)] : [line];
+  }
 
   if (args.tool) {
     const target = args.server ? `${args.tool} @ ${args.server}` : args.tool;
@@ -132,7 +141,6 @@ export function formatMcpProxyToolCallLines(
   }
 
   if (args.server) return [`mcp list ${args.server}`];
-  if (args.action) return [`mcp ${args.action}`];
 
   return ["mcp status"];
 }

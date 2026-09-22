@@ -65,6 +65,9 @@ export async function handleSamplingRequest(
   );
   throwIfAborted(signal);
 
+  const supportsTemperature = model.compat && "supportsTemperature" in model.compat
+    ? model.compat.supportsTemperature !== false
+    : !(model.id === "gpt-6-astra" && (model.api === "openai-responses" || model.api === "openai-codex-responses"));
   const result = await options.modelRegistry.complete(
     model,
     {
@@ -73,7 +76,7 @@ export async function handleSamplingRequest(
     },
     {
       maxTokens: params.maxTokens,
-      ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+      ...(supportsTemperature && params.temperature !== undefined ? { temperature: params.temperature } : {}),
       ...(params.metadata !== undefined ? { metadata: params.metadata as Record<string, unknown> } : {}),
       ...(signal ? { signal } : {}),
     },

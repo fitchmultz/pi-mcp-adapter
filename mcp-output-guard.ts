@@ -135,17 +135,19 @@ export async function guardMcpOutput(
     .join("\n");
   const composedOutput = `${prefix}${textOutput}${suffix}`;
   const stats = textStats(composedOutput);
+  const referenceSuffix = reference ? `\n${reference}` : "";
+  const totalStats = textStats(composedOutput ? composedOutput + referenceSuffix : reference ?? "");
 
   let guardedContent: ContentBlock[] = addAffixes(normalizedContent, prefix, suffix);
   let outputGuard: McpOutputGuardDetails | undefined;
 
-  if (stats.bytes > maxBytes || stats.lines > maxLines) {
+  if (totalStats.bytes > maxBytes || totalStats.lines > maxLines) {
     const { path: fullOutputPath, error: writeError } = await saveArtifact("output", composedOutput, options.outputDirectory);
     const notice = formatTruncationNotice(stats, fullOutputPath, writeError);
-    const previewBudget = reserveBudget(maxBytes, maxLines, notice);
+    const previewBudget = reserveBudget(maxBytes, maxLines, notice + referenceSuffix);
     const preview = truncateHead(composedOutput, previewBudget.maxBytes, previewBudget.maxLines);
     const finalText = `${preview.content}\n\n${notice}`;
-    const finalStats = textStats(finalText);
+    const finalStats = textStats(finalText + referenceSuffix);
 
     guardedContent = [{ type: "text" as const, text: finalText }, ...imageBlocks];
     outputGuard = {
@@ -313,7 +315,7 @@ export function formatMcpPayloadFile(file: McpPayloadFile): string {
 }
 
 export function formatMcpResultReference(ref: string): string {
-  return `[MCP result saved: ${ref}. Inspect without repeating the call: mcp({ action: "read-result", ref: ${JSON.stringify(ref)}, path: "/structuredContent" }) or await tools.readResult({ ref: ${JSON.stringify(ref)}, path: "/structuredContent" }). Omit path to read the whole result.]`;
+  return `[MCP result saved: ${JSON.stringify(ref)}. Inspect without repeating the call using mcp action "read-result" or tools.readResult with this ref. Optionally select a JSON Pointer with path.]`;
 }
 
 function summarizeMcpResult(result: unknown, rawBytes: number, artifact: { path?: string; error?: string }): McpResultSummary {

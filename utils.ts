@@ -274,11 +274,9 @@ export function truncateAtWord(text: string, target: number): string {
 }
 
 export function normalizeDirectToolInputSchema(schema: unknown): Record<string, unknown> {
-  const inputSchema = schema && typeof schema === "object" && !Array.isArray(schema)
-    ? schema as Record<string, unknown>
+  return schema && typeof schema === "object" && !Array.isArray(schema)
+    ? structuredClone(schema) as Record<string, unknown>
     : { type: "object", properties: {} };
-  const { $schema, additionalProperties, ...normalized } = inputSchema;
-  return normalized;
 }
 
 export function formatAuthRequiredMessage(

@@ -12,7 +12,8 @@ import { McpServerManager } from "../server-manager.ts";
 import { executeCall, executeDescribe } from "../proxy-modes.ts";
 import { computeServerHash, reconstructToolMetadata, serializeTools } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
-import { createDirectToolExecutor, resolveDirectTools } from "../direct-tools.ts";
+import { createDirectToolExecutor } from "../direct-tools.ts";
+import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { formatMcpResultReference } from "../mcp-output-guard.ts";
 import type { McpExtensionState } from "../state.ts";
@@ -380,10 +381,11 @@ describe("published SDK v2 over real local HTTP", () => {
     const api = {
       registerTool: (tool: any) => tools.set(tool.name, tool),
       registerCommand: () => {}, registerFlag: () => {}, getFlag: () => undefined,
+      registerEntryRenderer: () => {}, appendEntry: () => {},
       on: (name: string, handler: any) => handlers.set(name, handler),
       getAllTools: () => [...tools.values()], getActiveTools: () => [...tools.keys()], setActiveTools: () => {},
     } as any;
-    const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true } as any;
+    const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getBranch: () => [] } } as any;
     createMcpAdapter({ config: {
       mcpServers: { local: { url: f.url, auth: false, lifecycle: "lazy" } },
       settings: { sampling: false, elicitation: false },
@@ -392,7 +394,7 @@ describe("published SDK v2 over real local HTTP", () => {
     await handlers.get("session_start")({}, ctx);
     const page = await tools.get("mcp").execute("connect-page", { connect: "local", limit: 1, offset: 1 }, undefined, undefined, ctx);
     expect(page.details).toMatchObject({ mode: "list", server: "local", tools: ["local_second"], count: 3, hasMore: true, nextOffset: 2 });
-    expect(page.content[0].text).toContain('2-2 of 3 — mcp({ server: "local", limit: 1, offset: 2 }) for more');
+    expect(page.content[0].text).toContain('2-2 of 3 — mcp({ action: "list", server: "local", limit: 1, offset: 2 }) for more');
   });
 
   it("preserves native annotations through cached metadata, direct tools and both describe paths", async () => {
@@ -402,9 +404,9 @@ describe("published SDK v2 over real local HTTP", () => {
     const entry = { configHash: computeServerHash(definition), tools: serializeTools(connection.tools), resources: [], cachedAt: Date.now() };
     const metadata = reconstructToolMetadata("local", entry, "server", definition);
     expect(metadata).toEqual(state.toolMetadata.get("local"));
-    const specs = resolveDirectTools(state.config, { version: 1, servers: { local: entry } }, "server");
+    const specs = resolvePinnedTools(state.config, { version: 1, servers: { local: entry } }, "server");
     expect(specs[0].annotations).toEqual({ readOnlyHint: true });
-    expect(executeDescribe(state, "local_echo").content[0]).toMatchObject({ text: expect.stringContaining('"readOnlyHint":true') });
+    expect(JSON.parse(executeDescribe(state, "local_echo").content[0].text!)).toMatchObject({ annotations: { readOnlyHint: true } });
     const script = await runMcpScript(state, 'return tools.describe({ path: "local_echo" });');
     expect(JSON.parse(script.content[0].text).annotations).toEqual({ readOnlyHint: true });
     expect(f.calls()).toHaveLength(0);
@@ -448,7 +450,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const wrapper = join(root, "extension.ts");
     await writeFile(wrapper, `
       import { createMcpAdapter } from ${JSON.stringify(resolve("dist/index.js"))};
-      export default createMcpAdapter({ config: {
+      export default createMcpAdapter({ outputDirectory: ${JSON.stringify(join(root, "output"))}, config: {
         mcpServers: { local: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "lazy" } },
         settings: { sampling: false, elicitation: false },
       } });
@@ -495,9 +497,44 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.calls().map(e => e.body.params.name)).toEqual(["second"]);
     expect(prefixes).toHaveLength(steps.length + 1);
     const prefix = JSON.parse(prefixes[0]!);
-    expect(prefix.systemPrompt).toContain("MCP gateway");
+    expect(prefix.systemPrompt).toContain("MCP server operations");
     expect(prefix.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(["mcp", "mcp_script"]));
     expect(new Set(prefixes).size).toBe(1);
+
+    let stage = 0;
+    session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
+      expect(getCurrentSystemPrompt(context.messages)).toBe(prefix.systemPrompt);
+      const active = getCurrentTools(context.messages);
+      const selected = active.find(candidate => candidate.description === "Read newly available data") as { name: string; namespace?: string; parameters: unknown } | undefined;
+      let next: { name: string; namespace?: string; arguments: Record<string, unknown> } | undefined;
+      if (stage === 0) {
+        expect(selected).toBeUndefined();
+        next = { name: "mcp_search", arguments: { query: "newly available", server: "local", limit: 1 } };
+      } else if (stage === 1) {
+        expect(selected?.parameters).toEqual(tool.inputSchema);
+        next = { name: selected!.name, ...(selected!.namespace ? { namespace: selected!.namespace } : {}), arguments: { value: "typed" } };
+      } else if (stage === 2) {
+        const response = context.messages.filter(message => message.role === "toolResult").at(-1)!;
+        const text = response.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+        const reference = /\[MCP result saved: (".*?")\./.exec(text)?.[1];
+        expect(reference).toBeDefined();
+        next = { name: "mcp", arguments: { action: "read-result", ref: JSON.parse(reference!), path: "/structuredContent" } };
+      }
+      stage++;
+      const message = { role: "assistant", api: "openai-completions", provider: "fixture", model: "fixture", timestamp: Date.now(),
+        content: next ? [{ type: "toolCall", id: `loaded-${stage}`, ...next }] : [{ type: "text", text: "done" }],
+        stopReason: next ? "toolUse" : "stop",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      };
+      return { async *[Symbol.asyncIterator]() { yield { type: "done", reason: message.stopReason, message }; }, result: async () => message };
+    };
+    await session.prompt("Load the matching typed tool, call it, then inspect its saved structured data without another remote call.");
+    expect(stage).toBe(4);
+    const readback = session.messages.filter((message: any) => message.role === "toolResult").at(-1)!;
+    expect(readback.isError).toBe(false);
+    expect(JSON.parse(readback.content[0].text)).toEqual({ value: "typed" });
+    expect(f.calls().map(e => e.body.params.name)).toEqual(["second", "second"]);
+    expect(session.sessionManager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "mcp-tool-selection").at(-1).data.selected).toEqual([{ server: "local", tool: "second" }]);
   }, 20_000);
 
   it("awaits native Pi factory checkpoints and capture across Jiti without replaying completed effects", async () => {
@@ -838,7 +875,7 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(checkpoints.at(-1)!.operation.annotations).toEqual(annotations);
       expect(captures.at(-1)!.event.annotations).toEqual(annotations);
     }
-    for (const params of [{}, { search: "echo" }, { action: "auth-start" }]) {
+    for (const params of [{ }, { search: "echo" }, { action: "ui-messages" }]) {
       const count = captures.length;
       await execute("mcp", "unresolved-mode", params);
       expect(checkpoints.at(-1)!.operation).toBeUndefined();

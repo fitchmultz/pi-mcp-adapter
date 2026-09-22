@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveDirectTools } from "../direct-tools.ts";
+import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
 import { computeServerHash, reconstructToolMetadata, serializeResources, serializeTools } from "../metadata-cache.ts";
 import { rankToolMatches } from "../search-ranking.ts";
 import { buildToolMetadata, findToolByName } from "../tool-metadata.ts";
@@ -76,7 +76,7 @@ describe("canonical tool catalog", () => {
       uiStreamMode: "stream-first",
     });
     expect(live[0]?.inputSchema).toBe(descriptor.inputSchema);
-    const direct = resolveDirectTools({ mcpServers: { linear: definition } }, { version: 1, servers: { linear: stored } }, "server");
+    const direct = resolvePinnedTools({ mcpServers: { linear: definition } }, { version: 1, servers: { linear: stored } }, "server");
     const { name, ...metadata } = cached[0]!;
     expect(direct).toEqual([{ ...metadata, serverName: "linear", prefixedName: name }]);
   });
@@ -100,10 +100,10 @@ describe("canonical tool catalog", () => {
     expect(rankToolMatches(state, "app only invalid empty malformed")).toEqual([]);
     const config = { mcpServers: { demo: definition } };
     const cache = { version: 1, servers: { demo: entry } };
-    expect(resolveDirectTools(config, cache, "server").map(tool => tool.originalName)).toEqual(["visible", "both"]);
-    expect(resolveDirectTools(config, cache, "server", ["demo/app_only"])).toEqual([]);
+    expect(resolvePinnedTools(config, cache, "server").map(tool => tool.originalName)).toEqual(["visible", "both"]);
+    expect(resolvePinnedTools(config, cache, "server", ["demo/app_only"])).toEqual([]);
     definition.directTools = false;
-    expect(resolveDirectTools(config, cache, "server", ["demo/visible"])).toHaveLength(1);
+    expect(resolvePinnedTools(config, cache, "server", ["demo/visible"])).toHaveLength(1);
   });
 
   it("reconstructs old flattened UI cache records without exposing app-only tools", () => {
@@ -120,7 +120,7 @@ describe("canonical tool catalog", () => {
     const metadata = reconstructToolMetadata("demo", entry, "server", definition);
     expect(metadata.map(tool => tool.originalName)).toEqual(["legacy", "plain"]);
     expect(metadata[0]).toMatchObject({ uiResourceUri: "ui://legacy", uiVisibility: ["model"], uiStreamMode: "eager" });
-    expect(resolveDirectTools({ mcpServers: { demo: definition } }, { version: 1, servers: { demo: entry } }, "server").map(tool => tool.originalName)).toEqual(["legacy", "plain"]);
+    expect(resolvePinnedTools({ mcpServers: { demo: definition } }, { version: 1, servers: { demo: entry } }, "server").map(tool => tool.originalName)).toEqual(["legacy", "plain"]);
   });
 
   it("keeps resource aliases readable but never registers them as pinned functions", () => {
@@ -135,8 +135,8 @@ describe("canonical tool catalog", () => {
     expect(reconstructToolMetadata("demo", entry, "server", definition)).toContainEqual({
       name: "demo_read_guide", originalName: "read_guide", description: "Read resource: docs://guide", resourceUri: "docs://guide", resourceDescriptor: resources[0],
     });
-    expect(resolveDirectTools({ mcpServers: { demo: definition } }, { version: 1, servers: { demo: entry } }, "server").map(tool => tool.originalName)).toEqual(["get_guide"]);
-    expect(resolveDirectTools({ mcpServers: { demo: definition } }, { version: 1, servers: { demo: entry } }, "server", ["demo/read_guide"])).toEqual([]);
+    expect(resolvePinnedTools({ mcpServers: { demo: definition } }, { version: 1, servers: { demo: entry } }, "server").map(tool => tool.originalName)).toEqual(["get_guide"]);
+    expect(resolvePinnedTools({ mcpServers: { demo: definition } }, { version: 1, servers: { demo: entry } }, "server", ["demo/read_guide"])).toEqual([]);
   });
 
   it("finds issue listing from parameter guidance without changing exact identity lookup", () => {

@@ -26,7 +26,7 @@ This credential-free Pi gate excludes only the separately built interactive-visu
 
 ## Install
 
-Requires Pi 0.84.0 or later and Node.js 22.19.0 or later.
+Requires Pi 0.87.0 or later and Node.js 22.19.0 or later.
 
 ```bash
 pi install npm:@fitchmultz/pi-mcp-adapter
@@ -527,7 +527,7 @@ Tune the limits with the object form:
 }
 ```
 
-Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — to disable the guard and restore raw output behavior. Saved files are created with mode `0600` under the system temp directory (or the SDK host's `outputDirectory`) and are not cleaned up automatically; note that spilled MCP output may contain sensitive data.
+Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — to disable the guard and restore raw output behavior. Recovery notices remain visible even when a configured cap is too small to fit them. Saved files are created with mode `0600` under the system temp directory (or the SDK host's `outputDirectory`) and are not cleaned up automatically; note that spilled MCP output may contain sensitive data.
 
 Read a retained result without repeating the MCP operation:
 
@@ -582,11 +582,13 @@ The script API is:
 |--------|--------|
 | `tools.search({ query, server?, limit?, offset? })` | `{ items, total, hasMore, nextOffset, coverage }`; items include `path`, `name`, and `server`; discovery errors include `error` |
 | `tools.describe({ path, server? })` | Complete descriptor with `path`, `server`, `name`, and the server's `inputSchema`, `outputSchema`, `title`, annotations, `_meta`, and other fields when present; failures contain `error` |
-| `tools.call(path, args)` or `tools.exact_flat_name(args)` | `{ ok: true, data, resultRef? }` or `{ ok: false, error: { code, message, ... }, data?, resultRef? }` |
+| `tools.call(path, args, server?)` or `tools.exact_flat_name(args)` | `{ ok: true, data, resultRef? }` or `{ ok: false, error: { code, message, ... }, data?, resultRef? }` |
 | `tools.resources({ server, limit?, offset? })` | `{ mode: "resources", server, items, total, hasMore, nextOffset }`; failures contain `error` |
 | `tools.readResource({ server, uri })` | The call envelope above, with raw resource data in `data.contents` |
 | `tools.readResult({ ref, path?, fields?, offset?, limit? })` | `{ content, details }`; readback text and `details.nextOffset`, or `details.error` on failure |
 | `emit(value)` / `console.log(value)` | Captured output before the final return value |
+
+For an ambiguous flat name, call `tools.call(descriptor.name, args, descriptor.server)` using the original name and server returned by describe.
 
 Search/resource pages default to 12 items, maximum 100. `coverage` contains `complete`, `knownServers`, and `unknownServers`. Selecting an uncached server discovers it; global search does not connect every lazy server. Script discovery does not activate typed tools. Descriptions retain JSON Schema rather than a lossy TypeScript projection.
 
@@ -725,7 +727,7 @@ Valid cached descriptors avoid startup connections. Missing or stale metadata fo
 
 MCP catalog notifications and reconnects refresh eligible metadata. Removed tools leave the active set. `settings.freezeDirectTools: true` keeps the automatic registered surface stable after initial sync; deliberate `mcp({ action: "connect", server: "name" })` or `/mcp reconnect <server>` refreshes remain available.
 
-Run `/mcp` to see known tools, pinned counts, resource counts, and connection state. Uncached servers say **undiscovered**. Expand a server to pin or unpin real tools; resources have no checkboxes and use the resource actions instead. Pin changes apply to the current session and persist through `directTools`. Discovered session selections are separate from these startup pins. Press Enter on a server that needs auth or `ctrl+a` on an OAuth server to authenticate; `ctrl+r` reconnects. Broader setup changes still use Pi's normal reload flow.
+Run `/mcp` to see known tools, pinned counts, resource counts, and connection state. Uncached servers say **undiscovered**. Expand a server to pin or unpin real tools; resources have no checkboxes and use the resource actions instead. Pin changes apply to the current session and persist through `directTools`. Discovered session selections are separate from these startup pins: unpinning leaves a tool active if discovery already selected it for the current branch. Press Enter on a server that needs auth or `ctrl+a` on an OAuth server to authenticate; `ctrl+r` reconnects. Broader setup changes still use Pi's normal reload flow.
 
 **Guided first-run setup:** Run `/mcp setup` to inspect detected shared MCP files, adopt compatibility imports from other hosts, open discovered config paths, preview exact before/after file diffs for writes, scaffold a minimal project `.mcp.json`, add a curated known server (DeepWiki, Context7, Notion, GitHub, or Chrome DevTools), or quick-add RepoPrompt into a standard/shared MCP file.
 
@@ -874,7 +876,7 @@ Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. 
 - Tool metadata is cached to disk so search/list/describe work without live connections
 - Idle servers disconnect after 10 minutes (configurable), reconnect automatically on next use
 - npx-based servers resolve to direct binary paths, skipping the ~143 MB npm parent process
-- MCP server validates arguments, not the adapter
+- Pi validates loaded typed-tool arguments against their schemas; gateway and script arguments are validated by the MCP server
 - Keep-alive servers get health checks and auto-reconnect
 - `directTools` pins initial tools; search-driven selections persist separately on the native session branch
 - Resources use explicit URI-based listing and reading, without synthetic function definitions

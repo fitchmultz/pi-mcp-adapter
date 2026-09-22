@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { normalizeDirectToolInputSchema } from "../utils.ts";
 import { computeServerHash, type MetadataCache } from "../metadata-cache.ts";
-import { resolveDirectTools } from "../direct-tools.ts";
+import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
 
 describe("normalizeDirectToolInputSchema", () => {
-  it("removes top-level draft metadata and strict additional properties", () => {
+  it("preserves the original schema constraints without mutating the descriptor", () => {
     const schema = {
       $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
@@ -29,6 +29,8 @@ describe("normalizeDirectToolInputSchema", () => {
         },
       },
       required: ["query"],
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      additionalProperties: false,
     });
   });
 
@@ -51,6 +53,6 @@ describe("normalizeDirectToolInputSchema", () => {
       },
     };
 
-    expect(resolveDirectTools({ mcpServers: { shared: programmaticDefinition } }, cache, "server")).toEqual([]);
+    expect(resolvePinnedTools({ mcpServers: { shared: programmaticDefinition } }, cache, "server")).toEqual([]);
   });
 });

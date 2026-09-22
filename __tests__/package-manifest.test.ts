@@ -113,8 +113,7 @@ describe("package.json dependency policy", () => {
     expect(packageJson.dependencies?.["@modelcontextprotocol/core"]).toBe("2.0.0");
     expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBe("2.0.0");
     expect(packageJson.dependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
-    expect(packageJson.peerDependencies?.["@modelcontextprotocol/server"]).toBe("2.0.0");
-    expect(packageJson.peerDependenciesMeta?.["@modelcontextprotocol/server"]?.optional).toBe(true);
+    expect(packageJson.peerDependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
     expect(packageJson.dependencies?.zod).toBe("^4.6.5");
     expect(packageJson.peerDependencies?.zod).toBe("^4.6.5");
     expect(packageJson.dependencies?.minisearch).toBe("^7.2.0");

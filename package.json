@@ -1,6 +1,6 @@
 {
   "name": "@fitchmultz/pi-mcp-adapter",
-  "version": "5.0.0",
+  "version": "6.0.0",
   "description": "Fitch's independently maintained MCP adapter for Pi coding agent",
   "type": "module",
   "types": "./dist/index.d.ts",
@@ -77,6 +77,8 @@
     "agent-dir.ts",
     "legacy-migration.ts",
     "index.ts",
+    "tool-loader.ts",
+    "gateway-arguments.ts",
     "error-signal.ts",
     "state.ts",
     "utils.ts",
@@ -84,7 +86,6 @@
     "runtime-owner.ts",
     "checkpoint.ts",
     "tool-metadata.ts",
-    "ts-shape.ts",
     "search-ranking.ts",
     "tool-approval.ts",
     "init.ts",
@@ -152,7 +153,6 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
-    "@modelcontextprotocol/server": "2.0.0",
     "typebox": "*",
     "zod": "^4.6.5"
   },
@@ -164,9 +164,6 @@
       "optional": true
     },
     "@earendil-works/pi-tui": {
-      "optional": true
-    },
-    "@modelcontextprotocol/server": {
       "optional": true
     },
     "typebox": {

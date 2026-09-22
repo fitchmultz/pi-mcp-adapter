@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [6.0.0] - 2026-09-22
 
-### 6.0.0 — Breaking changes
+### Breaking changes
 
 - New gateway calls require an explicit `action` (`status`, `search`, `list`, `describe`, `call`, `connect`, `instructions`, `resources`, `read-resource`, `read-result`, `auth-start`, `auth-complete`, or `ui-messages`) and object arguments. Stored v5 optional-mode calls and JSON-string arguments are normalized only at ingress.
 - `mcp_search` discovers and loads full typed tool schemas for the next request, without executing a hit. `directTools` pins the initial active set; other eligible tools remain available for later discovery. Host tool allowlists and `MCP_DIRECT_TOOLS=__none__` remain binding.
