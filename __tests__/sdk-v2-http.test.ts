@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
-import type { ToolCall } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools, type ToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
 import { createMcpAdapter } from "../index.ts";
 import { McpServerManager } from "../server-manager.ts";
 import { executeCall, executeDescribe } from "../proxy-modes.ts";
@@ -460,7 +460,8 @@ describe("published SDK v2 over real local HTTP", () => {
     await loader.reload();
     expect(loader.getExtensions().errors).toEqual([]);
     const modelRuntime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null });
-    const model = { id: "fixture", name: "fixture", api: "test", provider: "fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 };
+    const model = { id: "fixture", name: "fixture", api: "openai-completions", provider: "fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 };
+    modelRuntime.registerProvider("fixture", { baseUrl: f.url, api: model.api, apiKey: "fixture-key", models: [model] });
     const { session } = await createAgentSession({ cwd: root, agentDir, resourceLoader: loader,
       sessionManager: SessionManager.inMemory(root), settingsManager, modelRuntime, model });
     cleanups.push(async () => {
@@ -473,17 +474,17 @@ describe("published SDK v2 over real local HTTP", () => {
       { instructions: "local" }, { describe: "local_second" }, { tool: "local_second", args: {} },
     ];
     const prefixes: string[] = [];
-    session.agent.streamFunction = async (_model: unknown, context: any) => {
-      prefixes.push(JSON.stringify({ systemPrompt: context.systemPrompt, tools: context.tools }));
+    session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
+      prefixes.push(JSON.stringify({ systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages) }));
       const step = steps[prefixes.length - 1];
-      const message = { role: "assistant", api: "test", provider: "fixture", model: "fixture", timestamp: Date.now(),
+      const message = { role: "assistant", api: "openai-completions", provider: "fixture", model: "fixture", timestamp: Date.now(),
         content: step ? [{ type: "toolCall", id: `call-${prefixes.length}`, name: "mcp", arguments: step }] : [{ type: "text", text: "done" }],
         stopReason: step ? "toolUse" : "stop",
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       };
       return { async *[Symbol.asyncIterator]() { yield { type: "done", reason: message.stopReason, message }; }, result: async () => message };
     };
-    await session.agent.prompt("Read the server guidance and discover the newly available tool.");
+    await session.prompt("Read the server guidance and discover the newly available tool.");
     const outputs = session.messages.filter((message: any) => message.role === "toolResult");
     expect(outputs).toHaveLength(steps.length);
     expect(outputs.every((message: any) => !message.isError && !message.details?.error)).toBe(true);
@@ -492,6 +493,9 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(JSON.stringify(outputs[4].content)).toContain("Read newly available data");
     expect(f.calls().map(e => e.body.params.name)).toEqual(["second"]);
     expect(prefixes).toHaveLength(steps.length + 1);
+    const prefix = JSON.parse(prefixes[0]!);
+    expect(prefix.systemPrompt).toContain("MCP gateway");
+    expect(prefix.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(["mcp", "mcp_script"]));
     expect(new Set(prefixes).size).toBe(1);
   }, 20_000);
 
@@ -627,7 +631,8 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(loader.getExtensions().errors).toEqual([]);
     const modelRuntime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null });
     const sessionManager = SessionManager.create(root, join(root, "sessions"));
-    const model = { id: "fixture", name: "fixture", api: "test", provider: "fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 };
+    const model = { id: "fixture", name: "fixture", api: "openai-completions", provider: "fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 };
+    modelRuntime.registerProvider("fixture", { baseUrl: f.url, api: model.api, apiKey: "fixture-key", models: [model] });
     const { session } = await createAgentSession({ cwd: root, agentDir, resourceLoader: loader, sessionManager, settingsManager, modelRuntime, model });
     cleanups.push(async () => {
       await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
@@ -642,7 +647,7 @@ describe("published SDK v2 over real local HTTP", () => {
     let modelCalls = 0;
     session.agent.streamFunction = async (_model: unknown, _context: unknown, options: { signal?: AbortSignal }) => {
       const aborted = options.signal?.aborted;
-      const message = { role: "assistant", api: "test", provider: "fixture", model: "fixture", timestamp: Date.now(),
+      const message = { role: "assistant", api: "openai-completions", provider: "fixture", model: "fixture", timestamp: Date.now(),
         content: aborted ? [] : ++modelCalls === 1 ? nativeCalls : [{ type: "text", text: "done" }],
         stopReason: aborted ? "aborted" : modelCalls === 1 ? "toolUse" : "stop",
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -651,7 +656,7 @@ describe("published SDK v2 over real local HTTP", () => {
         ? { type: "error", reason: "aborted", error: message }
         : { type: "done", reason: message.stopReason, message }; }, result: async () => message };
     };
-    const pending = session.agent.prompt("fixture: finish the workspace write and both effects");
+    const pending = session.prompt("fixture: finish the workspace write and both effects");
     await expect.poll(() => writer !== undefined).toBe(true);
     expect(checkpoints).toHaveLength(0);
     expect(effects).toBe(0);
@@ -777,7 +782,7 @@ describe("published SDK v2 over real local HTTP", () => {
       nativeCalls = [{ type: "toolCall", id, name, arguments: name === "mcp_script" ? { code: script }
         : name === "mcp" ? { tool: "local_echo", args: { value: "never" } } : { value: "never" } }];
       modelCalls = 0;
-      const stopping = session.agent.prompt(`fixture: stop ${name} during its checkpoint`);
+      const stopping = session.prompt(`fixture: stop ${name} during its checkpoint`);
       await expect.poll(() => checkpoints.length).toBe(beforeCount + 1);
       expect(checkpoints.at(-1).toolCallId).toBe(id);
       await session.abort();
