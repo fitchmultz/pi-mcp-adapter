@@ -2,108 +2,15 @@ import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from 
 import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpAdapterOptions, McpConfig, ToolPrefix } from "./types.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
-import { lazyConnect, getFailureAgeSeconds, clearFailure, recordFailure, updateStatusBar } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerCacheValid, parseDirectToolSelectors, reconstructToolMetadata } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
-import { runToolCall } from "./proxy-modes.ts";
-import { isServerDisabled, isNonInteractiveOAuth } from "./types.ts";
-import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
-import { formatAuthRequiredMessage, resolveServerUrl } from "./utils.ts";
-import { SessionRecoveryAuthRequiredError, type SessionRecoveryDeps } from "./session-recovery.ts";
-import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { ensureToolCallApproved } from "./tool-approval.ts";
+import { executeCall } from "./proxy-modes.ts";
+import { isServerDisabled } from "./types.ts";
 
 const BUILTIN_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "mcp"]);
 export const DIRECT_TOOLS_ADVISORY_THRESHOLD = 75;
 const advisedDirectToolSets = new Set<string>();
-
-type DirectAutoAuthResult =
-  | { status: "skipped" }
-  | { status: "success" }
-  | { status: "failed"; message: string };
-
-function getDirectAuthRequiredMessage(
-  state: McpExtensionState,
-  serverName: string,
-  defaultMessage = `MCP server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
-): string {
-  const oauth = state.config.mcpServers[serverName]?.oauth;
-  if (oauth && oauth.crossAppAccess) defaultMessage = `MCP server "${serverName}" requires enterprise authorization. Check oauth.crossAppAccess IdP configuration and ID-token source, then retry.`;
-  return formatAuthRequiredMessage(state.config, serverName, defaultMessage);
-}
-
-function getDirectAuthFailedMessage(state: McpExtensionState, serverName: string, message: string): string {
-  const customGuidance = state.config.settings?.authRequiredMessage;
-  const oauth = state.config.mcpServers[serverName]?.oauth;
-  if (customGuidance || (oauth && oauth.crossAppAccess)) {
-    return `OAuth authentication failed for "${serverName}": ${message}. ${getDirectAuthRequiredMessage(state, serverName)}`;
-  }
-  return `OAuth authentication failed for "${serverName}": ${message}. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
-}
-
-async function attemptDirectAutoAuth(
-  state: McpExtensionState,
-  serverName: string,
-  signal?: AbortSignal,
-): Promise<DirectAutoAuthResult> {
-  if (state.config.settings?.autoAuth !== true) {
-    return { status: "skipped" };
-  }
-
-  const definition = state.config.mcpServers[serverName];
-  if (!definition || isServerDisabled(definition) || !supportsOAuth(definition)) {
-    return { status: "skipped" };
-  }
-
-  let serverUrl: string | undefined;
-  try {
-    serverUrl = resolveServerUrl(definition);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { status: "failed", message: getDirectAuthFailedMessage(state, serverName, message) };
-  }
-  if (!serverUrl) {
-    return { status: "skipped" };
-  }
-
-  if (!state.ui && !isNonInteractiveOAuth(definition.oauth)) {
-    return {
-      status: "failed",
-      message: getDirectAuthRequiredMessage(
-        state,
-        serverName,
-        `MCP server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
-      ),
-    };
-  }
-
-  try {
-    if (state.authStorageOptions) {
-      await authenticate(
-        serverName,
-        serverUrl,
-        definition,
-        signal
-          ? { authStorageOptions: state.authStorageOptions, signal, runtime: state.oauthRuntime }
-          : { authStorageOptions: state.authStorageOptions, runtime: state.oauthRuntime },
-      );
-    } else {
-      await authenticate(serverName, serverUrl, definition, {
-        ...(signal ? { signal } : {}),
-        runtime: state.oauthRuntime,
-      });
-    }
-    return { status: "success" };
-  } catch (error) {
-    if (isAbortError(error, signal)) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      status: "failed",
-      message: getDirectAuthFailedMessage(state, serverName, message),
-    };
-  }
-}
 
 export function resolveDirectTools(
   config: McpConfig,
@@ -241,130 +148,12 @@ export function createDirectToolExecutor(
       };
     }
 
-    const definition = state.config.mcpServers[spec.serverName];
-    if (isServerDisabled(definition)) {
-      const message = `MCP server "${spec.serverName}" is disabled. Run /mcp enable ${spec.serverName} and /reload to enable it.`;
-      return {
-        content: [{ type: "text" as const, text: message }],
-        details: { error: "server_disabled", server: spec.serverName, message },
-      };
-    }
-
-    const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
-    throwIfAborted(ownedSignal);
-    let connected = await lazyConnect(state, spec.serverName, ownedSignal);
-    let autoAuthAttempted = false;
-
-    const needsAuthConnection = state.manager.getConnection(spec.serverName);
-    if (!connected && needsAuthConnection?.status === "needs-auth") {
-      autoAuthAttempted = true;
-      const autoAuth = await attemptDirectAutoAuth(state, spec.serverName, ownedSignal);
-      if (autoAuth.status === "failed") {
-        return {
-          content: [{ type: "text" as const, text: autoAuth.message }],
-          details: { error: "auth_required", server: spec.serverName, message: autoAuth.message },
-        };
-      }
-      if (autoAuth.status === "success") {
-        clearFailure(state, spec.serverName);
-        try {
-          const liveDefinition = state.config.mcpServers[spec.serverName];
-          if (liveDefinition) {
-            await state.manager.reconnect(spec.serverName, liveDefinition, needsAuthConnection, ownedSignal);
-            connected = true;
-          }
-        } catch (error) {
-          if (isAbortError(error, ownedSignal)) throwIfAborted(ownedSignal);
-          recordFailure(state, spec.serverName, error instanceof Error ? error.message : String(error));
-          updateStatusBar(state);
-        }
-        if (connected) connected = await lazyConnect(state, spec.serverName, ownedSignal);
-      }
-    }
-
-    if (!connected) {
-      const authConnection = state.manager.getConnection(spec.serverName);
-      if (authConnection?.status === "needs-auth") {
-        const message = getDirectAuthRequiredMessage(state, spec.serverName);
-        return {
-          content: [{ type: "text" as const, text: message }],
-          details: { error: "auth_required", server: spec.serverName, message, autoAuthAttempted },
-        };
-      }
-      const failedAgo = getFailureAgeSeconds(state, spec.serverName);
-      return {
-        content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not available${failedAgo !== null ? ` (failed ${failedAgo}s ago)` : ""}` }],
-        details: { error: "server_unavailable", server: spec.serverName },
-      };
-    }
-
-    const connection = state.manager.getConnection(spec.serverName);
-    if (!connection || connection.status !== "connected") {
-      return {
-        content: [{ type: "text" as const, text: `MCP server "${spec.serverName}" not connected` }],
-        details: { error: "not_connected", server: spec.serverName },
-      };
-    }
-
-    const approval = await ensureToolCallApproved(state, spec.serverName, {
-      name: spec.prefixedName,
-      originalName: spec.originalName,
-      description: spec.description,
-      ...(spec.inputSchema !== undefined ? { inputSchema: spec.inputSchema } : {}),
-      ...(spec.resourceUri !== undefined ? { resourceUri: spec.resourceUri } : {}),
-      ...(spec.uiResourceUri !== undefined ? { uiResourceUri: spec.uiResourceUri } : {}),
-      ...(spec.uiStreamMode !== undefined ? { uiStreamMode: spec.uiStreamMode } : {}),
-    }, params, ownedSignal);
-    if (approval.ok === false) {
-      const denied = approval.reason === "denied";
-      const message = denied
-        ? `The user declined approval to run MCP tool "${spec.originalName}" on server "${spec.serverName}".`
-        : `MCP tool "${spec.originalName}" on server "${spec.serverName}" is approval-gated and requires an interactive session.`;
-      return {
-        content: [{ type: "text" as const, text: message }],
-        details: {
-          error: denied ? "approval_denied" : "approval_required",
-          server: spec.serverName,
-          tool: spec.originalName,
-        },
-      };
-    }
-
-    const recoverAuthConnection: NonNullable<SessionRecoveryDeps["onNeedsAuth"]> = async (_serverName, recoverySignal = ownedSignal, challenge) => {
-      throwIfAborted(recoverySignal);
-      const current = state.manager.getConnection(spec.serverName);
-      if (current?.status === "connected" && current !== challenge?.connection) return current;
-
-      if (!autoAuthAttempted) {
-        autoAuthAttempted = true;
-        const autoAuth = await attemptDirectAutoAuth(state, spec.serverName, recoverySignal);
-        throwIfAborted(recoverySignal);
-        if (autoAuth.status === "failed") {
-          throw new SessionRecoveryAuthRequiredError(spec.serverName, autoAuth.message);
-        }
-        if (autoAuth.status === "success") {
-          const liveDefinition = state.config.mcpServers[spec.serverName];
-          if (!current || !liveDefinition) return undefined;
-          await state.manager.reconnect(spec.serverName, liveDefinition, current, recoverySignal);
-          clearFailure(state, spec.serverName);
-          const reconnected = await lazyConnect(state, spec.serverName, recoverySignal);
-          return reconnected ? state.manager.getConnection(spec.serverName) : undefined;
-        }
-      }
-      return challenge ? undefined : state.manager.getConnection(spec.serverName);
-    };
-
-    return runToolCall(state, spec.serverName, spec, params, {
-      toolCallId,
-      ...(beforeExecute ? { beforeDispatch: (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) } : {}),
-      detailsBase: spec.resourceUri
-        ? { server: spec.serverName, resourceUri: spec.resourceUri }
-        : { server: spec.serverName, tool: spec.originalName },
-      ownedSignal,
-      signal,
-      recoverAuthConnection,
-      authRequiredMessage: () => getDirectAuthRequiredMessage(state, spec.serverName),
-      autoAuthAttempted: () => autoAuthAttempted,
-    });
+    const result = await executeCall(
+      state, spec.originalName, params, spec.serverName, undefined, signal, undefined, { toolCallId },
+      beforeExecute ? (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) : undefined,
+      { exactOriginalName: true, ...(spec.resourceUri ? { resourceUri: spec.resourceUri } : {}) },
+    );
+    const { mode: _mode, ...details } = result.details;
+    return { ...result, details };
   };
 }

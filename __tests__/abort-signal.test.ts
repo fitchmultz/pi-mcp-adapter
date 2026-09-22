@@ -12,7 +12,7 @@ function connectedState(client: Record<string, unknown>) {
       mcpServers: { demo: { command: "node", args: ["server.js"] } },
     },
     manager: {
-      getConnection: vi.fn(() => ({ status: "connected", client, tools: [], resources: [] })),
+      getConnection: vi.fn(() => ({ status: "connected", client, tools: [{ name: "slow", description: "Slow tool" }], resources: [] })),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),

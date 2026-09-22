@@ -69,7 +69,7 @@ const tools = new Proxy(Object.create(null), {
       return async (input) => request("search", { input });
     }
     if (property === "call") {
-      return async (path, args) => {
+      return async (path, args, server) => {
         // Invalid paths never reach dispatch and therefore never appear in the call trace.
         if (typeof path !== "string" || path.trim() === "") {
           return {
@@ -80,9 +80,12 @@ const tools = new Proxy(Object.create(null), {
             },
           };
         }
-        return request("call", { path, args });
+        if (server !== undefined && (typeof server !== "string" || !server)) return { ok: false, error: { code: "invalid_arguments", message: "server must be a non-empty string" } };
+        return request("call", { path, args, server });
       };
     }
+    if (property === "resources" || property === "listResources") return async (input) => request("resources", { input });
+    if (property === "readResource" || property === "readResult") return async (input) => request(property, { input });
     if (property === "describe") {
       return async (input) => request("describe", { input });
     }

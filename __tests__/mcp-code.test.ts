@@ -12,7 +12,7 @@ let state: McpExtensionState;
 
 function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] {
   return result.content
-    .filter((block) => block.type === "text")
+    .filter((block) => block.type === "text" && !block.text.startsWith("[MCP result saved:"))
     .map((block) => block.text);
 }
 
@@ -94,16 +94,18 @@ describe("runMcpScript", () => {
       first: {
         items: [{ path: "fixture_echo", name: "echo", server: "fixture", description: "Echo a value", score: expect.any(Number) }],
         total: 3,
+        coverage: { complete: true, knownServers: ["fixture"], unknownServers: [] },
         hasMore: true,
         nextOffset: 1,
       },
       second: {
         items: [{ path: "fixture_fail", name: "fail", server: "fixture", description: "Return an MCP tool error", score: expect.any(Number) }],
         total: 3,
+        coverage: { complete: true, knownServers: ["fixture"], unknownServers: [] },
         hasMore: true,
         nextOffset: 2,
       },
-      empty: { items: [], total: 0, hasMore: false, nextOffset: null },
+      empty: { items: [], total: 0, hasMore: false, nextOffset: null, coverage: { complete: true, knownServers: ["fixture"], unknownServers: [] } },
     });
   });
 

@@ -14,6 +14,7 @@ import { computeServerHash, reconstructToolMetadata, serializeTools } from "../m
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { createDirectToolExecutor, resolveDirectTools } from "../direct-tools.ts";
 import { runMcpScript } from "../mcp-code.ts";
+import { formatMcpResultReference } from "../mcp-output-guard.ts";
 import type { McpExtensionState } from "../state.ts";
 import { SERVER_STREAM_RESULT_PATCH_METHOD, type McpOperationContext, type ServerEntry } from "../types.ts";
 
@@ -92,7 +93,7 @@ async function fixture(handler: (exchange: Exchange) => boolean | void | Promise
 async function call(state: McpExtensionState, entry: string, signal?: AbortSignal) {
   if (entry === "script") {
     const output = await runMcpScript(state, 'return await tools.local_echo({ value: "test" });', 2000, undefined, signal);
-    const text = output.content.filter(c => c.type === "text").at(-1);
+    const text = output.content.filter(c => c.type === "text" && !c.text.startsWith("[MCP result saved:")).at(-1);
     return text?.type === "text" ? JSON.parse(text.text) : undefined;
   }
   const output = entry === "direct"
@@ -330,7 +331,7 @@ describe("published SDK v2 over real local HTTP", () => {
     },
   );
 
-  it("describes complete native input schemas when TypeScript rendering is unsupported", async () => {
+  it("describes complete native input schemas without a lossy TypeScript projection", async () => {
     const inputSchema = {
       type: "object",
       properties: {
@@ -358,8 +359,8 @@ describe("published SDK v2 over real local HTTP", () => {
     const described = JSON.parse(script.content[0].text);
     expect(described.native.inputSchema).toEqual(inputSchema);
     expect(described.native).not.toHaveProperty("inputTypeScript");
-    expect(described.compact.inputTypeScript).toBe("{ value: string; }");
-    expect(described.compact).not.toHaveProperty("inputSchema");
+    expect(described.compact.inputSchema).toEqual({ type: "object", properties: { value: { type: "string" } }, required: ["value"] });
+    expect(described.compact).not.toHaveProperty("inputTypeScript");
     expect(described.called).toMatchObject({ ok: true, data: { structuredContent: { value: "test" } } });
     expect(f.calls()[0].body.params.arguments).toEqual({ value: "test" });
   });
@@ -686,7 +687,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(checkpoints[1]).toMatchObject({ toolCallId: "native-outer", operation: {
       toolCallId: "native-outer", innerCallId: 2, args: { value: "resource-1" },
     } });
-    expect(checkpoints[1].artifacts).toContain(largeOutput);
+    expect(checkpoints[1].artifacts).not.toContain(largeOutput); // Scripts retain raw JSON, without unused rendered-text work.
     expect(checkpoints[1].artifacts.map(bytes => bytes.startsWith("{") ? JSON.parse(bytes) : null))
       .toContainEqual(expect.objectContaining({ content: [{ type: "text", text: largeOutput }], structuredContent: { id: "resource-1", value: "first" } }));
     expect(captures).toHaveLength(2);
@@ -700,7 +701,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const scriptResult = sessionManager.getEntries().find((e: any) => e.type === "message" && e.message.role === "toolResult" && e.message.toolCallId === "native-outer");
     const finalPath = scriptResult.message.details.outputGuard.fullOutputPath;
     expect(dirname(dirname(finalPath))).toBe(outputDirectory);
-    expect(await readFile(finalPath, "utf8")).toBe(largeOutput);
+    expect(await readFile(finalPath, "utf8")).toBe([largeOutput, ...scriptResult.message.details.resultRefs.map(formatMcpResultReference)].join("\n"));
     const restoredPath = join(root, "restored.jsonl");
     await writeFile(restoredPath, checkpoint);
     const restored = SessionManager.open(restoredPath);
@@ -796,8 +797,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
     checkpointMode = "pass";
     mode = "pass";
+    expect(registered.some((t: any) => t.definition.name === "local_read_saved_data")).toBe(false);
     for (const entry of ["direct", "proxy", "script"]) {
-      for (const name of ["readback", "upsert", "read_saved_data"]) {
+      for (const name of entry === "direct" ? ["readback", "upsert"] : ["readback", "upsert", "read_saved_data"]) {
         const id = `${entry}-${name}`;
         const beforeCount = checkpoints.length;
         const captureCount = captures.length;
@@ -1334,7 +1336,10 @@ describe("published SDK v2 over real local HTTP", () => {
     const output = await call(state, entry);
     expect(output.ok, JSON.stringify(output)).toBe(true);
     if (entry === "script") expect(output.data.structuredContent).toBeNull();
-    else expect(output.content).toEqual([{ type: "text", text: "null" }]);
+    else {
+      expect(output.content[0]).toEqual({ type: "text", text: "null" });
+      expect(output.content[1].text).toContain(output.details.resultRef);
+    }
   });
 
   it("preserves catalogs longer than the native default 64-page cap", async () => {

@@ -27,7 +27,7 @@ function makeState() {
   const connection = {
     status: "connected" as const,
     client: { callTool },
-    tools: [{ name: "app", description: "App", inputSchema: { type: "object" } }],
+    tools: [{ name: "app", description: "App", inputSchema: { type: "object" }, _meta: { ui: { resourceUri: "ui://app" } } }],
     resources: [],
   };
   const consentManager = new ConsentManager();

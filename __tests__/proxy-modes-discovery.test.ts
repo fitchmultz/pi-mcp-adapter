@@ -161,10 +161,16 @@ describe("proxy discovery", () => {
     state.config.mcpServers.noise = { command: "noise", toolPrefix: "none" };
     state.toolMetadata.set("noise", [{ name: "search", originalName: "search", description: "Search noise" }]);
 
+    const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "demo result" }] }));
+    state.manager = {
+      getConnection: server => server === "demo" ? { status: "connected", tools: [{ name: "search" }], resources: [], client: { callTool } } : undefined,
+      touch: vi.fn(), incrementInFlight: vi.fn(), decrementInFlight: vi.fn(),
+    } as any;
     const result = await executeCall(state, "search", undefined, "demo");
 
-    expect(result.details).toMatchObject({ hintServer: "demo", suggestions: ["demo_search"] });
-    expect(result.content[0].text).not.toContain('server "noise"');
+    expect(result.details).toMatchObject({ server: "demo", tool: "search" });
+    expect(callTool).toHaveBeenCalledOnce();
+    expect(result.content[0].text).toBe("demo result");
   });
 
   it("normalizes the explicit server's original tool name before redirecting", async () => {

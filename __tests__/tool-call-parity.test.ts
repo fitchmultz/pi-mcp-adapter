@@ -29,7 +29,7 @@ function connectedState() {
       getConnection: vi.fn(() => ({
         status: "connected",
         client: { callTool: vi.fn(async () => MCP_RESULT) },
-        tools: [],
+        tools: [{ name: "echo", description: "Echo tool" }],
         resources: [],
       })),
       touch: vi.fn(),
@@ -53,7 +53,7 @@ describe("proxy and direct tool call parity", () => {
     state.config.settings.autoAuth = true;
     state.config.mcpServers.demo = { url: "http://localhost/mcp", auth: "oauth", oauth: { grantType: "client_credentials" } };
     const callTool = vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "expired", { status: 404 }));
-    const stale = { status: "connected", transport: { sessionId: "expired" }, client: { callTool }, tools: [], resources: [], prompts: [] };
+    const stale = { status: "connected", transport: { sessionId: "expired" }, client: { callTool }, tools: [{ name: "echo" }], resources: [], prompts: [] };
     let current = stale;
     state.manager.getConnection = () => current;
     state.manager.getRequestOptions = () => ({ timeout: 30 });
@@ -94,8 +94,10 @@ describe("proxy and direct tool call parity", () => {
     expect(proxy.details.mcpResult).toEqual(MCP_RESULT);
 
     // `mode` is the only field the proxy adds; everything else must match.
-    expect(proxy.details).toEqual({ mode: "call", ...direct.details });
-    expect(direct.content).toEqual(proxy.content);
+    expect(proxy.details).toEqual({ mode: "call", ...direct.details, resultRef: expect.any(String) });
+    expect(direct.content.slice(0, 2)).toEqual(proxy.content.slice(0, 2));
+    expect(direct.content.at(-1)?.text).toContain(direct.details.resultRef);
+    expect(proxy.content.at(-1)?.text).toContain(proxy.details.resultRef);
   });
 
   it("does not format the input schema on the success path", async () => {

@@ -1,8 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { guardMcpOutput, resolveMcpOutputGuardOptions, type McpResultSummary } from "../mcp-output-guard.ts";
+import { guardMcpOutput, retainMcpResult, resolveMcpOutputGuardOptions, type McpResultSummary } from "../mcp-output-guard.ts";
 
 describe("guardMcpOutput", () => {
+  it("retains oversized raw script results without constructing a discarded model summary", async () => {
+    const raw = { content: [{ type: "text", text: "x".repeat(500) }] };
+    const retained = await retainMcpResult(raw, { detailsMaxBytes: 100 }, true);
+    expect(retained.mcpResult).toBe(raw);
+    expect(JSON.parse(await readFile(retained.resultRef!, "utf8"))).toEqual(raw);
+  });
+
   it("leaves small MCP output unchanged and keeps the raw result in details", async () => {
     const rawMcpResult = { content: [{ type: "text", text: "small result" }], isError: false, structuredContent: { ok: true } };
     const guarded = await guardMcpOutput(
@@ -10,7 +17,8 @@ describe("guardMcpOutput", () => {
       { rawMcpResult },
     );
 
-    expect(guarded.content).toEqual([{ type: "text", text: "small result" }]);
+    expect(guarded.content[0]).toEqual({ type: "text", text: "small result" });
+    expect(guarded.content[1]).toEqual({ type: "text", text: expect.stringContaining(guarded.resultRef!) });
     expect(guarded.outputGuard).toBeUndefined();
     expect(guarded.mcpResult).toBe(rawMcpResult);
   });
@@ -58,7 +66,8 @@ describe("guardMcpOutput", () => {
       originalLines: 20,
     });
     expect(guarded.outputGuard?.fullOutputPath).toBeTruthy();
-    expect(guarded.content).toHaveLength(1);
+    expect(guarded.content).toHaveLength(2);
+    expect(guarded.content[1]).toMatchObject({ text: expect.stringContaining(guarded.resultRef!) });
     expect(guarded.content[0]).toMatchObject({ type: "text" });
     const returnedText = guarded.content[0].type === "text" ? guarded.content[0].text : "";
     expect(returnedText).toContain("MCP text output truncated");

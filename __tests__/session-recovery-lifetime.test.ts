@@ -449,8 +449,7 @@ describe("native session replacement lifetime", () => {
         })("call", {}, undefined, undefined, {} as any)
       : executeCall(f.state, "local_effect", {}, entry === "proxy-prefix" ? undefined : "local");
     const output = await pending;
-    expect(output.details.error).toBe(entry === "direct" ? "server_unavailable"
-      : entry === "proxy-cached" ? "connect_failed" : entry === "proxy-named" ? "server_backoff" : "tool_not_found");
+    expect(output.details.error).toBe("connect_failed");
     expect(f.state.failureTracker.has("local")).toBe(true);
     expect(f.state.failureMessages.get("local")).toContain("fixture setup unavailable");
     expect(attempts).toBe(2);

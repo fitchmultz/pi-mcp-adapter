@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { ContentBlock, McpSettings } from "./types.ts";
 
 export const DEFAULT_MCP_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -52,17 +52,31 @@ export interface McpOutputGuardOptions {
   /**
    * Raw MCP result to expose as details.mcpResult. Kept raw when its JSON
    * fits detailsMaxBytes (or when the guard is disabled); otherwise replaced
-   * with a compact summary and spilled to a temp file. Omit for call sites
-   * whose details never carried the raw result (e.g. resource reads).
+   * with a compact summary and spilled to a file. Payloads that are not fully
+   * visible as plain text also get a model-visible reference for local readback.
    */
   rawMcpResult?: unknown;
+  retainedMcpResult?: RetainedMcpResult;
 }
 
 export interface GuardedMcpOutput {
   content: ContentBlock[];
   outputGuard?: McpOutputGuardDetails;
   mcpResult?: unknown;
+  resultRef?: string;
+  resultWriteError?: string;
+  payloadFiles?: McpPayloadFile[];
 }
+
+export interface McpPayloadFile {
+  index: number;
+  kind: "audio" | "resource";
+  uri?: string;
+  mimeType?: string;
+  path?: string;
+  error?: string;
+}
+export type RetainedMcpResult = Pick<GuardedMcpOutput, "mcpResult" | "resultRef" | "resultWriteError" | "payloadFiles">;
 
 export function resolveMcpOutputGuardOptions(settings?: McpSettings, outputDirectory?: string): Pick<McpOutputGuardOptions, "enabled" | "maxBytes" | "maxLines" | "detailsMaxBytes" | "outputDirectory"> {
   const configured = settings?.outputGuard;
@@ -81,6 +95,9 @@ export function guardedMcpDetails(guarded: GuardedMcpOutput): Record<string, unk
   return {
     ...(guarded.mcpResult !== undefined ? { mcpResult: guarded.mcpResult } : {}),
     ...(guarded.outputGuard ? { outputGuard: guarded.outputGuard } : {}),
+    ...(guarded.resultRef ? { resultRef: guarded.resultRef } : {}),
+    ...(guarded.resultWriteError ? { resultWriteError: guarded.resultWriteError } : {}),
+    ...(guarded.payloadFiles?.length ? { payloadFiles: guarded.payloadFiles } : {}),
   };
 }
 
@@ -95,7 +112,6 @@ export async function guardMcpOutput(
 ): Promise<GuardedMcpOutput> {
   const maxBytes = options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES;
   const maxLines = options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES;
-  const detailsMaxBytes = options.detailsMaxBytes ?? DEFAULT_MCP_DETAILS_MAX_BYTES;
   const prefix = options.prefix ?? "";
   const suffix = options.suffix ?? "";
 
@@ -106,12 +122,11 @@ export async function guardMcpOutput(
     options.emptyTextFallback,
   );
 
-  if (options.enabled === false) {
-    return {
-      content: addAffixes(normalizedContent, prefix, suffix),
-      ...(options.rawMcpResult !== undefined ? { mcpResult: options.rawMcpResult } : {}),
-    };
-  }
+  const retained = options.retainedMcpResult ?? (options.rawMcpResult === undefined ? {} : await retainMcpResult(options.rawMcpResult, options));
+  const reference = retained.resultRef ? formatMcpResultReference(retained.resultRef)
+    : retained.resultWriteError ? `[MCP result could not be saved: ${retained.resultWriteError}]` : undefined;
+  const withReference = (blocks: ContentBlock[]) => reference ? [...blocks, { type: "text" as const, text: reference }] : blocks;
+  if (options.enabled === false) return { content: withReference(addAffixes(normalizedContent, prefix, suffix)), ...retained };
 
   const imageBlocks = normalizedContent.filter((block) => block.type === "image");
   const textOutput = normalizedContent
@@ -145,14 +160,10 @@ export async function guardMcpOutput(
     };
   }
 
-  const mcpResult = options.rawMcpResult === undefined
-    ? undefined
-    : await boundMcpResult(options.rawMcpResult, detailsMaxBytes, options.outputDirectory);
-
   return {
-    content: guardedContent,
+    content: withReference(guardedContent),
     ...(outputGuard ? { outputGuard } : {}),
-    ...(mcpResult !== undefined ? { mcpResult } : {}),
+    ...retained,
   };
 }
 
@@ -267,16 +278,46 @@ function formatTruncationNotice(
  * detailsMaxBytes; otherwise replace it with a compact summary and spill the
  * raw JSON to a temp file.
  */
-async function boundMcpResult(result: unknown, detailsMaxBytes: number, outputDirectory?: string): Promise<unknown> {
+export async function retainMcpResult(result: unknown, options: McpOutputGuardOptions = {}, rawResult = false): Promise<RetainedMcpResult> {
   const raw = safeStringify(result);
   const rawBytes = byteLength(raw);
-  if (rawBytes <= detailsMaxBytes) return result;
-  return summarizeMcpResult(result, raw, rawBytes, outputDirectory);
+  const record = asRecord(result);
+  const content = Array.isArray(record?.content) ? record.content
+    : Array.isArray(record?.contents) ? record.contents.map(resource => ({ type: "resource", resource })) : [];
+  const payloadFiles = (await Promise.all(content.map(async (block, index): Promise<McpPayloadFile | undefined> => {
+    const item = asRecord(block);
+    const resource = asRecord(item?.resource);
+    const data = item?.type === "audio" ? item.data : item?.type === "resource" ? resource?.blob : undefined;
+    if (typeof data !== "string") return undefined;
+    const mimeType = item?.mimeType ?? resource?.mimeType;
+    return { index, kind: item!.type as "audio" | "resource", ...(typeof resource?.uri === "string" ? { uri: resource.uri } : {}), ...(typeof mimeType === "string" ? { mimeType } : {}), ...await saveMcpPayload(data, options.outputDirectory) };
+  }))).filter((file): file is McpPayloadFile => file !== undefined);
+  const oversized = options.enabled !== false && rawBytes > (options.detailsMaxBytes ?? DEFAULT_MCP_DETAILS_MAX_BYTES);
+  const shouldSave = oversized || !record || Object.keys(record).some(key => key !== "content" && key !== "isError")
+    || content.some(block => {
+      const item = asRecord(block);
+      return item?.type !== "text" || Object.keys(item).some(key => key !== "type" && key !== "text");
+    });
+  if (!shouldSave) return { mcpResult: result };
+  const artifact = await saveArtifact("mcp-result", raw, options.outputDirectory);
+  return {
+    mcpResult: oversized && !rawResult ? summarizeMcpResult(result, rawBytes, artifact) : result,
+    ...(artifact.path ? { resultRef: artifact.path } : {}),
+    ...(artifact.error ? { resultWriteError: artifact.error } : {}),
+    ...(payloadFiles.length ? { payloadFiles } : {}),
+  };
 }
 
-async function summarizeMcpResult(result: unknown, raw: string, rawBytes: number, outputDirectory?: string): Promise<McpResultSummary> {
-  const { path: fullResultPath, error: resultWriteError } = await saveArtifact("mcp-result", raw, outputDirectory);
+export function formatMcpPayloadFile(file: McpPayloadFile): string {
+  return `[MCP ${file.kind === "audio" ? "audio" : "binary resource"}${file.uri ? ` (${file.uri})` : ""}: ${file.mimeType ?? "unknown MIME type"}; not rendered. ${file.path ? `Saved file: ${file.path}` : `Could not save: ${file.error}`}]`;
+}
 
+export function formatMcpResultReference(ref: string): string {
+  return `[MCP result saved: ${ref}. Inspect without repeating the call: mcp({ action: "read-result", ref: ${JSON.stringify(ref)}, path: "/structuredContent" }) or await tools.readResult({ ref: ${JSON.stringify(ref)}, path: "/structuredContent" }). Omit path to read the whole result.]`;
+}
+
+function summarizeMcpResult(result: unknown, rawBytes: number, artifact: { path?: string; error?: string }): McpResultSummary {
+  const { path: fullResultPath, error: resultWriteError } = artifact;
   const record = asRecord(result);
   const content = Array.isArray(record?.content) ? record.content : [];
   const summary: McpResultSummary = {
@@ -357,16 +398,76 @@ function truncateKey(key: string): string {
   return key.length <= KEY_MAX_CHARS ? key : `${key.slice(0, KEY_MAX_CHARS - 1)}…`;
 }
 
-async function saveArtifact(kind: string, text: string, outputDirectory?: string): Promise<{ path?: string; error?: string }> {
+async function saveMcpPayload(data: string, outputDirectory?: string): Promise<{ path?: string; error?: string }> {
+  return saveArtifact("payload", Buffer.from(data, "base64"), outputDirectory);
+}
+
+async function saveArtifact(kind: string, text: string | Uint8Array, outputDirectory?: string): Promise<{ path?: string; error?: string }> {
   try {
     const parent = outputDirectory === undefined ? tmpdir() : resolve(outputDirectory);
     if (outputDirectory !== undefined) await mkdir(parent, { recursive: true, mode: 0o700 });
     const dir = await mkdtemp(join(parent, "pi-mcp-output-"));
-    const path = join(dir, `${kind}-${randomBytes(4).toString("hex")}.txt`);
+    const path = join(dir, `${kind}-${randomBytes(4).toString("hex")}.${typeof text === "string" ? "txt" : "bin"}`);
     await writeFile(path, text, { encoding: "utf8", mode: 0o600 });
     return { path };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export interface ReadMcpResultInput {
+  ref: string;
+  /** RFC 6901 JSON Pointer. Omit to read the entire retained result. */
+  path?: string;
+  fields?: string[];
+  /** Zero-based character offset in the selected, pretty-printed value. */
+  offset?: number;
+  /** Maximum characters, additionally bounded by the configured output limits. */
+  limit?: number;
+}
+
+export async function readMcpResult(input: ReadMcpResultInput, options: McpOutputGuardOptions = {}) {
+  try {
+    if (!input || typeof input.ref !== "string") throw new Error("ref must be a retained MCP result path");
+    // Script-only hosts deliberately have no general filesystem capability.
+    const root = await realpath(options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory));
+    const ref = await realpath(resolve(input.ref));
+    if (dirname(dirname(ref)) !== root || !/^pi-mcp-output-/.test(basename(dirname(ref)))
+      || !/^(mcp-result|output)-[a-f0-9]+\.txt$/.test(basename(ref))) throw new Error("ref is not an MCP output artifact in this host's output directory");
+    let rendered = await readFile(ref, "utf8");
+    if (input.path !== undefined || input.fields !== undefined || basename(ref).startsWith("mcp-result-")) {
+      let value: unknown = JSON.parse(rendered);
+      if (input.path !== undefined && input.path !== "") {
+        if (typeof input.path !== "string" || !input.path.startsWith("/") || /~(?:[^01]|$)/.test(input.path)) throw new Error("path must be an RFC 6901 JSON Pointer");
+        for (const token of input.path.slice(1).split("/")) {
+          const key = token.replace(/~1/g, "/").replace(/~0/g, "~");
+          if (value === null || typeof value !== "object" || !Object.hasOwn(value, key)) throw new Error(`JSON Pointer does not exist: ${input.path}`);
+          value = (value as Record<string, unknown>)[key];
+        }
+      }
+      if (input.fields !== undefined) {
+        if (!Array.isArray(input.fields) || input.fields.some(field => typeof field !== "string")) throw new Error("fields must be an array of keys");
+        const select = (item: unknown) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("fields requires an object or array of objects");
+          return Object.fromEntries(input.fields!.filter(key => Object.hasOwn(item, key)).map(key => [key, (item as Record<string, unknown>)[key]]));
+        };
+        value = Array.isArray(value) ? value.map(select) : select(value);
+      }
+      rendered = JSON.stringify(value, null, 2);
+    }
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? 12_000;
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) throw new Error("offset must be a non-negative integer and limit a positive integer");
+    const page = truncateHead(rendered.slice(offset, offset + limit), options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES, options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES).content;
+    // A line limit can stop just before a newline; consume it so even a one-line page advances.
+    if (!page && offset < rendered.length && rendered[offset] !== "\n") throw new Error("Output byte limit is too small for the next character");
+    const end = offset + page.length;
+    const consumed = end < rendered.length && rendered[end] === "\n" ? `${page}\n` : page;
+    const nextOffset = offset + consumed.length < rendered.length ? offset + consumed.length : null;
+    return { content: [{ type: "text" as const, text: consumed }, ...(nextOffset !== null ? [{ type: "text" as const, text: `[MCP result page: ${offset}–${offset + consumed.length} of ${rendered.length} characters. Continue with offset: ${nextOffset}.]` }] : [])], details: { ref, offset, nextOffset, totalCharacters: rendered.length, ...(input.path !== undefined ? { path: input.path } : {}) } };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { content: [{ type: "text" as const, text: message }], details: { error: "result_read_failed", message } };
   }
 }
 
