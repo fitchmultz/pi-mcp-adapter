@@ -48,6 +48,8 @@ try {
   for (const name of ["mcp", "mcp_script"]) assert.ok(session.getAllTools().some(tool => tool.name === name), name);
   await session.reload();
   assert.deepEqual(errors, []);
+  assert.equal(resourceLoader.getExtensions().extensions[0]?.resolvedPath, join(packageRoot, "dist/index.js"));
+  for (const name of ["mcp", "mcp_script"]) assert.ok(session.getAllTools().some(tool => tool.name === name), `after reload: ${name}`);
   if (process.env.PI_COMPAT_HOST === "fork") {
     assert.equal(typeof session.acquireCheckpoint, "function", "fork checkpoint hook is required");
     const hold = await session.acquireCheckpoint({ quiesce: () => () => {}, signal: AbortSignal.timeout(10_000) });
