@@ -1,5 +1,5 @@
 import { execFile as execFileCallback, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +18,12 @@ function makeFixture(): string {
 	mkdirSync(join(dir, "node_modules", "typescript", "bin"), { recursive: true });
 	copyFileSync(tscStub, join(dir, "node_modules", "typescript", "bin", "tsc"));
 	for (const asset of RUNTIME_ASSETS) writeFileSync(join(dir, asset), `// stub ${asset}\n`);
+	mkdirSync(join(dir, "scripts"));
+	writeFileSync(join(dir, "scripts", "build-app-bridge.mjs"), `
+		import { writeFileSync } from "node:fs";
+		if (process.env.BRIDGE_STUB_FAIL) throw new Error("synthetic bridge build failure");
+		writeFileSync(process.argv[2], "// freshly bundled bridge");
+	`);
 	return dir;
 }
 
@@ -67,7 +73,20 @@ describe("build.mjs staging swap", () => {
 		expect((await runBuild(dir)).code).toBe(0);
 		expect(existsSync(join(dir, "dist", "index.js"))).toBe(true);
 		expect(existsSync(join(dir, "dist", "stale.txt"))).toBe(false);
+		expect(readFileSync(join(dir, "dist", "app-bridge.bundle.js"), "utf8")).toBe("// freshly bundled bridge");
 		for (const asset of RUNTIME_ASSETS) expect(existsSync(join(dir, "dist", asset))).toBe(true);
+		expect(stagingDirs(dir)).toEqual([]);
+	});
+
+	it("preserves the previous dist and cleans staging when bridge bundling fails", async () => {
+		const dir = makeFixture();
+		fixtures.push(dir);
+		mkdirSync(join(dir, "dist"));
+		writeFileSync(join(dir, "dist", "sentinel.txt"), "previous build");
+		const result = await runBuild(dir, { BRIDGE_STUB_FAIL: "1" });
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("synthetic bridge build failure");
+		expect(readFileSync(join(dir, "dist", "sentinel.txt"), "utf8")).toBe("previous build");
 		expect(stagingDirs(dir)).toEqual([]);
 	});
 
