@@ -1,17 +1,25 @@
-name: MCP product contracts
+name: MCP contracts
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: mcp-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PI_AUTOMATION_REF: 117b227140265329055bcda5927ac170c6301d75 # v1.0.0
+
 jobs:
-  test:
+  official:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -22,27 +30,52 @@ jobs:
           node-version: '22.19.0'
           cache: npm
 
-      - run: npm ci
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check:compat
       - name: Build interactive visualizer example
         run: |
-          npm install --prefix examples/interactive-visualizer --no-package-lock --no-audit --no-fund
+          npm ci --prefix examples/interactive-visualizer --no-audit --no-fund
           npm run --prefix examples/interactive-visualizer build
-      # Shared check:compat owns types, ordinary tests, OAuth and native pack/load.
-      # This visualizer case needs its separately built example and is excluded there.
       - name: Interactive visualizer server
         run: npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts
       - run: npm run test:conformance
-      - name: Git-install lifecycle smoke (build, prune, and consumer types)
+      - name: Git install and native consumer
         run: |
           git clone --quiet . /tmp/omit-dev-smoke
           cd /tmp/omit-dev-smoke
-          npm install --omit=dev
-          # Plain node cannot import dist/index.js here: host packages (typebox,
-          # @earendil-works/*) are pruned and provided at runtime by pi's loader
-          # aliases. Assert emit + assets + prune instead; syntax-check the entry.
-          node --check dist/index.js
-          test -f dist/mcp-keyring-helper.cjs
-          test -f dist/mcp-script-worker.mjs
-          test -f dist/app-bridge.bundle.js
+          npm install --omit=dev --no-audit --no-fund
           test ! -d node_modules/typescript
           node "$GITHUB_WORKSPACE/scripts/check-consumer-types.mjs" "$PWD"
+          node "$GITHUB_WORKSPACE/scripts/compat-package-smoke.mjs" "$PWD"
+
+  fork:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      npm_config_cache: ${{ github.workspace }}/.npm-cache
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ env.PI_AUTOMATION_REF }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/pi
+          ref: main
+          path: fork
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            fork/package-lock.json
+      - run: npm install --global "$(node -p 'require("./automation/package.json").packageManager')"
+      - run: node scripts/ci-fork-smoke.mjs automation fork
