@@ -135,12 +135,15 @@ export function createToolLoader(
     const requested = matches.flatMap(({ server, tool }) => {
       const id = key({ server, tool: tool.originalName });
       const registration = available.has(id) ? registered.get(id) : undefined;
-      return registration ? [registration.ref] : [];
+      return registration ? [registration] : [];
     });
     // No await between reading and extending the current loadout: parallel searches union their selections.
-    setActive([...active(), ...requested]);
+    setActive([...active(), ...requested.map(item => item.ref)]);
     const current = new Set(active().map(refKey));
-    const tools = requested.filter(ref => current.has(refKey(ref)));
+    const tools = requested.filter(item => current.has(refKey(item.ref))).map(({ selection, ref }) => {
+      selected.set(key(selection), selection);
+      return ref;
+    });
     persist();
     return tools;
   }

@@ -65,7 +65,7 @@ export function createDirectToolExecutor(
     }
 
     const result = await executeCall(
-      state, spec.originalName, params, spec.serverName, undefined, signal, undefined, { toolCallId },
+      state, spec.originalName, params, spec.serverName, undefined, signal, { toolCallId },
       beforeExecute ? (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) : undefined,
       { exactOriginalName: true, ...(spec.resourceUri ? { resourceUri: spec.resourceUri } : {}) },
     );

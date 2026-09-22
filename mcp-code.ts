@@ -193,7 +193,7 @@ async function runMcpScriptOperation(
 
   const callIdentity = (innerCallId: number) => ({ ...(toolCallId !== undefined ? { toolCallId } : {}), innerCallId });
   const callTool = (innerCallId: number, path: string, args?: Record<string, unknown>, server?: string) => recordCall(path,
-    () => executeCall(state, path, args, server, getPiTools, callSignal, undefined, callIdentity(innerCallId), beforeDispatch, { raw: true }));
+    () => executeCall(state, path, args, server, getPiTools, callSignal, callIdentity(innerCallId), beforeDispatch, { raw: true }));
 
   const discoverServer = async (server?: string) => {
     if (!server) return undefined;
@@ -245,8 +245,9 @@ async function runMcpScriptOperation(
       if (discoveryError) { error = discoveryError.code; return { path, error: discoveryError }; }
       const matches = [...state.toolMetadata].flatMap(([server, metadata]) => {
         if ((selectedServer && server !== selectedServer) || !state.config.mcpServers[server] || isServerDisabled(state.config.mcpServers[server])) return [];
-        return metadata.filter(tool => !tool.resourceUri && (tool.name === path || (selectedServer && tool.originalName === path)))
-          .map(tool => toToolDescriptor(server, tool));
+        const tools = metadata.filter(tool => !tool.resourceUri);
+        const originals = selectedServer ? tools.filter(tool => tool.originalName === path) : [];
+        return (originals.length ? originals : tools.filter(tool => tool.name === path)).map(tool => toToolDescriptor(server, tool));
       });
       if (matches.length === 1) return matches[0];
       if (matches.length > 1) { error = "ambiguous_tool"; return { path, error: { code: "ambiguous_tool", message: "Specify server and exact tool name." } }; }

@@ -292,7 +292,7 @@ export async function retainMcpResult(result: unknown, options: McpOutputGuardOp
     const data = item?.type === "audio" ? item.data : item?.type === "resource" ? resource?.blob : undefined;
     if (typeof data !== "string") return undefined;
     const mimeType = item?.mimeType ?? resource?.mimeType;
-    return { index, kind: item!.type as "audio" | "resource", ...(typeof resource?.uri === "string" ? { uri: resource.uri } : {}), ...(typeof mimeType === "string" ? { mimeType } : {}), ...await saveMcpPayload(data, options.outputDirectory) };
+    return { index, kind: item!.type as "audio" | "resource", ...(typeof resource?.uri === "string" ? { uri: resource.uri } : {}), ...(typeof mimeType === "string" ? { mimeType } : {}), ...await saveArtifact("payload", Buffer.from(data, "base64"), options.outputDirectory) };
   }))).filter((file): file is McpPayloadFile => file !== undefined);
   const oversized = options.enabled !== false && rawBytes > (options.detailsMaxBytes ?? DEFAULT_MCP_DETAILS_MAX_BYTES);
   const shouldSave = oversized || !record || Object.keys(record).some(key => key !== "content" && key !== "isError")
@@ -400,10 +400,6 @@ function truncateKey(key: string): string {
   return key.length <= KEY_MAX_CHARS ? key : `${key.slice(0, KEY_MAX_CHARS - 1)}…`;
 }
 
-async function saveMcpPayload(data: string, outputDirectory?: string): Promise<{ path?: string; error?: string }> {
-  return saveArtifact("payload", Buffer.from(data, "base64"), outputDirectory);
-}
-
 async function saveArtifact(kind: string, text: string | Uint8Array, outputDirectory?: string): Promise<{ path?: string; error?: string }> {
   try {
     const parent = outputDirectory === undefined ? tmpdir() : resolve(outputDirectory);
@@ -443,7 +439,7 @@ export async function readMcpResult(input: ReadMcpResultInput, options: McpOutpu
         if (typeof input.path !== "string" || !input.path.startsWith("/") || /~(?:[^01]|$)/.test(input.path)) throw new Error("path must be an RFC 6901 JSON Pointer");
         for (const token of input.path.slice(1).split("/")) {
           const key = token.replace(/~1/g, "/").replace(/~0/g, "~");
-          if (value === null || typeof value !== "object" || !Object.hasOwn(value, key)) throw new Error(`JSON Pointer does not exist: ${input.path}`);
+          if (value === null || typeof value !== "object" || (Array.isArray(value) && !/^(0|[1-9]\d*)$/.test(key)) || !Object.hasOwn(value, key)) throw new Error(`JSON Pointer does not exist: ${input.path}`);
           value = (value as Record<string, unknown>)[key];
         }
       }
@@ -460,13 +456,32 @@ export async function readMcpResult(input: ReadMcpResultInput, options: McpOutpu
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 12_000;
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) throw new Error("offset must be a non-negative integer and limit a positive integer");
-    const page = truncateHead(rendered.slice(offset, offset + limit), options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES, options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES).content;
-    // A line limit can stop just before a newline; consume it so even a one-line page advances.
-    if (!page && offset < rendered.length && rendered[offset] !== "\n") throw new Error("Output byte limit is too small for the next character");
-    const end = offset + page.length;
-    const consumed = end < rendered.length && rendered[end] === "\n" ? `${page}\n` : page;
-    const nextOffset = offset + consumed.length < rendered.length ? offset + consumed.length : null;
-    return { content: [{ type: "text" as const, text: consumed }, ...(nextOffset !== null ? [{ type: "text" as const, text: `[MCP result page: ${offset}–${offset + consumed.length} of ${rendered.length} characters. Continue with offset: ${nextOffset}.]` }] : [])], details: { ref, offset, nextOffset, totalCharacters: rendered.length, ...(input.path !== undefined ? { path: input.path } : {}) } };
+    if (offset > 0 && rendered.codePointAt(offset - 1)! > 0xffff) throw new Error("offset must not split a Unicode surrogate pair");
+    const maxBytes = options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES;
+    const maxLines = options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES;
+    const notice = (end: number) => `[MCP result page: ${offset}–${end} of ${rendered.length} characters. Continue with offset: ${end}.]`;
+    const pageEnd = (byteCap: number, lineCap: number) => {
+      let end = offset;
+      let bytes = 0;
+      let lines = 1;
+      while (end < rendered.length && end - offset < limit) {
+        const width = rendered.codePointAt(end)! > 0xffff ? 2 : 1;
+        const char = rendered.slice(end, end + width);
+        bytes += byteLength(char);
+        if (char === "\n") lines++;
+        // Tiny caps still return one complete character plus recovery guidance.
+        if (end > offset && (bytes > byteCap || lines > lineCap || end + width - offset > limit)) break;
+        end += width;
+      }
+      return end;
+    };
+    let end = pageEnd(maxBytes, maxLines);
+    if (end < rendered.length) {
+      // The final offset cannot need more digits than the total length. Include the block separator.
+      end = pageEnd(maxBytes - byteLength(notice(rendered.length)) - 1, maxLines - 1);
+    }
+    const nextOffset = end < rendered.length ? end : null;
+    return { content: [{ type: "text" as const, text: rendered.slice(offset, end) }, ...(nextOffset !== null ? [{ type: "text" as const, text: notice(end) }] : [])], details: { ref, offset, nextOffset, totalCharacters: rendered.length, ...(input.path !== undefined ? { path: input.path } : {}) } };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { content: [{ type: "text" as const, text: message }], details: { error: "result_read_failed", message } };

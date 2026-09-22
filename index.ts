@@ -678,7 +678,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             if (input !== undefined && (typeof input !== "string" || input.trim().length === 0)) throw new Error("auth-complete requires a non-empty redirectUrl, code, or input");
             return executeAuthComplete(ready, params.server!, input, signal);
           }
-          case "call": return executeCall(ready, params.tool!, params.args, params.server, getPiTools, signal, undefined, { toolCallId }, beforeDispatch);
+          case "call": return executeCall(ready, params.tool!, params.args, params.server, getPiTools, signal, { toolCallId }, beforeDispatch);
           case "connect": {
             const result = await executeConnect(ready, params.server!, signal, params.limit, params.offset);
             syncToolSurface(ctx);

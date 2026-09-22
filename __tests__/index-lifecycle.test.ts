@@ -397,7 +397,6 @@ describe("mcpAdapter session lifecycle", () => {
       undefined,
       expect.any(Function),
       undefined,
-      undefined,
       { toolCallId: "call-1" },
       undefined,
     );
@@ -501,7 +500,6 @@ describe("mcpAdapter session lifecycle", () => {
       undefined,
       expect.any(Function),
       controller.signal,
-      undefined,
       { toolCallId: "call-1" },
       undefined,
     );
@@ -688,7 +686,7 @@ describe("mcpAdapter session lifecycle", () => {
       expect(await proxy.execute(`connect-${server}`, { connect: server })).toEqual({ content: [{ type: "text", text: `Connected ${server}` }], details: {} });
       state.onToolMetadataUpdated(server, "tools-list-changed");
       expect(await proxy.execute(`call-${server}`, { tool: `${server}_search`, server })).toEqual({ content: [{ type: "text", text: "Search result" }] });
-      expect(mocks.executeCall).toHaveBeenLastCalledWith(state, `${server}_search`, undefined, server, expect.any(Function), undefined, undefined, { toolCallId: `call-${server}` }, undefined);
+      expect(mocks.executeCall).toHaveBeenLastCalledWith(state, `${server}_search`, undefined, server, expect.any(Function), undefined, { toolCallId: `call-${server}` }, undefined);
       expect(api.registerTool.mock.calls.map(([tool]: any[]) => tool.name)).toEqual(["mcp_search", "mcp", "mcp_script"]);
       expect(api.getActiveTools().sort()).toEqual(["mcp", "mcp_script", "mcp_search"]);
     }

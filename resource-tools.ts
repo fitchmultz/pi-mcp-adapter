@@ -32,7 +32,7 @@ export async function executeResourceRead(
   beforeDispatch?: (signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>,
   raw = false,
 ) {
-  return executeCall(state, uri, {}, server, undefined, signal, undefined, identity, beforeDispatch, { resourceUri: uri, raw });
+  return executeCall(state, uri, {}, server, undefined, signal, identity, beforeDispatch, { resourceUri: uri, raw });
 }
 
 export function resourceNameToToolName(name: string): string {

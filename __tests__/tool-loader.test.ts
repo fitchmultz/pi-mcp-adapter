@@ -112,6 +112,26 @@ describe("MCP typed loader", () => {
     expect(h.api.getActiveTools()).toContain("demo_pinned");
   });
 
+  it.each([false, true])("retains explicit discovery of a startup pin after unpin and branch restore (native=%s)", native => {
+    const h = host(native);
+    const loader = createToolLoader(h.api, () => null, () => null);
+    loader.restore(h.ctx);
+    loader.sync(config, cache());
+    expect(loader.activate([match("demo", "pinned")])).toEqual([{ name: "demo_pinned" }]);
+    expect(h.entries.at(-1).data.selected).toEqual([{ server: "demo", tool: "pinned" }]);
+    const unpinned = { ...config, mcpServers: { ...config.mcpServers, demo: { ...config.mcpServers.demo, directTools: false } } };
+    const ref = native ? { name: "pinned", namespace: "mcp_demo" } : { name: "demo_pinned" };
+    loader.sync(unpinned, cache());
+    expect(h.active()).toContainEqual(ref);
+    loader.restore(h.ctx);
+    loader.sync(unpinned, cache());
+    expect(h.active()).toContainEqual(ref);
+    if (native) h.api.setActiveToolReferences!([{ name: "mcp" }, { name: "read" }]);
+    else h.api.setActiveTools(["mcp", "read"]);
+    loader.persist();
+    expect(h.entries.at(-1).data.selected).toEqual([]);
+  });
+
   it("preserves manually disabled pins through schema refresh and a new loader", () => {
     const h = host();
     const loader = createToolLoader(h.api, () => null, () => null);
@@ -150,7 +170,8 @@ describe("MCP typed loader", () => {
     const loader = createToolLoader(h.api, () => null, () => null);
     loader.restore(h.ctx);
     loader.sync(config, cache());
-    expect(loader.activate([match("demo", "search")])).toEqual([]);
+    expect(loader.activate([match("demo", "search"), match("demo", "pinned")])).toEqual([]);
+    expect(h.entries.at(-1).data.selected).toEqual([]);
     expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
   });
 

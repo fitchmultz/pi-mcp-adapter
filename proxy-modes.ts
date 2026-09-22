@@ -408,7 +408,8 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
   const catalog = [...state.toolMetadata].flatMap(([server, tools]) =>
     (!serverFilter || serverFilter === server) && state.config.mcpServers[server] && !isServerDisabled(state.config.mcpServers[server])
       ? tools.map(tool => ({ server, tool })) : []);
-  const exact = catalog.filter(({ tool }) => tool.name === toolName || (serverFilter && tool.originalName === toolName));
+  const originals = serverFilter ? catalog.filter(({ tool }) => tool.originalName === toolName) : [];
+  const exact = originals.length ? originals : catalog.filter(({ tool }) => tool.name === toolName);
   const matches = exact.length ? exact : catalog.filter(({ tool }) => tool.name.replace(/-/g, "_") === toolName.replace(/-/g, "_"));
   if (matches.length > 1) return {
     content: [{ type: "text", text: `Tool ${JSON.stringify(toolName)} is ambiguous. Specify server and original tool name: ${JSON.stringify(matches.map(({ server, tool }) => ({ server, tool: tool.originalName })))}` }],
@@ -714,7 +715,6 @@ interface ToolCallOptions extends McpToolCallIdentity {
   recoverAuthConnection: NonNullable<SessionRecoveryDeps["onNeedsAuth"]>;
   authRequiredMessage: () => string;
   autoAuthAttempted: () => boolean;
-  onRawResult?: (result: unknown) => void;
   raw?: boolean;
 }
 
@@ -731,7 +731,7 @@ export async function runToolCall(
   args: Record<string, unknown> | undefined,
   options: ToolCallOptions,
 ): Promise<ProxyToolResult> {
-  const { detailsBase, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted, onRawResult } = options;
+  const { detailsBase, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted } = options;
   const configuredOptions = state.manager.getRequestOptions?.(serverName, options.ownedSignal);
   const callerSignal = combineAbortSignals(configuredOptions?.signal, options.ownedSignal);
   const outputGuardOptions = resolveMcpOutputGuardOptions(state.config.settings, state.outputDirectory);
@@ -824,7 +824,6 @@ export async function runToolCall(
           conn => abortable(conn.client.callTool({ name: target.originalName, arguments: args ?? {}, _meta: uiSession?.requestMeta }, requestOptions), ownedSignal),
         ));
     if (!target.resourceUri) uiSession?.sendToolResult(result as ClientCallToolResult);
-    onRawResult?.(result);
     const record = result as Record<string, unknown>;
     const isError = record.isError === true;
     const uiSummary = target.uiResourceUri ? summarizeUiSessionResult(uiSession) : undefined;
@@ -993,7 +992,6 @@ export async function executeCall(
   serverOverride?: string,
   getPiTools?: () => ToolInfo[],
   signal?: AbortSignal,
-  onRawResult?: (result: unknown) => void,
   identity: McpToolCallIdentity = {},
   beforeDispatch?: (signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>,
   options: ExecuteCallOptions = {},
@@ -1101,7 +1099,6 @@ export async function executeCall(
   return runToolCall(state, serverName, toolMeta, args, {
     ...identity,
     ...(beforeDispatch ? { beforeDispatch } : {}),
-    ...(onRawResult ? { onRawResult } : {}),
     ...(options.raw !== undefined ? { raw: options.raw } : {}),
     detailsBase: { mode: "call", server: serverName, ...(toolMeta.resourceUri ? { resourceUri: toolMeta.resourceUri } : { tool: toolMeta.originalName }) },
     ownedSignal, signal,
