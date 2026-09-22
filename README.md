@@ -16,7 +16,7 @@ Mario wrote about [why you might not need MCP](https://mariozechner.at/posts/202
 
 His take: skip MCP entirely, write simple CLI tools instead.
 
-But the MCP ecosystem has useful stuff - databases, browsers, APIs. This adapter gives you access without the bloat. One proxy tool (~200 tokens) instead of hundreds. The agent discovers what it needs on-demand. Servers only start when you actually use them.
+The MCP ecosystem has useful databases, browsers, and APIs. This adapter keeps their full tool schemas out of context until needed. `mcp_search` discovers and loads typed tools for the next request; `mcp` handles explicit gateway actions, and `mcp_script` composes MCP calls in JavaScript. Lazy servers stay disconnected until selected discovery or a call needs them.
 
 ## Pi release qualification
 
@@ -36,9 +36,19 @@ Or install from Git: `pi install git:github.com/fitchmultz/pi-mcp-adapter`.
 
 Restart Pi after installation. Existing v4 users should migrate first.
 
+### Upgrading from v5
+
+Version 6 keeps v5's package, config paths, and OAuth namespace. No credential migration is needed.
+
+- Use `mcp_search({ query: "...", server: "name" })` to discover and load typed tools. It loads matches for the next request; it never executes a search hit. `directTools` now pins tools at startup rather than deciding which tools can ever be loaded.
+- Give every new gateway call an explicit `action`: `mcp({ action: "search", query: "..." })`, `mcp({ action: "describe", tool: "..." })`, or `mcp({ action: "call", tool: "...", args: {} })`. Arguments are objects. Stored v5 calls with optional mode fields or JSON-string arguments are normalized at the ingress compatibility boundary; they are not the advertised v6 interface.
+- Resources use `resources` and `read-resource` actions, or `tools.resources` and `tools.readResource` in scripts. Generated `read_<resource>` aliases remain callable through gateway/script compatibility, but no longer appear as functions or panel checkboxes. Remove resource aliases from `directTools`; legacy resource pins keep the gateway available even with `disableProxyTool: true`.
+- Script descriptions always return complete JSON Schema in `inputSchema`, with `outputSchema` and other descriptor fields when supplied. Replace `inputTypeScript` consumers. Calls keep raw MCP results, including error-result data; use returned result references for bounded readback without another server call.
+- Global search reports partial catalog coverage instead of starting every uncached lazy server. Select a server to discover it. Cache format 2 preserves raw descriptors and still reads format 1; downgrading to v5 ignores format 2 and requires rediscovery.
+
 ### Upgrading from v4
 
-Version 5 uses its own package, state paths and OAuth credential namespace. Remove the previous adapter package entry from Pi settings (for example, `pi remove npm:pi-mcp-adapter` for the unscoped npm source), then install the distribution above. Keep only one adapter loaded in a Pi host.
+The Fitch distribution uses its own package, state paths and OAuth credential namespace. Remove the previous adapter package entry from Pi settings (for example, `pi remove npm:pi-mcp-adapter` for the unscoped npm source), then install the distribution above. Keep only one adapter loaded in a Pi host.
 
 After installation, **before restarting Pi**, run from your project directory:
 
@@ -104,26 +114,23 @@ Project layers and project-local host imports are read only after Pi marks the p
 
 `/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/fitch-mcp-adapter/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
 
-Servers are **lazy by default** — they won't connect until you actually call one of their tools. The adapter caches tool metadata so search and describe work without live connections.
+Servers are **lazy by default**. Cached tool descriptors can be searched without a live connection. To discover an uncached server and load the tools relevant to a task:
 
-```
-mcp({ search: "screenshot" })
-```
-```
-chrome_devtools_take_screenshot
-  Take a screenshot of the page or element.
-
-  Parameters:
-    format (enum: "png", "jpeg", "webp") [default: "png"]
-    fullPage (boolean) - Full page instead of viewport
-```
-```
-mcp({ tool: "chrome_devtools_take_screenshot", args: { format: "png" } })
+```js
+mcp_search({ query: "take screenshot", server: "chrome-devtools" })
 ```
 
-`args` can be a JSON object or a JSON string. Prefer the object form when your model handles it reliably; the string form remains supported for providers that need simpler schemas.
+The returned exact tool references become available with their full argument schemas on the next model request. The agent then calls the chosen typed tool normally. Discovery does not run it.
 
-Two calls instead of 26 tools cluttering the context.
+If the host only permits `mcp`, use explicit gateway actions instead:
+
+```js
+mcp({ action: "search", query: "take screenshot", server: "chrome-devtools" })
+mcp({ action: "describe", tool: "chrome_devtools_take_screenshot" })
+mcp({ action: "call", tool: "chrome_devtools_take_screenshot", args: { format: "png" } })
+```
+
+Gateway search returns schemas without activating direct tools. All paths preserve the same authentication, approval, and call-capture behavior.
 
 ## Config
 
@@ -229,7 +236,7 @@ Before any asynchronous flush, the adapter fences owned activity and pauses its 
 
 ### Runtime status snapshots
 
-Extensions can subscribe to the adapter's versioned shared event-bus channel instead of parsing `/mcp` or `mcp({})` output:
+Extensions can subscribe to the adapter's versioned shared event-bus channel instead of parsing `/mcp` or `mcp({ action: "status" })` output:
 
 ```ts
 import { MCP_STATUS_EVENT, type McpStatusSnapshot } from "@fitchmultz/pi-mcp-adapter";
@@ -241,7 +248,7 @@ pi.events.on(MCP_STATUS_EVENT, (snapshot) => {
 });
 ```
 
-`MCP_STATUS_EVENT` is `fitch-mcp-adapter/status/v1`. The snapshot is read-only machine-readable data with copied per-server entries. It includes `totalTools`, `totalResources`, `connectedCount`, and `disabledCount`; each server includes `name`, `status`, `toolCount`, and `disabled`, with `resourceCount` when known and `failedAgoSeconds` only for an active failure. Reading status never connects a lazy server, starts authentication, or exposes SDK clients, transports, credentials, or server definitions. An initial snapshot is emitted after initialization, updates are emitted for status and metadata changes, and an empty snapshot is emitted when the session shuts down.
+`MCP_STATUS_EVENT` is `fitch-mcp-adapter/status/v1`. The snapshot is read-only machine-readable data with copied per-server entries. It includes `totalTools`, `totalResources`, `connectedCount`, and `disabledCount`; each server includes `name`, `status`, `toolCount`, and `disabled`, with `resourceCount` when known, `catalogKnown` indicating whether discovery has completed, and `failedAgoSeconds` only for an active failure. An unknown catalog is not a confirmed zero-tool server. Reading status never connects a lazy server, starts authentication, or exposes SDK clients, transports, credentials, or server definitions. An initial snapshot is emitted after initialization, updates are emitted for status and metadata changes, and an empty snapshot is emitted when the session shuts down.
 
 In the configuration examples below, `30000` is illustrative only. If `requestTimeoutMs` is omitted or set to `<= 0`, the MCP SDK default timeout is used.
 
@@ -312,10 +319,10 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 | `lifecycle` | `"lazy"` (default), `"eager"`, `"keep-alive"`, or `"lazy-keep-alive"` |
 | `idleTimeout` | Minutes before idle disconnect (overrides global) |
 | `requestTimeoutMs` | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used) |
-| `exposeResources` | Expose MCP resources as tools (default: true) |
-| `directTools` | `true`, `string[]`, or `false` — register tools individually instead of through proxy |
+| `exposeResources` | Make MCP resources available through resource listing/reading (default: true) |
+| `directTools` | `true`, `string[]`, or `false` — pin real tools into the initial active tool set |
 | `toolPrefix` | Override global `settings.toolPrefix` for this server (`"server"`, `"short"`, `"none"`, or `"mcp"`) |
-| `includeTools` | `string[]` of tool names or glob patterns to expose (matches original names like `get_screenshot`, generated resource names like `read_figjam`, and prefixed names like `figma_get_screenshot`) |
+| `includeTools` | `string[]` of tool names or glob patterns to expose (matches original names like `get_screenshot`, legacy resource filter aliases like `read_figjam`, and prefixed names like `figma_get_screenshot`) |
 | `excludeTools` | `string[]` of tool names or glob patterns to hide (applied after `includeTools`) |
 | `debug` | Show server stderr (default: false) |
 | `trace` | Enable metadata-only JSONL protocol tracing for this server; payloads, prompts, tool arguments/results, authorization data, and URLs are never persisted |
@@ -430,10 +437,10 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
 
 ### Lifecycle Modes
 
-- **`lazy`** (default) — Don't connect at startup. Connect on first tool call. Disconnect after idle timeout. Cached metadata keeps search/list working without connections.
+- **`lazy`** (default) — Connect on selected discovery or first call, then disconnect after idle timeout. Cached metadata keeps search/list working without connections. Configured pins can intentionally discover their server at startup.
 - **`eager`** — Connect at startup but don't auto-reconnect if the connection drops. No idle timeout by default (set `idleTimeout` explicitly to enable).
 - **`keep-alive`** — Connect at startup. Auto-reconnect via health checks. No idle timeout. Use for servers you always need available.
-- **`lazy-keep-alive`** — Don't connect at startup. Connect on first tool call (like `lazy`). Once spawned, never idle-shut down and auto-reconnect via health checks if the process dies (like `keep-alive`). Use for servers that are expensive to start but should stay resident after their first use.
+- **`lazy-keep-alive`** — Connect on selected discovery or first call (like `lazy`); configured pins can discover it at startup. Once spawned, never idle-shut down and auto-reconnect via health checks if the process dies (like `keep-alive`). Use for servers that are expensive to start but should stay resident after their first use.
 
 ### Settings
 
@@ -471,9 +478,9 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
 | `oauthDir` | Parent directory for legacy OAuth imports. Runtime uses its `fitch-mcp-adapter/` child; explicit v4 migration reads the original directory. Relative paths resolve from the active project cwd. `FITCH_MCP_OAUTH_DIR` overrides the final runtime import path; the old `MCP_OAUTH_DIR` is read only by explicit migration. Persistent credentials live in the OS credential store. |
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
 | `directTools` | Global default for all servers (default: false). Per-server overrides this. |
-| `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ connect: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false. |
+| `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ action: "connect", server: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false. |
 | `scriptMode` | Register the MCP-only `mcp_script` plain-JavaScript tool (default: true). Set to `false` to hide it. |
-| `disableProxyTool` | Hide the `mcp` proxy tool once configured direct tools are fully available from cache. |
+| `disableProxyTool` | Hide `mcp` once configured pinned tools are available. Legacy resource pins keep it available for resource access. |
 | `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
 | `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
 | `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
@@ -507,7 +514,8 @@ Oversized MCP tool/resource results are guarded by default so a single huge resp
 
 - Inline text output is capped at **50 KiB / 2,000 lines** (matching Pi's built-in `bash` guard). Larger output is truncated to a head preview and the full text is saved to a temp file whose path is included in the result, so the agent can `read`/`grep` it.
 - **Image content blocks pass through unchanged** — only text output is guarded. Images are delivered to the provider as native image content.
-- In proxy and direct modes, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results are replaced with a compact summary (block counts, sizes, key previews) and the raw JSON is saved to a file.
+- In gateway and direct modes, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results use a compact summary and retain the full raw JSON in a file. Scripts receive the raw result before model-facing rendering, so they can reduce it without creating an unused text preview.
+- Structured data, media, resources, extra protocol fields, and oversized results include a model-visible **result reference** to the saved raw result. Tiny plain-text results remain inline without an artifact. `structuredContent` is shown even when the server also returns content blocks.
 
 Tune the limits with the object form:
 
@@ -521,9 +529,17 @@ Tune the limits with the object form:
 
 Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — to disable the guard and restore raw output behavior. Saved files are created with mode `0600` under the system temp directory (or the SDK host's `outputDirectory`) and are not cleaned up automatically; note that spilled MCP output may contain sensitive data.
 
+Read a retained result without repeating the MCP operation:
+
+```js
+mcp({ action: "read-result", ref: "/returned/result/path", path: "/structuredContent/rows", fields: ["id", "title"], offset: 0, limit: 12000 })
+```
+
+`path` is an RFC 6901 JSON Pointer; `fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count **characters in the selected, pretty-printed JSON**, starting at zero—not rows, lines, or bytes. Readback defaults to 12,000 characters and remains bounded by the output byte/line caps. Continue with `details.nextOffset` until it is `null`. Readback requires an existing adapter output artifact in this host's output directory; it never calls the server again. The same operation is available as `tools.readResult` in scripts.
+
 ### MCP Scripting
 
-For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. Run that code with the default-on `mcp_script` tool. For a single MCP call, search, describe, status check, or auth action, use `mcp` instead. Set `settings.scriptMode` to `false` to hide the scripting tool.
+For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. Run that code with the default-on `mcp_script` tool. Use `mcp_search` for typed discovery, a loaded typed tool for a single call, and `mcp` for explicit gateway actions. Set `settings.scriptMode` to `false` to hide the scripting tool.
 
 The bundled `mcp-scripting` skill is a separate Pi package resource. To hide that skill while keeping the adapter extension installed, replace the package entry in Pi settings with the object form and disable package skills:
 
@@ -537,29 +553,63 @@ The bundled `mcp-scripting` skill is a separate Pi package resource. To hide tha
 
 Preserve any version pin in `source` if your existing package entry has one. You can also disable package resources through `pi config`.
 
-For example, this is the JavaScript passed as the `code` argument to `mcp_script`:
+First inspect candidate schemas. This script discovers and describes without executing a search hit:
 
 ```js
-const { items } = await tools.search({ query: "search issues", server: "github" });
-const candidate = items[0];
-if (!candidate) return { error: "No matching tool" };
-
-const details = await tools.describe({ path: candidate.path });
-if (details.error) return details;
-
-const result = await tools.call(details.path, { query: "is:open label:bug" });
-if (!result.ok) return result;
-emit({ tool: details.path, completed: true });
-return result.data;
+const found = await tools.search({ query: "search issues", server: "github" });
+if (found.error) return found;
+emit(found.coverage);
+for (const item of found.items) {
+  emit(await tools.describe({ path: item.path, server: item.server }));
+}
 ```
 
-`tools.describe` returns argument information as `inputTypeScript` when representable, otherwise as the original JSON Schema in `inputSchema`. Only one is included; inspect it before constructing arguments.
+After choosing a tool and checking its schema, pass ordinary JavaScript as `mcp_script`'s `code` argument:
 
-See the bundled `mcp-scripting` skill for the complete workflow guide. The API is `await tools.search({ query, server?, limit?, offset? })`, `await tools.describe({ path })`, `tools.call(path, args)`, direct flat calls, `emit(value)`, and a captured `console`. Use ordinary JavaScript loops and Promise utilities for composition; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. MCP calls return `{ ok: true, data }` or `{ ok: false, error: { code, message } }`, so a failed call does not stop the rest of the script. Result details include a concise `calls` trace with each operation, its path or query, outcome, and duration. Emitted values and console output appear before the script's final return value, and the combined result uses the normal MCP output guard. The default timeout is 30 seconds unless the SDK host overrides it with `defaultScriptTimeoutMs`; an explicit per-script `timeoutMs` always wins. Each script runs in a worker thread that is terminated on timeout or cancellation, including for infinite loops.
+```js
+const results = [];
+for (const query of ["is:open label:bug", "is:open label:docs"]) {
+  const result = await tools.call("github_search_issues", { query });
+  if (!result.ok) return result;
+  results.push({ query, data: result.data });
+}
+return results;
+```
 
-For a tool-restricted subagent, launch the child Pi with its tool allowlist set to `["mcp_script"]`. Have the parent discover MCP tool names with `mcp({ search: "..." })` and include the relevant prefixed names in the child's task; the child can then loop, filter, and chain those MCP calls without filesystem, shell, or edit tools. The adapter's ordinary lazy connection, authentication, output guard, abort handling, and approval gates still apply to every call.
+The script API is:
 
-`mcp_script` is a trusted agent-authored MCP scripting layer, not an isolation boundary. If you need isolation, run Pi in an isolated environment. It is distinct from Pi's code-mode skill: Pi's skill batches general Pi tools, while `mcp_script` exposes MCP calls only and can be the child's sole tool.
+| Method | Result |
+|--------|--------|
+| `tools.search({ query, server?, limit?, offset? })` | `{ items, total, hasMore, nextOffset, coverage }`; items include `path`, `name`, and `server`; discovery errors include `error` |
+| `tools.describe({ path, server? })` | Complete descriptor with `path`, `server`, `name`, and the server's `inputSchema`, `outputSchema`, `title`, annotations, `_meta`, and other fields when present; failures contain `error` |
+| `tools.call(path, args)` or `tools.exact_flat_name(args)` | `{ ok: true, data, resultRef? }` or `{ ok: false, error: { code, message, ... }, data?, resultRef? }` |
+| `tools.resources({ server, limit?, offset? })` | `{ mode: "resources", server, items, total, hasMore, nextOffset }`; failures contain `error` |
+| `tools.readResource({ server, uri })` | The call envelope above, with raw resource data in `data.contents` |
+| `tools.readResult({ ref, path?, fields?, offset?, limit? })` | `{ content, details }`; readback text and `details.nextOffset`, or `details.error` on failure |
+| `emit(value)` / `console.log(value)` | Captured output before the final return value |
+
+Search/resource pages default to 12 items, maximum 100. `coverage` contains `complete`, `knownServers`, and `unknownServers`. Selecting an uncached server discovers it; global search does not connect every lazy server. Script discovery does not activate typed tools. Descriptions retain JSON Schema rather than a lossy TypeScript projection.
+
+`data` is the raw MCP result: tool calls usually return `{ content, structuredContent?, isError?, ... }`; resource reads return `{ contents, ... }`. Error results retain their raw data when available. Handle `ok: false`; ordinary call failures do not automatically stop the script. Capture failures stop dependent work, and ambiguous outcomes require provider readback instead of blindly repeating a call. Result details include a concise `calls` trace and saved result references. Reduce raw results before emitting them; the final output uses the normal output guard.
+
+Use JavaScript loops and Promise utilities; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. Await every call before returning. The default timeout is 30 seconds unless the SDK host overrides it with `defaultScriptTimeoutMs`; an explicit per-script `timeoutMs` wins. Each script runs in a local worker that is terminated on timeout or cancellation, including infinite loops.
+
+For a tool-restricted subagent, a host can allow only `mcp_script`; include the relevant exact tool names or let the script use its discovery methods. A gateway-only host can use `mcp({ action: "search", query: "..." })` without activating tools outside its allowlist. Authentication, approvals, filters, and cancellation apply to every call.
+
+`mcp_script` is a trusted agent-authored MCP scripting layer, not an isolation boundary. The worker exposes no Node, filesystem, or network globals such as `process`, `Buffer`, or `fetch`. Run Pi in an isolated environment if you need isolation. This is local orchestration, not provider-native programmatic tool calling; it does not claim Codex native PTC support. Pi's general code-mode skill is separate and batches general Pi tools.
+
+See the bundled `mcp-scripting` skill for the workflow and exact return shapes.
+
+### MCP Resources
+
+Resources are catalog entries addressed by URI, separate from tools:
+
+```js
+mcp({ action: "resources", server: "docs", limit: 12, offset: 0 })
+mcp({ action: "read-resource", server: "docs", uri: "docs://guide" })
+```
+
+List first, then use the exact URI. Listings preserve the server's resource descriptor fields, including name, title, MIME type, icons, and `_meta` when supplied. `exposeResources`, include/exclude filters, disabled servers, authentication, and approval policy remain binding. Existing `read_<resource>` filter names still select resources, but these compatibility aliases are not typed functions and cannot be pinned in `/mcp`. Scripts use `tools.resources` and `tools.readResource`.
 
 ### MCP Prompts
 
@@ -579,9 +629,17 @@ When Pi exposes dialog-capable UI, the adapter advertises form elicitation suppo
 
 URL mode is advertised only in TUI mode. The adapter displays the requesting server, target host, and full URL, and always requires consent before opening the browser. It also handles URL-required tool errors (`-32042`) and completion notifications; after completing the browser interaction, retry the original tool call.
 
-### Direct Tools
+### Typed Discovery and Pinned Tools
 
-By default, all MCP tools are accessed through the single `mcp` proxy tool. This keeps context small but means the LLM has to discover MCP tools via proxy search. If you want specific tools to show up directly in the agent's tool list — alongside `read`, `bash`, `edit`, etc. — add `directTools` to your config.
+`mcp_search({ query, server?, limit?, offset? })` searches real tools and loads the matching typed functions for the next request. It defaults to five matches, with a maximum of 100 and zero-based pagination. Use a specific query, or an empty query with `server` to browse that server. It does not execute a hit or rewrite dynamic instructions into the system prompt.
+
+Cached eligible schemas register inactive; only pins and tools selected for the current branch are active. The adapter persists canonical `{ server, tool }` selections in native Pi session entries and restores them across resume, reload, branch navigation, and working-directory changes. Host tool allowlists remain binding.
+
+On hosts with native tool-search support, lazy tools use exact references in namespace `mcp_<server>` with the original tool name as the leaf. Existing direct pins retain their flat prefixed names. On official Pi 0.87.0, the ordinary `mcp_search` loader activates flat tools with the same discover-then-call workflow. Always use the exact reference returned by discovery rather than constructing names.
+
+Typed tools may opt into native asynchronous execution only when both the host's pending-call API and the selected model route support it. Tools requiring configured approval, an MCP App UI, or the `beforeExecute` sequential checkpoint barrier keep ordinary awaited execution. This is separate from local `mcp_script` orchestration.
+
+Add `directTools` to pin frequently used tools into the initial active set:
 
 Per-server:
 
@@ -608,9 +666,9 @@ Per-server:
 
 | Value | Behavior |
 |-------|----------|
-| `true` | Register all tools from this server as individual Pi tools |
-| `["tool_a", "tool_b"]` | Register only these tools (use original MCP names) |
-| Omitted or `false` | Proxy only (default) |
+| `true` | Pin all eligible real tools from this server |
+| `["tool_a", "tool_b"]` | Pin these tools (use original MCP names) |
+| Omitted or `false` | No initial pins; load tools with `mcp_search` when needed (default) |
 
 To set a global default for all servers:
 
@@ -627,11 +685,11 @@ To set a global default for all servers:
 }
 ```
 
-Per-server `directTools` overrides the global setting. The example above registers direct tools for every server except `huge-server`.
+Per-server `directTools` overrides the global setting. The example above pins tools for every server except `huge-server`, whose tools remain discoverable.
 
-Set `MCP_DIRECT_TOOLS=__none__` before loading the adapter to suppress all direct-tool registration, including after lazy connections and metadata updates. With default scripting enabled, only `mcp` and `mcp_script` are exposed by the adapter. Configured servers remain available through those tools; normal tool filters and disabled-server settings still apply.
+Set `MCP_DIRECT_TOOLS=__none__` before loading the adapter to suppress all direct-tool registration, including pins and search-driven activation. `mcp_search` can still discover schemas and report that no functions were loaded; use gateway or script calls instead. Normal tool filters, host allowlists, and disabled-server settings still apply.
 
-To expose only a subset of a noisy server, add `includeTools` on the server. Values can be exact original names, generated resource names such as `read_<resource>`, prefixed names, or simple glob patterns:
+To expose only a subset of a server, add `includeTools`. Values can be exact original names, prefixed names, or simple glob patterns. Legacy `read_<resource>` names continue to filter resource access:
 
 ```json
 {
@@ -659,17 +717,15 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
 }
 ```
 
-`includeTools` and `excludeTools` filter direct tools, proxy search/list/describe, and the `/mcp` panel view.
+`includeTools` and `excludeTools` filter typed tools, gateway/script discovery, resource access, and the `/mcp` panel. App-only tools stay out of the model catalog and pin choices.
 
-Each direct tool costs ~150-300 tokens in the system prompt (name + description + schema). Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy or pick specific tools with a `string[]`. If 75+ direct tools resolve, the adapter prints a warning but still registers the tools you configured.
+Active schemas consume context; inactive cached schemas do not. Pin the tools you routinely need and discover the rest as the task requires.
 
-Direct tools register from the metadata cache (`~/.pi/agent/fitch-mcp-adapter/mcp-cache.json` by default, or `$PI_CODING_AGENT_DIR/fitch-mcp-adapter/mcp-cache.json` when set), so no server connections are needed at startup. On the first session after adding `directTools` to a new server, the cache won't exist yet — tools fall back to proxy-only while the cache populates, then the extension hot-loads the refreshed direct tools into the current session. Servers that advertise MCP list-change notifications refresh the current session when their tool or resource list changes. Stale direct tools are deactivated from the active tool set and reactivated if a later refresh restores them. To force a refresh: `/mcp reconnect <server>`.
+Valid cached descriptors avoid startup connections. Missing or stale metadata for configured pins is discovered intentionally at startup; eager and keep-alive servers also connect as configured. An empty cache does not trigger discovery of every lazy server. Search coverage reports which configured servers are still unknown.
 
-If prompt-cache stability matters more than automatic direct-tool hot-loading, set `settings.freezeDirectTools` to `true`. The initial direct-tool sync still runs, but later automatic reconnects, lazy-connects, and list-change notifications keep the registered tool surface unchanged. Deliberate refreshes through `mcp({ connect: "server" })` or `/mcp reconnect <server>` still update direct tools.
+MCP catalog notifications and reconnects refresh eligible metadata. Removed tools leave the active set. `settings.freezeDirectTools: true` keeps the automatic registered surface stable after initial sync; deliberate `mcp({ action: "connect", server: "name" })` or `/mcp reconnect <server>` refreshes remain available.
 
-When you change direct-tool toggles in `/mcp`, the extension updates direct tool registration in the current session. Broader setup writes from `/mcp setup` still use Pi's normal reload flow because they can add or restructure MCP config files.
-
-**Interactive configuration:** Run `/mcp` to open an interactive panel showing all servers with connection status, tools, and direct/proxy toggles. You can reconnect servers and toggle tools between direct and proxy from the same overlay. For OAuth, press Enter on a server that needs auth or `ctrl+a` on any OAuth server.
+Run `/mcp` to see known tools, pinned counts, resource counts, and connection state. Uncached servers say **undiscovered**. Expand a server to pin or unpin real tools; resources have no checkboxes and use the resource actions instead. Pin changes apply to the current session and persist through `directTools`. Discovered session selections are separate from these startup pins. Press Enter on a server that needs auth or `ctrl+a` on an OAuth server to authenticate; `ctrl+r` reconnects. Broader setup changes still use Pi's normal reload flow.
 
 **Guided first-run setup:** Run `/mcp setup` to inspect detected shared MCP files, adopt compatibility imports from other hosts, open discovered config paths, preview exact before/after file diffs for writes, scaffold a minimal project `.mcp.json`, add a curated known server (DeepWiki, Context7, Notion, GitHub, or Chrome DevTools), or quick-add RepoPrompt into a standard/shared MCP file.
 
@@ -677,7 +733,7 @@ When you change direct-tool toggles in `/mcp`, the extension updates direct tool
 
 ### MCP UI Integration
 
-MCP servers can ship interactive UIs via the [MCP UI](https://github.com/MCP-UI-Org/mcp-ui) standard. When you call a tool that has a UI resource, the adapter opens it in a native macOS window via [Glimpse](https://github.com/hazat/glimpse) if available, otherwise falls back to the browser.
+MCP servers can ship interactive UIs via [MCP Apps](https://github.com/modelcontextprotocol/ext-apps). The adapter uses MCP Apps 2.0.0 with the split MCP SDK 2.0.0 runtime. When you call a tool that has a UI resource, the adapter opens it in a native macOS window via [Glimpse](https://github.com/hazat/glimpse) if available, otherwise falls back to the browser.
 
 **How it works:**
 
@@ -721,7 +777,7 @@ Returns accumulated messages from UI sessions. Each message includes `type`, `se
 - Tool consent gates whether UIs can call MCP tools (never/once-per-server/always)
 - `_meta.ui.visibility` controls audience: tools marked app-only stay out of the model tool list, and tools marked model-only cannot be called from the UI iframe.
 - Works with both stdio and HTTP MCP servers
-- Uses a local 408KB AppBridge bundle (MCP SDK + Zod) for browser↔server communication
+- Uses a local MCP Apps AppBridge bundle for browser↔server communication
 - Enforces CSP from standard `_meta.ui.csp` and OpenAI-compatible `_meta["openai/widgetCSP"]` metadata in the response header while preserving provider HTML.
 
 ### Local Example: Interactive Visualizer
@@ -757,32 +813,34 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/fitch-mcp-adapt
 
 ## Usage
 
-| Mode | Example |
-|------|---------|
-| Status | `mcp({ })` |
-| List server | `mcp({ server: "name", limit: 12, offset: 0 })` |
-| Search | `mcp({ search: "screenshot navigate", limit: 12, offset: 0 })` |
-| Describe | `mcp({ describe: "tool_name" })` |
-| Instructions | `mcp({ instructions: "name" })` |
-| Call | `mcp({ tool: "...", args: { key: "value" } })` |
-| Connect | `mcp({ connect: "server-name", limit: 12, offset: 0 })` |
+| Action | Example |
+|--------|---------|
+| Discover and load typed tools | `mcp_search({ query: "screenshot", server: "chrome-devtools", limit: 5 })` |
+| Status | `mcp({ action: "status" })` |
+| List server tools | `mcp({ action: "list", server: "name", limit: 12, offset: 0 })` |
+| Search without activation | `mcp({ action: "search", query: "screenshot navigate", limit: 12 })` |
+| Describe | `mcp({ action: "describe", tool: "tool_name", server: "name" })` |
+| Instructions | `mcp({ action: "instructions", server: "name" })` |
+| Call | `mcp({ action: "call", tool: "tool_name", args: { key: "value" } })` |
+| Connect or refresh | `mcp({ action: "connect", server: "name", limit: 12, offset: 0 })` |
+| List resources | `mcp({ action: "resources", server: "name" })` |
+| Read resource | `mcp({ action: "read-resource", server: "name", uri: "docs://guide" })` |
+| Read saved result | `mcp({ action: "read-result", ref: "/returned/result/path", path: "/structuredContent" })` |
 | UI messages | `mcp({ action: "ui-messages" })` |
 | Auth start | `mcp({ action: "auth-start", server: "name" })` |
 | Auth complete | `mcp({ action: "auth-complete", server: "name" })` after the browser callback, or supply `args: { redirectUrl: "..." }` |
 
-`mcp({ connect: "server-name" })` refreshes an already connected server, so new tools, resources, prompts, and instructions can load without restarting Pi. Its returned server listing accepts the same `limit` and `offset` options as list mode.
+`action` is required. Search requires `query`; describe/call require `tool`; list/connect/instructions/resources/auth require `server`; resource reads require `server` and `uri`; saved-result reads require `ref`. Pass object `args`. Optional `server` disambiguates tool calls and descriptions.
 
-MCP proxy and direct-tool results render compactly by default: long text shows the first three terminal-wrapped lines plus Pi's configured `app.tools.expand` keybinding hint, while the full result remains available when expanded and is still returned unchanged to the model.
+`connect` refreshes an already connected server, including tools, resources, prompts, and instructions. Server-scoped discovery connects that server if its catalog is unknown. Global search uses known catalogs and returns `coverage: { complete, knownServers, unknownServers }`; partial coverage is never presented as an exhaustive result. Gateway search provides schemas without activating functions, so it works for gateway-only hosts.
 
-Search covers MCP tools. Space-separated words are ranked by weighted matches across name, server, and description. Search and server listings return one page at a time (`limit` defaults to 12 and is capped at 100); use `details.nextOffset` for the next page.
+Search ranks names, descriptions, and parameter guidance using MiniSearch. Catalog pages use item offsets: gateway/script search and lists default to 12, while `mcp_search` defaults to 5; maximum 100. Follow the returned `nextOffset`. Saved-result readback uses character offsets instead.
 
-Tool names are fuzzy-matched on hyphens and underscores — `context7_resolve_library_id` finds `context7_resolve-library-id`. When `describe` or `tool` cannot resolve a name, the result includes top suggestions so the agent can correct a typo or missing prefix in the same turn.
+Describe preserves the complete server descriptor, including JSON Schemas, annotations, `_meta`, and extensions when present. Search and typed-tool discovery exclude app-only tools and resources. Legacy hyphen/underscore matching remains a compatibility convenience; ambiguous names require an explicit server rather than executing an arbitrary match. Use the exact names returned by discovery.
 
-When `includeSchemas` is enabled, search and describe render common JSON Schema parameters as compact TypeScript shapes like `{ query: string; limit?: number; }`, with the older schema formatter retained as a fallback for unsupported schemas.
+The gateway description stays stable as catalogs and credentials change. Server instructions are available through `action: "instructions"` and previews in server listings, rather than injected dynamically into the prompt.
 
-The `mcp` tool description contains usage guidance and configured server names, not changing catalog counts or server-instruction previews. Connecting, refreshing metadata, or renewing credentials therefore does not rewrite that description. Status, search, describe, and connect results still reflect current metadata; explicitly configured direct tools keep their normal refresh behavior.
-
-Servers that provide usage guidance via the MCP `instructions` field surface it as a preview at the end of `mcp({ server: "name" })` listings and in full via `mcp({ instructions: "name" })`. Instructions are captured at connect time and cached alongside tool metadata, so they stay available without a live connection. No extra discovery call is required when the needed details are already in the conversation.
+Gateway and typed-tool results render compactly in the terminal: long text shows the first three terminal-wrapped lines with Pi's `app.tools.expand` hint. Expanding reveals the guarded result. Structured data and saved-result references remain visible to the model.
 
 ## Commands
 
@@ -790,7 +848,8 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 |---------|--------------|
 | `/mcp` | Interactive panel and first-run onboarding surface |
 | `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
-| `/mcp tools` | List all tools |
+| `/mcp tools` | List discovered real tools, excluding resource aliases |
+| `/mcp status` | Show connection state and separate tool/resource counts |
 | `/mcp prompts` | List all MCP prompts registered as slash commands |
 | `/mcp reconnect` | Reconnect all servers |
 | `/mcp reconnect <server>` | Connect or reconnect a single server |
@@ -800,24 +859,25 @@ Servers that provide usage guidance via the MCP `instructions` field surface it 
 | `/mcp-auth` | Open an OAuth server picker in interactive UI sessions |
 | `/mcp-auth <server>` | OAuth setup for a specific server |
 
-If `settings.autoAuth` is `true`, `mcp({ connect: ... })`, `mcp({ tool: ... })`, and direct/script tool calls may run OAuth when needed, with at most one automatic auth attempt per invocation and one post-auth retry. Browser authorization requires an interactive host. Auth-only replacement preserves accepted work on the old client; ordinary `/mcp reconnect` and panel `ctrl+r` remain hard resets.
+If `settings.autoAuth` is `true`, `mcp({ action: "connect", server: "..." })`, gateway calls, and typed/script tool calls may run OAuth when needed, with at most one automatic auth attempt per invocation and one post-auth retry. Browser authorization requires an interactive host. Auth-only replacement preserves accepted work on the old client; ordinary `/mcp reconnect` and panel `ctrl+r` remain hard resets.
 
 In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or Enter on a server that needs auth. In remote/headless sessions, use the proxy tool's `auth-start` and `auth-complete` actions. Complete without arguments when the browser reaches Pi's callback, or paste the redirect URL when it cannot. `/mcp-auth` without a server only opens a picker in the interactive UI.
 
 ### MCP output schemas
 
-Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls. When content blocks are empty, any JSON structured value—including `null`, `false`, and `0`—is rendered as text. Non-empty content, including images, takes precedence.
+Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls. Any JSON structured value—including `null`, `false`, and `0`—is rendered as text, including alongside non-empty content or images. The raw result remains available for script reduction and saved-result readback.
 
 ## How It Works
 
-- One `mcp` tool in context (~200 tokens) instead of hundreds
-- Servers are lazy by default — they connect on first tool call, not at startup
+- Stable `mcp_search`, `mcp`, and optional `mcp_script` entry points; full typed schemas load when selected
+- Lazy servers connect on selected discovery or calls; configured pins and eager/keep-alive servers can bootstrap intentionally
 - Tool metadata is cached to disk so search/list/describe work without live connections
 - Idle servers disconnect after 10 minutes (configurable), reconnect automatically on next use
 - npx-based servers resolve to direct binary paths, skipping the ~143 MB npm parent process
 - MCP server validates arguments, not the adapter
 - Keep-alive servers get health checks and auto-reconnect
-- Specific tools can be promoted from the proxy to first-class Pi tools via `directTools` config, so the LLM sees them directly instead of having to search
+- `directTools` pins initial tools; search-driven selections persist separately on the native session branch
+- Resources use explicit URI-based listing and reading, without synthetic function definitions
 
 ## Limitations
 

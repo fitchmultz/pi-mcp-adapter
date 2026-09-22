@@ -1,11 +1,9 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { copyToClipboard } from "@earendil-works/pi-coding-agent";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
-import { isServerDisabled, isToolAllowed } from "./types.ts";
-import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance, ToolPrefix } from "./types.ts";
-import { resourceNameToToolName } from "./resource-tools.ts";
+import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerEntry, ServerProvenance, ToolPrefix } from "./types.ts";
 import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
-import type { MetadataCache, ServerCacheEntry, CachedTool } from "./metadata-cache.ts";
+import { reconstructToolMetadata, type MetadataCache, type ServerCacheEntry, type CachedTool } from "./metadata-cache.ts";
 
 interface PanelTheme {
   border: string;
@@ -130,9 +128,9 @@ interface ServerState {
   expanded: boolean;
   source: "user" | "project" | "import";
   importKind?: string;
-  includeTools?: string[];
-  excludeTools?: string[];
-  exposeResources: boolean;
+  definition: ServerEntry;
+  toolFilter: true | string[] | false;
+  resourceCount: number;
   connectionStatus: ConnectionStatus;
   failureMessage?: string | null;
   tools: ToolState[];
@@ -197,61 +195,24 @@ class McpPanel {
         toolFilter = globalDirect;
       }
 
-      const tools: ToolState[] = [];
-      if (serverCache && !this.authOnly && !isServerDisabled(definition)) {
-        for (const tool of serverCache.tools ?? []) {
-          if (!isToolAllowed(tool.name, serverName, this.prefix, definition.includeTools, definition.excludeTools)) {
-            continue;
-          }
-
-          const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(tool.name));
-          tools.push({
-            name: tool.name,
-            description: tool.description ?? "",
-            isDirect,
-            wasDirect: isDirect,
-            estimatedTokens: estimateTokens(tool),
-          });
-        }
-        if (definition.exposeResources !== false) {
-          for (const resource of serverCache.resources ?? []) {
-            const baseName = `read_${resourceNameToToolName(resource.name)}`;
-            if (!isToolAllowed(baseName, serverName, this.prefix, definition.includeTools, definition.excludeTools)) {
-              continue;
-            }
-
-            const isDirect = toolFilter === true || (Array.isArray(toolFilter) && toolFilter.includes(baseName));
-            const ct: CachedTool = {
-              name: baseName,
-              ...(resource.description !== undefined ? { description: resource.description } : {}),
-            };
-            tools.push({
-              name: baseName,
-              description: resource.description ?? `Read resource: ${resource.uri}`,
-              isDirect,
-              wasDirect: isDirect,
-              estimatedTokens: estimateTokens(ct),
-            });
-          }
-        }
-      }
-
       const status = callbacks.getConnectionStatus(serverName);
       const failureMessage = callbacks.getFailureMessage?.(serverName) ?? null;
 
-      this.servers.push({
+      const server: ServerState = {
         name: serverName,
         expanded: false,
         source: prov?.kind ?? "user",
         ...(prov?.importKind !== undefined ? { importKind: prov.importKind } : {}),
-        ...(definition.includeTools !== undefined ? { includeTools: definition.includeTools } : {}),
-        ...(definition.excludeTools !== undefined ? { excludeTools: definition.excludeTools } : {}),
-        exposeResources: definition.exposeResources !== false,
+        definition,
+        toolFilter,
+        resourceCount: 0,
         connectionStatus: status,
         failureMessage,
-        tools,
+        tools: [],
         hasCachedData: !!serverCache,
-      });
+      };
+      this.servers.push(server);
+      if (serverCache && !this.authOnly) this.rebuildServerTools(server, serverCache);
     }
 
     this.rebuildVisibleItems();
@@ -565,7 +526,6 @@ class McpPanel {
         if (entry) {
           this.rebuildServerTools(server, entry);
         }
-        server.hasCachedData = true;
       }
       if (options.afterAuth) {
         this.authNotice = connected && server.connectionStatus === "connected"
@@ -637,50 +597,22 @@ class McpPanel {
   }
 
   private rebuildServerTools(server: ServerState, entry: ServerCacheEntry): void {
-    const existingState = new Map<string, boolean>();
-    for (const t of server.tools) existingState.set(t.name, t.isDirect);
-
-    const newTools: ToolState[] = [];
-    for (const tool of entry.tools ?? []) {
-      if (!isToolAllowed(tool.name, server.name, this.prefix, server.includeTools, server.excludeTools)) {
-        continue;
-      }
-
-      const prev = existingState.get(tool.name);
-      const isDirect = prev !== undefined ? prev : false;
-      newTools.push({
-        name: tool.name,
-        description: tool.description ?? "",
-        isDirect,
-        wasDirect: prev !== undefined ? server.tools.find((t) => t.name === tool.name)?.wasDirect ?? false : false,
+    const existingState = new Map(server.tools.map(tool => [tool.name, tool]));
+    const metadata = reconstructToolMetadata(server.name, entry, this.prefix, server.definition);
+    server.resourceCount = metadata.filter(tool => tool.resourceUri !== undefined).length;
+    server.tools = metadata.filter(tool => tool.resourceUri === undefined).map(tool => {
+      const previous = existingState.get(tool.originalName);
+      const pinned = server.toolFilter === true
+        || (Array.isArray(server.toolFilter) && server.toolFilter.includes(tool.originalName));
+      return {
+        name: tool.originalName,
+        description: tool.description,
+        isDirect: previous?.isDirect ?? pinned,
+        wasDirect: previous?.wasDirect ?? pinned,
         estimatedTokens: estimateTokens(tool),
-      });
-    }
-
-    if (server.exposeResources) {
-      for (const resource of entry.resources ?? []) {
-        const baseName = `read_${resourceNameToToolName(resource.name)}`;
-        if (!isToolAllowed(baseName, server.name, this.prefix, server.includeTools, server.excludeTools)) {
-          continue;
-        }
-
-        const prev = existingState.get(baseName);
-        const isDirect = prev !== undefined ? prev : false;
-        const ct: CachedTool = {
-          name: baseName,
-          ...(resource.description !== undefined ? { description: resource.description } : {}),
-        };
-        newTools.push({
-          name: baseName,
-          description: resource.description ?? `Read resource: ${resource.uri}`,
-          isDirect,
-          wasDirect: prev !== undefined ? server.tools.find((t) => t.name === baseName)?.wasDirect ?? false : false,
-          estimatedTokens: estimateTokens(ct),
-        });
-      }
-    }
-
-    server.tools = newTools;
+      };
+    });
+    server.hasCachedData = true;
     this.rebuildVisibleItems();
     this.updateDirty();
   }
@@ -746,6 +678,9 @@ class McpPanel {
 
         if (item.type === "server") {
           lines.push(row(this.renderServerRow(server, isCursor)));
+          if (isCursor && !this.authOnly && server.resourceCount > 0) {
+            lines.push(row(fg(t.hint, "    Resources: mcp actions resources / read-resource")));
+          }
           if (isCursor && server.connectionStatus === "failed" && server.failureMessage) {
             for (const line of this.wrapText(sanitizeDisplayText(server.failureMessage), innerW - 6)) {
               lines.push(row(`    ${fg(t.cancel, line)}`));
@@ -796,8 +731,9 @@ class McpPanel {
           0,
         );
         const stats =
-          directCount > 0 ? `${directCount} direct  ~${totalTokens.toLocaleString()} tokens` : "no direct tools";
+          directCount > 0 ? `${directCount} pinned  ~${totalTokens.toLocaleString()} tokens` : "no pinned tools";
         lines.push(row(fg(t.description, stats + (this.dirty ? fg(t.needsAuth, "  (unsaved)") : ""))));
+        lines.push(row(fg(t.hint, "Pins load at startup; discover more with mcp_search.")));
       }
     }
 
@@ -812,7 +748,7 @@ class McpPanel {
         ]
       : [
           italic("↑↓") + " navigate",
-          italic("space") + " toggle",
+          italic("space") + " pin/unpin",
           italic("⏎") + " expand/auth",
           italic("ctrl+a") + " auth",
           italic("ctrl+r") + " reconnect",
@@ -860,7 +796,7 @@ class McpPanel {
     const statusLabel = this.renderConnectionStatus(server);
 
     if (!server.hasCachedData && !this.authOnly) {
-      return `${prefix}   ${nameStr}${importLabel}  ${fg(t.description, "(not cached)")}${statusLabel}`;
+      return `${prefix}   ${nameStr}${importLabel}${statusLabel}  ${fg(t.description, "(undiscovered)")}`;
     }
 
     const directCount = server.tools.filter((t) => t.isDirect).length;
@@ -872,17 +808,10 @@ class McpPanel {
       toggleIcon = fg(t.needsAuth, "◐");
     }
 
-    let toolInfo = "";
-    if (totalCount > 0) {
-      toolInfo = `${directCount}/${totalCount}`;
-      if (directCount > 0) {
-        const tokens = server.tools.filter((t) => t.isDirect).reduce((s, t) => s + t.estimatedTokens, 0);
-        toolInfo += `  ~${tokens.toLocaleString()}`;
-      }
-      toolInfo = fg(t.description, toolInfo);
-    }
+    const toolInfo = this.authOnly ? "" : fg(t.description,
+      `${totalCount} tool${totalCount === 1 ? "" : "s"}, ${directCount} pinned${server.resourceCount > 0 ? `, ${server.resourceCount} resource${server.resourceCount === 1 ? "" : "s"}` : ""}`);
 
-    return `${prefix} ${toggleIcon} ${nameStr}${importLabel}  ${toolInfo}${statusLabel}`;
+    return `${prefix} ${toggleIcon} ${nameStr}${importLabel}${statusLabel}  ${toolInfo}`;
   }
 
   private selectedServerHasFailureMessage(): boolean {
