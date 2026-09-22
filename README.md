@@ -20,9 +20,9 @@ The MCP ecosystem has useful databases, browsers, and APIs. This adapter keeps t
 
 ## Pi release qualification
 
-The development baseline is official Pi **0.87.0**; host peers remain wildcard. `npm run check:compat` verifies the installed selected SDK and manifest CLI identity, builds/typechecks, runs the existing Vitest and memory-only OAuth suites, then packs and loads a runtime-only consumer through native SDK startup/reload and the actual bundled RPC CLI. Existing real reload/direct-tool tests retain their local MCP servers and cleanup assertions. The fork lane requires native checkpoint tests for both an idle adapter and a live stdio server (which must block sleep without being stopped).
+The development baseline is official Pi **0.87.0**; host peers remain wildcard. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
 
-This credential-free Pi gate excludes only the separately built interactive-visualizer example's three tests. To qualify that example, retain the existing CI steps: install its dependencies, run `npm run --prefix examples/interactive-visualizer build`, then run the complete `npm test`. MCP protocol conformance remains a separate `npm run test:conformance` gate. None of these checks should read live server configs, launch an authenticated browser, or use real OAuth credentials. Use an empty HOME/agent directory and disposable working directory.
+GitHub CI runs that contract on official Pi with Node 22.19.0. It separately builds the current maintained fork with Node 24 and checks its actual package graph, native tool discovery, reload, checkpoints, and CLI without repeating the full unit and OAuth suites. The official lane also checks the built interactive visualizer, MCP protocol conformance, and fresh Git and npm installations. These checks use local MCP fixtures and disposable agent directories, never live credentials or paid providers.
 
 ## Install
 
