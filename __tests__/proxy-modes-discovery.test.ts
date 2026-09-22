@@ -44,7 +44,7 @@ describe("proxy discovery", () => {
   });
 
   it("treats a long query as plain text rather than a pattern", () => {
-    const result = executeSearch(createState(), "search terms ".repeat(40));
+    const result = executeSearch(createState(), ".*[unknown](terms)? ".repeat(40));
 
     expect(result.details).toMatchObject({ count: 0 });
   });

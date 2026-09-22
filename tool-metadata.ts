@@ -1,7 +1,7 @@
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
-import { formatToolName, isToolAllowed, resolveToolPrefix } from "./types.ts";
+import { formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
 import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
@@ -16,6 +16,7 @@ export function buildToolMetadata(
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
   const seenNames = new Set<string>();
+  if (isServerDisabled(definition)) return { metadata, failedTools };
   const effectivePrefix = resolveToolPrefix(definition, prefix);
 
   for (const tool of tools) {
@@ -46,11 +47,10 @@ export function buildToolMetadata(
     }
     const uiStreamMode = extractToolUiStreamMode(tool._meta);
     metadata.push({
+      ...tool,
       name,
       originalName: tool.name,
       description: tool.description ?? "",
-      ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
-      ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
       ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
       ...(uiVisibility !== undefined ? { uiVisibility } : {}),
       ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
@@ -59,6 +59,7 @@ export function buildToolMetadata(
 
   if (definition.exposeResources !== false) {
     for (const resource of resources) {
+      if (!resource?.name || !resource?.uri) continue;
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
       if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) {
         continue;

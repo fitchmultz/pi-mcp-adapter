@@ -549,7 +549,7 @@ describe("excludeTools filtering", () => {
 
     const specs = resolveDirectTools(config, cache, "server");
 
-    expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes", "figma_read_figjam"]);
+    expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes"]);
   });
 
   it("matches mcp-prefixed exclusions when toolPrefix is mcp", () => {

@@ -4,11 +4,10 @@ import type { DirectToolSpec, McpAdapterOptions, McpConfig, ToolPrefix } from ".
 import type { MetadataCache } from "./metadata-cache.ts";
 import { lazyConnect, getFailureAgeSeconds, clearFailure, recordFailure, updateStatusBar } from "./init.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
-import { isServerCacheValid, parseDirectToolSelectors } from "./metadata-cache.ts";
+import { isServerCacheValid, parseDirectToolSelectors, reconstructToolMetadata } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { runToolCall } from "./proxy-modes.ts";
-import { formatToolName, isServerDisabled, isNonInteractiveOAuth, isToolAllowed, resolveToolPrefix } from "./types.ts";
-import { resourceNameToToolName } from "./resource-tools.ts";
+import { isServerDisabled, isNonInteractiveOAuth } from "./types.ts";
 import { authenticate, supportsOAuth } from "./mcp-auth-flow.ts";
 import { formatAuthRequiredMessage, resolveServerUrl } from "./utils.ts";
 import { SessionRecoveryAuthRequiredError, type SessionRecoveryDeps } from "./session-recovery.ts";
@@ -143,12 +142,9 @@ export function resolveDirectTools(
 
     if (!toolFilter) continue;
 
-    const effectivePrefix = resolveToolPrefix(definition, prefix);
-
-    for (const tool of serverCache.tools ?? []) {
-      if (toolFilter !== true && !toolFilter.includes(tool.name)) continue;
-      if (!isToolAllowed(tool.name, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) continue;
-      const prefixedName = formatToolName(tool.name, serverName, effectivePrefix);
+    for (const { name: prefixedName, ...tool } of reconstructToolMetadata(serverName, serverCache, prefix, definition)) {
+      if (tool.resourceUri !== undefined) continue;
+      if (toolFilter !== true && !toolFilter.includes(tool.originalName)) continue;
       if (BUILTIN_NAMES.has(prefixedName)) {
         console.warn(`MCP: skipping direct tool "${prefixedName}" (collides with builtin)`);
         continue;
@@ -158,41 +154,7 @@ export function resolveDirectTools(
         continue;
       }
       seenNames.add(prefixedName);
-      specs.push({
-        serverName,
-        originalName: tool.name,
-        prefixedName,
-        description: tool.description ?? "",
-        ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
-        ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
-        ...(tool.uiResourceUri !== undefined ? { uiResourceUri: tool.uiResourceUri } : {}),
-        ...(tool.uiStreamMode !== undefined ? { uiStreamMode: tool.uiStreamMode } : {}),
-      });
-    }
-
-    if (definition.exposeResources !== false) {
-      for (const resource of serverCache.resources ?? []) {
-        const baseName = `read_${resourceNameToToolName(resource.name)}`;
-        if (toolFilter !== true && !toolFilter.includes(baseName)) continue;
-        if (!isToolAllowed(baseName, serverName, effectivePrefix, definition.includeTools, definition.excludeTools)) continue;
-        const prefixedName = formatToolName(baseName, serverName, effectivePrefix);
-        if (BUILTIN_NAMES.has(prefixedName)) {
-          console.warn(`MCP: skipping direct resource tool "${prefixedName}" (collides with builtin)`);
-          continue;
-        }
-        if (seenNames.has(prefixedName)) {
-          console.warn(`MCP: skipping duplicate direct resource tool "${prefixedName}" from "${serverName}"`);
-          continue;
-        }
-        seenNames.add(prefixedName);
-        specs.push({
-          serverName,
-          originalName: baseName,
-          prefixedName,
-          description: resource.description ?? `Read resource: ${resource.uri}`,
-          resourceUri: resource.uri,
-        });
-      }
+      specs.push({ ...tool, serverName, prefixedName });
     }
   }
 
