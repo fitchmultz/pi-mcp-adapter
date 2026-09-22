@@ -48,6 +48,16 @@ const descriptor = {
 };
 
 describe("canonical tool catalog", () => {
+  it("retains distinct identities even when their legacy aliases collide", () => {
+    const metadata = buildToolMetadata([{ name: "find.item" }, { name: "find_item" }], [
+      { name: "Guide", uri: "docs://one" }, { name: "Guide", uri: "docs://two" },
+    ], {}, "demo", "server").metadata;
+    expect(metadata.map(tool => tool.originalName)).toEqual(["find.item", "find_item", "read_guide", "read_guide"]);
+    expect(metadata.filter(tool => tool.resourceUri).map(tool => tool.resourceUri)).toEqual(["docs://one", "docs://two"]);
+    expect(findToolByName(metadata, "demo_find_item")).toBeUndefined();
+    expect(findToolByName(metadata, "demo_read_guide")).toBeUndefined();
+  });
+
   it("preserves complete raw descriptors through cache, live metadata and direct selection", () => {
     const definition = { directTools: true };
     const entry = cacheEntry([descriptor], definition);

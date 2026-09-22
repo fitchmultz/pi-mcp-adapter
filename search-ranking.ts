@@ -61,6 +61,7 @@ function getIndex(state: McpExtensionState): MiniSearch<SearchDocument> {
   let id = 0;
   for (const [server, tools] of state.toolMetadata) {
     for (const tool of tools) {
+      if (tool.resourceUri !== undefined) continue;
       index.add({
         id: id++, server, tool,
         name: normalizeSearchText(tool.name),

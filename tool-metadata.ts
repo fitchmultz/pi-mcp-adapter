@@ -15,7 +15,6 @@ export function buildToolMetadata(
 ): { metadata: ToolMetadata[]; failedTools: string[] } {
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
-  const seenNames = new Set<string>();
   if (isServerDisabled(definition)) return { metadata, failedTools };
   const effectivePrefix = resolveToolPrefix(definition, prefix);
 
@@ -29,16 +28,11 @@ export function buildToolMetadata(
     }
 
     const name = formatToolName(tool.name, serverName, effectivePrefix);
-    if (seenNames.has(name)) {
-      continue;
-    }
 
     const uiVisibility = extractUiToolVisibility(tool._meta);
     if (!isUiToolVisibleToModel(uiVisibility)) {
       continue;
     }
-    seenNames.add(name);
-
     let uiResourceUri: string | undefined;
     try {
       uiResourceUri = getToolUiResourceUri({ _meta: tool._meta });
@@ -66,10 +60,6 @@ export function buildToolMetadata(
       }
 
       const name = formatToolName(baseName, serverName, effectivePrefix);
-      if (seenNames.has(name)) {
-        continue;
-      }
-      seenNames.add(name);
 
       metadata.push({
         name,
@@ -86,17 +76,30 @@ export function buildToolMetadata(
 export function totalToolCount(state: McpExtensionState): number {
   let count = 0;
   for (const metadata of state.toolMetadata.values()) {
-    count += metadata.length;
+    count += metadata.filter(tool => tool.resourceUri === undefined).length;
   }
   return count;
 }
 
+export function toToolDescriptor(server: string, tool: ToolMetadata) {
+  const { name: path, originalName: name, resourceUri: _resourceUri, uiResourceUri: _uiResourceUri, uiVisibility: _uiVisibility, uiStreamMode: _uiStreamMode, ...descriptor } = tool;
+  return { ...descriptor, server, path, name };
+}
+
+export function catalogCoverage(state: McpExtensionState, server?: string) {
+  const servers = Object.keys(state.config.mcpServers).filter(name => (!server || name === server) && !isServerDisabled(state.config.mcpServers[name]));
+  const knownServers = servers.filter(name => state.toolMetadata.has(name));
+  const unknownServers = servers.filter(name => !state.toolMetadata.has(name));
+  return { complete: unknownServers.length === 0, knownServers, unknownServers };
+}
+
 export function findToolByName(metadata: ToolMetadata[] | undefined, toolName: string): ToolMetadata | undefined {
   if (!metadata) return undefined;
-  const exact = metadata.find(m => m.name === toolName);
-  if (exact) return exact;
+  const exact = metadata.filter(m => m.name === toolName);
+  if (exact.length > 0) return exact.length === 1 ? exact[0] : undefined;
   const normalized = toolName.replace(/-/g, "_");
-  return metadata.find(m => m.name.replace(/-/g, "_") === normalized);
+  const matches = metadata.filter(m => m.name.replace(/-/g, "_") === normalized);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 export function formatSchema(schema: unknown, indent = "  "): string {
