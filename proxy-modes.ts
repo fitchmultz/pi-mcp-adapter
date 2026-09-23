@@ -15,7 +15,7 @@ import { guardMcpOutput, guardedMcpDetails, retainMcpResult, resolveMcpOutputGua
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, formatMcpStatus, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
-import { isToolTransportFailure, SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
+import { isInterruptedToolCall, isToolTransportFailure, trackToolCallOutcome, SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 
@@ -821,7 +821,8 @@ export async function runToolCall(
       : await dispatch(() => withSessionRecovery<ClientCallToolResult>(
           { ...recovery, retryOnTransportFailure: annotations?.readOnlyHint === true || annotations?.idempotentHint === true },
           serverName,
-          conn => abortable(conn.client.callTool({ name: target.originalName, arguments: args ?? {}, _meta: uiSession?.requestMeta }, requestOptions), ownedSignal),
+          conn => trackToolCallOutcome(() =>
+            abortable(conn.client.callTool({ name: target.originalName, arguments: args ?? {}, _meta: uiSession?.requestMeta }, requestOptions), ownedSignal), ownedSignal),
         ));
     if (!target.resourceUri) uiSession?.sendToolResult(result as ClientCallToolResult);
     const record = result as Record<string, unknown>;
@@ -861,8 +862,8 @@ export async function runToolCall(
         details: { ...detailsBase, ...retained, error: isAbortError(error, callerSignal) ? "aborted" : "call_capture_failed", message, recovery: context },
       };
     }
-    if (isToolTransportFailure(error)) {
-      const message = `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after transport loss. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call or rerun its script.`;
+    if (isToolTransportFailure(error) || (!callerSignal?.aborted && isInterruptedToolCall(error))) {
+      const message = `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call or rerun its script.`;
       uiSession?.sendToolCancelled(message);
       return {
         content: [{ type: "text", text: message }],

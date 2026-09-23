@@ -17,7 +17,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { UnixSocketClientTransport } from "./unix-socket-transport.ts";
-import { trackToolHttpFailures, trackToolTransportFailure } from "./session-recovery.ts";
+import { trackToolTransport, trackToolTransportFailure } from "./session-recovery.ts";
 import {
   isServerDisabled,
   isNonInteractiveOAuth,
@@ -612,6 +612,8 @@ export class McpServerManager {
       transport = new UnixSocketClientTransport(resolveConfigPath(definition.socket!)!);
     }
 
+    if (!definition.url) trackToolTransport(transport);
+
     if (traceObserver) {
       const traceTransportKindValue = traceTransportKind(definition, transport);
       transport = wrapTransportWithMcpTrace(transport, name, traceTransportKindValue, traceObserver);
@@ -1088,7 +1090,7 @@ export class McpServerManager {
         onAuthChallenge?.(error);
       };
     }
-    if (!legacySse) trackToolHttpFailures(transport);
+    trackToolTransport(transport, true);
     return { transport, oauthProvider: authProvider !== undefined };
   }
 
