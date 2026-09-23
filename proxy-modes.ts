@@ -818,12 +818,11 @@ export async function runToolCall(
           recovery, serverName,
           conn => abortable(conn.client.readResource({ uri: target.resourceUri! }, requestOptions), ownedSignal),
         ))
-      : await dispatch(() => withSessionRecovery<ClientCallToolResult>(
+      : await dispatch(() => trackToolCallOutcome(() => withSessionRecovery<ClientCallToolResult>(
           { ...recovery, retryOnTransportFailure: annotations?.readOnlyHint === true || annotations?.idempotentHint === true },
           serverName,
-          conn => trackToolCallOutcome(() =>
-            abortable(conn.client.callTool({ name: target.originalName, arguments: args ?? {}, _meta: uiSession?.requestMeta }, requestOptions), ownedSignal), ownedSignal),
-        ));
+          conn => abortable(conn.client.callTool({ name: target.originalName, arguments: args ?? {}, _meta: uiSession?.requestMeta }, requestOptions), ownedSignal),
+        ), ownedSignal));
     if (!target.resourceUri) uiSession?.sendToolResult(result as ClientCallToolResult);
     const record = result as Record<string, unknown>;
     const isError = record.isError === true;
@@ -862,7 +861,7 @@ export async function runToolCall(
         details: { ...detailsBase, ...retained, error: isAbortError(error, callerSignal) ? "aborted" : "call_capture_failed", message, recovery: context },
       };
     }
-    if (isToolTransportFailure(error) || (!callerSignal?.aborted && isInterruptedToolCall(error))) {
+    if (isToolTransportFailure(error) || isInterruptedToolCall(error)) {
       const message = `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call or rerun its script.`;
       uiSession?.sendToolCancelled(message);
       return {

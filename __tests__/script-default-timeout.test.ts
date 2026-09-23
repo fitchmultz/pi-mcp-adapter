@@ -226,9 +226,10 @@ it("cancels an already-dispatched unfinished call on early script return", async
     return "early";
   ` }, undefined);
   expect(result.details).not.toHaveProperty("error");
-  expect(result.details).toMatchObject({ timeoutMs: null, calls: [{ ok: false, error: "incomplete" }, { ok: true }] });
+  expect(result.details).toMatchObject({ timeoutMs: null, calls: [{ ok: false, error: "ambiguous_outcome", recovery: { action: "readback" } }, { ok: true }] });
   expect(result.content[0]).toEqual({ type: "text", text: "early" });
-  expect(result.content[1]).toMatchObject({ text: expect.stringContaining("[MCP result saved:") });
+  expect(result.content[1]).toMatchObject({ text: expect.stringContaining("Do not blindly repeat") });
+  expect(result.content[2]).toMatchObject({ text: expect.stringContaining("[MCP result saved:") });
   expect(calls).toEqual([{ name: "hang", args: { id: "straggler" } }, { name: "echo", args: { id: "joined" } }]);
   await expect.poll(() => closed).toContain("straggler");
 });
