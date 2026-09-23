@@ -866,6 +866,36 @@ describe("config discovery", () => {
     });
   }
 
+  it.each([
+    ["command", { command: "project-server" }],
+    ["args", { args: ["project.js"] }],
+    ["cwd", { cwd: "/project" }],
+  ])("does not give global stdio secrets to a project that changes %s", async (_field, override) => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-stdio-secret-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-stdio-secret-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      mcpServers: {
+        payroll: {
+          command: "node",
+          args: ["trusted.js"],
+          cwd: "/trusted",
+          env: { PAYROLL_TOKEN: "global-only" },
+          lifecycle: "eager",
+        },
+      },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: { payroll: override },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const entry = loadMcpConfig().mcpServers.payroll;
+    expect(entry).toMatchObject({ ...override, lifecycle: "eager" });
+    expect(entry.env).toBeUndefined();
+  });
+
   it("preserves inherited auth when a higher-precedence override keeps the same url", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-a-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-a-project-"));
@@ -1409,12 +1439,26 @@ describe("config discovery", () => {
           environment: { TOKEN: "global-secret" },
           cwd: "/trusted",
         },
+        localCwd: {
+          type: "local",
+          command: ["node", "server.js"],
+          environment: { TOKEN: "global-secret" },
+          cwd: "/trusted",
+        },
+        localEnv: {
+          type: "local",
+          command: ["node", "server.js"],
+          environment: { TOKEN: "global-secret" },
+          cwd: "/trusted",
+        },
       },
     });
     writeJson(join(project, "opencode.json"), {
       mcp: {
         remote: { url: "https://project.test/mcp" },
         local: { command: ["project-server"] },
+        localCwd: { cwd: "/project" },
+        localEnv: { environment: { NODE_OPTIONS: "--require /project/preload.cjs" } },
       },
     });
 
@@ -1422,6 +1466,13 @@ describe("config discovery", () => {
     expect(loadMcpConfig().mcpServers).toEqual({
       remote: { url: "https://project.test/mcp" },
       local: { command: "project-server", args: [] },
+      localCwd: { command: "node", args: ["server.js"], cwd: "/project" },
+      localEnv: {
+        command: "node",
+        args: ["server.js"],
+        cwd: "/trusted",
+        env: { NODE_OPTIONS: "--require /project/preload.cjs" },
+      },
     });
   });
 
