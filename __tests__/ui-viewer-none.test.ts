@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { ConsentManager } from "../consent-manager.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall } from "../proxy-modes.ts";
+import { runMcpScript } from "../mcp-code.ts";
 import { maybeStartUiSession } from "../ui-session.ts";
 
 const glimpseMocks = vi.hoisted(() => ({
@@ -83,6 +84,32 @@ afterEach(() => {
 });
 
 describe("remote MCP UI viewers", () => {
+  it.each(["timeout", "abort"])("settles a script on %s while browser opening is pending", async ending => {
+    process.env.MCP_UI_VIEWER = "browser";
+    const { state, callTool } = makeState();
+    const controller = new AbortController();
+    let releaseOpen!: () => void;
+    state.openBrowser.mockImplementation(() => new Promise<void>(resolve => { releaseOpen = resolve; }));
+    let output: Awaited<ReturnType<typeof runMcpScript>> | undefined;
+    const pending = runMcpScript(state, "await tools.demo_app({});", ending === "timeout" ? 500 : 5000, undefined, controller.signal)
+      .then(result => { output = result; return result; });
+    try {
+      await expect.poll(() => state.openBrowser.mock.calls.length).toBe(1);
+      if (ending === "abort") controller.abort(new Error("caller cancelled"));
+      await expect.poll(() => output, { timeout: 1000 }).toBeDefined();
+      expect(output!.details).toMatchObject({
+        error: ending === "timeout" ? "timeout" : "aborted",
+        calls: [{ path: "demo_app", error: "aborted" }],
+      });
+      expect(callTool).not.toHaveBeenCalled();
+    } finally {
+      releaseOpen?.();
+      await pending;
+      state.uiServer?.close("test-cleanup");
+    }
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
   it("skips Glimpse and prints a remote access hint for SSH sessions", async () => {
     process.env.SSH_CONNECTION = "192.0.2.10 55555 127.0.0.1 22";
     const { state } = makeState();

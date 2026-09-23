@@ -172,10 +172,10 @@ async function runMcpScriptOperation(
           : textFromContent(result.content);
       calls[index] = {
         operation: "call", path, ok: false, error: errorCode, durationMs: Date.now() - startedAt, startedAt,
-        ...(errorCode === "ambiguous_outcome" ? { recovery: details.recovery } : {}),
+        ...(details.recovery !== undefined ? { recovery: details.recovery } : {}),
       };
       if (errorCode === "call_capture_failed") throw new McpScriptCaptureError(details.recovery, message);
-      if (errorCode === "ambiguous_outcome") output.push({ type: "text", text: message });
+      if (details.recovery !== undefined) output.push({ type: "text", text: message });
       return {
         ok: false as const,
         ...(details.mcpResult !== undefined ? { data: details.mcpResult } : {}),

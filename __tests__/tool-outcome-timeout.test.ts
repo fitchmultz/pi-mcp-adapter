@@ -74,7 +74,9 @@ it.each(["stdio", "unix"])("reports a committed %s tool's expired deadline witho
   }
 });
 
-it.each(["timeout", "abort", "early return"])("reports committed writes when a script ends by %s", async ending => {
+it.each([
+  ["timeout", false], ["abort", false], ["early return", false], ["timeout", true],
+] as const)("reports committed writes when a script ends by %s (capture=%s)", async (ending, capture) => {
   const manager = new McpServerManager();
   const controller = new AbortController();
   try {
@@ -94,6 +96,7 @@ it.each(["timeout", "abort", "early return"])("reports committed writes when a s
       toolMetadata: new Map([["local", buildToolMetadata(connection.tools, [], definition, "local", "server").metadata]]),
       failureTracker: new Map(), serverInstructions: new Map(), completedUiSessions: [],
     } as unknown as McpExtensionState;
+    if (capture) state.onToolCall = async () => {};
     const pending = runMcpScript(state, `
       await tools.local_readback({});
       const write = tools.local_write({ delayMs: 5000 });
@@ -112,10 +115,18 @@ it.each(["timeout", "abort", "early return"])("reports committed writes when a s
     else expect(output.details.error).toBe(ending === "timeout" ? "timeout" : "aborted");
     expect(output.details.calls).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: "local_readback", ok: true }),
-      expect.objectContaining({ path: "local_write", error: "ambiguous_outcome", recovery: { server: "local", tool: "write", toolCallId: "script-write", innerCallId: 2, action: "readback" } }),
+      expect.objectContaining({
+        path: "local_write", error: capture ? "aborted" : "ambiguous_outcome",
+        recovery: expect.objectContaining({
+          server: "local", tool: "write", toolCallId: "script-write", innerCallId: 2,
+          ...(capture ? { phase: "after", args: { delayMs: 5000 }, error: expect.any(Error) } : { action: "readback" }),
+        }),
+      }),
       expect.objectContaining({ path: "local_write", error: "aborted" }),
     ]));
-    expect(output.content).toEqual(expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining("Do not blindly repeat") })]));
+    expect(output.content).toEqual(expect.arrayContaining([expect.objectContaining({
+      text: expect.stringContaining(capture ? "do not repeat a completed call or rerun the script" : "Do not blindly repeat"),
+    })]));
     expect((await executeCall(state, "local_readback", {})).content).toEqual([{ type: "text", text: "1" }]);
     expect(connection.inFlight).toBe(0);
   } finally {

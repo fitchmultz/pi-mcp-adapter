@@ -763,7 +763,7 @@ export async function runToolCall(
     state.manager.incrementInFlight(serverName);
 
     uiSession = !target.resourceUri && target.uiResourceUri
-      ? await maybeStartUiSession(state, {
+      ? await abortable(maybeStartUiSession(state, {
           serverName,
           toolName: target.originalName,
           toolArgs: args ?? {},
@@ -771,7 +771,7 @@ export async function runToolCall(
           ...(target.uiStreamMode !== undefined ? { streamMode: target.uiStreamMode } : {}),
           ...(signal ? { signal } : {}),
           onNeedsAuth: recoverAuthConnection,
-        })
+        }), callerSignal)
       : null;
 
     // UI preparation can replace the connection; use its current annotations.
