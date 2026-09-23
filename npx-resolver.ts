@@ -53,6 +53,7 @@ export async function resolveNpxBinary(
   if (!parsed) return null;
 
   const packageSpec = parsePackageSpec(parsed.packageSpec);
+  if (!packageSpec) return null;
   const cacheKey = JSON.stringify([command, ...args]);
   const cache = loadCache();
   const cached = cache?.entries?.[cacheKey];
@@ -61,7 +62,7 @@ export async function resolveNpxBinary(
     cached
     && Date.now() - cached.resolvedAt < CACHE_TTL_MS
     && existsSync(cached.resolvedBin)
-    && (!packageSpec?.exactVersion || cached.packageVersion === packageSpec.exactVersion)
+    && (!packageSpec.exactVersion || cached.packageVersion === packageSpec.exactVersion)
   ) {
     return { binPath: cached.resolvedBin, extraArgs: parsed.extraArgs, isJs: cached.isJs };
   }
@@ -329,11 +330,13 @@ function parsePackageSpec(spec: string): ParsedPackageSpec | null {
 
   if (!packageName) return null;
   const normalizedVersion = requestedVersion?.replace(/^=/, "").replace(/^v/i, "");
+  // Let npm resolve ranges and tags rather than choosing an arbitrary cached version.
+  if (requestedVersion !== undefined && (!normalizedVersion || !EXACT_PACKAGE_VERSION_RE.test(normalizedVersion))) {
+    return null;
+  }
   return {
     packageName,
-    ...(normalizedVersion && EXACT_PACKAGE_VERSION_RE.test(normalizedVersion)
-      ? { exactVersion: normalizedVersion }
-      : {}),
+    ...(normalizedVersion ? { exactVersion: normalizedVersion } : {}),
   };
 }
 
