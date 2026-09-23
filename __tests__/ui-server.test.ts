@@ -633,6 +633,46 @@ describe("UiServer", () => {
       );
     });
 
+    it("applies includeTools and excludeTools to app calls", async () => {
+      const mockClient = {
+        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "result" }] }),
+      };
+      const definition = {
+        command: "demo",
+        includeTools: ["open_ui", "excluded"],
+        excludeTools: ["excluded"],
+      };
+      const manager = createMockManager({
+        getConnection: vi.fn().mockReturnValue({
+          status: "connected",
+          definition,
+          client: mockClient,
+          tools: [{ name: "open_ui" }, { name: "excluded" }, { name: "not_included" }],
+        }),
+      });
+      handle = await startUiServer(createServerOptions({
+        manager,
+        config: { mcpServers: { "test-server": definition } },
+      }));
+
+      for (const name of ["excluded", "not_included"]) {
+        const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+          method: "POST",
+          body: { token: handle.sessionToken, params: { name, arguments: {} } },
+        });
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual({ ok: false, error: `MCP tool "${name}" is not callable by apps` });
+      }
+      expect(mockClient.callTool).not.toHaveBeenCalled();
+
+      const allowed = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params: { name: "open_ui", arguments: {} } },
+      });
+      expect(allowed.status).toBe(200);
+      expect(mockClient.callTool).toHaveBeenCalledTimes(1);
+    });
+
     it("returns a gated iframe call as an approval_denied tool result", async () => {
       const mockClient = { callTool: vi.fn() };
       const manager = createMockManager({
