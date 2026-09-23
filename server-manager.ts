@@ -262,7 +262,7 @@ export class McpServerManager {
   private runtimeSignal: AbortSignal | undefined;
   private closePromises = new Map<string, Promise<void>>();
   private closeGenerations = new Map<string, number>();
-  private connectAttempts = new Map<string, AbortController>();
+  private connectAttempts = new Map<string, { controller: AbortController; waiters: number }>();
   private traceSettings: McpTraceSettings | undefined;
   private traceWriter: McpTraceWriter | undefined;
   private stopped = false;
@@ -414,9 +414,27 @@ export class McpServerManager {
     throwIfAborted(ownedSignal);
     if (this.stopped) throw new Error("MCP server manager is closed");
 
+    const wait = (promise: Promise<ServerConnection>, attempt: { controller: AbortController; waiters: number }) => {
+      attempt.waiters++;
+      return abortable(promise, ownedSignal).finally(() => {
+        if (--attempt.waiters === 0 && ownedSignal?.aborted) attempt.controller.abort(ownedSignal.reason);
+      });
+    };
     // Dedupe concurrent connection attempts.
-    if (this.connectPromises.has(name)) {
-      return abortable(this.connectPromises.get(name)!, ownedSignal);
+    const pending = this.connectPromises.get(name);
+    if (pending) {
+      const attempt = this.connectAttempts.get(name)!;
+      if (attempt.controller.signal.aborted) {
+        // Finish the canceled attempt's cleanup before starting a fresh one.
+        try {
+          await abortable(pending, ownedSignal);
+        } catch (error) {
+          throwIfAborted(ownedSignal);
+          if (this.containsCleanupFailure(error)) throw error;
+        }
+        return this.connect(name, definition, signal);
+      }
+      return wait(pending, attempt);
     }
 
     const existing = this.connections.get(name);
@@ -426,10 +444,10 @@ export class McpServerManager {
     }
 
     const generation = this.closeGenerations.get(name) ?? 0;
-    const attemptController = new AbortController();
-    const attemptSignal = combineAbortSignals(ownedSignal, attemptController.signal);
-    const promise = this.createConnection(name, definition, attemptSignal, ownedSignal).then(async connection => {
-      if (attemptController.signal.aborted || (this.closeGenerations.get(name) ?? 0) !== generation) {
+    const attempt = { controller: new AbortController(), waiters: 0 };
+    const attemptSignal = combineAbortSignals(this.runtimeSignal, attempt.controller.signal);
+    const promise = this.createConnection(name, definition, attemptSignal, ownedSignal ? attemptSignal : undefined).then(async connection => {
+      if (attempt.controller.signal.aborted || (this.closeGenerations.get(name) ?? 0) !== generation) {
         await this.disposeConnection(connection);
         throwIfAborted(attemptSignal);
         throw new Error(`MCP connection for ${name} was closed while connecting`);
@@ -437,16 +455,14 @@ export class McpServerManager {
       connection.inFlight = this.connections.get(name)?.inFlight ?? 0;
       this.connections.set(name, connection);
       return connection;
+    }).finally(() => {
+      if (this.connectPromises.get(name) === promise) this.connectPromises.delete(name);
+      if (this.connectAttempts.get(name) === attempt) this.connectAttempts.delete(name);
     });
     this.connectPromises.set(name, promise);
-    this.connectAttempts.set(name, attemptController);
+    this.connectAttempts.set(name, attempt);
 
-    try {
-      return await promise;
-    } finally {
-      if (this.connectPromises.get(name) === promise) this.connectPromises.delete(name);
-      if (this.connectAttempts.get(name) === attemptController) this.connectAttempts.delete(name);
-    }
+    return wait(promise, attempt);
   }
 
   /**
@@ -1174,7 +1190,7 @@ export class McpServerManager {
   async close(name: string): Promise<void> {
     this.beforeActivity();
     this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
-    this.connectAttempts.get(name)?.abort(new Error(`MCP connection ${name} was closed`));
+    this.connectAttempts.get(name)?.controller.abort(new Error(`MCP connection ${name} was closed`));
     const pendingClose = this.closePromises.get(name);
     if (pendingClose) return pendingClose;
 

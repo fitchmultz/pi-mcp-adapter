@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep a shared initial MCP connection alive when one caller cancels, so other callers can continue without a false failure backoff.
 - Let npm resolve explicit version ranges and tags for MCP server commands instead of launching an arbitrary cached version. Exact versions retain the direct-launch optimization.
 
 ## [6.0.0] - 2026-09-22
