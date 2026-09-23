@@ -269,7 +269,9 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(connection.inFlight).toBe(0);
   });
 
-  it.each(["direct", "proxy", "script"])("reconciles a committed mutation after lost response through %s without replay", async entry => {
+  it.each(["direct", "proxy", "script"].flatMap(entry =>
+    ["sse", "json", "timeout", "http500-timeout", "legacy-timeout"].map(failure => ({ entry, failure })),
+  ))("reconciles a committed mutation after $failure response loss through $entry without replay", async ({ entry, failure }) => {
     const receipts = new Map<string, unknown>();
     let mutations = 0;
     const f = await fixture(e => {
@@ -286,25 +288,67 @@ describe("published SDK v2 over real local HTTP", () => {
       } else {
         mutations++;
         receipts.set(e.body.params.arguments.value, { id: "original-resource", version: mutations });
-        e.res.writeHead(200, { "content-type": "text/event-stream" });
-        e.res.write(": committed\n\n");
-        setTimeout(() => e.res.destroy(), 20);
+        if (failure.endsWith("timeout")) {
+          if (failure === "http500-timeout") {
+            e.res.writeHead(500, { "content-type": "text/plain" });
+            e.res.write("Internal error after committing");
+          } else setTimeout(() => result(e, { resultType: "complete", content: [] }), 160);
+        } else {
+          e.res.writeHead(200, { "content-type": failure === "json" ? "application/json" : "text/event-stream" });
+          e.res.write(failure === "json" ? `{"jsonrpc":"2.0","id":${e.body.id},"result":` : ": committed\n\n");
+          setTimeout(() => e.res.destroy(), 20);
+        }
       }
       return true;
     });
-    const { state } = await f.connect({ retryOnTransportFailure: true });
+    const { state } = await f.connect({ retryOnTransportFailure: true, requestTimeoutMs: 80,
+      ...(failure === "legacy-timeout" ? { protocolVersion: "legacy" as const } : {}),
+    });
     const captured: any[] = [];
-    state.onToolCall = async event => { captured.push(event); };
+    if (!failure.endsWith("timeout")) state.onToolCall = async event => { captured.push(event); };
     const output = await call(state, entry);
     expect(mutations).toBe(1);
     expect(entry === "script" ? output.error.code : output.details.error).toBe("ambiguous_outcome");
-    expect(captured.map(e => e.phase)).toEqual(["before", "after"]);
-    expect(captured[0].args).toEqual({ value: "test" });
-    expect(captured[1].error).toBeInstanceOf(Error);
-    if (entry === "script") expect(captured[0].innerCallId).toBe(1);
+    expect(entry === "script" ? output.error.message : output.details.message).toContain("Read back the original operation");
+    expect(entry === "script" ? output.error.recovery : output.details.recovery).toMatchObject({ action: "readback" });
+    if (!failure.endsWith("timeout")) {
+      expect(captured.map(e => e.phase)).toEqual(["before", "after"]);
+      expect(captured[0].args).toEqual({ value: "test" });
+      expect(captured[1].error).toBeInstanceOf(Error);
+      if (entry === "script") expect(captured[0].innerCallId).toBe(1);
+    }
     const readback = await executeCall(state, "local_readback", { value: "test" });
     expect(readback.details.mcpResult).toMatchObject({ structuredContent: { id: "original-resource", version: 1 } });
     expect(mutations).toBe(1);
+  });
+
+  it("does not replay a lost JSON body even for a replay-safe tool", async () => {
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/call") return;
+      e.res.writeHead(200, { "content-type": "application/json" });
+      e.res.write(`{"jsonrpc":"2.0","id":${e.body.id},"result":`);
+      setTimeout(() => e.res.destroy(), 20);
+      return true;
+    });
+    const { state } = await f.connect({ retryOnTransportFailure: true });
+    const output = await call(state, "proxy");
+    expect(output.details).toMatchObject({ error: "ambiguous_outcome", recovery: { action: "readback" } });
+    expect(f.calls()).toHaveLength(1);
+  });
+
+  it("does not report an unknown outcome when a rejected call times out refreshing its catalog", async () => {
+    let lists = 0;
+    const f = await fixture(e => {
+      if (e.body.method === "tools/list" && ++lists > 1) return true;
+      if (e.body.method !== "tools/call") return;
+      rpcError(e, -32020, 400);
+      return true;
+    });
+    const { state } = await f.connect({ requestTimeoutMs: 80, retryOnTransportFailure: true });
+    const output = await call(state, "proxy");
+    expect(output.details).toMatchObject({ error: "call_failed", message: expect.stringMatching(/timeout|timed out/i) });
+    expect(lists).toBe(2);
+    expect(f.calls()).toHaveLength(1);
   });
 
   it.each([undefined, {}, { readOnlyHint: false }, { idempotentHint: true }, { readOnlyHint: true }])(
@@ -1053,8 +1097,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const { state } = await f.connect({ requestTimeoutMs: 160, retryOnTransportFailure: true });
     const started = performance.now();
     const output = await call(state, "proxy");
-    expect(output.details.error).toBe("call_failed");
-    expect(output.details.message).toMatch(/timeout|timed out/i);
+    expect(output.details).toMatchObject({ error: "ambiguous_outcome", recovery: { action: "readback" } });
     expect(performance.now() - started).toBeLessThan(240);
     expect(f.calls()).toHaveLength(2);
   });
@@ -1321,6 +1364,7 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it.each([404, 405, 406, 415])("connects deprecated SSE only after HTTP%s endpoint rejection", async status => {
     let stream: ServerResponse;
+    let stall = false;
     const f = await fixture(e => {
       if (e.req.url === "/mcp" && e.req.method === "POST") { e.res.writeHead(status).end(); return true; }
       if (e.req.url === "/mcp" && e.req.method === "GET") {
@@ -1330,7 +1374,7 @@ describe("published SDK v2 over real local HTTP", () => {
         return true;
       }
       if (e.req.url !== "/messages") return;
-      if (e.body.id !== undefined) {
+      if (e.body.id !== undefined && !(stall && e.body.method === "tools/call")) {
         const payload = e.body.method === "initialize"
           ? { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "sse", version: "1" } }
           : e.body.method === "tools/list" ? { tools: [tool] } : { content: [{ type: "text", text: "ok" }] };
@@ -1344,6 +1388,10 @@ describe("published SDK v2 over real local HTTP", () => {
     expect((await call(state, "proxy")).ok).toBe(true);
     expect(f.requests.filter(r => r.req.method === "GET")).toHaveLength(1);
     expect(f.requests.filter(r => r.req.url === "/messages" && r.body.method === "initialize")).toHaveLength(1);
+    stall = true;
+    connection.definition.requestTimeoutMs = 80;
+    expect((await call(state, "proxy")).details).toMatchObject({ error: "ambiguous_outcome", recovery: { action: "readback" } });
+    expect(f.calls()).toHaveLength(2);
   });
 
   it("closes an in-flight native discover request when connect is cancelled", async () => {

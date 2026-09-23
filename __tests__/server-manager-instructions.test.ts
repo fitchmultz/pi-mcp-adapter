@@ -26,6 +26,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
 vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
+    this.send = vi.fn(async () => undefined);
     this.close = vi.fn(async () => undefined);
   }),
 }));

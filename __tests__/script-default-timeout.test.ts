@@ -212,7 +212,7 @@ it("keeps the independent provider deadline without replaying the original call"
   const elapsedMs = performance.now() - started;
   console.info("provider deadline", JSON.stringify({ elapsedMs, details: result.details, calls }));
   expect(result.details).not.toHaveProperty("error");
-  expect(result.details).toMatchObject({ timeoutMs: null, calls: [{ ok: false, error: "call_failed" }, { ok: true }] });
+  expect(result.details).toMatchObject({ timeoutMs: null, calls: [{ ok: false, error: "ambiguous_outcome", recovery: { action: "readback" } }, { ok: true }] });
   expect(elapsedMs).toBeLessThan(2_000);
   expect(calls).toEqual([{ name: "hang", args: { id: "original" } }, { name: "echo", args: { id: "following" } }]);
   await expect.poll(() => closed).toContain("original");

@@ -21,7 +21,7 @@
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
 import { AsyncLocalStorage } from "node:async_hooks";
-import { SdkHttpError, SdkErrorCode, ProtocolError, InsufficientScopeError, UnauthorizedError, type FetchLike, type Transport } from "@modelcontextprotocol/client";
+import { SdkError, SdkHttpError, SdkErrorCode, ProtocolError, InsufficientScopeError, UnauthorizedError, type FetchLike, type Transport } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerDisabled, isNonInteractiveOAuth, type McpConfig } from "./types.ts";
@@ -32,8 +32,34 @@ const toolTransportFailures = new WeakSet<object>();
 export function isToolTransportFailure(error: unknown): boolean {
   return error instanceof Error && toolTransportFailures.has(error);
 }
+const interruptedToolCalls = new WeakSet<object>();
+export function isInterruptedToolCall(error: unknown): boolean {
+  return error instanceof Error && interruptedToolCalls.has(error);
+}
+type ToolCallOutcome = { pending: boolean; cleanup: Set<() => void> };
+const toolCallOutcome = new AsyncLocalStorage<ToolCallOutcome>();
+
+/** Timeout outcome reporting is separate from the transport retry policy. */
+export async function trackToolCallOutcome<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const outcome: ToolCallOutcome = { pending: false, cleanup: new Set() };
+  return toolCallOutcome.run(outcome, async () => {
+    try {
+      return await fn();
+    } catch (error) {
+      if (outcome.pending && error instanceof Error
+        && (signal?.aborted || (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout))) {
+        interruptedToolCalls.add(error);
+      }
+      throw error;
+    } finally {
+      for (const cleanup of outcome.cleanup) cleanup();
+    }
+  });
+}
+
 type ToolSend = {
   id: string | number;
+  outcome: ToolCallOutcome | undefined;
   streaming: boolean;
   responseReceived: boolean;
   bodyFailure: Error | undefined;
@@ -42,15 +68,27 @@ type ToolSend = {
 };
 const toolSend = new AsyncLocalStorage<ToolSend | undefined>();
 
-/** Retain fetch/body-error origin without parsing or buffering the SSE response. */
+/** Retain fetch/body-error origin without parsing or buffering the response. */
 export const trackToolTransportFailure: FetchLike = async (input, init) => {
   const pending = toolSend.getStore();
   if (pending) pending.bodyFailure = undefined;
+  let toolPost = false;
+  if (pending && init?.method === "POST" && typeof init.body === "string") {
+    try {
+      const request = JSON.parse(init.body);
+      toolPost = request.method === "tools/call" && request.id === pending.id;
+    } catch {}
+  }
+  if (toolPost && pending?.outcome) pending.outcome.pending = true;
   try {
     const response = await fetch(input, init);
-    if (!pending || !response.ok || !response.body
-      || response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "text/event-stream") return response;
-    pending.streaming = true;
+    if (toolPost && !response.ok && response.status < 500 && pending?.outcome) pending.outcome.pending = false;
+    const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    const observeBody = response.ok
+      ? mediaType === "text/event-stream" || (toolPost && mediaType === "application/json")
+      : toolPost && response.status >= 500;
+    if (!pending || !response.body || !observeBody) return response;
+    pending.streaming = response.ok && mediaType === "text/event-stream";
     // The native end hook has no error argument. Only a failed body read proves loss.
     const reader = response.body.getReader();
     return new Response(new ReadableStream({
@@ -62,7 +100,10 @@ export const trackToolTransportFailure: FetchLike = async (input, init) => {
         } catch (error) {
           // Native intentional closure suppresses onRequestStreamEnd.
           if (init?.signal?.aborted) pending.finishSend();
-          else if (error instanceof Error) pending.bodyFailure = error;
+          else if (error instanceof Error) {
+            pending.bodyFailure = error;
+            if (!pending.streaming) interruptedToolCalls.add(error);
+          }
           controller.error(error);
           reader.releaseLock();
         }
@@ -79,12 +120,15 @@ export const trackToolTransportFailure: FetchLike = async (input, init) => {
 };
 
 /** Observe only the originating tool send, not OAuth or catalog requests. */
-export function trackToolHttpFailures(transport: Transport): void {
+export function trackToolTransport(transport: Transport, http = false): void {
+  const requests = new Map<string | number, ToolSend>();
   const onmessage = transport.onmessage;
   transport.onmessage = (message, extra) => {
-    const pending = toolSend.getStore();
+    const pending = ("id" in message && message.id !== undefined ? requests.get(message.id) : undefined) ?? toolSend.getStore();
     if (pending && "id" in message && message.id === pending.id && ("result" in message || "error" in message)) {
       pending.responseReceived = true;
+      if (pending.outcome) pending.outcome.pending = false;
+      requests.delete(pending.id);
       pending.finishSend();
     }
     onmessage?.(message, extra);
@@ -99,15 +143,23 @@ export function trackToolHttpFailures(transport: Transport): void {
   const send = transport.send.bind(transport);
   transport.send = async (message, options) => {
     try {
-      if (!("method" in message && message.method === "tools/call" && "id" in message && options?.requestSignal)) {
+      if (!("method" in message && message.method === "tools/call" && "id" in message)) {
         return await toolSend.run(undefined, () => send(message, options));
       }
       const pending: ToolSend = {
-        id: message.id, streaming: false, responseReceived: false,
+        id: message.id, outcome: toolCallOutcome.getStore(), streaming: false, responseReceived: false,
         bodyFailure: undefined, otherFailure: undefined,
         finishSend: () => {},
       };
+      if (pending.outcome) {
+        requests.set(message.id, pending);
+        pending.outcome.cleanup.add(() => requests.delete(message.id));
+        if (!http) pending.outcome.pending = true;
+      }
       try {
+        if (!options?.requestSignal) {
+          return await toolSend.run(pending, () => send(message, options));
+        }
         await abortable(new Promise<void>((resolve, reject) => {
           pending.finishSend = resolve;
           void toolSend.run(pending, () => send(message, {
@@ -122,6 +174,10 @@ export function trackToolHttpFailures(transport: Transport): void {
             },
           })).then(() => { if (!pending.streaming) resolve(); }, reject);
         }), options.requestSignal);
+      } catch (error) {
+        // Local send failures are distinct from a sent request waiting for its reply.
+        if (!http && pending.outcome) pending.outcome.pending = false;
+        throw error;
       } finally {
         pending.finishSend = () => {};
       }
