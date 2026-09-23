@@ -19,6 +19,8 @@ import {
   extractUiPromptText,
   getVisualizationStreamEnvelope,
   isServerDisabled,
+  isToolAllowed,
+  resolveToolPrefix,
   type McpConfig,
   type UiDisplayMode,
   type UiDisplayModeRequest,
@@ -385,9 +387,16 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           return;
         }
 
+        const definition = options.config?.mcpServers[options.serverName] ?? connection.definition;
         const toolDefinitions = Array.isArray(connection.tools) ? connection.tools : [];
         const toolDefinition = toolDefinitions.find((tool) => tool.name === callParams.name);
-        if (!toolDefinition) {
+        if (!toolDefinition || !isToolAllowed(
+          callParams.name,
+          options.serverName,
+          resolveToolPrefix(definition, options.config?.settings?.toolPrefix),
+          definition?.includeTools,
+          definition?.excludeTools,
+        )) {
           sendJson(res, 403, { ok: false, error: `MCP tool "${callParams.name}" is not callable by apps` });
           return;
         }
