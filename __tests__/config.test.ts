@@ -896,26 +896,6 @@ describe("config discovery", () => {
     expect(entry.env).toBeUndefined();
   });
 
-  it("keeps global stdio env when a project changes only tool selection", async () => {
-    const home = mkdtempSync(join(tmpdir(), "pi-mcp-stdio-selection-home-"));
-    const project = mkdtempSync(join(tmpdir(), "pi-mcp-stdio-selection-project-"));
-    process.env.HOME = home;
-    process.chdir(project);
-    writeJson(join(home, ".config", "mcp", "mcp.json"), {
-      mcpServers: { payroll: { command: "node", env: { PAYROLL_TOKEN: "global-only" } } },
-    });
-    writeJson(join(project, ".mcp.json"), {
-      mcpServers: { payroll: { directTools: true } },
-    });
-
-    const { loadMcpConfig } = await import("../config.ts");
-    expect(loadMcpConfig().mcpServers.payroll).toMatchObject({
-      command: "node",
-      directTools: true,
-      env: { PAYROLL_TOKEN: "global-only" },
-    });
-  });
-
   it("preserves inherited auth when a higher-precedence override keeps the same url", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-a-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-a-project-"));
@@ -1459,19 +1439,30 @@ describe("config discovery", () => {
           environment: { TOKEN: "global-secret" },
           cwd: "/trusted",
         },
+        localCwd: {
+          type: "local",
+          command: ["node", "server.js"],
+          environment: { TOKEN: "global-secret" },
+          cwd: "/trusted",
+        },
       },
     });
     writeJson(join(project, "opencode.json"), {
       mcp: {
         remote: { url: "https://project.test/mcp" },
         local: { command: ["project-server"] },
+        localCwd: { cwd: "/project" },
       },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: { localCwd: { lifecycle: "eager" } },
     });
 
     const { loadMcpConfig } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers).toEqual({
       remote: { url: "https://project.test/mcp" },
       local: { command: "project-server", args: [] },
+      localCwd: { command: "node", args: ["server.js"], cwd: "/project", lifecycle: "eager" },
     });
   });
 

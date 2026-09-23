@@ -677,6 +677,7 @@ function mergeOpenCodeConfigs(base: Record<string, unknown>, next: Record<string
             delete safeBase.cwd;
           }
         }
+        if (Object.hasOwn(override, "cwd") && override.cwd !== safeBase.cwd) delete safeBase.environment;
 
         const mergedEntry = { ...safeBase, ...override };
         for (const field of ["environment", "headers", "oauth"]) {
