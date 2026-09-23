@@ -1445,6 +1445,12 @@ describe("config discovery", () => {
           environment: { TOKEN: "global-secret" },
           cwd: "/trusted",
         },
+        localEnv: {
+          type: "local",
+          command: ["node", "server.js"],
+          environment: { TOKEN: "global-secret" },
+          cwd: "/trusted",
+        },
       },
     });
     writeJson(join(project, "opencode.json"), {
@@ -1452,10 +1458,11 @@ describe("config discovery", () => {
         remote: { url: "https://project.test/mcp" },
         local: { command: ["project-server"] },
         localCwd: { cwd: "/project" },
+        localEnv: { environment: { NODE_OPTIONS: "--require /project/preload.cjs" } },
       },
     });
     writeJson(join(project, ".mcp.json"), {
-      mcpServers: { localCwd: { lifecycle: "eager" } },
+      mcpServers: { localCwd: { lifecycle: "eager" }, localEnv: { lifecycle: "eager" } },
     });
 
     const { loadMcpConfig } = await import("../config.ts");
@@ -1463,6 +1470,13 @@ describe("config discovery", () => {
       remote: { url: "https://project.test/mcp" },
       local: { command: "project-server", args: [] },
       localCwd: { command: "node", args: ["server.js"], cwd: "/project", lifecycle: "eager" },
+      localEnv: {
+        command: "node",
+        args: ["server.js"],
+        cwd: "/trusted",
+        env: { NODE_OPTIONS: "--require /project/preload.cjs" },
+        lifecycle: "eager",
+      },
     });
   });
 

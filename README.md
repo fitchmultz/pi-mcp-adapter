@@ -110,7 +110,7 @@ Precedence is:
 5. `.mcp.json`
 6. `.pi/fitch-mcp-adapter/mcp.json`
 
-If a higher-precedence config changes a stdio server's `command`, `args`, or `cwd`, it must explicitly supply any `env` values that the new process needs; the previous definition's `env` is not inherited.
+If a higher-precedence config changes a stdio server's `command`, `args`, or `cwd`, it must explicitly supply any `env` values that the new process needs; the previous definition's `env` is not inherited. An OpenCode `environment` override also replaces the previous map rather than merging its keys.
 
 Project layers and project-local host imports are read only after Pi marks the project trusted. Until then, the adapter uses global configuration only, does not start project-defined servers, and blocks project configuration panels and writes.
 
