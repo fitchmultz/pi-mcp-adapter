@@ -1461,21 +1461,17 @@ describe("config discovery", () => {
         localEnv: { environment: { NODE_OPTIONS: "--require /project/preload.cjs" } },
       },
     });
-    writeJson(join(project, ".mcp.json"), {
-      mcpServers: { localCwd: { lifecycle: "eager" }, localEnv: { lifecycle: "eager" } },
-    });
 
     const { loadMcpConfig } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers).toEqual({
       remote: { url: "https://project.test/mcp" },
       local: { command: "project-server", args: [] },
-      localCwd: { command: "node", args: ["server.js"], cwd: "/project", lifecycle: "eager" },
+      localCwd: { command: "node", args: ["server.js"], cwd: "/project" },
       localEnv: {
         command: "node",
         args: ["server.js"],
         cwd: "/trusted",
         env: { NODE_OPTIONS: "--require /project/preload.cjs" },
-        lifecycle: "eager",
       },
     });
   });
