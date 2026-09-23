@@ -444,10 +444,11 @@ export function executeSearch(
   includeSchemas?: boolean,
   limit = 12,
   offset = 0,
+  caller: "mcp" | "mcp_search" = "mcp",
 ): ProxyToolResult {
   const showSchemas = includeSchemas !== false;
   const searchCall = (nextOffset: number | null) =>
-    `mcp({ action: "search", query: ${JSON.stringify(query)}${server ? `, server: ${JSON.stringify(server)}` : ""}${showSchemas ? "" : ", includeSchemas: false"}, limit: ${limit}, offset: ${nextOffset} })`;
+    `${caller}({ ${caller === "mcp" ? 'action: "search", ' : ""}query: ${JSON.stringify(query)}${server ? `, server: ${JSON.stringify(server)}` : ""}${caller === "mcp" && !showSchemas ? ", includeSchemas: false" : ""}, limit: ${limit}, offset: ${nextOffset} })`;
   if (server && isServerDisabled(state.config.mcpServers[server])) return disabledResult("search", server);
 
   let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;

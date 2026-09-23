@@ -572,7 +572,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       : params.server ? (ready.toolMetadata.get(params.server) ?? []).filter(tool => !tool.resourceUri).map(tool => ({ server: params.server!, tool })).sort((a, b) => a.tool.name.localeCompare(b.tool.name)) : [];
     const page = paginate(matches, params.offset ?? 0, params.limit ?? 5);
     const tools = toolLoader.activate(page.items);
-    const result = executeSearch(ready, params.query, params.server, tools.length < page.items.length, params.limit ?? 5, params.offset);
+    const result = executeSearch(ready, params.query, params.server, tools.length < page.items.length, params.limit ?? 5, params.offset, "mcp_search");
     const guarded = await guardMcpOutput([
       ...result.content,
       { type: "text", text: tools.length ? `Loaded for the next request: ${JSON.stringify(tools)}` : "No direct tools loaded. Use mcp action call or tools.call in mcp_script with the returned exact names." },

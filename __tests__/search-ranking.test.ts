@@ -17,6 +17,62 @@ function stateWithTools(tools: ToolMetadata[]): McpExtensionState {
 }
 
 describe("search ranking", () => {
+  it("promotes exact public names above lexical cross-references, preserving the remainder", () => {
+    const state = stateWithTools([
+      tool("linear_save_diff_comment", "linear_save_comment linear_save_comment"),
+      tool("linear_save_comment", "Create a discussion message"),
+      tool("linear_list_comments", "List comments"),
+    ]);
+    // Same MiniSearch tokens without an exact identifier.
+    const control = rankToolMatches(state, "linear save comment");
+    expect(control[0].tool.name).toBe("linear_save_diff_comment");
+    const treatment = rankToolMatches(state, "linear_save_comment");
+    expect(treatment[0].tool.name).toBe("linear_save_comment");
+    expect(treatment.slice(1)).toEqual(control.filter(match => match.tool.name !== "linear_save_comment"));
+    expect(rankToolMatches(state, "LINEAR_SAVE_COMMENT")).toEqual(control);
+    expect(rankToolMatches(state, " linear_save_comment ")).toEqual(treatment);
+  });
+
+  it("promotes original names only with server scope and keeps accounts separate", () => {
+    const state = stateWithTools([]);
+    state.config.mcpServers = { gh: {}, "gh-personal": {} };
+    state.toolMetadata = new Map(["gh", "gh-personal"].map(server => [server, [
+      tool(`${server.replace("-", "_")}_search_pull_requests`, "list_pull_requests list_pull_requests", "search_pull_requests"),
+      tool(`${server.replace("-", "_")}_list_pull_requests`, "Retrieve pull requests", "list_pull_requests"),
+    ]]));
+    const natural = rankToolMatches(state, "list pull requests");
+    expect(rankToolMatches(state, "list_pull_requests")).toEqual(natural);
+    expect(rankToolMatches(state, "gh_list_pull_requests")[0].server).toBe("gh");
+    expect(rankToolMatches(state, "gh_personal_list_pull_requests")[0].server).toBe("gh-personal");
+    for (const server of ["gh", "gh-personal"]) {
+      const ranked = rankToolMatches(state, "list_pull_requests", server);
+      const lexical = rankToolMatches(state, "list pull requests", server);
+      expect(ranked[0].tool.originalName).toBe("list_pull_requests");
+      expect(ranked.every(match => match.server === server)).toBe(true);
+      expect(ranked.slice(1)).toEqual(lexical.filter(match => match.tool.originalName !== "list_pull_requests"));
+    }
+    state.config.mcpServers.gh!.excludeTools = ["list_pull_requests"];
+    expect(rankToolMatches(state, "gh_list_pull_requests").some(match => match.tool.name === "gh_list_pull_requests")).toBe(false);
+    state.config.mcpServers["gh-personal"]!.disabled = true;
+    expect(rankToolMatches(state, "list_pull_requests", "gh-personal")).toEqual([]);
+  });
+
+  it("retains every account when public names collide instead of choosing one", () => {
+    const state = stateWithTools([]);
+    state.config.mcpServers = { work: { toolPrefix: "none" }, personal: { toolPrefix: "none" } };
+    state.toolMetadata = new Map(["work", "personal"].map(server => [server, [
+      tool("save_comment", "Write a discussion message"),
+      tool("save_diff_comment", "save_comment save_comment"),
+    ]]));
+    const lexical = rankToolMatches(state, "save comment");
+    const exact = lexical.filter(match => match.tool.name === "save_comment");
+    expect(exact).toHaveLength(2);
+    expect(rankToolMatches(state, "save_comment")).toEqual([
+      ...exact, ...lexical.filter(match => match.tool.name !== "save_comment"),
+    ]);
+    expect(rankToolMatches(state, "save_comment", "personal")[0].server).toBe("personal");
+  });
+
   it("ranks a name match above a description match", () => {
     const state = stateWithTools([tool("search_records", "Find records"), tool("find_records", "Search records")]);
     expect(rankToolMatches(state, "search").map(match => match.tool.name)).toEqual(["search_records", "find_records"]);
