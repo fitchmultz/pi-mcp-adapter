@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -470,6 +470,26 @@ describe("config discovery", () => {
         },
       },
     });
+  });
+
+  it("preserves a private config's permissions when disabling a server", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-private-config-"));
+    const filePath = join(project, ".pi", "fitch-mcp-adapter", "mcp.json");
+    writeJson(filePath, { mcpServers: { private: { url: "https://example.invalid/mcp", bearerToken: "dummy-token" } } });
+    chmodSync(filePath, 0o600);
+
+    const originalUmask = process.umask(0o022);
+    try {
+      const { writeProjectServerDisabledOverride } = await import("../config.ts");
+      writeProjectServerDisabledOverride(undefined, project, "private", true);
+      expect(statSync(filePath).mode & 0o777).toBe(0o600);
+      expect(JSON.parse(readFileSync(filePath, "utf-8")).mcpServers.private).toMatchObject({
+        bearerToken: "dummy-token",
+        disabled: true,
+      });
+    } finally {
+      process.umask(originalUmask);
+    }
   });
 
   it("resolves configured oauthDir against the active project cwd", async () => {

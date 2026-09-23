@@ -1,5 +1,6 @@
 // config.ts - Config loading with import support
-import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, renameSync, statSync, chmodSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -875,8 +876,14 @@ function readRawConfigObject(filePath: string): Record<string, unknown> {
 
 function writeRawConfigObject(filePath: string, raw: Record<string, unknown>): void {
   mkdirSync(dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, `${JSON.stringify(raw, null, 2)}\n`, "utf-8");
+  const existingMode = existsSync(filePath) ? statSync(filePath).mode & 0o7777 : undefined;
+  const tmpPath = `${filePath}.${randomUUID()}.tmp`;
+  writeFileSync(tmpPath, `${JSON.stringify(raw, null, 2)}\n`, {
+    encoding: "utf-8",
+    mode: existingMode ?? 0o666,
+    flag: "wx",
+  });
+  if (existingMode !== undefined) chmodSync(tmpPath, existingMode);
   renameSync(tmpPath, filePath);
 }
 
