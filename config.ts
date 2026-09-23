@@ -861,12 +861,16 @@ function buildConfigWritePreview(filePath: string, nextRaw: Record<string, unkno
 function readRawConfigObject(filePath: string): Record<string, unknown> {
   if (!existsSync(filePath)) return {};
 
+  let raw: unknown;
   try {
-    const raw = parseJsonConfig(readFileSync(filePath, "utf-8"));
-    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
-  } catch {
-    return {};
+    raw = parseJsonConfig(readFileSync(filePath, "utf-8"));
+  } catch (error) {
+    throw new Error(`Cannot read MCP config at ${filePath}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`Invalid MCP config at ${filePath}: expected an object`);
+  }
+  return raw as Record<string, unknown>;
 }
 
 function writeRawConfigObject(filePath: string, raw: Record<string, unknown>): void {
@@ -876,10 +880,12 @@ function writeRawConfigObject(filePath: string, raw: Record<string, unknown>): v
   renameSync(tmpPath, filePath);
 }
 
-function getServersObject(raw: Record<string, unknown>): Record<string, ServerEntry> {
-  const existing = raw.mcpServers ?? raw["mcp-servers"] ?? {};
+function getServersObject(raw: Record<string, unknown>, filePath: string): Record<string, ServerEntry> {
+  const existing = raw.mcpServers !== undefined ? raw.mcpServers
+    : raw["mcp-servers"] !== undefined ? raw["mcp-servers"]
+    : {};
   if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
-    return {};
+    throw new Error(`Invalid MCP config at ${filePath}: mcpServers must be an object`);
   }
   return existing as Record<string, ServerEntry>;
 }
@@ -1058,7 +1064,7 @@ export function previewCompatibilityImports(importKinds: ImportKind[], overrideP
   const currentImports = Array.isArray(raw.imports) ? raw.imports.filter((value): value is ImportKind => typeof value === "string") : [];
   const merged = [...new Set([...currentImports, ...importKinds])];
   const nextRaw = { ...raw, imports: merged };
-  setServersObject(nextRaw, getServersObject(nextRaw));
+  setServersObject(nextRaw, getServersObject(nextRaw, targetPath));
   return buildConfigWritePreview(targetPath, nextRaw);
 }
 
@@ -1073,7 +1079,7 @@ export function ensureCompatibilityImports(importKinds: ImportKind[], overridePa
   }
 
   raw.imports = merged;
-  const servers = getServersObject(raw);
+  const servers = getServersObject(raw, targetPath);
   setServersObject(raw, servers);
   writeRawConfigObject(targetPath, raw);
   return { path: targetPath, added };
@@ -1101,7 +1107,7 @@ export function writeStarterProjectConfig(cwd = process.cwd()): string {
 export function previewSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): ConfigWritePreview {
   const raw = readRawConfigObject(filePath);
   const nextRaw = { ...raw };
-  const servers = getServersObject(nextRaw);
+  const servers = getServersObject(nextRaw, filePath);
   servers[serverName] = entry;
   setServersObject(nextRaw, servers);
   return buildConfigWritePreview(filePath, nextRaw);
@@ -1109,7 +1115,7 @@ export function previewSharedServerEntry(filePath: string, serverName: string, e
 
 export function writeSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): string {
   const raw = readRawConfigObject(filePath);
-  const servers = getServersObject(raw);
+  const servers = getServersObject(raw, filePath);
   servers[serverName] = entry;
   setServersObject(raw, servers);
   writeRawConfigObject(filePath, raw);
@@ -1180,7 +1186,7 @@ export function writeDirectToolsConfig(
 
   for (const [filePath, entries] of byPath) {
     const raw = readRawConfigObject(filePath);
-    const servers = getServersObject(raw);
+    const servers = getServersObject(raw, filePath);
 
     for (const { name, value } of entries) {
       // Keep inherited connection details in their source file.

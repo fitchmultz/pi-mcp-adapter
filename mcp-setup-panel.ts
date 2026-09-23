@@ -427,7 +427,10 @@ export class McpSetupPanel {
     }
     lines.push(this.padLine("", innerW));
 
-    const preview = this.getActionPreview(this.getSelectedAction(), this.previewWidth(innerW));
+    const preview = this.previewOrError(
+      width => this.getActionPreview(this.getSelectedAction(), width),
+      innerW,
+    );
     for (const line of preview) {
       lines.push(this.padLine(line, innerW));
     }
@@ -450,8 +453,10 @@ export class McpSetupPanel {
     }
     lines.push(this.padLine("", innerW));
     const selected = this.discovery.imports.filter((entry) => this.selectedImports.has(entry.kind)).map((entry) => entry.kind);
-    const preview = this.callbacks.previewImports(selected);
-    for (const line of this.formatWritePreview("Compatibility import write preview", preview, [], this.previewWidth(innerW))) {
+    for (const line of this.previewOrError(
+      width => this.formatWritePreview("Compatibility import write preview", this.callbacks.previewImports(selected), [], width),
+      innerW,
+    )) {
       lines.push(this.padLine(line, innerW));
     }
     return lines;
@@ -616,6 +621,15 @@ export class McpSetupPanel {
       preview.push(...wrapText(line, width));
     }
     return preview;
+  }
+
+  private previewOrError(preview: (width: number) => string[], innerW: number): string[] {
+    const width = this.previewWidth(innerW);
+    try {
+      return preview(width);
+    } catch (error) {
+      return this.formatPreview([`Cannot preview write: ${error instanceof Error ? error.message : String(error)}`], width);
+    }
   }
 
   private formatWritePreview(title: string, preview: ConfigWritePreview, intro: string[] = [], width = DESKTOP_PREVIEW_WIDTH): string[] {
