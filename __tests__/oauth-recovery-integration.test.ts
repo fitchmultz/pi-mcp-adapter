@@ -940,7 +940,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       await expect.poll(() => f.manager.getConnection(f.name)?.status).toBe("connected");
     }
     if (mode === "panel-reset") {
-      expect((await effect).details.error).toBe("call_failed"); expect(close).toHaveBeenCalledTimes(1);
+      expect((await effect).details).toMatchObject({ error: "ambiguous_outcome", recovery: { action: "readback" } }); expect(close).toHaveBeenCalledTimes(1);
       expect(browser.open).not.toHaveBeenCalled();
     } else {
       expect(close).not.toHaveBeenCalled(); expect(f.manager.getConnection(f.name)?.inFlight).toBe(1);
@@ -977,7 +977,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       expect(close).not.toHaveBeenCalled(); f.controls.releaseEffect(); expect((await effect).details.error).toBeUndefined();
       await expect.poll(() => close.mock.calls.length).toBe(1);
     } else {
-      expect((await effect).details.error).toBe("call_failed"); expect(close).toHaveBeenCalledTimes(1); expect(browser.open).not.toHaveBeenCalled();
+      expect((await effect).details).toMatchObject({ error: "ambiguous_outcome", recovery: { action: "readback" } }); expect(close).toHaveBeenCalledTimes(1); expect(browser.open).not.toHaveBeenCalled();
     }
     expect(f.controls.effectCount).toBe(1); expect(f.requests.filter(r => r.name === "effect")).toHaveLength(1);
     expect(manager.getConnection(f.name)).not.toBe(old);

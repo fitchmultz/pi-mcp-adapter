@@ -39,7 +39,7 @@ export function isInterruptedToolCall(error: unknown): boolean {
 type ToolCallOutcome = { pending: boolean; cleanup: Set<() => void> };
 const toolCallOutcome = new AsyncLocalStorage<ToolCallOutcome>();
 
-/** Timeout outcome reporting is separate from the transport retry policy. */
+/** Interrupted outcome reporting is separate from the transport retry policy. */
 export async function trackToolCallOutcome<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   const outcome: ToolCallOutcome = { pending: false, cleanup: new Set() };
   return toolCallOutcome.run(outcome, async () => {
@@ -47,8 +47,12 @@ export async function trackToolCallOutcome<T>(fn: () => Promise<T>, signal?: Abo
       return await fn();
     } catch (error) {
       if (outcome.pending && error instanceof Error
-        && (signal?.aborted || (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout))) {
-        interruptedToolCalls.add(error);
+        && (signal?.aborted || (error instanceof SdkError
+          && (error.code === SdkErrorCode.RequestTimeout || error.code === SdkErrorCode.ConnectionClosed)))) {
+        // Abort reasons can be shared by calls that never reached dispatch.
+        const interrupted = new Error(error.message, { cause: error });
+        interruptedToolCalls.add(interrupted);
+        throw interrupted;
       }
       throw error;
     } finally {

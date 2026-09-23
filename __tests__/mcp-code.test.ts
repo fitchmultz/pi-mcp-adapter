@@ -264,7 +264,7 @@ describe("runMcpScript", () => {
       error: "timeout",
       calls: [
         { path: "fixture_echo", ok: true },
-        { path: "fixture_hang", ok: false, error: "incomplete" },
+        { path: "fixture_hang", ok: false, error: "ambiguous_outcome", recovery: { action: "readback" } },
       ],
     });
   });
@@ -275,11 +275,11 @@ describe("runMcpScript", () => {
     await expect.poll(() => manager.getConnection("fixture")?.inFlight).toBe(1);
     controller.abort(new Error("caller cancelled"));
     const result = await pending;
-    expect(result.details).toMatchObject({ error: "aborted", calls: [{ path: "fixture_hang", ok: false, error: "incomplete" }] });
+    expect(result.details).toMatchObject({ error: "aborted", calls: [{ path: "fixture_hang", ok: false, error: "ambiguous_outcome", recovery: { action: "readback" } }] });
     await expect.poll(() => manager.getConnection("fixture")?.inFlight).toBe(0);
   });
 
-  it("returns promptly on early return and marks un-awaited calls incomplete", async () => {
+  it("returns promptly on early return and reports un-awaited dispatched calls as unknown", async () => {
     const start = Date.now();
     const result = await runMcpScript(
       state,
@@ -290,7 +290,7 @@ describe("runMcpScript", () => {
     expect(Date.now() - start).toBeLessThan(2_000);
     expect(result.details).not.toHaveProperty("error");
     expect(result.details).toMatchObject({
-      calls: [{ path: "fixture_hang", ok: false, error: "incomplete" }],
+      calls: [{ path: "fixture_hang", ok: false, error: "ambiguous_outcome", recovery: { action: "readback" } }],
     });
   });
 

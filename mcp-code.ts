@@ -148,7 +148,7 @@ async function runMcpScriptOperation(
       ? Math.max(0, Date.now() - startedAt)
       : operation.durationMs,
   }));
-  let callsSnapshot: ScriptOperation[] | undefined;
+  const pendingOperations = new Set<Promise<void>>();
   const resultRefs = new Set<string>();
   const payloadNotices = new Set<string>();
   const recordCall = async (path: string, dispatch: () => ReturnType<typeof executeCall>) => {
@@ -172,10 +172,10 @@ async function runMcpScriptOperation(
           : textFromContent(result.content);
       calls[index] = {
         operation: "call", path, ok: false, error: errorCode, durationMs: Date.now() - startedAt, startedAt,
-        ...(errorCode === "ambiguous_outcome" ? { recovery: details.recovery } : {}),
+        ...(details.recovery !== undefined ? { recovery: details.recovery } : {}),
       };
       if (errorCode === "call_capture_failed") throw new McpScriptCaptureError(details.recovery, message);
-      if (errorCode === "ambiguous_outcome") output.push({ type: "text", text: message });
+      if (details.recovery !== undefined) output.push({ type: "text", text: message });
       return {
         ok: false as const,
         ...(details.mcpResult !== undefined ? { data: details.mcpResult } : {}),
@@ -309,7 +309,7 @@ async function runMcpScriptOperation(
           return;
         }
 
-        void (async () => {
+        const operation = (async () => {
           let envelope: unknown;
           if (message.type === "call") {
             envelope = await callTool(message.id, message.path, message.args as Record<string, unknown> | undefined, message.server);
@@ -334,7 +334,9 @@ async function runMcpScriptOperation(
           }
           const response: WorkerResultMessage = { type: "result", id: message.id, envelope };
           activeWorker.postMessage(response);
-        })().catch(reject);
+        })();
+        pendingOperations.add(operation);
+        void operation.catch(reject).finally(() => pendingOperations.delete(operation));
       });
       activeWorker.once("error", reject);
       activeWorker.once("exit", (code) => {
@@ -345,7 +347,6 @@ async function runMcpScriptOperation(
       if (resolvedTimeoutMs === null) return;
       const timeoutError = new McpScriptTimeoutError(resolvedTimeoutMs);
       timer = setTimeout(() => {
-        callsSnapshot = snapshotCalls();
         timeoutController.abort(timeoutError);
         void activeWorker.terminate();
         reject(timeoutError);
@@ -354,7 +355,6 @@ async function runMcpScriptOperation(
     const aborted = externalSignal
       ? new Promise<never>((_resolve, reject) => {
           const onAbort = () => {
-            callsSnapshot = snapshotCalls();
             void activeWorker.terminate();
             reject(abortReasonError(externalSignal.reason));
           };
@@ -383,15 +383,16 @@ async function runMcpScriptOperation(
   } finally {
     clearTimeout(timer);
     removeAbortListener();
-    // "incomplete" means the call had not settled when the script finished
-    // (deadline, abort, or early return). Snapshot before aborting stragglers.
-    callsSnapshot ??= snapshotCalls();
+    worker?.removeAllListeners("message");
     // A script may finish without awaiting every call; abort leftovers so
     // parent-side dispatches do not outlive the script.
     timeoutController.abort(new Error("mcp_script finished"));
+    // Let cancelled dispatches report whether an outcome is known before taking the trace.
+    await Promise.allSettled(pendingOperations);
     await worker?.terminate();
   }
 
+  const callsSnapshot = snapshotCalls();
   // Snapshot before the asynchronous output guard; the terminated worker can no longer emit.
   const guarded = await guardMcpOutput(
     [...(output.length > 0 ? output : [{ type: "text" as const, text: "(no output)" }]), ...[...payloadNotices].map(text => ({ type: "text" as const, text })), ...[...resultRefs].map(ref => ({ type: "text" as const, text: formatMcpResultReference(ref) }))],

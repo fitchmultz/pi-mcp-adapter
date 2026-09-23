@@ -1040,7 +1040,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const pending = call(state, "proxy", controller.signal);
     await expect.poll(() => f.calls().length).toBe(1);
     controller.abort(new Error("caller cancelled"));
-    expect((await pending).details.error).toBe("aborted");
+    expect((await pending).details).toMatchObject({ error: "ambiguous_outcome", recovery: { action: "readback" } });
     await expect.poll(() => closed).toBe(true);
     expect(f.calls()).toHaveLength(1);
     expect(f.requests.some(r => r.body.method === "notifications/cancelled" || r.req.method === "GET")).toBe(false);
@@ -1072,7 +1072,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const pending = call(state, "proxy");
     await expect.poll(() => f.calls().length).toBe(1);
     await f.manager.closeAll();
-    expect((await pending).details.message).toContain("Connection closed");
+    expect((await pending).details).toMatchObject({ error: "ambiguous_outcome", recovery: { action: "readback" } });
     await expect.poll(() => settled).toBe(1);
     expect(f.calls()).toHaveLength(1);
     await expect.poll(() => readFile(traceFile, "utf8")).toContain('"method":"tools/call"');
