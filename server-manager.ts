@@ -447,7 +447,7 @@ export class McpServerManager {
     const attempt = { controller: new AbortController(), waiters: 0 };
     const attemptSignal = combineAbortSignals(this.runtimeSignal, attempt.controller.signal);
     const promise = this.createConnection(name, definition, attemptSignal, ownedSignal ? attemptSignal : undefined).then(async connection => {
-      if (attempt.controller.signal.aborted || (this.closeGenerations.get(name) ?? 0) !== generation) {
+      if (connection.status === "closed" || attempt.controller.signal.aborted || (this.closeGenerations.get(name) ?? 0) !== generation) {
         await this.disposeConnection(connection);
         throwIfAborted(attemptSignal);
         throw new Error(`MCP connection for ${name} was closed while connecting`);
@@ -656,10 +656,9 @@ export class McpServerManager {
             oauthProvider,
           };
 
-          // The public client hook preserves native transport cleanup. An old
-          // client's late close must never change its replacement's status.
+          // Track closure during discovery too; this only changes this client's connection.
           client.onclose = () => {
-            if (this.connections.get(name) === connection) connection.status = "closed";
+            connection.status = "closed";
           };
 
           const discoveryOptions = this.buildRequestOptions(definition, signal);

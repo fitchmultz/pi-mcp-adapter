@@ -58,6 +58,33 @@ describe("McpServerManager connections", () => {
 
   const def = { url: "https://example.test/mcp" };
 
+  it("rejects a connection closed during optional discovery and allows a fresh attempt", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    let releaseConnect!: () => void;
+    mocks.connectGate = new Promise<void>(resolve => { releaseConnect = resolve; });
+    const connecting = manager.connect("remote", def);
+
+    try {
+      await vi.waitFor(() => expect(mocks.clients).toHaveLength(1));
+      const client = mocks.clients[0];
+      client.getServerCapabilities = () => ({ resources: {} });
+      client.listResources.mockImplementation(async () => {
+        client.onclose();
+        throw new Error("Connection closed");
+      });
+      releaseConnect();
+
+      await expect(connecting).rejects.toThrow("closed while connecting");
+      expect(manager.getConnection("remote")).toBeUndefined();
+      expect((await manager.connect("remote", def)).status).toBe("connected");
+      expect(mocks.clients).toHaveLength(2);
+    } finally {
+      releaseConnect();
+      await manager.closeAll();
+    }
+  });
+
   it("keeps a shared initial connection alive when its first caller cancels", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
