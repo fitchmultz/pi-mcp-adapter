@@ -49,7 +49,7 @@ vi.mock("../npx-resolver.ts", () => ({
   resolveNpxBinary: vi.fn(async () => null),
 }));
 
-describe("McpServerManager.reconnect", () => {
+describe("McpServerManager connections", () => {
   beforeEach(() => {
     mocks.clients.length = 0;
     mocks.httpTransports.length = 0;
@@ -57,6 +57,54 @@ describe("McpServerManager.reconnect", () => {
   });
 
   const def = { url: "https://example.test/mcp" };
+
+  it("keeps a shared initial connection alive when its first caller cancels", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    let releaseConnect!: () => void;
+    mocks.connectGate = new Promise<void>(resolve => { releaseConnect = resolve; });
+    const controller = new AbortController();
+    const reason = new Error("stop waiting");
+
+    const first = manager.connect("remote", def, controller.signal);
+    const second = manager.connect("remote", def).catch(error => error);
+    try {
+      controller.abort(reason);
+      await expect(first).rejects.toBe(reason);
+      const third = manager.connect("remote", def).catch(error => error);
+      expect(mocks.clients).toHaveLength(1);
+
+      releaseConnect();
+      const connection = await second;
+      expect(connection).toBe(await third);
+      expect(connection).toBe(manager.getConnection("remote"));
+      expect(connection.status).toBe("connected");
+    } finally {
+      releaseConnect();
+      await manager.closeAll();
+    }
+  });
+
+  it("lets a new caller connect after the sole waiter cancels", async () => {
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    let releaseConnect!: () => void;
+    mocks.connectGate = new Promise<void>(resolve => { releaseConnect = resolve; });
+    const controller = new AbortController();
+    const first = manager.connect("remote", def, controller.signal);
+
+    try {
+      controller.abort(new Error("stop waiting"));
+      await expect(first).rejects.toThrow("stop waiting");
+      const next = manager.connect("remote", def);
+      releaseConnect();
+      expect((await next).status).toBe("connected");
+      expect(mocks.clients).toHaveLength(2);
+    } finally {
+      releaseConnect();
+      await manager.closeAll();
+    }
+  });
 
   it("is single-flight: concurrent reconnects for the same server share one underlying reconnect", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
