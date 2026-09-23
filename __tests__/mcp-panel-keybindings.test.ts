@@ -214,6 +214,25 @@ describe("mcp-setup-panel custom keybindings", () => {
     panel.dispose();
   });
 
+  it("shows a config read error instead of crashing the setup preview", () => {
+    const callbacks = createSetupCallbacks();
+    callbacks.previewKnownServer = () => {
+      throw new Error("Cannot read MCP config at /tmp/project/.mcp.json");
+    };
+    const panel = createMcpSetupPanel(
+      createEmptyDiscovery(),
+      callbacks,
+      { mode: "setup", onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false } },
+      { requestRender: () => {} },
+      () => {},
+    );
+
+    for (let i = 0; i < 3; i++) panel.handleInput(DOWN);
+    const output = panel.render(90).join("\n");
+    expect(output).toContain("Cannot preview write: Cannot read MCP config at /tmp/project/.mcp.json");
+    panel.dispose();
+  });
+
   it("shows the actual config precedence including .agents paths", () => {
     const panel = createMcpSetupPanel(
       createEmptyDiscovery(),

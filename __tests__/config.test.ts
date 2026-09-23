@@ -1198,6 +1198,21 @@ describe("config discovery", () => {
     expect(sharedPreview.diffText).toContain('+     "repoprompt": {');
   });
 
+  it.each([
+    ["malformed JSON", '{"mcpServers":{"private":{"command":"private"}'],
+    ["invalid server map", '{"mcpServers":[{"private":{"command":"private"}}]}'],
+    ["null server map", '{"mcpServers":null}'],
+  ])("does not preview or overwrite an existing config with %s", async (_case, original) => {
+    const filePath = join(mkdtempSync(join(tmpdir(), "pi-mcp-unreadable-")), ".mcp.json");
+    writeFileSync(filePath, original, "utf-8");
+
+    const { previewSharedServerEntry, writeSharedServerEntry } = await import("../config.ts");
+    const entry = { url: "https://mcp.deepwiki.com/mcp" };
+    expect(() => previewSharedServerEntry(filePath, "deepwiki", entry)).toThrow();
+    expect(() => writeSharedServerEntry(filePath, "deepwiki", entry)).toThrow();
+    expect(readFileSync(filePath, "utf-8")).toBe(original);
+  });
+
   it("preserves the mcp toolPrefix setting from config files", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-prefix-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-prefix-project-"));
