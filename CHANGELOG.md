@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prevent a project override of a stdio server's command, arguments, or working directory from inheriting another config source's environment secrets.
 - Refuse MCP setup writes when an existing config cannot be read, preserving the file and showing the error in the setup preview.
 - Keep a shared initial MCP connection alive when one caller cancels, so other callers can continue without a false failure backoff.
 - Let npm resolve explicit version ranges and tags for MCP server commands instead of launching an arbitrary cached version. Exact versions retain the direct-launch optimization.

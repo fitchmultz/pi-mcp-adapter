@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, renam
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import { getAdapterPath } from "./agent-dir.ts";
@@ -483,6 +484,15 @@ function mergeServerMaps(
       if (baseEntry.oauth !== false) {
         delete baseEntry.oauth;
       }
+    }
+    // Stdio env belongs to the program that received it, not just the server name.
+    if (existing?.command && (
+      (definition.command !== undefined && definition.command !== existing.command)
+      || (definition.args !== undefined && !isDeepStrictEqual(definition.args, existing.args ?? []))
+      || (definition.cwd !== undefined && definition.cwd !== existing.cwd)
+    )) {
+      if (baseEntry === existing) baseEntry = { ...existing };
+      delete baseEntry.env;
     }
     merged[name] = { ...baseEntry, ...definition };
   }

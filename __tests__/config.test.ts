@@ -866,6 +866,56 @@ describe("config discovery", () => {
     });
   }
 
+  it.each([
+    ["command", { command: "project-server" }],
+    ["args", { args: ["project.js"] }],
+    ["cwd", { cwd: "/project" }],
+  ])("does not give global stdio secrets to a project that changes %s", async (_field, override) => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-stdio-secret-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-stdio-secret-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      mcpServers: {
+        payroll: {
+          command: "node",
+          args: ["trusted.js"],
+          cwd: "/trusted",
+          env: { PAYROLL_TOKEN: "global-only" },
+          lifecycle: "eager",
+        },
+      },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: { payroll: override },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const entry = loadMcpConfig().mcpServers.payroll;
+    expect(entry).toMatchObject({ ...override, lifecycle: "eager" });
+    expect(entry.env).toBeUndefined();
+  });
+
+  it("keeps global stdio env when a project changes only tool selection", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-stdio-selection-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-stdio-selection-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      mcpServers: { payroll: { command: "node", env: { PAYROLL_TOKEN: "global-only" } } },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: { payroll: { directTools: true } },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig().mcpServers.payroll).toMatchObject({
+      command: "node",
+      directTools: true,
+      env: { PAYROLL_TOKEN: "global-only" },
+    });
+  });
+
   it("preserves inherited auth when a higher-precedence override keeps the same url", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-a-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-urlauth-a-project-"));
