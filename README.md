@@ -840,6 +840,8 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/fitch-mcp-adapt
 
 Search ranks names, descriptions, and parameter guidance using MiniSearch. Catalog pages use item offsets: gateway/script search and lists default to 12, while `mcp_search` defaults to 5; maximum 100. Follow the returned `nextOffset`. Saved-result readback uses character offsets instead.
 
+An exact, case-sensitive public tool name ranks before lexical matches; with `server`, an exact original tool name also ranks first within that server. Unscoped original names do not select an account. All remaining matches retain MiniSearch order. Search continuation and retry calls preserve their entry point: `mcp_search` loads the next page, while gateway search remains metadata-only.
+
 Describe preserves the complete server descriptor, including JSON Schemas, annotations, `_meta`, and extensions when present. Search and typed-tool discovery exclude app-only tools and resources. Legacy hyphen/underscore matching remains a compatibility convenience; ambiguous names require an explicit server rather than executing an arbitrary match. Use the exact names returned by discovery.
 
 The gateway description stays stable as catalogs and credentials change. Server instructions are available through `action: "instructions"` and previews in server listings, rather than injected dynamically into the prompt.

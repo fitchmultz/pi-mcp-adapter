@@ -90,7 +90,11 @@ function searchCatalog(state: McpExtensionState, query: string, server?: string,
 }
 
 export function rankToolMatches(state: McpExtensionState, query: string, server?: string): RankedToolMatch[] {
-  return searchCatalog(state, query, server);
+  const matches = searchCatalog(state, query, server);
+  const identity = query.trim();
+  const exact = ({ tool }: RankedToolMatch) => tool.name === identity || (Boolean(server) && tool.originalName === identity);
+  // Stable partition retains MiniSearch order and scores within both groups.
+  return [...matches.filter(exact), ...matches.filter(match => !exact(match))];
 }
 
 export function paginate<T>(items: T[], offset: number, limit: number): { items: T[]; total: number; hasMore: boolean; nextOffset: number | null } {

@@ -356,6 +356,60 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.appendEntry).toHaveBeenCalledWith("mcp-tool-selection", expect.objectContaining({ selected: [{ server: "demo", tool: "search" }] }));
   });
 
+  it.each([false, true])("loads the advertised next page and retry, native host: %s", async (native) => {
+    const config = { mcpServers: { demo: { command: "demo" } } };
+    const state = createState();
+    state.config = config;
+    state.toolMetadata.set("demo", ["alpha", "beta"].map(name => ({
+      name: `demo_${name}`, originalName: name, description: "Find records",
+    })));
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.initializeMcp.mockResolvedValue(state);
+    const realProxy = await vi.importActual<typeof import("../proxy-modes.ts")>("../proxy-modes.ts");
+    mocks.executeSearch.mockImplementation(realProxy.executeSearch);
+    const { default: adapter } = await import("../index.ts");
+    const { api, handlers } = createPi();
+    if (native) {
+      let refs: Array<{ name: string; namespace?: string }> = [];
+      api.registerToolSearch = vi.fn();
+      api.getActiveToolReferences = () => refs;
+      api.setActiveToolReferences = (next: typeof refs) => { refs = next; };
+    }
+    adapter(api);
+    await handlers.get("session_start")?.({}, {});
+    await Promise.resolve();
+    const search = native ? api.registerToolSearch.mock.calls[0][0]
+      : api.registerTool.mock.calls.find(([tool]: any[]) => tool.name === "mcp_search")![0];
+    const gateway = api.registerTool.mock.calls.find(([tool]: any[]) => tool.name === "mcp")![0];
+    const active = () => native ? api.getActiveToolReferences() : api.getActiveTools().map((name: string) => ({ name }));
+    const beta = native ? { namespace: "mcp_demo", name: "beta" } : { name: "demo_beta" };
+    const params = { query: "records", server: "demo", limit: 1 };
+    const page = await search.execute("page-1", params, undefined, undefined, {});
+    expect(active()).not.toContainEqual(beta);
+    // Dispatch the operation printed in the result, rather than constructing page two ourselves.
+    const follow = (result: any) => {
+      const text = result.content.map((item: any) => item.text ?? "").join("\n");
+      const call = text.match(/(mcp_search|mcp)\((\{[^\n]+\})\)/)!;
+      expect(call).not.toBeNull();
+      const args = JSON.parse(call[2].replace(/(\w+):/g, '"$1":'));
+      return (call[1] === "mcp_search" ? search : gateway).execute("follow", args, undefined, undefined, {});
+    };
+    const before = active();
+    const metadataPage = await gateway.execute("metadata-page", { action: "search", ...params }, undefined, undefined, {});
+    expect(metadataPage.content[0].text).toContain('mcp({ action: "search"');
+    await follow(metadataPage);
+    expect(active()).toEqual(before);
+    expect(active()).not.toContainEqual(beta);
+    const next = await follow(page);
+    expect(next.tools).toEqual([beta]);
+    expect(active()).toContainEqual(beta);
+    expect(next.details.matches).toMatchObject([{ tool: "demo_beta" }]);
+    expect(next.details.query).toBe(params.query);
+    const retry = await search.execute("out-of-range", { ...params, offset: 99 }, undefined, undefined, {});
+    expect((await follow(retry)).details.matches).toMatchObject([{ tool: "demo_alpha" }]);
+    expect(mocks.executeConnect).not.toHaveBeenCalled();
+  });
+
   it("advertises object args and explicit actions while preparing legacy JSON strings", async () => {
     const { default: mcpAdapter } = await import("../index.ts");
     const { api } = createPi();
