@@ -92,7 +92,7 @@ function searchCatalog(state: McpExtensionState, query: string, server?: string,
 export function rankToolMatches(state: McpExtensionState, query: string, server?: string): RankedToolMatch[] {
   const matches = searchCatalog(state, query, server);
   const identity = query.trim();
-  const exact = ({ tool }: RankedToolMatch) => tool.name === identity || (server !== undefined && tool.originalName === identity);
+  const exact = ({ tool }: RankedToolMatch) => tool.name === identity || (Boolean(server) && tool.originalName === identity);
   // Stable partition retains MiniSearch order and scores within both groups.
   return [...matches.filter(exact), ...matches.filter(match => !exact(match))];
 }

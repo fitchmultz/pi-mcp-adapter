@@ -37,11 +37,15 @@ describe("search ranking", () => {
     const state = stateWithTools([]);
     state.config.mcpServers = { gh: {}, "gh-personal": {} };
     state.toolMetadata = new Map(["gh", "gh-personal"].map(server => [server, [
-      tool(`${server.replace("-", "_")}_search_pull_requests`, "list_pull_requests list_pull_requests", "search_pull_requests"),
+      tool(`${server.replace("-", "_")}_list_pull_requests_diff`, "list_pull_requests list_pull_requests", "list_pull_requests_diff"),
       tool(`${server.replace("-", "_")}_list_pull_requests`, "Retrieve pull requests", "list_pull_requests"),
     ]]));
     const natural = rankToolMatches(state, "list pull requests");
+    expect(natural[0].tool.originalName).toBe("list_pull_requests_diff");
     expect(rankToolMatches(state, "list_pull_requests")).toEqual(natural);
+    expect(rankToolMatches(state, "list_pull_requests", "")).toEqual(natural);
+    expect(paginate(rankToolMatches(state, "list_pull_requests", ""), 1, 1))
+      .toEqual(paginate(rankToolMatches(state, "list_pull_requests"), 1, 1));
     expect(rankToolMatches(state, "gh_list_pull_requests")[0].server).toBe("gh");
     expect(rankToolMatches(state, "gh_personal_list_pull_requests")[0].server).toBe("gh-personal");
     for (const server of ["gh", "gh-personal"]) {
