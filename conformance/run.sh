@@ -12,13 +12,14 @@ cd "$(dirname "$0")/.."
 
 RESULTS_DIR="${CONFORMANCE_RESULTS_DIR:-conformance/results}"
 BASELINE="conformance/baseline-client.yml"
+CONFORMANCE="npx -y @modelcontextprotocol/conformance@0.1.16"
 DRIVER="bash conformance/driver.sh"
 TIMEOUT="${CONFORMANCE_TIMEOUT_MS:-90000}"
 
 run_scenario() {
   local scenario="$1"
   shift
-  npx conformance client \
+  $CONFORMANCE client \
     --command "$DRIVER" \
     --scenario "$scenario" \
     --expected-failures "$BASELINE" \
@@ -53,7 +54,7 @@ if [[ -n "$focused_scenario" ]]; then
   focused_log="$(mktemp "${TMPDIR:-/tmp}/pi-mcp-conformance-log.XXXXXX")"
   trap 'rm -f "$focused_log"' EXIT
   set +e
-  npx conformance client \
+  $CONFORMANCE client \
     --command "$DRIVER" \
     --expected-failures "$BASELINE" \
     --timeout "$TIMEOUT" \
@@ -85,7 +86,7 @@ fi
 rm -rf "$RESULTS_DIR"
 mkdir -p "$RESULTS_DIR"
 
-scenarios="$({ npx conformance list --client 2>/dev/null || true; } |
+scenarios="$({ $CONFORMANCE list --client 2>/dev/null || true; } |
   awk '/^Client scenarios/{found=1; next} found && /^  - /{print $2}')"
 if [[ -z "$scenarios" ]]; then
   echo "Unable to list MCP client conformance scenarios" >&2

@@ -4,7 +4,7 @@
  * Spawned by `@modelcontextprotocol/conformance` once per scenario (via
  * conformance/driver.sh, which provisions an isolated FITCH_MCP_OAUTH_DIR):
  *
- *   MCP_CONFORMANCE_SCENARIO=<scenario> node --import tsx conformance/driver.ts <server-url>
+ *   MCP_CONFORMANCE_SCENARIO=<scenario> node conformance/driver.ts <server-url>
  *
  * The MCP client under test is the adapter's real client stack:
  * McpServerManager (transport probe, StreamableHTTP/SSE fallback, needs-auth

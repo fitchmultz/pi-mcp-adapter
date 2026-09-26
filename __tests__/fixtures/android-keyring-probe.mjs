@@ -56,8 +56,10 @@ function checkFailures(nativeFailure) {
       assert.match(error.message, androidMessage, JSON.stringify({ messages, status }));
       assert.match(error.cause.cause.message, /Failed to load @napi-rs\/keyring/);
       assert.match(error.cause.cause.cause.message, /Cannot find native binding/);
-      assert(error.cause.cause.cause.cause.some(cause => mode === 'missing'
-        ? cause.code === 'MODULE_NOT_FOUND' && cause.message.includes('@napi-rs/keyring-android-arm64')
+      const loadErrors = [];
+      for (let cause = error.cause.cause.cause.cause; cause; cause = cause.cause) loadErrors.push(cause);
+      assert(loadErrors.some(cause => mode === 'missing'
+        ? cause.message.includes("Cannot find module '@napi-rs/keyring-android-arm64'")
         : cause.message === 'synthetic binding cannot load'));
     }
   }

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-09-26
+
+### Breaking changes
+
+- Node.js 24 or later is required. The development baseline is Pi 0.87.1.
+- Package `exports` now resolve to the compiled `dist/` modules and declarations. The npm tarball no longer ships TypeScript sources, build scripts, or tsconfig files; standalone Node consumers import the package directly without a TypeScript loader.
+- `zod` is a regular dependency only, no longer a required peer.
+
+### Changed
+
+- Update the MCP client and core SDK to 2.1.0, `@napi-rs/keyring` to 2.1.0 (credential-store failures now surface as errors instead of empty reads), `open` to 11.0.4, and `smol-toml` to 1.9.0. Pin all runtime dependencies to exact versions.
+- MCP clients report the adapter's package version instead of a stale `4.3.1`.
+- Build with TypeScript 7 and test with Vitest 5. OAuth tests, conformance, and fixtures run on Node's native type stripping; `tsx` is removed. `npm test` now also runs the OAuth suite.
+- Git installs copy the committed MCP Apps bridge bundle instead of rebuilding it, so they no longer need esbuild. `npm run build:bridge` regenerates it, and a test fails when it drifts.
+- The MCP conformance runner is fetched on demand instead of installing a second MCP SDK into every source install.
+- CI qualifies official Pi and the maintained fork with the shared Pi compatibility automation, and rejects lockfile URLs outside the public npm registry.
+
 ### Fixed
 
 - Prevent project stdio overrides, including OpenCode working-directory and environment changes, from inheriting another config source's environment secrets.

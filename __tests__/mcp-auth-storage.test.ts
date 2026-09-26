@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -78,7 +77,7 @@ describe("OAuth credential-store diagnostics", () => {
       if (mode !== "missing") {
         const binding = join(modules, "@napi-rs/keyring-android-arm64");
         mkdirSync(binding);
-        writeFileSync(join(binding, "package.json"), '{"version":"1.3.0","main":"index.cjs"}');
+        writeFileSync(join(binding, "package.json"), '{"version":"2.1.0","main":"index.cjs"}');
         writeFileSync(join(binding, "index.cjs"), mode === "unloadable"
           ? 'throw new Error("synthetic binding cannot load");'
           : `const entries = new Map();
@@ -92,7 +91,7 @@ module.exports = {
   },
 };`);
       }
-      const result = spawnSync(process.execPath, ["--import", createRequire(import.meta.url).resolve("tsx"), resolve("__tests__/fixtures/android-keyring-probe.mjs"), mode], {
+      const result = spawnSync(process.execPath, [resolve("__tests__/fixtures/android-keyring-probe.mjs"), mode], {
         cwd: home,
         env: { HOME: home, PI_CODING_AGENT_DIR: join(home, ".pi", "agent"), PATH: dirname(process.execPath), TMPDIR: home },
         encoding: "utf8",

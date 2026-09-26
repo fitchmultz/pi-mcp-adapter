@@ -20,7 +20,6 @@ const execFile = promisify(execFileCallback);
 // several @earendil-works packages expose import-only "exports" maps and throw
 // ERR_PACKAGE_PATH_NOT_EXPORTED even when installed.
 const REQUIRED_SOURCE_BUILD_MODULES = [
-	"esbuild",
 	"typescript",
 	"typebox",
 	"@earendil-works/pi-ai",

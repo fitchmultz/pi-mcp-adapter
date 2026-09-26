@@ -44,14 +44,20 @@ class CollapsibleText implements Component {
   private readonly footerText: Text;
   private collapsedText: { charBudget: number; fullyIncluded: boolean; text: Text } | null = null;
 
-  constructor(
-    private readonly text: string,
-    private readonly expanded: boolean,
-    private readonly maxCollapsedLines: number,
-    private readonly ellipsis: string,
-    private readonly expandHint: string,
-    private readonly preTruncated = false,
-  ) {
+  private readonly text: string;
+  private readonly expanded: boolean;
+  private readonly maxCollapsedLines: number;
+  private readonly ellipsis: string;
+  private readonly expandHint: string;
+  private readonly preTruncated: boolean;
+
+  constructor(text: string, expanded: boolean, maxCollapsedLines: number, ellipsis: string, expandHint: string, preTruncated = false) {
+    this.text = text;
+    this.expanded = expanded;
+    this.maxCollapsedLines = maxCollapsedLines;
+    this.ellipsis = ellipsis;
+    this.expandHint = expandHint;
+    this.preTruncated = preTruncated;
     this.fullText = new Text(text, 0, 0);
     this.footerText = new Text(`${ellipsis}\n${expandHint}`, 0, 0);
   }

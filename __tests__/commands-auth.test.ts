@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { authenticateServer, logoutServer, openMcpAuthPanel } from "../commands.ts";
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
@@ -22,7 +23,6 @@ vi.mock("../init.ts", () => ({
 describe("authenticateServer", () => {
   it("does not open an empty auth panel for disabled-only OAuth config", async () => {
     const ui = { notify: vi.fn(), custom: vi.fn() };
-    const { openMcpAuthPanel } = await import("../commands.ts");
 
     await openMcpAuthPanel({
       programmaticConfig: false,
@@ -38,7 +38,6 @@ describe("authenticateServer", () => {
     process.env.MCP_AUTH_URL = "https://mcp.sentry.dev/mcp";
     mocks.authenticate.mockResolvedValueOnce("authenticated");
     const ui = { notify: vi.fn(), setStatus: vi.fn() };
-    const { authenticateServer } = await import("../commands.ts");
 
     try {
       const definition = { url: "${MCP_AUTH_URL}", auth: "oauth" as const };
@@ -64,7 +63,6 @@ describe("authenticateServer", () => {
     delete process.env.MCP_AUTH_URL;
     mocks.authenticate.mockClear();
     const ui = { notify: vi.fn(), setStatus: vi.fn() };
-    const { authenticateServer } = await import("../commands.ts");
 
     try {
       const result = await authenticateServer("sentry", {
@@ -87,7 +85,6 @@ describe("authenticateServer", () => {
   it("reports credential removal failures without escaping the logout command boundary", async () => {
     mocks.removeAuth.mockRejectedValueOnce(new Error("simulated secure credential store unavailable"));
     const ui = { notify: vi.fn() };
-    const { logoutServer } = await import("../commands.ts");
 
     const close = vi.fn();
     const result = await logoutServer("sentry", {
@@ -107,7 +104,6 @@ describe("authenticateServer", () => {
   it("reports a close failure accurately after credentials were removed", async () => {
     mocks.removeAuth.mockResolvedValueOnce(undefined);
     const ui = { notify: vi.fn() };
-    const { logoutServer } = await import("../commands.ts");
 
     const result = await logoutServer("sentry", {
       config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
@@ -129,7 +125,6 @@ describe("authenticateServer", () => {
       return "authenticated";
     });
     const ui = { notify: vi.fn(), setStatus: vi.fn() };
-    const { authenticateServer } = await import("../commands.ts");
 
     const result = await authenticateServer("sentry", {
       mcpServers: {

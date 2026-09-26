@@ -38,7 +38,7 @@ import {
   type AuthStorageOptions,
 } from "./mcp-auth.ts"
 import { isServerDisabled, isNonInteractiveOAuth, validateServerProtocolConfig, type ServerEntry } from "./types.ts"
-import { formatTerminalError, interpolateEnvRecord, interpolateEnvVars, normalizeRequestTimeoutMs } from "./utils.ts"
+import { ADAPTER_VERSION, formatTerminalError, interpolateEnvRecord, interpolateEnvVars, normalizeRequestTimeoutMs } from "./utils.ts"
 import { abortable, throwIfAborted } from "./abort.ts"
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts"
 
@@ -338,7 +338,7 @@ async function probeAuthDiscovery(serverUrl: string, definition?: ServerEntry, s
   const timeout = normalizeRequestTimeoutMs(definition?.requestTimeoutMs) ?? 5000
   const discoverySignal = combineAbortSignals(signal, AbortSignal.timeout(Math.ceil(timeout)))
   let discovery: AuthDiscovery = {}
-  const client = new Client({ name: "pi-mcp-auth-discovery", version: "4.3.1" }, {
+  const client = new Client({ name: "pi-mcp-auth-discovery", version: ADAPTER_VERSION }, {
     versionNegotiation: { mode: definition?.protocolVersion ?? "auto" },
     ...(isNonInteractiveOAuth(definition?.oauth)
       ? { capabilities: { extensions: { [definition?.oauth && definition.oauth.crossAppAccess

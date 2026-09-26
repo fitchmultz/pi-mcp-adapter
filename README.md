@@ -4,7 +4,7 @@
 
 # Fitch MCP Adapter
 
-Use MCP servers with [Pi](https://github.com/badlogic/pi-mono/) without burning your context window.
+Use MCP servers with [Pi](https://github.com/earendil-works/pi) without burning your context window.
 
 An independently maintained distribution of [Nico's Pi MCP Adapter](https://github.com/nicobailon/pi-mcp-adapter), under the original MIT license.
 
@@ -20,13 +20,13 @@ The MCP ecosystem has useful databases, browsers, and APIs. This adapter keeps t
 
 ## Pi release qualification
 
-The development baseline is official Pi **0.87.0**; host peers remain wildcard. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
+The development baseline is official Pi **0.87.1**; host peers remain wildcard. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
 
-GitHub CI runs that contract on official Pi with Node 22.19.0. It separately builds the current maintained fork with Node 24 and checks its actual package graph, native tool discovery, reload, checkpoints, and CLI without repeating the full unit and OAuth suites. The official lane also checks the built interactive visualizer, MCP protocol conformance, and fresh Git and npm installations. These checks use local MCP fixtures and disposable agent directories, never live credentials or paid providers.
+GitHub CI runs that contract on Node 24 against both official Pi and the maintained fork through the shared Pi compatibility automation, including fresh Git and npm installations loaded by the real Pi CLI. A second job checks lockfile registry hosts, published type declarations, the built interactive visualizer, and MCP protocol conformance. These checks use local MCP fixtures and disposable agent directories, never live credentials or paid providers.
 
 ## Install
 
-Requires Pi 0.87.0 or later and Node.js 22.19.0 or later.
+Requires Pi 0.87.1 or later and Node.js 24 or later.
 
 ```bash
 pi install npm:@fitchmultz/pi-mcp-adapter
@@ -174,7 +174,7 @@ const extension = createMcpAdapter({
 // Register `extension` with the host SDK.
 ```
 
-The package ships TypeScript source for Pi's source-loader and SDK integrations. Use a TypeScript-capable loader/toolchain (for example `node --import tsx`) when importing the package from a standalone Node process; raw Node ESM does not execute the `.ts` entry directly.
+The package exports compiled ESM and declarations from `dist/`, so a standalone Node process can import it directly.
 
 A supplied `config` is a complete, isolated snapshot. It is not merged with files, imports, global config, project config, or `--mcp-config`, and it is never mutated. Each adapter factory and session receives its own clone, so separate integrations can use different servers and settings safely. In this mode, server status, reconnect, explicit `/mcp-auth <server>`, proxy calls, and direct tools continue to work; setup and no-argument auth/status panels report the limitation instead of discovering or writing ambient config.
 
@@ -639,7 +639,7 @@ URL mode is advertised only in TUI mode. The adapter displays the requesting ser
 
 Cached eligible schemas register inactive; only pins and tools selected for the current branch are active. The adapter persists canonical `{ server, tool }` selections in native Pi session entries and restores them across resume, reload, branch navigation, and working-directory changes. Host tool allowlists remain binding.
 
-On hosts with native tool-search support, lazy tools use exact references in namespace `mcp_<server>` with the original tool name as the leaf. Existing direct pins retain their flat prefixed names. On official Pi 0.87.0, the ordinary `mcp_search` loader activates flat tools with the same discover-then-call workflow. Always use the exact reference returned by discovery rather than constructing names.
+On hosts with native tool-search support, lazy tools use exact references in namespace `mcp_<server>` with the original tool name as the leaf. Existing direct pins retain their flat prefixed names. On official Pi 0.87.1, which has no native tool search, the ordinary `mcp_search` loader activates flat tools with the same discover-then-call workflow. Always use the exact reference returned by discovery rather than constructing names.
 
 Typed tools may opt into native asynchronous execution only when both the host's pending-call API and the selected model route support it. Tools requiring configured approval, an MCP App UI, or the `beforeExecute` sequential checkpoint barrier keep ordinary awaited execution. This is separate from local `mcp_script` orchestration.
 

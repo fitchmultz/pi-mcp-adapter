@@ -39,7 +39,7 @@ vi.mock("../metadata-cache.ts", () => ({
 }));
 
 vi.mock("../server-manager.ts", () => ({
-  McpServerManager: vi.fn(() => mocks.manager),
+  McpServerManager: vi.fn(function () { return mocks.manager; }),
 }));
 
 vi.mock("../tool-metadata.ts", () => ({

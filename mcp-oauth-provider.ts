@@ -219,15 +219,26 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private flowIssuerMismatch = false
   private flowState: string | undefined
 
+  private serverName: string
+  private serverUrl: string
+  private config: McpOAuthConfig
+  private callbacks: McpOAuthCallbacks
+  private storageOptions: AuthStorageOptions
+
   constructor(
-    private serverName: string,
-    private serverUrl: string,
-    private config: McpOAuthConfig,
-    private callbacks: McpOAuthCallbacks,
-    private storageOptions: AuthStorageOptions = {},
+    serverName: string,
+    serverUrl: string,
+    config: McpOAuthConfig,
+    callbacks: McpOAuthCallbacks,
+    storageOptions: AuthStorageOptions = {},
     runtimeSignal?: AbortSignal,
     initialState?: string,
   ) {
+    this.serverName = serverName
+    this.serverUrl = serverUrl
+    this.config = config
+    this.callbacks = callbacks
+    this.storageOptions = storageOptions
     validateOAuthClientMetadataUrl(config.clientMetadataUrl)
     validateOAuthPrivateKeyJwt(config)
     validateOAuthCrossAppAccess(config)

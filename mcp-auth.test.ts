@@ -57,7 +57,12 @@ describe("mcp-auth", () => {
 
   describe("keyring native binding fallback", () => {
     class FakeEntry {
-      constructor(readonly service: string, readonly account: string) {}
+      readonly service: string
+      readonly account: string
+      constructor(service: string, account: string) {
+        this.service = service
+        this.account = account
+      }
       getPassword(): string | null { return null }
       setPassword(): void {}
       deleteCredential(): boolean { return true }

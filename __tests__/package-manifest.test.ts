@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,7 +22,7 @@ const hostPeerPackages = {
   "@earendil-works/pi-ai": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
   "@earendil-works/pi-coding-agent": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
   "@earendil-works/pi-tui": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
-  "typebox": "1.3.7",
+  "typebox": "1.3.34",
 };
 
 describe("package.json files", () => {
@@ -33,31 +33,14 @@ describe("package.json files", () => {
     expect(packageJson.files).toContain("OAUTH.md");
   });
 
-  it("exports generated declarations while retaining source runtime entries", () => {
+  it("exports only the compiled runtime and its declarations", () => {
     expect(packageJson.types).toBe("./dist/index.d.ts");
-    expect(packageJson.exports).toMatchObject({
-      ".": {
-        types: "./dist/index.d.ts",
-        import: "./index.ts",
-        default: "./index.ts",
-      },
-      "./types": {
-        types: "./dist/types.d.ts",
-        import: "./types.ts",
-        default: "./types.ts",
-      },
+    expect(packageJson.exports).toEqual({
+      ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
+      "./types": { types: "./dist/types.d.ts", default: "./dist/types.js" },
     });
-  });
-
-  it("publishes every root runtime TypeScript module", () => {
-    const publishedFiles = new Set(packageJson.files ?? []);
-    const runtimeModules = readdirSync(repoRoot)
-      .filter((entry) => entry.endsWith(".ts"))
-      .filter((entry) => !entry.endsWith(".test.ts"))
-      .filter((entry) => entry !== "vitest.config.ts");
-
-    expect(runtimeModules.length).toBeGreaterThan(0);
-    expect(runtimeModules.filter((entry) => !publishedFiles.has(entry))).toEqual([]);
+    expect(packageJson.files).toContain("dist");
+    expect((packageJson.files ?? []).filter((entry) => entry.endsWith(".ts"))).toEqual([]);
   });
 });
 
@@ -107,33 +90,30 @@ describe("package.json dependency policy", () => {
   });
 
   it("uses stable split SDK v2 and Apps v2 without SDK v1", () => {
-    expect(packageJson.dependencies?.["@modelcontextprotocol/ext-apps"]).toBe("2.0.0");
-    expect(packageJson.dependencies?.["@modelcontextprotocol/sdk"]).toBeUndefined();
-    expect(packageJson.dependencies?.["@modelcontextprotocol/client"]).toBe("2.0.0");
-    expect(packageJson.dependencies?.["@modelcontextprotocol/core"]).toBe("2.0.0");
-    expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBe("2.0.0");
-    expect(packageJson.dependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
+    const deps = packageJson.dependencies ?? {};
+    expect(deps["@modelcontextprotocol/sdk"]).toBeUndefined();
+    expect(deps["@modelcontextprotocol/client"]).toBe(deps["@modelcontextprotocol/core"]);
+    expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBe(deps["@modelcontextprotocol/core"]);
+    expect(deps["@modelcontextprotocol/ext-apps"]).toMatch(/^2\./);
+    expect(deps["@modelcontextprotocol/server"]).toBeUndefined();
     expect(packageJson.peerDependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
-    expect(packageJson.dependencies?.zod).toBe("^4.6.5");
-    expect(packageJson.peerDependencies?.zod).toBe("^4.6.5");
-    expect(packageJson.dependencies?.minisearch).toBe("^7.2.0");
-    expect(packageJson.dependencies?.ajv).toBeUndefined();
-    expect(packageJson.dependencies?.["ajv-formats"]).toBeUndefined();
+    expect(packageJson.peerDependencies?.zod).toBeUndefined();
+    expect(deps.ajv).toBeUndefined();
+    expect(deps["ajv-formats"]).toBeUndefined();
   });
 
-  it("publishes a reproducible bridge builder with development-only esbuild", () => {
-    expect(packageJson.files).toContain("scripts/build-app-bridge.mjs");
-    expect(packageJson.files).toContain("app-bridge.bundle.js");
+  it("builds the committed bridge with development-only esbuild", () => {
     expect(packageJson.scripts?.["build:bridge"]).toBe("node ./scripts/build-app-bridge.mjs");
-    expect(packageJson.devDependencies?.esbuild).toBe("^0.28.2");
+    expect(packageJson.devDependencies?.esbuild).toBeDefined();
     expect(packageJson.dependencies?.esbuild).toBeUndefined();
   });
 
   it("uses the same Apps v2 graph in the interactive visualizer", () => {
     const example = JSON.parse(readFileSync(join(repoRoot, "examples/interactive-visualizer/package.json"), "utf-8"));
-    for (const name of ["client", "core", "ext-apps", "server"]) {
-      expect(example.dependencies[`@modelcontextprotocol/${name}`]).toBe("2.0.0");
+    for (const name of ["client", "core", "ext-apps"]) {
+      expect(example.dependencies[`@modelcontextprotocol/${name}`]).toBe(packageJson.dependencies?.[`@modelcontextprotocol/${name}`]);
     }
+    expect(example.dependencies["@modelcontextprotocol/server"]).toBe(packageJson.devDependencies?.["@modelcontextprotocol/server"]);
     expect(example.dependencies["@modelcontextprotocol/sdk"]).toBeUndefined();
     expect(example.dependencies.zod).toBe(packageJson.dependencies?.zod);
     expect(example.devDependencies.esbuild).toBe(packageJson.devDependencies?.esbuild);

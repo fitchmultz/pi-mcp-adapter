@@ -31,7 +31,7 @@ describe("direct tools in child Pi processes", () => {
 
     const { stdout, stderr } = await execFileAsync(
       process.execPath,
-      ["--import", "tsx", resolve("__tests__/fixtures/direct-tools-child-harness.ts")],
+      [resolve("__tests__/fixtures/direct-tools-child-harness.ts")],
       {
         cwd: process.cwd(),
         env: {
