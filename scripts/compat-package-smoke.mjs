@@ -21,7 +21,8 @@ try {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   let packageRoot = process.argv[2] ? resolve(process.argv[2]) : undefined;
   if (!packageRoot) {
-    const [pack] = JSON.parse(run(npm, ["pack", "--json", "--pack-destination", root], process.cwd()));
+    // npm 12 keys pack --json output by package name; npm 11 returned an array.
+    const [pack] = Object.values(JSON.parse(run(npm, ["pack", "--json", "--pack-destination", root], process.cwd())));
     const consumer = join(root, "consumer");
     mkdirSync(consumer);
     writeFileSync(join(consumer, "package.json"), JSON.stringify({
