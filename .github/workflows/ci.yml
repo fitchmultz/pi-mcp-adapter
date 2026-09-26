@@ -1,4 +1,4 @@
-name: MCP contracts
+name: CI
 
 on:
   pull_request:
@@ -14,50 +14,16 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PI_AUTOMATION_REF: 117b227140265329055bcda5927ac170c6301d75 # v1.0.0
+  PI_AUTOMATION_REF: fe049ea97a8c91d1a4c3a0958a85b37c7759dcc6 # v1.0.0
 
 jobs:
-  official:
+  compatibility:
+    name: compatibility / compatibility
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22.19.0'
-          cache: npm
-
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run check:compat
-      - name: Build interactive visualizer example
-        run: |
-          npm ci --prefix examples/interactive-visualizer --no-audit --no-fund
-          npm run --prefix examples/interactive-visualizer build
-      - name: Interactive visualizer server
-        run: npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts
-      - run: npm run test:conformance
-      - name: Git install and native consumer
-        run: |
-          git clone --quiet . /tmp/omit-dev-smoke
-          cd /tmp/omit-dev-smoke
-          npm install --omit=dev --no-audit --no-fund
-          test ! -d node_modules/typescript
-          node "$GITHUB_WORKSPACE/scripts/check-consumer-types.mjs" "$PWD"
-          node "$GITHUB_WORKSPACE/scripts/compat-package-smoke.mjs" "$PWD"
-
-  fork:
-    runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 25
     env:
       npm_config_cache: ${{ github.workspace }}/.npm-cache
-
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: fitchmultz/.github
@@ -66,16 +32,92 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: fitchmultz/pi
-          ref: main
-          path: fork
+          path: extension
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
+          check-latest: true
+          package-manager-cache: false
+      - name: Use the reviewed npm version
+        run: npm install --global "$(node -p 'require("./automation/package.json").packageManager')"
+      - name: Install native TUI prerequisites
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.sources
+          sudo apt-get update
+          sudo apt-get install -y fd-find ripgrep
+          sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+      - name: Select pinned fork
+        id: fork
+        run: echo "ref=$(node -p 'require("./automation/host-targets.json").forkRef')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/pi
+          ref: ${{ steps.fork.outputs.ref }}
+          path: fork
+          persist-credentials: false
+      - name: Build fork once
+        working-directory: fork
+        env:
+          FORK_REF: ${{ steps.fork.outputs.ref }}
+          PI_OFFLINE: '1'
+          PI_TELEMETRY: '0'
+        run: |
+          npm ci --ignore-scripts
+          npm run hydrate:model-data
+          git diff --exit-code
+          npm run build:offline
+          node ../automation/scripts/pack-fork.mjs . "$RUNNER_TEMP/fork-package" "$FORK_REF"
+          git diff --exit-code
+      - name: Use the extension npm version
+        run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
+      - name: Qualify official Pi
+        run: |
+          version=$(node -p 'require("./extension/package.json").devDependencies["@earendil-works/pi-coding-agent"]')
+          node automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$GITHUB_WORKSPACE/extension" \
+            --host official --target "$version" --output "$RUNNER_TEMP/official-evidence"
+      - name: Qualify fork Pi
+        env:
+          PI_COMPAT_FORK_REF: ${{ steps.fork.outputs.ref }}
+        run: |
+          node automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$GITHUB_WORKSPACE/extension" \
+            --host fork --target "$RUNNER_TEMP/fork-package" --output "$RUNNER_TEMP/fork-evidence"
+
+  extras:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          check-latest: true
           cache: npm
           cache-dependency-path: |
             package-lock.json
-            fork/package-lock.json
-      - run: npm install --global "$(node -p 'require("./automation/package.json").packageManager')"
-      - run: node scripts/ci-fork-smoke.mjs automation fork
+            examples/interactive-visualizer/package-lock.json
+      - name: Use the extension npm version
+        run: npm install --global "$(node -p 'require("./package.json").packageManager')"
+      - name: Lockfiles resolve only from the public npm registry
+        run: |
+          for lock in package-lock.json examples/interactive-visualizer/package-lock.json; do
+            npx -y lockfile-lint@5.0.1 --type npm --allowed-hosts npm --validate-https --path "$lock"
+          done
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - name: Published types resolve from the packed tarball
+        run: |
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          mkdir "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          echo '{"private":true}' > package.json
+          npm install --omit=dev --no-audit --no-fund "$RUNNER_TEMP"/fitchmultz-pi-mcp-adapter-*.tgz
+          node "$GITHUB_WORKSPACE/scripts/check-consumer-types.mjs" "$PWD/node_modules/@fitchmultz/pi-mcp-adapter"
+      - name: Interactive visualizer
+        run: |
+          npm ci --prefix examples/interactive-visualizer --ignore-scripts --no-audit --no-fund
+          npm run --prefix examples/interactive-visualizer build
+          npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts
+      - run: npm run test:conformance

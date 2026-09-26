@@ -103,8 +103,11 @@ function parseWorkerMessage(value: unknown): WorkerMessage | null {
 }
 
 class McpScriptCaptureError extends Error {
-  constructor(readonly recovery: unknown, message: string) {
+  readonly recovery: unknown;
+
+  constructor(recovery: unknown, message: string) {
     super(message);
+    this.recovery = recovery;
   }
 }
 

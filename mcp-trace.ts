@@ -133,7 +133,10 @@ export class McpTraceWriter {
   private persistenceError: unknown;
   private readonly fileReady: Promise<void>;
 
-  constructor(private readonly options: McpTraceWriterOptions) {
+  private readonly options: McpTraceWriterOptions;
+
+  constructor(options: McpTraceWriterOptions) {
+    this.options = options;
     this.maxBytes = boundedPositiveInteger(options.maxBytes, DEFAULT_MCP_TRACE_MAX_BYTES);
     this.maxEvents = boundedPositiveInteger(options.maxEvents, DEFAULT_MCP_TRACE_MAX_EVENTS);
     this.append = options.appendFile ?? (async (path, data, appendOptions) => {

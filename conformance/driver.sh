@@ -21,4 +21,4 @@ export MCP_OAUTH_CALLBACK_PORT="$(
   node -e 'const s=require("node:net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close();})'
 )"
 
-node --import tsx conformance/driver.ts "$@"
+node conformance/driver.ts "$@"

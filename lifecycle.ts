@@ -34,10 +34,13 @@ export class McpLifecycleManager {
   private healthSignal: AbortSignal | undefined;
   private removeHealthAbortListener: (() => void) | undefined;
 
-  constructor(
-    private readonly manager: McpServerManager,
-    private readonly hasPendingAuthForServer = hasPendingAuth,
-  ) {}
+  private readonly manager: McpServerManager;
+  private readonly hasPendingAuthForServer: typeof hasPendingAuth;
+
+  constructor(manager: McpServerManager, hasPendingAuthForServer = hasPendingAuth) {
+    this.manager = manager;
+    this.hasPendingAuthForServer = hasPendingAuthForServer;
+  }
 
   setReconnectCallback(callback: ReconnectCallback): void {
     this.onReconnect = callback;

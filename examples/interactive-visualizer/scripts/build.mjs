@@ -48,7 +48,7 @@ async function bundleServer() {
     format: "esm",
     platform: "node",
     outfile: path.join(distDir, "server.js"),
-    target: ["node20"],
+    target: ["node24"],
     banner: {
       js: "#!/usr/bin/env node",
     },

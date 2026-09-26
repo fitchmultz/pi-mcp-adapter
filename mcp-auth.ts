@@ -79,15 +79,13 @@ export interface AuthStorageOptions {
 
 export class OAuthCredentialStoreError extends Error {
   readonly code = 'OAUTH_CREDENTIAL_STORE_UNAVAILABLE';
+  readonly operation: 'read' | 'write' | 'remove';
 
-  constructor(
-    message: string,
-    readonly operation: 'read' | 'write' | 'remove',
-    cause: unknown,
-  ) {
+  constructor(message: string, operation: 'read' | 'write' | 'remove', cause: unknown) {
     super(isAndroidKeyringLoadFailure(cause)
       ? `${message}. Android/Termux: @napi-rs/keyring could not load a native binding. Persistent OAuth requires a supported platform with an OS credential store; no plaintext fallback is used.`
       : message, { cause });
+    this.operation = operation;
     this.name = 'OAuthCredentialStoreError';
   }
 }

@@ -43,6 +43,7 @@ import {
   type ServerElicitationConfig,
 } from "./elicitation-handler.ts";
 import {
+  ADAPTER_VERSION,
   normalizeRequestTimeoutMs,
   resolveBearerToken,
   resolveCommandSecret,
@@ -340,7 +341,11 @@ export class McpServerManager {
   }
 
   /** Default cwd for stdio servers without an explicit config `cwd`. */
-  constructor(private readonly defaultCwd?: string) {}
+  private readonly defaultCwd: string | undefined;
+
+  constructor(defaultCwd?: string) {
+    this.defaultCwd = defaultCwd;
+  }
 
   setSamplingConfig(config: ServerSamplingConfig | undefined): void {
     this.samplingConfig = config;
@@ -794,7 +799,7 @@ export class McpServerManager {
     const capabilities = this.buildClientCapabilities(definition);
     let client: ManagedClient;
     client = new ManagedClient(
-      { name: `pi-mcp-${serverName}`, version: "4.3.1" },
+      { name: `pi-mcp-${serverName}`, version: ADAPTER_VERSION },
       {
         versionNegotiation: { mode: definition.protocolVersion ?? (definition.url ? "auto" : "legacy") },
         listMaxPages: 0,

@@ -1,8 +1,22 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import type { McpConfig, ServerEntry } from "./types.ts";
+
+function readAdapterVersion(): string {
+  // Source modules sit beside package.json; compiled modules sit one level down in dist/.
+  for (const path of ["./package.json", "../package.json"]) {
+    try {
+      const manifest = JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8"));
+      if (manifest.name === "@fitchmultz/pi-mcp-adapter" && typeof manifest.version === "string") return manifest.version;
+    } catch {}
+  }
+  return "0.0.0";
+}
+
+export const ADAPTER_VERSION = readAdapterVersion();
 
 export function normalizeRequestTimeoutMs(timeoutMs: number | undefined): number | undefined {
   return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0

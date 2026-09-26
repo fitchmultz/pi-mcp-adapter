@@ -22,7 +22,13 @@ interface ReadUiResourceOptions {
 export class UiResourceHandler {
   private log = logger.child({ component: "UiResourceHandler" });
 
-  constructor(private manager: McpServerManager, private config: McpConfig | undefined = undefined) {}
+  private manager: McpServerManager;
+  private config: McpConfig | undefined;
+
+  constructor(manager: McpServerManager, config?: McpConfig) {
+    this.manager = manager;
+    this.config = config;
+  }
 
   async readUiResource(serverName: string, uri: string, options: ReadUiResourceOptions = {}): Promise<UiResourceContent> {
     const log = this.log.child({ server: serverName, uri });

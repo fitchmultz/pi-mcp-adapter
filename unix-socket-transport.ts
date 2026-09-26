@@ -12,7 +12,11 @@ export class UnixSocketClientTransport implements Transport {
   onerror?: (error: Error) => void;
   onmessage?: (message: JSONRPCMessage) => void;
 
-  constructor(private readonly socketPath: string) {}
+  private readonly socketPath: string;
+
+  constructor(socketPath: string) {
+    this.socketPath = socketPath;
+  }
 
   async start(): Promise<void> {
     if (this.socket) {

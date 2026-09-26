@@ -425,7 +425,7 @@ it("returns a rejected native send Promise rather than throwing synchronously af
 });
 
 it("keeps legacy cancellation sends promise-based after OAuth runtime shutdown", () => {
-  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
     import {createServer} from 'node:http';
     import {McpServerManager} from './server-manager.ts';
     import {createOAuthRuntime,shutdownOAuth} from './mcp-auth-flow.ts';
