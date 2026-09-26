@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { executeCall, executeDescribe, executeList, executeSearch, executeStatus } from "../proxy-modes.ts";
 import type { McpExtensionState } from "../state.ts";
@@ -43,10 +44,10 @@ describe("proxy discovery", () => {
     tool.outputSchema = { type: "object", properties: { total: { type: "integer" } }, required: ["total"] };
     tool.title = "Record search";
     tool._meta = { "example/hint": "retain" };
-    const described = JSON.parse(executeDescribe(state, "demo_search").content[0].text!);
+    const described = JSON.parse((executeDescribe(state, "demo_search").content[0] as TextContent).text);
     expect(described).toMatchObject({ inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, title: tool.title, _meta: tool._meta });
     expect(described).not.toHaveProperty("inputTypeScript");
-    const text = executeSearch(state, "unique lookup").content[0].text!;
+    const text = (executeSearch(state, "unique lookup").content[0] as TextContent).text;
     const searched = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
     expect(searched.inputSchema).toEqual(tool.inputSchema);
     expect(searched.outputSchema).toEqual(tool.outputSchema);
@@ -58,7 +59,7 @@ describe("proxy discovery", () => {
     state.toolMetadata.get("demo")!.push({ name: "demo_read_guide", originalName: "read_guide", description: "Guide", resourceUri: "docs://guide" });
     const search = executeSearch(state, "guide");
     expect(search.details).toMatchObject({ count: 0, coverage: { complete: false, unknownServers: ["unknown"] } });
-    expect(search.content[0].text).toContain("Catalog is incomplete");
+    expect((search.content[0] as TextContent).text).toContain("Catalog is incomplete");
     expect(executeList(state, "demo").details.count).toBe(2);
     expect(executeStatus(state).details.totalTools).toBe(2);
   });
@@ -66,7 +67,7 @@ describe("proxy discovery", () => {
   it("searches MCP tools only", () => {
     const result = executeSearch(createState(), "read");
 
-    expect(result.content[0].text).toBe('No tools matching "read"');
+    expect((result.content[0] as TextContent).text).toBe('No tools matching "read"');
     expect(result.details).toMatchObject({ count: 0, matches: [] });
   });
 
@@ -79,9 +80,9 @@ describe("proxy discovery", () => {
   it("paginates server listings", () => {
     const result = executeList(createState(), "demo", 1, 0);
 
-    expect(result.content[0].text).toContain("demo_search");
-    expect(result.content[0].text).not.toContain("demo_find");
-    expect(result.content[0].text).toContain('1-1 of 2 — mcp({ action: "list", server: "demo", limit: 1, offset: 1 }) for more');
+    expect((result.content[0] as TextContent).text).toContain("demo_search");
+    expect((result.content[0] as TextContent).text).not.toContain("demo_find");
+    expect((result.content[0] as TextContent).text).toContain('1-1 of 2 — mcp({ action: "list", server: "demo", limit: 1, offset: 1 }) for more');
     expect(result.details).toMatchObject({
       count: 2,
       hasMore: true,
@@ -93,20 +94,20 @@ describe("proxy discovery", () => {
   it("explains an out-of-range server-list offset", () => {
     const result = executeList(createState(), "demo", 1, 99);
 
-    expect(result.content[0].text).toBe('No tools at offset 99; "demo" has 2 tools. Retry with mcp({ action: "list", server: "demo", limit: 1, offset: 0 }).');
+    expect((result.content[0] as TextContent).text).toBe('No tools at offset 99; "demo" has 2 tools. Retry with mcp({ action: "list", server: "demo", limit: 1, offset: 0 }).');
     expect(result.details).toMatchObject({ error: "offset_out_of_range", count: 2, tools: [] });
   });
 
   it("explains lazy connection state", () => {
     const result = executeStatus(createState());
 
-    expect(result.content[0].text).toContain("MCP: 0/1 connected, 2 tools available (calls connect lazily)");
+    expect((result.content[0] as TextContent).text).toContain("MCP: 0/1 connected, 2 tools available (calls connect lazily)");
   });
 
   it("returns ranked paged search details", () => {
     const result = executeSearch(createState(), "demo", undefined, false, 1, 0);
 
-    expect(result.content[0].text).toContain('1-1 of 2 — mcp({ action: "search", query: "demo", includeSchemas: false, limit: 1, offset: 1 }) for more');
+    expect((result.content[0] as TextContent).text).toContain('1-1 of 2 — mcp({ action: "search", query: "demo", includeSchemas: false, limit: 1, offset: 1 }) for more');
 
     expect(result.details).toMatchObject({
       count: 2,
@@ -119,7 +120,7 @@ describe("proxy discovery", () => {
   it("keeps the default schema mode implicit in search continuations", () => {
     const result = executeSearch(createState(), "demo", undefined, undefined, 1, 0);
 
-    expect(result.content[0].text).not.toContain("includeSchemas");
+    expect((result.content[0] as TextContent).text).not.toContain("includeSchemas");
   });
 
   it("preserves compact server-scoped search in continuation and retry calls", () => {
@@ -127,14 +128,14 @@ describe("proxy discovery", () => {
     const page = executeSearch(state, "demo", "demo", false, 1, 0);
     const retry = executeSearch(state, "demo", "demo", false, 1, 99);
 
-    expect(page.content[0].text).toContain('mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 1 })');
-    expect(retry.content[0].text).toContain('mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 0 })');
+    expect((page.content[0] as TextContent).text).toContain('mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 1 })');
+    expect((retry.content[0] as TextContent).text).toContain('mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 0 })');
   });
 
   it("paginates search results without changing their order", () => {
     const result = executeSearch(createState(), "demo", undefined, false, 1, 1);
 
-    expect(result.content[0].text).toContain("2-2 of 2 — end");
+    expect((result.content[0] as TextContent).text).toContain("2-2 of 2 — end");
     expect(result.details).toMatchObject({
       count: 2,
       hasMore: false,
@@ -146,7 +147,7 @@ describe("proxy discovery", () => {
   it("explains an out-of-range search offset", () => {
     const result = executeSearch(createState(), "demo", undefined, false, 1, 99);
 
-    expect(result.content[0].text).toContain("No search results at offset 99; 2 tools match");
+    expect((result.content[0] as TextContent).text).toContain("No search results at offset 99; 2 tools match");
     expect(result.details).toMatchObject({ error: "offset_out_of_range", count: 2, matches: [] });
   });
 
@@ -162,7 +163,7 @@ describe("proxy discovery", () => {
     const result = executeDescribe(state, "demo_sear");
 
     expect(result.details).toMatchObject({ suggestions: ["demo_search"] });
-    expect(result.content[0].text).toContain('Inspect with mcp({ action: "describe", tool: "demo_search" })');
+    expect((result.content[0] as TextContent).text).toContain('Inspect with mcp({ action: "describe", tool: "demo_search" })');
   });
 
   it("keeps cached prefixed call typos bounded without connecting", async () => {
@@ -173,13 +174,13 @@ describe("proxy discovery", () => {
     const result = await executeCall(state, "demo_sear");
 
     expect(connect).not.toHaveBeenCalled();
-    expect(result.content[0].text).toContain("Did you mean: demo_search");
-    expect(result.content[0].text).not.toContain("demo_find");
-    expect(result.content[0].text).toContain('mcp({ action: "connect", server: "demo" })');
-    expect(result.content[0].text.length).toBeLessThan(300);
+    expect((result.content[0] as TextContent).text).toContain("Did you mean: demo_search");
+    expect((result.content[0] as TextContent).text).not.toContain("demo_find");
+    expect((result.content[0] as TextContent).text).toContain('mcp({ action: "connect", server: "demo" })');
+    expect((result.content[0] as TextContent).text.length).toBeLessThan(300);
 
     const missing = await executeCall(state, "demo_new_tool");
-    expect(missing.content[0].text).toContain('mcp({ action: "connect", server: "demo" })');
+    expect((missing.content[0] as TextContent).text).toContain('mcp({ action: "connect", server: "demo" })');
     expect(connect).not.toHaveBeenCalled();
   });
 
@@ -190,14 +191,14 @@ describe("proxy discovery", () => {
 
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "demo result" }] }));
     state.manager = {
-      getConnection: server => server === "demo" ? { status: "connected", tools: [{ name: "search" }], resources: [], client: { callTool } } : undefined,
+      getConnection: (server: string) => server === "demo" ? { status: "connected", tools: [{ name: "search" }], resources: [], client: { callTool } } : undefined,
       touch: vi.fn(), incrementInFlight: vi.fn(), decrementInFlight: vi.fn(),
     } as any;
     const result = await executeCall(state, "search", undefined, "demo");
 
     expect(result.details).toMatchObject({ server: "demo", tool: "search" });
     expect(callTool).toHaveBeenCalledOnce();
-    expect(result.content[0].text).toBe("demo result");
+    expect((result.content[0] as TextContent).text).toBe("demo result");
   });
 
   it("normalizes the explicit server's original tool name before redirecting", async () => {
@@ -209,12 +210,12 @@ describe("proxy discovery", () => {
     const result = await executeCall(state, "list-issues", undefined, "demo");
 
     expect(result.details).toMatchObject({ hintServer: "demo", suggestions: ["demo_list_issues"] });
-    expect(result.content[0].text).not.toContain('server "noise"');
+    expect((result.content[0] as TextContent).text).not.toContain('server "noise"');
   });
 
   it("suggests unprefixed tools when an explicit server is provided", async () => {
     const state = createState();
-    state.config.mcpServers.demo.toolPrefix = "none";
+    state.config.mcpServers.demo!.toolPrefix = "none";
     state.toolMetadata.set("demo", [{ name: "search", originalName: "search", description: "Search" }]);
 
     const result = await executeCall(state, "sear", undefined, "demo");
@@ -237,7 +238,7 @@ describe("proxy discovery", () => {
     const result = await executeCall(state, "gh_list_issues", undefined, "slack");
 
     expect(result.details).toMatchObject({ hintServer: "slack", suggestedServer: "gh", suggestions: ["gh_list_issues"] });
-    expect(result.content[0].text).toBe(
+    expect((result.content[0] as TextContent).text).toBe(
       'Tool "gh_list_issues" is on server "gh", not "slack". Retry the same call with server: "gh" or omit server.',
     );
 
@@ -256,7 +257,7 @@ describe("proxy discovery", () => {
       originalName: "search",
       description: "Search enterprise",
     }]]]);
-    const connect = vi.fn(async () => { throw new Error("stop after routing"); });
+    const connect = vi.fn<(server: string) => Promise<never>>(async () => { throw new Error("stop after routing"); });
     state.manager = {
       getConnection: () => undefined,
       getAllConnections: () => [],
@@ -274,7 +275,7 @@ describe("proxy discovery", () => {
     state.config.settings = { toolPrefix: "none" };
     state.config.mcpServers = { github: { command: "github", toolPrefix: "server" } };
     state.toolMetadata.clear();
-    const connect = vi.fn(async () => { throw new Error("stop after routing"); });
+    const connect = vi.fn<(server: string) => Promise<never>>(async () => { throw new Error("stop after routing"); });
     state.manager = {
       getConnection: () => undefined,
       getAllConnections: () => [],
@@ -316,7 +317,7 @@ describe("proxy discovery", () => {
       () => [{ name: "read", description: "Read a file" } as any],
     );
 
-    expect(result.content[0].text).toBe(
+    expect((result.content[0] as TextContent).text).toBe(
       '"read" is a native Pi tool. Call read directly instead of using mcp({ action: "call", tool: "read" }).',
     );
     expect(result.details).toMatchObject({ error: "native_tool", requestedTool: "read" });

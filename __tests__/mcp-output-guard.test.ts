@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,7 +86,7 @@ describe("guardMcpOutput", () => {
     expect(guarded.content).toHaveLength(2);
     expect(guarded.content[1]).toMatchObject({ text: expect.stringContaining(guarded.resultRef!) });
     expect(guarded.content[0]).toMatchObject({ type: "text" });
-    const returnedText = guarded.content[0].type === "text" ? guarded.content[0].text : "";
+    const returnedText = guarded.content[0]!.type === "text" ? (guarded.content[0] as TextContent).text : "";
     expect(returnedText).toContain("MCP text output truncated");
     expect(returnedText).toContain("Full text saved to:");
     expect(returnedText).not.toContain("line-19");
@@ -147,7 +148,7 @@ describe("guardMcpOutput", () => {
 
     expect(guarded.outputGuard).toMatchObject({ truncated: true, imageBlocksPassedThrough: 1 });
     expect(guarded.content).toHaveLength(2);
-    expect(guarded.content[0].type).toBe("text");
+    expect(guarded.content[0]!.type).toBe("text");
     expect(guarded.content[1]).toEqual(image);
 
     const saved = await readFile(guarded.outputGuard!.fullOutputPath!, "utf8");
@@ -159,7 +160,7 @@ describe("guardMcpOutput", () => {
     const guarded = await guardMcpOutput([{ type: "text", text }], { maxBytes: 10_000, maxLines: 10 });
 
     expect(guarded.outputGuard).toMatchObject({ truncated: true, originalLines: 30 });
-    const returnedText = guarded.content[0].type === "text" ? guarded.content[0].text : "";
+    const returnedText = guarded.content[0]!.type === "text" ? (guarded.content[0] as TextContent).text : "";
     expect(returnedText).toContain("entry-0");
     expect(returnedText).not.toContain("entry-29");
   });

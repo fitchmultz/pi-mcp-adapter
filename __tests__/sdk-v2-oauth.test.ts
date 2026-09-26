@@ -98,7 +98,7 @@ async function oauthFixture() {
     return completeAuthFromInput(name, `http://127.0.0.1:19878/callback?${params}`, { runtime });
   };
   const connect = async (implicit = false) => {
-    const config: ServerEntry = { ...definition, ...(implicit ? { auth: undefined } : {}), oauth: { ...definition.oauth as object, skipIssuerMetadataValidation: true } };
+    const config = { ...definition, ...(implicit ? { auth: undefined } : {}), oauth: { ...definition.oauth as object, skipIssuerMetadataValidation: true } } as ServerEntry;
     await manager.connect(name, config);
     const state = { manager, config: { mcpServers: { [name]: config }, settings: {} },
       toolMetadata: new Map([[name, [{ name: "local_echo", originalName: "echo", description: "Echo" }]]]),
@@ -128,8 +128,8 @@ describe("published SDK OAuth compatibility over local HTTP", () => {
     const f = await oauthFixture();
     const { authorizationUrl } = await f.start(true);
     expect(await f.complete(authorizationUrl)).toBe("authenticated");
-    expect(f.tokenRequests[0].get("code")).toBe("fixture-code");
-    expect(f.tokenRequests[0].get("code_verifier")).toBeTruthy();
+    expect(f.tokenRequests[0]!.get("code")).toBe("fixture-code");
+    expect(f.tokenRequests[0]!.get("code_verifier")).toBeTruthy();
     const stored = await getAuthForUrl(f.name, f.definition.url!);
     expect(stored?.tokens?.issuer).toBe(f.origin);
     expect(stored?.clientInfo?.clientSecret).toBeUndefined();
@@ -137,7 +137,7 @@ describe("published SDK OAuth compatibility over local HTTP", () => {
     expect(f.tokenRequests).toHaveLength(1); // A valid stored token needs no refresh or fresh consent.
     f.expire();
     expect((await call()).details.error).toBeUndefined();
-    expect(f.tokenRequests[1].get("grant_type")).toBe("refresh_token");
+    expect(f.tokenRequests[1]!.get("grant_type")).toBe("refresh_token");
   });
 
   it("keeps missing callback iss recoverable and rejects a wrong issuer before exchange", async () => {

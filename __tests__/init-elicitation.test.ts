@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ExtensionAPI,
   ExtensionContext,
-  ExtensionMode,
   ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
 
@@ -28,7 +27,7 @@ vi.mock("../server-manager.ts", () => ({
   }),
 }));
 
-function context(overrides: { hasUI?: boolean; mode?: ExtensionMode } = {}): ExtensionContext {
+function context(overrides: { hasUI?: boolean; mode?: ExtensionContext["mode"] } = {}): ExtensionContext {
   return {
     cwd: "/tmp/project",
     hasUI: true,
@@ -111,13 +110,13 @@ describe("initializeMcp elicitation config", () => {
     const ctx = context() as ExtensionContext & { model: unknown; signal: AbortSignal | undefined };
     const firstSignal = new AbortController();
     const secondSignal = new AbortController();
-    ctx.model = { id: "first" };
+    ctx.model = { id: "first" } as ExtensionContext["model"];
     ctx.signal = firstSignal.signal;
 
     const state = await initializeMcp(extensionApi(), ctx);
     const sampling = mocks.managers[0].setSamplingConfig.mock.calls[0][0];
 
-    ctx.model = { id: "second" };
+    ctx.model = { id: "second" } as ExtensionContext["model"];
     ctx.signal = secondSignal.signal;
     expect(sampling.getCurrentModel()).toEqual({ id: "second" });
     const activeSignal = sampling.getSignal();

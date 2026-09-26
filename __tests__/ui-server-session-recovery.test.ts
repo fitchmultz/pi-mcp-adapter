@@ -3,7 +3,7 @@ import http from "node:http";
 import { startUiServer, type UiServerHandle, type UiServerOptions } from "../ui-server.ts";
 import type { McpServerManager, ServerConnection } from "../server-manager.ts";
 import type { ConsentManager } from "../consent-manager.ts";
-import type { UiResourceContent, McpConfig } from "../types.ts";
+import type { UiResourceContent, UiResourcePermissions, McpConfig } from "../types.ts";
 
 // Same HTTP helper as __tests__/ui-server.test.ts.
 async function request(
@@ -54,7 +54,7 @@ function createMockResource(): UiResourceContent {
     uri: "ui://test/widget",
     html: "<h1>Test App</h1>",
     mimeType: "text/html",
-    meta: { permissions: [] },
+    meta: { permissions: [] as unknown as UiResourcePermissions },
   };
 }
 

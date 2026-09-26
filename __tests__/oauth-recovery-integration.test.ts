@@ -36,13 +36,13 @@ const content = (text: string) => ({ content: [{ type: "text", text }] });
 const scopes = (scope: string | null | undefined) => (scope ?? "").split(" ").filter(Boolean).sort();
 const settled = <T>(promise: Promise<T>) => Promise.allSettled([promise]).then(([result]) => result);
 
-type WireRequest = { method: string; token?: string; name?: string };
+type WireRequest = { method: string; token?: string | undefined; name?: string };
 async function fixture(era: "legacy" | "modern" = "legacy", name = `recovery-${crypto.randomUUID()}`) {
   let origin = "";
   let sessions = 0;
   let codeNumber = 0;
   const requests: WireRequest[] = [];
-  const http: Array<{ method?: string; path: string }> = [];
+  const http: Array<{ method?: string | undefined; path: string }> = [];
   const authorizations: URL[] = [];
   const exchanges: URLSearchParams[] = [];
   const codes = new Map<string, URL>();
@@ -241,8 +241,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect((await f.call()).details.error).toBe("auth_required");
     const url = await f.manual();
     expect(scopes(new URL(url).searchParams.get("scope"))).toEqual(["basic", "write"]);
-    expect(scopes(f.exchanges[0].get("scope"))).toEqual(["basic", "write"]);
-    expect(f.exchanges[0].get("grant_type")).toBe("authorization_code");
+    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "write"]);
+    expect(f.exchanges[0]!.get("grant_type")).toBe("authorization_code");
     expect((await f.stored())?.tokens?.scope).toBe("basic write");
     expect((await f.call()).details.error).toBeUndefined();
   });
@@ -289,7 +289,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         expect(f.authorizations).toHaveLength(eligible ? 1 : 0);
         expect(f.exchanges).toHaveLength(eligible ? 1 : 0);
         expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(eligible ? 2 : 1);
-        if (eligible) expect(scopes(f.authorizations[0].searchParams.get("scope"))).toEqual(["basic", "write"]);
+        if (eligible) expect(scopes(f.authorizations[0]!.searchParams.get("scope"))).toEqual(["basic", "write"]);
       });
     }
     it.each([401, 403])(`${era} first protected tool %s activates once with stored tokens and survives replacement`, async status => {
@@ -414,7 +414,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect((await f.call()).details.error).toBeUndefined();
     expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(implicit ? 3 : 2);
     expect(f.exchanges.map(p => p.get("grant_type"))).toEqual(["client_credentials"]);
-    expect(scopes(f.exchanges[0].get("scope"))).toEqual(["basic", "write"]);
+    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "write"]);
     f.controls.toolStatuses = [403, 403, 403];
     expect((await f.call()).details.error).toBe("call_failed");
     expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(implicit ? 5 : 4);
@@ -427,7 +427,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     await f.connect();
     expect((await f.call()).details.error).toBe("call_failed");
     expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(2);
-    expect(f.exchanges).toHaveLength(1); expect(f.exchanges[0].get("grant_type")).toBe("refresh_token");
+    expect(f.exchanges).toHaveLength(1); expect(f.exchanges[0]!.get("grant_type")).toBe("refresh_token");
     expect(browser.open).not.toHaveBeenCalled();
   });
 
@@ -451,7 +451,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.state.config.settings!.autoAuth = true; f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
     await f.connect(); expect((await f.call()).details.error).toBe("auth_required");
     expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(2);
-    expect(f.exchanges).toHaveLength(1); expect(f.exchanges[0].get("grant_type")).toBe("refresh_token");
+    expect(f.exchanges).toHaveLength(1); expect(f.exchanges[0]!.get("grant_type")).toBe("refresh_token");
     expect(browser.open).not.toHaveBeenCalled(); expect((await f.stored())?.tokens?.scope).toBe("basic");
   });
 
@@ -482,7 +482,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect((await f.call()).details.error).toBe("auth_required"); expect(await f.stored()).toEqual(before);
     const url = await f.manual();
     expect(scopes(new URL(url).searchParams.get("scope"))).toEqual(["basic", "write"]);
-    expect(f.exchanges[0].get("grant_type")).toBe("authorization_code");
+    expect(f.exchanges[0]!.get("grant_type")).toBe("authorization_code");
     expect((await f.call()).details.error).toBeUndefined();
   });
 
@@ -505,7 +505,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const storageA = { baseDir: kind === "pending" ? "/b|/c" : `/b|${a.definition.url}|/c` };
     const storageB = { baseDir: "/c" };
     a.manager.setAuthStorageOptions(storageA); b.manager.setAuthStorageOptions(storageB); b.manager.setOAuthRuntime(a.runtime);
-    b.definition.url = a.definition.url;
+    b.definition.url = a.definition.url!;
     for (const f of [a, b]) {
       f.definition.auth = "oauth";
       updateTokens(f.name, { accessToken: "basic-token", scope: "basic", issuer: a.origin }, a.definition.url!);
@@ -549,7 +549,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       expect((await b.stored())?.tokens?.scope).toBe("basic admin");
       expect((await b.stored())?.tokens?.accessToken).not.toBe((await a.stored())?.tokens?.accessToken);
       expect(a.exchanges).toHaveLength(2);
-      expect(a.exchanges[0].get("code_verifier")).not.toBe(a.exchanges[1].get("code_verifier"));
+      expect(a.exchanges[0]!.get("code_verifier")).not.toBe(a.exchanges[1]!.get("code_verifier"));
       expect(hasPendingAuth(a.name, storageA, a.runtime)).toBe(false); expect(hasPendingAuth(b.name, storageB, a.runtime)).toBe(false);
     } finally {
       controller.abort(new Error("tuple test finished")); await Promise.all(outcomes);
@@ -586,8 +586,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect((await f.call()).details.error).toBeUndefined();
     expect(f.request()?.issuer).toBe(f.origin);
     expect(f.authorizations).toHaveLength(0); expect(browser.open).not.toHaveBeenCalled();
-    expect(f.exchanges).toHaveLength(1); expect(f.exchanges[0].get("grant_type")).toBe("client_credentials");
-    expect(scopes(f.exchanges[0].get("scope"))).toEqual(["basic", "write"]);
+    expect(f.exchanges).toHaveLength(1); expect(f.exchanges[0]!.get("grant_type")).toBe("client_credentials");
+    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "write"]);
     expect(f.requests.filter(request => request.method === "tools/call")).toHaveLength(4);
   });
 
@@ -624,7 +624,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const callback = await f.authorize(first.authorizationUrl);
     expect(await completeAuthFromInput(f.name, callback, { runtime: f.runtime })).toBe("authenticated");
     expect((await f.stored())?.tokens?.scope).toBe("basic write");
-    expect(scopes(f.exchanges[0].get("scope"))).toEqual(["basic", "write"]);
+    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "write"]);
     expect(scopes(f.request()?.challenge?.requiredScope)).toEqual(["admin", "write"]);
     expect((await f.call()).details.error).toBeUndefined();
     const next = await f.start();
@@ -670,7 +670,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.controls.releaseToken();
     if (phase === "token") {
       await expect.poll(() => saveTokens.mock.calls.length).toBe(1);
-      await expect(saveTokens.mock.results[0].value).rejects.toThrow("no longer active");
+      await expect(saveTokens.mock.results[0]!.value).rejects.toThrow("no longer active");
     } else expect(saveTokens).not.toHaveBeenCalled();
     expect((await f.stored())?.tokens).toEqual(before?.tokens);
     expect(f.requests.filter(r => r.method === "tools/call")).toHaveLength(1);
@@ -722,8 +722,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const authorizationUrl = started.details.authorizationUrl as string;
     const early = await executeAuthComplete(f.state, f.name);
     expect(early.details.error).toBe("auth_complete_failed");
-    expect(early.content[0].text).toContain("No OAuth callback received yet");
-    expect(early.content[0].text).toContain("redirectUrl");
+    expect((early.content[0] as { text: string }).text).toContain("No OAuth callback received yet");
+    expect((early.content[0] as { text: string }).text).toContain("redirectUrl");
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
     expect((await f.start()).authorizationUrl).toBe(authorizationUrl);
 
@@ -741,7 +741,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const completed = await executeAuthComplete(f.state, f.name);
     expect(completed.details.authenticated).toBe(true);
     expect(f.exchanges).toHaveLength(1);
-    expect(f.exchanges[0].get("code")).toBe(callback.searchParams.get("code"));
+    expect(f.exchanges[0]!.get("code")).toBe(callback.searchParams.get("code"));
     expect((await f.stored())?.tokens?.issuer).toBe(f.origin);
     for (const secret of [callback.href, callback.searchParams.get("code")!, callback.searchParams.get("state")!]) {
       expect(JSON.stringify(completed)).not.toContain(secret);
@@ -783,7 +783,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const result = await executeAuthComplete(f.state, f.name);
     expect(result.details.error).toBe("auth_complete_failed");
     expect(result.details.authenticated).toBeUndefined();
-    expect(result.content[0].text).toContain("denied or failed");
+    expect((result.content[0] as { text: string }).text).toContain("denied or failed");
     expect(JSON.stringify(result)).not.toContain(callback.href);
     expect(JSON.stringify(result)).not.toContain(callback.searchParams.get("code")!);
     expect(f.exchanges).toHaveLength(0);
@@ -966,7 +966,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     await handlers.get("session_start")({}, ctx);
     cleanups.push(() => handlers.get("session_shutdown")({}, ctx));
     await tools.get("mcp").execute("connect", { connect: f.name }, undefined, undefined, ctx);
-    const manager = connecting.mock.contexts.find(candidate => candidate !== f.manager)!;
+    const manager = connecting.mock.contexts.find(candidate => candidate !== f.manager) as McpServerManager;
     const old = manager.getConnection(f.name)!; const close = vi.spyOn(old.client, "close");
     let received!: () => void; const headers = new Promise<void>(resolve => { received = resolve; }); const nativeFetch = globalThis.fetch;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (...args) => { const response = await nativeFetch(...args); if (response.headers.has("x-accepted-effect")) received(); return response; });
@@ -989,7 +989,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const authorizationUrl = await f.manual();
     const requested = scopes(new URL(authorizationUrl).searchParams.get("scope"));
     expect(requested).toEqual(["basic", "offline_access", "write"]);
-    expect(scopes(f.exchanges[0].get("scope"))).toEqual(requested);
+    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(requested);
     expect(scopes(f.request()?.requestedScope)).toEqual(requested);
     expect((await f.call()).details.error).toBeUndefined();
   });
@@ -1070,7 +1070,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   it("keeps legal server-name/storage tuples separate even when delimiter joining collides", async () => {
     const a = await fixture("legacy", "a"); const b = await fixture("legacy", "a|/b");
     a.manager.setAuthStorageOptions({ baseDir: "/b|/c" }); b.manager.setAuthStorageOptions({ baseDir: "/c" }); b.manager.setOAuthRuntime(a.runtime);
-    b.definition.url = a.definition.url;
+    b.definition.url = a.definition.url!;
     for (const f of [a, b]) {
       f.definition.auth = "oauth";
       updateTokens(f.name, { accessToken: "basic-token", scope: "basic", issuer: a.origin }, a.definition.url!);
@@ -1119,7 +1119,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     await f.connect(); await f.call();
     const authorizationUrl = await f.manual();
     expect(scopes(new URL(authorizationUrl).searchParams.get("scope"))).toEqual(["basic", "configured", "write"]);
-    expect(scopes(f.exchanges[0].get("scope"))).toEqual(["basic", "configured", "write"]);
+    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "configured", "write"]);
     expect(f.definition.oauth.scope).toBe("configured");
     expect((await f.call()).details.error).toBeUndefined();
   });

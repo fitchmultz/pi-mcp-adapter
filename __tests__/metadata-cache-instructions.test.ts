@@ -55,19 +55,19 @@ describe("metadata cache instructions", () => {
 
     saveMetadataCache({ version: 1, servers: { demo: entry } });
 
-    expect(loadMetadataCache()?.servers.demo.instructions).toBe(
+    expect(loadMetadataCache()?.servers.demo!.instructions).toBe(
       "The available skills are listed in this server's instructions.",
     );
   });
 
   it("omits instructions from the cache file when a server provides none", () => {
-    const entry: ServerCacheEntry = {
+    const entry = {
       configHash: "hash",
       tools: [],
       resources: [],
       instructions: undefined,
       cachedAt: Date.now(),
-    };
+    } as unknown as ServerCacheEntry;
 
     saveMetadataCache({ version: 1, servers: { demo: entry } });
 

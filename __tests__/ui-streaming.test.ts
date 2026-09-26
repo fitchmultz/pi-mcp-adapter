@@ -195,11 +195,11 @@ describe("UI Streaming", () => {
     function attachNotificationHandler(manager: McpServerManager, serverName = "test-server") {
       const client = { setNotificationHandler: vi.fn() };
       (manager as unknown as {
-        attachAdapterNotificationHandlers: (serverName: string, client: { setNotificationHandler: typeof client.setNotificationHandler }) => void;
+        attachAdapterNotificationHandlers: (serverName: string, notificationClient: { setNotificationHandler: typeof client.setNotificationHandler }) => void;
       }).attachAdapterNotificationHandlers(serverName, client);
       expect(client.setNotificationHandler).toHaveBeenCalledOnce();
-      expect(client.setNotificationHandler.mock.calls[0][0]).toBe(SERVER_STREAM_RESULT_PATCH_METHOD);
-      const handler = client.setNotificationHandler.mock.calls[0][2] as (params: {
+      expect(client.setNotificationHandler.mock.calls[0]![0]).toBe(SERVER_STREAM_RESULT_PATCH_METHOD);
+      const handler = client.setNotificationHandler.mock.calls[0]![2] as (params: {
         streamToken: string;
         result: { content?: unknown[]; structuredContent?: Record<string, unknown> };
       }) => void;
@@ -299,7 +299,7 @@ describe("UI Streaming", () => {
         },
       }));
 
-      const events: Array<{ name: string; data: unknown; id?: string }> = [];
+      const events: Array<{ name: string; data: unknown; id?: string | undefined }> = [];
       const sse = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
         (name, data, id) => events.push({ name, data, id })
@@ -328,7 +328,7 @@ describe("UI Streaming", () => {
       expect(patchEvents).toHaveLength(1);
 
       const envelope = getVisualizationStreamEnvelope(
-        (patchEvents[0].data as { structuredContent?: unknown })?.structuredContent
+        (patchEvents[0]!.data as { structuredContent?: unknown })?.structuredContent
       );
       expect(envelope?.frameType).toBe("patch");
       expect(envelope?.phase).toBe("shell");
@@ -353,7 +353,7 @@ describe("UI Streaming", () => {
       const ids = eventIds.map(Number).filter((n) => !Number.isNaN(n));
       expect(ids).toHaveLength(3);
       for (let i = 1; i < ids.length; i++) {
-        expect(ids[i]).toBeGreaterThan(ids[i - 1]);
+        expect(ids[i]).toBeGreaterThan(ids[i - 1]!);
       }
     });
 
@@ -361,7 +361,7 @@ describe("UI Streaming", () => {
       handle = await startUiServer(createServerOptions());
 
       // First connection to send some events
-      const firstEvents: Array<{ name: string; id?: string }> = [];
+      const firstEvents: Array<{ name: string; id?: string | undefined }> = [];
       const sse1 = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
         (name, _data, id) => firstEvents.push({ name, id })
@@ -377,11 +377,11 @@ describe("UI Streaming", () => {
       // Get the ID of the first patch event
       const patchEvents = firstEvents.filter((e) => e.name === "result-patch");
       expect(patchEvents.length).toBe(3);
-      const firstPatchId = patchEvents[0].id;
+      const firstPatchId = patchEvents[0]!.id;
       expect(firstPatchId).toBeDefined();
 
       // Second connection with Last-Event-ID should replay from that point
-      const replayedEvents: Array<{ name: string; id?: string }> = [];
+      const replayedEvents: Array<{ name: string; id?: string | undefined }> = [];
       const sse2 = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
         (name, _data, id) => replayedEvents.push({ name, id }),

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `npm run typecheck` now also checks the test suite under the same strict settings as the source.
+
 ## [7.0.0] - 2026-09-26
 
 ### Breaking changes

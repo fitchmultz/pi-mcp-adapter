@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildToolMetadata } from "../tool-metadata.ts";
 
@@ -79,7 +80,7 @@ describe("direct tools auto auth", () => {
       "demo",
       "server",
     );
-    const [tool] = metadata;
+    const tool = metadata[0]!;
     state.toolMetadata.set("demo", metadata);
 
     const executor = createDirectToolExecutor(
@@ -113,7 +114,7 @@ describe("direct tools auto auth", () => {
       },
       { timeout: 4321, signal: expect.any(AbortSignal) },
     );
-    expect(result.content[0].text).toContain("ok");
+    expect((result.content[0] as TextContent).text).toContain("ok");
   });
 
   it("surfaces aborted direct tool calls via the forwarded AbortSignal", async () => {
@@ -161,7 +162,7 @@ describe("direct tools auto auth", () => {
       { ...requestOptions, signal: expect.any(AbortSignal) },
     );
     expect(result.details).toMatchObject({ error: "aborted", server: "demo" });
-    expect(result.content[0].text).toContain("request aborted");
+    expect((result.content[0] as TextContent).text).toContain("request aborted");
   });
 
   it("rethrows direct auto-auth cancellation", async () => {
@@ -243,8 +244,8 @@ describe("direct tools auto auth", () => {
     const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
-    expect(result.content[0].text).toContain("auth-start");
-    expect(result.content[0].text).toContain("/mcp-auth demo");
+    expect((result.content[0] as TextContent).text).toContain("auth-start");
+    expect((result.content[0] as TextContent).text).toContain("/mcp-auth demo");
   });
 
   it("runs URL elicitations returned by a URL-required tool error", async () => {
@@ -285,7 +286,7 @@ describe("direct tools auto auth", () => {
 
     expect(state.manager.handleUrlElicitationRequired).toHaveBeenCalledWith("demo", error);
     expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });
-    expect(result.content[0].text).toContain("retry the tool");
+    expect((result.content[0] as TextContent).text).toContain("retry the tool");
   });
 
   it("uses custom authRequiredMessage in non-ui direct tool auth failures", async () => {
@@ -330,6 +331,6 @@ describe("direct tools auto auth", () => {
     const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
-    expect(result.content[0].text).toBe("Reconnect demo from the host app.");
+    expect((result.content[0] as TextContent).text).toBe("Reconnect demo from the host app.");
   });
 });

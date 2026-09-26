@@ -23,6 +23,6 @@ describe("McpServerManager connection close ownership", () => {
 
     expect(clientCloseSpy).toHaveBeenCalledTimes(1);
     expect(transportCloseSpy).toHaveBeenCalledTimes(1);
-    expect(clientCloseSpy.mock.invocationCallOrder[0]).toBeLessThan(transportCloseSpy.mock.invocationCallOrder[0]);
+    expect(clientCloseSpy.mock.invocationCallOrder[0]!).toBeLessThan(transportCloseSpy.mock.invocationCallOrder[0]!);
   });
 });

@@ -82,7 +82,7 @@ describe("session recovery — Streamable HTTP wire path", () => {
       if (message.method === "tools/call") {
         toolCalls += 1;
         const sessionId = req.headers["mcp-session-id"];
-        toolCallSessionIds.push(Array.isArray(sessionId) ? sessionId[0] : sessionId ?? "");
+        toolCallSessionIds.push(Array.isArray(sessionId) ? sessionId[0]! : sessionId ?? "");
         if (toolCalls === 1) {
           res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({
             jsonrpc: "2.0",
@@ -172,7 +172,7 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
     expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
-    expect(result.content[0].text).toContain("ok");
+    expect((result.content[0] as { text: string }).text).toContain("ok");
   });
 
   it("recovers a server-not-initialized MCP error transparently mid tool-call", async () => {
@@ -219,7 +219,7 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
     expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
-    expect(result.content[0].text).toContain("ok");
+    expect((result.content[0] as { text: string }).text).toContain("ok");
   });
 
   it("gives up after one reconnect attempt: a second server-not-initialized MCP error propagates as call_failed", async () => {
@@ -362,7 +362,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
     expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
-    expect(result.content[0].text).toContain("ok");
+    expect((result.content[0] as { text: string }).text).toContain("ok");
   });
 
   it("recovers a server-not-initialized MCP error transparently for a direct tool call", async () => {
@@ -414,7 +414,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
     expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
-    expect(result.content[0].text).toContain("ok");
+    expect((result.content[0] as { text: string }).text).toContain("ok");
   });
 
   it("gives up after one reconnect attempt: a second terminated session propagates as call_failed", async () => {

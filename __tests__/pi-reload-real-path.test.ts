@@ -8,6 +8,7 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type SessionShutdownEvent,
 } from "@earendil-works/pi-coding-agent";
 import { computeServerHash } from "../metadata-cache.ts";
 
@@ -152,7 +153,7 @@ describe("Pi registered extension reload real path", () => {
       const firstActive = await waitForFixture(harness.pidDir, active => active.length === 1).catch(error => {
         throw new Error(`${error instanceof Error ? error.message : String(error)}; errors=${JSON.stringify(harness.errors)}; statuses=${JSON.stringify(harness.statusCalls)}`);
       });
-      oldPids.push(firstActive[0].pid);
+      oldPids.push(firstActive[0]!.pid);
 
       if (process.env.PI_COMPAT_HOST === "fork") {
         const checkpointSession = harness.session as typeof harness.session & {
@@ -165,7 +166,7 @@ describe("Pi registered extension reload real path", () => {
           const hold = await checkpointSession.acquireCheckpoint({ quiesce: () => () => {}, signal: AbortSignal.timeout(5000) });
           try {
             expect(hold.sleepReady).toBe(false);
-            expect(isAlive(oldPids[0])).toBe(true);
+            expect(isAlive(oldPids[0]!)).toBe(true);
             return /stdio|process/i.test(hold.sleepBlockers.join("\n"));
           } finally { hold.release(); }
         });
@@ -173,12 +174,12 @@ describe("Pi registered extension reload real path", () => {
 
       await harness.session.reload();
       const secondActive = await waitForFixture(harness.pidDir, active =>
-        active.length === 1 && active[0].pid !== oldPids[0],
+        active.length === 1 && active[0]!.pid !== oldPids[0],
       ).catch(async error => {
         throw new Error(`${error instanceof Error ? error.message : String(error)}; active=${JSON.stringify(await activeFixtures(harness.pidDir))}; errors=${JSON.stringify(harness.errors)}; statuses=${JSON.stringify(harness.statusCalls)}`);
       });
-      oldPids.push(secondActive[0].pid);
-      await waitFor(() => !isAlive(oldPids[0]));
+      oldPids.push(secondActive[0]!.pid);
+      await waitFor(() => !isAlive(oldPids[0]!));
       expect(harness.session.getActiveToolNames()).toContain("delayed_reload_identity");
       harness.session.setActiveToolsByName(
         harness.session.getActiveToolNames().filter((name) => name !== "delayed_reload_identity"),
@@ -186,24 +187,24 @@ describe("Pi registered extension reload real path", () => {
 
       await harness.session.reload();
       const active = await waitForFixture(harness.pidDir, fixtures =>
-        fixtures.length === 1 && fixtures[0].pid !== oldPids[1],
+        fixtures.length === 1 && fixtures[0]!.pid !== oldPids[1],
       );
-      oldPids.push(active[0].pid);
-      await waitFor(() => !isAlive(oldPids[1]));
+      oldPids.push(active[0]!.pid);
+      await waitFor(() => !isAlive(oldPids[1]!));
       expect(harness.session.getActiveToolNames()).not.toContain("delayed_reload_identity");
 
       expect(active).toHaveLength(1);
-      expect(active[0].toolName).toBe("reload_identity");
+      expect(active[0]!.toolName).toBe("reload_identity");
       const tools = harness.session.extensionRunner.getAllRegisteredTools().map(tool => tool.definition.name);
       expect(tools.filter(name => name === "mcp")).toHaveLength(1);
       expect(harness.errors.map(error => `${error.error}\n${error.stack ?? ""}`).join("\n"))
         .not.toContain("This extension ctx is stale after session replacement or reload");
       await harness.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-      await waitFor(() => !isAlive(oldPids[2]));
+      await waitFor(() => !isAlive(oldPids[2]!));
       await new Promise(resolve => setTimeout(resolve, 150));
     } finally {
       try {
-        await harness.session.extensionRunner.emit({ type: "session_shutdown", reason: "test-finally" });
+        await harness.session.extensionRunner.emit({ type: "session_shutdown", reason: "test-finally" } as unknown as SessionShutdownEvent);
       } catch {
         // Preserve the original assertion while still attempting extension cleanup.
       }
@@ -288,7 +289,7 @@ describe("Pi registered extension reload real path", () => {
     try {
       await session.reload();
       const active = await waitForFixture(pidDir, fixtures => fixtures.length === 1);
-      pid = active[0].pid;
+      pid = active[0]!.pid;
       const registered = session.extensionRunner.getAllRegisteredTools();
       expect(registered.map(tool => tool.definition.name)).not.toContain("demo_attacker");
       expect(registered.find(tool => tool.definition.name === "mcp")?.definition.description)
@@ -298,7 +299,7 @@ describe("Pi registered extension reload real path", () => {
       await waitFor(() => pid === undefined || !isAlive(pid));
     } finally {
       try {
-        await session.extensionRunner.emit({ type: "session_shutdown", reason: "test-finally" });
+        await session.extensionRunner.emit({ type: "session_shutdown", reason: "test-finally" } as unknown as SessionShutdownEvent);
       } catch {
         // Preserve the original assertion while still attempting extension cleanup.
       }

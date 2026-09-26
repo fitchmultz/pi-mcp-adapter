@@ -42,7 +42,7 @@ async function fixture(oauth: OAuthConfig = {}) {
   const documentFetches: string[] = [];
   const blockedPorts: number[] = [];
   const registrations: object[] = [];
-  const requests: Array<{ method: string; token?: string }> = [];
+  const requests: Array<{ method: string; token?: string | undefined }> = [];
   const codes = new Map<string, URL>();
   const refreshes = new Map<string, string>();
   const tokens = new Set<string>();
@@ -176,7 +176,7 @@ async function fixture(oauth: OAuthConfig = {}) {
 it("uses the default document through native PKCE, callback, refresh, resource and tool HTTP with zero DCR", async () => {
   const f = await fixture();
   expect(await f.login()).toBe("authenticated");
-  expect(f.authorizations[0].searchParams.get("client_id")).toBe(metadataDocument.client_id);
+  expect(f.authorizations[0]!.searchParams.get("client_id")).toBe(metadataDocument.client_id);
   expect(f.stored()?.clientInfo).toMatchObject({ clientId: metadataDocument.client_id, registrationType: "cimd", issuer: f.origin });
   const connection = await f.connect();
   expect(connection.status).toBe("connected");
@@ -193,19 +193,19 @@ it.each([
   [undefined, undefined], [undefined, false], [undefined, "https://custom.example/next.json"],
   ["https://custom.example/client.json", undefined], ["https://custom.example/client.json", false], ["https://custom.example/client.json", "https://custom.example/next.json"],
 ] as const)("keeps saved CIMD %s and refresh after restart/forced port change and setting %s", async (initial, setting) => {
-  const f = await fixture({ clientMetadataUrl: initial });
+  const f = await fixture({ clientMetadataUrl: initial } as OAuthConfig);
   const id = initial ?? metadataDocument.client_id;
   f.documents.set(id, { ...metadataDocument, client_id: id });
   await f.login();
   const before = f.stored()!;
   const oldPort = getOAuthCallbackPort();
   expect(await f.restart()).toBe(oldPort);
-  f.definition.oauth = { clientMetadataUrl: setting };
+  f.definition.oauth = { clientMetadataUrl: setting } as OAuthConfig;
   expect(await f.start()).toEqual({ authorizationUrl: "" });
   expect(getOAuthCallbackPort()).not.toBe(oldPort);
   expect(f.stored()?.clientInfo).toEqual(before.clientInfo);
-  expect(f.exchanges[1].get("refresh_token")).toBe(before.tokens?.refreshToken);
-  expect(f.exchanges[1].get("client_id")).toBe(id);
+  expect(f.exchanges[1]!.get("refresh_token")).toBe(before.tokens?.refreshToken);
+  expect(f.exchanges[1]!.get("client_id")).toBe(id);
   expect(f.authorizations).toHaveLength(1); expect(f.registrations).toHaveLength(0);
 });
 
@@ -244,10 +244,10 @@ it.each(["rejected", "unavailable"])("surfaces AS document %s without claiming a
 it.each([undefined, false, "https://custom.example/client.json"])("keeps configured clients ahead of CIMD setting %s", async clientMetadataUrl => {
   const portServer = createServer(); const port = await listen(portServer); await close(portServer);
   const redirectUri = `http://127.0.0.1:${port}/callback`;
-  const f = await fixture({ clientId: "configured", clientMetadataUrl, redirectUri });
+  const f = await fixture({ clientId: "configured", clientMetadataUrl, redirectUri } as OAuthConfig);
   f.registered.set("configured", { ...metadataDocument, redirect_uris: [redirectUri] });
   expect(await f.login()).toBe("authenticated");
-  expect(f.exchanges[0].get("client_id")).toBe("configured");
+  expect(f.exchanges[0]!.get("client_id")).toBe("configured");
   expect(f.registrations).toHaveLength(0); expect(f.documentFetches).toHaveLength(0);
   expect(f.stored()?.clientInfo).toEqual({ clientId: "configured", issuer: f.origin, configPreRegistered: true });
 });
@@ -271,8 +271,8 @@ it.each(["/callback", "/custom", "/callback?tenant=one"])("uses shared metadata 
   const redirectUri = `http://127.0.0.1:${port}${path}`;
   const f = await fixture({ redirectUri });
   expect(await f.login()).toBe("authenticated");
-  expect(f.authorizations[0].searchParams.get("redirect_uri")).toBe(redirectUri);
-  expect(f.authorizations[0].searchParams.get("client_id")).toBe(path === "/callback" ? metadataDocument.client_id : "https://opaque.example/registration/1");
+  expect(f.authorizations[0]!.searchParams.get("redirect_uri")).toBe(redirectUri);
+  expect(f.authorizations[0]!.searchParams.get("client_id")).toBe(path === "/callback" ? metadataDocument.client_id : "https://opaque.example/registration/1");
   expect(f.registrations).toHaveLength(path === "/callback" ? 0 : 1);
 });
 
@@ -296,8 +296,8 @@ it.each([
   expect(await f.start()).toEqual({ authorizationUrl: "" });
   expect(getOAuthCallbackPort()).toBe(nextPort);
   expect(f.stored()?.clientInfo).toEqual(before.clientInfo);
-  expect(f.exchanges[1].get("refresh_token")).toBe(before.tokens?.refreshToken);
-  expect(f.exchanges[1].get("client_id")).toBe(id);
+  expect(f.exchanges[1]!.get("refresh_token")).toBe(before.tokens?.refreshToken);
+  expect(f.exchanges[1]!.get("client_id")).toBe(id);
   expect(f.registrations).toHaveLength(0); expect(f.authorizations).toHaveLength(1);
 });
 
@@ -306,7 +306,7 @@ it.each(["?return_to=/../welcome", "?next=https://other.example/a/../b"])("accep
   const f = await fixture({ clientMetadataUrl: id });
   f.documents.set(id, { ...metadataDocument, client_id: id });
   expect(await f.login()).toBe("authenticated");
-  expect(f.exchanges[0].get("client_id")).toBe(id);
+  expect(f.exchanges[0]!.get("client_id")).toBe(id);
   expect(f.registrations).toHaveLength(0);
 });
 
@@ -317,8 +317,8 @@ it("uses a custom document with an exact custom callback and identity", async ()
   const f = await fixture({ clientMetadataUrl: id, clientName: "Custom", clientUri: "https://custom.example/", redirectUri });
   f.documents.set(id, { ...metadataDocument, client_id: id, client_name: "Custom", client_uri: "https://custom.example/", redirect_uris: [redirectUri] });
   expect(await f.login()).toBe("authenticated");
-  expect(f.exchanges[0].get("redirect_uri")).toBe(redirectUri);
-  expect(f.exchanges[0].get("client_id")).toBe(id);
+  expect(f.exchanges[0]!.get("redirect_uri")).toBe(redirectUri);
+  expect(f.exchanges[0]!.get("client_id")).toBe(id);
   expect(f.registrations).toHaveLength(0);
 });
 
@@ -359,9 +359,9 @@ it("keeps stored client and token issuer guards after CIMD port reuse", async ()
 });
 
 it.each([undefined, metadataDocument.client_id])("never gives machine clients the shared browser identity (%s)", async clientMetadataUrl => {
-  const f = await fixture({ grantType: "client_credentials", clientMetadataUrl });
+  const f = await fixture({ grantType: "client_credentials", clientMetadataUrl } as OAuthConfig);
   expect(await f.start()).toEqual({ authorizationUrl: "" });
-  expect(f.exchanges[0].get("client_id")).toBe("https://opaque.example/registration/1");
+  expect(f.exchanges[0]!.get("client_id")).toBe("https://opaque.example/registration/1");
   expect(f.registrations).toHaveLength(1); expect(f.documentFetches).toHaveLength(0);
 });
 

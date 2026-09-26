@@ -1,3 +1,4 @@
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { createDirectToolExecutor } from "../direct-tools.ts";
@@ -27,7 +28,7 @@ function createState(manager: McpServerManager, names: string[]): McpExtensionSt
     uiResourceHandler: new UiResourceHandler(manager),
     completedUiSessions: [],
     uiServer: null,
-  } as McpExtensionState;
+  } as unknown as McpExtensionState;
 }
 
 function directSpec(originalName: string): DirectToolSpec {
@@ -58,7 +59,7 @@ describe("MCP output schema validation", () => {
 
     const result = path === "proxy"
       ? await executeCall(state, `real_${name}`, {})
-      : await createDirectToolExecutor(() => state, () => null, directSpec(name))("id", {});
+      : await createDirectToolExecutor(() => state, () => null, directSpec(name))("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
 
     expect(result.details).not.toMatchObject({ error: "call_failed" });
     expect(result.content[0]).toEqual({ type: "text", text: name });
@@ -79,7 +80,7 @@ describe("MCP output schema validation", () => {
 
     const result = path === "proxy"
       ? await executeCall(state, `real_${name}`, {})
-      : await createDirectToolExecutor(() => state, () => null, directSpec(name))("id", {});
+      : await createDirectToolExecutor(() => state, () => null, directSpec(name))("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
 
     expect(result.details).toMatchObject({ error: "call_failed" });
     expect(result.content[0]).toMatchObject({

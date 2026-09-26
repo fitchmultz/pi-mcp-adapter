@@ -6,7 +6,7 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { auth, OAuthError, OAuthErrorCode, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { auth, OAuthError, OAuthErrorCode, StreamableHTTPClientTransport, type OAuthDiscoveryState } from "@modelcontextprotocol/client";
 import { createOAuthRuntime, extractOAuthConfig, hasPendingAuth, shutdownOAuth, startAuth } from "../mcp-auth-flow.ts";
 import { clearAllCredentials, getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
 import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
@@ -49,7 +49,7 @@ function jwt(payload: object, key: ReturnType<typeof generateKeyPairSync>["priva
   return `${input}.${sign("sha256", Buffer.from(input), { key, dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
 }
 function claims(token: string, key: ReturnType<typeof generateKeyPairSync>["publicKey"]) {
-  const [header, payload, signature] = token.split(".");
+  const [header, payload, signature] = token.split(".") as [string, string, string];
   expect(verify("sha256", Buffer.from(`${header}.${payload}`), { key, dsaEncoding: "ieee-p1363" }, Buffer.from(signature, "base64url"))).toBe(true);
   return JSON.parse(Buffer.from(payload, "base64url").toString());
 }
@@ -69,7 +69,7 @@ function gate() {
 function nativeSends() {
   const pending = new Set<Promise<void>>();
   const send = StreamableHTTPClientTransport.prototype.send;
-  const spy = vi.spyOn(StreamableHTTPClientTransport.prototype, "send").mockImplementation(function (...args) {
+  const spy = vi.spyOn(StreamableHTTPClientTransport.prototype, "send").mockImplementation(function (this: unknown, ...args) {
     const operation = send.apply(this, args); pending.add(operation);
     void operation.then(() => pending.delete(operation), () => pending.delete(operation));
     return operation;
@@ -217,7 +217,7 @@ it.each(["secret", "public", "private", "private-cimd"] as const)("completes nat
   expect(f.idpRequests.find(r => r.form)?.form?.get("scope")).toBe("tools");
   expect(f.requests.find(r => r.method === "tools/call").headers["x-resource-only"]).toBe("resource-secret");
   const saved = JSON.stringify(f.stored());
-  for (const value of [f.oauth.crossAppAccess!.idToken, "idp-secret", "mcp-secret", f.exchanges[0].form.get("assertion")!]) expect(saved).not.toContain(value);
+  for (const value of [f.oauth.crossAppAccess!.idToken, "idp-secret", "mcp-secret", f.exchanges[0]!.form.get("assertion")!]) expect(saved).not.toContain(value);
   expect(f.registrations).toHaveLength(0); expect(browser.open).not.toHaveBeenCalled(); expect(hasPendingAuth(f.name, {}, f.runtime)).toBe(false);
   if (identity === "public" || identity === "private-cimd") expect(f.stored()?.clientInfo).toMatchObject({ registrationType: "cimd", redirectUris: [] });
 });
@@ -265,7 +265,7 @@ it.each(["issued", "rejected"])("resets the native resource after an %s grant, i
   const first = await auth(provider, { serverUrl: f.definition.url!, fetchFn: provider.fetch }).catch(error => error);
   if (outcome === "rejected") expect(first).toBeInstanceOf(OAuthError); else expect(first).toBe("AUTHORIZED");
   f.idpError(undefined);
-  await provider.saveDiscoveryState({ authorizationServerUrl: f.as, authorizationServerMetadata: { issuer: f.as, token_endpoint: `${f.as}/token`, response_types_supported: ["code"] } });
+  await provider.saveDiscoveryState({ authorizationServerUrl: f.as, authorizationServerMetadata: { issuer: f.as, token_endpoint: `${f.as}/token`, response_types_supported: ["code"] } as NonNullable<OAuthDiscoveryState["authorizationServerMetadata"]> });
   f.noResource();
   await expect(auth(provider, { serverUrl: f.definition.url!, fetchFn: provider.fetch })).rejects.toThrow(/protected resource metadata/);
   expect(f.exchanges).toHaveLength(outcome === "rejected" ? 0 : 1); expect(f.idpRequests.filter(r => r.form)).toHaveLength(1);
@@ -285,8 +285,8 @@ it.each(["invalid_client", "invalid_grant", "malformed", "malformed-success", "i
 
 it.each(["auto", "legacy"] as const)("uses native %s capabilities and preserves scope precedence", async protocolVersion => {
   const f = await fixture(); f.definition.protocolVersion = protocolVersion; f.oauth.scope = "configured";
-  await f.start(); expect(f.exchanges[0].form.get("scope")).toBe("configured"); f.expire();
-  await f.connect(); expect(f.exchanges[1].form.get("scope")).toBe("tools");
+  await f.start(); expect(f.exchanges[0]!.form.get("scope")).toBe("configured"); f.expire();
+  await f.connect(); expect(f.exchanges[1]!.form.get("scope")).toBe("tools");
   const handshakes = f.requests.filter(r => r.method === (protocolVersion === "auto" ? "server/discover" : "initialize"));
   expect(handshakes.length).toBeGreaterThanOrEqual(2);
   for (const request of handshakes) expect((protocolVersion === "auto" ? request.params._meta["io.modelcontextprotocol/clientCapabilities"] : request.params.capabilities).extensions).toEqual({ "io.modelcontextprotocol/enterprise-managed-authorization": {} });
@@ -530,7 +530,7 @@ it.each(["proxy", "direct"])("gives truthful %s CAA failure guidance and preserv
   f.idpError({ error: "invalid_client", error_description: "TOKEN_SENTINEL" });
   const state = stateFor(f);
   for (const custom of [undefined, "Contact your workspace administrator"]) {
-    state.config.settings!.authRequiredMessage = custom;
+    state.config.settings!.authRequiredMessage = custom as string;
     const result = await callHost(f, state, host), text = JSON.stringify(result);
     expect(text).toContain(custom ?? "ID-token source"); expect(text).not.toContain("browser URL"); expect(text).not.toContain("TOKEN_SENTINEL");
   }

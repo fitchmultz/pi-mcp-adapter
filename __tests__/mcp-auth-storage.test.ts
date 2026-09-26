@@ -266,7 +266,7 @@ describe("mcp-auth storage paths", () => {
       expect(manifestPayload).toBeDefined();
       const manifest = JSON.parse(manifestPayload!) as { __piMcpAdapterOAuthChunked?: number; chunkCount?: number };
       expect(manifest.__piMcpAdapterOAuthChunked).toBe(1);
-      expect(chunkEntries).toHaveLength(manifest.chunkCount);
+      expect(chunkEntries).toHaveLength(manifest.chunkCount!);
       expect(chunkEntries.every(([, payload]) => payload.length <= 1800)).toBe(true);
     });
 

@@ -18,7 +18,7 @@ type TestDetails = Record<string, unknown> & { error?: unknown };
 type TestResult = AgentToolResult<TestDetails>;
 
 const collapsedOptions: ToolRenderResultOptions = { expanded: false, isPartial: false };
-const plainTheme = { fg: (_name: string, text: string) => text };
+const plainTheme = { fg: (_name: string, text: string) => text } as NonNullable<Parameters<typeof renderMcpToolResult>[2]>;
 
 function result(content: TestResult["content"], details: TestDetails = {}): TestResult {
   return { content, details };

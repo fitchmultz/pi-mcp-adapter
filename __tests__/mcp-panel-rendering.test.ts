@@ -47,7 +47,7 @@ function createCache(config: McpConfig): MetadataCache {
     version: 1,
     servers: {
       atlassian: {
-        configHash: computeServerHash(config.mcpServers.atlassian),
+        configHash: computeServerHash(config.mcpServers.atlassian!),
         cachedAt: Date.now(),
         tools: [
           {
@@ -185,7 +185,7 @@ describe("mcp-panel rendering", () => {
     panel.handleInput("\r");
 
     expect(done).toHaveBeenCalledTimes(1);
-    const result = done.mock.calls[0][0];
+    const result = done.mock.calls[0]![0];
     expect(result.cancelled).toBe(false);
     expect(result.changes.get("atlassian")).toEqual(["search\u0007issues"]);
     panel.dispose();

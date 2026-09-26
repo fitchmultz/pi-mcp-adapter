@@ -209,7 +209,7 @@ describe("mcp-callback-server", () => {
     const { ensureCallbackServer, stopCallbackServer } = await import("../mcp-callback-server.ts");
     await ensureCallbackServer();
     let finishClose: (() => void) | undefined;
-    mocks.runtime.servers[0].close.mockImplementation((callback?: () => void) => {
+    mocks.runtime.servers[0]!.close.mockImplementation((callback?: () => void) => {
       finishClose = callback;
     });
 

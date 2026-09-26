@@ -101,7 +101,7 @@ describe("prompts with the real MCP SDK", () => {
     const command = createPromptCommand(pi, () => state, haiku);
     await command.handler("", commandCtx());
 
-    const [[sent]] = (pi.sendUserMessage as ReturnType<typeof vi.fn>).mock.calls;
+    const [[sent]] = (pi.sendUserMessage as ReturnType<typeof vi.fn>).mock.calls as [[unknown]];
     expect(sent).toContain("[user] Write a haiku about MCP.");
     expect(sent).toContain("[assistant] Bridges of context…");
   });

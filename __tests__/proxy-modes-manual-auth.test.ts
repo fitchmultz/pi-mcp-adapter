@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -75,11 +76,11 @@ describe("manual OAuth proxy actions", () => {
       state.config.mcpServers.demo,
       { runtime: state.oauthRuntime },
     );
-    expect(result.content[0].text).toContain("Open this URL in your local browser");
-    expect(result.content[0].text).toContain("https://auth.example.com/authorize");
-    expect(result.content[0].text).toContain('mcp({ action: "auth-complete", server: "demo" })');
-    expect(result.content[0].text).toContain('args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" }');
-    expect(result.content[0].text).toContain('args: { code: "PASTE_CODE_HERE" }');
+    expect((result.content[0] as TextContent).text).toContain("Open this URL in your local browser");
+    expect((result.content[0] as TextContent).text).toContain("https://auth.example.com/authorize");
+    expect((result.content[0] as TextContent).text).toContain('mcp({ action: "auth-complete", server: "demo" })');
+    expect((result.content[0] as TextContent).text).toContain('args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" }');
+    expect((result.content[0] as TextContent).text).toContain('args: { code: "PASTE_CODE_HERE" }');
     expect(result.details).toMatchObject({ mode: "auth-start", server: "demo" });
   });
 
@@ -89,7 +90,7 @@ describe("manual OAuth proxy actions", () => {
     const result = await executeAuthStart(createState(), "bearer");
 
     expect(mocks.startAuth).not.toHaveBeenCalled();
-    expect(result.content[0].text).toContain("not configured for OAuth");
+    expect((result.content[0] as TextContent).text).toContain("not configured for OAuth");
     expect(result.details).toMatchObject({ error: "oauth_not_supported" });
   });
 
@@ -108,6 +109,6 @@ describe("manual OAuth proxy actions", () => {
     expect(state.manager.close).not.toHaveBeenCalled();
     expect(state.failureTracker.has("demo")).toBe(false);
     expect(mocks.updateStatusBar).toHaveBeenCalledWith(state);
-    expect(result.content[0].text).toContain("OAuth authentication successful");
+    expect((result.content[0] as TextContent).text).toContain("OAuth authentication successful");
   });
 });

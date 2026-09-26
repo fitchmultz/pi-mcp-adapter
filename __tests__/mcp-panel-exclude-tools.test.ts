@@ -23,7 +23,7 @@ describe("mcp-panel include/exclude tools", () => {
       },
     };
     const entry = {
-      configHash: computeServerHash(config.mcpServers.docs),
+      configHash: computeServerHash(config.mcpServers.docs!),
       cachedAt: Date.now(),
       tools: [
         { name: "search", description: "Search docs" },
@@ -59,14 +59,14 @@ describe("mcp-panel include/exclude tools", () => {
     expect(output).not.toMatch(/app_only|excluded|read_guide|read_secret/);
     panel.handleInput(" "); // pin all actual tools
     panel.handleInput("\x13");
-    expect(done.mock.calls[0][0].changes.get("docs")).toBe(true);
+    expect(done.mock.calls[0]![0].changes.get("docs")).toBe(true);
     panel.dispose();
   });
 
   it("omits resources disabled by policy and preserves legacy cache visibility", () => {
     const config: McpConfig = { mcpServers: { docs: { command: "node", exposeResources: false } } };
     const panel = createMcpPanel(config, { version: 1, servers: { docs: {
-      configHash: computeServerHash(config.mcpServers.docs), cachedAt: Date.now(),
+      configHash: computeServerHash(config.mcpServers.docs!), cachedAt: Date.now(),
       tools: [{ name: "search" }, { name: "app_only", uiVisibility: ["app"] }],
       resources: [{ name: "guide", uri: "docs://guide" }],
     } } }, new Map(), {
@@ -97,7 +97,7 @@ describe("mcp-panel include/exclude tools", () => {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma),
+          configHash: computeServerHash(config.mcpServers.figma!),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },
@@ -156,7 +156,7 @@ describe("mcp-panel include/exclude tools", () => {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma),
+          configHash: computeServerHash(config.mcpServers.figma!),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },
