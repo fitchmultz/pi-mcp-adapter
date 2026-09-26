@@ -4,6 +4,12 @@ import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 
+type CliMain = (argv: string[], log: (line: string) => void, error: (line: string) => void) => Promise<number>;
+
+async function loadMain(): Promise<CliMain> {
+  return (await import("../cli.js")).main;
+}
+
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
@@ -44,7 +50,7 @@ describe("cli init helper", () => {
 
     const logs: string[] = [];
     const errors: string[] = [];
-    const { main } = await import("../cli.js");
+    const main = await loadMain();
     const exitCode = await main(["init"], (line) => logs.push(line), (line) => errors.push(line));
 
     expect(exitCode).toBe(0);
@@ -69,7 +75,7 @@ describe("cli init helper", () => {
 
     const logs: string[] = [];
     const errors: string[] = [];
-    const { main } = await import("../cli.js");
+    const main = await loadMain();
     const exitCode = await main(["init", "--dry-run"], (line) => logs.push(line), (line) => errors.push(line));
 
     expect(exitCode).toBe(0);
@@ -96,7 +102,7 @@ describe("cli init helper", () => {
 
     const logs: string[] = [];
     const errors: string[] = [];
-    const { main } = await import("../cli.js");
+    const main = await loadMain();
     const exitCode = await main(["init", "--dry-run"], (line) => logs.push(line), (line) => errors.push(line));
 
     expect(exitCode).toBe(0);
@@ -118,7 +124,7 @@ describe("cli init helper", () => {
 
     const logs: string[] = [];
     const errors: string[] = [];
-    const { main } = await import("../cli.js");
+    const main = await loadMain();
     const exitCode = await main(["init", "--discover-host-configs"], (line) => logs.push(line), (line) => errors.push(line));
 
     expect(exitCode).toBe(0);
@@ -145,7 +151,7 @@ describe("cli init helper", () => {
 
     const logs: string[] = [];
     const errors: string[] = [];
-    const { main } = await import("../cli.js");
+    const main = await loadMain();
     const exitCode = await main(["init"], (line) => logs.push(line), (line) => errors.push(line));
 
     expect(exitCode).toBe(0);
@@ -184,7 +190,7 @@ describe("cli init helper", () => {
   it("explains that install now goes through `pi install`", async () => {
     const logs: string[] = [];
     const errors: string[] = [];
-    const { main } = await import("../cli.js");
+    const main = await loadMain();
     const exitCode = await main(["install"], (line) => logs.push(line), (line) => errors.push(line));
 
     expect(exitCode).toBe(1);

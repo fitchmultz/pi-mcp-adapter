@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall } from "../proxy-modes.ts";
@@ -96,8 +97,8 @@ describe("proxy and direct tool call parity", () => {
     // `mode` is the only field the proxy adds; everything else must match.
     expect(proxy.details).toEqual({ mode: "call", ...direct.details, resultRef: expect.any(String) });
     expect(direct.content.slice(0, 2)).toEqual(proxy.content.slice(0, 2));
-    expect(direct.content.at(-1)?.text).toContain(direct.details.resultRef);
-    expect(proxy.content.at(-1)?.text).toContain(proxy.details.resultRef);
+    expect((direct.content.at(-1) as TextContent | undefined)?.text).toContain(direct.details.resultRef);
+    expect((proxy.content.at(-1) as TextContent | undefined)?.text).toContain(proxy.details.resultRef);
   });
 
   it("does not format the input schema on the success path", async () => {

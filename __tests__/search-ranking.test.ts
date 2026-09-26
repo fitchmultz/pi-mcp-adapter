@@ -13,7 +13,7 @@ const tool = (name: string, description: string, originalName = name) => ({
 });
 
 function stateWithTools(tools: ToolMetadata[]): McpExtensionState {
-  return { config: { mcpServers: { demo: {} } }, toolMetadata: new Map([["demo", tools]]) } as McpExtensionState;
+  return { config: { mcpServers: { demo: {} } }, toolMetadata: new Map([["demo", tools]]) } as unknown as McpExtensionState;
 }
 
 describe("search ranking", () => {
@@ -25,9 +25,9 @@ describe("search ranking", () => {
     ]);
     // Same MiniSearch tokens without an exact identifier.
     const control = rankToolMatches(state, "linear save comment");
-    expect(control[0].tool.name).toBe("linear_save_diff_comment");
+    expect(control[0]!.tool.name).toBe("linear_save_diff_comment");
     const treatment = rankToolMatches(state, "linear_save_comment");
-    expect(treatment[0].tool.name).toBe("linear_save_comment");
+    expect(treatment[0]!.tool.name).toBe("linear_save_comment");
     expect(treatment.slice(1)).toEqual(control.filter(match => match.tool.name !== "linear_save_comment"));
     expect(rankToolMatches(state, "LINEAR_SAVE_COMMENT")).toEqual(control);
     expect(rankToolMatches(state, " linear_save_comment ")).toEqual(treatment);
@@ -41,17 +41,17 @@ describe("search ranking", () => {
       tool(`${server.replace("-", "_")}_list_pull_requests`, "Retrieve pull requests", "list_pull_requests"),
     ]]));
     const natural = rankToolMatches(state, "list pull requests");
-    expect(natural[0].tool.originalName).toBe("list_pull_requests_diff");
+    expect(natural[0]!.tool.originalName).toBe("list_pull_requests_diff");
     expect(rankToolMatches(state, "list_pull_requests")).toEqual(natural);
     expect(rankToolMatches(state, "list_pull_requests", "")).toEqual(natural);
     expect(paginate(rankToolMatches(state, "list_pull_requests", ""), 1, 1))
       .toEqual(paginate(rankToolMatches(state, "list_pull_requests"), 1, 1));
-    expect(rankToolMatches(state, "gh_list_pull_requests")[0].server).toBe("gh");
-    expect(rankToolMatches(state, "gh_personal_list_pull_requests")[0].server).toBe("gh-personal");
+    expect(rankToolMatches(state, "gh_list_pull_requests")[0]!.server).toBe("gh");
+    expect(rankToolMatches(state, "gh_personal_list_pull_requests")[0]!.server).toBe("gh-personal");
     for (const server of ["gh", "gh-personal"]) {
       const ranked = rankToolMatches(state, "list_pull_requests", server);
       const lexical = rankToolMatches(state, "list pull requests", server);
-      expect(ranked[0].tool.originalName).toBe("list_pull_requests");
+      expect(ranked[0]!.tool.originalName).toBe("list_pull_requests");
       expect(ranked.every(match => match.server === server)).toBe(true);
       expect(ranked.slice(1)).toEqual(lexical.filter(match => match.tool.originalName !== "list_pull_requests"));
     }
@@ -74,7 +74,7 @@ describe("search ranking", () => {
     expect(rankToolMatches(state, "save_comment")).toEqual([
       ...exact, ...lexical.filter(match => match.tool.name !== "save_comment"),
     ]);
-    expect(rankToolMatches(state, "save_comment", "personal")[0].server).toBe("personal");
+    expect(rankToolMatches(state, "save_comment", "personal")[0]!.server).toBe("personal");
   });
 
   it("ranks a name match above a description match", () => {

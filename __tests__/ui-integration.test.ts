@@ -10,7 +10,7 @@ import { startUiServer, type UiServerHandle } from "../ui-server.ts";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 import { ConsentManager } from "../consent-manager.ts";
 import type { McpServerManager } from "../server-manager.ts";
-import type { UiResourceContent, UiSessionMessages } from "../types.ts";
+import type { UiResourceContent, UiResourcePermissions, UiSessionMessages } from "../types.ts";
 
 // Helper to make HTTP requests
 async function request(
@@ -215,10 +215,10 @@ describe("MCP UI Integration", () => {
         uri: "ui://test/app",
         html: "<h1>Test App</h1>",
         mimeType: "text/html",
-        meta: { permissions: [] },
+        meta: { permissions: [] as UiResourcePermissions },
       };
 
-      const receivedMessages: UiSessionMessages = { prompts: [], notifications: [], intents: [] };
+      const receivedMessages: Omit<UiSessionMessages, "contexts"> = { prompts: [], notifications: [], intents: [] };
       const onMessage = vi.fn().mockImplementation((params) => {
         if (params.type === "prompt") receivedMessages.prompts.push(params.prompt);
       });
@@ -262,7 +262,7 @@ describe("MCP UI Integration", () => {
         uri: "ui://test/chat",
         html: "<div id='chat'></div>",
         mimeType: "text/html",
-        meta: { permissions: [] },
+        meta: { permissions: [] as UiResourcePermissions },
       };
 
       handle = await startUiServer({
@@ -303,7 +303,7 @@ describe("MCP UI Integration", () => {
         uri: "ui://test/app",
         html: "<h1>App</h1>",
         mimeType: "text/html",
-        meta: { permissions: [] },
+        meta: { permissions: [] as UiResourcePermissions },
       };
 
       handle = await startUiServer({
@@ -337,7 +337,7 @@ describe("MCP UI Integration", () => {
         uri: "ui://test/app",
         html: "<h1>App</h1>",
         mimeType: "text/html",
-        meta: { permissions: [] },
+        meta: { permissions: [] as UiResourcePermissions },
       };
 
       handle = await startUiServer({
@@ -407,7 +407,7 @@ describe("MCP UI Integration", () => {
           uri: "ui://test/app",
           html: "<h1>App</h1>",
           mimeType: "text/html",
-          meta: { permissions: [] },
+          meta: { permissions: [] as UiResourcePermissions },
         },
         manager,
         consentManager,
@@ -435,7 +435,7 @@ describe("MCP UI Integration", () => {
           uri: "ui://test/app",
           html: "<h1>App</h1>",
           mimeType: "text/html",
-          meta: { permissions: [] },
+          meta: { permissions: [] as UiResourcePermissions },
         },
         manager,
         consentManager,
@@ -477,7 +477,7 @@ describe("MCP UI Integration", () => {
           uri: "ui://test/app",
           html: "<h1>App</h1>",
           mimeType: "text/html",
-          meta: { permissions: [] },
+          meta: { permissions: [] as UiResourcePermissions },
         },
         manager,
         consentManager,
@@ -509,7 +509,7 @@ describe("MCP UI Integration", () => {
           uri: "ui://test/app",
           html: "<h1>App</h1>",
           mimeType: "text/html",
-          meta: { permissions: [] },
+          meta: { permissions: [] as UiResourcePermissions },
         },
         manager,
         consentManager,
@@ -536,7 +536,7 @@ describe("MCP UI Integration", () => {
           uri: "ui://test/app",
           html: "<h1>App</h1>",
           mimeType: "text/html",
-          meta: { permissions: [] },
+          meta: { permissions: [] as UiResourcePermissions },
         },
         manager,
         consentManager,

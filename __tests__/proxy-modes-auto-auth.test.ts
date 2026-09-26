@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -140,8 +141,8 @@ describe("proxy auto auth", () => {
     expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, undefined);
     expect(manager.connect).not.toHaveBeenCalled();
     expect(result.details).toMatchObject({ mode: "list", server: "demo", count: 13 });
-    expect(result.content[0].text).toContain("demo_fresh");
-    expect(result.content[0].text).toContain('mcp({ action: "list", server: "demo", limit: 12, offset: 12 })');
+    expect((result.content[0] as TextContent).text).toContain("demo_fresh");
+    expect((result.content[0] as TextContent).text).toContain('mcp({ action: "list", server: "demo", limit: 12, offset: 12 })');
     expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({ originalName: "fresh" });
   });
 
@@ -196,7 +197,7 @@ describe("proxy auto auth", () => {
       name: "mcp__demo_search",
       originalName: "search",
     });
-    expect(result.content[0].text).toContain("demo (1 tools)");
+    expect((result.content[0] as TextContent).text).toContain("demo (1 tools)");
   });
 
   it("fails fast for non-ui browser auth when autoAuth is enabled", async () => {
@@ -224,8 +225,8 @@ describe("proxy auto auth", () => {
     const result = await executeConnect(state, "demo");
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
-    expect(result.content[0].text).toContain("auth-start");
-    expect(result.content[0].text).toContain("/mcp-auth demo");
+    expect((result.content[0] as TextContent).text).toContain("auth-start");
+    expect((result.content[0] as TextContent).text).toContain("/mcp-auth demo");
   });
 
   it("uses custom authRequiredMessage for non-ui autoAuth failures", async () => {
@@ -254,7 +255,7 @@ describe("proxy auto auth", () => {
     const result = await executeConnect(state, "demo");
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
-    expect(result.content[0].text).toBe("Reconnect demo from the host app.");
+    expect((result.content[0] as TextContent).text).toBe("Reconnect demo from the host app.");
   });
 
   it("runs URL elicitations returned by proxy tool calls", async () => {
@@ -378,7 +379,7 @@ describe("proxy auto auth", () => {
       },
       { timeout: 1234, signal: expect.any(AbortSignal) },
     );
-    expect(result.content[0].text).toContain("ok");
+    expect((result.content[0] as TextContent).text).toContain("ok");
   });
 
   it("rethrows proxy auto-auth cancellation", async () => {
@@ -456,7 +457,7 @@ describe("proxy auto auth", () => {
       { ...requestOptions, signal: expect.any(AbortSignal) },
     );
     expect(result.details).toMatchObject({ error: "aborted", message: "request aborted" });
-    expect(result.content[0].text).toContain("request aborted");
+    expect((result.content[0] as TextContent).text).toContain("request aborted");
   });
 
   it("preserves owner cancellation during a proxy tool call", async () => {
@@ -563,7 +564,7 @@ describe("proxy auto auth", () => {
       { name: "search", arguments: { q: "two" }, _meta: undefined },
       { timeout: 5000, signal: expect.any(AbortSignal) },
     );
-    expect(first.content[0].text).toContain("ok");
-    expect(second.content[0].text).toContain("ok");
+    expect((first.content[0] as TextContent).text).toContain("ok");
+    expect((second.content[0] as TextContent).text).toContain("ok");
   });
 });

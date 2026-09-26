@@ -19,7 +19,7 @@ function fakeTransport(overrides: Partial<Transport> = {}): Transport {
 describe("MCP protocol tracing", () => {
   it("is disabled unless global or per-server tracing is explicitly enabled", () => {
     expect(isMcpTraceEnabled({}, undefined)).toBe(false);
-    expect(isMcpTraceEnabled({ debug: true }, undefined)).toBe(false);
+    expect(isMcpTraceEnabled({ debug: true } as { trace?: boolean }, undefined)).toBe(false);
     expect(isMcpTraceEnabled({ trace: false }, { enabled: true })).toBe(false);
     expect(isMcpTraceEnabled({}, { enabled: true })).toBe(true);
     expect(isMcpTraceEnabled({ trace: true }, undefined)).toBe(true);

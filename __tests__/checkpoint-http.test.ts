@@ -60,7 +60,7 @@ function host() {
   const ui = {
     setStatus: vi.fn(), notify: vi.fn(),
     confirm: vi.fn(async () => true),
-    select: vi.fn(async (title: string) => title.startsWith("Review") ? "Submit" : "Continue"),
+    select: vi.fn(async (title: string): Promise<string> => title.startsWith("Review") ? "Submit" : "Continue"),
     input: vi.fn(async () => "synthetic"),
   };
   const modelRegistry = {
@@ -583,7 +583,7 @@ it.each(["readiness", "final shutdown"])("owns initial detached GET token reads 
   const f = await wire({ oauth: true, inbound: true });
   const gate = deferred(); let entered = false;
   const tokens = McpOAuthProvider.prototype.tokens;
-  vi.spyOn(McpOAuthProvider.prototype, "tokens").mockImplementation(async function (...args) {
+  vi.spyOn(McpOAuthProvider.prototype, "tokens").mockImplementation(async function (this: McpOAuthProvider, ...args) {
     // Native initialized send launches GET synchronously before returning to discovery.
     if (!entered && f.methods.includes("notifications/initialized")) {
       entered = true; await gate.promise;
@@ -623,12 +623,12 @@ it.each([false, true])("fences reconnect auth and joins post-401 persistence (cl
   const cut = hold(); expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true });
   let readBeforeInvalidation = false;
   const tokens = McpOAuthProvider.prototype.tokens;
-  vi.spyOn(McpOAuthProvider.prototype, "tokens").mockImplementation(function (...args) {
+  vi.spyOn(McpOAuthProvider.prototype, "tokens").mockImplementation(function (this: McpOAuthProvider, ...args) {
     if (!cut.event.signal.aborted) readBeforeInvalidation = true;
     return tokens.apply(this, args);
   });
   const saveTokens = McpOAuthProvider.prototype.saveTokens;
-  vi.spyOn(McpOAuthProvider.prototype, "saveTokens").mockImplementation(async function (...args) {
+  vi.spyOn(McpOAuthProvider.prototype, "saveTokens").mockImplementation(async function (this: McpOAuthProvider, ...args) {
     entered = true; await gate.promise;
     return saveTokens.apply(this, args);
   });
@@ -650,7 +650,7 @@ it("owns a background auth response body after fetch headers have arrived", asyn
   await expect.poll(f.streamReady).toBe(true);
   const read = Response.prototype.json; const gate = deferred(); let entered = false;
   cleanups.push(async () => gate.resolve());
-  vi.spyOn(Response.prototype, "json").mockImplementation(async function () {
+  vi.spyOn(Response.prototype, "json").mockImplementation(async function (this: Response) {
     if (this.url === f.origin + "/token") { entered = true; await gate.promise; }
     return read.call(this);
   });
@@ -710,7 +710,7 @@ it("does not couple optional trace path failures to repeated recovery or clean s
   f.config.settings!.trace = { enabled: true, file: join(parent, "trace.jsonl") };
   const state = await runtime(f.config);
   for (let i = 0; i < 3; i++) {
-    const cut = hold(); cut.event.boundary = "turn";
+    const cut = hold(); (cut.event as { boundary: McpCheckpointEvent["boundary"] }).boundary = "turn";
     expect(await prepareMcpCheckpoint(state, cut.event)).toEqual({ sleepReady: true }); cut.release();
   }
   await state.manager.getConnection(f.name)!.client.callTool({ name: "echo", arguments: {} });

@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { createMcpAdapter } from "../index.ts";
@@ -12,7 +13,7 @@ let state: McpExtensionState;
 
 function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] {
   return result.content
-    .filter((block) => block.type === "text" && !block.text.startsWith("[MCP result saved:"))
+    .filter((block): block is TextContent => block.type === "text" && !block.text.startsWith("[MCP result saved:"))
     .map((block) => block.text);
 }
 
@@ -363,7 +364,7 @@ describe("runMcpScript", () => {
       return { message, globals: [typeof require, typeof fetch, typeof process] };`,
     );
 
-    expect(JSON.parse(textBlocks(result)[0])).toEqual({
+    expect(JSON.parse(textBlocks(result)[0]!)).toEqual({
       message: "tools is not enumerable — use tools.search({ query })",
       globals: ["undefined", "undefined", "undefined"],
     });

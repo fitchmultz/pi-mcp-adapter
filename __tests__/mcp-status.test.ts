@@ -5,6 +5,7 @@ import {
   publishMcpStatusShutdown,
   publishMcpStatusSnapshot,
 } from "../mcp-status.ts";
+import type { McpStatusSnapshot } from "../types.ts";
 
 function createState() {
   const manager = {
@@ -91,10 +92,10 @@ describe("MCP status snapshots", () => {
 
   it("publishes fresh snapshots and isolates event listener failures", () => {
     const state = createState();
-    const emitted: unknown[] = [];
+    const emitted: McpStatusSnapshot[] = [];
     state.statusEvents = {
       emit: vi.fn((_channel: string, payload: unknown) => {
-        emitted.push(payload);
+        emitted.push(payload as McpStatusSnapshot);
         throw new Error("consumer failed");
       }),
     };
@@ -103,6 +104,6 @@ describe("MCP status snapshots", () => {
     publishMcpStatusSnapshot(state);
     expect(state.statusEvents.emit).toHaveBeenCalledWith(MCP_STATUS_EVENT, emitted[0]);
     expect(emitted[0]).not.toBe(emitted[1]);
-    expect(emitted[0].servers).not.toBe(emitted[1].servers);
+    expect(emitted[0]!.servers).not.toBe(emitted[1]!.servers);
   });
 });

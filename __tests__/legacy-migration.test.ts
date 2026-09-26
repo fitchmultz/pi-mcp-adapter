@@ -75,7 +75,7 @@ describe("explicit pre-v5 state migration", () => {
     expect(Object.keys(loadMcpConfig(undefined, project).mcpServers).sort()).toEqual(["global", "project"]);
     writeProjectServerDisabledOverride(undefined, project, "global", true);
     saveMetadataCache({ version: 1, servers: {} });
-    expect(loadMcpConfig(undefined, project).mcpServers.global.disabled).toBe(true);
+    expect(loadMcpConfig(undefined, project).mcpServers.global!.disabled).toBe(true);
     for (const [path, contents] of sourceFiles) expect(readFileSync(path, "utf8")).toBe(contents);
   });
 
@@ -86,7 +86,7 @@ describe("explicit pre-v5 state migration", () => {
     write(destination, independent);
     const { migrateLegacyState } = await import("../legacy-migration.ts");
     for (let run = 0; run < 2; run++) {
-      expect(migrateLegacyState({ cwd: project }).files[0].status).toBe("existing");
+      expect(migrateLegacyState({ cwd: project }).files[0]!.status).toBe("existing");
       expect(readFileSync(destination, "utf8")).toBe(independent);
       expect(readFileSync(join(agent, "mcp.json"), "utf8")).toBe(globalConfig);
     }

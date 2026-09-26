@@ -593,7 +593,7 @@ describe("config discovery", () => {
       kind: "import",
       importKind: "cursor",
     });
-    expect(config.mcpServers.shared.headers).toBeUndefined();
+    expect(config.mcpServers.shared!.headers).toBeUndefined();
   });
 
   it("reports the deterministic winning host provenance for same-name servers", async () => {
@@ -891,7 +891,7 @@ describe("config discovery", () => {
     });
 
     const { loadMcpConfig } = await import("../config.ts");
-    const entry = loadMcpConfig().mcpServers.payroll;
+    const entry = loadMcpConfig().mcpServers.payroll!;
     expect(entry).toMatchObject({ ...override, lifecycle: "eager" });
     expect(entry.env).toBeUndefined();
   });
@@ -930,7 +930,7 @@ describe("config discovery", () => {
     const config = loadMcpConfig();
 
     expect(config.mcpServers.litellm).toEqual({ url: URL_B });
-    expect(config.mcpServers.litellm.headers).toBeUndefined();
+    expect(config.mcpServers.litellm!.headers).toBeUndefined();
   });
 
   it("keeps only the new auth when a higher-precedence override changes both url and headers", async () => {
@@ -972,7 +972,7 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const config = loadMcpConfig();
 
-    const entry = config.mcpServers.litellm;
+    const entry = config.mcpServers.litellm!;
     expect(entry.url).toBe(URL_B);
     expect(entry.headers).toBeUndefined();
     expect(entry.bearerTokenEnv).toBeUndefined();
@@ -996,7 +996,7 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const config = loadMcpConfig();
 
-    const entry = config.mcpServers.litellm;
+    const entry = config.mcpServers.litellm!;
     expect(entry).toEqual({ url: URL_B });
     expect(entry.bearerToken).toBeUndefined();
     expect(JSON.stringify(entry)).not.toContain("secret-bearer-token");
@@ -1015,7 +1015,7 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const config = loadMcpConfig();
 
-    const entry = config.mcpServers.litellm;
+    const entry = config.mcpServers.litellm!;
     expect(entry).toEqual({ url: URL_B });
     expect(entry.oauth).toBeUndefined();
     expect(JSON.stringify(entry)).not.toContain("oauth-client-secret");
@@ -1060,7 +1060,7 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const config = loadMcpConfig();
 
-    const entry = config.mcpServers.litellm;
+    const entry = config.mcpServers.litellm!;
     expect(entry).toEqual({ url: URL_B });
     expect(entry.headers).toBeUndefined();
     expect(JSON.stringify(entry)).not.toContain("secret-vk");
@@ -1200,7 +1200,7 @@ describe("config discovery", () => {
     const provenance = getServerProvenance();
 
     writeDirectToolsConfig(
-      new Map([
+      new Map<string, true | string[] | false>([
         ["genericServer", true],
         ["projectServer", ["search"]],
       ]),

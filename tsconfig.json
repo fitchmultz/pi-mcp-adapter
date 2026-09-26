@@ -14,5 +14,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "__tests__/**/*.ts"]
 }

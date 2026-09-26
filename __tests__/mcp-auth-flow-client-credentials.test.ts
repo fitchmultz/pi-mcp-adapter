@@ -140,7 +140,7 @@ describe("mcp-auth-flow explicit auth", () => {
       `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://auth.example.com")}`,
     )).resolves.toBe("authenticated");
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(2);
-    expect(mocks.sdkAuth.mock.calls[1][1].iss).toBe("https://auth.example.com");
+    expect(mocks.sdkAuth.mock.calls[1]![1].iss).toBe("https://auth.example.com");
     expect(hasPendingAuth("rfc9207-missing")).toBe(false);
   });
 
@@ -575,7 +575,7 @@ describe("mcp-auth-flow explicit auth", () => {
       serverUrl: "https://api.example.com/mcp",
       authorizationCode: "manual-code",
     });
-    expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(mocks.waitForCallback.mock.calls[0][0]);
+    expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(mocks.waitForCallback.mock.calls[0]![0]);
     expect(getOAuthState("browser-fail")).toBeUndefined();
   });
 

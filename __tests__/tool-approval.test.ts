@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeDescribe, executeSearch } from "../proxy-modes.ts";
@@ -72,7 +73,7 @@ describe("tool approval", () => {
     ];
 
     for (const { config, meta } of cases) {
-      expect(isToolCallApprovalRequired(config, Object.keys(config.mcpServers)[0], meta)).toBe(true);
+      expect(isToolCallApprovalRequired(config, Object.keys(config.mcpServers)[0]!, meta)).toBe(true);
     }
   });
 
@@ -87,7 +88,7 @@ describe("tool approval", () => {
       server: "demo",
       tool: "search-records",
     });
-    expect(result.content[0].text).toContain("approval-gated");
+    expect((result.content[0] as TextContent).text).toContain("approval-gated");
     expect(callTool).not.toHaveBeenCalled();
   });
 
@@ -141,7 +142,7 @@ describe("tool approval", () => {
   it("marks gated tools in describe and search output without hiding them", () => {
     const { state } = createState({ approveTools: true });
 
-    expect(JSON.parse(executeDescribe(state, tool.name).content[0].text!)).toMatchObject({ name: "search-records", approvalRequired: true });
-    expect(executeSearch(state, "search", undefined, false).content[0].text).toContain("(requires approval)");
+    expect(JSON.parse((executeDescribe(state, tool.name).content[0] as TextContent).text)).toMatchObject({ name: "search-records", approvalRequired: true });
+    expect((executeSearch(state, "search", undefined, false).content[0] as TextContent).text).toContain("(requires approval)");
   });
 });

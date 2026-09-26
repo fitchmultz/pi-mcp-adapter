@@ -43,6 +43,6 @@ try {
   await session.reload();
   await session.extensionRunner.emit({ type: "agent_start" });
 } finally {
-  await session.extensionRunner.emit({ type: "session_shutdown", reason: "test" });
+  await session.extensionRunner.emit({ type: "session_shutdown", reason: "test" as "quit" });
   session.dispose();
 }

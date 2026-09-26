@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { abortable } from "../abort.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
@@ -67,7 +68,7 @@ describe("AbortSignal propagation", () => {
     controller.abort(new Error("user cancelled"));
 
     const result = await inFlight;
-    expect(result.content[0].text).toContain("Failed to call tool: user cancelled");
+    expect((result.content[0] as TextContent).text).toContain("Failed to call tool: user cancelled");
     expect(result.details.error).toBe("aborted");
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },
@@ -86,7 +87,7 @@ describe("AbortSignal propagation", () => {
     controller.abort(new Error("user cancelled"));
 
     const result = await inFlight;
-    expect(result.content[0].text).toContain("Failed to call tool: user cancelled");
+    expect((result.content[0] as TextContent).text).toContain("Failed to call tool: user cancelled");
     expect(result.details.error).toBe("aborted");
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },

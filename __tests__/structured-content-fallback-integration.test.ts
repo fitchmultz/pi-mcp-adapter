@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // End-to-end coverage for the structuredContent fallback.
@@ -62,7 +63,7 @@ describe("structuredContent fallback — direct tool executor", () => {
 
     const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
 
-    expect(result.content[0].text).toBe(JSON.stringify(structured, null, 2));
+    expect((result.content[0] as TextContent).text).toBe(JSON.stringify(structured, null, 2));
     expect(textOf(result)).toContain(result.details.resultRef);
     expect(textOf(result)).not.toContain("(empty result)");
   });

@@ -26,7 +26,7 @@ describe("MCP status failure reasons", () => {
       expect.stringContaining("demo: failed 7s ago — stderr says server failed"),
       "info",
     );
-    expect(ui.notify.mock.calls[0][0]).not.toContain("https://secret.invalid/status");
+    expect(ui.notify.mock.calls[0]![0]).not.toContain("https://secret.invalid/status");
   });
 
   it("reports real tool and resource counts while leaving cold catalogs undiscovered", async () => {
@@ -43,17 +43,17 @@ describe("MCP status failure reasons", () => {
       ]]]),
     };
     await showStatus(state as any, { hasUI: true, ui } as any);
-    const status = ui.notify.mock.calls[0][0];
+    const status = ui.notify.mock.calls[0]![0];
     expect(status).toContain("docs: cached (1 tool, 1 resource, cached)");
     expect(status).toContain("cold: not connected (undiscovered)");
     expect(status).not.toContain("0 tools");
     await showTools(state as any, { hasUI: true, ui } as any);
-    expect(ui.notify.mock.calls[1][0]).toContain("docs_search");
-    expect(ui.notify.mock.calls[1][0]).toContain("Total: 1 tool");
-    expect(ui.notify.mock.calls[1][0]).not.toContain("docs_read_guide");
+    expect(ui.notify.mock.calls[1]![0]).toContain("docs_search");
+    expect(ui.notify.mock.calls[1]![0]).toContain("Total: 1 tool");
+    expect(ui.notify.mock.calls[1]![0]).not.toContain("docs_read_guide");
     state.toolMetadata.clear();
     await showTools(state as any, { hasUI: true, ui } as any);
-    expect(ui.notify.mock.calls[2][0]).toBe("No MCP tools discovered. Use mcp_search to discover tools.");
+    expect(ui.notify.mock.calls[2]![0]).toBe("No MCP tools discovered. Use mcp_search to discover tools.");
   });
 
   it("sanitizes captured diagnostics in reconnect notifications", async () => {
@@ -70,6 +70,6 @@ describe("MCP status failure reasons", () => {
     } as any, { hasUI: true, ui } as any, "demo");
 
     expect(ui.notify).toHaveBeenCalledWith("MCP: Failed to reconnect to demo: stderr server failed", "error");
-    expect(ui.notify.mock.calls[0][0]).not.toContain("clipboard-secret");
+    expect(ui.notify.mock.calls[0]![0]).not.toContain("clipboard-secret");
   });
 });

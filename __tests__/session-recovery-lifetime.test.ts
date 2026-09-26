@@ -84,7 +84,7 @@ async function fixture(handler: (e: Exchange) => boolean | void = () => {}) {
   } as unknown as McpExtensionState;
   const calls = (name: string) => requests.filter(e => e.body.method === "tools/call" && e.body.params.name === name);
   const call = (name: string, signal?: AbortSignal) => withSessionRecovery(
-    { manager, config: state.config, signal }, "local",
+    { manager, config: state.config, signal: signal as AbortSignal }, "local",
     connection => connection.client.callTool({ name }, manager.getRequestOptions("local", signal)),
   );
   return { manager, state, definition, requests, executions, calls, call, sessions: () => sessions };
@@ -196,14 +196,14 @@ describe("native session replacement lifetime", () => {
     expect(await replacing).toMatchObject({ status: "fulfilled" });
     expect(await pending).toMatchObject({ status: "fulfilled" });
     expect(f.calls("effect")).toHaveLength(1);
-    expect(f.calls("effect")[0].req.headers["mcp-session-id"]).toBe("session-2");
+    expect(f.calls("effect")[0]!.req.headers["mcp-session-id"]).toBe("session-2");
   });
 
   it.each(["tool", "resource"])("drains a complete %s operation started before its first native request", async kind => {
     const f = await fixture();
     const old = await f.manager.connect("local", f.definition);
     const request = vi.spyOn(old.client, "request");
-    const operation = settle(kind === "tool"
+    const operation = settle<unknown>(kind === "tool"
       ? old.client.callTool({ name: "effect" })
       : old.client.readResource({ uri: "test://document" }));
     expect(request).not.toHaveBeenCalled();
@@ -374,14 +374,14 @@ describe("native session replacement lifetime", () => {
     const listTools = Client.prototype.listTools;
     let closing: Promise<void> | undefined;
     let closed = false;
-    vi.spyOn(Client.prototype, "listTools").mockImplementation(function (...args) {
+    vi.spyOn(Client.prototype, "listTools").mockImplementation(function (this: Client, ...args) {
       return listTools.apply(this, args).then(value => {
         closing = f.manager.close("local").then(() => { closed = true; });
         return value;
       });
     });
     const nativeClose = Client.prototype.close;
-    const close = vi.spyOn(Client.prototype, "close").mockImplementation(async function () {
+    const close = vi.spyOn(Client.prototype, "close").mockImplementation(async function (this: Client) {
       disposing.resolve();
       await release.promise;
       await nativeClose.call(this);

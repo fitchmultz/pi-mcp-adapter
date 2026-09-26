@@ -8,6 +8,10 @@ import { runMcpScript } from "../mcp-code.ts";
 import { resolveMcpResultContent } from "../tool-registrar.ts";
 import * as output from "../mcp-output-guard.ts";
 import * as resources from "../resource-tools.ts";
+import type { TextContent } from "@earendil-works/pi-ai";
+
+type ReadPage = Awaited<ReturnType<typeof output.readMcpResult>>;
+type ReadSuccess = ReadPage & { details: Extract<ReadPage["details"], { nextOffset: unknown }> };
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -75,7 +79,7 @@ describe("MCP execution redesign", () => {
     let offset = 0;
     let joined = "";
     for (let i = 0; i < 100; i++) {
-      const page = await output.readMcpResult({ ...input, offset }, { outputDirectory: state.outputDirectory, maxLines: 1 });
+      const page = await output.readMcpResult({ ...input, offset }, { outputDirectory: state.outputDirectory, maxLines: 1 }) as ReadSuccess;
       expect(page.details.error).toBeUndefined();
       joined += page.content[0]!.text;
       if (page.details.nextOffset === null) break;
@@ -102,7 +106,7 @@ describe("MCP execution redesign", () => {
     connection.resources = [{ name: "notes", uri: "test://notes" }] as any;
     expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({ items: [{ uri: "test://notes" }] });
     const script = await runMcpScript(state, 'const list = await tools.resources({ server: "demo" }); const read = await tools.readResource({ server: "demo", uri: list.items[0].uri }); return read;');
-    expect(JSON.parse(script.content[0].text)).toMatchObject({ ok: true, data: { contents: [{ uri: "test://notes", text: "notes" }] } });
+    expect(JSON.parse((script.content[0] as TextContent).text)).toMatchObject({ ok: true, data: { contents: [{ uri: "test://notes", text: "notes" }] } });
     expect((await executeCall(state, "demo_read_notes")).details.error).toBeUndefined();
     for (const policy of [{ exposeResources: false }, { excludeTools: ["read_notes"] }, { includeTools: ["echo"] }]) {
       state.config.mcpServers.demo = { command: "fixture", ...policy };
@@ -118,7 +122,7 @@ describe("MCP execution redesign", () => {
     state.toolMetadata.set("demo", [descriptor]);
     state.config.mcpServers.unknown = { command: "not contacted" };
     const result = await runMcpScript(state, 'return { found: await tools.describe({ path: "demo_echo" }), search: await tools.search({ query: "Echo" }) };');
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = JSON.parse((result.content[0] as TextContent).text);
     const { originalName: _originalName, name: _name, ...fields } = descriptor;
     expect(parsed.found).toEqual({ ...fields, name: "echo", path: "demo_echo", server: "demo" });
     expect(parsed.search.coverage).toEqual({ complete: false, knownServers: ["demo"], unknownServers: ["unknown"] });
@@ -131,12 +135,12 @@ describe("MCP execution redesign", () => {
     state.manager.getConnection = (server: string) => server === "demo" ? connection : undefined;
     state.manager.connect = vi.fn(async () => connection);
     const result = await runMcpScript(state, 'return await tools.search({ query: "Echo", server: "cold" });');
-    expect(JSON.parse(result.content[0].text)).toMatchObject({ items: [{ path: "cold_echo" }], coverage: { complete: true, knownServers: ["cold"], unknownServers: [] } });
+    expect(JSON.parse((result.content[0] as TextContent).text)).toMatchObject({ items: [{ path: "cold_echo" }], coverage: { complete: true, knownServers: ["cold"], unknownServers: [] } });
     expect(state.manager.connect.mock.calls.map((call: unknown[]) => call[0])).toEqual(["cold"]);
     state.toolMetadata.delete("cold");
     state.manager.connect.mockResolvedValue({ status: "needs-auth" });
     const failed = await runMcpScript(state, 'return await tools.search({ query: "Echo", server: "cold" });');
-    expect(JSON.parse(failed.content[0].text)).toMatchObject({ error: { code: "auth_required" }, coverage: { complete: false, unknownServers: ["cold"] } });
+    expect(JSON.parse((failed.content[0] as TextContent).text)).toMatchObject({ error: { code: "auth_required" }, coverage: { complete: false, unknownServers: ["cold"] } });
     expect(failed.details.calls).toMatchObject([{ operation: "search", ok: false, error: "auth_required" }]);
   });
 
@@ -147,7 +151,7 @@ describe("MCP execution redesign", () => {
     expect((await executeCall(state, "demo_a_b", {})).details.error).toBe("ambiguous_tool");
     expect(connection.client.callTool).not.toHaveBeenCalled();
     const script = await runMcpScript(state, 'return await tools.call("a_b", {}, "demo");');
-    expect(JSON.parse(script.content[0].text).ok).toBe(true);
+    expect(JSON.parse((script.content[0] as TextContent).text).ok).toBe(true);
     expect(connection.client.callTool).toHaveBeenCalledWith(expect.objectContaining({ name: "a_b" }), expect.anything());
   });
 
@@ -185,7 +189,7 @@ describe("MCP execution redesign", () => {
     const raw = { isError: true, content: [{ type: "text", text: "Declined" }], structuredContent: { reason: "quota", remaining: 0 } };
     const { state, connection } = await fixture(raw);
     const result = await runMcpScript(state, 'return await tools.demo_echo({});');
-    expect(JSON.parse(result.content[0].text)).toMatchObject({ ok: false, data: raw, error: { code: "tool_error" } });
+    expect(JSON.parse((result.content[0] as TextContent).text)).toMatchObject({ ok: false, data: raw, error: { code: "tool_error" } });
     expect(connection.client.callTool).toHaveBeenCalledTimes(1);
   });
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpConfig } from "../types.ts";
+import type { MetadataCache } from "../metadata-cache.ts";
 
 const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn(),
@@ -10,14 +11,14 @@ const mocks = vi.hoisted(() => ({
   initializeOAuth: vi.fn().mockResolvedValue(undefined),
   createOAuthRuntime: vi.fn((signal: AbortSignal) => ({ signal })),
   shutdownOAuth: vi.fn().mockResolvedValue(undefined),
-  loadMcpConfig: vi.fn(() => ({ mcpServers: {} })),
+  loadMcpConfig: vi.fn((_path: string | undefined, _cwd: string, _options: { includeProject?: boolean }): McpConfig => ({ mcpServers: {} })),
   cloneMcpConfig: vi.fn((config: unknown) => structuredClone(config)),
   isPathInsideProject: vi.fn(() => false),
   getMetadataCachePath: vi.fn(() => "/global/mcp-cache.json"),
-  loadMetadataCache: vi.fn(() => null),
-  buildProxyDescription: vi.fn(() => "MCP gateway"),
+  loadMetadataCache: vi.fn((): MetadataCache | null => null),
+  buildProxyDescription: vi.fn((_config: McpConfig) => "MCP gateway"),
   createDirectToolExecutor: vi.fn(() => vi.fn()),
-  getMissingConfiguredDirectToolServers: vi.fn(() => []),
+  getMissingConfiguredDirectToolServers: vi.fn((): string[] => []),
   showStatus: vi.fn(),
   showTools: vi.fn(),
   showPrompts: vi.fn(),
@@ -240,7 +241,7 @@ describe("mcpAdapter session lifecycle", () => {
     const state = createState();
     state.config = config;
     const schema = { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object", properties: { query: { type: "string", description: "Query" } }, additionalProperties: false };
-    const initialization = createDeferred(state);
+    const initialization = createDeferred<typeof state>();
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["demo"]);
     mocks.initializeMcp.mockReturnValue(initialization.promise);
@@ -314,7 +315,7 @@ describe("mcpAdapter session lifecycle", () => {
     const { computeServerHash } = await import("../metadata-cache.ts");
     const state = createState();
     state.config = config;
-    const init = createDeferred(state);
+    const init = createDeferred<typeof state>();
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.initializeMcp.mockReturnValue(init.promise);
     mocks.loadMetadataCache.mockReturnValue({ version: 2, servers: { demo: {
@@ -593,7 +594,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "memory_search" }));
     expect(api.getActiveTools()).not.toContain("mcp");
     expect(mocks.initializeMcp).toHaveBeenCalledWith(api, expect.any(Object), expect.any(Object), expect.objectContaining({ config: expect.objectContaining({ mcpServers: config.mcpServers }) }));
-    expect(mocks.initializeMcp.mock.calls[0][3].config).not.toBe(config);
+    expect(mocks.initializeMcp.mock.calls[0]![3].config).not.toBe(config);
   });
 
   it.each([false, true])("transforms each session's resolved config before registration and initialization (snapshot=%s)", async (snapshot) => {
@@ -861,7 +862,7 @@ describe("mcpAdapter session lifecycle", () => {
     await sessionStart?.({}, {});
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
     expect(mocks.shutdownOAuth).not.toHaveBeenCalled();
-    const firstRuntime = mocks.createOAuthRuntime.mock.results[0].value;
+    const firstRuntime = mocks.createOAuthRuntime.mock.results[0]!.value;
 
     await sessionStart?.({}, {});
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
@@ -1285,7 +1286,7 @@ describe("mcpAdapter session lifecycle", () => {
       await handlers.get("session_start")?.({}, {});
       await new Promise((resolve) => setImmediate(resolve));
 
-      expect(mocks.createOAuthRuntime.mock.results[0].value.signal.aborted).toBe(true);
+      expect(mocks.createOAuthRuntime.mock.results[0]!.value.signal.aborted).toBe(true);
     } finally {
       consoleError.mockRestore();
     }

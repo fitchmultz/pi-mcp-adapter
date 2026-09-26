@@ -11,7 +11,7 @@ import {
 } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { formatToolName } from "../types.ts";
-import type { McpConfig } from "../types.ts";
+import type { McpConfig, ServerEntry } from "../types.ts";
 import { reconstructToolMetadata } from "../metadata-cache.ts";
 
 const originalHashEnv = {
@@ -250,7 +250,7 @@ describe("direct tool metadata bootstrap", () => {
       version: 1,
       servers: {
         cached: {
-          configHash: computeServerHash(config.mcpServers.cached),
+          configHash: computeServerHash(config.mcpServers.cached!),
           cachedAt: Date.now(),
           tools: [],
           resources: [],
@@ -405,7 +405,7 @@ describe("excludeTools filtering", () => {
         resources: [{ name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" }],
       },
       "server",
-      { command: "npx", args: ["-y", "demo"] },
+      { command: "npx", args: ["-y", "demo"] } as ServerEntry,
     );
 
     expect(reconstructed.map((tool) => [tool.name, tool.originalName, tool.description])).toEqual([
@@ -433,7 +433,7 @@ describe("excludeTools filtering", () => {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma),
+          configHash: computeServerHash(config.mcpServers.figma!),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },
@@ -468,7 +468,7 @@ describe("excludeTools filtering", () => {
       version: 1,
       servers: {
         github: {
-          configHash: computeServerHash(config.mcpServers.github),
+          configHash: computeServerHash(config.mcpServers.github!),
           cachedAt: Date.now(),
           tools: [{ name: "search", description: "Search" }],
           resources: [],
@@ -499,7 +499,7 @@ describe("excludeTools filtering", () => {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma),
+          configHash: computeServerHash(config.mcpServers.figma!),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },
@@ -533,7 +533,7 @@ describe("excludeTools filtering", () => {
       version: 1,
       servers: {
         "my-server": {
-          configHash: computeServerHash(config.mcpServers["my-server"]),
+          configHash: computeServerHash(config.mcpServers["my-server"]!),
           cachedAt: Date.now(),
           tools: [
             { name: "do_thing", description: "Does a thing" },
@@ -566,7 +566,7 @@ describe("excludeTools filtering", () => {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma),
+          configHash: computeServerHash(config.mcpServers.figma!),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },

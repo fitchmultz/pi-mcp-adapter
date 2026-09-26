@@ -42,7 +42,7 @@ const match = (server: string, originalName: string) => ({ server, tool: { ...to
 describe("MCP typed loader", () => {
   it("enables async only with host lifecycle support and for non-interactive direct calls", () => {
     const capability = { model: { compat: { supportsAsyncTools: true } } };
-    expect(supportsNativeAsync(capability as ExtensionContext)).toBe(false);
+    expect(supportsNativeAsync(capability as unknown as ExtensionContext)).toBe(false);
     expect(supportsNativeAsync({ getPendingToolCalls() {}, ...capability } as unknown as ExtensionContext)).toBe(true);
     expect(supportsNativeAsync({ getPendingToolCalls() {}, model: { compat: { supportsAsyncTools: false } } } as unknown as ExtensionContext)).toBe(false);
     const h = host();

@@ -55,7 +55,7 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
   let verificationKey = pair.publicJwk;
   let issuer: string | undefined;
   let publicMcp = false;
-  const exchanges: Array<{ params: URLSearchParams; authorization?: string; claims?: Claims; header?: Record<string, unknown> }> = [];
+  const exchanges: Array<{ params: URLSearchParams; authorization?: string | undefined; claims?: Claims; header?: Record<string, unknown> }> = [];
   const requests: Array<{ method: string; params: any }> = [];
   const authorizations: URL[] = [];
   const documentFetches: string[] = [];
@@ -96,7 +96,7 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
       try {
         if (oauth.privateKeyJwt) {
           const assertion = params.get("client_assertion")!;
-          const [encodedHeader, encodedClaims, signature] = assertion.split(".");
+          const [encodedHeader, encodedClaims, signature] = assertion.split(".") as [string, string, string];
           const header = JSON.parse(Buffer.from(encodedHeader, "base64url").toString());
           const claims: Claims = JSON.parse(Buffer.from(encodedClaims, "base64url").toString());
           exchange.header = header; exchange.claims = claims;
@@ -179,7 +179,7 @@ function holdNativeSigning(transport: Pick<StreamableHTTPClientTransport, "send"
     const signature = await sign(...args); events.push("sign-finished"); return signature;
   });
   const send = transport.send;
-  const sender = vi.spyOn(transport, "send").mockImplementation(function (...args) {
+  const sender = vi.spyOn(transport, "send").mockImplementation(function (this: unknown, ...args) {
     events.push("native-send-start");
     const pending = send.apply(this, args);
     sends.add(pending);
@@ -203,7 +203,7 @@ it.each(["ES256", "RS256", "PS256", "EdDSA", "Ed25519"])("authenticates native %
   expect(await f.start()).toEqual({ authorizationUrl: "" });
   expect((await f.connect()).status).toBe("connected");
   expect(await (await f.connect()).client.callTool({ name: "echo" })).toMatchObject({ content: [{ text: "signed tool" }] });
-  const { claims, params } = f.exchanges[0];
+  const { claims, params } = f.exchanges[0]!;
   expect(claims).toMatchObject({ iss: f.id, sub: f.id, aud: f.origin });
   expect(claims!.exp - claims!.iat).toBe(300); expect(claims!.jti).toBeTruthy();
   expect(params.get("scope")).toBe("tools");
@@ -228,7 +228,7 @@ it.each(["PEM", "JWK"])("resolves a %s command afresh after test-key rotation, w
   const next = key(); f.rotate(next); writeFileSync(file, format === "PEM" ? next.pem : JSON.stringify(next.jwk));
   expect(await f.start()).toEqual({ authorizationUrl: "" });
   expect(readFileSync(counter, "utf8")).toBe("xx");
-  expect(f.exchanges[0].params.get("client_assertion")).not.toBe(f.exchanges[1].params.get("client_assertion"));
+  expect(f.exchanges[0]!.params.get("client_assertion")).not.toBe(f.exchanges[1]!.params.get("client_assertion"));
   for (const { claims } of f.exchanges) {
     expect(claims).toMatchObject({ iss: f.id, sub: f.id, aud: "urn:jwt-audience", role: "test" });
     expect(claims!.exp - claims!.iat).toBe(90); expect(claims!.jti).not.toBe("wrong"); expect(claims!.iat).toBeGreaterThan(2);
@@ -336,8 +336,8 @@ it.each([
   [undefined, undefined, true], ["oauth", { "X-Fixture": "test" }, true],
 ] as const)("advertises ordinary machine auth only when OAuth is enabled: auth=%s headers=%j", async (authMode, headers, enabled) => {
   const f = await fixture(); f.publicMcp();
-  f.definition.auth = authMode;
-  f.definition.headers = headers;
+  f.definition.auth = authMode as NonNullable<typeof authMode>;
+  f.definition.headers = headers as NonNullable<typeof headers>;
   expect((await f.connect()).status).toBe("connected");
   const discover = f.requests.find(r => r.method === "server/discover")!;
   expect(discover.params._meta["io.modelcontextprotocol/clientCapabilities"]?.extensions).toEqual(
@@ -360,11 +360,11 @@ it("does not resolve commands during discovery or declare machine auth for brows
 it("keeps native ordinary-versus-explicit scope precedence without changing step-up policy", async () => {
   const ordinary = await fixture({ scope: "configured-scope" });
   expect(await (await ordinary.connect()).client.callTool({ name: "echo" })).toMatchObject({ content: [{ text: "signed tool" }] });
-  expect(ordinary.exchanges[0].params.get("scope")).toBe("tools");
-  expect(ordinary.exchanges[0].params.get("resource")).toBe(`${ordinary.origin}/mcp`);
+  expect(ordinary.exchanges[0]!.params.get("scope")).toBe("tools");
+  expect(ordinary.exchanges[0]!.params.get("resource")).toBe(`${ordinary.origin}/mcp`);
   const explicit = await fixture({ scope: "configured-scope" });
   await explicit.start();
-  expect(explicit.exchanges[0].params.get("scope")).toBe("configured-scope");
+  expect(explicit.exchanges[0]!.params.get("scope")).toBe("configured-scope");
 });
 
 it("stops failed signing during ordinary browser refresh without consent or credential invalidation", async () => {
@@ -500,7 +500,7 @@ it("validates private-key configuration and identity conflicts at both public bo
 
 it("does not migrate a real saved shared browser login into private-key auth after a custom URL change", async () => {
   const portServer = createServer(); const port = await listen(portServer); await close(portServer);
-  const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback`, clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: undefined });
+  const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback`, clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: undefined } as unknown as OAuthConfig);
   await f.login(); const before = f.stored();
   expect(before?.clientInfo).toMatchObject({ clientId: sharedDocument.client_id, registrationType: "cimd" });
   const dir = scratch(), marker = join(dir, "ran");
@@ -514,7 +514,7 @@ it("does not migrate a real saved shared browser login into private-key auth aft
 
 it("refuses keyless machine authentication with a real saved shared browser registration", async () => {
   const portServer = createServer(); const port = await listen(portServer); await close(portServer);
-  const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback`, clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: undefined });
+  const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback`, clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: undefined } as unknown as OAuthConfig);
   await f.login(); const before = f.stored();
   f.oauth.grantType = "client_credentials";
   const error = await f.start().catch(error => error);
@@ -530,7 +530,7 @@ it.each(["configured", "opaque-dcr"])("does not classify a %s client by its URL-
     saveAuthEntry(f.name, { clientInfo: { clientId: f.id, issuer: f.origin, redirectUris: [] }, tokens: { accessToken: "old", issuer: f.origin } }, f.definition.url!);
   }
   expect(await f.start()).toEqual({ authorizationUrl: "" });
-  expect(f.exchanges[0].claims).toMatchObject({ iss: f.id, sub: f.id });
+  expect(f.exchanges[0]!.claims).toMatchObject({ iss: f.id, sub: f.id });
   expect(f.stored()?.clientInfo?.registrationType).toBeUndefined();
 });
 

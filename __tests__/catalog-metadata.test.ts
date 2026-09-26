@@ -59,7 +59,7 @@ describe("canonical tool catalog", () => {
   });
 
   it("preserves complete raw descriptors through cache, live metadata and direct selection", () => {
-    const definition = { directTools: true };
+    const definition: ServerEntry = { directTools: true };
     const entry = cacheEntry([descriptor], definition);
     expect(entry.tools).toEqual([descriptor]);
     expect(entry.tools[0]).not.toHaveProperty("uiResourceUri");
@@ -96,7 +96,7 @@ describe("canonical tool catalog", () => {
     const live = buildToolMetadata(tools, [], definition, "demo", "server").metadata;
     expect(live.map(tool => tool.originalName)).toEqual(["visible", "both"]);
     expect(reconstructToolMetadata("demo", entry, "server", definition)).toEqual(live);
-    const state = { config: { mcpServers: { demo: definition } }, toolMetadata: new Map([["demo", live]]) } as McpExtensionState;
+    const state = { config: { mcpServers: { demo: definition } }, toolMetadata: new Map([["demo", live]]) } as unknown as McpExtensionState;
     expect(rankToolMatches(state, "app only invalid empty malformed")).toEqual([]);
     const config = { mcpServers: { demo: definition } };
     const cache = { version: 1, servers: { demo: entry } };
@@ -107,7 +107,7 @@ describe("canonical tool catalog", () => {
   });
 
   it("reconstructs old flattened UI cache records without exposing app-only tools", () => {
-    const definition = { directTools: true };
+    const definition: ServerEntry = { directTools: true };
     const entry: ServerCacheEntry = {
       ...cacheEntry([], definition),
       tools: [
@@ -141,7 +141,7 @@ describe("canonical tool catalog", () => {
 
   it("finds issue listing from parameter guidance without changing exact identity lookup", () => {
     const metadata = buildToolMetadata([descriptor, { name: "get_issue", description: "Get an issue" }], [], {}, "linear", "server").metadata;
-    const state = { config: { mcpServers: { linear: {} } }, toolMetadata: new Map([["linear", metadata]]) } as McpExtensionState;
+    const state = { config: { mcpServers: { linear: {} } }, toolMetadata: new Map([["linear", metadata]]) } as unknown as McpExtensionState;
     expect(rankToolMatches(state, "search issues", "linear")[0]?.tool.originalName).toBe("list_issues");
     expect(rankToolMatches(state, "triage", "linear").map(match => match.tool.originalName)).toEqual(["list_issues"]);
     expect(findToolByName(metadata, "linear_list_issues")?.originalName).toBe("list_issues");

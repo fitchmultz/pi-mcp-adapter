@@ -7,6 +7,10 @@ import { executeDescribe } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import type { McpExtensionState } from "../state.ts";
+import type { TextContent } from "@earendil-works/pi-ai";
+
+type ReadPage = Awaited<ReturnType<typeof readMcpResult>>;
+type ReadSuccess = ReadPage & { details: Extract<ReadPage["details"], { nextOffset: unknown }> };
 
 describe("review regressions: saved-result readback", () => {
   let outputDirectory: string;
@@ -24,7 +28,7 @@ describe("review regressions: saved-result readback", () => {
     let offset = 0;
     let reconstructed = "";
     for (let count = 0; count <= expected.length; count++) {
-      const page = await readMcpResult({ ref: saved.resultRef!, path: "/structuredContent/rows", fields: ["id"], offset, limit }, { outputDirectory, maxBytes, maxLines });
+      const page = await readMcpResult({ ref: saved.resultRef!, path: "/structuredContent/rows", fields: ["id"], offset, limit }, { outputDirectory, maxBytes, maxLines }) as ReadSuccess;
       expect(page.details).not.toHaveProperty("error");
       const visible = page.content.map(block => block.text).join("\n");
       expect(Buffer.byteLength(visible)).toBeLessThanOrEqual(maxBytes);
@@ -40,10 +44,10 @@ describe("review regressions: saved-result readback", () => {
 
   it("never splits surrogate pairs at the character limit", async () => {
     const saved = await retainMcpResult({ value: "😀Z" }, { outputDirectory });
-    const first = await readMcpResult({ ref: saved.resultRef!, path: "/value", limit: 2 }, { outputDirectory });
+    const first = await readMcpResult({ ref: saved.resultRef!, path: "/value", limit: 2 }, { outputDirectory }) as ReadSuccess;
     expect(first.content[0]!.text).toBe('"');
     expect(first.details.nextOffset).toBe(1);
-    const second = await readMcpResult({ ref: saved.resultRef!, path: "/value", offset: first.details.nextOffset!, limit: 2 }, { outputDirectory });
+    const second = await readMcpResult({ ref: saved.resultRef!, path: "/value", offset: first.details.nextOffset!, limit: 2 }, { outputDirectory }) as ReadSuccess;
     expect(second.content[0]!.text).toBe("😀");
     expect(second.details.nextOffset).toBe(3);
     const splitOffset = await readMcpResult({ ref: saved.resultRef!, path: "/value", offset: 2 }, { outputDirectory });
@@ -56,7 +60,7 @@ describe("review regressions: saved-result readback", () => {
     let offset = 0;
     let reconstructed = "";
     for (let count = 0; count < expected.length; count++) {
-      const page = await readMcpResult({ ref: saved.resultRef!, path: "/value", offset, limit: 1 }, { outputDirectory, maxBytes: 1, maxLines: 1 });
+      const page = await readMcpResult({ ref: saved.resultRef!, path: "/value", offset, limit: 1 }, { outputDirectory, maxBytes: 1, maxLines: 1 }) as ReadSuccess;
       expect(page.details).not.toHaveProperty("error");
       const text = page.content[0]!.text;
       expect([...text]).toHaveLength(1);
@@ -75,7 +79,7 @@ describe("review regressions: saved-result readback", () => {
     for (const path of ["/rows/length", "/rows/01", "/rows/-"]) {
       expect((await readMcpResult({ ref: saved.resultRef!, path }, { outputDirectory })).details.error).toBe("result_read_failed");
     }
-    for (const [path, expected] of [["/rows/0", '"first"'], ["/object/length", "7"], ["/object/01", "8"], ["/object/a~1b~0c", "9"]]) {
+    for (const [path, expected] of [["/rows/0", '"first"'], ["/object/length", "7"], ["/object/01", "8"], ["/object/a~1b~0c", "9"]] as const) {
       expect((await readMcpResult({ ref: saved.resultRef!, path }, { outputDirectory })).content[0]!.text).toBe(expected);
     }
   });
@@ -97,7 +101,7 @@ function collisionState(): McpExtensionState {
   return {
     config: { settings: { toolPrefix: "none" }, mcpServers: { demo: definition } },
     toolMetadata: new Map([["demo", buildToolMetadata(tools, [], definition, "demo", "none").metadata]]),
-  } as McpExtensionState;
+  } as unknown as McpExtensionState;
 }
 
 describe("review regressions: scoped original-name description", () => {
@@ -106,7 +110,7 @@ describe("review regressions: scoped original-name description", () => {
     for (const name of ["a.b", "a_b"]) {
       const result = executeDescribe(state, name, "demo");
       expect(result.details).not.toHaveProperty("error");
-      expect(JSON.parse(result.content[0]!.text!)).toMatchObject({ server: "demo", name, inputSchema: { properties: { [name]: { type: "string" } } } });
+      expect(JSON.parse((result.content[0] as TextContent).text)).toMatchObject({ server: "demo", name, inputSchema: { properties: { [name]: { type: "string" } } } });
     }
     expect(executeDescribe(state, "a_b").details.error).toBe("ambiguous_tool");
   });
@@ -114,7 +118,7 @@ describe("review regressions: scoped original-name description", () => {
   it("prefers the exact scoped original name in tools.describe and preserves unscoped ambiguity", async () => {
     const result = await runMcpScript(collisionState(), 'return { dot: await tools.describe({ server: "demo", path: "a.b" }), underscore: await tools.describe({ server: "demo", path: "a_b" }), unscoped: await tools.describe({ path: "a_b" }) };');
     expect(result.details).not.toHaveProperty("error");
-    expect(JSON.parse(result.content[0]!.text!)).toMatchObject({
+    expect(JSON.parse((result.content[0] as TextContent).text)).toMatchObject({
       dot: { server: "demo", name: "a.b", inputSchema: { properties: { "a.b": { type: "string" } } } },
       underscore: { server: "demo", name: "a_b", inputSchema: { properties: { a_b: { type: "string" } } } },
       unscoped: { error: { code: "ambiguous_tool" } },

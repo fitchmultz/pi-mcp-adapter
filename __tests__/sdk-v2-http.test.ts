@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
-import { getCurrentSystemPrompt, getCurrentTools, type ToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools, type TextContent, type ToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
 import { createMcpAdapter } from "../index.ts";
 import { McpServerManager } from "../server-manager.ts";
 import { executeCall, executeDescribe } from "../proxy-modes.ts";
@@ -137,8 +137,8 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(req.headers["mcp-session-id"]).toBeUndefined();
       expect(body.params._meta["io.modelcontextprotocol/protocolVersion"]).toBe("2026-07-28");
     }
-    expect(f.calls()[0].req.headers["mcp-name"]).toBe("echo");
-    expect(f.calls()[0].req.headers["mcp-param-region"]).toBe("=?base64?SGVsbG8sIOS4lueVjA==?=");
+    expect(f.calls()[0]!.req.headers["mcp-name"]).toBe("echo");
+    expect(f.calls()[0]!.req.headers["mcp-param-region"]).toBe("=?base64?SGVsbG8sIOS4lueVjA==?=");
   });
 
   it("leaves HEADER_MISMATCH refresh and fresh request IDs to the SDK", async () => {
@@ -159,8 +159,8 @@ describe("published SDK v2 over real local HTTP", () => {
     await connection.client.callTool({ name: "echo", arguments: { region: "west" } });
     expect(lists).toBe(2);
     expect(f.calls()).toHaveLength(2);
-    expect(f.calls()[0].body.id).not.toBe(f.calls()[1].body.id);
-    expect(f.calls()[1].req.headers["mcp-param-region"]).toBe("west");
+    expect(f.calls()[0]!.body.id).not.toBe(f.calls()[1]!.body.id);
+    expect(f.calls()[1]!.req.headers["mcp-param-region"]).toBe("west");
   });
 
   it.each([-32601, -32700, -32000, -32020, -32021])("keeps native matched error %s fallback", async code => {
@@ -173,8 +173,8 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(connection.client.getProtocolEra()).toBe("legacy");
     const initializations = f.requests.filter(r => r.body.method === "initialize");
     expect(initializations).toHaveLength(1);
-    expect(initializations[0].req.headers["mcp-method"]).toBeUndefined();
-    expect(initializations[0].body.params._meta).toBeUndefined();
+    expect(initializations[0]!.req.headers["mcp-method"]).toBeUndefined();
+    expect(initializations[0]!.body.params._meta).toBeUndefined();
   });
 
   it.each(["malformed", "http400"])("keeps native %s discovery fallback", async mode => {
@@ -199,7 +199,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.requests.filter(r => r.body.method === "initialize")).toHaveLength(1);
   });
 
-  it.each([401, 403, 500, "network"])("never chooses SSE or legacy for discovery %s", async failure => {
+  it.each([401, 403, 500, "network"] as const)("never chooses SSE or legacy for discovery %s", async failure => {
     const f = await fixture(e => {
       if (e.body.method !== "server/discover") return;
       if (failure === "network") e.req.socket.destroy();
@@ -245,7 +245,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(output.ok).toBe(true);
     expect(f.manager.getConnection("local")?.client).toBe(connection.client);
     expect(f.calls()).toHaveLength(2);
-    expect(f.calls()[0].body.id).not.toBe(f.calls()[1].body.id);
+    expect(f.calls()[0]!.body.id).not.toBe(f.calls()[1]!.body.id);
     expect(f.requests.filter(r => r.body.method === "server/discover")).toHaveLength(1);
     expect(connection.inFlight).toBe(0);
   });
@@ -263,7 +263,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const output = await call(state, entry);
     expect(output.ok, JSON.stringify({ output, calls: f.calls().map(c => c.body.id), elapsedMs: performance.now() - started })).toBe(true);
     expect(f.calls()).toHaveLength(2);
-    expect(f.calls()[0].body.id).not.toBe(f.calls()[1].body.id);
+    expect(f.calls()[0]!.body.id).not.toBe(f.calls()[1]!.body.id);
     expect(f.manager.getConnection("local")?.client).toBe(connection.client);
     expect(f.requests.filter(r => r.body.method === "server/discover")).toHaveLength(1);
     expect(connection.inFlight).toBe(0);
@@ -401,13 +401,13 @@ describe("published SDK v2 over real local HTTP", () => {
       return { native, compact, called: await tools.call(native.path, { value: "test" }) };
     `);
     expect(script.details).not.toHaveProperty("error");
-    const described = JSON.parse(script.content[0].text);
+    const described = JSON.parse((script.content[0] as TextContent).text);
     expect(described.native.inputSchema).toEqual(inputSchema);
     expect(described.native).not.toHaveProperty("inputTypeScript");
     expect(described.compact.inputSchema).toEqual({ type: "object", properties: { value: { type: "string" } }, required: ["value"] });
     expect(described.compact).not.toHaveProperty("inputTypeScript");
     expect(described.called).toMatchObject({ ok: true, data: { structuredContent: { value: "test" } } });
-    expect(f.calls()[0].body.params.arguments).toEqual({ value: "test" });
+    expect(f.calls()[0]!.body.params.arguments).toEqual({ value: "test" });
   });
 
   it("applies public proxy connect pagination to the discovered server list", async () => {
@@ -444,15 +444,15 @@ describe("published SDK v2 over real local HTTP", () => {
   it("preserves native annotations through cached metadata, direct tools and both describe paths", async () => {
     const f = await fixture();
     const { state, connection } = await f.connect({ directTools: true });
-    const definition = state.config.mcpServers.local;
+    const definition = state.config.mcpServers.local!;
     const entry = { configHash: computeServerHash(definition), tools: serializeTools(connection.tools), resources: [], cachedAt: Date.now() };
     const metadata = reconstructToolMetadata("local", entry, "server", definition);
     expect(metadata).toEqual(state.toolMetadata.get("local"));
     const specs = resolvePinnedTools(state.config, { version: 1, servers: { local: entry } }, "server");
-    expect(specs[0].annotations).toEqual({ readOnlyHint: true });
-    expect(JSON.parse(executeDescribe(state, "local_echo").content[0].text!)).toMatchObject({ annotations: { readOnlyHint: true } });
+    expect(specs[0]!.annotations).toEqual({ readOnlyHint: true });
+    expect(JSON.parse((executeDescribe(state, "local_echo").content[0] as TextContent).text)).toMatchObject({ annotations: { readOnlyHint: true } });
     const script = await runMcpScript(state, 'return tools.describe({ path: "local_echo" });');
-    expect(JSON.parse(script.content[0].text).annotations).toEqual({ readOnlyHint: true });
+    expect(JSON.parse((script.content[0] as TextContent).text).annotations).toEqual({ readOnlyHint: true });
     expect(f.calls()).toHaveLength(0);
   });
 
@@ -747,38 +747,38 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(checkpoints[0]).toMatchObject({ toolCallId: "native-outer", workspace: "writer finished", artifacts: [], operation: {
       toolCallId: "native-outer", innerCallId: 1, server: "local", tool: "echo", args: { value: "first" }, annotationsTrusted: true,
     } });
-    expect(checkpoints[0].operation.annotations).toBeUndefined();
+    expect(checkpoints[0]!.operation!.annotations).toBeUndefined();
     // A real wait longer than the 1s service deadline must not consume that deadline.
     await delay(1200);
-    expect(checkpoints[0].bytes).toContain('"role":"toolResult","toolCallId":"native-writer"');
+    expect(checkpoints[0]!.bytes).toContain('"role":"toolResult","toolCallId":"native-writer"');
     expect(captures).toHaveLength(0);
     expect(effects).toBe(0);
-    checkpoints[0].res.writeHead(200).end();
+    checkpoints[0]!.res.writeHead(200).end();
     await expect.poll(() => captures.length).toBe(1);
     expect(effects).toBe(0);
-    expect(captures[0].event).toMatchObject({ phase: "before", toolCallId: "native-outer", innerCallId: 1, args: { value: "first" } });
-    expect(captures[0].bytes).toContain('"name":"mcp_script"');
-    captures[0].res.writeHead(200).end();
+    expect(captures[0]!.event).toMatchObject({ phase: "before", toolCallId: "native-outer", innerCallId: 1, args: { value: "first" } });
+    expect(captures[0]!.bytes).toContain('"name":"mcp_script"');
+    captures[0]!.res.writeHead(200).end();
     await expect.poll(() => captures.length).toBe(2);
     expect(effects).toBe(1);
-    const checkpoint = captures[1].bytes;
-    expect(captures[1].event.result.structuredContent).toEqual({ id: "resource-1", value: "first" });
-    captures[1].res.writeHead(200).end();
+    const checkpoint = captures[1]!.bytes;
+    expect(captures[1]!.event.result.structuredContent).toEqual({ id: "resource-1", value: "first" });
+    captures[1]!.res.writeHead(200).end();
     await expect.poll(() => checkpoints.length).toBe(2);
     expect(checkpoints[1]).toMatchObject({ toolCallId: "native-outer", operation: {
       toolCallId: "native-outer", innerCallId: 2, args: { value: "resource-1" },
     } });
-    expect(checkpoints[1].artifacts).not.toContain(largeOutput); // Scripts retain raw JSON, without unused rendered-text work.
-    expect(checkpoints[1].artifacts.map(bytes => bytes.startsWith("{") ? JSON.parse(bytes) : null))
+    expect(checkpoints[1]!.artifacts).not.toContain(largeOutput); // Scripts retain raw JSON, without unused rendered-text work.
+    expect(checkpoints[1]!.artifacts.map(bytes => bytes.startsWith("{") ? JSON.parse(bytes) : null))
       .toContainEqual(expect.objectContaining({ content: [{ type: "text", text: largeOutput }], structuredContent: { id: "resource-1", value: "first" } }));
     expect(captures).toHaveLength(2);
     expect(effects).toBe(1);
     checkpointMode = "pass";
-    checkpoints[1].res.writeHead(200).end();
+    checkpoints[1]!.res.writeHead(200).end();
     await pending;
     await session.waitForIdle();
     expect(effects).toBe(2);
-    expect(captures[2].event).toMatchObject({ toolCallId: "native-outer", innerCallId: 2, args: { value: "resource-1" } });
+    expect(captures[2]!.event).toMatchObject({ toolCallId: "native-outer", innerCallId: 2, args: { value: "resource-1" } });
     const scriptResult = sessionManager.getEntries().find((e: any) => e.type === "message" && e.message.role === "toolResult" && e.message.toolCallId === "native-outer");
     const finalPath = scriptResult.message.details.outputGuard.fullOutputPath;
     expect(dirname(dirname(finalPath))).toBe(outputDirectory);
@@ -821,21 +821,21 @@ describe("published SDK v2 over real local HTTP", () => {
     mode = "pass";
     const proxy = await execute("mcp", "proxy-outer", { tool: "local_echo", args: { value: "proxy" } });
     expect(proxy.details.error).toBeUndefined();
-    expect(captures.at(-1).event).toMatchObject({ phase: "after", toolCallId: "proxy-outer", args: { value: "proxy" } });
-    expect(captures.at(-1).event.innerCallId).toBeUndefined();
+    expect(captures.at(-1)!.event).toMatchObject({ phase: "after", toolCallId: "proxy-outer", args: { value: "proxy" } });
+    expect(captures.at(-1)!.event.innerCallId).toBeUndefined();
     expect(effects).toBe(4);
     const lost = await execute("mcp_script", "lost-outer", { code: 'await tools.local_echo({ value: ["lose", "response"].join("-") });' });
     expect(lost.details.calls[0]).toMatchObject({ error: "ambiguous_outcome", recovery: { toolCallId: "lost-outer", innerCallId: 1, action: "readback" } });
     expect(lost.content[0].text).toContain("Read back the original operation");
     expect(effects).toBe(5);
     const lostPath = join(root, "lost-response.jsonl");
-    await writeFile(lostPath, captures.at(-1).bytes);
+    await writeFile(lostPath, captures.at(-1)!.bytes);
     const lostHistory = SessionManager.open(lostPath).getEntries().filter((e: any) => e.type === "custom");
     const intent = lostHistory.at(-2).data;
     expect(intent).toMatchObject({ phase: "before", toolCallId: "lost-outer", innerCallId: 1, args: { value: "lose-response" } });
     const readback = await execute("mcp", "readback-outer", { tool: "local_readback", args: intent.args });
     expect(readback.details.mcpResult.structuredContent).toEqual({ id: "resource-5", value: "lose-response" });
-    expect(captures.at(-1).event.result.structuredContent.id).toBe("resource-5");
+    expect(captures.at(-1)!.event.result.structuredContent.id).toBe("resource-5");
     expect(effects).toBe(5);
     expect(checkpoints.map(c => c.toolCallId)).toEqual([
       "native-outer", "native-outer", "blocked-outer", "interrupted-outer", "stopped-outer", "proxy-outer", "lost-outer", "readback-outer",
@@ -866,11 +866,11 @@ describe("published SDK v2 over real local HTTP", () => {
       modelCalls = 0;
       const stopping = session.prompt(`fixture: stop ${name} during its checkpoint`);
       await expect.poll(() => checkpoints.length).toBe(beforeCount + 1);
-      expect(checkpoints.at(-1).toolCallId).toBe(id);
+      expect(checkpoints.at(-1)!.toolCallId).toBe(id);
       await session.abort();
       await stopping;
       await session.waitForIdle();
-      checkpoints.at(-1).res.end();
+      checkpoints.at(-1)!.res.end();
       expect(modelCalls).toBe(1);
       expect(captures).toHaveLength(captureCount);
       expect(effects).toBe(5);
@@ -897,9 +897,9 @@ describe("published SDK v2 over real local HTTP", () => {
           ...(name === "readback" ? { annotations: { readOnlyHint: true } }
             : name === "upsert" ? { annotations: { readOnlyHint: false, idempotentHint: true } } : { resourceUri }),
         });
-        const { annotationsTrusted: _trust, ...nativeFields } = operation;
+        const { annotationsTrusted: _trust, ...nativeFields } = operation!;
         expect(captures.slice(captureCount).map(c => c.event.phase)).toEqual(["before", "after"]);
-        expect(captures[captureCount].event).toEqual({ ...nativeFields, phase: "before" });
+        expect(captures[captureCount]!.event).toEqual({ ...nativeFields, phase: "before" });
         expect(captures.at(-1)!.event).toMatchObject({ ...nativeFields, phase: "after" });
         expect(captures.at(-1)!.event).not.toHaveProperty("annotationsTrusted");
       }
@@ -916,7 +916,7 @@ describe("published SDK v2 over real local HTTP", () => {
       await execute("mcp", "refresh", { connect: "local" });
       expect(checkpoints.at(-1)!.operation).toBeUndefined();
       await execute("local_readback", "stale-direct", { value: "stale" });
-      expect(checkpoints.at(-1)!.operation.annotations).toEqual(annotations);
+      expect(checkpoints.at(-1)!.operation!.annotations).toEqual(annotations);
       expect(captures.at(-1)!.event.annotations).toEqual(annotations);
     }
     for (const params of [{ }, { search: "echo" }, { action: "ui-messages" }]) {
@@ -936,13 +936,13 @@ describe("published SDK v2 over real local HTTP", () => {
     await expect.poll(() => checkpoints.length).toBe(checkpointCount + 2);
     // Parallel HTTP arrivals need not match the script's native call order.
     const pair = checkpoints.slice(checkpointCount).sort((a, b) => a.operation!.innerCallId! - b.operation!.innerCallId!);
-    expect(pair.map(c => [c.operation.toolCallId, c.operation.innerCallId, c.operation.args.value])).toEqual([
+    expect(pair.map(c => [c.operation!.toolCallId, c.operation!.innerCallId, c.operation!.args.value])).toEqual([
       ["parallel-outer", 1, "parallel-first"], ["parallel-outer", 2, "parallel-second"],
     ]);
-    pair[1].res.writeHead(200).end();
+    pair[1]!.res.writeHead(200).end();
     await expect.poll(() => captures.length).toBe(parallelCaptureCount + 2);
     expect(captures.slice(parallelCaptureCount).map(c => c.event.innerCallId)).toEqual([2, 2]);
-    pair[0].res.writeHead(200).end();
+    pair[0]!.res.writeHead(200).end();
     expect((await parallel).details.calls).toMatchObject([{ ok: true }, { ok: true }]);
     expect(captures.slice(parallelCaptureCount).map(c => c.event.innerCallId)).toEqual([2, 2, 1, 1]);
   }, 20000);
@@ -1078,7 +1078,7 @@ describe("published SDK v2 over real local HTTP", () => {
     await expect.poll(() => readFile(traceFile, "utf8")).toContain('"method":"tools/call"');
     const events = (await readFile(traceFile, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(events.filter(e => e.direction === "outbound" && e.method === "tools/call"))
-      .toMatchObject([{ id: f.calls()[0].body.id, status: "sent" }]);
+      .toMatchObject([{ id: f.calls()[0]!.body.id, status: "sent" }]);
   });
 
   it.each(["network", "sse"])("keeps an absolute deadline across %s retry without reporting caller cancellation", async failure => {
@@ -1321,11 +1321,11 @@ describe("published SDK v2 over real local HTTP", () => {
     cleanups.unshift(() => rm(directory, { recursive: true, force: true }));
     f.manager.setTraceConfig({ enabled: true, file: join(directory, "trace.jsonl") });
     const { connection } = await f.connect();
-    expect(connection.tools[0].name).toBe("before");
+    expect(connection.tools[0]!.name).toBe("before");
     stream!.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed",
       params: { _meta: { "io.modelcontextprotocol/subscriptionId": subscriptionId } },
     })}\n\n`);
-    await expect.poll(() => connection.tools[0].name).toBe("after");
+    await expect.poll(() => connection.tools[0]!.name).toBe("after");
     expect(f.requests.filter(r => r.body.method === "subscriptions/listen")).toHaveLength(1);
     expect(f.requests.some(r => r.req.method === "GET")).toBe(false);
     await f.manager.closeAll();
@@ -1357,8 +1357,8 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(f.calls()).toHaveLength(1);
     } else {
       expect(f.calls()).toHaveLength(2);
-      expect(f.calls()[1].body.params.requestState).toBe("opaque-state");
-      expect(f.calls()[0].body.id).not.toBe(f.calls()[1].body.id);
+      expect(f.calls()[1]!.body.params.requestState).toBe("opaque-state");
+      expect(f.calls()[0]!.body.id).not.toBe(f.calls()[1]!.body.id);
     }
   });
 

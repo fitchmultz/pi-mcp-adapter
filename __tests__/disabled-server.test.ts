@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -69,9 +70,9 @@ describe("disabled MCP servers", () => {
     const directCache = {
       ...cache,
       servers: {
-        disabled: { ...cache.servers.disabled, configHash: computeServerHash(config.mcpServers.disabled) },
-        string: { ...cache.servers.enabled, configHash: computeServerHash(config.mcpServers.string) },
-        enabled: { ...cache.servers.enabled, configHash: computeServerHash(config.mcpServers.enabled) },
+        disabled: { ...cache.servers.disabled!, configHash: computeServerHash(config.mcpServers.disabled) },
+        string: { ...cache.servers.enabled!, configHash: computeServerHash(config.mcpServers.string) },
+        enabled: { ...cache.servers.enabled!, configHash: computeServerHash(config.mcpServers.enabled) },
       },
     };
 
@@ -90,14 +91,14 @@ describe("disabled MCP servers", () => {
 
     const result = await execute("call", {}, undefined, undefined, {} as any);
     expect(result.details).toMatchObject({ error: "server_disabled", server: "disabled" });
-    expect(result.content[0].text).toContain("/reload");
+    expect((result.content[0] as TextContent).text).toContain("/reload");
     expect(state.manager.connect).not.toHaveBeenCalled();
   });
 
   it("rejects proxy execution and hides disabled cached metadata while listing it in status", async () => {
     const state = disabledState();
-    expect(executeStatus(state).content[0].text).toContain("disabled");
-    expect(executeStatus(state).content[0].text).toContain("0/1 connected");
+    expect((executeStatus(state).content[0] as TextContent).text).toContain("disabled");
+    expect((executeStatus(state).content[0] as TextContent).text).toContain("0/1 connected");
     expect(executeList(state, "disabled").details).toMatchObject({ error: "server_disabled" });
     expect(executeInstructions(state, "disabled").details).toMatchObject({ error: "server_disabled" });
     state.toolMetadata.set("enabled", [{ name: "disabled_search", originalName: "search", description: "enabled duplicate" }]);
@@ -152,7 +153,7 @@ describe("disabled MCP servers", () => {
 
     expect(writeProjectServerDisabledOverride(overridePath, cwd, "lower", false)).toMatchObject({ changed: true });
     expect(JSON.parse(readFileSync(join(cwd, ".pi", "fitch-mcp-adapter", "mcp.json"), "utf8")).mcpServers.lower).toEqual({ disabled: false });
-    expect(loadMcpConfig(overridePath, cwd).mcpServers.lower.disabled).toBe(false);
+    expect(loadMcpConfig(overridePath, cwd).mcpServers.lower!.disabled).toBe(false);
   });
 
   it("enables a server disabled by an import declared in the project override", () => {

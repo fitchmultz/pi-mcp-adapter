@@ -3,7 +3,7 @@ import http from "node:http";
 import { startUiServer, type UiServerOptions, type UiServerHandle } from "../ui-server.ts";
 import type { McpServerManager } from "../server-manager.ts";
 import type { ConsentManager } from "../consent-manager.ts";
-import type { McpConfig, UiResourceContent } from "../types.ts";
+import type { McpConfig, UiResourceContent, UiResourcePermissions } from "../types.ts";
 import type { McpExtensionState } from "../state.ts";
 
 // Helper to make HTTP requests to the server
@@ -143,7 +143,7 @@ function createMockResource(overrides: Partial<UiResourceContent> = {}): UiResou
     html: "<h1>Test App</h1>",
     mimeType: "text/html",
     meta: {
-      permissions: [],
+      permissions: [] as UiResourcePermissions,
     },
     ...overrides,
   };
@@ -327,7 +327,7 @@ describe("UiServer", () => {
         resource: createMockResource({
           html: appHtml,
           meta: {
-            permissions: [],
+            permissions: [] as UiResourcePermissions,
             csp: {
               resourceDomains: ["https://esm.sh"],
               connectDomains: ["https://api.excalidraw.com"],
@@ -358,7 +358,7 @@ describe("UiServer", () => {
         resource: createMockResource({
           html: appHtml,
           meta: {
-            permissions: [],
+            permissions: [] as UiResourcePermissions,
             csp: {
               resourceDomains: [
                 "https://safe.example.com",
@@ -384,7 +384,7 @@ describe("UiServer", () => {
       handle = await startUiServer(createServerOptions({
         resource: createMockResource({
           html: appHtml,
-          meta: { permissions: [], csp: {} },
+          meta: { permissions: [] as UiResourcePermissions, csp: {} },
         }),
       }));
 
@@ -514,7 +514,7 @@ describe("UiServer", () => {
       handle = await startUiServer(createServerOptions());
       const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;
 
-      const firstConnectionEvents: Array<{ name: string; data: unknown; id?: string }> = [];
+      const firstConnectionEvents: Array<{ name: string; data: unknown; id?: string | undefined }> = [];
       const firstConnection = await connectSSE(url, (name, data, eventId) => {
         firstConnectionEvents.push({ name, data, id: eventId });
       });
@@ -540,7 +540,7 @@ describe("UiServer", () => {
       const checkpointEvent = firstConnectionEvents.find((event) => event.name === "result-patch");
       expect(checkpointEvent?.id).toBeTruthy();
 
-      const replayedEvents: Array<{ name: string; data: unknown; id?: string }> = [];
+      const replayedEvents: Array<{ name: string; data: unknown; id?: string | undefined }> = [];
       const replayConnection = await connectSSE(
         url,
         (name, data, eventId) => {
@@ -1256,8 +1256,8 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(200);
       expect(handle.getSessionMessages().contexts[0]).toMatchObject({ truncated: true });
-      expect(handle.getSessionMessages().contexts[0].summary.length).toBeLessThanOrEqual(12_000);
-      expect(handle.getSessionMessages().contexts[0].payload).toBeUndefined();
+      expect(handle.getSessionMessages().contexts[0]!.summary.length).toBeLessThanOrEqual(12_000);
+      expect(handle.getSessionMessages().contexts[0]!.payload).toBeUndefined();
     });
   });
 
@@ -1304,7 +1304,7 @@ describe("UiServer", () => {
 
   describe("initialResultPromise", () => {
     it("pushes result when promise resolves", async () => {
-      const resultPromise = Promise.resolve({ data: "initial" });
+      const resultPromise = Promise.resolve({ data: "initial" }) as unknown as NonNullable<UiServerOptions["initialResultPromise"]>;
       handle = await startUiServer(createServerOptions({ initialResultPromise: resultPromise }));
 
       const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;

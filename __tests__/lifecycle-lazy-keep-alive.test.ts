@@ -1,3 +1,4 @@
+import type { TextContent } from "@earendil-works/pi-ai";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,7 +50,7 @@ class FakeManager {
   }
 }
 
-function makeDefinition(lifecycle: ServerDefinition["lifecycle"]): ServerDefinition {
+function makeDefinition(lifecycle: NonNullable<ServerDefinition["lifecycle"]>): ServerDefinition {
   return { command: "echo", args: [], lifecycle };
 }
 
@@ -139,7 +140,7 @@ describe("lazy-keep-alive lifecycle", () => {
     expect(onFailure).toHaveBeenCalledWith("srv", fake.connectError);
     expect(onSuccess).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalledWith("MCP: Failed to reconnect to srv: server exited safely");
-    expect(consoleError.mock.calls[0][0]).not.toContain("clipboard-secret");
+    expect(consoleError.mock.calls[0]![0]).not.toContain("clipboard-secret");
 
     fake.connectError = undefined;
     await (lifecycle as never as { checkConnections: () => Promise<void> }).checkConnections();
@@ -247,7 +248,7 @@ describe("lazy-keep-alive lifecycle", () => {
     } as never;
 
     const result = await executeCall(state, "srv_search", {}, "srv");
-    expect(result.content[0]?.text).toBe("ok");
+    expect((result.content[0] as TextContent | undefined)?.text).toBe("ok");
 
     current = undefined;
     await (state as any).lifecycle.checkConnections();
