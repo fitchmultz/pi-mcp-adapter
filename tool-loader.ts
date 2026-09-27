@@ -10,6 +10,9 @@ import { isToolCallApprovalRequired } from "./tool-approval.ts";
 
 type Reference = { name: string; namespace?: string };
 type Selection = { server: string; tool: string };
+export type Feature = "gateway" | "script";
+export type FeaturePolicy = Partial<Record<Feature, { eager?: boolean }>>;
+const featureRefs: Record<Feature, Reference> = { gateway: { name: "mcp" }, script: { name: "mcp_script" } };
 type SearchDefinition<TParams extends TSchema, TDetails> = Omit<ToolDefinition<TParams, TDetails>, "execute"> & {
   execute: (...args: Parameters<ToolDefinition<TParams, TDetails>["execute"]>) => Promise<AgentToolResult<TDetails> & { tools: Reference[] }>;
 };
@@ -44,6 +47,10 @@ export function createToolLoader(
   let available = new Set<string>();
   let selected = new Map<string, Selection>();
   let inactive = new Map<string, Selection>();
+  let features: FeaturePolicy = {};
+  let selectedFeatures = new Set<Feature>();
+  let inactiveFeatures = new Set<Feature>();
+  const registeredFeatures = new Set<Feature>();
   let restoring = true;
   const active = (): Reference[] => native ? pi.getActiveToolReferences!() : pi.getActiveTools().map(name => ({ name }));
   const setActive = (refs: Reference[]) => {
@@ -52,8 +59,21 @@ export function createToolLoader(
     if (native) pi.setActiveToolReferences!(unique);
     else pi.setActiveTools(unique.map(ref => ref.name));
   };
+  function registerFeature<TParams extends TSchema, TDetails>(feature: Feature, definition: ToolDefinition<TParams, TDetails>) {
+    pi.registerTool(definition);
+    registeredFeatures.add(feature);
+  }
   function capture() {
     const current = new Set(active().map(refKey));
+    for (const feature of Object.keys(features) as Feature[]) {
+      if (current.has(refKey(featureRefs[feature]))) {
+        if (!features[feature]?.eager) selectedFeatures.add(feature);
+        inactiveFeatures.delete(feature);
+      } else {
+        selectedFeatures.delete(feature);
+        if (features[feature]?.eager) inactiveFeatures.add(feature);
+      }
+    }
     for (const [id, { selection, ref, pinned }] of registered) {
       if (!available.has(id)) continue;
       if (current.has(refKey(ref))) { if (!pinned) selected.set(id, selection); inactive.delete(id); }
@@ -62,14 +82,18 @@ export function createToolLoader(
   }
   function persist() {
     capture();
-    pi.appendEntry(ENTRY, { selected: [...selected.values()], inactive: [...inactive.values()] });
+    pi.appendEntry(ENTRY, { selected: [...selected.values()], inactive: [...inactive.values()], features: [...selectedFeatures], inactiveFeatures: [...inactiveFeatures] });
   }
   function restore(ctx: ExtensionContext) {
     selected = new Map();
     inactive = new Map();
+    selectedFeatures = new Set();
+    inactiveFeatures = new Set();
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "custom" || entry.customType !== ENTRY || !entry.data || typeof entry.data !== "object") continue;
-      const data = entry.data as { selected?: Selection[]; inactive?: Selection[] };
+      const data = entry.data as { selected?: Selection[]; inactive?: Selection[]; features?: Feature[]; inactiveFeatures?: Feature[] };
+      selectedFeatures = new Set(Array.isArray(data.features) ? data.features.filter(value => value === "gateway" || value === "script") : []);
+      inactiveFeatures = new Set(Array.isArray(data.inactiveFeatures) ? data.inactiveFeatures.filter(value => value === "gateway" || value === "script") : []);
       for (const [field, target] of [[data.selected, selected], [data.inactive, inactive]] as const) {
         target.clear();
         for (const selection of Array.isArray(field) ? field : []) {
@@ -79,7 +103,7 @@ export function createToolLoader(
     }
     restoring = true;
   }
-  function sync(config: McpConfig, cache: MetadataCache | null, env?: string[] | null, asyncSupported = false, registerGateways?: (pins: DirectToolSpec[]) => void) {
+  function sync(config: McpConfig, cache: MetadataCache | null, env?: string[] | null, asyncSupported = false, registerGateways?: (pins: DirectToolSpec[]) => FeaturePolicy) {
     if (!restoring) capture();
     const previousRefs = new Set([...registered.values()].map(item => refKey(item.ref)));
     const existing = new Set(pi.getAllTools().map(tool => refKey(tool)));
@@ -126,28 +150,50 @@ export function createToolLoader(
     }
     const permitted = new Set(pi.getAllTools().map(refKey));
     const pins = specs.filter(item => item.pinned && available.has(key(item.selection)) && permitted.has(refKey(item.ref))).map(item => item.spec);
-    registerGateways?.(pins);
+    const policy = registerGateways?.(pins);
+    if (policy) {
+      const permittedFeatures = new Set(pi.getAllTools().map(refKey));
+      const loaderMissing = !permittedFeatures.has(refKey({ name: "mcp_search" }));
+      features = {};
+      for (const feature of Object.keys(featureRefs) as Feature[]) {
+        if (policy[feature] && permittedFeatures.has(refKey(featureRefs[feature]))) {
+          features[feature] = { eager: policy[feature].eager || loaderMissing };
+          if (selectedFeatures.has(feature) || (features[feature]?.eager && !inactiveFeatures.has(feature))) enabled.push(featureRefs[feature]);
+        } else {
+          selectedFeatures.delete(feature);
+          inactiveFeatures.delete(feature);
+        }
+      }
+    }
     // Official 0.87 reactivates allowlisted definitions on registration. Apply our loadout last.
     const ownedRefs = new Set([...previousRefs, ...[...registered.values()].map(item => refKey(item.ref))]);
+    for (const feature of registeredFeatures) ownedRefs.add(refKey(featureRefs[feature]));
     setActive([...active().filter(ref => !ownedRefs.has(refKey(ref))), ...enabled]);
     restoring = false;
     return pins;
   }
-  function activate(matches: Array<{ server: string; tool: ToolMetadata }>) {
+  function activate(matches: Array<{ server: string; tool: ToolMetadata }>, enable: Feature[] = []) {
     const requested = matches.flatMap(({ server, tool }) => {
       const id = key({ server, tool: tool.originalName });
       const registration = available.has(id) ? registered.get(id) : undefined;
       return registration ? [registration] : [];
     });
     // No await between reading and extending the current loadout: parallel searches union their selections.
-    setActive([...active(), ...requested.map(item => item.ref)]);
+    const permitted = new Set(pi.getAllTools().map(refKey));
+    const requestedFeatures = [...new Set(enable)].filter(feature => features[feature] && permitted.has(refKey(featureRefs[feature])));
+    setActive([...active(), ...requested.map(item => item.ref), ...requestedFeatures.map(feature => featureRefs[feature])]);
     const current = new Set(active().map(refKey));
     const tools = requested.filter(item => current.has(refKey(item.ref))).map(({ selection, ref }) => {
       selected.set(key(selection), selection);
       return ref;
     });
+    for (const feature of requestedFeatures) {
+      if (!current.has(refKey(featureRefs[feature]))) continue;
+      selectedFeatures.add(feature);
+      tools.push(featureRefs[feature]);
+    }
     persist();
     return tools;
   }
-  return { native, restore, sync, activate, persist, selectedServers: () => [...new Set([...selected.values()].map(item => item.server))] };
+  return { native, registerFeature, restore, sync, activate, persist, selectedServers: () => [...new Set([...selected.values()].map(item => item.server))] };
 }

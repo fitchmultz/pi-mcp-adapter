@@ -7,6 +7,8 @@ description: Write mcp_script JavaScript for discovering, inspecting, and callin
 
 Use `mcp_script` for MCP calls with loops, filtering, chaining, fan-out, or other logic between calls. Pass ordinary JavaScript as its `code` argument. For a single call, use an already loaded typed tool. Use `mcp_search({ query, server?, limit?, offset? })` to discover and load typed tools for the next request, or explicit `mcp` actions for gateway-only workflows. Discovery never executes a search hit.
 
+If `mcp_script` is inactive, first call `mcp_search({ enable: ["script"] })`. For gateway actions, load `mcp` with `mcp_search({ enable: ["gateway"] })`. Enable both in one call when needed. Enabling does not connect to a server or run an integration action; selections stay active for the session/branch. Hosts permitting only one gateway without the loader keep that tool eager.
+
 ## Discover, inspect, then call
 
 ```js

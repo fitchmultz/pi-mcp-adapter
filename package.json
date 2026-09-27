@@ -1,6 +1,6 @@
 {
   "name": "@fitchmultz/pi-mcp-adapter",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "description": "Fitch's independently maintained MCP adapter for Pi coding agent",
   "type": "module",
   "types": "./dist/index.d.ts",
