@@ -34,6 +34,13 @@ pi install npm:@fitchmultz/pi-mcp-adapter
 
 Or install from Git: `pi install git:github.com/fitchmultz/pi-mcp-adapter`.
 
+On **Android/Termux**, Git/source installs and type checks require an Android-native
+TypeScript 7 compiler as `tsgo` on `PATH`. The [Fold development environment](https://github.com/fitchmultz/fold-dev-environment)
+provides a pinned native build (validated with `7.1.0-dev.20260904.1`). npm's TypeScript
+package has no Android binary, and its Linux binary probes a syscall Android blocks.
+macOS/Linux use the package-local pinned compiler. Published precompiled packages
+do not need a compiler at runtime.
+
 Restart Pi after installation. Existing v4 users should migrate first.
 
 ### Upgrading from v5

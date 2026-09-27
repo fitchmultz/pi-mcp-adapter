@@ -35,7 +35,7 @@
     "build:bridge": "node ./scripts/build-app-bridge.mjs",
     "prepare": "node ./scripts/prepare.mjs",
     "check:compat": "node scripts/compat-host.mjs && npm run build && npm run typecheck && vitest run --exclude __tests__/interactive-visualizer-server.test.ts && npm run test:oauth && node scripts/compat-package-smoke.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node ./scripts/tsc.mjs --noEmit",
     "test": "vitest run && npm run test:oauth",
     "test:watch": "vitest",
     "test:oauth": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --test --test-concurrency=1 mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
