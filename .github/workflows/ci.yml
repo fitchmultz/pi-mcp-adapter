@@ -47,19 +47,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fd-find ripgrep
           sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
-      - name: Select pinned fork
-        id: fork
-        run: echo "ref=$(node -p 'require("./automation/host-targets.json").forkRef')" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: fork
         with:
           repository: fitchmultz/pi
-          ref: ${{ steps.fork.outputs.ref }}
+          ref: main
           path: fork
           persist-credentials: false
       - name: Build fork once
         working-directory: fork
         env:
-          FORK_REF: ${{ steps.fork.outputs.ref }}
+          FORK_REF: ${{ steps.fork.outputs.commit }}
           PI_OFFLINE: '1'
           PI_TELEMETRY: '0'
         run: |
@@ -78,7 +76,7 @@ jobs:
             --host official --target "$version" --output "$RUNNER_TEMP/official-evidence"
       - name: Qualify fork Pi
         env:
-          PI_COMPAT_FORK_REF: ${{ steps.fork.outputs.ref }}
+          PI_COMPAT_FORK_REF: ${{ steps.fork.outputs.commit }}
         run: |
           node automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$GITHUB_WORKSPACE/extension" \
             --host fork --target "$RUNNER_TEMP/fork-package" --output "$RUNNER_TEMP/fork-evidence"
