@@ -104,6 +104,8 @@ async function startAdapter(options: McpAdapterOptions = {}, requestTimeoutMs = 
   });
   sessions.push(session);
   await session.bindExtensions({ mode: "print", onError: error => { throw new Error(error.error); } });
+  const loader = session.agent.state.tools.find(tool => tool.name === "mcp_search")!;
+  await loader.execute("bootstrap", { enable: ["gateway", "script"] });
   const proxy = session.agent.state.tools.find(tool => tool.name === "mcp");
   const script = session.agent.state.tools.find(tool => tool.name === "mcp_script");
   if (!proxy || !script) throw new Error("Adapter tools were not registered");

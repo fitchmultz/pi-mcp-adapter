@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.1.0] - 2026-09-27
+
 ### Changed
 
+- Keep full MCP gateway/script schemas inactive until selected with `mcp_search({ enable: ["gateway", "script"] })`. Typed discovery still loads matches in one call. Selections persist on the current session branch; configured pins, legacy resource pins, configuration restrictions, and loader-excluded host allowlists retain their behavior.
 - `npm run typecheck` now also checks the test suite under the same strict settings as the source.
 
 ## [7.0.0] - 2026-09-26

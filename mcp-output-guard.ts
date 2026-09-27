@@ -315,7 +315,7 @@ export function formatMcpPayloadFile(file: McpPayloadFile): string {
 }
 
 export function formatMcpResultReference(ref: string): string {
-  return `[MCP result saved: ${JSON.stringify(ref)}. Inspect without repeating the call using mcp action "read-result" or tools.readResult with this ref. Optionally select a JSON Pointer with path.]`;
+  return `[MCP result saved: ${JSON.stringify(ref)}. Inspect without repeating the call using mcp action "read-result" or tools.readResult with this ref. If inactive, first mcp_search({ enable: ["gateway"] }) or mcp_search({ enable: ["script"] }). Optionally select a JSON Pointer with path.]`;
 }
 
 function summarizeMcpResult(result: unknown, rawBytes: number, artifact: { path?: string; error?: string }): McpResultSummary {

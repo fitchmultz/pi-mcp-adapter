@@ -165,6 +165,45 @@ describe("MCP typed loader", () => {
     expect(h.active()).toContainEqual({ name: "demo_pinned" });
   });
 
+  it("unions gateway activation with native typed and foreign same-name references through late registration", async () => {
+    const h = host(true);
+    h.api.registerTool({ name: "mcp_search" } as any);
+    h.api.registerTool({ name: "mcp", namespace: "foreign" } as any);
+    const loader = createToolLoader(h.api, () => null, () => null);
+    loader.registerFeature("gateway", { name: "mcp" } as any);
+    loader.registerFeature("script", { name: "mcp_script" } as any);
+    const gateways = () => ({ gateway: {}, script: {} });
+    loader.restore(h.ctx);
+    loader.sync(config, cache(), undefined, true, gateways);
+    expect(h.active()).not.toContainEqual({ name: "mcp" });
+    await Promise.all([
+      Promise.resolve().then(() => loader.activate([match("demo", "search")], ["script"])),
+      Promise.resolve().then(() => loader.activate([], ["gateway"])),
+    ]);
+    const expected = [{ name: "mcp", namespace: "foreign" }, { name: "search", namespace: "mcp_demo" }, { name: "mcp" }, { name: "mcp_script" }];
+    for (const ref of expected) expect(h.active()).toContainEqual(ref);
+    const updated = cache();
+    updated.servers.other!.tools.push(tool("late"));
+    loader.sync(config, updated, undefined, true, gateways);
+    for (const ref of expected) expect(h.active()).toContainEqual(ref);
+    expect(h.active()).not.toContainEqual({ name: "late", namespace: "mcp_other" });
+    // A config restriction removes only the unnamespaced original definition.
+    loader.sync(config, updated, undefined, true, () => ({ script: {} }));
+    expect(loader.activate([], ["gateway"])).toEqual([]);
+    expect(h.active()).not.toContainEqual({ name: "mcp" });
+    expect(h.active()).toContainEqual({ name: "mcp", namespace: "foreign" });
+    expect(h.entries.at(-1).data.features).toEqual(["script"]);
+  });
+
+  it("does not remove a same-name definition it never registered when the adapter feature is disabled", () => {
+    const h = host();
+    h.api.registerTool({ name: "mcp_script" } as any);
+    const loader = createToolLoader(h.api, () => null, () => null);
+    loader.sync({ mcpServers: {}, settings: { scriptMode: false } }, null, undefined, false, () => ({}));
+    expect(h.api.getActiveTools()).toContain("mcp_script");
+    expect(loader.activate([], ["script"])).toEqual([]);
+  });
+
   it.each([false, true])("honors the host allowlist (native=%s)", native => {
     const h = host(native, ref => ["mcp", "read"].includes(ref.name));
     const loader = createToolLoader(h.api, () => null, () => null);

@@ -90,6 +90,13 @@ beforeEach(async () => {
   }));
   await session.bindExtensions({ mode: "print", onError: error => { throw new Error(error.error); } });
   await discovering;
+  expect(session.getActiveToolNames()).not.toContain("mcp");
+  expect(session.getActiveToolNames()).not.toContain("mcp_script");
+  const loader = session.agent.state.tools.find(tool => tool.name === "mcp_search")!;
+  const loaded = await loader.execute("load-during-startup", { enable: ["gateway", "script"] });
+  expect(loaded.details).toMatchObject({ loaded: [{ name: "mcp" }, { name: "mcp_script" }] });
+  expect(calls).toEqual([]);
+  expect(connect).toHaveBeenCalledTimes(1);
 });
 
 afterEach(async () => {

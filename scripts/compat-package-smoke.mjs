@@ -47,7 +47,13 @@ try {
   const errors = [];
   await session.bindExtensions({ mode: "print", onError: error => errors.push(error) });
   for (const name of ["mcp", "mcp_script"]) assert.ok(session.getAllTools().some(tool => tool.name === name), name);
+  assert.deepEqual(session.getActiveToolNames(), ["mcp_search"], "registered gateways must not be active by default");
+  const search = session.agent.state.tools.find(tool => tool.name === "mcp_search");
+  const loaded = await search.execute("load-gateways", { enable: ["gateway", "script"] });
+  assert.deepEqual(loaded.details.loaded, [{ name: "mcp" }, { name: "mcp_script" }]);
+  assert.deepEqual(session.getActiveToolNames().sort(), ["mcp", "mcp_script", "mcp_search"]);
   await session.reload();
+  assert.deepEqual(session.getActiveToolNames().sort(), ["mcp", "mcp_script", "mcp_search"], "loaded gateways survive reload");
   assert.deepEqual(errors, []);
   assert.equal(resourceLoader.getExtensions().extensions[0]?.resolvedPath, join(packageRoot, "dist/index.js"));
   for (const name of ["mcp", "mcp_script"]) assert.ok(session.getAllTools().some(tool => tool.name === name), `after reload: ${name}`);
@@ -60,12 +66,16 @@ try {
   const marker = join(root, "cli.json");
   const observer = join(root, "observer.ts");
   writeFileSync(observer, `import { writeFileSync } from "node:fs";
-export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ tools: pi.getAllTools().map(t => t.name), commands: pi.getCommands().map(c => c.name) })); ctx.shutdown(); }); }`);
+export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ tools: pi.getAllTools().map(t => t.name), activeTools: pi.getActiveTools(), commands: pi.getCommands().map(c => c.name) })); ctx.shutdown(); }); }`);
   const child = spawnSync(process.execPath, [hostCli, "--mode", "rpc", "--no-session", "-ne", "-ns", "-np", "-nc", "--no-themes", "--approve", "-e", packageRoot, "-e", observer], { cwd: root, env, input: "", encoding: "utf8", timeout: 30_000 });
   assert.equal(child.status, 0, `${child.error ?? ""}\n${child.stderr}`);
   assert.doesNotMatch(child.stderr, /Failed to load extension|Extension error/);
   const observed = JSON.parse(readFileSync(marker, "utf8"));
-  for (const name of ["mcp", "mcp_script"]) assert.ok(observed.tools.includes(name), `CLI tool ${name}`);
+  for (const name of ["mcp", "mcp_script"]) {
+    assert.ok(observed.tools.includes(name), `CLI tool ${name}`);
+    assert.ok(!observed.activeTools.includes(name), `CLI tool ${name} must start inactive`);
+  }
+  assert.ok(observed.activeTools.includes("mcp_search"));
   for (const name of ["mcp", "mcp-auth"]) assert.ok(observed.commands.includes(name), `CLI command ${name}`);
   console.log(`[compat-package] ${process.argv[2] ? "Git" : "npm"} install, native SDK reload, and bundled CLI passed`);
 } finally {
