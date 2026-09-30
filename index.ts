@@ -19,7 +19,7 @@ import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwne
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS, runMcpScript } from "./mcp-code.ts";
 import { MAX_PAGE_SIZE, paginate, rankToolMatches } from "./search-ranking.ts";
-import { createToolLoader, supportsNativeAsync, type SearchAPI, type Feature, type FeaturePolicy } from "./tool-loader.ts";
+import { createToolLoader, type Feature, type FeaturePolicy } from "./tool-loader.ts";
 import { gatewayParameters, prepareGatewayArguments, type GatewayArguments } from "./gateway-arguments.ts";
 import { executeResourceList, executeResourceRead } from "./resource-tools.ts";
 import { guardMcpOutput, guardedMcpDetails, readMcpResult, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
@@ -92,7 +92,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const envDirectToolOverride = envRaw?.split(",").map(s => s.trim()).filter(Boolean);
   const toolLoader = createToolLoader(pi, () => state, () => initPromise, beforeExecute);
   let runtimeCwd: string | undefined;
-  let nativeAsyncSupported = false;
   let proxyToolRegistered = false;
   let proxyToolDescription: string | null = null;
   let directToolsFrozen = false;
@@ -109,7 +108,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   function syncToolSurface(ctx?: ExtensionContext): void {
     const config = state?.config ?? currentConfig;
     const cache = loadMetadataCache(state?.metadataCacheEnabled ?? false);
-    toolLoader.sync(config, cache, envRaw === "__none__" ? null : envDirectToolOverride, nativeAsyncSupported,
+    toolLoader.sync(config, cache, envRaw === "__none__" ? null : envDirectToolOverride,
       specs => syncGateways(config, cache, specs));
   }
 
@@ -211,7 +210,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
 
   async function startSession(ctx: ExtensionContext) {
     runtimeCwd = ctx.cwd;
-    nativeAsyncSupported = supportsNativeAsync(ctx);
     directToolsFrozen = false;
     const generation = ++lifecycleGeneration;
     const previousState = state;
@@ -262,7 +260,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     toolLoader.restore(ctx);
     registerPromptCommands(resolveCachedPrompts(runtimeConfig, metadataCacheEnabled));
     const runtimeCache = loadMetadataCache(metadataCacheEnabled);
-    toolLoader.sync(runtimeConfig, runtimeCache, envRaw === "__none__" ? null : envDirectToolOverride, nativeAsyncSupported,
+    toolLoader.sync(runtimeConfig, runtimeCache, envRaw === "__none__" ? null : envDirectToolOverride,
       specs => syncGateways(runtimeConfig, runtimeCache, specs));
 
     const initialization = startInitialization(ctx, owner, oauthRuntime, runtimeConfig, generation);
@@ -284,7 +282,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     syncToolSurface(ctx);
   });
   pi.on("model_select", (_event, ctx) => {
-    nativeAsyncSupported = supportsNativeAsync(ctx);
     if (state) syncToolSurface(ctx);
   });
   pi.on("before_agent_start", async (_event, ctx) => {
@@ -545,8 +542,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   }
 
   type SearchParams = { query?: string; enable?: Feature[]; server?: string; limit?: number; offset?: number };
-  const unavailableFeatures = (enable: Feature[] = [], tools: Array<{ name: string; namespace?: string }>) =>
-    enable.filter(feature => !tools.some(tool => tool.name === (feature === "gateway" ? "mcp" : "mcp_script") && !tool.namespace));
+  const unavailableFeatures = (enable: Feature[] = [], tools: Array<{ name: string }>) =>
+    enable.filter(feature => !tools.some(tool => tool.name === (feature === "gateway" ? "mcp" : "mcp_script")));
   async function searchAndLoad(params: SearchParams, signal: AbortSignal | undefined, ctx: ExtensionContext) {
     throwIfAborted(signal);
     if (params.query === undefined && !params.enable?.length) throw new Error("Provide query or enable.");
@@ -568,7 +565,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const page = paginate(matches, params.offset ?? 0, params.limit ?? 5);
     const tools = toolLoader.activate(page.items, params.enable);
     const unavailable = unavailableFeatures(params.enable, tools);
-    const typedCount = tools.filter(tool => tool.namespace || (tool.name !== "mcp" && tool.name !== "mcp_script")).length;
+    const typedCount = tools.filter(tool => tool.name !== "mcp" && tool.name !== "mcp_script").length;
     const result = executeSearch(ready, params.query, params.server, typedCount < page.items.length, params.limit ?? 5, params.offset, "mcp_search");
     const guarded = await guardMcpOutput([
       ...result.content,
@@ -597,8 +594,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       return searchAndLoad(params, signal, ctx);
     },
   };
-  if (toolLoader.native) (pi as SearchAPI).registerToolSearch!(searchDefinition);
-  else pi.registerTool(searchDefinition);
+  pi.registerTool(searchDefinition);
 
   let scriptToolRegistered = false;
 

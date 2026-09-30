@@ -22,7 +22,7 @@ const hostPeerPackages = {
   "@earendil-works/pi-ai": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
   "@earendil-works/pi-coding-agent": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
   "@earendil-works/pi-tui": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
-  "typebox": "1.3.34",
+  "typebox": "1.3.27",
 };
 
 describe("package.json files", () => {

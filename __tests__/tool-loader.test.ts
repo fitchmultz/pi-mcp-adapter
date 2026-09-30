@@ -1,31 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
-import { createToolLoader, supportsNativeAsync, type SearchAPI } from "../tool-loader.ts";
+import { createToolLoader } from "../tool-loader.ts";
 import { computeServerHash } from "../metadata-cache.ts";
 import type { McpConfig, McpTool } from "../types.ts";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-type Ref = { name: string; namespace?: string };
-const refKey = (ref: Ref) => JSON.stringify([ref.namespace ?? null, ref.name]);
-function host(native = false, allow: (ref: Ref) => boolean = () => true) {
+type Ref = { name: string };
+const refKey = (ref: Ref) => ref.name;
+function host(allow: (ref: Ref) => boolean = () => true) {
   const definitions = new Map<string, any>();
   let active: Ref[] = [{ name: "mcp" }, { name: "read" }];
   const entries: any[] = [];
   const api = {
     registerTool: vi.fn((tool: any) => {
       definitions.set(refKey(tool), tool);
-      if (allow(tool) && !active.some(ref => refKey(ref) === refKey(tool))) active.push({ name: tool.name, ...(tool.namespace ? { namespace: tool.namespace } : {}) });
+      if (allow(tool) && !active.some(ref => refKey(ref) === refKey(tool))) active.push({ name: tool.name });
     }),
     registerEntryRenderer: vi.fn(),
     getAllTools: () => [...definitions.values()].filter(allow),
-    getActiveTools: () => active.map(ref => ref.namespace ? refKey(ref) : ref.name),
+    getActiveTools: () => active.map(ref => ref.name),
     setActiveTools: (names: string[]) => { active = names.map(name => ({ name })).filter(allow); },
     appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
-    ...(native ? {
-      registerToolSearch: vi.fn(),
-      getActiveToolReferences: () => active,
-      setActiveToolReferences: (refs: Ref[]) => { active = refs.filter(allow); },
-    } : {}),
-  } as unknown as SearchAPI;
+  } as unknown as ExtensionAPI;
   const ctx = { sessionManager: { getBranch: () => entries } } as unknown as ExtensionContext;
   return { api, ctx, entries, definitions, active: () => active };
 }
@@ -40,29 +35,12 @@ function cache() {
 const match = (server: string, originalName: string) => ({ server, tool: { ...tool(originalName), description: originalName, name: `${server}_${originalName}`, originalName } });
 
 describe("MCP typed loader", () => {
-  it("enables async only with host lifecycle support and for non-interactive direct calls", () => {
-    const capability = { model: { compat: { supportsAsyncTools: true } } };
-    expect(supportsNativeAsync(capability as unknown as ExtensionContext)).toBe(false);
-    expect(supportsNativeAsync({ getPendingToolCalls() {}, ...capability } as unknown as ExtensionContext)).toBe(true);
-    expect(supportsNativeAsync({ getPendingToolCalls() {}, model: { compat: { supportsAsyncTools: false } } } as unknown as ExtensionContext)).toBe(false);
-    const h = host();
-    const loader = createToolLoader(h.api, () => null, () => null);
-    loader.restore(h.ctx);
-    const catalog = cache();
-    catalog.servers.other!.tools[0]!._meta = { ui: { resourceUri: "ui://app" } };
-    const gated = { ...config, settings: { approveTools: ["pinned"] } };
-    loader.sync(gated, catalog, undefined, true);
-    expect(h.definitions.get(refKey({ name: "demo_search" })).async).toBe(true);
-    expect(h.definitions.get(refKey({ name: "demo_pinned" })).async).toBeUndefined();
-    expect(h.definitions.get(refKey({ name: "other_search" })).async).toBeUndefined();
-    loader.sync(gated, catalog, undefined, false);
-    expect(h.definitions.get(refKey({ name: "demo_search" })).async).toBeUndefined();
+  it("serializes guarded calls at the public execution boundary", () => {
     const guardedHost = host();
     const guarded = createToolLoader(guardedHost.api, () => null, () => null, async () => {});
     guarded.restore(guardedHost.ctx);
-    guarded.sync(config, cache(), undefined, true);
-    expect(guardedHost.definitions.get(refKey({ name: "demo_search" })).async).toBeUndefined();
-    expect(guardedHost.definitions.get(refKey({ name: "demo_search" })).executionMode).toBe("sequential");
+    guarded.sync(config, cache());
+    expect(guardedHost.definitions.get("demo_search").executionMode).toBe("sequential");
   });
 
   it("registers real schemas silently but activates only pins until discovery", () => {
@@ -112,22 +90,21 @@ describe("MCP typed loader", () => {
     expect(h.api.getActiveTools()).toContain("demo_pinned");
   });
 
-  it.each([false, true])("retains explicit discovery of a startup pin after unpin and branch restore (native=%s)", native => {
-    const h = host(native);
+  it("retains explicit discovery of a startup pin after unpin and branch restore", () => {
+    const h = host();
     const loader = createToolLoader(h.api, () => null, () => null);
     loader.restore(h.ctx);
     loader.sync(config, cache());
     expect(loader.activate([match("demo", "pinned")])).toEqual([{ name: "demo_pinned" }]);
     expect(h.entries.at(-1).data.selected).toEqual([{ server: "demo", tool: "pinned" }]);
     const unpinned = { ...config, mcpServers: { ...config.mcpServers, demo: { ...config.mcpServers.demo, directTools: false } } };
-    const ref = native ? { name: "pinned", namespace: "mcp_demo" } : { name: "demo_pinned" };
+    const ref = { name: "demo_pinned" };
     loader.sync(unpinned, cache());
     expect(h.active()).toContainEqual(ref);
     loader.restore(h.ctx);
     loader.sync(unpinned, cache());
     expect(h.active()).toContainEqual(ref);
-    if (native) h.api.setActiveToolReferences!([{ name: "mcp" }, { name: "read" }]);
-    else h.api.setActiveTools(["mcp", "read"]);
+    h.api.setActiveTools(["mcp", "read"]);
     loader.persist();
     expect(h.entries.at(-1).data.selected).toEqual([]);
   });
@@ -151,47 +128,46 @@ describe("MCP typed loader", () => {
     expect(fresh.api.getActiveTools()).toEqual(["mcp", "read"]);
   });
 
-  it("uses exact native identities without losing other namespaces", () => {
-    const h = host(true);
-    h.api.registerTool({ name: "search", namespace: "outside" } as any);
+  it("uses unique public names without losing other namespaces", () => {
+    const h = host();
+    h.api.registerTool({ name: "search", namespace: { name: "outside" } } as any);
     const loader = createToolLoader(h.api, () => null, () => null);
     loader.restore(h.ctx);
     loader.sync(config, cache());
-    expect(loader.native).toBe(true);
     expect(loader.activate([match("demo", "search"), match("other", "search")])).toEqual([
-      { name: "search", namespace: "mcp_demo" }, { name: "search", namespace: "mcp_other" },
+      { name: "demo_search" }, { name: "other_search" },
     ]);
-    expect(h.active()).toContainEqual({ name: "search", namespace: "outside" });
+    expect(h.active()).toContainEqual({ name: "search" });
     expect(h.active()).toContainEqual({ name: "demo_pinned" });
   });
 
-  it("unions gateway activation with native typed and foreign same-name references through late registration", async () => {
-    const h = host(true);
+  it("unions gateway activation with typed and foreign tools through late registration", async () => {
+    const h = host();
     h.api.registerTool({ name: "mcp_search" } as any);
-    h.api.registerTool({ name: "mcp", namespace: "foreign" } as any);
+    h.api.registerTool({ name: "foreign_mcp" } as any);
     const loader = createToolLoader(h.api, () => null, () => null);
     loader.registerFeature("gateway", { name: "mcp" } as any);
     loader.registerFeature("script", { name: "mcp_script" } as any);
     const gateways = () => ({ gateway: {}, script: {} });
     loader.restore(h.ctx);
-    loader.sync(config, cache(), undefined, true, gateways);
+    loader.sync(config, cache(), undefined, gateways);
     expect(h.active()).not.toContainEqual({ name: "mcp" });
     await Promise.all([
       Promise.resolve().then(() => loader.activate([match("demo", "search")], ["script"])),
       Promise.resolve().then(() => loader.activate([], ["gateway"])),
     ]);
-    const expected = [{ name: "mcp", namespace: "foreign" }, { name: "search", namespace: "mcp_demo" }, { name: "mcp" }, { name: "mcp_script" }];
+    const expected = [{ name: "foreign_mcp" }, { name: "demo_search" }, { name: "mcp" }, { name: "mcp_script" }];
     for (const ref of expected) expect(h.active()).toContainEqual(ref);
     const updated = cache();
     updated.servers.other!.tools.push(tool("late"));
-    loader.sync(config, updated, undefined, true, gateways);
+    loader.sync(config, updated, undefined, gateways);
     for (const ref of expected) expect(h.active()).toContainEqual(ref);
-    expect(h.active()).not.toContainEqual({ name: "late", namespace: "mcp_other" });
-    // A config restriction removes only the unnamespaced original definition.
-    loader.sync(config, updated, undefined, true, () => ({ script: {} }));
+    expect(h.active()).not.toContainEqual({ name: "other_late" });
+    // A config restriction removes only the adapter's own gateway.
+    loader.sync(config, updated, undefined, () => ({ script: {} }));
     expect(loader.activate([], ["gateway"])).toEqual([]);
     expect(h.active()).not.toContainEqual({ name: "mcp" });
-    expect(h.active()).toContainEqual({ name: "mcp", namespace: "foreign" });
+    expect(h.active()).toContainEqual({ name: "foreign_mcp" });
     expect(h.entries.at(-1).data.features).toEqual(["script"]);
   });
 
@@ -199,13 +175,13 @@ describe("MCP typed loader", () => {
     const h = host();
     h.api.registerTool({ name: "mcp_script" } as any);
     const loader = createToolLoader(h.api, () => null, () => null);
-    loader.sync({ mcpServers: {}, settings: { scriptMode: false } }, null, undefined, false, () => ({}));
+    loader.sync({ mcpServers: {}, settings: { scriptMode: false } }, null, undefined, () => ({}));
     expect(h.api.getActiveTools()).toContain("mcp_script");
     expect(loader.activate([], ["script"])).toEqual([]);
   });
 
-  it.each([false, true])("honors the host allowlist (native=%s)", native => {
-    const h = host(native, ref => ["mcp", "read"].includes(ref.name));
+  it("honors the host allowlist", () => {
+    const h = host(ref => ["mcp", "read"].includes(ref.name));
     const loader = createToolLoader(h.api, () => null, () => null);
     loader.restore(h.ctx);
     loader.sync(config, cache());
