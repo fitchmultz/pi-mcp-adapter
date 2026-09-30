@@ -392,7 +392,7 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
-  it.each([false, true])("loads the advertised next page and retry, native host: %s", async (native) => {
+  it("loads the advertised next page and retry through public tool names", async () => {
     const config = { mcpServers: { demo: { command: "demo" } } };
     const state = createState();
     state.config = config;
@@ -405,20 +405,13 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.executeSearch.mockImplementation(realProxy.executeSearch);
     const { default: adapter } = await import("../index.ts");
     const { api, handlers } = createPi();
-    if (native) {
-      let refs: Array<{ name: string; namespace?: string }> = [];
-      api.registerToolSearch = vi.fn();
-      api.getActiveToolReferences = () => refs;
-      api.setActiveToolReferences = (next: typeof refs) => { refs = next; };
-    }
     adapter(api);
     await handlers.get("session_start")?.({}, {});
     await Promise.resolve();
-    const search = native ? api.registerToolSearch.mock.calls[0][0]
-      : api.registerTool.mock.calls.find(([tool]: any[]) => tool.name === "mcp_search")![0];
+    const search = api.getAllTools().find((tool: { name: string }) => tool.name === "mcp_search");
     const gateway = api.registerTool.mock.calls.find(([tool]: any[]) => tool.name === "mcp")![0];
-    const active = () => native ? api.getActiveToolReferences() : api.getActiveTools().map((name: string) => ({ name }));
-    const beta = native ? { namespace: "mcp_demo", name: "beta" } : { name: "demo_beta" };
+    const active = () => api.getActiveTools().map((name: string) => ({ name }));
+    const beta = { name: "demo_beta" };
     const params = { query: "records", server: "demo", limit: 1 };
     const page = await search.execute("page-1", params, undefined, undefined, {});
     expect(active()).not.toContainEqual(beta);

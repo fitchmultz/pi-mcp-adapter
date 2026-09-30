@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMcpAdapter } from "../index.ts";
 import { formatMcpResultReference } from "../mcp-output-guard.ts";
@@ -38,7 +38,7 @@ async function startAdapter(outputDirectory?: string) {
     getActiveTools: () => activeTools,
     setActiveTools: (names: string[]) => { activeTools = names; },
   } as unknown as ExtensionAPI;
-  const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getBranch: () => [] } } as unknown as ExtensionContext;
+  const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getBranch: () => [] } } as unknown as ExtensionToolContext;
   const options: McpAdapterOptions = {
     config: {
       mcpServers: { output: {

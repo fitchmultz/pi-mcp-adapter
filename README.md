@@ -20,7 +20,7 @@ The MCP ecosystem has useful databases, browsers, and APIs. This adapter keeps t
 
 ## Pi release qualification
 
-The development baseline is official Pi **0.87.1**; host peers remain wildcard. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
+The development baseline is official Pi **0.99.1**; host peers remain wildcard and the declared Pi/Node floors are unchanged. Current-host checks do not requalify older Pi versions. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
 
 GitHub CI runs that contract on Node 24 against both official Pi and the maintained fork through the shared Pi compatibility automation, including fresh Git and npm installations loaded by the real Pi CLI. A second job checks lockfile registry hosts, published type declarations, the built interactive visualizer, and MCP protocol conformance. These checks use local MCP fixtures and disposable agent directories, never live credentials or paid providers.
 
@@ -650,9 +650,9 @@ URL mode is advertised only in TUI mode. The adapter displays the requesting ser
 
 Cached eligible schemas and the full gateway/script definitions register inactive; only pins and tools selected for the current branch are active. Legacy resource pins keep the gateway eager. Allowed gateway/script tools also stay eager when the host excludes the loader, so restricted hosts remain usable. The adapter persists canonical `{ server, tool }` selections and enabled gateway/script features in native Pi session entries and restores them across resume, reload, branch navigation, and working-directory changes. Host tool allowlists remain binding. Manual deselection survives reload. Loaded schemas remain available rather than unloading each turn; activation changes declarations and can invalidate the prompt-cache prefix.
 
-On hosts with native tool-search support, lazy tools use exact references in namespace `mcp_<server>` with the original tool name as the leaf. Existing direct pins retain their flat prefixed names. On official Pi 0.87.1, which has no native tool search, the ordinary `mcp_search` loader activates flat tools with the same discover-then-call workflow. Always use the exact reference returned by discovery rather than constructing names.
+Both official Pi and the maintained fork use public tool registration and active-tool APIs. Discovered tools retain their flat prefixed names, with `mcp_<server>` namespace metadata for grouping. Always use the exact name returned by discovery rather than constructing names. Inactive tools are not exposed through deferred/codemode execution; loading them still requires the same allowlist and selection checks.
 
-Typed tools may opt into native asynchronous execution only when both the host's pending-call API and the selected model route support it. Tools requiring configured approval, an MCP App UI, or the `beforeExecute` sequential checkpoint barrier keep ordinary awaited execution. This is separate from local `mcp_script` orchestration.
+Tool execution uses Pi's public request-boundary scheduling, not retired native async or pending-call APIs. Configured approval, MCP App UI consent, and the `beforeExecute` sequential checkpoint barrier remain binding. This is separate from local `mcp_script` orchestration.
 
 Add `directTools` to pin frequently used tools into the initial active set:
 

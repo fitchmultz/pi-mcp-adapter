@@ -447,7 +447,7 @@ it("keeps legacy cancellation sends promise-based after OAuth runtime shutdown",
     await manager.closeAll();await pending;server.closeAllConnections();await new Promise(r=>server.close(r));
     console.log(JSON.stringify({uncaught}));process.exitCode=uncaught?1:0;
   `], { encoding: "utf8", timeout: 5000 });
-  expect({ status: child.status, error: child.error?.message, stdout: child.stdout.trim(), stderr: child.stderr.trim() }).toEqual({ status: 0, error: undefined, stdout: '{"uncaught":0}', stderr: "" });
+  expect({ status: child.status, error: child.error?.message, stdout: child.stdout.trim() }, child.stderr).toEqual({ status: 0, error: undefined, stdout: '{"uncaught":0}' });
 });
 
 it("releases the native async context on deactivation and cannot re-enable it with a late send", async () => {

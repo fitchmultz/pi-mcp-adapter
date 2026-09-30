@@ -560,14 +560,16 @@ describe("published SDK v2 over real local HTTP", () => {
     session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
       const active = getCurrentTools(context.messages);
       if (stage < 3) expect(active.some(tool => tool.name === "mcp" || tool.name === "mcp_script")).toBe(false);
-      const selected = active.find(candidate => candidate.description === "Read newly available data") as { name: string; namespace?: string; parameters: unknown } | undefined;
-      let next: { name: string; namespace?: string; arguments: Record<string, unknown> } | undefined;
+      const selected = active.find(candidate => candidate.description === "Read newly available data") as { name: string; parameters: unknown } | undefined;
+      let next: { name: string; arguments: Record<string, unknown> } | undefined;
       if (stage === 0) {
         expect(selected).toBeUndefined();
+        expect(session.getCallableToolNames()).not.toContain("local_second");
         next = { name: "mcp_search", arguments: { query: "newly available", server: "local", limit: 1 } };
       } else if (stage === 1) {
         expect(selected?.parameters).toEqual(tool.inputSchema);
-        next = { name: selected!.name, ...(selected!.namespace ? { namespace: selected!.namespace } : {}), arguments: { value: "typed" } };
+        expect(session.getCallableToolNames()).toContain("local_second");
+        next = { name: selected!.name, arguments: { value: "typed" } };
       } else if (stage === 2) {
         const response = context.messages.filter(message => message.role === "toolResult").at(-1)!;
         const text = response.content.filter(block => block.type === "text").map(block => block.text).join("\n");
@@ -595,18 +597,15 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.calls().map(e => e.body.params.name)).toEqual(["second", "second"]);
     expect(session.sessionManager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "mcp-tool-selection").at(-1).data.selected).toEqual([{ server: "local", tool: "second" }]);
 
-    if (typeof session.getPendingToolCalls === "function") {
-      session.agent.state.model = { ...model, api: "openai-responses", compat: { supportsAsyncTools: true } };
-      await session.extensionRunner.emit({ type: "model_select", model: session.agent.state.model, source: "set" });
-      session.setActiveToolReferences(session.getActiveToolReferences().filter((ref: { name: string }) => ref.name !== "mcp_script"));
+    {
+      session.setActiveToolsByName(session.getActiveToolNames().filter((name: string) => name !== "mcp_script"));
       let requests = 0;
       session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
         const first = requests++ === 0;
         const typed = getCurrentTools(context.messages).find(candidate => candidate.description === "Read newly available data")!;
-        const call = { type: "toolCall", id: "pending-typed", name: typed.name, ...("namespace" in typed ? { namespace: typed.namespace } : {}), arguments: { value: "pending" }, async: true,
-          responsesItem: { type: "function_call", id: "fc_pending", call_id: "pending-typed", name: typed.name, arguments: '{"value":"pending"}', async: true, status: "completed" } };
+        const call = { type: "toolCall", id: "pending-typed", name: typed.name, arguments: { value: "pending" } };
         if (!first) expect(getCurrentTools(context.messages).some(tool => tool.name === "mcp_script")).toBe(true);
-        const message = { role: "assistant", api: "openai-responses", provider: "fixture", model: "fixture", timestamp: Date.now(),
+        const message = { role: "assistant", api: model.api, provider: "fixture", model: "fixture", timestamp: Date.now(),
           content: first ? [call] : [{ type: "text", text: "done" }],
           stopReason: first ? "toolUse" : "stop",
           usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -622,17 +621,15 @@ describe("published SDK v2 over real local HTTP", () => {
       const pending = session.prompt("Keep the accepted typed call while loading script.");
       try {
         await expect.poll(() => heldCall !== undefined).toBe(true);
-        expect(session.getPendingToolCalls()).toContainEqual(expect.objectContaining({ toolCallId: "pending-typed" }));
         const search = session.agent.state.tools.find((tool: { name: string }) => tool.name === "mcp_search");
         await search.execute("load-with-pending", { enable: ["script"] });
-        expect(session.getActiveToolReferences()).toContainEqual({ name: "mcp_script" });
-        expect(session.getActiveToolReferences()).toContainEqual({ name: "second", namespace: "mcp_local" });
+        expect(session.getActiveToolNames()).toContain("mcp_script");
+        expect(session.getActiveToolNames()).toContain("local_second");
       } finally {
         if (heldCall) result(heldCall, { resultType: "complete", content: [{ type: "text", text: "settled once" }] });
         await pending;
       }
       await session.waitForIdle();
-      expect(session.getPendingToolCalls()).toEqual([]);
       expect(f.calls().filter(call => call.body.params.arguments.value === "pending"), JSON.stringify(session.messages.slice(-4))).toHaveLength(1);
       expect(session.messages.filter((message: any) => message.role === "toolResult" && message.toolCallId === "pending-typed")).toMatchObject([
         { isError: false, content: [{ type: "text", text: "settled once" }] },
