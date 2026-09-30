@@ -844,7 +844,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const restoredPath = join(root, "restored.jsonl");
     await writeFile(restoredPath, checkpoint);
     const restored = SessionManager.open(restoredPath);
-    const entries = restored.getEntries().filter((e: any) => e.type === "custom");
+    const entries = restored.getEntries().filter((e: any) => e.type === "custom" && e.customType === "fixture-mcp-call");
     expect(entries.map((e: any) => e.data.phase)).toEqual(["before", "after"]);
     expect(entries[1].data.result.structuredContent.id).toBe("resource-1");
     expect(effects).toBe(2); // Opening native history does not replay its script.
@@ -888,7 +888,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(effects).toBe(5);
     const lostPath = join(root, "lost-response.jsonl");
     await writeFile(lostPath, captures.at(-1)!.bytes);
-    const lostHistory = SessionManager.open(lostPath).getEntries().filter((e: any) => e.type === "custom");
+    const lostHistory = SessionManager.open(lostPath).getEntries().filter((e: any) => e.type === "custom" && e.customType === "fixture-mcp-call");
     const intent = lostHistory.at(-2).data;
     expect(intent).toMatchObject({ phase: "before", toolCallId: "lost-outer", innerCallId: 1, args: { value: "lose-response" } });
     const readback = await execute("mcp", "readback-outer", { tool: "local_readback", args: intent.args });
