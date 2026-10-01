@@ -7,10 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.1.1] - 2026-10-01
+
 ### Changed
 
 - Update MCP Apps to 2.0.3 in the adapter and interactive visualizer, keeping their dependency graphs aligned.
 - Qualify development against official Pi 0.99.2 and the current maintained fork, keeping host peers wildcard and the declared Pi/Node floors unchanged.
+- Update development validation to Vitest 5.0.3 and npm 12.2.0.
+- Use current public Pi tool activation and request-boundary scheduling APIs, preserving authentication, approval, and checkpoint barriers.
 
 ### Fixed
 
