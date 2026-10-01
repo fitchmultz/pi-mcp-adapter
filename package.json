@@ -78,7 +78,7 @@
   "dependencies": {
     "@modelcontextprotocol/client": "2.1.0",
     "@modelcontextprotocol/core": "2.1.0",
-    "@modelcontextprotocol/ext-apps": "2.0.0",
+    "@modelcontextprotocol/ext-apps": "2.0.3",
     "@napi-rs/keyring": "2.1.0",
     "cross-spawn": "7.0.6",
     "minisearch": "7.2.0",
