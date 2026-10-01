@@ -1,4 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>fitchmultz/.github:pi-extensions"]
+  "extends": ["github>fitchmultz/.github:pi-extensions"],
+  "packageRules": [
+    {
+      "description": "TypeBox follows the official Pi development baseline to avoid loading a second version.",
+      "matchPackageNames": ["typebox"],
+      "enabled": false
+    }
+  ]
 }
