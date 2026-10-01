@@ -38,7 +38,7 @@ export function createUiMessageHistory(outputDirectory?: string) {
         messages.historyError = error instanceof Error ? error.message : String(error);
         if (category === "intents") messages.intents.push(value as UiSessionMessages["intents"][number]);
         else messages[category].push(value as string);
-        return `UI history could not be saved; messages remain in memory for recovery: ${messages.historyError}`;
+        return `UI history could not be saved; messages remain in memory for recovery: ${messages.historyError}. Unsaved messages will be lost on reload or process exit.`;
       }
     },
   };

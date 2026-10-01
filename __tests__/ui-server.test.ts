@@ -960,6 +960,8 @@ describe("UiServer", () => {
         expect(res.status).toBe(200);
         expect(res.body).toMatchObject({ ok: true, warning: expect.stringContaining("remain in memory") });
         expect(notify).toHaveBeenCalledWith(expect.stringContaining("remain in memory"), "warning");
+        expect(res.body).toMatchObject({ warning: expect.stringContaining("lost on reload or process exit") });
+        expect(notify).toHaveBeenCalledWith(expect.stringContaining("lost on reload or process exit"), "warning");
         expect(onMessage).toHaveBeenCalledWith({ type: "prompt", prompt: "recover this message" });
         expect((await materializeUiMessages(handle.getSessionMessages())).prompts).toEqual(["recover this message"]);
       } finally { await rm(root, { recursive: true, force: true }); }
