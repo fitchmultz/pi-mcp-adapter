@@ -108,9 +108,9 @@
     }
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.99.1",
-    "@earendil-works/pi-coding-agent": "0.99.1",
-    "@earendil-works/pi-tui": "0.99.1",
+    "@earendil-works/pi-ai": "0.99.2",
+    "@earendil-works/pi-coding-agent": "0.99.2",
+    "@earendil-works/pi-tui": "0.99.2",
     "@modelcontextprotocol/server": "2.2.0",
     "@types/cross-spawn": "6.0.6",
     "@types/node": "24.19.0",

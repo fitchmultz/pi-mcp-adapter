@@ -20,7 +20,7 @@ The MCP ecosystem has useful databases, browsers, and APIs. This adapter keeps t
 
 ## Pi release qualification
 
-The development baseline is official Pi **0.99.1**; host peers remain wildcard and the declared Pi/Node floors are unchanged. Current-host checks do not requalify older Pi versions. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
+The development baseline is official Pi **0.99.2**; host peers remain wildcard and the declared Pi/Node floors are unchanged. Current-host checks do not requalify older Pi versions. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
 
 GitHub CI runs that contract on Node 24 against both official Pi and the maintained fork through the shared Pi compatibility automation, including fresh Git and npm installations loaded by the real Pi CLI. A second job checks lockfile registry hosts, published type declarations, the built interactive visualizer, and MCP protocol conformance. These checks use local MCP fixtures and disposable agent directories, never live credentials or paid providers.
 
