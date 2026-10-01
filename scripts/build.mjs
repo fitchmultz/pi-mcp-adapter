@@ -14,15 +14,15 @@ import { copyFile, readdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 const RM_OPTIONS = { force: true, maxRetries: 5, recursive: true, retryDelay: 100 };
 const RENAME_RETRY_LIMIT = 50;
 const RENAME_RETRY_MS = 50;
-// Run tsc's JS entrypoint directly through the current node binary: no .cmd shim,
-// no shell, safe for install paths containing spaces on every platform.
-const tscPath = join(process.cwd(), "node_modules", "typescript", "bin", "tsc");
+// The shared launcher selects native tsgo on Termux, package-local tsc elsewhere.
+const tscPath = fileURLToPath(new URL("./tsc.mjs", import.meta.url));
 // Runtime siblings resolved relative to the compiled module directory
 // (mcp-auth.ts, mcp-code.ts, ui-server.ts). `npm run build:bridge` regenerates the bridge bundle.
 const RUNTIME_ASSETS = ["mcp-keyring-helper.cjs", "mcp-script-worker.mjs", "app-bridge.bundle.js"];
@@ -116,7 +116,6 @@ async function publishStaging(stagingDir, distDir) {
 
 async function main() {
 	const cwd = process.cwd();
-	if (!existsSync(tscPath)) throw new Error(`typescript is not installed at ${tscPath}; run npm install first.`);
 	await reapStrandedStaging(cwd);
 	// Pid-scoped staging isolates concurrent emits; only a complete tree publishes.
 	const stagingDir = join(cwd, `dist.staging.${process.pid}`);

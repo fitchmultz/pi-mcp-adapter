@@ -207,7 +207,7 @@ For browser authorization, this will:
 
 ### Remote/headless authentication
 
-When Pi runs over SSH or in a headless environment, use the proxy tool to retrieve the authorization URL instead of relying on OS browser launch:
+When Pi runs over SSH or in a headless environment, use the proxy tool to retrieve the authorization URL instead of relying on OS browser launch. If `mcp` is inactive, first call `mcp_search({ enable: ["gateway"] })` (no query needed):
 
 ```
 mcp({ action: "auth-start", server: "my-oauth-server" })

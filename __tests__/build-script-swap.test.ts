@@ -1,7 +1,7 @@
 import { execFile as execFileCallback, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
@@ -14,9 +14,14 @@ const tscStub = fileURLToPath(new URL("./fixtures/build-tsc-stub.cjs", import.me
 const faultPreload = fileURLToPath(new URL("./fixtures/build-fs-fault-preload.mjs", import.meta.url));
 
 function makeFixture(): string {
-	const dir = mkdtempSync(join(tmpdir(), "build-swap-"));
+	const dir = mkdtempSync(join(tmpdir(), "build swap-"));
 	mkdirSync(join(dir, "node_modules", "typescript", "bin"), { recursive: true });
 	copyFileSync(tscStub, join(dir, "node_modules", "typescript", "bin", "tsc"));
+	if (process.platform === "android") {
+		writeFileSync(join(dir, "node_modules/typescript/bin/tsc"), 'throw new Error("npm has no Android compiler");\n');
+		mkdirSync(join(dir, "bin"));
+		writeFileSync(join(dir, "bin", "tsgo"), `#!${process.execPath}\n${readFileSync(tscStub, "utf8")}`, { mode: 0o755 });
+	}
 	for (const asset of RUNTIME_ASSETS) writeFileSync(join(dir, asset), `// stub ${asset}\n`);
 	return dir;
 }
@@ -29,7 +34,7 @@ async function runBuild(cwd: string, env: Record<string, string> = {}, nodeArgs:
 	try {
 		const { stderr } = await execFile(process.execPath, [...nodeArgs, buildScript], {
 			cwd,
-			env: { ...process.env, ...env },
+			env: { ...process.env, PATH: `${join(cwd, "bin")}${delimiter}${process.env.PATH}`, ...env },
 		});
 		return { code: 0, stderr };
 	} catch (error) {

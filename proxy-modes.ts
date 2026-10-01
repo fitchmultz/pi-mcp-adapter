@@ -40,7 +40,7 @@ function disabledResult(mode: string, serverName: string): ProxyToolResult {
 function getAuthRequiredMessage(
   state: McpExtensionState,
   serverName: string,
-  defaultMessage = `Server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
+  defaultMessage = `Server "${serverName}" requires OAuth authentication. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
 ): string {
   const oauth = state.config.mcpServers[serverName]?.oauth;
   if (oauth && oauth.crossAppAccess) defaultMessage = `Server "${serverName}" requires enterprise authorization. Check oauth.crossAppAccess IdP configuration and ID-token source, then retry.`;
@@ -53,7 +53,7 @@ function getAuthFailedMessage(state: McpExtensionState, serverName: string, mess
   if (customGuidance || (oauth && oauth.crossAppAccess)) {
     return `OAuth authentication failed for "${serverName}": ${message}. ${getAuthRequiredMessage(state, serverName)}`;
   }
-  return `OAuth authentication failed for "${serverName}": ${message}. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
+  return `OAuth authentication failed for "${serverName}": ${message}. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
 }
 
 function getRedirectPort(authorizationUrl: string): number | undefined {
@@ -122,7 +122,7 @@ async function attemptAutoAuth(
       message: getAuthRequiredMessage(
         state,
         serverName,
-        `Server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
+        `Server "${serverName}" requires OAuth authentication. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
       ),
     };
   }
@@ -317,7 +317,7 @@ export async function executeAuthStart(state: McpExtensionState, serverName: str
   const definition = state.config.mcpServers[serverName];
   if (!definition) {
     return {
-      content: [{ type: "text" as const, text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.` }],
+      content: [{ type: "text" as const, text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).` }],
       details: { mode: "auth-start", error: "not_found", server: serverName },
     };
   }
@@ -365,7 +365,7 @@ export async function executeAuthComplete(state: McpExtensionState, serverName: 
   const definition = state.config.mcpServers[serverName];
   if (!definition) {
     return {
-      content: [{ type: "text" as const, text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.` }],
+      content: [{ type: "text" as const, text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).` }],
       details: { mode: "auth-complete", error: "not_found", server: serverName },
     };
   }
@@ -421,7 +421,7 @@ export function executeDescribe(state: McpExtensionState, toolName: string, serv
     if (disabled) return disabledResult("describe", disabled[0]);
     const suggestions = rankSuggestions(state, toolName, 5, serverFilter);
     const hint = suggestions.length > 0
-      ? `Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ action: "describe", tool: "${suggestions[0]}" }).`
+      ? `Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ action: "describe", tool: "${suggestions[0]}" }). Load if inactive: mcp_search({ enable: ["gateway"] }).`
       : `Use mcp_search({ query: "..." }) to search.`;
     return {
       content: [{ type: "text", text: `Tool "${toolName}" not found. ${hint}` }],
@@ -521,7 +521,7 @@ export function executeList(state: McpExtensionState, server: string, limit = 12
   const definition = state.config.mcpServers[server];
   if (!definition) {
     return {
-      content: [{ type: "text" as const, text: `Server "${server}" not found. Use mcp({ action: "status" }) to see available servers.` }],
+      content: [{ type: "text" as const, text: `Server "${server}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).` }],
       details: { mode: "list", server, tools: [], count: 0, error: "not_found" },
     };
   }
@@ -599,7 +599,7 @@ export function executeInstructions(state: McpExtensionState, server: string): P
   const definition = state.config.mcpServers[server];
   if (!definition) {
     return {
-      content: [{ type: "text" as const, text: `Server "${server}" not found. Use mcp({ action: "status" }) to see available servers.` }],
+      content: [{ type: "text" as const, text: `Server "${server}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).` }],
       details: { mode: "instructions", server, error: "not_found" },
     };
   }
@@ -639,7 +639,7 @@ export async function executeConnect(
   const definition = state.config.mcpServers[serverName];
   if (!definition) {
     return {
-      content: [{ type: "text" as const, text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.` }],
+      content: [{ type: "text" as const, text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).` }],
       details: { mode: "connect", error: "not_found", server: serverName },
     };
   }
@@ -1060,6 +1060,7 @@ export async function executeCall(
     let hint = suggestions.length
       ? ` Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ action: "describe", tool: ${JSON.stringify(suggestions[0])} }).`
       : serverName ? ` Search with mcp({ action: "search", query: ${JSON.stringify(toolName)}, server: ${JSON.stringify(serverName)} }).` : ' Use mcp({ action: "search", query: "..." }) to search.';
+    hint += ' If mcp is inactive, load it with mcp_search({ enable: ["gateway"] }).';
     if (serverName && state.toolMetadata.has(serverName) && state.manager.getConnection(serverName)?.status !== "connected") hint += ` Refresh a stale catalog with mcp({ action: "connect", server: ${JSON.stringify(serverName)} }).`;
     return {
       content: [{ type: "text", text: `Tool "${toolName}" not found.${hint}` }],
@@ -1068,7 +1069,7 @@ export async function executeCall(
   };
   if (!serverName) return missing();
   const definition = state.config.mcpServers[serverName];
-  if (!definition) return { content: [{ type: "text", text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.` }], details: { mode: "call", error: "server_not_found", server: serverName, requestedTool: toolName } };
+  if (!definition) return { content: [{ type: "text", text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).` }], details: { mode: "call", error: "server_not_found", server: serverName, requestedTool: toolName } };
   if (isServerDisabled(definition)) return disabledResult("call", serverName);
   const cached = state.toolMetadata.get(serverName);
   if (matches(cached).length > 1) return ambiguous();

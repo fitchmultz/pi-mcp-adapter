@@ -40,8 +40,8 @@ try {
     include: [],
     files: ["consumer.mts", join(repo, "node_modules/@types/node/index.d.ts")],
   }));
-  execFileSync(process.execPath, [join(repo, "node_modules/typescript/bin/tsc"),
-    "--project", join(consumer, "tsconfig.json")], { cwd: consumer, stdio: "inherit" });
+  execFileSync(process.execPath, [join(repo, "scripts/tsc.mjs"),
+    "--project", join(consumer, "tsconfig.json")], { cwd: repo, stdio: "inherit" });
 } finally {
   rmSync(consumer, { recursive: true, force: true });
 }

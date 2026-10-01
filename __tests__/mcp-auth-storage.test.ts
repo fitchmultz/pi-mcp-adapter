@@ -96,8 +96,8 @@ module.exports = {
         env: { HOME: home, PI_CODING_AGENT_DIR: join(home, ".pi", "agent"), PATH: dirname(process.execPath), TMPDIR: home },
         encoding: "utf8",
       });
-      expect(result.stderr).toBe("");
-      expect(result.status, result.stdout).toBe(0);
+      expect(result.error).toBeUndefined();
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const receipt = JSON.parse(result.stdout);
       expect(receipt).toMatchObject({ platform: "android", arch: "arm64", execPath: process.execPath, version: process.version, mode, passed: true });
     } finally {

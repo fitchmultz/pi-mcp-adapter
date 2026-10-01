@@ -458,8 +458,13 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("keeps Pi's provider prompt stable while proxy discovery and instructions refresh", async () => {
     let discoveries = 0;
+    let heldCall: Exchange | undefined;
     const instructions = "Read the data guide before querying. ".repeat(20);
     const f = await fixture(e => {
+      if (e.body.method === "tools/call" && e.body.params.arguments.value === "pending") {
+        heldCall = e;
+        return true;
+      }
       if (e.body.method === "server/discover") {
         result(e, { ...modern, instructions: ++discoveries === 1 ? "Original guidance" : instructions });
         return true;
@@ -516,6 +521,8 @@ describe("published SDK v2 over real local HTTP", () => {
       session.dispose();
     });
     await session.bindExtensions({ mode: "print", onError: (error: any) => { throw new Error(error.error); } });
+    expect(session.getActiveToolNames()).not.toContain("mcp");
+    expect(session.getActiveToolNames()).not.toContain("mcp_script");
     const steps = [
       { connect: "local" }, { search: "echo" }, { connect: "local" },
       { instructions: "local" }, { describe: "local_second" }, { tool: "local_second", args: {} },
@@ -523,46 +530,56 @@ describe("published SDK v2 over real local HTTP", () => {
     const prefixes: string[] = [];
     session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
       prefixes.push(JSON.stringify({ systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages) }));
-      const step = steps[prefixes.length - 1];
+      const loading = prefixes.length === 1;
+      const step = loading ? { enable: ["gateway", "script"] } : steps[prefixes.length - 2];
       const message = { role: "assistant", api: "openai-completions", provider: "fixture", model: "fixture", timestamp: Date.now(),
-        content: step ? [{ type: "toolCall", id: `call-${prefixes.length}`, name: "mcp", arguments: step }] : [{ type: "text", text: "done" }],
+        content: step ? [{ type: "toolCall", id: `call-${prefixes.length}`, name: loading ? "mcp_search" : "mcp", arguments: step }] : [{ type: "text", text: "done" }],
         stopReason: step ? "toolUse" : "stop",
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       };
       return { async *[Symbol.asyncIterator]() { yield { type: "done", reason: message.stopReason, message }; }, result: async () => message };
     };
     await session.prompt("Read the server guidance and discover the newly available tool.");
-    const outputs = session.messages.filter((message: any) => message.role === "toolResult");
+    const outputs = session.messages.filter((message: any) => message.role === "toolResult").slice(1);
     expect(outputs).toHaveLength(steps.length);
     expect(outputs.every((message: any) => !message.isError && !message.details?.error)).toBe(true);
     expect(JSON.stringify(outputs[1].content)).toContain("Read the original data");
     expect(outputs[3].content[0].text).toBe(`local instructions:\n\n${instructions}`);
     expect(JSON.stringify(outputs[4].content)).toContain("Read newly available data");
     expect(f.calls().map(e => e.body.params.name)).toEqual(["second"]);
-    expect(prefixes).toHaveLength(steps.length + 1);
-    const prefix = JSON.parse(prefixes[0]!);
+    expect(prefixes).toHaveLength(steps.length + 2);
+    expect(JSON.parse(prefixes[0]!).tools.map((tool: { name: string }) => tool.name)).not.toEqual(expect.arrayContaining(["mcp", "mcp_script"]));
+    const prefix = JSON.parse(prefixes[1]!);
     expect(prefix.systemPrompt).toContain("MCP server operations");
     expect(prefix.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(["mcp", "mcp_script"]));
-    expect(new Set(prefixes).size).toBe(1);
+    expect(new Set(prefixes.slice(1)).size).toBe(1);
 
+    session.setActiveToolsByName(session.getActiveToolNames().filter((name: string) => name !== "mcp" && name !== "mcp_script"));
     let stage = 0;
+    let savedRef: string | undefined;
     session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
-      expect(getCurrentSystemPrompt(context.messages)).toBe(prefix.systemPrompt);
       const active = getCurrentTools(context.messages);
-      const selected = active.find(candidate => candidate.description === "Read newly available data") as { name: string; namespace?: string; parameters: unknown } | undefined;
-      let next: { name: string; namespace?: string; arguments: Record<string, unknown> } | undefined;
+      if (stage < 3) expect(active.some(tool => tool.name === "mcp" || tool.name === "mcp_script")).toBe(false);
+      const selected = active.find(candidate => candidate.description === "Read newly available data") as { name: string; parameters: unknown } | undefined;
+      let next: { name: string; arguments: Record<string, unknown> } | undefined;
       if (stage === 0) {
         expect(selected).toBeUndefined();
+        expect(session.getCallableToolNames()).not.toContain("local_second");
         next = { name: "mcp_search", arguments: { query: "newly available", server: "local", limit: 1 } };
       } else if (stage === 1) {
         expect(selected?.parameters).toEqual(tool.inputSchema);
-        next = { name: selected!.name, ...(selected!.namespace ? { namespace: selected!.namespace } : {}), arguments: { value: "typed" } };
+        expect(session.getCallableToolNames()).toContain("local_second");
+        next = { name: selected!.name, arguments: { value: "typed" } };
       } else if (stage === 2) {
         const response = context.messages.filter(message => message.role === "toolResult").at(-1)!;
         const text = response.content.filter(block => block.type === "text").map(block => block.text).join("\n");
         const reference = /\[MCP result saved: (".*?")\./.exec(text)?.[1];
         expect(reference).toBeDefined();
-        next = { name: "mcp", arguments: { action: "read-result", ref: JSON.parse(reference!), path: "/structuredContent" } };
+        savedRef = JSON.parse(reference!);
+        expect(text).toContain('mcp_search({ enable: ["gateway"] })');
+        next = { name: "mcp_search", arguments: { enable: ["gateway"] } };
+      } else if (stage === 3) {
+        next = { name: "mcp", arguments: { action: "read-result", ref: savedRef, path: "/structuredContent" } };
       }
       stage++;
       const message = { role: "assistant", api: "openai-completions", provider: "fixture", model: "fixture", timestamp: Date.now(),
@@ -573,12 +590,51 @@ describe("published SDK v2 over real local HTTP", () => {
       return { async *[Symbol.asyncIterator]() { yield { type: "done", reason: message.stopReason, message }; }, result: async () => message };
     };
     await session.prompt("Load the matching typed tool, call it, then inspect its saved structured data without another remote call.");
-    expect(stage).toBe(4);
+    expect(stage).toBe(5);
     const readback = session.messages.filter((message: any) => message.role === "toolResult").at(-1)!;
     expect(readback.isError).toBe(false);
     expect(JSON.parse(readback.content[0].text)).toEqual({ value: "typed" });
     expect(f.calls().map(e => e.body.params.name)).toEqual(["second", "second"]);
     expect(session.sessionManager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "mcp-tool-selection").at(-1).data.selected).toEqual([{ server: "local", tool: "second" }]);
+
+    {
+      session.setActiveToolsByName(session.getActiveToolNames().filter((name: string) => name !== "mcp_script"));
+      let requests = 0;
+      session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
+        const first = requests++ === 0;
+        const typed = getCurrentTools(context.messages).find(candidate => candidate.description === "Read newly available data")!;
+        const call = { type: "toolCall", id: "pending-typed", name: typed.name, arguments: { value: "pending" } };
+        if (!first) expect(getCurrentTools(context.messages).some(tool => tool.name === "mcp_script")).toBe(true);
+        const message = { role: "assistant", api: model.api, provider: "fixture", model: "fixture", timestamp: Date.now(),
+          content: first ? [call] : [{ type: "text", text: "done" }],
+          stopReason: first ? "toolUse" : "stop",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        };
+        return { async *[Symbol.asyncIterator]() {
+          if (first) {
+            yield { type: "start", partial: message };
+            yield { type: "toolcall_end", partial: message, toolCall: call, contentIndex: 0 };
+          }
+          yield { type: "done", reason: message.stopReason, message };
+        }, result: async () => message };
+      };
+      const pending = session.prompt("Keep the accepted typed call while loading script.");
+      try {
+        await expect.poll(() => heldCall !== undefined).toBe(true);
+        const search = session.agent.state.tools.find((tool: { name: string }) => tool.name === "mcp_search");
+        await search.execute("load-with-pending", { enable: ["script"] });
+        expect(session.getActiveToolNames()).toContain("mcp_script");
+        expect(session.getActiveToolNames()).toContain("local_second");
+      } finally {
+        if (heldCall) result(heldCall, { resultType: "complete", content: [{ type: "text", text: "settled once" }] });
+        await pending;
+      }
+      await session.waitForIdle();
+      expect(f.calls().filter(call => call.body.params.arguments.value === "pending"), JSON.stringify(session.messages.slice(-4))).toHaveLength(1);
+      expect(session.messages.filter((message: any) => message.role === "toolResult" && message.toolCallId === "pending-typed")).toMatchObject([
+        { isError: false, content: [{ type: "text", text: "settled once" }] },
+      ]);
+    }
   }, 20_000);
 
   it("awaits native Pi factory checkpoints and capture across Jiti without replaying completed effects", async () => {
@@ -721,6 +777,8 @@ describe("published SDK v2 over real local HTTP", () => {
       session.dispose();
     });
     await session.bindExtensions({ mode: "print", onError: (error: any) => { throw new Error(error.error); } });
+    // This safety/capture fixture explicitly selects its entry points; lazy loading is exercised above.
+    session.setActiveToolsByName([...session.getActiveToolNames(), "mcp", "mcp_script"]);
     const script = `const first = await tools.local_echo({ value: ["first"].join("") }); await tools.local_echo({ value: first.data.structuredContent.id }); emit(first.data.content[0].text);`;
     let nativeCalls: ToolCall[] = [
       { type: "toolCall", id: "native-writer", name: "fixture_writer", arguments: {} },
@@ -786,7 +844,7 @@ describe("published SDK v2 over real local HTTP", () => {
     const restoredPath = join(root, "restored.jsonl");
     await writeFile(restoredPath, checkpoint);
     const restored = SessionManager.open(restoredPath);
-    const entries = restored.getEntries().filter((e: any) => e.type === "custom");
+    const entries = restored.getEntries().filter((e: any) => e.type === "custom" && e.customType === "fixture-mcp-call");
     expect(entries.map((e: any) => e.data.phase)).toEqual(["before", "after"]);
     expect(entries[1].data.result.structuredContent.id).toBe("resource-1");
     expect(effects).toBe(2); // Opening native history does not replay its script.
@@ -830,7 +888,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(effects).toBe(5);
     const lostPath = join(root, "lost-response.jsonl");
     await writeFile(lostPath, captures.at(-1)!.bytes);
-    const lostHistory = SessionManager.open(lostPath).getEntries().filter((e: any) => e.type === "custom");
+    const lostHistory = SessionManager.open(lostPath).getEntries().filter((e: any) => e.type === "custom" && e.customType === "fixture-mcp-call");
     const intent = lostHistory.at(-2).data;
     expect(intent).toMatchObject({ phase: "before", toolCallId: "lost-outer", innerCallId: 1, args: { value: "lose-response" } });
     const readback = await execute("mcp", "readback-outer", { tool: "local_readback", args: intent.args });
