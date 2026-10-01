@@ -18,12 +18,12 @@ const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf
   scripts?: Record<string, string>;
 };
 
-const hostPeerPackages = {
-  "@earendil-works/pi-ai": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
-  "@earendil-works/pi-coding-agent": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
-  "@earendil-works/pi-tui": packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
-  "typebox": "1.3.27",
-};
+const hostPeerPackages = [
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-tui",
+  "typebox",
+];
 
 describe("package.json files", () => {
   it("uses the owned package, helper executable and repository", () => {
@@ -78,15 +78,19 @@ describe("compiled extension peer resolution", () => {
 
 describe("package.json dependency policy", () => {
   it("treats Pi host packages as optional wildcard peers with exact dev pins", () => {
-    const entries = Object.entries(hostPeerPackages);
-
-    for (const [name, exactVersion] of entries) {
+    for (const name of hostPeerPackages) {
       expect(packageJson.peerDependencies?.[name]).toBe("*");
       expect(packageJson.peerDependenciesMeta?.[name]?.optional).toBe(true);
       expect(packageJson.dependencies?.[name]).toBeUndefined();
-      expect(exactVersion).toMatch(/^\d+\.\d+\.\d+$/);
-      expect(packageJson.devDependencies?.[name]).toBe(exactVersion);
+      expect(packageJson.devDependencies?.[name]).toMatch(/^\d+\.\d+\.\d+$/);
     }
+    for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-tui"]) {
+      expect(packageJson.devDependencies?.[name]).toBe(packageJson.devDependencies?.["@earendil-works/pi-coding-agent"]);
+    }
+    const lock = JSON.parse(readFileSync(join(repoRoot, "package-lock.json"), "utf-8"));
+    const baseline = lock.packages["node_modules/@earendil-works/pi-coding-agent"];
+    expect(baseline.version).toBe(packageJson.devDependencies?.["@earendil-works/pi-coding-agent"]);
+    expect(packageJson.devDependencies?.typebox).toBe(baseline.dependencies.typebox);
   });
 
   it("uses stable split SDK v2 and Apps v2 without SDK v1", () => {
