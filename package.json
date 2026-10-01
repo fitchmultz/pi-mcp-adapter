@@ -76,9 +76,9 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@modelcontextprotocol/client": "2.1.0",
-    "@modelcontextprotocol/core": "2.1.0",
-    "@modelcontextprotocol/ext-apps": "2.0.0",
+    "@modelcontextprotocol/client": "2.2.0",
+    "@modelcontextprotocol/core": "2.2.0",
+    "@modelcontextprotocol/ext-apps": "2.0.3",
     "@napi-rs/keyring": "2.1.0",
     "cross-spawn": "7.0.6",
     "minisearch": "7.2.0",
@@ -111,7 +111,7 @@
     "@earendil-works/pi-ai": "0.99.1",
     "@earendil-works/pi-coding-agent": "0.99.1",
     "@earendil-works/pi-tui": "0.99.1",
-    "@modelcontextprotocol/server": "2.1.0",
+    "@modelcontextprotocol/server": "2.2.0",
     "@types/cross-spawn": "6.0.6",
     "@types/node": "24.19.0",
     "esbuild": "0.28.2",

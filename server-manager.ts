@@ -802,7 +802,8 @@ export class McpServerManager {
       { name: `pi-mcp-${serverName}`, version: ADAPTER_VERSION },
       {
         versionNegotiation: { mode: definition.protocolVersion ?? (definition.url ? "auto" : "legacy") },
-        listMaxPages: 0,
+        // ponytail: reject catalogs over 1024 pages; raise this native cap if a real catalog needs more.
+        listMaxPages: 1024,
         ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
         listChanged: {
           tools: {
