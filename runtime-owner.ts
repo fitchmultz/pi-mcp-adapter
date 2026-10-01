@@ -1,4 +1,3 @@
-import type { McpCheckpointEvent } from "./checkpoint.ts";
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { formatTerminalError } from "./utils.ts";
 
@@ -8,22 +7,17 @@ export interface McpRuntimeOwner {
   addCleanup(cleanup: () => void | Promise<void>): void;
   stop(reason?: string): Promise<void>;
   throwIfInactive(): void;
-  beforeActivity(): void;
-  holdCheckpoint(event: McpCheckpointEvent): () => void;
   runCallback<T>(kind: "beforeExecute" | "onToolCall", run: () => Promise<T>): Promise<T>;
-  getCheckpointBlocker(): string | undefined;
 }
 
 export function createMcpRuntimeOwner(): McpRuntimeOwner {
   const controller = new AbortController();
   const cleanups: Array<() => void | Promise<void>> = [];
   let stopPromise: Promise<void> | undefined;
-  let checkpoint: McpCheckpointEvent | undefined;
-  const beforeActivity = () => checkpoint?.invalidate();
   // These two host hooks can outlive abortable() at their call sites. Count their underlying
   // promises through settlement, without cancelling, serializing, or replaying callback work.
   const callbacks = { beforeExecute: 0, onToolCall: 0 };
-  const getCheckpointBlocker = () => {
+  const pendingCallback = () => {
     if (callbacks.beforeExecute) return "MCP beforeExecute callback is pending";
     if (callbacks.onToolCall) return "MCP onToolCall callback is pending";
     return undefined;
@@ -35,19 +29,11 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
 
   return {
     signal: controller.signal,
-    beforeActivity,
-    getCheckpointBlocker,
     runCallback: async (kind, run) => {
-      beforeActivity();
       // Invocation/cancellation policy stays at the call site. In particular, an accepted
       // tool's outcome callback may still need to persist its result during shutdown.
       callbacks[kind]++;
       try { return await run(); } finally { callbacks[kind]--; }
-    },
-    holdCheckpoint: event => {
-      if (checkpoint) throw new Error("MCP checkpoint is already held");
-      checkpoint = event;
-      return () => { if (checkpoint === event) checkpoint = undefined; };
     },
     isActive: () => !controller.signal.aborted,
     addCleanup: cleanup => {
@@ -59,15 +45,14 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
     },
     stop: (reason = "MCP extension runtime stopped") => {
       if (stopPromise) return stopPromise;
-      beforeActivity();
       controller.abort(new Error(reason));
       const pendingCleanups = cleanups.splice(0).reverse().map(cleanup =>
         Promise.resolve().then(cleanup),
       );
       stopPromise = Promise.allSettled(pendingCleanups).then(results => {
         const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
-        const pendingCallback = getCheckpointBlocker();
-        if (pendingCallback) failures.push(new Error(pendingCallback));
+        const callback = pendingCallback();
+        if (callback) failures.push(new Error(callback));
         if (failures.length > 0) {
           const aggregate = new AggregateError(failures, "MCP runtime cleanup failed");
           console.error(`MCP: runtime cleanup failed: ${formatTerminalError(aggregate)}`);
@@ -76,7 +61,7 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
       });
       return stopPromise;
     },
-    throwIfInactive: () => { beforeActivity(); controller.signal.throwIfAborted(); },
+    throwIfInactive: () => { controller.signal.throwIfAborted(); },
   };
 }
 

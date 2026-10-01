@@ -6,6 +6,7 @@ import { parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { executeCall } from "./proxy-modes.ts";
 import { isServerDisabled } from "./types.ts";
+import { nativeMcpResult } from "./tool-registrar.ts";
 
 export function directToolSelection(config: McpConfig, serverName: string, envOverride?: string[]): true | string[] | false {
   if (envOverride) {
@@ -51,17 +52,17 @@ export function createDirectToolExecutor(
       } catch (error) {
         throwIfAborted(signal);
         const message = error instanceof Error ? error.message : String(error);
-        return {
+        return nativeMcpResult({
           content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
           details: { error: "init_failed", message },
-        };
+        }, !!spec.outputSchema);
       }
     }
     if (!state) {
-      return {
+      return nativeMcpResult({
         content: [{ type: "text" as const, text: "MCP not initialized" }],
         details: { error: "not_initialized" },
-      };
+      }, !!spec.outputSchema);
     }
 
     const result = await executeCall(
@@ -70,6 +71,6 @@ export function createDirectToolExecutor(
       { exactOriginalName: true, ...(spec.resourceUri ? { resourceUri: spec.resourceUri } : {}) },
     );
     const { mode: _mode, ...details } = result.details;
-    return { ...result, details };
+    return nativeMcpResult({ ...result, details }, !!spec.outputSchema);
   };
 }

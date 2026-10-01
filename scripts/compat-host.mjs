@@ -10,7 +10,7 @@ export const hostRoot = realpathSync(dirname(findPackageJSON("@earendil-works/pi
 export const hostIndex = join(hostRoot, "dist/index.js");
 const manifest = JSON.parse(readFileSync(join(hostRoot, "package.json"), "utf8"));
 export const hostCli = realpathSync(join(hostRoot, manifest.bin.pi));
-for (const [name, actual] of [["PI_COMPAT_EXPECTED_PACKAGE_DIR", hostRoot], ["PI_HOST_INDEX", hostIndex], ["PI_HOST_CLI", hostCli]]) {
+for (const [name, actual] of [["PI_PACKAGE_DIR", hostRoot], ["PI_COMPAT_EXPECTED_PACKAGE_DIR", hostRoot], ["PI_HOST_INDEX", hostIndex], ["PI_HOST_CLI", hostCli]]) {
   if (process.env[name]) assert.equal(realpathSync(process.env[name]), realpathSync(actual), `${name} must select the installed graph`);
 }
 if (process.env.PI_COMPAT_EXPECTED_VERSION) assert.equal(manifest.version, process.env.PI_COMPAT_EXPECTED_VERSION);

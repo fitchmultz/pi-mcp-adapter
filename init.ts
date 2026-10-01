@@ -67,7 +67,6 @@ export function recordFailure(state: McpExtensionState, serverName: string, mess
       getFailureExpiryTimers(state).delete(serverName);
       return;
     }
-    state.owner.beforeActivity();
     if (state.failureTracker.get(serverName) === failedAt) {
       state.failureTracker.delete(serverName);
       state.failureMessages?.delete(serverName);

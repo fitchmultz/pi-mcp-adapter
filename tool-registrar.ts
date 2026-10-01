@@ -2,6 +2,33 @@
 
 import type { McpContent, ContentBlock } from "./types.ts";
 import { formatMcpPayloadFile, type McpPayloadFile } from "./mcp-output-guard.ts";
+import { Type } from "typebox";
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import type { JsonValue } from "@earendil-works/pi-ai";
+import { toolErrorOverride } from "./error-signal.ts";
+
+/** Overflow/not-run outcomes are receipts, never a fabricated server-schema result. */
+export function nativeMcpOutputSchema(schema: Record<string, unknown>) {
+  return Type.Union([Type.Unsafe(schema), Type.Object({
+    mcpAdapter: Type.Object({
+      omitted: Type.Literal(true),
+      resultRef: Type.Optional(Type.String()),
+      error: Type.Optional(Type.String()),
+    }),
+  })]);
+}
+
+export function nativeMcpResult(result: AgentToolResult<Record<string, unknown>>, structured = false): AgentToolResult<Record<string, unknown>> {
+  const { details } = result;
+  const raw = details.mcpResult as { structuredContent?: JsonValue } | undefined;
+  return {
+    ...result,
+    ...toolErrorOverride(details),
+    ...(structured ? { structuredContent: !details.outputGuard && (!details.error || details.error === "tool_error") && raw?.structuredContent !== undefined
+      ? raw.structuredContent
+      : { mcpAdapter: { omitted: true, ...(typeof details.resultRef === "string" ? { resultRef: details.resultRef } : {}), ...(typeof details.error === "string" ? { error: details.error } : {}) } } } : {}),
+  };
+}
 
 /**
  * Transform MCP content types to Pi content blocks.

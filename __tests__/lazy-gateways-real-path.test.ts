@@ -64,27 +64,7 @@ async function harness(options: { tools?: string[]; excludeTools?: string[]; con
     expect(stage, JSON.stringify(session.messages.slice(before))).toBe(steps.length + 1);
     return session.messages.slice(before).filter((message: any) => message.role === "toolResult");
   }
-  async function checkpoint() {
-    const hold = await session.acquireCheckpoint({ quiesce: () => () => {}, signal: AbortSignal.timeout(5000) });
-    try {
-      expect(hold.sleepReady).toBe(true);
-      expect(hold.checkpoint.selection.knownTools).toEqual(expect.arrayContaining(["mcp", "mcp_script", "mcp_search"]));
-      const saved = structuredClone(hold.checkpoint);
-      saved.selection.sessionFile = join(await mkdtemp(join(root, "restored-")), "session.jsonl");
-      const restoredLoader = new sdk.DefaultResourceLoader(loaderOptions);
-      await restoredLoader.reload();
-      const { session: restored } = await sdk.createAgentSession({ checkpoint: saved, modelRuntime, resourceLoader: restoredLoader, settingsManager });
-      try {
-        await restored.bindExtensions({ mode: "print", onError: (error: { error: string }) => { throw new Error(error.error); } });
-        expect(restored.getActiveToolNames().sort()).toEqual(active());
-        expect(restored.getAllTools().find((tool: any) => tool.name === "mcp").parameters).toEqual(gatewayParameters);
-      } finally {
-        await restored.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-        restored.dispose();
-      }
-    } finally { hold.release(); }
-  }
-  return { session, active, request, checkpoint };
+  return { session, active, request };
 }
 
 describe("lazy MCP gateways through real Pi SDK", () => {
@@ -92,7 +72,6 @@ describe("lazy MCP gateways through real Pi SDK", () => {
     const h = await harness();
     expect(h.active()).toEqual(["mcp_search"]);
     expect(h.session.getAllTools().map((tool: any) => tool.name)).toEqual(expect.arrayContaining(["mcp", "mcp_script", "mcp_search"]));
-    if (typeof h.session.acquireCheckpoint === "function") await h.checkpoint();
     const branch = h.session.sessionManager.appendCustomEntry("test-branch", {});
     const outputs = await h.request([
       { name: "mcp_search", arguments: { enable: ["script"] } },
@@ -112,7 +91,6 @@ describe("lazy MCP gateways through real Pi SDK", () => {
     expect(outputs[1].content[0].text).toBe("42");
     expect(outputs[4].isError).toBe(true); // Original per-action validation still owns execution.
     expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);
-    if (typeof h.session.acquireCheckpoint === "function") await h.checkpoint();
     const selectedBranch = h.session.sessionManager.getLeafId();
     await h.session.reload();
     expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);

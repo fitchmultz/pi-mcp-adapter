@@ -14,7 +14,6 @@ import { executeAuthComplete, executeAuthStart, executeCall, executeConnect, exe
 import { formatTerminalError } from "./utils.ts";
 import { createOAuthRuntime, shutdownOAuth } from "./mcp-auth-flow.ts";
 import { renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
-import { toolErrorOverride } from "./error-signal.ts";
 import { createMcpRuntimeOwner, createOwnedUi, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS, runMcpScript } from "./mcp-code.ts";
@@ -24,7 +23,6 @@ import { gatewayParameters, prepareGatewayArguments, type GatewayArguments } fro
 import { executeResourceList, executeResourceRead } from "./resource-tools.ts";
 import { guardMcpOutput, guardedMcpDetails, readMcpResult, resolveMcpOutputGuardOptions } from "./mcp-output-guard.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
-import { onSessionCheckpoint, prepareMcpCheckpoint } from "./checkpoint.ts";
 
 export type { McpAdapterOptions, McpOperationContext, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
 export {
@@ -288,12 +286,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     if (ctx.cwd !== runtimeCwd) await startSession(ctx);
   });
 
-  onSessionCheckpoint(pi, async event => {
-    if (initPromise) return { sleepReady: false, reason: "MCP initialization is active" };
-    if (!state || !currentOwner?.isActive()) return { sleepReady: false, reason: "MCP runtime is not initialized" };
-    return prepareMcpCheckpoint(state, event);
-  });
-
   pi.on("session_shutdown", async () => {
     // Cached tool selections exist before background server initialization finishes.
     toolLoader.persist();
@@ -318,9 +310,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     // Ordinary extension error handling owns reporting. Strict clean-exit hosts must see failure.
     if (failures.length) throw new AggregateError(failures, "MCP session shutdown persistence/cleanup failed");
   });
-
-  // Re-flag returned MCP tool failures so pi registers them as errors (see toolErrorOverride).
-  pi.on("tool_result", (event) => toolErrorOverride(event.details));
 
   function createCommandContext(ctx: ExtensionContext): {
     owner: McpRuntimeOwner | null;

@@ -113,7 +113,6 @@ class McpScriptCaptureError extends Error {
 
 export const runMcpScript: typeof runMcpScriptOperation = async (...args) => {
   const state = args[0];
-  state.owner?.beforeActivity();
   state.activeScripts = (state.activeScripts ?? 0) + 1;
   try { return await runMcpScriptOperation(...args); }
   finally { state.activeScripts--; }

@@ -6,6 +6,8 @@ import type { McpExtensionState } from "./state.ts";
 import { createMcpDirectToolCallRenderer, renderMcpToolResult } from "./tool-result-renderer.ts";
 import { isServerDisabled, type DirectToolSpec, type McpAdapterOptions, type McpConfig, type ToolMetadata } from "./types.ts";
 import { normalizeDirectToolInputSchema } from "./utils.ts";
+import { nativeMcpOutputSchema } from "./tool-registrar.ts";
+import { toolErrorOverride } from "./error-signal.ts";
 
 type Selection = { server: string; tool: string };
 export type Feature = "gateway" | "script";
@@ -38,7 +40,10 @@ export function createToolLoader(
     pi.setActiveTools(unique);
   };
   function registerFeature<TParams extends TSchema, TDetails>(feature: Feature, definition: ToolDefinition<TParams, TDetails>) {
-    pi.registerTool(definition);
+    pi.registerTool({ defaultActive: false, ...definition, async execute(...args) {
+      const result = await definition.execute(...args);
+      return { ...result, ...toolErrorOverride(result.details) };
+    } });
     registeredFeatures.add(feature);
   }
   function capture() {
@@ -67,9 +72,21 @@ export function createToolLoader(
     inactive = new Map();
     selectedFeatures = new Set();
     inactiveFeatures = new Set();
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type !== "custom" || entry.customType !== ENTRY || !entry.data || typeof entry.data !== "object") continue;
+    const manager = ctx.sessionManager;
+    function* snapshots() {
+      let id = manager.getLeafId();
+      while (id) {
+        const entry = manager.getEntry(id);
+        if (!entry) break;
+        yield entry;
+        id = entry.parentId;
+      }
+    }
+    for (const entry of snapshots()) {
+      if (entry?.type !== "custom" || entry.customType !== ENTRY || !entry.data || typeof entry.data !== "object") continue;
       const data = entry.data as { selected?: Selection[]; inactive?: Selection[]; features?: Feature[]; inactiveFeatures?: Feature[] };
+      if (!Array.isArray(data.selected) || [data.inactive, data.features, data.inactiveFeatures].some(value => value !== undefined && !Array.isArray(value))) continue;
+      if ([...data.selected, ...(data.inactive ?? [])].some(value => !value || typeof value.server !== "string" || typeof value.tool !== "string")) continue;
       selectedFeatures = new Set(Array.isArray(data.features) ? data.features.filter(value => value === "gateway" || value === "script") : []);
       inactiveFeatures = new Set(Array.isArray(data.inactiveFeatures) ? data.inactiveFeatures.filter(value => value === "gateway" || value === "script") : []);
       for (const [field, target] of [[data.selected, selected], [data.inactive, inactive]] as const) {
@@ -78,6 +95,7 @@ export function createToolLoader(
           if (typeof selection?.server === "string" && typeof selection.tool === "string") target.set(key(selection), selection);
         }
       }
+      break;
     }
     restoring = true;
   }
@@ -106,11 +124,19 @@ export function createToolLoader(
       const id = key(selection);
       if (reserved.has(name) || counts.get(name)! > 1 || (existing.has(name) && !previousNames.has(name))) continue;
       available.add(id);
-      const fingerprint = JSON.stringify({ spec, name });
+      const instructions = getState()?.serverInstructions.get(spec.serverName) ?? cache?.servers[spec.serverName]?.instructions;
+      const fingerprint = JSON.stringify({ spec, name, instructions });
       if (registered.get(id)?.fingerprint !== fingerprint) {
         pi.registerTool({
           name,
-          namespace: { name: `mcp_${spec.serverName}` },
+          namespace: { name: `mcp_${spec.serverName}`, ...(instructions !== undefined ? { instructions } : {}) },
+          ...(spec.outputSchema ? { outputSchema: nativeMcpOutputSchema(spec.outputSchema) } : {}),
+          ...(spec.annotations ? { annotations: {
+            ...(typeof spec.annotations.readOnlyHint === "boolean" ? { readOnlyHint: spec.annotations.readOnlyHint } : {}),
+            ...(typeof spec.annotations.destructiveHint === "boolean" ? { destructiveHint: spec.annotations.destructiveHint } : {}),
+            ...(typeof spec.annotations.idempotentHint === "boolean" ? { idempotentHint: spec.annotations.idempotentHint } : {}),
+            ...(typeof spec.annotations.openWorldHint === "boolean" ? { openWorldHint: spec.annotations.openWorldHint } : {}),
+          } } : {}),
           // Inactive direct tools are not callable through codemode or nested execution.
           defaultActive: false,
           ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
@@ -142,7 +168,7 @@ export function createToolLoader(
         }
       }
     }
-    // Official 0.87 reactivates allowlisted definitions on registration. Apply our loadout last.
+    // Retain the journal: official 1.0 initial SDK resume has a native loadout restoration gap.
     const ownedNames = new Set([...previousNames, ...[...registered.values()].map(item => item.name)]);
     for (const feature of registeredFeatures) ownedNames.add(featureNames[feature]);
     setActive([...active().filter(name => !ownedNames.has(name)), ...enabled]);

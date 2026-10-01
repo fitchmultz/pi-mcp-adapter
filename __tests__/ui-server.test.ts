@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import http from "node:http";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { materializeUiMessages } from "../ui-message-history.ts";
 import { startUiServer, type UiServerOptions, type UiServerHandle } from "../ui-server.ts";
 import type { McpServerManager } from "../server-manager.ts";
 import type { ConsentManager } from "../consent-manager.ts";
@@ -173,9 +177,11 @@ async function getUiAppUrl(handle: UiServerHandle): Promise<string> {
 describe("UiServer", () => {
   let handle: UiServerHandle | null = null;
 
-  afterEach(() => {
+  afterEach(async () => {
     if (handle) {
+      const ref = handle.getSessionMessages().historyRef;
       handle.close("test-cleanup");
+      if (ref) await rm(dirname(ref), { recursive: true, force: true });
       handle = null;
     }
   });
@@ -936,6 +942,29 @@ describe("UiServer", () => {
   });
 
   describe("POST /proxy/ui/message", () => {
+    it("acknowledges failed persistence with recovery data and an operator warning", async () => {
+      const root = await mkdtemp(join(tmpdir(), "mcp-ui-server-failure-"));
+      try {
+        const blocked = join(root, "blocked");
+        await writeFile(blocked, "not a directory");
+        const notify = vi.fn();
+        const onMessage = vi.fn();
+        handle = await startUiServer(createServerOptions({
+          state: { outputDirectory: blocked, ui: { notify } } as unknown as McpExtensionState,
+          onMessage,
+        }));
+        const res = await request(`http://localhost:${handle.port}/proxy/ui/message`, {
+          method: "POST",
+          body: { token: handle.sessionToken, params: { type: "prompt", prompt: "recover this message" } },
+        });
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({ ok: true, warning: expect.stringContaining("remain in memory") });
+        expect(notify).toHaveBeenCalledWith(expect.stringContaining("remain in memory"), "warning");
+        expect(onMessage).toHaveBeenCalledWith({ type: "prompt", prompt: "recover this message" });
+        expect((await materializeUiMessages(handle.getSessionMessages())).prompts).toEqual(["recover this message"]);
+      } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
     it("rejects anonymous messages", async () => {
       const onMessage = vi.fn();
       handle = await startUiServer(createServerOptions({ onMessage }));
@@ -962,7 +991,7 @@ describe("UiServer", () => {
         },
       });
 
-      const messages = handle.getSessionMessages();
+      const messages = await materializeUiMessages(handle.getSessionMessages());
       expect(messages.prompts).toContain("Hello agent");
       expect(onMessage).toHaveBeenCalled();
     });
@@ -978,7 +1007,7 @@ describe("UiServer", () => {
         },
       });
 
-      const messages = handle.getSessionMessages();
+      const messages = await materializeUiMessages(handle.getSessionMessages());
       expect(messages.intents).toEqual([{ intent: "navigate", params: { to: "/home" } }]);
     });
 
@@ -993,7 +1022,7 @@ describe("UiServer", () => {
         },
       });
 
-      const messages = handle.getSessionMessages();
+      const messages = await materializeUiMessages(handle.getSessionMessages());
       expect(messages.notifications).toContain("User clicked button");
     });
 
@@ -1008,7 +1037,7 @@ describe("UiServer", () => {
         },
       });
 
-      const messages = handle.getSessionMessages();
+      const messages = await materializeUiMessages(handle.getSessionMessages());
       expect(messages.prompts).toContain("Legacy prompt");
     });
 
@@ -1026,7 +1055,7 @@ describe("UiServer", () => {
         },
       });
 
-      const messages = handle.getSessionMessages();
+      const messages = await materializeUiMessages(handle.getSessionMessages());
       expect(messages.prompts).toContain("Native AppBridge prompt");
     });
 
@@ -1046,7 +1075,7 @@ describe("UiServer", () => {
         body: { token: handle.sessionToken, params: { type: "notify", message: "Info" } },
       });
 
-      const messages = handle.getSessionMessages();
+      const messages = await materializeUiMessages(handle.getSessionMessages());
       expect(messages.prompts).toEqual(["First", "Second"]);
       expect(messages.notifications).toEqual(["Info"]);
     });

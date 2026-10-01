@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, realpath, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { ContentBlock, McpSettings } from "./types.ts";
@@ -413,6 +414,18 @@ async function saveArtifact(kind: string, text: string | Uint8Array, outputDirec
   }
 }
 
+/** Stream histories through the same private output-artifact and paged-reader boundary. */
+export async function saveMcpOutputStream(chunks: AsyncIterable<string>, outputDirectory?: string) {
+  const artifact = await saveArtifact("output", "", outputDirectory);
+  if (!artifact.path) return artifact;
+  try {
+    const file = await open(artifact.path, "a");
+    try { for await (const chunk of chunks) await file.writeFile(chunk); }
+    finally { await file.close(); }
+    return artifact;
+  } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+}
+
 export interface ReadMcpResultInput {
   ref: string;
   /** RFC 6901 JSON Pointer. Omit to read the entire retained result. */
@@ -432,6 +445,32 @@ export async function readMcpResult(input: ReadMcpResultInput, options: McpOutpu
     const ref = await realpath(resolve(input.ref));
     if (dirname(dirname(ref)) !== root || !/^pi-mcp-output-/.test(basename(dirname(ref)))
       || !/^(mcp-result|output)-[a-f0-9]+\.txt$/.test(basename(ref))) throw new Error("ref is not an MCP output artifact in this host's output directory");
+    // Plain output pages without flattening a complete UI history into memory.
+    if (basename(ref).startsWith("output-") && input.path === undefined && input.fields === undefined) {
+      const offset = input.offset ?? 0;
+      const limit = input.limit ?? 12_000;
+      if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) throw new Error("offset must be a non-negative integer and limit a positive integer");
+      const maxBytes = Math.max(1, (options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES) - 256);
+      const maxLines = Math.max(1, (options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES) - 1);
+      let total = 0, bytes = 0, lines = 1;
+      let page = "";
+      let finished = false;
+      for await (const chunk of createReadStream(ref, { encoding: "utf8" })) {
+        for (const char of chunk as string) {
+          if (total < offset && total + char.length > offset) throw new Error("offset must not split a Unicode surrogate pair");
+          if (total >= offset && !finished) {
+            const nextBytes = bytes + byteLength(char);
+            const nextLines = lines + (char === "\n" ? 1 : 0);
+            if (page && (nextBytes > maxBytes || nextLines > maxLines || page.length + char.length > limit)) finished = true;
+            else { page += char; bytes = nextBytes; lines = nextLines; }
+          }
+          total += char.length;
+        }
+      }
+      const end = offset + page.length;
+      const nextOffset = end < total ? end : null;
+      return { content: [{ type: "text" as const, text: page }, ...(nextOffset !== null ? [{ type: "text" as const, text: `[MCP result page: ${offset}–${end} of ${total} characters. Continue with offset: ${end}.]` }] : [])], details: { ref, offset, nextOffset, totalCharacters: total } };
+    }
     let rendered = await readFile(ref, "utf8");
     if (input.path !== undefined || input.fields !== undefined || basename(ref).startsWith("mcp-result-")) {
       let value: unknown = JSON.parse(rendered);

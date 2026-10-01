@@ -38,7 +38,7 @@ async function startAdapter(outputDirectory?: string) {
     getActiveTools: () => activeTools,
     setActiveTools: (names: string[]) => { activeTools = names; },
   } as unknown as ExtensionAPI;
-  const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getBranch: () => [] } } as unknown as ExtensionToolContext;
+  const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getLeafId: () => null, getEntry: () => undefined } } as unknown as ExtensionToolContext;
   const options: McpAdapterOptions = {
     config: {
       mcpServers: { output: {

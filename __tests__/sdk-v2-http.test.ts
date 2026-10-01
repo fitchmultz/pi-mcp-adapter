@@ -429,7 +429,7 @@ describe("published SDK v2 over real local HTTP", () => {
       on: (name: string, handler: any) => handlers.set(name, handler),
       getAllTools: () => [...tools.values()], getActiveTools: () => [...tools.keys()], setActiveTools: () => {},
     } as any;
-    const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getBranch: () => [] } } as any;
+    const ctx = { cwd: root, hasUI: false, mode: "print", isProjectTrusted: () => true, sessionManager: { getLeafId: () => null, getEntry: () => undefined } } as any;
     createMcpAdapter({ config: {
       mcpServers: { local: { url: f.url, auth: false, lifecycle: "lazy" } },
       settings: { sampling: false, elicitation: false },

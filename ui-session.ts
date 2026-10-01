@@ -397,6 +397,7 @@ export async function maybeStartUiSession(
           const messages = handle.getSessionMessages();
           const stream = handle.getStreamSummary();
           const hasContent =
+            !!messages.historyCount ||
             messages.prompts.length > 0 ||
             messages.intents.length > 0 ||
             messages.notifications.length > 0 ||
@@ -419,7 +420,7 @@ export async function maybeStartUiSession(
 
             log.debug("Session completed", {
               reason,
-              prompts: messages.prompts.length,
+              prompts: messages.historyCount ?? messages.prompts.length,
               intents: messages.intents.length,
               notifications: messages.notifications.length,
               contexts: messages.contexts.length,
