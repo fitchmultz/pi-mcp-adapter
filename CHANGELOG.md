@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Update MCP Apps to 2.0.3 in the adapter and interactive visualizer, keeping their dependency graphs aligned.
+- Qualify development against official Pi 0.99.2 and the current maintained fork, keeping host peers wildcard and the declared Pi/Node floors unchanged.
 
 ### Fixed
 
