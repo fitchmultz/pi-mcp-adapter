@@ -781,6 +781,8 @@ Returns completed UI sessions (the last ten), grouped in the existing prompt →
 
 Retrieval drains only the sessions included in a usable inline/file receipt; read/write failure leaves them available for retry. History-write failure is explicitly reported, and unsaved events stay in memory until recovered. Files use private directory/file permissions and the existing output-directory lifetime: receipts remain readable after draining or UI closure, and are not deleted automatically. Remove artifacts only when you no longer need recovery. New sessions completed during retrieval are not cleared.
 
+Messages and context updates are accepted only while the UI is open. An upload finishing after completion is rejected before it can invoke callbacks or alter history. Retrieval verifies the accepted history prefix's byte and event counts; truncated history remains pending recovery instead of being delivered and cleared.
+
 **Browser controls:**
 
 - **Cmd/Ctrl+Enter** — Complete and close

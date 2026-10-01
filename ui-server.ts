@@ -363,6 +363,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       const body = await parseBody(req, res);
       if (!body) return;
       if (!validateTokenBody(body, sessionToken, res)) return;
+      // A partial upload is not accepted until its authenticated body is complete.
+      if (completed && (url.pathname === "/proxy/ui/message" || url.pathname === "/proxy/ui/context")) {
+        sendJson(res, 409, { ok: false, error: "UI session is complete; message was not accepted" });
+        return;
+      }
       const params = body.params ?? {};
       touchHeartbeat();
 

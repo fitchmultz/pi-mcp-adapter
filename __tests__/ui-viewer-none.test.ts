@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFile } from "node:child_process";
+import http from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ConsentManager } from "../consent-manager.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
-import { executeCall } from "../proxy-modes.ts";
+import { executeCall, executeUiMessages } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { maybeStartUiSession } from "../ui-session.ts";
 
@@ -152,6 +156,58 @@ describe("remote MCP UI viewers", () => {
 });
 
 describe("MCP UI context submissions", () => {
+  it("rejects an authenticated message whose upload finishes after UI completion", async () => {
+    process.env.MCP_UI_VIEWER = "none";
+    const root = await mkdtemp(join(tmpdir(), "mcp-ui-late-message-"));
+    const { state } = makeState();
+    state.outputDirectory = root;
+    const runtime = await maybeStartUiSession(state, {
+      serverName: "demo", toolName: "app", toolArgs: {}, uiResourceUri: "ui://app",
+    });
+    if (!runtime) throw new Error("expected UI runtime");
+    const handle = state.uiServer;
+    let upload: http.ClientRequest | undefined;
+    try {
+      const body = (message: string) => JSON.stringify({
+        token: handle.sessionToken, params: { type: "notify", message },
+      });
+      const first = await fetch(`http://127.0.0.1:${handle.port}/proxy/ui/message`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: body("accepted before completion"),
+      });
+      expect(first.status).toBe(200);
+      const lateBody = body("not accepted after completion");
+      let started!: () => void;
+      const admittedUpload = new Promise<void>(resolve => { started = resolve; });
+      const receipt = new Promise<{ status: number; body: unknown }>((resolve, reject) => {
+        upload = http.request({
+          hostname: "127.0.0.1", port: handle.port, path: "/proxy/ui/message", method: "POST", agent: false,
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(lateBody), Expect: "100-continue" },
+        }, res => {
+          let text = "";
+          res.on("data", chunk => { text += chunk; });
+          res.on("end", () => resolve({ status: res.statusCode!, body: JSON.parse(text) }));
+        });
+        upload.on("error", reject);
+        upload.once("continue", started);
+        upload.write(lateBody.slice(0, -1));
+      });
+      await admittedUpload;
+      runtime.close("user-closed");
+      upload!.end(lateBody.slice(-1));
+      expect(await receipt).toMatchObject({ status: 409, body: { ok: false } });
+      expect(state.ui.notify).not.toHaveBeenCalledWith("[demo] not accepted after completion", "info");
+      const delivered = await executeUiMessages(state);
+      expect(textOf(delivered)).toContain("accepted before completion");
+      expect(textOf(delivered)).not.toContain("not accepted after completion");
+      expect(delivered.details.cleared).toBe(true);
+      expect(state.completedUiSessions).toEqual([]);
+    } finally {
+      upload?.destroy();
+      runtime.close("test-cleanup");
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("triggers an agent turn when the UI updates model context", async () => {
     process.env.MCP_UI_VIEWER = "none";
     const { state } = makeState();

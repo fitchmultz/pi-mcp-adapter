@@ -48,11 +48,17 @@ export async function* uiMessages(messages: UiSessionMessages, category: Categor
   if (messages.historyRef && messages.historyBytes) {
     // A failed partial append is not an accepted event; the in-memory tail owns it instead.
     const input = createReadStream(messages.historyRef, { encoding: "utf8", end: messages.historyBytes - 1 });
+    let bytes = 0, count = 0;
+    input.on("data", chunk => { bytes += Buffer.byteLength(chunk); });
     const lines = createInterface({ input, crlfDelay: Infinity });
     try {
       for await (const line of lines) {
         const record = JSON.parse(line);
+        count++;
         if (record.category === category) yield record.value;
+      }
+      if (bytes !== messages.historyBytes || (messages.historyCount !== undefined && count !== messages.historyCount)) {
+        throw new Error("UI history is incomplete; accepted messages remain pending recovery");
       }
     } finally { lines.close(); input.destroy(); }
   }

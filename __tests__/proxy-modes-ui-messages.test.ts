@@ -27,6 +27,36 @@ function createState(prompts: string[]): McpExtensionState {
 }
 
 describe("executeUiMessages", () => {
+  it.each([
+    ["inline", "empty"], ["inline", "valid-prefix"], ["paged", "empty"], ["paged", "valid-prefix"],
+  ])("retains %s sessions when accepted history is truncated to %s", async (mode, truncation) => {
+    const root = await mkdtemp(join(tmpdir(), "mcp-ui-truncated-"));
+    try {
+      const history = createUiMessageHistory(root);
+      history.append("prompts", "accepted first");
+      history.append("prompts", "accepted second");
+      const original = await readFile(history.messages.historyRef!, "utf8");
+      const state = createState([]);
+      state.outputDirectory = root;
+      state.config = { mcpServers: {}, settings: { outputGuard: mode === "paged"
+        ? { maxBytes: 1000, detailsMaxBytes: 1 } : {} } };
+      state.completedUiSessions[0]!.messages = history.messages;
+      await writeFile(history.messages.historyRef!, truncation === "empty" ? "" : original.split("\n")[0] + "\n");
+      const failed = await executeUiMessages(state);
+      expect(failed).toMatchObject({ isError: true, details: { error: "ui_history_delivery_failed", cleared: false } });
+      expect(state.completedUiSessions).toHaveLength(1);
+      await writeFile(history.messages.historyRef!, original);
+      const recovered = await executeUiMessages(state);
+      expect(recovered.details.cleared).toBe(true);
+      const delivered = recovered.details.resultRef
+        ? await readFile(recovered.details.resultRef as string, "utf8")
+        : recovered.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+      expect(delivered).toContain("accepted first");
+      expect(delivered).toContain("accepted second");
+      expect(state.completedUiSessions).toEqual([]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it("keeps small disk-backed histories inline with category order and private permissions", async () => {
     const root = await mkdtemp(join(tmpdir(), "mcp-ui-history-"));
     try {
