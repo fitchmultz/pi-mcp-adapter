@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Update MCP Apps to 2.0.3 in the adapter and interactive visualizer, keeping their dependency graphs aligned.
+
 ## [7.1.0] - 2026-09-27
 
 ### Changed
