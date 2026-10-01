@@ -24,6 +24,8 @@ The development baseline is official Pi **0.99.2**; host peers remain wildcard a
 
 GitHub CI runs that contract on Node 24 against both official Pi and the maintained fork through the shared Pi compatibility automation, including fresh Git and npm installations loaded by the real Pi CLI. A second job checks lockfile registry hosts, published type declarations, the built interactive visualizer, and MCP protocol conformance. These checks use local MCP fixtures and disposable agent directories, never live credentials or paid providers.
 
+Keep the development TypeBox pin aligned with the official Pi baseline's dependency, updating it only with that cohort. Standalone TypeBox updates are disabled: a second version in source installs adds measurable startup cost. Published peers remain optional wildcard dependencies, and qualification selects each host's actual TypeBox version.
+
 ## Install
 
 Requires Pi 0.87.1 or later and Node.js 24 or later.
