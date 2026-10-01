@@ -750,7 +750,7 @@ Run `/mcp` to see known tools, pinned counts, resource counts, and connection st
 
 ### MCP UI Integration
 
-MCP servers can ship interactive UIs via [MCP Apps](https://github.com/modelcontextprotocol/ext-apps). The adapter uses MCP Apps 2.0.0 with the split MCP SDK 2.2.0 runtime. When you call a tool that has a UI resource, the adapter opens it in a native macOS window via [Glimpse](https://github.com/hazat/glimpse) if available, otherwise falls back to the browser.
+MCP servers can ship interactive UIs via [MCP Apps](https://github.com/modelcontextprotocol/ext-apps). The adapter uses MCP Apps 2.0.3. When you call a tool that has a UI resource, the adapter opens it in a native macOS window via [Glimpse](https://github.com/hazat/glimpse) if available, otherwise falls back to the browser.
 
 **How it works:**
 
