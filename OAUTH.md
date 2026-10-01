@@ -413,7 +413,7 @@ The OAuth implementation uses the following modules:
 
 ## Issuer compatibility
 
-SDK 2.0.0 checks that authorization-server metadata returns the issuer advertised by discovery. Some providers advertise a path-scoped issuer but return the origin instead. If the provider cannot be corrected, explicitly opt out for that server only:
+SDK v2 checks that authorization-server metadata returns the issuer advertised by discovery. Some providers advertise a path-scoped issuer but return the origin instead. If the provider cannot be corrected, explicitly opt out for that server only:
 
 ```json
 {
@@ -431,7 +431,7 @@ The default remains strict, including when `protocolVersion` is `"legacy"`. The 
 
 ## SDK Integration
 
-The implementation uses the official split MCP SDK v2 client and OAuth APIs. SDK v1 remains installed only because the current MCP Apps package requires it:
+The implementation uses the official split MCP SDK v2 client and OAuth APIs. MCP Apps also uses this split SDK graph; SDK v1 is not a runtime dependency:
 
 ```typescript
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
