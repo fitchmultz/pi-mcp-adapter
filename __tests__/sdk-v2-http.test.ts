@@ -1485,6 +1485,22 @@ describe("published SDK v2 over real local HTTP", () => {
     }
   });
 
+  it("discovers every tool when changing catalog pages reuse the same cursor", async () => {
+    let page = 0;
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/list") return;
+      result(e, {
+        resultType: "complete",
+        tools: [{ ...tool, name: `tool-${page}` }],
+        ...(page < 2 ? { nextCursor: "opaque" } : {}),
+      });
+      page++;
+      return true;
+    });
+    expect((await f.connect()).connection.tools.map(item => item.name)).toEqual(["tool-0", "tool-1", "tool-2"]);
+    expect(page).toBe(3);
+  });
+
   it("preserves catalogs longer than the native default 64-page cap", async () => {
     const f = await fixture(e => {
       if (e.body.method !== "tools/list") return;
@@ -1493,5 +1509,26 @@ describe("published SDK v2 over real local HTTP", () => {
       return true;
     });
     expect((await f.connect()).connection.tools).toHaveLength(66);
+  });
+
+  it("rejects a never-ending changing catalog instead of publishing a partial list", async () => {
+    let pages = 0;
+    const f = await fixture(e => {
+      if (e.body.method !== "tools/list") return;
+      pages++;
+      if (pages > 1024) {
+        rpcError(e, -32603);
+        return true;
+      }
+      result(e, {
+        resultType: "complete",
+        tools: [{ ...tool, name: `tool-${pages}` }],
+        nextCursor: "opaque",
+      });
+      return true;
+    });
+    await expect(f.connect()).rejects.toMatchObject({ code: SdkErrorCode.ListPaginationExceeded });
+    expect(pages).toBe(1024);
+    expect(f.manager.getConnection("local")).toBeUndefined();
   });
 });

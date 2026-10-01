@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Upgrade the split MCP client, core, and server SDKs together to 2.2.0 in the adapter and interactive visualizer. Native discovery now retains changing catalog pages that reuse an opaque cursor instead of silently dropping later tools.
+- Bound native catalog walks, including automatic refreshes, to 1,024 pages and reject oversized or nonterminating catalogs without publishing partial results.
+
 ## [7.1.0] - 2026-09-27
 
 ### Changed
