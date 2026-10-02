@@ -1,16 +1,18 @@
 // Consumer-shaped compiled package, with only runtime dependencies and host-supplied peers.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { hostCli, hostIndex } from "./compat-host.mjs";
+import { hostCli, hostIndex, hostRoot } from "./compat-host.mjs";
+import { verifyNativeTools } from "./compat-native-tools.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "mcp-package-"));
 const agentDir = join(root, "agent");
 mkdirSync(agentDir);
-const env = { ...process.env, HOME: root, USERPROFILE: root, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory" };
+const env = { ...process.env, HOME: root, USERPROFILE: root, PI_PACKAGE_DIR: hostRoot, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory" };
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, env, encoding: "utf8", timeout: 120_000, maxBuffer: 10 * 1024 * 1024, shell: process.platform === "win32" && command === "npm.cmd" });
   assert.equal(result.status, 0, `${command} ${args.join(" ")}\n${result.error ?? ""}\n${result.stderr}\n${result.stdout}`);
@@ -31,6 +33,12 @@ try {
     }));
     run(npm, ["install", "--omit=dev", "--no-audit", "--no-fund"], consumer);
     packageRoot = join(consumer, "node_modules", "@fitchmultz", "pi-mcp-adapter");
+    // Ordinary ESM consumers supply peers from the exact host graph, not private runtime copies.
+    for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
+      const target = join(consumer, "node_modules", name);
+      mkdirSync(dirname(target), { recursive: true });
+      if (!existsSync(target)) symlinkSync(dirname(findPackageJSON(name, pathToFileURL(hostIndex).href)), target, "junction");
+    }
   }
   for (const file of ["dist/index.js", "dist/index.d.ts", "dist/mcp-script-worker.mjs", "dist/mcp-keyring-helper.cjs", "dist/app-bridge.bundle.js"]) assert.ok(readFileSync(join(packageRoot, file)).length, file);
   assert.ok(readFileSync(join(packageRoot, "skills/mcp-scripting/SKILL.md")).length);
@@ -57,26 +65,24 @@ try {
   assert.deepEqual(errors, []);
   assert.equal(resourceLoader.getExtensions().extensions[0]?.resolvedPath, join(packageRoot, "dist/index.js"));
   for (const name of ["mcp", "mcp_script"]) assert.ok(session.getAllTools().some(tool => tool.name === name), `after reload: ${name}`);
-  if (process.env.PI_COMPAT_HOST === "fork") {
-    assert.equal(typeof session.acquireCheckpoint, "function", "fork checkpoint hook is required");
-    const hold = await session.acquireCheckpoint({ quiesce: () => () => {}, signal: AbortSignal.timeout(10_000) });
-    try { assert.equal(hold.sleepReady, true, JSON.stringify(hold.sleepBlockers)); }
-    finally { hold.release(); }
-  }
   const marker = join(root, "cli.json");
   const observer = join(root, "observer.ts");
   writeFileSync(observer, `import { writeFileSync } from "node:fs";
-export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ tools: pi.getAllTools().map(t => t.name), activeTools: pi.getActiveTools(), commands: pi.getCommands().map(c => c.name) })); ctx.shutdown(); }); }`);
+import { VERSION, getPackageDir } from "@earendil-works/pi-coding-agent";
+export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ version: VERSION, packageDir: getPackageDir(), tools: pi.getAllTools().map(t => t.name), activeTools: pi.getActiveTools(), commands: pi.getCommands().map(c => c.name) })); ctx.shutdown(); }); }`);
   const child = spawnSync(process.execPath, [hostCli, "--mode", "rpc", "--no-session", "-ne", "-ns", "-np", "-nc", "--no-themes", "--approve", "-e", packageRoot, "-e", observer], { cwd: root, env, input: "", encoding: "utf8", timeout: 30_000 });
   assert.equal(child.status, 0, `${child.error ?? ""}\n${child.stderr}`);
   assert.doesNotMatch(child.stderr, /Failed to load extension|Extension error/);
   const observed = JSON.parse(readFileSync(marker, "utf8"));
+  assert.equal(observed.version, sdk.VERSION);
+  assert.equal(realpathSync(observed.packageDir), hostRoot, "CLI loader must use the selected host graph");
   for (const name of ["mcp", "mcp_script"]) {
     assert.ok(observed.tools.includes(name), `CLI tool ${name}`);
     assert.ok(!observed.activeTools.includes(name), `CLI tool ${name} must start inactive`);
   }
   assert.ok(observed.activeTools.includes("mcp_search"));
   for (const name of ["mcp", "mcp-auth"]) assert.ok(observed.commands.includes(name), `CLI command ${name}`);
+  await verifyNativeTools(packageRoot);
   console.log(`[compat-package] ${process.argv[2] ? "Git" : "npm"} install, native SDK reload, and bundled CLI passed`);
 } finally {
   try { if (session) { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); } }

@@ -1,11 +1,9 @@
 /**
- * Decide the `isError` override for a finished tool result in the `tool_result` hook.
+ * Classify returned MCP execution failures for Pi's native result-level isError.
  *
  * A failed MCP tool call is *returned* (not thrown), tagged `details.error: "tool_error"` (the server
- * returned an error result) or `"call_failed"` (the call itself threw and was caught). pi never reads a
- * result-level `isError`, so without this such a call is recorded as a success. Returning
- * `{ isError: true }` (and nothing else) flips the flag; pi's field-by-field merge keeps the original
- * `content` and `details` intact.
+ * returned an error result) or `"call_failed"` (the call itself threw and was caught).
+ * Spread this onto the returned result without replacing human or structured content.
  *
  * Limited to those two codes: the adapter's other `details.error` values (`auth_required`, connection
  * states, search/validation feedback, ...) are not failed tool calls, so they get no override.

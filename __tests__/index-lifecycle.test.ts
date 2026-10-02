@@ -124,6 +124,7 @@ function createState() {
     manager: { getAllConnections: () => new Map() },
     lifecycle: { gracefulShutdown: vi.fn().mockResolvedValue(undefined) },
     toolMetadata: new Map(),
+    serverInstructions: new Map(),
     config: { mcpServers: {} },
     oauthRuntime: { signal: new AbortController().signal },
     failureTracker: new Map(),
@@ -135,20 +136,21 @@ function createState() {
   } as any;
 }
 
-function createPi(refreshAllowedTools = false) {
+function createPi() {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let activeTools = ["bash"];
   const tools = new Map<string, any>();
   const entries: any[] = [];
-  const sessionManager = { getBranch: () => entries };
+  const sessionManager = { getBranch: () => entries,
+    getLeafId: () => entries.length ? String(entries.length - 1) : null,
+    getEntry: (id: string) => entries[Number(id)] ? { ...entries[Number(id)], id, parentId: Number(id) ? String(Number(id) - 1) : null } : undefined,
+  };
   return {
     handlers,
     api: {
       registerTool: vi.fn((tool) => {
-        if (!tools.has(tool.name) && !activeTools.includes(tool.name)) activeTools.push(tool.name);
+        if (tool.defaultActive !== false && !tools.has(tool.name) && !activeTools.includes(tool.name)) activeTools.push(tool.name);
         tools.set(tool.name, tool);
-        // Official 0.87 refreshes every allowlisted tool when a definition changes.
-        if (refreshAllowedTools) activeTools = [...tools.keys()];
       }),
       registerEntryRenderer: vi.fn(),
       appendEntry: vi.fn((customType, data) => entries.push({ type: "custom", customType, data })),
@@ -330,7 +332,7 @@ describe("mcpAdapter session lifecycle", () => {
     } } });
     mocks.buildProxyDescription.mockImplementation(config => `Servers: ${Object.keys(config.mcpServers).join(",")}`);
     const { default: adapter } = await import("../index.ts");
-    const { api, handlers } = createPi(true);
+    const { api, handlers } = createPi();
     adapter(api);
     try {
       await handlers.get("session_start")?.({}, {});
@@ -667,7 +669,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(transformConfig).not.toHaveBeenCalled();
 
     for (const [index, reason] of ["startup", "reload", "new"].entries()) {
-      const sessionManager = { getSessionId: () => `session-${index}`, getBranch: () => [] };
+      const sessionManager = { getSessionId: () => `session-${index}`, getBranch: () => [], getLeafId: () => null, getEntry: () => undefined };
       await handlers.get("session_start")?.({ reason }, { sessionManager });
       await Promise.resolve();
       const options = mocks.initializeMcp.mock.calls[index]![3];
@@ -1350,19 +1352,4 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
-  it("registers a tool_result handler that re-flags returned MCP tool failures (and leaves other results alone)", async () => {
-    const { default: mcpAdapter } = await import("../index.ts");
-    const { api, handlers } = createPi();
-    mcpAdapter(api);
-
-    const toolResult = handlers.get("tool_result");
-    expect(toolResult).toBeDefined();
-
-    // server returned an error result (direct path) -> tagged tool_error
-    expect(toolResult?.({ details: { error: "tool_error", server: "demo" } })).toEqual({ isError: true });
-    // the call itself threw and was caught (proxy path) -> tagged call_failed
-    expect(toolResult?.({ details: { mode: "call", error: "call_failed", message: "boom" } })).toEqual({ isError: true });
-    // a precondition code is not a tool-execution failure -> left untouched
-    expect(toolResult?.({ details: { error: "auth_required", server: "demo" } })).toBeUndefined();
-  });
 });

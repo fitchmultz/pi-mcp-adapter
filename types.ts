@@ -257,6 +257,11 @@ export function parseUiPromptHandoff(prompt: string): UiPromptHandoff | undefine
  * Collected during the session and available when it ends.
  */
 export interface UiSessionMessages {
+  /** Private JSONL history, readable with the normal paged result reader. */
+  historyRef?: string;
+  historyBytes?: number;
+  historyCount?: number;
+  historyError?: string;
   prompts: string[];
   notifications: string[];
   intents: Array<{ intent: string; params?: Record<string, unknown> }>;

@@ -155,22 +155,6 @@ describe("Pi registered extension reload real path", () => {
       });
       oldPids.push(firstActive[0]!.pid);
 
-      if (process.env.PI_COMPAT_HOST === "fork") {
-        const checkpointSession = harness.session as typeof harness.session & {
-          acquireCheckpoint(options: { quiesce: () => () => void; signal: AbortSignal }): Promise<{ sleepReady: boolean; sleepBlockers: string[]; release(): void }>;
-        };
-        expect(typeof checkpointSession.acquireCheckpoint).toBe("function");
-        // PID publication precedes MCP discovery completion. The initialization barrier
-        // must remain negative until the long-lived stdio blocker takes over.
-        await waitFor(async () => {
-          const hold = await checkpointSession.acquireCheckpoint({ quiesce: () => () => {}, signal: AbortSignal.timeout(5000) });
-          try {
-            expect(hold.sleepReady).toBe(false);
-            expect(isAlive(oldPids[0]!)).toBe(true);
-            return /stdio|process/i.test(hold.sleepBlockers.join("\n"));
-          } finally { hold.release(); }
-        });
-      }
 
       await harness.session.reload();
       const secondActive = await waitForFixture(harness.pidDir, active =>

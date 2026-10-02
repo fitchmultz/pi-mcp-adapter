@@ -13,7 +13,7 @@ function host(allow: (ref: Ref) => boolean = () => true) {
   const api = {
     registerTool: vi.fn((tool: any) => {
       definitions.set(refKey(tool), tool);
-      if (allow(tool) && !active.some(ref => refKey(ref) === refKey(tool))) active.push({ name: tool.name });
+      if (tool.defaultActive !== false && allow(tool) && !active.some(ref => refKey(ref) === refKey(tool))) active.push({ name: tool.name });
     }),
     registerEntryRenderer: vi.fn(),
     getAllTools: () => [...definitions.values()].filter(allow),
@@ -21,7 +21,10 @@ function host(allow: (ref: Ref) => boolean = () => true) {
     setActiveTools: (names: string[]) => { active = names.map(name => ({ name })).filter(allow); },
     appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
   } as unknown as ExtensionAPI;
-  const ctx = { sessionManager: { getBranch: () => entries } } as unknown as ExtensionContext;
+  const ctx = { sessionManager: {
+    getLeafId: () => entries.length ? String(entries.length - 1) : null,
+    getEntry: vi.fn((id: string) => entries[Number(id)] ? { ...entries[Number(id)], id, parentId: Number(id) ? String(Number(id) - 1) : null } : undefined),
+  } } as unknown as ExtensionContext;
   return { api, ctx, entries, definitions, active: () => active };
 }
 const config: McpConfig = { mcpServers: { demo: { command: "unused", directTools: ["pinned"] }, other: { command: "unused" } } };
@@ -35,6 +38,23 @@ function cache() {
 const match = (server: string, originalName: string) => ({ server, tool: { ...tool(originalName), description: originalName, name: `${server}_${originalName}`, originalName } });
 
 describe("MCP typed loader", () => {
+  it.each([10, 43_000])("restores the first valid backward snapshot across %s unrelated entries", size => {
+    const h = host();
+    h.entries.push(...Array.from({ length: size }, () => ({ type: "message" })));
+    h.entries.push({ type: "custom", customType: "mcp-tool-selection", data: { selected: [{ server: "demo", tool: "search" }] } });
+    h.entries.push({ type: "custom", customType: "mcp-tool-selection", data: { selected: "corrupt" } });
+    h.entries.push({ type: "message" }, { type: "message" });
+    const loader = createToolLoader(h.api, () => null, () => null);
+    loader.restore(h.ctx); loader.sync(config, cache());
+    expect(h.api.getActiveTools()).toEqual(["mcp", "read", "demo_pinned", "demo_search"]);
+    expect(h.ctx.sessionManager.getEntry).toHaveBeenCalledTimes(4);
+    // An empty complete snapshot must not resurrect older selections.
+    h.entries.push({ type: "custom", customType: "mcp-tool-selection", data: { selected: [], inactive: [{ server: "demo", tool: "pinned" }] } });
+    loader.restore(h.ctx); loader.sync(config, cache());
+    expect(h.api.getActiveTools()).toEqual(["mcp", "read"]);
+    expect(h.ctx.sessionManager.getEntry).toHaveBeenCalledTimes(5);
+  });
+
   it("serializes guarded calls at the public execution boundary", () => {
     const guardedHost = host();
     const guarded = createToolLoader(guardedHost.api, () => null, () => null, async () => {});
@@ -148,6 +168,7 @@ describe("MCP typed loader", () => {
     const loader = createToolLoader(h.api, () => null, () => null);
     loader.registerFeature("gateway", { name: "mcp" } as any);
     loader.registerFeature("script", { name: "mcp_script" } as any);
+    h.api.setActiveTools(["read", "mcp_search", "foreign_mcp"]);
     const gateways = () => ({ gateway: {}, script: {} });
     loader.restore(h.ctx);
     loader.sync(config, cache(), undefined, gateways);

@@ -19,18 +19,6 @@ export class McpLifecycleManager {
   private activeHealthCheck: Promise<void> | undefined;
   private shutdownPromise: Promise<void> | undefined;
   private stopped = false;
-  private checkpointPauses = 0;
-
-  hasActiveHealthCheck(): boolean { return this.activeHealthCheck !== undefined; }
-
-  /** Skip ticks, without cancelling accepted work or permanently closing the manager. */
-  pauseForCheckpoint(): () => void {
-    this.checkpointPauses++;
-    let released = false;
-    return () => {
-      if (!released) { released = true; this.checkpointPauses--; }
-    };
-  }
   private healthSignal: AbortSignal | undefined;
   private removeHealthAbortListener: (() => void) | undefined;
 
@@ -89,7 +77,7 @@ export class McpLifecycleManager {
     signal?.addEventListener("abort", stop, { once: true });
     this.removeHealthAbortListener = () => signal?.removeEventListener("abort", stop);
     this.healthCheckInterval = setInterval(() => {
-      if (this.stopped || signal?.aborted || this.activeHealthCheck || this.checkpointPauses > 0) return;
+      if (this.stopped || signal?.aborted || this.activeHealthCheck) return;
       const check = this.checkConnections(signal)
         .catch(error => {
           console.error(`MCP: Health check failed: ${formatTerminalError(error)}`);

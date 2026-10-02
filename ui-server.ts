@@ -14,6 +14,7 @@ import type { McpExtensionState } from "./state.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { extractUiToolVisibility, isUiToolCallableByApp } from "./ui-tool-visibility.ts";
+import { createUiMessageHistory } from "./ui-message-history.ts";
 import {
   createUiModelContextUpdate,
   extractUiPromptText,
@@ -113,12 +114,8 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   let streamSummary: UiStreamSummary | undefined;
 
   // Track messages from UI for retrieval
-  const sessionMessages: UiSessionMessages = {
-    prompts: [],
-    notifications: [],
-    intents: [],
-    contexts: [],
-  };
+  const history = createUiMessageHistory(options.state?.outputDirectory);
+  const sessionMessages = history.messages;
 
   const hostContext: UiHostContext = {
     displayMode: currentDisplayMode,
@@ -366,6 +363,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       const body = await parseBody(req, res);
       if (!body) return;
       if (!validateTokenBody(body, sessionToken, res)) return;
+      // A partial upload is not accepted until its authenticated body is complete.
+      if (completed && (url.pathname === "/proxy/ui/message" || url.pathname === "/proxy/ui/context")) {
+        sendJson(res, 409, { ok: false, error: "UI session is complete; message was not accepted" });
+        return;
+      }
       const params = body.params ?? {};
       touchHeartbeat();
 
@@ -485,13 +487,14 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         
         // Track messages by type (order: prompt → intent → notify)
         // Must match the order in index.ts onMessage handler
+        let warning: string | undefined;
         if (promptText) {
-          sessionMessages.prompts.push(promptText);
+          warning = history.append("prompts", promptText);
           log.debug("UI prompt received", { prompt: promptText.slice(0, 100) });
         } else if (msgParams.type === "intent" || msgParams.intent) {
           const intentName = msgParams.intent ?? "";
           if (intentName) {
-            sessionMessages.intents.push({
+            warning = history.append("intents", {
               intent: intentName,
               ...(msgParams.params !== undefined ? { params: msgParams.params } : {}),
             });
@@ -500,13 +503,17 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         } else if (msgParams.type === "notify" || msgParams.message) {
           const notifyText = msgParams.message ?? "";
           if (notifyText) {
-            sessionMessages.notifications.push(notifyText);
+            warning = history.append("notifications", notifyText);
             log.debug("UI notification", { message: notifyText.slice(0, 100) });
           }
         }
         
         await options.onMessage?.(msgParams);
-        sendJson(res, 200, { ok: true, result: {} });
+        if (warning) {
+          log.warn(warning);
+          options.state?.ui?.notify(warning, "warning");
+        }
+        sendJson(res, 200, { ok: true, result: {}, ...(warning ? { warning } : {}) });
         return;
       }
 

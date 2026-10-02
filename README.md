@@ -20,7 +20,7 @@ The MCP ecosystem has useful databases, browsers, and APIs. This adapter keeps t
 
 ## Pi release qualification
 
-The development baseline is official Pi **0.99.2**; host peers remain wildcard and the declared Pi/Node floors are unchanged. Current-host checks do not requalify older Pi versions. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
+The supported Pi baseline is official **1.0.0**; host peers remain wildcard. Older Pi releases are not supported. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
 
 GitHub CI runs that contract on Node 24 against both official Pi and the maintained fork through the shared Pi compatibility automation, including fresh Git and npm installations loaded by the real Pi CLI. A second job checks lockfile registry hosts, published type declarations, the built interactive visualizer, and MCP protocol conformance. These checks use local MCP fixtures and disposable agent directories, never live credentials or paid providers.
 
@@ -28,7 +28,7 @@ Keep the development TypeBox pin aligned with the official Pi baseline's depende
 
 ## Install
 
-Requires Pi 0.87.1 or later and Node.js 24 or later.
+Requires Pi 1.0.0 or later and Node.js 24 or later.
 
 ```bash
 pi install npm:@fitchmultz/pi-mcp-adapter
@@ -235,17 +235,11 @@ Supplying `beforeExecute` marks the adapter's tools `executionMode: "sequential"
 
 The two callbacks serve different boundaries: `beforeExecute` saves completed workspace writes; `onToolCall` captures the resolved operation and its raw outcome. The host owns `pi.appendEntry()` and the awaited checkpoint of that same native JSONL. Exclude `signal`, serialize thrown errors explicitly, redact sensitive checkpoint bytes, and honor the signal and session/attempt fence. `pi.appendEntry()` alone only persists locally; `pi.events.emit()` is not an awaited barrier. Custom entries do not enter model context automatically: the host must provide truthful recovered results or readback instructions when resuming. The adapter stores no separate transcript or receipts, does not replay scripts, and does not invent provider operation keys.
 
-### Native working-session checkpoints
+### Runtime shutdown and replacement
 
-On hosts that emit the optional awaited `session_checkpoint` event, the adapter can acknowledge an **idle, stateless Streamable HTTP** runtime with its **default sampling and elicitation capabilities intact**. Older Pi hosts continue normally and never invoke this hook. The host still owns native session capture, coherent filesystem capture, private credential retention, and commit-before-sleep.
+Pi 1.0 owns session replacement and emits `session_shutdown`. The adapter aborts outgoing activity before awaiting cleanup, closes owned connections, health watchers, OAuth callbacks and UI servers, and reports persistence/cleanup failures. Actual sampling/elicitation and native send/auth tails remain owned through settlement, even when a public request has already been cancelled. Unfinished callbacks prevent idle connection closure; final shutdown joins transport work. Pending `beforeExecute`/`onToolCall` promises prevent a clean-shutdown success claim. No detached work is declared finished merely because the agent settled.
 
-Sampling/elicitation handlers are owned through their actual UI/model/handler promises. A pending handler returns a named veto; after it finishes, an otherwise reconstructible runtime can qualify. Cancelling an SDK response or closing a transport does not discard an unfinished handler: connection cleanup drains those callbacks. Native sends that outlive per-server cancellation remain owned and veto readiness; final shutdown joins them. SDK-generated callback replies remain owned through HTTP/auth completion even after the handler returns. Unfinished callbacks also prevent automatic idle closure. Configured `beforeExecute`/`onToolCall` hooks likewise do not block idle checkpoints. Their underlying promises stay counted even if the caller's abortable wait has ended. Callbacks must return/await their work and persist any logical state they need on resume; arbitrary unreturned detached work and closure memory are not serialized.
-
-Ordinary logging, argument completion, empty experimental metadata, and the SDK's auto-opened catalog notification subscription are reconstructible: requests are owned and notification ingress is fenced. Explicit consumer resource/listen subscriptions, negotiated remote tasks, opaque protocol capabilities, HTTP session IDs, legacy SSE, stdio/Unix servers, pending initialization/requests/refresh/health checks, browser OAuth flows, UI sessions/messages, active scripts, and unpersisted session approvals return a named `sleepReady: false`. Session grants are not silently reset to obtain readiness. Advertising subscription support alone is not an active subscription. A resource-subscribe attempt with a cancelled/lost response remains unresolved until successful unsubscribe or connection disposal; it is not silently replayed. Completed URL elicitation clears only its accepted ID; other pending IDs still veto. Failed cleanup remains owned; an explicit later close may retry only if the native client still owns its transport. Unsupported work remains usable while compute stays running; the hook does not cancel accepted operations to manufacture readiness.
-
-Before any asynchronous flush, the adapter fences owned activity and pauses its existing health-check timer. New requests, background HTTP GET/reconnect/auth work, or incoming callbacks invalidate the host's hold **before** dispatch or mutation. Native provider promises and HTTP headers/body reads remain owned through settlement, including cancellation tails; final shutdown joins them while per-server cancellation stays prompt. An idle inbound SSE stream is not a perpetual active request. Completed refreshes use the existing native OS credential store; no token file or second auth store is introduced. Server OAuth challenges reconstruct through normal re-challenge, with granted scopes and issuer bindings in native credentials. Required metadata persistence errors reject capture; optional diagnostic tracing stays best-effort and never prevents recovery or clean exit. Release/cancellation resumes the same clients and timer, without replaying tools, reauthenticating, or running shutdown. Cold startup uses normal discovery and native credentials; only a new explicit tool invocation sends a new tool request.
-
-`session_shutdown` separately performs best-effort cleanup and propagates persistence/cleanup failures through the host's ordinary extension error contract. A host callback still running after cleanup also prevents clean-shutdown success. A clean-exit host must not infer success after a failed handler. No callback/process memory recovery is promised.
+The retired fork `session_checkpoint`/`acquireCheckpoint` APIs are no longer used. Host-supplied `beforeExecute` and raw `onToolCall` capture remain supported; the host still owns durable effect receipts and coherent workspace/session capture. No callback/process-memory recovery or automatic operation replay is promised.
 
 ### Runtime status snapshots
 
@@ -783,7 +777,11 @@ MCP servers can ship interactive UIs via [MCP Apps](https://github.com/modelcont
 mcp({ action: "ui-messages" })
 ```
 
-Returns accumulated messages from UI sessions. Each message includes `type`, `sessionId`, `serverName`, `toolName`, and `timestamp`. Prompt messages include `prompt`, intent messages include `intent` and `params`.
+Returns completed UI sessions (the last ten), grouped in the existing prompt → intent → context → notification order. Prompt handoffs are also normalized into intents. Prompts, intents and notifications are saved in private disk history as they arrive; context updates and SSE replay retain their existing bounds. Small retrievals keep the original inline content/details. Large retrievals return `resultRef` for the complete grouped output and `historyRefs` for original JSONL events; use `read-result` with `offset`/`limit` to page them without rerunning UI actions. Plain output pages are streamed without loading the entire artifact into memory.
+
+Retrieval drains only the sessions included in a usable inline/file receipt; read/write failure leaves them available for retry. History-write failure is explicitly reported, and unsaved events remain recoverable in the current instance's memory. **If normal storage fails and you then reload or exit, that unsaved tail is lost.** There is deliberately no session-journal rescue or alternate recovery file. Retrieve the pending messages before reloading or exiting when possible; do not treat the warning as a durable receipt. This rare failed-storage boundary does not change normal disk-history persistence or failed-delivery recovery. Files use private directory/file permissions and the existing output-directory lifetime: receipts remain readable after draining or UI closure, and are not deleted automatically. Remove artifacts only when you no longer need recovery. New sessions completed during retrieval are not cleared.
+
+Messages and context updates are accepted only while the UI is open. An upload finishing after completion is rejected before it can invoke callbacks or alter history. Retrieval verifies the accepted history prefix's byte and event counts; truncated history remains pending recovery instead of being delivered and cleared.
 
 **Browser controls:**
 
@@ -887,7 +885,7 @@ In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or 
 
 ### MCP output schemas
 
-Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls. Any JSON structured value—including `null`, `false`, and `0`—is rendered as text, including alongside non-empty content or images. The raw result remains available for script reduction and saved-result readback.
+Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls. Typed direct tools also expose that schema and bounded `structuredContent` to native Pi composition. Human text/images remain complementary. Oversized, absent, or not-run structured results return an `mcpAdapter` receipt (`omitted`, optional `resultRef`/`error`) instead of fabricating a server-schema value. Only the protocol's structured field is exposed: private details and `_meta` are not copied. Native content-only result-hook redaction drops structured output, as intended. Any JSON structured value—including `null`, `false`, and `0`—is rendered as text, including alongside non-empty content or images. The raw result remains available for script reduction and saved-result readback.
 
 ## How It Works
 

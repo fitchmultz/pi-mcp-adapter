@@ -11,13 +11,16 @@ import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { buildToolMetadata, catalogCoverage, findToolByName, formatSchema, toToolDescriptor } from "./tool-metadata.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { renderMcpResultContent } from "./tool-registrar.ts";
-import { guardMcpOutput, guardedMcpDetails, retainMcpResult, resolveMcpOutputGuardOptions, formatMcpResultReference } from "./mcp-output-guard.ts";
+import { guardMcpOutput, guardedMcpDetails, retainMcpResult, resolveMcpOutputGuardOptions, formatMcpResultReference, saveMcpOutputStream } from "./mcp-output-guard.ts";
 import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, formatMcpStatus, resolveServerUrl, truncateAtWord } from "./utils.ts";
 import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
 import { isInterruptedToolCall, isToolTransportFailure, trackToolCallOutcome, SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
+import { materializeUiMessages, uiMessages } from "./ui-message-history.ts";
+import type { CompletedUiSession } from "./state.ts";
+import type { UiSessionMessages } from "./types.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
 type ClientCallToolResult = Awaited<ReturnType<Client["callTool"]>>;
@@ -155,8 +158,59 @@ async function attemptAutoAuth(
   }
 }
 
-export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
-  const sessions = state.completedUiSessions;
+async function* uiSessionText(session: CompletedUiSession): AsyncGenerator<string> {
+  yield `\n## ${session.serverName} / ${session.toolName} (${session.completedAt.toLocaleTimeString()}, ${session.reason})`;
+  let heading = false;
+  for await (const prompt of uiMessages(session.messages, "prompts")) {
+    if (parseUiPromptHandoff(prompt as string)) continue;
+    if (!heading) { yield "\n\n### Prompts:"; heading = true; }
+    yield `\n- ${prompt}`;
+  }
+  heading = false;
+  for await (const value of uiMessages(session.messages, "intents")) {
+    const intent = value as UiSessionMessages["intents"][number];
+    if (!heading) { yield "\n\n### Intents:"; heading = true; }
+    yield `\n- ${intent.intent}${intent.params ? ` (${JSON.stringify(intent.params)})` : ""}`;
+  }
+  for await (const prompt of uiMessages(session.messages, "prompts")) {
+    const handoff = parseUiPromptHandoff(prompt as string);
+    if (!handoff) continue;
+    if (!heading) { yield "\n\n### Intents:"; heading = true; }
+    yield `\n- ${handoff.intent} (${JSON.stringify(handoff.params)})`;
+  }
+  if (session.messages.contexts.length) {
+    yield "\n\n### Context updates:";
+    for (const context of session.messages.contexts) yield `\n- ${context.summary}${context.truncated ? " (truncated)" : ""}`;
+  }
+  heading = false;
+  for await (const notification of uiMessages(session.messages, "notifications")) {
+    if (!heading) { yield "\n\n### Notifications:"; heading = true; }
+    yield `\n- ${notification}`;
+  }
+}
+
+export async function executeUiMessages(state: McpExtensionState): Promise<ProxyToolResult> {
+  const pending = [...state.completedUiSessions];
+  const options = resolveMcpOutputGuardOptions(state.config?.settings, state.outputDirectory);
+  // Bound both inline output and details. Large retrieval streams; it never flattens all events.
+  const size = pending.reduce((bytes, session) => bytes + (session.messages.historyBytes ?? 0) + Buffer.byteLength(JSON.stringify(session.messages)), 0);
+  const large = size > Math.min(options.maxBytes!, options.detailsMaxBytes!);
+  const warnings = pending.flatMap(session => session.messages.historyError ? [session.messages.historyError] : []);
+  const paged = async (): Promise<ProxyToolResult> => {
+    async function* output() {
+      yield `UI Session Messages (${pending.length} sessions):\n`;
+      for (const session of pending) yield* uiSessionText(session);
+    }
+    const artifact = await saveMcpOutputStream(output(), state.outputDirectory);
+    if (!artifact.path) return { content: [{ type: "text", text: `UI messages remain available; retrieval could not be saved: ${artifact.error}` }], isError: true, details: { error: "ui_history_delivery_failed", cleared: false } };
+    // Newly completed sessions during I/O are not part of this drain.
+    state.completedUiSessions = state.completedUiSessions.filter(session => !pending.includes(session));
+    return { content: [{ type: "text", text: `UI Session Messages (${pending.length} sessions). ${formatMcpResultReference(artifact.path)}${warnings.length ? `\nHistory persistence warning: ${warnings.join("; ")}` : ""}` }], details: { sessions: pending.length, resultRef: artifact.path, historyRefs: pending.flatMap(session => session.messages.historyRef ? [session.messages.historyRef] : []), cleared: true } };
+  };
+  if (large) return paged();
+  let sessions: CompletedUiSession[];
+  try { sessions = await Promise.all(pending.map(async session => ({ ...session, messages: await materializeUiMessages(session.messages) }))); }
+  catch (error) { return { content: [{ type: "text", text: `UI messages remain available; history could not be read: ${String(error)}` }], isError: true, details: { error: "ui_history_delivery_failed", cleared: false } }; }
 
   if (sessions.length === 0) {
     return {
@@ -228,10 +282,8 @@ export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
   }
 
   const count = sessions.length;
-  state.completedUiSessions = [];
-
-  return {
-    content: [{ type: "text" as const, text: output.join("\n") }],
+  const inline: ProxyToolResult = {
+    content: [{ type: "text" as const, text: output.join("\n") + (warnings.length ? `\nHistory persistence warning: ${warnings.join("; ")}` : "") }],
     details: {
       sessions: count,
       prompts: allPrompts,
@@ -241,6 +293,10 @@ export function executeUiMessages(state: McpExtensionState): ProxyToolResult {
       cleared: true,
     },
   };
+  const text = inline.content.map(block => block.type === "text" ? block.text : "").join("\n");
+  if (Buffer.byteLength(JSON.stringify(inline.details)) > options.detailsMaxBytes! || Buffer.byteLength(text) > options.maxBytes! || text.split("\n").length > options.maxLines!) return paged();
+  state.completedUiSessions = state.completedUiSessions.filter(session => !pending.includes(session));
+  return inline;
 }
 
 export function executeStatus(state: McpExtensionState): ProxyToolResult {
@@ -795,7 +851,7 @@ export async function runToolCall(
     }
     throwIfAborted(callerSignal);
 
-    // Host checkpoints and UI preparation do not consume the service deadline.
+    // Approval and UI preparation do not consume the service deadline.
     const ownedSignal = combineAbortSignals(callerSignal, AbortSignal.timeout(Math.ceil(configuredOptions?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC)))!;
     const requestOptions = { ...configuredOptions, signal: ownedSignal };
     const recovery = { manager: state.manager, config: state.config, signal: ownedSignal, onNeedsAuth: recoverAuthConnection };
@@ -837,7 +893,7 @@ export async function runToolCall(
     if (options.raw) {
       const message = isError
         ? (Array.isArray(record.content) ? record.content.filter(block => block.type === "text").map(block => block.text).join("\n") : "") || "Tool execution failed" : undefined;
-      return { content: [], details: { ...details, ...retained, ...(message ? { message } : {}) } };
+      return { content: [], ...(isError ? { isError: true } : {}), details: { ...details, ...retained, ...(message ? { message } : {}) } };
     }
     const content = renderMcpResultContent(record, retained.payloadFiles);
     const guarded = await guardMcpOutput(content.length ? content : [{ type: "text", text: target.resourceUri ? "(empty resource)" : "(empty result)" }], {
@@ -845,7 +901,7 @@ export async function runToolCall(
       ...(isError ? { prefix: "Error: ", suffix: schemaSuffix(), emptyTextFallback: "Tool execution failed" }
         : uiSummary ? { suffix: `\n\n${uiSummary.message}` } : {}),
     });
-    return { content: guarded.content, details: { ...details, ...guardedMcpDetails(guarded) } };
+    return { content: guarded.content, ...(isError ? { isError: true } : {}), details: { ...details, ...guardedMcpDetails(guarded) } };
   } catch (error) {
     // Direct/proxy host errors throw; scripts retain their failed-call envelope.
     if (beforeDispatchPending && options.innerCallId === undefined) throw error;
@@ -859,6 +915,7 @@ export async function runToolCall(
         ? await retainMcpResult(captureFailure.result, { ...outputGuardOptions, enabled: true, detailsMaxBytes: 1 }) : {};
       return {
         content: [{ type: "text", text: message }, ...(retained.resultRef ? [{ type: "text" as const, text: formatMcpResultReference(retained.resultRef) }] : [])],
+        isError: true,
         details: { ...detailsBase, ...retained, error: isAbortError(error, callerSignal) ? "aborted" : "call_capture_failed", message, recovery: context },
       };
     }
@@ -867,6 +924,7 @@ export async function runToolCall(
       uiSession?.sendToolCancelled(message);
       return {
         content: [{ type: "text", text: message }],
+        isError: true,
         details: { ...detailsBase, error: "ambiguous_outcome", message, recovery: { ...identity, action: "readback" } },
       };
     }
@@ -894,6 +952,7 @@ export async function runToolCall(
     const guarded = await guardMcpOutput([{ type: "text" as const, text: message }], { ...outputGuardOptions, prefix: "Failed to call tool: ", suffix: schemaSuffix() });
     return {
       content: guarded.content,
+      isError: true,
       details: {
         ...detailsBase,
         error: isAbortError(error, callerSignal) ? "aborted" : "call_failed",

@@ -6,6 +6,9 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import http from "node:http";
+import { rm } from "node:fs/promises";
+import { dirname } from "node:path";
+import { materializeUiMessages } from "../ui-message-history.ts";
 import { startUiServer, type UiServerHandle } from "../ui-server.ts";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 import { ConsentManager } from "../consent-manager.ts";
@@ -198,9 +201,11 @@ function approvedConsentManager(): ConsentManager {
 describe("MCP UI Integration", () => {
   let handle: UiServerHandle | null = null;
 
-  afterEach(() => {
+  afterEach(async () => {
     if (handle) {
+      const ref = handle.getSessionMessages().historyRef;
       handle.close("test-cleanup");
+      if (ref) await rm(dirname(ref), { recursive: true, force: true });
       handle = null;
     }
   });
@@ -247,7 +252,7 @@ describe("MCP UI Integration", () => {
       await browser.sendPrompt("Please analyze this data and summarize");
 
       // 5. Agent retrieves the messages
-      const messages = handle.getSessionMessages();
+      const messages = await materializeUiMessages(handle.getSessionMessages());
       expect(messages.prompts).toContain("Please analyze this data and summarize");
 
       // 6. Browser completes the session
@@ -283,7 +288,7 @@ describe("MCP UI Integration", () => {
       await browser.sendPrompt("And what about Germany?");
       await browser.sendIntent("show_map", { countries: ["France", "Germany"] });
 
-      const messages = handle.getSessionMessages();
+      const messages = await materializeUiMessages(handle.getSessionMessages());
       expect(messages.prompts).toHaveLength(2);
       expect(messages.prompts[0]).toBe("What is the capital of France?");
       expect(messages.prompts[1]).toBe("And what about Germany?");

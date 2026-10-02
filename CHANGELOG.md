@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.0] - 2026-10-01
+
+### Changed
+
+- Require Pi 1.0.0 and qualify the exact official SDK/CLI cohort; live installations are not changed.
+- Typed MCP tools expose native schemas, complete namespace instructions, annotations, bounded structured output and result-level failures. Human content, private raw capture, output/readback artifacts, cancellation and no-replay ownership remain separate.
+- Restore the selection journal backward to the first valid snapshot, preserving legacy/incomplete recovery, pins, restrictions, lazy startup and enable-first permissions. Keep this journal for the official initial SDK-resume gap.
+- Save MCP App messages privately on disk. Small retrievals stay inline; large histories stream to existing paged output references. Failed persistence/delivery remains recoverable, with no new retention caps.
+- Reject App messages/context updates whose authenticated upload finishes after completion, and refuse incomplete history delivery before draining accepted sessions.
+- Report and document the owner-accepted failed-storage boundary: unsaved in-memory App history is lost on reload/process exit; no second recovery store is added. Normal private disk history and failed-delivery recovery remain protected.
+- Remove retired fork checkpoint/metadata APIs. Preserve actual transport/OAuth/sampling/elicitation/capture shutdown ownership and move their independent lifetime tests out of the retired checkpoint suite.
+
 ## [7.1.1] - 2026-10-01
 
 ### Changed

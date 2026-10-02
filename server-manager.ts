@@ -1,4 +1,3 @@
-import type { McpCheckpointEvent } from "./checkpoint.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   Client,
@@ -90,8 +89,6 @@ async function drainClientOperations(client: Client): Promise<void> {
 class ManagedClient extends Client {
   serverName = "";
   oauthProvider: McpOAuthProvider | undefined;
-  beforeActivity: () => void = () => {};
-  readonly resourceSubscriptions = new Set<string>();
 
   private own<T>(operation: Promise<T>, kind: ClientOperation): Promise<T> {
     let pending = clientOperations.get(this);
@@ -103,24 +100,20 @@ class ManagedClient extends Client {
   }
 
   ownNative<T>(run: () => Promise<T>): Promise<T> {
-    this.beforeActivity();
     return this.own(run(), "request/refresh");
   }
 
   ownSend(run: () => Promise<void>): Promise<void> {
-    this.beforeActivity();
     // SDK-generated callback replies also perform HTTP/auth work, without calling callTool().
     return this.own(Promise.resolve().then(run), "request/refresh");
   }
 
   ownCallback<T>(kind: "sampling callback" | "elicitation callback", run: () => Promise<T>): Promise<T> {
-    this.beforeActivity();
     // Insert before dispatch. Cancellation/close of the SDK response does not settle this promise.
     return this.own(Promise.resolve().then(run), kind);
   }
 
   private async track<T>(start: (signal?: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
-    this.beforeActivity();
     const controller = this.oauthProvider ? new AbortController() : undefined;
     let removeAbortListener = () => {};
     const operation = this.oauthProvider
@@ -180,19 +173,12 @@ class ManagedClient extends Client {
   override subscribeResource(...args: Parameters<Client["subscribeResource"]>) {
     return this.track(async signal => {
       throwIfAborted(signal);
-      // A cancelled/lost response does not prove the server rejected the subscription.
-      // Retain the attempted URI until an explicit unsubscribe succeeds or the connection is discarded.
-      if (this.getServerCapabilities()?.resources?.subscribe) this.resourceSubscriptions.add(args[0].uri);
       return super.subscribeResource(args[0], { ...args[1], ...(signal ? { signal } : {}) });
     }, args[1]?.signal);
   }
 
   override unsubscribeResource(...args: Parameters<Client["unsubscribeResource"]>) {
-    return this.track(async signal => {
-      const result = await super.unsubscribeResource(args[0], { ...args[1], ...(signal ? { signal } : {}) });
-      this.resourceSubscriptions.delete(args[0].uri);
-      return result;
-    }, args[1]?.signal);
+    return this.track(signal => super.unsubscribeResource(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
   }
 }
 
@@ -267,76 +253,16 @@ export class McpServerManager {
   private traceSettings: McpTraceSettings | undefined;
   private traceWriter: McpTraceWriter | undefined;
   private stopped = false;
-  private checkpoint: McpCheckpointEvent | undefined;
-  private readonly beforeActivity = () => this.checkpoint?.invalidate();
-
-  holdCheckpoint(event: McpCheckpointEvent): () => void {
-    if (this.checkpoint) throw new Error("MCP manager checkpoint is already held");
-    this.checkpoint = event;
-    return () => { if (this.checkpoint === event) this.checkpoint = undefined; };
-  }
-
-  getCheckpointBlocker(): string | undefined {
-    if (this.stopped) return "MCP manager is stopped";
-    if (this.connectPromises.size || this.reconnectPromises.size || this.closePromises.size || this.retiredConnections.size)
-      return "MCP connection/discovery/retirement is active";
-    if (this.acceptedUrlElicitations.size || this.uiStreamListeners.size)
-      return "MCP browser elicitation/UI stream is pending";
-    for (const client of this.ownedClients) {
-      // Only the SDK's exact auto-opened catalog handle reconstructs during connect().
-      // An explicit consumer listen(), even with the same filter, still owns private state.
-      const kinds = [...(clientOperations.get(client) ?? [])]
-        .filter(([operation, kind]) => kind !== "subscription" || operation !== client.autoOpenedSubscription?.closed)
-        .map(([, kind]) => kind);
-      const callback = kinds.find(kind => kind === "sampling callback" || kind === "elicitation callback");
-      if (callback) return `MCP ${client.serverName}: ${callback} is active`;
-      if (kinds.includes("request/refresh")) return `MCP ${client.serverName}: request/refresh is active`;
-      if (kinds.includes("subscription")) return `MCP ${client.serverName}: subscription is active`;
-    }
-    for (const [name, connection] of this.connections) {
-      if (connection.inFlight) return `MCP ${name}: request/refresh is active`;
-      if (connection.client instanceof ManagedClient && connection.client.resourceSubscriptions.size)
-        return `MCP ${name}: resource subscription is active or unresolved`;
-      if (!(connection.transport instanceof StreamableHTTPClientTransport)) return `MCP ${name}: only stateless Streamable HTTP is checkpoint-supported`;
-      if (connection.transport.sessionId !== undefined) return `MCP ${name}: HTTP session state is not reconstructible`;
-      const capabilities = connection.client.getServerCapabilities();
-      if (capabilities?.tasks) return `MCP ${name}: negotiated remote task state is not checkpoint-supported`;
-      const opaque = Object.keys(capabilities ?? {}).find(key =>
-        !["tools", "resources", "prompts", "logging", "completions"].includes(key)
-        && !(key === "experimental" && Object.keys(capabilities?.experimental ?? {}).length === 0));
-      if (opaque) return `MCP ${name}: unsupported negotiated capability ${opaque}`;
-    }
-    return undefined;
-  }
-
-  // Diagnostics are best-effort, not session authority or a clean-exit prerequisite.
-  async flushForCheckpoint(): Promise<void> { await this.traceWriter?.flush(); }
 
   private releaseClientWhenSettled(client: Client): void {
     if (client instanceof ManagedClient) void drainClientOperations(client).then(() => this.ownedClients.delete(client));
   }
 
-  /** Fence before SDK callbacks AND before trace observers; retain native transport identity.
-   * Preserve existing property setters (including tracing) rather than replacing their behavior. */
-  private fenceTransport(transport: Transport, client: Client): void {
-    for (const key of ["onmessage", "onerror", "onclose"] as const) {
-      const descriptor = Object.getOwnPropertyDescriptor(transport, key);
-      let value = transport[key];
-      Object.defineProperty(transport, key, {
-        configurable: true,
-        get: () => {
-          const handler = descriptor?.get ? descriptor.get.call(transport) : value;
-          return handler ? (...args: unknown[]) => { this.beforeActivity(); return handler(...args); } : undefined;
-        },
-        set: next => { if (descriptor?.set) descriptor.set.call(transport, next); else value = next; },
-      });
-    }
-    if (typeof transport.send === "function") {
+  /** Own native send/auth tails even after a public request has been cancelled. */
+  private ownTransportSends(transport: Transport, client: Client): void {
+    if (typeof transport.send === "function" && client instanceof ManagedClient) {
       const send = transport.send.bind(transport);
-      transport.send = (...args) => {
-        this.beforeActivity();
-        return client instanceof ManagedClient ? client.ownSend(() => send(...args)) : send(...args);
-      };
+      transport.send = (...args) => client.ownSend(() => send(...args));
     }
   }
 
@@ -409,7 +335,6 @@ export class McpServerManager {
   }
 
   async connect(name: string, definition: ServerDefinition, signal?: AbortSignal): Promise<ServerConnection> {
-    this.beforeActivity();
     if (isServerDisabled(definition)) throw new Error(`MCP server "${name}" is disabled`);
     if (this.stopped) throw new Error("MCP server manager is closed");
     const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
@@ -526,7 +451,6 @@ export class McpServerManager {
 
   /** Retire only the expected current client; accepted native work drains before close. */
   retire(name: string, connection: ServerConnection): void {
-    this.beforeActivity();
     if (this.connections.get(name) !== connection) return;
     connection.status = "closed";
     let retired = this.retiredConnections.get(name);
@@ -754,7 +678,7 @@ export class McpServerManager {
     signal?: AbortSignal,
   ): Promise<void> {
     throwIfAborted(signal);
-    this.fenceTransport(transport, client);
+    this.ownTransportSends(transport, client);
     let abortCleanup: Promise<void> | undefined;
     const closeTransport = () => {
       abortCleanup = Promise.resolve().then(() => transport.close());
@@ -826,7 +750,6 @@ export class McpServerManager {
     );
     client.serverName = serverName;
     this.ownedClients.add(client);
-    client.beforeActivity = this.beforeActivity;
     if (this.samplingConfig) {
       registerSamplingHandler(client, { ...this.samplingConfig, serverName }, run => client.ownCallback("sampling callback", run));
     }
@@ -858,7 +781,6 @@ export class McpServerManager {
     error: Error | null,
     tools: McpTool[] | null,
   ): void {
-    this.beforeActivity();
     if (error) {
       logger.debug(`MCP: tools/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
@@ -876,7 +798,6 @@ export class McpServerManager {
     error: Error | null,
     prompts: McpPrompt[] | null,
   ): void {
-    this.beforeActivity();
     if (error) {
       logger.debug(`MCP: prompts/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
@@ -895,7 +816,6 @@ export class McpServerManager {
     error: Error | null,
     resources: McpResource[] | null,
   ): void {
-    this.beforeActivity();
     if (error) {
       logger.debug(`MCP: resources/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
@@ -1063,7 +983,6 @@ export class McpServerManager {
       reconnectionScheduler: (reconnect, delay) => {
         const timer = setTimeout(() => {
           if (transportClosed) return;
-          this.beforeActivity();
           reconnect();
         }, delay);
         return () => clearTimeout(timer);
@@ -1195,7 +1114,6 @@ export class McpServerManager {
   }
 
   async close(name: string): Promise<void> {
-    this.beforeActivity();
     this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
     this.connectAttempts.get(name)?.controller.abort(new Error(`MCP connection ${name} was closed`));
     const pendingClose = this.closePromises.get(name);
@@ -1267,7 +1185,7 @@ export class McpServerManager {
     this.samplingConfig = undefined;
     this.elicitationConfig = undefined;
     await Promise.all([...this.ownedClients].map(client => drainClientOperations(client)));
-    try { await this.flushForCheckpoint(); } catch (error) { failures.push(error); }
+    try { await this.traceWriter?.flush(); } catch (error) { failures.push(error); }
     if (failures.length > 0) throw new AggregateError(failures, "MCP manager cleanup failed");
   }
 
