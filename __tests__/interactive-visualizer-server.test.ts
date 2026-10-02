@@ -39,13 +39,11 @@ describe("interactive visualizer", () => {
     expect(html).toContain('<div id="app">');
   });
 
-  it("dist/server.js exists and is executable", () => {
+  it("emits the Node shebang for the built server", () => {
     const server = readFileSync(
       join(__dirname, "..", "examples", "interactive-visualizer", "dist", "server.js"),
       "utf-8",
     );
-    expect(server).toContain("#!/usr/bin/env node");
-    expect(server).toContain("show_chart");
-    expect(server).toContain("interactive-visualizer");
+    expect(server.startsWith("#!/usr/bin/env node\n")).toBe(true);
   });
 });

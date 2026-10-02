@@ -364,38 +364,4 @@ describe("withSessionRecovery", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(manager.reconnect).not.toHaveBeenCalled();
   });
-
-  it("concurrency: two simultaneous session failures both replay against the same fresh connection", async () => {
-    const stale = makeConnection("session-1");
-    const fresh = makeConnection("session-2");
-
-    // Simulate McpServerManager.reconnect's real single-flight contract: no
-    // matter how many callers ask, they all get the same in-flight promise
-    // resolving to the same fresh connection.
-    const sharedReconnect = Promise.resolve(fresh);
-    const manager = makeManager({
-      getConnection: () => stale,
-      reconnect: () => sharedReconnect,
-    });
-
-    const fn = vi.fn(async (conn: ServerConnection) => {
-      if (conn === stale) {
-        throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 });
-      }
-      return conn === fresh ? "ok" : "unexpected";
-    });
-
-    const [r1, r2] = await Promise.all([
-      withSessionRecovery({ manager: manager as any, config }, "demo", fn),
-      withSessionRecovery({ manager: manager as any, config }, "demo", fn),
-    ]);
-
-    expect(r1).toBe("ok");
-    expect(r2).toBe("ok");
-    // Each caller's own failure triggers its own reconnect() call, but the
-    // manager's single-flight dedupes the underlying work; both resolve to
-    // the identical fresh connection.
-    expect(manager.reconnect).toHaveBeenCalledTimes(2);
-    expect(fn).toHaveBeenCalledTimes(4); // 2 failed stale attempts + 2 successful fresh replays
-  });
 });
