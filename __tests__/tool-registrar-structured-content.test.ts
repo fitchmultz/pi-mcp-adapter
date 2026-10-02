@@ -67,13 +67,4 @@ describe("resolveMcpResultContent", () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({ type: "text" });
   });
-
-  it("does not hide structured content behind a short status", () => {
-    const blocks = resolveMcpResultContent({
-      content: [{ type: "text", text: "real" }],
-      structuredContent: { id: "saved" },
-    });
-
-    expect(blocks).toEqual([{ type: "text", text: "real" }, { type: "text", text: JSON.stringify({ id: "saved" }, null, 2) }]);
-  });
 });

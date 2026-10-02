@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import http from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { materializeUiMessages } from "../ui-message-history.ts";
@@ -433,32 +433,14 @@ describe("UiServer", () => {
 
       const res = await request(url);
 
-      // May be 200 or 500 depending on whether bundle exists in test environment
-      if (res.status === 200) {
-        expect(res.headers["content-type"]).toContain("javascript");
-        expect(res.headers["cache-control"]).toContain("max-age");
-      }
+      expect(res.status).toBe(200);
+      expect(res.headers["content-type"]).toContain("javascript");
+      expect(res.headers["cache-control"]).toContain("max-age");
+      expect(res.body).toBe(await readFile(new URL("../app-bridge.bundle.js", import.meta.url), "utf8"));
     });
   });
 
   describe("GET /events (SSE)", () => {
-    it("establishes SSE connection with valid token", async () => {
-      handle = await startUiServer(createServerOptions());
-      const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;
-
-      const events: Array<{ name: string; data: unknown }> = [];
-      const sse = await connectSSE(url, (name, data) => {
-        events.push({ name, data });
-      });
-
-      // Give it a moment to connect
-      await new Promise((r) => setTimeout(r, 50));
-      sse.close();
-
-      // Connection should succeed (no error thrown)
-      expect(true).toBe(true);
-    });
-
     it("receives tool-result event when sent", async () => {
       handle = await startUiServer(createServerOptions());
       const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;

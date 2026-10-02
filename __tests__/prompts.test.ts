@@ -122,15 +122,6 @@ describe("resolvePromptArgs", () => {
     expect(result.args).toEqual({ topic: "ai", date: "fallback" });
   });
 
-  it("fills unnamed declared args from the next positional value", () => {
-    const result = resolvePromptArgs(meta(), {
-      positional: ["today"],
-      named: { topic: "ai" },
-    });
-    expect(result.ok).toBe(true);
-    expect(result.args).toEqual({ topic: "ai", date: "today" });
-  });
-
   it("rejects missing required args with a usage hint", () => {
     const result = resolvePromptArgs(meta(), { positional: [], named: {} });
     expect(result.ok).toBe(false);

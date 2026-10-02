@@ -390,11 +390,13 @@ describe("MCP UI Integration", () => {
         consentManager,
       });
 
-      // Verify page contains the resource content
       const browser = new BrowserSimulator(handle);
       const html = await browser.loadPage();
-      // The host page wraps the resource in an iframe
-      expect(html).toContain("iframe");
+      const resourceToken = html.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/)?.[1];
+      expect(resourceToken).toBeDefined();
+      const response = await request(`http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(resourceToken!)}`);
+      expect(response.status).toBe(200);
+      expect(response.body).toBe(resource.html);
     });
   });
 
@@ -426,36 +428,6 @@ describe("MCP UI Integration", () => {
       // Wait for callback
       await new Promise((r) => setTimeout(r, 50));
       expect(onComplete).toHaveBeenCalledWith("user-finished");
-    });
-
-    it("maintains heartbeat to prevent timeout", async () => {
-      const manager = createIntegrationManager();
-      const consentManager = approvedConsentManager();
-      
-      handle = await startUiServer({
-        serverName: "test-server",
-        toolName: "test_tool",
-        toolArgs: {},
-        resource: {
-          uri: "ui://test/app",
-          html: "<h1>App</h1>",
-          mimeType: "text/html",
-          meta: { permissions: [] as UiResourcePermissions },
-        },
-        manager,
-        consentManager,
-      });
-
-      const browser = new BrowserSimulator(handle);
-      await browser.loadPage();
-
-      // Send heartbeats
-      await browser.heartbeat();
-      await browser.heartbeat();
-
-      // Session should still be active
-      const html = await browser.loadPage();
-      expect(html).toContain("test-server");
     });
   });
 

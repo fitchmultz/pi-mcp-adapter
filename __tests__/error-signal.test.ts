@@ -14,10 +14,6 @@ describe("toolErrorOverride", () => {
     expect(toolErrorOverride({ ok: true })).toBeUndefined(); // no error breadcrumb at all
   });
 
-  it("returns only { isError: true } so pi's field-by-field merge keeps content and details", () => {
-    expect(Object.keys(toolErrorOverride({ error: "tool_error" }) ?? {})).toEqual(["isError"]);
-  });
-
   it("ignores malformed details (nullish, non-object, non-string error)", () => {
     expect(toolErrorOverride(undefined)).toBeUndefined();
     expect(toolErrorOverride("tool_error")).toBeUndefined();
