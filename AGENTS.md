@@ -7,6 +7,7 @@
 - Heartbeat success is not timeout prevention unless a test crosses the timer boundary. Bind occupied-port fixtures to a separately allocated port; never silently return on a collision.
 
 ## Local validation
+- Qualify latest stable official Pi and latest maintained fork main using complete selected host graphs; resolve version/commit once per workflow run and retain exact SDK/CLI evidence. Locked development dependencies are reproducible snapshots, not qualification targets. Plain npm ci checks only the snapshot; the shared qualifier selects latest before the commands below.
 - Install with the `packageManager` version in `package.json`; use `npm ci --ignore-scripts --no-audit --no-fund`.
 - Build the example before the complete suite: `npm ci --prefix examples/interactive-visualizer --ignore-scripts --no-audit --no-fund`, then `npm run --prefix examples/interactive-visualizer build`.
 - Run `npm run build`, `npm run typecheck`, `npm test` and `npm run test:conformance`. `npm run check:compat` additionally checks the selected native host and packed package.
