@@ -5,25 +5,48 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      official-version:
+        description: Official stable version resolved for this run; blank resolves latest
+        type: string
+        default: ''
+      fork-ref:
+        description: Maintained fork commit resolved for this run; blank resolves main
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: mcp-ci-${{ github.ref }}
+  group: mcp-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PI_AUTOMATION_REF: a0fdc5780053237ac4ee24f49976ee5449e3aaab # v1.0.1
+  PI_AUTOMATION_REF: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
 
 jobs:
+  resolve:
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+    with:
+      automation-ref: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+      official-version: ${{ inputs.official-version }}
+      fork-ref: ${{ inputs.fork-ref }}
+
   compatibility:
+    needs: resolve
+    if: ${{ !cancelled() }}
     name: compatibility / compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       npm_config_cache: ${{ github.workspace }}/.npm-cache
     steps:
+      - name: Require resolved latest hosts
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+        run: test "$RESOLVE" = success
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: fitchmultz/.github
@@ -51,7 +74,7 @@ jobs:
         id: fork
         with:
           repository: fitchmultz/pi
-          ref: main
+          ref: ${{ needs.resolve.outputs.fork-ref }}
           path: fork
           persist-credentials: false
       - name: Build fork once
@@ -70,8 +93,9 @@ jobs:
       - name: Use the extension npm version
         run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
       - name: Qualify official Pi
+        env:
+          version: ${{ needs.resolve.outputs.official-version }}
         run: |
-          version=$(node -p 'require("./extension/package.json").devDependencies["@earendil-works/pi-coding-agent"]')
           node automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$GITHUB_WORKSPACE/extension" \
             --host official --target "$version" --output "$RUNNER_TEMP/official-evidence"
       - name: Qualify fork Pi
@@ -80,11 +104,27 @@ jobs:
         run: |
           node automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$GITHUB_WORKSPACE/extension" \
             --host fork --target "$RUNNER_TEMP/fork-package" --output "$RUNNER_TEMP/fork-evidence"
+      - name: Retain qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: host-qualification
+          path: |
+            ${{ runner.temp }}/official-evidence
+            ${{ runner.temp }}/fork-evidence
+          if-no-files-found: error
+          retention-days: 3
 
   extras:
+    needs: resolve
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Require resolved latest hosts
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+        run: test "$RESOLVE" = success
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -103,7 +143,25 @@ jobs:
           for lock in package-lock.json examples/interactive-visualizer/package-lock.json; do
             npx -y lockfile-lint@5.0.1 --type npm --allowed-hosts npm --validate-https --path "$lock"
           done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ env.PI_AUTOMATION_REF }}
+          path: automation
+          persist-credentials: false
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Select the same latest official graph for extras
+        env:
+          OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { prepareHost, selectDevelopmentHost } from './automation/scripts/hosts.mjs';
+          import { writeJson } from './automation/scripts/common.mjs';
+          const host = await prepareHost(`${process.env.RUNNER_TEMP}/extras-host`, 'official', process.env.OFFICIAL_VERSION, process.env);
+          const selected = selectDevelopmentHost(process.cwd(), host, process.env);
+          writeJson(`${process.env.RUNNER_TEMP}/extras-host/host.json`, { provenance: host.provenance, ...selected });
+          console.log(JSON.stringify(selected));
+          NODE
       - run: npm run build
       - name: Published types resolve from the packed tarball
         run: |
@@ -113,6 +171,16 @@ jobs:
           echo '{"private":true}' > package.json
           npm install --omit=dev --no-audit --no-fund "$RUNNER_TEMP"/fitchmultz-pi-mcp-adapter-*.tgz
           node "$GITHUB_WORKSPACE/scripts/check-consumer-types.mjs" "$PWD/node_modules/@fitchmultz/pi-mcp-adapter"
+      - name: Retain compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: extras-host
+          path: |
+            ${{ runner.temp }}/extras-host/host.json
+            ${{ runner.temp }}/extras-host/package-lock.json
+          if-no-files-found: error
+          retention-days: 3
       - name: Interactive visualizer
         run: |
           npm ci --prefix examples/interactive-visualizer --ignore-scripts --no-audit --no-fund
