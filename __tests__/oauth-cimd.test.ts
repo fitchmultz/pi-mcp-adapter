@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import metadataDocument from "../docs/client-metadata.json" with { type: "json" };
 import { authenticate, completeAuthFromInput, createOAuthRuntime, extractOAuthConfig, shutdownOAuth, startAuth } from "../mcp-auth-flow.ts";
 import { clearAllCredentials, getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
+import { ensureCallbackServer } from "../mcp-callback-server.ts";
 import { getOAuthCallbackPort, loopbackRedirectsMatch, McpOAuthProvider } from "../mcp-oauth-provider.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { OAuthConfig, ServerEntry } from "../types.ts";
@@ -27,6 +28,12 @@ const listen = async (server: Server, port = 0, host = "127.0.0.1") => {
   if (!address || typeof address === "string") throw new Error("Fixture did not bind");
   return address.port;
 };
+
+async function callbackUri(template = "http://127.0.0.1:PORT/callback") {
+  const url = new URL(template.replace("PORT", "40001"));
+  await ensureCallbackServer({ callbackHost: url.hostname === "[::1]" ? "::1" : url.hostname, callbackPath: url.pathname });
+  return template.replace("PORT", String(getOAuthCallbackPort()));
+}
 
 async function fixture(oauth: OAuthConfig = {}) {
   const name = `cimd-${crypto.randomUUID()}`;
@@ -242,8 +249,7 @@ it.each(["rejected", "unavailable"])("surfaces AS document %s without claiming a
 });
 
 it.each([undefined, false, "https://custom.example/client.json"])("keeps configured clients ahead of CIMD setting %s", async clientMetadataUrl => {
-  const portServer = createServer(); const port = await listen(portServer); await close(portServer);
-  const redirectUri = `http://127.0.0.1:${port}/callback`;
+  const redirectUri = await callbackUri();
   const f = await fixture({ clientId: "configured", clientMetadataUrl, redirectUri } as OAuthConfig);
   f.registered.set("configured", { ...metadataDocument, redirect_uris: [redirectUri] });
   expect(await f.login()).toBe("authenticated");
@@ -267,8 +273,7 @@ it.each([
 });
 
 it.each(["/callback", "/custom", "/callback?tenant=one"])("uses shared metadata only for represented callback %s", async path => {
-  const portServer = createServer(); const port = await listen(portServer); await close(portServer);
-  const redirectUri = `http://127.0.0.1:${port}${path}`;
+  const redirectUri = await callbackUri(`http://127.0.0.1:PORT${path}`);
   const f = await fixture({ redirectUri });
   expect(await f.login()).toBe("authenticated");
   expect(f.authorizations[0]!.searchParams.get("redirect_uri")).toBe(redirectUri);
@@ -281,18 +286,18 @@ it.each([
   "http://[0:0:0:0:0:0:0:1]:PORT/callback",
   "http://localhost:PORT?tenant=one",
 ])("retains custom CIMD refresh for raw port-only callback changes: %s", async template => {
-  const host = new URL(template.replace("PORT", "40001")).hostname;
-  const portServer = createServer(); const port = await listen(portServer, 0, host === "[::1]" ? "::1" : host); await close(portServer);
   const id = "https://custom.example/ports.json";
-  const redirectUri = template.replace("PORT", String(port));
+  const redirectUri = await callbackUri(template);
+  const port = getOAuthCallbackPort();
   const f = await fixture({ clientMetadataUrl: id, redirectUri });
   f.documents.set(id, { ...metadataDocument, client_id: id, redirect_uris: [redirectUri] });
   expect(await f.login()).toBe("authenticated");
   const before = f.stored()!;
   expect(await f.restart()).toBe(port);
-  const nextPortServer = createServer(); const nextPort = await listen(nextPortServer, 0, host === "[::1]" ? "::1" : host); await close(nextPortServer);
+  const nextRedirectUri = await callbackUri(template);
+  const nextPort = getOAuthCallbackPort();
   expect(nextPort).not.toBe(port);
-  f.definition.oauth = { clientMetadataUrl: false, redirectUri: template.replace("PORT", String(nextPort)) };
+  f.definition.oauth = { clientMetadataUrl: false, redirectUri: nextRedirectUri };
   expect(await f.start()).toEqual({ authorizationUrl: "" });
   expect(getOAuthCallbackPort()).toBe(nextPort);
   expect(f.stored()?.clientInfo).toEqual(before.clientInfo);
@@ -311,9 +316,8 @@ it.each(["?return_to=/../welcome", "?next=https://other.example/a/../b"])("accep
 });
 
 it("uses a custom document with an exact custom callback and identity", async () => {
-  const portServer = createServer(); const port = await listen(portServer); await close(portServer);
   const id = "https://custom.example/app.json";
-  const redirectUri = `http://127.0.0.1:${port}/custom?tenant=one`;
+  const redirectUri = await callbackUri("http://127.0.0.1:PORT/custom?tenant=one");
   const f = await fixture({ clientMetadataUrl: id, clientName: "Custom", clientUri: "https://custom.example/", redirectUri });
   f.documents.set(id, { ...metadataDocument, client_id: id, client_name: "Custom", client_uri: "https://custom.example/", redirect_uris: [redirectUri] });
   expect(await f.login()).toBe("authenticated");
