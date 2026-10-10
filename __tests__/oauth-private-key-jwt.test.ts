@@ -7,7 +7,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { auth, OAuthError, OAuthErrorCode, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { completeAuthFromInput, createOAuthRuntime, extractOAuthConfig, shutdownOAuth, startAuth } from "../mcp-auth-flow.ts";
 import { clearAllCredentials, getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
-import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
+import { ensureCallbackServer } from "../mcp-callback-server.ts";
+import { getOAuthCallbackPort, McpOAuthProvider } from "../mcp-oauth-provider.ts";
 import { McpServerManager } from "../server-manager.ts";
 import sharedDocument from "../docs/client-metadata.json" with { type: "json" };
 import type { OAuthConfig, ServerEntry } from "../types.ts";
@@ -151,6 +152,10 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
       requests, authorizations: authorizations.length, documentFetches, registrations: registrations.length })}\n`);
     await manager.closeAll(); await shutdownOAuth(runtime); clearAllCredentials(name); await close(server);
   });
+  if (oauth.grantType === "authorization_code" && oauth.redirectUri === undefined) {
+    await ensureCallbackServer({ callbackHost: "127.0.0.1", callbackPath: "/callback" });
+    oauth.redirectUri = `http://127.0.0.1:${getOAuthCallbackPort()}/callback`;
+  }
   return { name, origin, pair, id, definition, oauth, runtime, manager, exchanges, requests, authorizations, registrations, documentFetches, stored, start,
     provider: (signal?: AbortSignal) => new McpOAuthProvider(name, definition.url!, extractOAuthConfig(definition), { onRedirect: () => { browser.open(); } }, {}, signal, "fixture-state"),
     rotate: (next: ReturnType<typeof key>) => { verificationKey = next.publicJwk; },
@@ -246,8 +251,7 @@ it.each(["${JWT_TEST_KEY}", "$env:JWT_TEST_KEY", "{env:JWT_TEST_KEY}"])("resolve
 });
 
 it.each([false, true])("signs browser PKCE and refresh with custom document=%s", async custom => {
-  const portServer = createServer(); const port = await listen(portServer); await close(portServer);
-  const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback`,
+  const f = await fixture({ grantType: "authorization_code",
     ...(custom ? { clientMetadataUrl: "https://jwt.example/client.json" } : {}) });
   await f.login();
   expect(await f.start()).toEqual({ authorizationUrl: "" });
@@ -269,8 +273,7 @@ it("round-trips private-key custom CIMD client_credentials without the shared do
 });
 
 it.each(["!printf 'COMMAND_SECRET_SENTINEL' >&2; exit 7", "!true", "!printf '{PRIVATE_KEY_SENTINEL}'", "!printf 'PRIVATE_KEY_SENTINEL'", "!printf '[]'", "!printf 'COMMAND_SECRET_SENTINEL'\0"])("fails refresh privately without token request, consent or invalidation: case %#", async source => {
-  const portServer = createServer(); const port = await listen(portServer); await close(portServer);
-  const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback` });
+  const f = await fixture({ grantType: "authorization_code" });
   await f.login(); const before = f.stored();
   f.oauth.privateKeyJwt!.privateKey = source;
   const error = await f.start().catch(error => error);
@@ -368,8 +371,7 @@ it("keeps native ordinary-versus-explicit scope precedence without changing step
 });
 
 it("stops failed signing during ordinary browser refresh without consent or credential invalidation", async () => {
-  const portServer = createServer(); const port = await listen(portServer); await close(portServer);
-  const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback` });
+  const f = await fixture({ grantType: "authorization_code" });
   await f.login(); const connection = await f.connect(); const before = f.stored(); f.expire();
   f.oauth.privateKeyJwt!.privateKey = key("RS256").pem; // Real incompatible key, not a mocked signer.
   await expect(connection.client.callTool({ name: "echo" })).rejects.toThrow(/privateKeyJwt/);
@@ -500,8 +502,7 @@ it("validates private-key configuration and identity conflicts at both public bo
 });
 
 it("does not migrate a real saved shared browser login into private-key auth after a custom URL change", async () => {
-  const portServer = createServer(); const port = await listen(portServer); await close(portServer);
-  const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback`, clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: undefined } as unknown as OAuthConfig);
+  const f = await fixture({ grantType: "authorization_code", clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: undefined } as unknown as OAuthConfig);
   await f.login(); const before = f.stored();
   expect(before?.clientInfo).toMatchObject({ clientId: sharedDocument.client_id, registrationType: "cimd" });
   const dir = scratch(), marker = join(dir, "ran");
@@ -514,8 +515,7 @@ it("does not migrate a real saved shared browser login into private-key auth aft
 });
 
 it("refuses keyless machine authentication with a real saved shared browser registration", async () => {
-  const portServer = createServer(); const port = await listen(portServer); await close(portServer);
-  const f = await fixture({ grantType: "authorization_code", redirectUri: `http://127.0.0.1:${port}/callback`, clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: undefined } as unknown as OAuthConfig);
+  const f = await fixture({ grantType: "authorization_code", clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: undefined } as unknown as OAuthConfig);
   await f.login(); const before = f.stored();
   f.oauth.grantType = "client_credentials";
   const error = await f.start().catch(error => error);
