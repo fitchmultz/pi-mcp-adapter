@@ -15,7 +15,7 @@ pi install npm:@fitchmultz/pi-mcp-adapter
 pi
 ```
 
-Restart Pi if it was open during installation. Load only one adapter per Pi host. For pre-v5 state, read the [upgrade guide](docs/migration.md) before restart.
+Restart Pi if it was open during installation. Load only one adapter per Pi host. For pre-v5 state, read the [upgrade guide](docs/migration.md) before you restart Pi.
 
 For a Git install, run `pi install git:github.com/fitchmultz/pi-mcp-adapter`.
 
@@ -88,6 +88,6 @@ If App history cannot be saved, reload or exit discards unsaved messages. Retrie
 
 ## License and background
 
-Mitch Fultz maintains Fitch MCP Adapter under the [MIT license](LICENSE). Mario Zechner discusses tool schema costs in [“What if you do not need MCP?”](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/).
+Mitch Fultz maintains Fitch MCP Adapter under the [MIT license](LICENSE). Mario Zechner discusses tool schema costs in [his article about MCP](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/).
 
 [Watch the adapter demo](https://github.com/user-attachments/assets/4b7c66ff-e27e-4639-b195-22c3db406a5a).

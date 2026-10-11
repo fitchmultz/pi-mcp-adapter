@@ -1,6 +1,6 @@
 # Upgrading the MCP adapter
 
-[Install the current package](../README.md#start-here). For pre-v5 state, follow the migration steps below **before restarting Pi**.
+[Install the current package](../README.md#install). For pre-v5 state, follow the migration steps below **before restarting Pi**.
 
 ## Upgrading from v5
 
