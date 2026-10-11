@@ -32,7 +32,7 @@ For Chrome DevTools, create `.mcp.json` in your project:
   "mcpServers": {
     "chrome-devtools": {
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"]
+      "args": ["-y", "chrome-devtools-mcp"]
     }
   }
 }

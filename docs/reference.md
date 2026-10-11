@@ -31,7 +31,7 @@ Preferred project config: `.mcp.json`
   "mcpServers": {
     "chrome-devtools": {
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"]
+      "args": ["-y", "chrome-devtools-mcp"]
     }
   }
 }
@@ -228,7 +228,7 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
   "mcpServers": {
     "my-server": {
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "args": ["-y", "chrome-devtools-mcp"],
       "lifecycle": "lazy",
       "idleTimeout": 10,
       "requestTimeoutMs": 30000
@@ -498,7 +498,7 @@ The bundled `mcp-scripting` skill is a separate Pi package resource. To hide tha
 }
 ```
 
-Preserve any version pin in `source` if your existing package entry has one. You can also disable package resources through `pi config`.
+You can also disable package resources through `pi config`.
 
 First inspect candidate schemas. This script discovers and describes without executing a search hit:
 
@@ -597,7 +597,7 @@ Per-server (the `mcp.example.com` URLs are placeholders for your own endpoints):
   "mcpServers": {
     "chrome-devtools": {
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "args": ["-y", "chrome-devtools-mcp"],
       "directTools": true
     },
     "github": {

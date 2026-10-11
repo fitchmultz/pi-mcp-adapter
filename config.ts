@@ -58,7 +58,7 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
     id: "chrome-devtools",
     name: "Chrome DevTools",
     summary: "Inspect and automate a local Chrome browser.",
-    entry: { command: "npx", args: ["-y", "chrome-devtools-mcp@latest"] },
+    entry: { command: "npx", args: ["-y", "chrome-devtools-mcp"] },
   },
 ];
 
