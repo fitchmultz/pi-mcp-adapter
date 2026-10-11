@@ -4,8 +4,6 @@ Connect [Pi](https://github.com/earendil-works/pi) to MCP servers for browsers, 
 
 ![Pi sends a task to the adapter. The adapter discovers tools, calls local or remote servers, and returns results with files for large text.](.github/readme/mcp-flow.png)
 
-Pi discovers tools before it calls them. The adapter saves large text results for readback.
-
 ## Install
 
 Use Pi 1.0.0 or later and Node.js 24 or later.
@@ -73,7 +71,7 @@ MCP servers can execute programs or access accounts. Check server commands and a
 
 OAuth requires an available OS credential store. Unlock a Secret Service-compatible keyring on headless Linux. The adapter has no plaintext fallback. See the [OAuth guide](OAUTH.md) for remote sign-in.
 
-Persistent OAuth is unsupported out of the box on Android/Termux. Unauthenticated, header-token, and stdio servers work. Git/source builds require an Android-native `tsgo` compiler. Use the precompiled npm package if you have no compiler. See [Android build details](docs/development.md#androidtermux-source-builds).
+Android and Termux do not support persistent OAuth by default. Unauthenticated, header-token, and stdio servers work. Git/source builds require an Android-native `tsgo` compiler. Use the precompiled npm package if you have no compiler. See [Android build details](docs/development.md#androidtermux-source-builds).
 
 The adapter saves text above the default 50 KiB or 2,000-line limit to local files. Saved results and App histories can contain sensitive data. Remove files when you no longer need them. See [output handling and readback](docs/reference.md#output-guard).
 
