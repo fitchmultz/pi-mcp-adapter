@@ -131,10 +131,10 @@ describe("MCP tool result renderer", () => {
 
   it("keeps error text visible", () => {
     const display = formatMcpToolResultLines(result([
-      { type: "text", text: "Error: upstream failed\nExpected parameters:\n{}" },
+      { type: "text", text: "Error: server failed\nExpected parameters:\n{}" },
     ]), false);
 
-    expect(display.lines).toEqual(["Error: upstream failed", "Expected parameters:", "{}"]);
+    expect(display.lines).toEqual(["Error: server failed", "Expected parameters:", "{}"]);
     expect(display.truncated).toBe(false);
   });
 

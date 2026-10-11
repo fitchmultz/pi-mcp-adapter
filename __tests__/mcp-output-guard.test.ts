@@ -42,11 +42,11 @@ describe("guardMcpOutput", () => {
 
   it("merges prefixes and suffixes into small text output", async () => {
     const guarded = await guardMcpOutput(
-      [{ type: "text", text: "upstream failed" }],
+      [{ type: "text", text: "server failed" }],
       { prefix: "Error: ", suffix: "\n\nExpected parameters:\n{}" },
     );
 
-    expect(guarded.content).toEqual([{ type: "text", text: "Error: upstream failed\n\nExpected parameters:\n{}" }]);
+    expect(guarded.content).toEqual([{ type: "text", text: "Error: server failed\n\nExpected parameters:\n{}" }]);
   });
 
   it("uses the empty text fallback before applying affixes", async () => {

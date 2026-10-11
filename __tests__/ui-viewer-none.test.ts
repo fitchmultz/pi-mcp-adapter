@@ -136,7 +136,7 @@ describe("remote MCP UI viewers", () => {
   });
 
   it("uses local-window wording when a remote login is active but Glimpse opened", async () => {
-    vi.mocked(execFile).mockImplementation((_command: any, _options: any, callback: any) => callback(null, "nico ttys001 2026-08-02 08:00 (192.0.2.10)\n") as any);
+    vi.mocked(execFile).mockImplementation((_command: any, _options: any, callback: any) => callback(null, "user ttys001 2026-08-02 08:00 (192.0.2.10)\n") as any);
     const { state } = makeState();
     glimpseMocks.openGlimpseWindow.mockResolvedValueOnce({ close: vi.fn() });
 
