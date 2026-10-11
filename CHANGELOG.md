@@ -99,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING:** Independently maintained package identity is now `@fitchmultz/pi-mcp-adapter`, with CLI `fitch-mcp-adapter` and repository `fitchmultz/pi-mcp-adapter`. Original Nico MIT attribution is retained.
+- **BREAKING:** Package identity is now `@fitchmultz/pi-mcp-adapter`, with CLI `fitch-mcp-adapter` and repository `fitchmultz/pi-mcp-adapter`.
 - **BREAKING:** Adapter-owned config, metadata/onboarding/npx caches and legacy OAuth imports now live under `<Pi agent dir>/fitch-mcp-adapter/`. The project override is `.pi/fitch-mcp-adapter/mcp.json`; default traces use `.pi/fitch-mcp-adapter/traces/`. Shared standard MCP files and explicit config paths/imports remain supported unchanged.
 - **BREAKING:** OAuth uses service `fitch-mcp-adapter.oauth` and normal legacy imports use `FITCH_MCP_OAUTH_DIR`. Old adapter-owned defaults and credentials are never imported implicitly; `MCP_OAUTH_DIR` is read only by explicit migration. Other operational `MCP_*` and `PI_MCP_ADAPTER_*` controls remain compatible.
 - The private runtime registry and exported status channel use the `fitch-mcp-adapter` prefix (`MCP_STATUS_EVENT` is `fitch-mcp-adapter/status/v1`). Public `mcp`, `mcp_script`, slash commands and wire-stream metadata remain unchanged.
@@ -110,7 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replace the previous package entry with `pi install npm:@fitchmultz/pi-mcp-adapter` (or the Fitch Git source). Load only one adapter in a Pi host.
 - After installation, before restarting Pi, run `fitch-mcp-adapter migrate --dry-run`, then `fitch-mcp-adapter migrate`. Repeat from each project with a v4 `.pi/mcp.json` override. See [full upgrade instructions](docs/migration.md#upgrading-from-v4).
 - Migration copies global owned files, the current project override, and configured HTTP servers' OAuth entries only when destinations are absent. It preserves URL/issuer/client/token data, verifies credential copies, reports existing destinations without merging, prints no plaintext secrets, and leaves old sources untouched. Dry-run never reads the keychain or writes; repeated migration skips existing destinations.
-- The copied OAuth grant remains the same provider grant. Separate sign-ins are required for independent grants across distributions. Normal runtime never falls back to the old namespace after logout.
+- The copied OAuth grant remains the same provider grant. Sign in again for a separate provider grant. Normal runtime never falls back to the old namespace after logout.
 
 ## [4.4.0] - 2026-09-18
 
@@ -177,7 +177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known issues
 
-- Pi 0.84.0's development dependency shrinkwrap still installs `undici` 8.9.0, affected by upstream advisories fixed in 8.10.2. This remains unresolved even when npm audit reports zero vulnerabilities. Source installs temporarily include these development dependencies to build, then prune them.
+- Pi 0.84.0's development dependency shrinkwrap still installs `undici` 8.9.0, affected by dependency advisories fixed in 8.10.2. This remains unresolved even when npm audit reports zero vulnerabilities. Source installs temporarily include these development dependencies to build, then prune them.
 
 ## [4.2.1] - 2026-09-04
 
@@ -354,7 +354,7 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 
 ### Fixed
 - Treated null optional server URLs as absent and cleaned unpublished runtimes after initialization failures, preventing `not_initialized` sessions with surviving MCP children. Thanks @autopeasant for the diagnosis in issue #222.
-- Registered env-selected direct MCP tools before child `agent_start` when their metadata cache must be populated first. Thanks @peedrr for the original report in pi-subagents issue #638 and issue #219.
+- Registered env-selected direct MCP tools before child `agent_start` when their metadata cache must be populated first. Thanks @peedrr for the original report in issue #219.
 
 ## [2.14.0] - 2026-07-25
 
@@ -405,7 +405,7 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - Added argument completions for `/mcp` subcommands and reconnect/logout server names. Thanks @sting8k for PR #8.
 - Surfaced MCP connection failure reasons from bounded stdio diagnostics in status output and the `/mcp` panel, with a shortcut to copy the selected failure. Thanks @parkuman for PR #197.
 - Added Codex MCP imports from `.codex/config.toml`, with fallback to the existing JSON config. Thanks @npo-mmenke for PR #31.
-- Added explicit OpenCode V1 MCP imports from global and project `opencode.json` files, including nested config merging and environment interpolation. Thanks @NicoAvanzDev for PR #25.
+- Added explicit OpenCode V1 MCP imports from global and project `opencode.json` files, including nested config merging and environment interpolation. See PR #25.
 - Added environment-variable interpolation for HTTP MCP server URLs, with missing URL variables failing closed before requests are sent. Thanks @ozeias for PR #206.
 - Added `settings.oauthDir` to store MCP OAuth credentials in a project-specific directory, with `MCP_OAUTH_DIR` still taking precedence. Thanks @Termina1 for PR #105.
 - Added `lazy-keep-alive` lifecycle mode for MCP servers that should start on first use and then stay resident with health-check reconnects. Thanks @ricardoraposo for PR #143.

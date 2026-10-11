@@ -1,7 +1,7 @@
 {
   "name": "@fitchmultz/pi-mcp-adapter",
   "version": "8.0.0",
-  "description": "Fitch's independently maintained MCP adapter for Pi coding agent",
+  "description": "Token-efficient MCP adapter for the Pi coding agent",
   "type": "module",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -16,9 +16,6 @@
   },
   "license": "MIT",
   "author": "Mitch Fultz",
-  "contributors": [
-    "Nico Bailon"
-  ],
   "homepage": "https://github.com/fitchmultz/pi-mcp-adapter",
   "bugs": "https://github.com/fitchmultz/pi-mcp-adapter/issues",
   "publishConfig": {

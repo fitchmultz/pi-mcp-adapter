@@ -35,7 +35,7 @@ describe("explicit pre-v5 state migration", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("ignores upstream-owned defaults while retaining shared standard MCP discovery", async () => {
+  it("ignores pre-v5 defaults while retaining shared standard MCP discovery", async () => {
     write(join(agent, "mcp.json"), globalConfig);
     write(join(project, ".pi", "mcp.json"), projectConfig);
     write(join(agent, "mcp-cache.json"), '{"version":1,"servers":{}}');
