@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Rewrite the README around installation and everyday use, add a discovery/call-flow diagram, and move detailed configuration, migration, and maintainer guidance into linked docs.
+
 ## [8.0.0] - 2026-10-01
 
 ### Changed
@@ -74,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resources are listed and read explicitly by server and URI, not registered as synthetic functions. The panel shows separate resource counts and only real-tool pin choices. Legacy resource aliases remain gateway/script-callable; old resource pins keep the gateway available even with `disableProxyTool` enabled.
 - Script `tools.describe` preserves complete JSON Schema and raw descriptor fields rather than returning `inputTypeScript`. Update consumers to use `inputSchema` and optional `outputSchema`.
 - Cold caches no longer trigger connections to every lazy server. Global search reports partial catalog coverage; selected server discovery, configured pins, and eager/keep-alive startup remain intentional connection paths.
-- Metadata cache format 2 preserves raw tool/resource descriptors and reads legacy format 1. Downgrading to v5 ignores format 2 and requires rediscovery. Config paths and the OAuth namespace are unchanged from v5; see [migration](README.md#upgrading-from-v5).
+- Metadata cache format 2 preserves raw tool/resource descriptors and reads legacy format 1. Downgrading to v5 ignores format 2 and requires rediscovery. Config paths and the OAuth namespace are unchanged from v5; see [migration](docs/migration.md#upgrading-from-v5).
 
 ### Added
 
@@ -104,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Migration
 
 - Replace the previous package entry with `pi install npm:@fitchmultz/pi-mcp-adapter` (or the Fitch Git source). Load only one adapter in a Pi host.
-- After installation, before restarting Pi, run `fitch-mcp-adapter migrate --dry-run`, then `fitch-mcp-adapter migrate`. Repeat from each project with a v4 `.pi/mcp.json` override. See [full upgrade instructions](README.md#upgrading-from-v4).
+- After installation, before restarting Pi, run `fitch-mcp-adapter migrate --dry-run`, then `fitch-mcp-adapter migrate`. Repeat from each project with a v4 `.pi/mcp.json` override. See [full upgrade instructions](docs/migration.md#upgrading-from-v4).
 - Migration copies global owned files, the current project override, and configured HTTP servers' OAuth entries only when destinations are absent. It preserves URL/issuer/client/token data, verifies credential copies, reports existing destinations without merging, prints no plaintext secrets, and leaves old sources untouched. Dry-run never reads the keychain or writes; repeated migration skips existing destinations.
 - The copied OAuth grant remains the same provider grant. Separate sign-ins are required for independent grants across distributions. Normal runtime never falls back to the old namespace after logout.
 

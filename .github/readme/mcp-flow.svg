@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="640" viewBox="0 0 1600 640" role="img" aria-labelledby="title desc">
+  <title id="title">How MCP servers fit into a Pi task</title>
+  <desc id="desc">A task in Pi reaches the Fitch MCP Adapter. It discovers tools and loads selected schemas before calling local stdio or Unix-socket servers, or remote HTTP servers. Guarded results return to Pi, with large text saved for readback. Servers are lazy by default and cached catalogs can be searched while disconnected.</desc>
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#060A12"/><stop offset=".52" stop-color="#0B1120"/><stop offset="1" stop-color="#080C16"/></linearGradient>
+    <radialGradient id="blueBloom" cx=".2" cy=".18" r=".8"><stop stop-color="#2563EB" stop-opacity=".2"/><stop offset="1" stop-color="#2563EB" stop-opacity="0"/></radialGradient>
+    <radialGradient id="violetBloom" cx=".8" cy=".45" r=".7"><stop stop-color="#8B5CF6" stop-opacity=".16"/><stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/></radialGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#172238" stop-opacity=".96"/><stop offset="1" stop-color="#0E1525" stop-opacity=".98"/></linearGradient>
+    <linearGradient id="focus" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#172554" stop-opacity=".82"/><stop offset="1" stop-color="#312E81" stop-opacity=".58"/></linearGradient>
+    <pattern id="dotGrid" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.2" fill="#94A3B8" fill-opacity=".08"/></pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#02040A" flood-opacity=".5"/></filter>
+    <marker id="arrowBlue" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 11 6 1 11Z" fill="#60A5FA"/></marker>
+    <marker id="arrowViolet" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 11 6 1 11Z" fill="#A78BFA"/></marker>
+    <marker id="arrowGreen" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto"><path d="M1 1 11 6 1 11Z" fill="#34D399"/></marker>
+    <style>
+      .sans { font-family: Inter, ui-sans-serif, Arial, sans-serif; }
+      .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+      .title { font-size: 32px; font-weight: 650; fill: #F8FAFC; }
+      .copy { font-size: 26px; fill: #B4C1D4; }
+      .chip { font-size: 22px; font-weight: 650; }
+      .connector { fill: none; stroke-width: 3.5; stroke-linecap: round; }
+    </style>
+  </defs>
+  <!-- Solid canvas and restrained depth use the fleet dark-glass tokens. -->
+  <rect width="1600" height="640" fill="url(#canvas)"/>
+  <rect width="1600" height="640" fill="url(#blueBloom)"/>
+  <rect width="1600" height="640" fill="url(#violetBloom)"/>
+  <rect width="1600" height="640" fill="url(#dotGrid)"/>
+  <g class="sans">
+    <text x="64" y="92" font-size="48" font-weight="720" letter-spacing="-1" fill="#F8FAFC">Bring MCP tools into your Pi task</text>
+    <text x="64" y="140" class="copy">Discover what you need. Load its schema. Call the server.</text>
+  </g>
+  <!-- Request and result lanes stay outside all labels and cards. -->
+  <path d="M432 272H496" class="connector" stroke="#60A5FA" marker-end="url(#arrowBlue)"/>
+  <path d="M1080 270H1188" class="connector" stroke="#A78BFA" marker-start="url(#arrowViolet)" marker-end="url(#arrowViolet)"/>
+  <path d="M1080 464H1188" class="connector" stroke="#A78BFA" marker-start="url(#arrowViolet)" marker-end="url(#arrowViolet)"/>
+  <path d="M496 464H432" class="connector" stroke="#34D399" marker-end="url(#arrowGreen)"/>
+  <!-- Pi entry and returned output. -->
+  <g class="sans" filter="url(#shadow)">
+    <rect x="64" y="198" width="368" height="146" rx="24" fill="url(#glass)" stroke="#2A3851"/>
+    <rect x="64" y="198" width="5" height="146" rx="2.5" fill="#60A5FA"/>
+    <text x="92" y="254" class="title">Your task in Pi</text>
+    <text x="92" y="301" class="copy">Ask in plain language</text>
+    <rect x="64" y="396" width="368" height="146" rx="24" fill="url(#glass)" stroke="#285448"/>
+    <rect x="64" y="396" width="5" height="146" rx="2.5" fill="#34D399"/>
+    <text x="92" y="443" class="title">Results in Pi</text>
+    <text x="92" y="482" class="copy">Text, images, and data</text>
+    <text x="92" y="518" class="copy">Large text → saved file</text>
+  </g>
+  <!-- Dominant adapter card: discovery precedes execution. -->
+  <g class="sans" filter="url(#shadow)">
+    <rect x="496" y="198" width="584" height="344" rx="28" fill="url(#focus)" stroke="#6D7DFF" stroke-opacity=".6"/>
+    <text x="532" y="252" font-size="36" font-weight="700" fill="#F8FAFC">Fitch MCP Adapter</text>
+    <rect x="532" y="276" width="192" height="38" rx="19" fill="#0C1425" stroke="#38517A"/>
+    <text x="628" y="302" text-anchor="middle" class="mono chip" fill="#93C5FD">mcp_search</text>
+    <circle cx="548" cy="357" r="17" fill="#60A5FA" fill-opacity=".16"/>
+    <text x="548" y="366" text-anchor="middle" class="copy" fill="#93C5FD">1</text>
+    <text x="580" y="366" class="copy">Discover relevant tools</text>
+    <circle cx="548" cy="419" r="17" fill="#A78BFA" fill-opacity=".16"/>
+    <text x="548" y="428" text-anchor="middle" class="copy" fill="#DDD6FE">2</text>
+    <text x="580" y="428" class="copy">Load schemas, then call</text>
+    <circle cx="548" cy="481" r="17" fill="#34D399" fill-opacity=".16"/>
+    <text x="548" y="490" text-anchor="middle" class="copy" fill="#A7F3D0">3</text>
+    <text x="580" y="490" class="copy">Guard output for readback</text>
+  </g>
+  <!-- Alternatives, not sequential servers: both exchange calls and results. -->
+  <g class="sans" filter="url(#shadow)">
+    <rect x="1188" y="198" width="348" height="146" rx="24" fill="url(#glass)" stroke="#423458"/>
+    <text x="1216" y="254" class="title">Local servers</text>
+    <text x="1216" y="301" class="copy">stdio · Unix socket</text>
+    <rect x="1188" y="396" width="348" height="146" rx="24" fill="url(#glass)" stroke="#423458"/>
+    <text x="1216" y="452" class="title">Remote servers</text>
+    <text x="1216" y="499" class="copy">HTTP · OAuth or token</text>
+  </g>
+  <text x="64" y="604" class="sans copy" fill="#91A0B8">Lazy by default · cached catalogs · optional startup pins</text>
+</svg>

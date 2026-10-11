@@ -333,17 +333,17 @@ On Linux, if credential access fails because Pi inherited a revoked session keyr
 
 Normal runtime uses `<Pi agent dir>/fitch-mcp-adapter/mcp-oauth/sha256-<server-hash>/tokens.json` only for legacy plaintext imports. With `settings.oauthDir`, runtime uses a `fitch-mcp-adapter/` child of that directory, so a migrated v4 setting cannot consume or delete its old token files. Explicit migration reads the original directory. `FITCH_MCP_OAUTH_DIR` overrides the final runtime import path. A valid entry in these locations is imported on first read and its plaintext file removed. These directories do not change the OS credential namespace.
 
-Version 5 never automatically reads v4's `pi-mcp-adapter.oauth` service, old default `~/.pi/agent/mcp-oauth/` directory, or `MCP_OAUTH_DIR`. After installation and before restarting Pi, run `fitch-mcp-adapter migrate --dry-run`, then `fitch-mcp-adapter migrate` from each project with an old override. See [upgrade instructions](README.md#upgrading-from-v4).
+Version 5 never automatically reads v4's `pi-mcp-adapter.oauth` service, old default `~/.pi/agent/mcp-oauth/` directory, or `MCP_OAUTH_DIR`. After installation and before restarting Pi, run `fitch-mcp-adapter migrate --dry-run`, then `fitch-mcp-adapter migrate` from each project with an old override. See [upgrade instructions](docs/migration.md#upgrading-from-v4).
 
 Explicit migration copies configured HTTP servers' old OS entries or legacy token files into the new service only when no destination credential exists. It preserves URL/issuer bindings, client registration and tokens, verifies each copy, prints no plaintext secrets, and leaves all old sources untouched. Dry-run lists file actions without reading the keychain or writing. Existing destinations are never overwritten or merged; repeated migration skips them. The old `MCP_OAUTH_DIR` is honored only for this explicit migration.
 
-Logging out removes the new namespace's entry; normal runtime cannot restore it from the old namespace. Migration preserves the existing provider grant rather than creating a second grant. Using both distributions with independent provider grants requires separate sign-ins.
+Logging out removes the new namespace's entry; normal runtime cannot restore it from the old namespace. Migration preserves the existing provider grant rather than creating a second grant. Sign in again if you need a separate provider grant.
 
 The stored `serverUrl` field ensures credentials are invalidated if the server URL changes. Client and token issuer bindings also remain strict: a changed authorization-server issuer requires explicitly clearing credentials before authenticating again, including for CIMD. Normal authentication never silently changes stored-login or issuer bindings.
 
 ### Android / Termux
 
-Persistent OAuth is unsupported out of the box on Android/Termux: the published `@napi-rs/keyring` 1.3.0 package has no Android native binding. When native loading fails, authentication and credential status explain this limitation rather than suggesting that unlocking a Linux keyring will fix it. Use a supported platform with a working OS credential store for persistent OAuth; there is no plaintext fallback. Unauthenticated servers, header-token authentication, and stdio servers remain available. Public HTTP servers still defer credential-store access until an OAuth challenge.
+Persistent OAuth is unsupported out of the box on Android/Termux: the published `@napi-rs/keyring` 2.1.0 package has no Android native binding. When native loading fails, authentication and credential status explain this limitation rather than suggesting that unlocking a Linux keyring will fix it. Use a supported platform with a working OS credential store for persistent OAuth; there is no plaintext fallback. Unauthenticated servers, header-token authentication, and stdio servers remain available. Public HTTP servers still defer credential-store access until an OAuth challenge.
 
 ## Security Considerations
 
