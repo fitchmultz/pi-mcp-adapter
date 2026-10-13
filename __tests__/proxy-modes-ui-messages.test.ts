@@ -109,7 +109,8 @@ describe("executeUiMessages", () => {
       expect(page.content[0]).toEqual({ type: "text", text: full.slice(0, 500) });
       expect(delivered.details.historyRefs).toEqual([history.messages.historyRef]);
     } finally { await rm(root, { recursive: true, force: true }); }
-  }, 60_000);
+  // The same 10,000 real flushes take over 90s on APFS; do not skip durability work.
+  }, process.platform === "darwin" ? 180_000 : 60_000);
 
   it("retains failed history writes in memory and truthfully reports recovery", async () => {
     const root = await mkdtemp(join(tmpdir(), "mcp-ui-failure-"));
