@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Rewrite the README around installation and everyday use, add a discovery/call-flow diagram, and move detailed configuration, migration, and maintainer guidance into linked docs.
 
+## [8.0.1] - 2026-10-13
+
+### Changed
+
+- Refresh the MCP client, core, and server SDKs together to 2.3.1 in the adapter and interactive visualizer, and update smol-toml to 1.9.1. Keep native authentication, request lifetime, cancellation, streaming results and package discovery contracts.
+
 ## [8.0.0] - 2026-10-01
 
 ### Changed

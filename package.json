@@ -1,6 +1,6 @@
 {
   "name": "@fitchmultz/pi-mcp-adapter",
-  "version": "8.0.0",
+  "version": "8.0.1",
   "description": "Token-efficient MCP adapter for the Pi coding agent",
   "type": "module",
   "types": "./dist/index.d.ts",
@@ -73,14 +73,14 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@modelcontextprotocol/client": "2.2.0",
-    "@modelcontextprotocol/core": "2.2.0",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/core": "2.3.1",
     "@modelcontextprotocol/ext-apps": "2.0.3",
     "@napi-rs/keyring": "2.1.0",
     "cross-spawn": "7.0.6",
     "minisearch": "7.2.0",
     "open": "11.0.4",
-    "smol-toml": "1.9.0",
+    "smol-toml": "1.9.1",
     "strip-json-comments": "5.0.3",
     "zod": "4.6.5"
   },
@@ -108,7 +108,7 @@
     "@earendil-works/pi-ai": "1.0.0",
     "@earendil-works/pi-coding-agent": "1.0.0",
     "@earendil-works/pi-tui": "1.0.0",
-    "@modelcontextprotocol/server": "2.2.0",
+    "@modelcontextprotocol/server": "2.3.1",
     "@types/cross-spawn": "6.0.6",
     "@types/node": "24.19.1",
     "esbuild": "0.28.2",
