@@ -197,7 +197,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 
 ### Transport compatibility
 
-The adapter uses official split MCP SDK 2.2.0. HTTP connections automatically negotiate protocol `2026-07-28` and fall back to older revisions using the SDK's native rules. The SDK generates protocol metadata, method/name headers, and schema-driven `Mcp-Param-*` headers. Modern HTTP supports streamed POST responses without opening a legacy standalone GET stream. Deprecated SSE is tried only when the Streamable HTTP handshake rejects the endpoint with HTTP 404, 405, 406, or 415—not after a timeout, network failure, or authentication failure.
+The adapter uses official split MCP SDK 2.3.1. HTTP connections automatically negotiate protocol `2026-07-28` and fall back to older revisions using the SDK's native rules. The SDK generates protocol metadata, method/name headers, and schema-driven `Mcp-Param-*` headers. Modern HTTP supports streamed POST responses without opening a legacy standalone GET stream. Deprecated SSE is tried only when the Streamable HTTP handshake rejects the endpoint with HTTP 404, 405, 406, or 415—not after a timeout, network failure, or authentication failure.
 
 Native catalog discovery follows changing pages even when their opaque cursor repeats. Catalogs exceeding 1,024 pages fail explicitly instead of publishing a partial list or walking indefinitely; this also bounds automatic catalog refreshes.
 

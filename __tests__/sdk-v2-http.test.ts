@@ -163,6 +163,48 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.calls()[1]!.req.headers["mcp-param-region"]).toBe("west");
   });
 
+  it.each([307, 308])("preserves authenticated POST bodies across same-origin HTTP%s redirects", async status => {
+    const f = await fixture(e => {
+      if (e.req.url !== "/mcp") return;
+      e.res.writeHead(status, { location: "/final" }).end();
+      return true;
+    });
+    const { state } = await f.connect({ auth: "bearer", bearerToken: "redirect-fixture-token" });
+    expect((await call(state, "proxy")).ok).toBe(true);
+    const final = f.requests.filter(e => e.req.url === "/final");
+    expect(final.map(e => e.body.method)).toEqual(["server/discover", "tools/list", "tools/call"]);
+    expect(final.every(e => e.req.method === "POST" && e.req.headers.authorization === "Bearer redirect-fixture-token")).toBe(true);
+    expect(final.at(-1)!.body.params.arguments).toEqual({ value: "test" });
+  });
+
+  it.each([301, 302, 303])("refuses HTTP%s redirects that change an MCP POST method", async status => {
+    const f = await fixture(e => {
+      e.res.writeHead(status, { location: "/final" }).end();
+      return true;
+    });
+    await expect(f.connect()).rejects.toThrow(/Redirect.*not followed/i);
+    expect(f.requests.length).toBeGreaterThan(0);
+    expect(f.requests.every(e => e.req.method === "POST" && e.req.url === "/mcp")).toBe(true);
+    expect(f.manager.getConnection("local")).toBeUndefined();
+  });
+
+  it("does not forward credentials across origins; the explicit final endpoint remains usable", async () => {
+    const target = await fixture();
+    const f = await fixture(e => {
+      e.res.writeHead(307, { location: target.url }).end();
+      return true;
+    });
+    const credentials = { auth: "bearer" as const, bearerToken: "cross-origin-fixture-token" };
+    await expect(f.connect(credentials)).rejects.toThrow(/Redirect.*not followed/i);
+    expect(target.requests).toHaveLength(0);
+    expect(f.requests.length).toBeGreaterThan(0);
+    expect(f.requests.every(e => e.req.method === "POST" && e.req.url === "/mcp")).toBe(true);
+    const { state } = await f.connect({ ...credentials, url: target.url });
+    expect((await call(state, "proxy")).ok).toBe(true);
+    expect(target.requests.map(e => e.body.method)).toEqual(["server/discover", "tools/list", "tools/call"]);
+    expect(target.requests.every(e => e.req.headers.authorization === "Bearer cross-origin-fixture-token")).toBe(true);
+  });
+
   it.each([-32601, -32700, -32000, -32020, -32021])("keeps native matched error %s fallback", async code => {
     const f = await fixture(e => {
       if (e.body.method !== "server/discover") return;
