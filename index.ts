@@ -57,7 +57,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   let currentOAuthRuntime: McpOAuthRuntime | null = null;
   let lifecycleGeneration = 0;
   let currentConfigPath: string | undefined;
-  // Server, command, panel and call modules load on first use so sessions that never use MCP skip them.
+  // init loads during session_start, after the cached surface registers, keeping it off the extension-load path.
+  // Command, panel, gateway, script and resource modules load on first use.
   let initModule: typeof import("./init.ts") | undefined;
 
   async function shutdownState(currentState: McpExtensionState | null, reason: string): Promise<void> {
