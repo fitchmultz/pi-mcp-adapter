@@ -68,6 +68,33 @@ async function harness(options: { tools?: string[]; excludeTools?: string[]; con
 }
 
 describe("lazy MCP gateways through real Pi SDK", () => {
+  it("advertises object-typed search alternatives and validates query or enable through Pi", async () => {
+    const h = await harness();
+    let search: ReturnType<typeof getCurrentTools>[number] | undefined;
+    const outputs = await h.request([
+      { name: "mcp_search", arguments: { query: "" } },
+      { name: "mcp_search", arguments: { enable: ["gateway"] } },
+      { name: "mcp_search", arguments: { query: "", enable: ["script"] } },
+      { name: "mcp_search", arguments: {} },
+    ], (tools, stage) => {
+      if (stage === 0) search = tools.find(tool => tool.name === "mcp_search");
+    });
+    // Providers such as xAI require an explicit object type on each root alternative.
+    expect(search?.parameters).toMatchObject({
+      type: "object",
+      anyOf: [
+        { type: "object", required: ["query"] },
+        { type: "object", required: ["enable"] },
+      ],
+    });
+    expect(outputs).toHaveLength(4);
+    expect(outputs.slice(0, 3).map((output: any) => output.isError)).toEqual([false, false, false]);
+    expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);
+    expect(outputs[3].isError).toBe(true);
+    // Require native schema rejection, not just the handler's "Provide query or enable" guard.
+    expect(outputs[3].content[0].text).toContain('Validation failed for tool "mcp_search"');
+  }, 20_000);
+
   it("loads complete original schemas on the next request, persists branches/reload and respects manual deselection", async () => {
     const h = await harness();
     expect(h.active()).toEqual(["mcp_search"]);
