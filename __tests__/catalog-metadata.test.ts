@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { getToolUiResourceUri, RESOURCE_MIME_TYPE as RESOURCE_MIME_TYPE_OFFICIAL } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
 import { computeServerHash, reconstructToolMetadata, serializeResources, serializeTools } from "../metadata-cache.ts";
 import { rankToolMatches } from "../search-ranking.ts";
 import { buildToolMetadata, findToolByName } from "../tool-metadata.ts";
+import { RESOURCE_MIME_TYPE } from "../ui-resource-handler.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { McpTool, ServerCacheEntry, ServerEntry } from "../types.ts";
 
@@ -49,6 +50,8 @@ const descriptor = {
 };
 
 describe("canonical tool catalog", () => {
+  it("matches the official UI resource MIME type", () => expect(RESOURCE_MIME_TYPE).toBe(RESOURCE_MIME_TYPE_OFFICIAL));
+
   it.each([
     ["absent metadata", undefined],
     ["null metadata", null],

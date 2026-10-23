@@ -5,7 +5,7 @@ import type { McpServerManager } from "./server-manager.ts";
 import { isServerDisabled, type McpConfig, type UiResourceContent, type UiResourceCsp, type UiResourceMeta, type UiResourcePermissions } from "./types.ts";
 
 // MCP Apps resource media type; metadata reads must not import the app bridge.
-const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
+export const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 
 interface ResourceContentRecord {
   uri?: string;

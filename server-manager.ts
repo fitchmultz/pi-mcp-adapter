@@ -710,6 +710,7 @@ export class McpServerManager {
   ): Promise<"accept" | "decline" | "cancel"> {
     if (this.runtimeSignal?.aborted || !this.elicitationConfig?.allowUrl) return "cancel";
     const { handleUrlElicitation } = await import("./elicitation-handler.ts");
+    // The import yields; recheck cancellation and URL support before prompting.
     if (this.runtimeSignal?.aborted || !this.elicitationConfig?.allowUrl) return "cancel";
     for (const params of error.elicitations) {
       const result = await handleUrlElicitation({
