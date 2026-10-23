@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Load Zod and the command, panel, gateway, script and resource modules on first MCP use instead of at extension startup, so sessions that never use MCP skip them. Cached tool registration, schemas, commands and first-call behavior are unchanged; the `./types` entry exposes the same public types without loading Zod.
 - Rewrite the README around installation and everyday use, add a discovery/call-flow diagram, and move detailed configuration, migration, and maintainer guidance into linked docs.
 
 ## [8.0.1] - 2026-10-13
