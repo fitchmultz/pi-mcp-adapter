@@ -1,6 +1,6 @@
 import { isServerDisabled, type ServerDefinition } from "./types.ts";
 import type { McpServerManager } from "./server-manager.ts";
-import { hasPendingAuth } from "./mcp-auth-flow.ts";
+import { hasPendingAuth } from "./mcp-oauth-runtime.ts";
 import { logger } from "./logger.ts";
 import { formatTerminalError, sanitizeTerminalText } from "./utils.ts";
 

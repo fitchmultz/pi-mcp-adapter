@@ -52,7 +52,7 @@ vi.mock("../init.ts", () => ({
   notifyToolMetadataUpdated: mocks.notifyToolMetadataUpdated,
 }));
 
-vi.mock("../mcp-auth-flow.ts", () => ({
+vi.mock("../mcp-oauth-runtime.ts", () => ({
   initializeOAuth: mocks.initializeOAuth,
   createOAuthRuntime: mocks.createOAuthRuntime,
   shutdownOAuth: mocks.shutdownOAuth,

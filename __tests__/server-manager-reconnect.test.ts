@@ -13,6 +13,7 @@ type HttpTransportMock = {
 const mocks = vi.hoisted(() => ({
   clients: [] as any[],
   connectGate: undefined as Promise<void> | undefined,
+  connectStarted: null as { promise: Promise<void>; resolve(): void } | null,
   httpTransports: [] as HttpTransportMock[],
 }));
 
@@ -25,7 +26,10 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
       onclose: undefined,
       setRequestHandler: vi.fn(),
       setNotificationHandler: vi.fn(),
-      connect: vi.fn(async () => { await mocks.connectGate; }),
+      connect: vi.fn(async () => {
+        mocks.connectStarted?.resolve();
+        await mocks.connectGate;
+      }),
       listTools: vi.fn(async () => ({ tools: [] })),
       listResources: vi.fn(async () => ({ resources: [] })),
       close: vi.fn(async () => undefined),
@@ -54,6 +58,9 @@ describe("McpServerManager connections", () => {
     mocks.clients.length = 0;
     mocks.httpTransports.length = 0;
     mocks.connectGate = undefined;
+    let resolve!: () => void;
+    const promise = new Promise<void>(entered => { resolve = entered; });
+    mocks.connectStarted = { promise, resolve };
   });
 
   const def = { url: "https://example.test/mcp" };
@@ -96,6 +103,8 @@ describe("McpServerManager connections", () => {
     const first = manager.connect("remote", def, controller.signal);
     const second = manager.connect("remote", def).catch(error => error);
     try {
+      // Cancel an actual native connect wait, not the preceding lazy import.
+      await mocks.connectStarted!.promise;
       controller.abort(reason);
       await expect(first).rejects.toBe(reason);
       const third = manager.connect("remote", def).catch(error => error);
@@ -121,6 +130,9 @@ describe("McpServerManager connections", () => {
     const first = manager.connect("remote", def, controller.signal);
 
     try {
+      // A client must exist before the sole waiter cancels: the next caller
+      // then proves cleanup/replacement of that client, not import cancellation.
+      await mocks.connectStarted!.promise;
       controller.abort(new Error("stop waiting"));
       await expect(first).rejects.toThrow("stop waiting");
       const next = manager.connect("remote", def);

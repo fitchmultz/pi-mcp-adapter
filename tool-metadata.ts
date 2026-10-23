@@ -1,4 +1,3 @@
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
 import { formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
@@ -35,7 +34,11 @@ export function buildToolMetadata(
     }
     let uiResourceUri: string | undefined;
     try {
-      uiResourceUri = getToolUiResourceUri({ _meta: tool._meta });
+      // MCP Apps metadata must also be readable from the cache before loading the SDK.
+      const uri = (tool._meta?.ui as { resourceUri?: unknown } | undefined)?.resourceUri;
+      const resourceUri = uri === undefined ? tool._meta?.["ui/resourceUri"] : uri;
+      if (typeof resourceUri === "string" && resourceUri.startsWith("ui://")) uiResourceUri = resourceUri;
+      else if (resourceUri !== undefined) failedTools.push(tool.name);
     } catch {
       failedTools.push(tool.name);
     }
