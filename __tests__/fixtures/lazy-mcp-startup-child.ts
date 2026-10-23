@@ -18,11 +18,11 @@ const hooks = registerHooks({
   },
 });
 const require = createRequire(import.meta.url);
-function sdkModules(): string[] {
-  return [...new Set([...loaded, ...Object.keys(require.cache)])]
-    .filter(url => /(?:\/|%2[fF])@modelcontextprotocol(?:\/|%2[fF])/.test(url))
-    .sort();
+function loadedModules(pattern: RegExp): string[] {
+  return [...new Set([...loaded, ...Object.keys(require.cache)])].filter(url => pattern.test(url)).sort();
 }
+const sdkModules = () => loadedModules(/(?:\/|%2[fF])@modelcontextprotocol(?:\/|%2[fF])/);
+const zodModules = () => loadedModules(/(?:\/|%2[fF])zod(?:\/|%2[fF])/);
 
 const agentDir = process.env.PI_CODING_AGENT_DIR;
 const configPath = process.env.MCP_CHILD_CONFIG;
@@ -92,6 +92,7 @@ try {
   const startupStatus = statuses.at(-1);
   const activeTools = session.getActiveToolNames().sort();
   const startupSdkModules = sdkModules();
+  const startupZodModules = zodModules();
   const eventsBeforeCall = await readEvents();
   // Use Pi's native registered-tool wrapper to supply its real runtime context.
   // No assistant/model is needed to exercise registration -> stdio -> result.
@@ -102,7 +103,7 @@ try {
     .execute("startup-regression", { text: "first use" }, undefined, undefined);
   console.log(`LAZY_MCP_STARTUP=${JSON.stringify({
     sourceLoaded, activeTools, errors, tools, commands, startupStatus, startupSdkModules,
-    afterCallSdkModules: sdkModules(), eventsBeforeCall, eventsAfterCall: await readEvents(), call,
+    afterCallSdkModules: sdkModules(), startupZodModules, afterCallZodModules: zodModules(), eventsBeforeCall, eventsAfterCall: await readEvents(), call,
   })}`);
 } finally {
   try {

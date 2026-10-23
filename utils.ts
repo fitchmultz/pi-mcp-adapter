@@ -17,6 +17,7 @@ function readAdapterVersion(): string {
 }
 
 export const ADAPTER_VERSION = readAdapterVersion();
+export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
 
 export function normalizeRequestTimeoutMs(timeoutMs: number | undefined): number | undefined {
   return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0

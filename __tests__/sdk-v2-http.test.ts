@@ -17,7 +17,8 @@ import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { formatMcpResultReference } from "../mcp-output-guard.ts";
 import type { McpExtensionState } from "../state.ts";
-import { SERVER_STREAM_RESULT_PATCH_METHOD, type McpOperationContext, type ServerEntry } from "../types.ts";
+import type { McpOperationContext, ServerEntry } from "../types.ts";
+import { SERVER_STREAM_RESULT_PATCH_METHOD } from "../ui-stream-types.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

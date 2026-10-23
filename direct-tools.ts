@@ -4,7 +4,6 @@ import type { DirectToolSpec, McpAdapterOptions, McpConfig } from "./types.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
-import { executeCall } from "./proxy-modes.ts";
 import { isServerDisabled } from "./types.ts";
 import { nativeMcpResult } from "./tool-registrar.ts";
 
@@ -65,6 +64,7 @@ export function createDirectToolExecutor(
       }, !!spec.outputSchema);
     }
 
+    const { executeCall } = await import("./proxy-modes.ts");
     const result = await executeCall(
       state, spec.originalName, params, spec.serverName, undefined, signal, { toolCallId },
       beforeExecute ? (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) : undefined,

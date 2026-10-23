@@ -5,7 +5,14 @@ import adapter, {
   type McpAdapterOptions,
   type McpStatusSnapshot,
 } from "@fitchmultz/pi-mcp-adapter";
-import { extractUiPromptText, type McpConfig, type McpToolCallEvent } from "@fitchmultz/pi-mcp-adapter/types";
+import {
+  extractUiPromptText,
+  SERVER_STREAM_RESULT_PATCH_METHOD,
+  serverStreamResultPatchNotificationSchema,
+  type McpConfig,
+  type McpToolCallEvent,
+  type ServerStreamResultPatchNotification,
+} from "@fitchmultz/pi-mcp-adapter/types";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const config: McpConfig = { mcpServers: {} };
@@ -38,6 +45,10 @@ const snapshot: McpStatusSnapshot = {
   servers: [], totalTools: 0, totalResources: 0, connectedCount: 0, disabledCount: 0,
 };
 const prompt: string | undefined = extractUiPromptText({ prompt: "hello" });
+const patch: ServerStreamResultPatchNotification | undefined = serverStreamResultPatchNotificationSchema.safeParse({
+  method: SERVER_STREAM_RESULT_PATCH_METHOD,
+  params: { streamToken: "token", result: {} },
+}).data;
 
 // @ts-expect-error Factory options must retain their declared value types.
 createMcpAdapter({ defaultScriptTimeoutMs: "unlimited" });
@@ -47,4 +58,4 @@ createMcpAdapter(options)("invalid host");
 adapter("invalid host");
 // @ts-expect-error The /types export must retain function return types.
 const invalidPrompt: number = extractUiPromptText({ prompt: "hello" });
-void [extension, defaultExtension, channel, snapshot, prompt, invalidPrompt];
+void [extension, defaultExtension, channel, snapshot, prompt, patch, invalidPrompt];

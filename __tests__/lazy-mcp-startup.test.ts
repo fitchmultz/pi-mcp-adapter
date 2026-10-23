@@ -95,6 +95,8 @@ describe("cached lazy MCP startup through native Pi", () => {
       startupStatus: McpStatusSnapshot;
       startupSdkModules: string[];
       afterCallSdkModules: string[];
+      startupZodModules: string[];
+      afterCallZodModules: string[];
       eventsBeforeCall: unknown[];
       eventsAfterCall: Array<{ event: string; server: string; text?: string }>;
       call: { isError?: boolean; content: unknown[]; details: { error?: string } };
@@ -127,7 +129,9 @@ describe("cached lazy MCP startup through native Pi", () => {
     ]);
     expect(report.afterCallSdkModules.some(url => /@modelcontextprotocol\/client\//.test(url))).toBe(true);
     expect(report.afterCallSdkModules.some(url => /@modelcontextprotocol\/core\//.test(url))).toBe(true);
-    // Keep this last so the baseline also exercises the real first-call boundary.
+    expect(report.afterCallZodModules).not.toEqual([]);
+    // Keep these last so the baseline also exercises the real first-call boundary.
     expect(report.startupSdkModules).toEqual([]);
+    expect(report.startupZodModules).toEqual([]);
   }, 70_000);
 });
