@@ -1,22 +1,14 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import {
+import type {
   Client,
-  StreamableHTTPClientTransport,
-  SSEClientTransport,
-  SdkHttpError,
-  auth,
-  extractWWWAuthenticateParams,
-  UnauthorizedError,
-  type AuthProvider,
-  type RequestOptions,
-  type FetchLike,
-  type GetPromptResult,
-  type ReadResourceResult,
-  type UrlElicitationRequiredError,
+  AuthProvider,
+  RequestOptions,
+  FetchLike,
+  GetPromptResult,
+  ReadResourceResult,
+  UrlElicitationRequiredError,
 } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { UnixSocketClientTransport } from "./unix-socket-transport.ts";
-import { trackToolTransport, trackToolTransportFailure } from "./session-recovery.ts";
+import type { ManagedClient } from "./connection-runtime.ts";
+import { clientOperations, drainClientCallbacks, drainClientOperations } from "./client-operations.ts";
 import {
   isServerDisabled,
   isNonInteractiveOAuth,
@@ -32,15 +24,11 @@ import {
 } from "./types.ts";
 import { resolveNpxBinary } from "./npx-resolver.ts";
 import { logger } from "./logger.ts";
-import { McpOAuthProvider } from "./mcp-oauth-provider.ts";
-import { extractOAuthConfig, supportsOAuth, isOAuthChallenge, recordOAuthChallenge, getOAuthRequest, bindOAuthRequestIssuer, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import type { McpOAuthProvider } from "./mcp-oauth-provider.ts";
+import { supportsOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import { getAuthBaseDir, type AuthStorageOptions } from "./mcp-auth.ts";
-import { registerSamplingHandler, type ServerSamplingConfig } from "./sampling-handler.ts";
-import {
-  handleUrlElicitation,
-  registerElicitationHandler,
-  type ServerElicitationConfig,
-} from "./elicitation-handler.ts";
+import type { ServerSamplingConfig } from "./sampling-handler.ts";
+import type { ServerElicitationConfig } from "./elicitation-handler.ts";
 import {
   ADAPTER_VERSION,
   normalizeRequestTimeoutMs,
@@ -61,126 +49,11 @@ import {
   wrapTransportWithMcpTrace,
 } from "./mcp-trace.ts";
 
+type ConnectionRuntime = typeof import("./connection-runtime.ts");
+
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
 const abortCleanupPromises = new WeakMap<object, Promise<void>>();
-type ClientOperation = "request/refresh" | "sampling callback" | "elicitation callback" | "subscription";
-const clientOperations = new WeakMap<Client, Map<Promise<unknown>, ClientOperation>>();
-
-async function drainClientCallbacks(client: Client): Promise<void> {
-  for (;;) {
-    const pending = [...(clientOperations.get(client) ?? [])]
-      .filter(([, kind]) => kind === "sampling callback" || kind === "elicitation callback")
-      .map(([operation]) => operation);
-    if (!pending.length) return;
-    await Promise.allSettled(pending);
-  }
-}
-
-async function drainClientOperations(client: Client): Promise<void> {
-  for (;;) {
-    const pending = [...(clientOperations.get(client)?.keys() ?? [])];
-    if (!pending.length) return;
-    await Promise.allSettled(pending);
-  }
-}
-
-// Track complete SDK operations, including pagination and pre-request cache awaits.
-class ManagedClient extends Client {
-  serverName = "";
-  oauthProvider: McpOAuthProvider | undefined;
-
-  private own<T>(operation: Promise<T>, kind: ClientOperation): Promise<T> {
-    let pending = clientOperations.get(this);
-    if (!pending) clientOperations.set(this, pending = new Map());
-    pending.set(operation, kind);
-    const settled = () => { pending.delete(operation); };
-    void operation.then(settled, settled);
-    return operation;
-  }
-
-  ownNative<T>(run: () => Promise<T>): Promise<T> {
-    return this.own(run(), "request/refresh");
-  }
-
-  ownSend(run: () => Promise<void>): Promise<void> {
-    // SDK-generated callback replies also perform HTTP/auth work, without calling callTool().
-    return this.own(Promise.resolve().then(run), "request/refresh");
-  }
-
-  ownCallback<T>(kind: "sampling callback" | "elicitation callback", run: () => Promise<T>): Promise<T> {
-    // Insert before dispatch. Cancellation/close of the SDK response does not settle this promise.
-    return this.own(Promise.resolve().then(run), kind);
-  }
-
-  private async track<T>(start: (signal?: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
-    const controller = this.oauthProvider ? new AbortController() : undefined;
-    let removeAbortListener = () => {};
-    const operation = this.oauthProvider
-      ? this.oauthProvider.runWithSignal(controller!.signal, () => {
-          // Native legacy cancellation notifications must retain their operation's auth context.
-          const abort = AsyncLocalStorage.bind(() => controller!.abort(signal?.reason));
-          if (signal?.aborted) abort();
-          else signal?.addEventListener("abort", abort, { once: true });
-          removeAbortListener = () => signal?.removeEventListener("abort", abort);
-          return start(controller!.signal);
-        })
-      : start(signal);
-    void operation.then(removeAbortListener, () => { controller?.abort(); removeAbortListener(); });
-    return this.own(operation, "request/refresh");
-  }
-
-  override callTool(...args: Parameters<Client["callTool"]>) {
-    return this.track(signal => super.callTool(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
-  }
-
-  override readResource(...args: Parameters<Client["readResource"]>) {
-    return this.track(signal => super.readResource(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
-  }
-
-  override getPrompt(...args: Parameters<Client["getPrompt"]>) {
-    return this.track(signal => super.getPrompt(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
-  }
-
-  override listTools(...args: Parameters<Client["listTools"]>) {
-    return this.track(signal => super.listTools(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
-  }
-
-  override listResources(...args: Parameters<Client["listResources"]>) {
-    return this.track(signal => super.listResources(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
-  }
-
-  override listPrompts(...args: Parameters<Client["listPrompts"]>) {
-    return this.track(signal => super.listPrompts(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
-  }
-
-  override complete(...args: Parameters<Client["complete"]>) {
-    return this.track(signal => super.complete(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
-  }
-
-  override setLoggingLevel(...args: Parameters<Client["setLoggingLevel"]>) {
-    return this.track(signal => super.setLoggingLevel(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
-  }
-
-  override listen(...args: Parameters<Client["listen"]>) {
-    return this.track(async signal => {
-      const subscription = await super.listen(args[0], { ...args[1], ...(signal ? { signal } : {}) });
-      this.own(subscription.closed, "subscription");
-      return subscription;
-    }, args[1]?.signal);
-  }
-
-  override subscribeResource(...args: Parameters<Client["subscribeResource"]>) {
-    return this.track(async signal => {
-      throwIfAborted(signal);
-      return super.subscribeResource(args[0], { ...args[1], ...(signal ? { signal } : {}) });
-    }, args[1]?.signal);
-  }
-
-  override unsubscribeResource(...args: Parameters<Client["unsubscribeResource"]>) {
-    return this.track(signal => super.unsubscribeResource(args[0], { ...args[1], ...(signal ? { signal } : {}) }), args[1]?.signal);
-  }
-}
 
 function boundedStderrChunk(chunk: Buffer | string): Buffer {
   if (Buffer.isBuffer(chunk)) {
@@ -255,12 +128,12 @@ export class McpServerManager {
   private stopped = false;
 
   private releaseClientWhenSettled(client: Client): void {
-    if (client instanceof ManagedClient) void drainClientOperations(client).then(() => this.ownedClients.delete(client));
+    if (this.ownedClients.has(client as ManagedClient)) void drainClientOperations(client).then(() => this.ownedClients.delete(client as ManagedClient));
   }
 
   /** Own native send/auth tails even after a public request has been cancelled. */
-  private ownTransportSends(transport: Transport, client: Client): void {
-    if (typeof transport.send === "function" && client instanceof ManagedClient) {
+  private ownTransportSends(transport: Transport, client: ManagedClient): void {
+    if (typeof transport.send === "function") {
       const send = transport.send.bind(transport);
       transport.send = (...args) => client.ownSend(() => send(...args));
     }
@@ -481,7 +354,10 @@ export class McpServerManager {
   ): Promise<ServerConnection> {
     throwIfAborted(signal);
     validateServerProtocolConfig(definition);
-    let client = this.createClient(name, definition);
+    const runtime = await import("./connection-runtime.ts");
+    const { StdioClientTransport, SdkHttpError, UnixSocketClientTransport, trackToolTransport, getOAuthRequest, isOAuthChallenge } = runtime;
+    throwIfAborted(signal);
+    let client = this.createClient(name, definition, runtime);
 
     const tracingEnabled = isMcpTraceEnabled(definition, this.traceSettings);
     const traceWriter = tracingEnabled
@@ -536,7 +412,7 @@ export class McpServerManager {
       transport = stdioTransport;
     } else if (definition.url) {
       // HTTP transport with fallback
-      ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, false, implicitOAuth, onAuthChallenge));
+      ({ transport, oauthProvider } = this.createHttpTransport(runtime, definition, name, client, false, implicitOAuth, onAuthChallenge));
     } else {
       transport = new UnixSocketClientTransport(resolveConfigPath(definition.socket!)!);
     }
@@ -565,8 +441,8 @@ export class McpServerManager {
             legacySse = true;
             await client.close();
             this.releaseClientWhenSettled(client);
-            client = this.createClient(name, { ...definition, protocolVersion: "legacy" });
-            ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
+            client = this.createClient(name, { ...definition, protocolVersion: "legacy" }, runtime);
+            ({ transport, oauthProvider } = this.createHttpTransport(runtime, definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
             if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
             continue;
           }
@@ -615,8 +491,8 @@ export class McpServerManager {
           implicitOAuth = true;
           await client.close();
           this.releaseClientWhenSettled(client);
-          client = this.createClient(name, legacySse ? { ...definition, protocolVersion: "legacy" } : definition);
-          ({ transport, oauthProvider } = this.createHttpTransport(definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
+          client = this.createClient(name, legacySse ? { ...definition, protocolVersion: "legacy" } : definition, runtime);
+          ({ transport, oauthProvider } = this.createHttpTransport(runtime, definition, name, client, legacySse, implicitOAuth, onAuthChallenge));
           if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
         }
       }
@@ -672,7 +548,7 @@ export class McpServerManager {
   }
 
   private async connectClientWithAbort(
-    client: Client,
+    client: ManagedClient,
     transport: Transport,
     requestOptions?: RequestOptions,
     signal?: AbortSignal,
@@ -719,7 +595,8 @@ export class McpServerManager {
     };
   }
 
-  private createClient(serverName: string, definition: ServerDefinition): ManagedClient {
+  private createClient(serverName: string, definition: ServerDefinition, runtime: ConnectionRuntime): ManagedClient {
+    const { ManagedClient, registerSamplingHandler, registerElicitationHandler } = runtime;
     const capabilities = this.buildClientCapabilities(definition);
     let client: ManagedClient;
     client = new ManagedClient(
@@ -832,6 +709,9 @@ export class McpServerManager {
     error: UrlElicitationRequiredError,
   ): Promise<"accept" | "decline" | "cancel"> {
     if (this.runtimeSignal?.aborted || !this.elicitationConfig?.allowUrl) return "cancel";
+    const { handleUrlElicitation } = await import("./elicitation-handler.ts");
+    // The import yields; recheck cancellation and URL support before prompting.
+    if (this.runtimeSignal?.aborted || !this.elicitationConfig?.allowUrl) return "cancel";
     for (const params of error.elicitations) {
       const result = await handleUrlElicitation({
         ...this.elicitationConfig,
@@ -854,6 +734,7 @@ export class McpServerManager {
   }
 
   private createHttpTransport(
+    connectionRuntime: ConnectionRuntime,
     definition: ServerDefinition,
     serverName: string,
     client: ManagedClient,
@@ -861,6 +742,11 @@ export class McpServerManager {
     implicitOAuth = false,
     onAuthChallenge?: (error: Error) => void,
   ): { transport: Transport; oauthProvider: boolean } {
+    const {
+      StreamableHTTPClientTransport, SSEClientTransport, auth, extractWWWAuthenticateParams, UnauthorizedError,
+      McpOAuthProvider, extractOAuthConfig, isOAuthChallenge, recordOAuthChallenge, getOAuthRequest, bindOAuthRequestIssuer,
+      trackToolTransport, trackToolTransportFailure,
+    } = connectionRuntime;
     const serverUrl = resolveServerUrl(definition)!;
     const url = new URL(serverUrl);
     const storageBase = getAuthBaseDir(this.authStorageOptions);

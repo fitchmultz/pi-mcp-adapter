@@ -463,9 +463,14 @@ describe("proxy auto auth", () => {
   it("preserves owner cancellation during a proxy tool call", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
     const owner = new AbortController();
+    let markCallStarted!: () => void;
+    const callStarted = new Promise<void>(resolve => { markCallStarted = resolve; });
     const connection = {
       status: "connected",
-      client: { callTool: vi.fn(() => new Promise<never>(() => {})) },
+      client: { callTool: vi.fn(() => {
+        markCallStarted();
+        return new Promise<never>(() => {});
+      }) },
     };
     const state = {
       config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
@@ -483,7 +488,10 @@ describe("proxy auto auth", () => {
     } as any;
 
     const inFlight = executeCall(state, "demo_search", {}, "demo");
-    await Promise.resolve();
+    // This contract concerns an accepted native call. Wait for that boundary,
+    // rather than cancelling during newly lazy connection/runtime imports.
+    await callStarted;
+    expect(connection.client.callTool).toHaveBeenCalledOnce();
     owner.abort(new Error("owner stopped"));
     const result = await inFlight;
 

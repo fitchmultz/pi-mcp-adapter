@@ -25,7 +25,7 @@ import { formatMcpStatus, openUrl, parallelLimit, sanitizeTerminalText } from ".
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { getAuthStorageOptions } from "./mcp-auth.ts";
-import { createOAuthRuntime, hasPendingAuth, shutdownOAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import { createOAuthRuntime, hasPendingAuth, shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import {
   combineAbortSignals,
   createMcpRuntimeOwner,

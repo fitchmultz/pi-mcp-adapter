@@ -1,5 +1,5 @@
-import { keyHint, type AgentToolResult, type Theme, type ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { type Component, Text } from "@earendil-works/pi-tui";
+import type { AgentToolResult, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { type Component, getKeybindings, Text } from "@earendil-works/pi-tui";
 
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -90,6 +90,15 @@ class CollapsibleText implements Component {
   }
 
   invalidate(): void {}
+}
+
+// Read the shared TUI keybinding registry without importing the entire host SDK.
+function expandHint(theme: RenderTheme): string {
+  const keys = getKeybindings().getKeys("app.tools.expand").join("/")
+    .split("/").map(key => key.split("+")
+      .map(part => process.platform === "darwin" && part.toLowerCase() === "alt" ? "option" : part)
+      .join("+")).join("/");
+  return theme.fg("dim", keys) + theme.fg("muted", " to expand");
 }
 
 function truncateText(value: string, maxChars: number): string {
@@ -294,7 +303,7 @@ export function renderMcpToolResult(
     expanded,
     DEFAULT_MAX_COLLAPSED_LINES + (identity ? 1 : 0),
     activeTheme.fg("muted", "…"),
-    activeTheme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`),
+    activeTheme.fg("muted", `(${expandHint(activeTheme)})`),
     display.truncated,
   );
 }

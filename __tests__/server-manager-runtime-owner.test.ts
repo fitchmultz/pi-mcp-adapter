@@ -6,6 +6,10 @@ const mocks = vi.hoisted(() => ({
   connectGate: null as null | { promise: Promise<void>; resolve(): void },
   connectError: null as Error | null,
   resolveGate: null as null | { promise: Promise<void>; resolve(): void },
+  clientCreated: null as null | { promise: Promise<void>; resolve(): void },
+  transportCreated: null as null | { promise: Promise<void>; resolve(): void },
+  connectStarted: null as null | { promise: Promise<void>; resolve(): void },
+  resolveStarted: null as null | { promise: Promise<void>; resolve(): void },
 }));
 
 function gate() {
@@ -20,13 +24,15 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     this.setRequestHandler = vi.fn();
     this.setNotificationHandler = vi.fn();
     this.connect = vi.fn(async () => {
-      if (mocks.connectError) throw mocks.connectError;
+      mocks.connectStarted?.resolve();
       await mocks.connectGate?.promise;
+      if (mocks.connectError) throw mocks.connectError;
     });
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
     this.close = vi.fn(async () => undefined);
     mocks.clients.push(this);
+    mocks.clientCreated?.resolve();
   }),
   StreamableHTTPClientTransport: vi.fn(),
   SSEClientTransport: vi.fn(),
@@ -36,14 +42,22 @@ vi.mock("@modelcontextprotocol/client/stdio", () => ({
     this.send = vi.fn(async () => undefined);
     this.close = vi.fn(async () => undefined);
     mocks.transports.push(this);
+    mocks.transportCreated?.resolve();
   }),
 }));
 vi.mock("../npx-resolver.ts", () => ({
   resolveNpxBinary: vi.fn(async () => {
+    mocks.resolveStarted?.resolve();
     await mocks.resolveGate?.promise;
     return null;
   }),
 }));
+
+async function waitForConnectSetup(): Promise<void> {
+  await mocks.clientCreated!.promise;
+  await mocks.transportCreated!.promise;
+  await mocks.connectStarted!.promise;
+}
 
 describe("MCP manager owner races", () => {
   beforeEach(() => {
@@ -52,6 +66,10 @@ describe("MCP manager owner races", () => {
     mocks.connectGate = null;
     mocks.connectError = null;
     mocks.resolveGate = null;
+    mocks.clientCreated = gate();
+    mocks.transportCreated = gate();
+    mocks.connectStarted = gate();
+    mocks.resolveStarted = gate();
   });
 
   it("closes a connection that finishes after owner shutdown before insertion", async () => {
@@ -64,7 +82,7 @@ describe("MCP manager owner races", () => {
     manager.setRuntimeSignal(owner.signal);
 
     const connecting = manager.connect("demo", { command: "node", args: ["server.js"] });
-    await Promise.resolve();
+    await waitForConnectSetup();
     await owner.stop("reload");
     connectGate.resolve();
 
@@ -80,7 +98,7 @@ describe("MCP manager owner races", () => {
     mocks.connectGate = connectGate;
     const manager = new McpServerManager("/tmp/session");
     const connecting = manager.connect("demo", { command: "node", args: ["server.js"] });
-    await Promise.resolve();
+    await waitForConnectSetup();
     const closing = manager.close("demo");
     await expect(closing).resolves.toBeUndefined();
     connectGate.resolve();
@@ -94,7 +112,7 @@ describe("MCP manager owner races", () => {
     mocks.connectGate = connectGate;
     const manager = new McpServerManager("/tmp/session");
     const connecting = manager.connect("demo", { command: "node", args: ["server.js"] });
-    await Promise.resolve();
+    await waitForConnectSetup();
     const closeAll = manager.closeAll();
     await expect(closeAll).resolves.toBeUndefined();
     connectGate.resolve();
@@ -108,7 +126,7 @@ describe("MCP manager owner races", () => {
     mocks.connectGate = connectGate;
     const manager = new McpServerManager("/tmp/session");
     const connecting = manager.connect("demo", { command: "node", args: ["server.js"] });
-    await Promise.resolve();
+    await waitForConnectSetup();
     mocks.transports[0].close = vi.fn(async () => { throw new Error("transport close failed"); });
 
     const closeAll = manager.closeAll();
@@ -120,10 +138,14 @@ describe("MCP manager owner races", () => {
 
   it("surfaces client cleanup failures after a non-abort setup error", async () => {
     const { McpServerManager } = await import("../server-manager.ts");
+    const connectGate = gate();
+    mocks.connectGate = connectGate;
     mocks.connectError = new Error("connect failed");
     const manager = new McpServerManager("/tmp/session");
     const connecting = manager.connect("demo", { command: "node", args: ["server.js"] });
+    await waitForConnectSetup();
     mocks.clients[0].close = vi.fn(async () => { throw new Error("client close failed"); });
+    connectGate.resolve();
 
     await expect(connecting).rejects.toThrow("MCP connection setup failed");
     expect(mocks.clients[0].close).toHaveBeenCalledTimes(1);
@@ -151,11 +173,46 @@ describe("MCP manager owner races", () => {
     manager.setRuntimeSignal(owner.signal);
 
     const connecting = manager.connect("demo", { command: "npx", args: ["-y", "demo"] });
-    await Promise.resolve();
+    await mocks.clientCreated!.promise;
+    await mocks.resolveStarted!.promise;
+    expect(mocks.transports).toHaveLength(0);
     await owner.stop("shutdown");
     resolveGate.resolve();
 
     await expect(connecting).rejects.toThrow("shutdown");
     expect(mocks.transports).toHaveLength(0);
+  });
+
+  it.each(["abort", "clear-config"] as const)("cancels URL elicitation when %s happens during the handler import", async change => {
+    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
+    const { McpServerManager } = await import("../server-manager.ts");
+    const controller = new AbortController();
+    const ui = {
+      select: vi.fn(async () => "Decline"),
+      input: vi.fn(),
+      notify: vi.fn(),
+    };
+    const manager = new McpServerManager();
+    manager.setRuntimeSignal(controller.signal);
+    manager.setElicitationConfig({ allowUrl: true, ui: ui as any });
+    try {
+      const pending = manager.handleUrlElicitationRequired("demo", new UrlElicitationRequiredError([{
+        mode: "url",
+        message: "Connect your account",
+        elicitationId: "cancel-during-import",
+        url: "https://example.test/connect",
+      }]));
+      // Even a cached dynamic import yields. Change ownership before it resumes,
+      // rather than relying on a timer or a guessed number of microtasks.
+      if (change === "abort") controller.abort(new Error("owner stopped during import"));
+      else manager.setElicitationConfig(undefined);
+
+      await expect(pending).resolves.toBe("cancel");
+      expect(ui.select).not.toHaveBeenCalled();
+      expect(ui.input).not.toHaveBeenCalled();
+      expect(ui.notify).not.toHaveBeenCalled();
+    } finally {
+      await manager.closeAll();
+    }
   });
 });

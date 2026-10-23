@@ -1,6 +1,5 @@
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { Client } from "@modelcontextprotocol/client";
-import { DEFAULT_REQUEST_TIMEOUT_MSEC, UrlElicitationRequiredError } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import type { ServerConnection } from "./server-manager.ts";
 import type { ToolMetadata, McpOperationContext, McpToolCallEvent, McpToolCallIdentity } from "./types.ts";
@@ -12,10 +11,10 @@ import { buildToolMetadata, catalogCoverage, findToolByName, formatSchema, toToo
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { renderMcpResultContent } from "./tool-registrar.ts";
 import { guardMcpOutput, guardedMcpDetails, retainMcpResult, resolveMcpOutputGuardOptions, formatMcpResultReference, saveMcpOutputStream } from "./mcp-output-guard.ts";
-import { maybeStartUiSession, summarizeUiSessionResult, type UiSessionRuntime } from "./ui-session.ts";
+import type { UiSessionRuntime } from "./ui-session.ts";
 import { formatAuthRequiredMessage, formatMcpStatus, resolveServerUrl, truncateAtWord } from "./utils.ts";
-import { authenticate, completeAuthFromInput, startAuth, supportsOAuth } from "./mcp-auth-flow.ts";
-import { isInterruptedToolCall, isToolTransportFailure, trackToolCallOutcome, SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
+import { supportsOAuth } from "./mcp-oauth-runtime.ts";
+import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { materializeUiMessages, uiMessages } from "./ui-message-history.ts";
@@ -131,6 +130,7 @@ async function attemptAutoAuth(
   }
 
   try {
+    const { authenticate } = await import("./mcp-auth-flow.ts");
     if (state.authStorageOptions) {
       await authenticate(
         serverName,
@@ -368,6 +368,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 }
 
 export async function executeAuthStart(state: McpExtensionState, serverName: string, signal?: AbortSignal): Promise<ProxyToolResult> {
+  const { startAuth } = await import("./mcp-auth-flow.ts");
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
   const definition = state.config.mcpServers[serverName];
@@ -416,6 +417,7 @@ export async function executeAuthStart(state: McpExtensionState, serverName: str
 }
 
 export async function executeAuthComplete(state: McpExtensionState, serverName: string, input?: string, signal?: AbortSignal): Promise<ProxyToolResult> {
+  const { completeAuthFromInput } = await import("./mcp-auth-flow.ts");
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
   const definition = state.config.mcpServers[serverName];
@@ -788,6 +790,9 @@ export async function runToolCall(
   args: Record<string, unknown> | undefined,
   options: ToolCallOptions,
 ): Promise<ProxyToolResult> {
+  const { DEFAULT_REQUEST_TIMEOUT_MSEC, UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
+  const { isInterruptedToolCall, isToolTransportFailure, trackToolCallOutcome, SessionRecoveryAuthRequiredError, withSessionRecovery } = await import("./session-recovery.ts");
+  const { maybeStartUiSession, summarizeUiSessionResult } = await import("./ui-session.ts");
   const { detailsBase, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted } = options;
   const configuredOptions = state.manager.getRequestOptions?.(serverName, options.ownedSignal);
   const callerSignal = combineAbortSignals(configuredOptions?.signal, options.ownedSignal);
@@ -818,6 +823,8 @@ export async function runToolCall(
   try {
     state.manager.touch(serverName);
     state.manager.incrementInFlight(serverName);
+    // Loading the connection-only modules can yield to cancellation or shutdown.
+    throwIfAborted(callerSignal);
 
     uiSession = !target.resourceUri && target.uiResourceUri
       ? await abortable(maybeStartUiSession(state, {
@@ -978,6 +985,7 @@ export interface ExecuteCallOptions {
 
 /** Connect/auth once for calls and resource discovery. Recovery stays bounded by withSessionRecovery. */
 export async function prepareMcpConnection(state: McpExtensionState, serverName: string, signal?: AbortSignal) {
+  const { SessionRecoveryAuthRequiredError } = await import("./session-recovery.ts");
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   throwIfAborted(ownedSignal);
   let autoAuthAttempted = false;

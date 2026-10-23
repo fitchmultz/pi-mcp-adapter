@@ -1,5 +1,4 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { copyToClipboard } from "@earendil-works/pi-coding-agent";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerEntry, ServerProvenance, ToolPrefix } from "./types.ts";
 import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
@@ -437,7 +436,7 @@ class McpPanel {
       if (!server || server.connectionStatus !== "failed" || !server.failureMessage) return;
       const serverName = sanitizeDisplayText(server.name);
       const failureMessage = sanitizeDisplayText(server.failureMessage);
-      copyToClipboard(failureMessage).then(() => {
+      import("@earendil-works/pi-coding-agent").then(({ copyToClipboard }) => copyToClipboard(failureMessage)).then(() => {
         this.authNotice = `Copied error for ${serverName} to clipboard`;
         this.tui.requestRender();
       }).catch((error) => {

@@ -40,6 +40,7 @@ import {
 import { resolveCommandSecret } from "./utils.ts"
 import { isNonInteractiveOAuth, type OAuthPrivateKeyJwtConfig, type OAuthCrossAppAccessConfig } from "./types.ts"
 import { combineAbortSignals } from "./runtime-owner.ts"
+import { getOAuthCallbackPath, getOAuthCallbackPort } from "./mcp-oauth-callback-config.ts"
 import sharedClientMetadata from "./docs/client-metadata.json" with { type: "json" }
 
 /** Validate explicit document URLs without echoing possible credentials in errors. */
@@ -75,42 +76,6 @@ export function issuersMatch(first: string, second: string): boolean {
   return first === second
     || (first.endsWith("/") && first.slice(0, -1) === second)
     || (second.endsWith("/") && second.slice(0, -1) === first)
-}
-
-// Callback server configuration
-const DEFAULT_OAUTH_CALLBACK_PORT = 19876
-const DEFAULT_OAUTH_CALLBACK_PATH = "/callback"
-
-let configuredOAuthCallbackPort = DEFAULT_OAUTH_CALLBACK_PORT
-
-if (process.env.MCP_OAUTH_CALLBACK_PORT) {
-  const parsedPort = Number.parseInt(process.env.MCP_OAUTH_CALLBACK_PORT, 10)
-  if (Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
-    configuredOAuthCallbackPort = parsedPort
-  }
-}
-
-let oauthCallbackPort = configuredOAuthCallbackPort
-let oauthCallbackPath = DEFAULT_OAUTH_CALLBACK_PATH
-
-export function getConfiguredOAuthCallbackPort(): number {
-  return configuredOAuthCallbackPort
-}
-
-export function getOAuthCallbackPort(): number {
-  return oauthCallbackPort
-}
-
-export function setOAuthCallbackPort(port: number): void {
-  oauthCallbackPort = port
-}
-
-export function getOAuthCallbackPath(): string {
-  return oauthCallbackPath
-}
-
-export function setOAuthCallbackPath(path: string): void {
-  oauthCallbackPath = path.startsWith("/") ? path : `/${path}`
 }
 
 /** Configuration options for OAuth */
@@ -782,4 +747,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 }
 
-export { DEFAULT_OAUTH_CALLBACK_PORT, DEFAULT_OAUTH_CALLBACK_PATH }
+export {
+  DEFAULT_OAUTH_CALLBACK_PORT,
+  DEFAULT_OAUTH_CALLBACK_PATH,
+  getConfiguredOAuthCallbackPort,
+  getOAuthCallbackPath,
+  getOAuthCallbackPort,
+  setOAuthCallbackPath,
+  setOAuthCallbackPort,
+} from "./mcp-oauth-callback-config.ts"

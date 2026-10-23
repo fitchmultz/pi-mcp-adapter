@@ -17,7 +17,7 @@ import {
 import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
 import { loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
-import { supportsOAuth, authenticate, removeAuth, type McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import { supportsOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
 import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
@@ -276,6 +276,7 @@ export async function authenticateServer(
 
     ui.setStatus("mcp-auth", `Authenticating ${serverName}...`);
     const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
+    const { authenticate } = await import("./mcp-auth-flow.ts");
     const status = await authenticate(serverName, serverUrl, definition, {
       ...(authStorageOptions.baseDir ? { authStorageOptions } : {}),
       onAuthorizationUrl: (authorizationUrl) => {
@@ -324,6 +325,7 @@ export async function logoutServer(
 
   const signal = state.owner?.signal;
   try {
+    const { removeAuth } = await import("./mcp-auth-flow.ts");
     await removeAuth(serverName, { authStorageOptions: state.authStorageOptions, signal, runtime: state.oauthRuntime });
   } catch (error) {
     if (isAbortError(error, signal)) throw error;

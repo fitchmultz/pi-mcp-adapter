@@ -13,7 +13,7 @@ import {
   getOAuthCallbackPort,
   setOAuthCallbackPath,
   setOAuthCallbackPort,
-} from "./mcp-oauth-provider.ts"
+} from "./mcp-oauth-callback-config.ts"
 
 // HTML templates for callback responses
 const HTML_SUCCESS = `<!DOCTYPE html>

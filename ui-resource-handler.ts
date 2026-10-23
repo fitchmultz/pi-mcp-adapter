@@ -1,9 +1,11 @@
-import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import { UrlElicitationRequiredError, type ReadResourceResult } from "@modelcontextprotocol/client";
+import type { ReadResourceResult } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
-import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
+import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import { isServerDisabled, type McpConfig, type UiResourceContent, type UiResourceCsp, type UiResourceMeta, type UiResourcePermissions } from "./types.ts";
+
+// MCP Apps resource media type; metadata reads must not import the app bridge.
+export const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 
 interface ResourceContentRecord {
   uri?: string;
@@ -31,6 +33,8 @@ export class UiResourceHandler {
   }
 
   async readUiResource(serverName: string, uri: string, options: ReadUiResourceOptions = {}): Promise<UiResourceContent> {
+    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
+    const { SessionRecoveryAuthRequiredError, withSessionRecovery } = await import("./session-recovery.ts");
     const log = this.log.child({ server: serverName, uri });
 
     if (!uri.startsWith("ui://")) {
