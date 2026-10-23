@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Load Zod and the command, panel, gateway, script and resource modules on first MCP use instead of at extension startup, so sessions that never use MCP skip them. Cached tool registration, schemas, commands and first-call behavior are unchanged; the `./types` entry exposes the same public types without loading Zod.
 - Rewrite the README around installation and everyday use, add a discovery/call-flow diagram, and move detailed configuration, migration, and maintainer guidance into linked docs.
+- Update Zod to 4.6.7 in the adapter and interactive visualizer, and rebuild the bundled MCP Apps bridge with it. Zod 4.6.6 rejects arrays, sets and maps over their declared size limit before checking each element ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)).
 
 ## [8.0.1] - 2026-10-13
 
