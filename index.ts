@@ -573,7 +573,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       server: Type.Optional(Type.String()),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_PAGE_SIZE, description: "Tools to load (default 5)." })),
       offset: Type.Optional(Type.Integer({ minimum: 0 })),
-    }, { anyOf: [{ required: ["query"] }, { required: ["enable"] }] }),
+    }, { anyOf: [{ type: "object", required: ["query"] }, { type: "object", required: ["enable"] }] }),
     renderResult: renderMcpToolResult,
     async execute(toolCallId: string, params: SearchParams, signal: AbortSignal | undefined, _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined, ctx: ExtensionContext) {
       if (beforeExecute) {
