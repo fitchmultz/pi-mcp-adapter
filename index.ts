@@ -230,9 +230,6 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     } catch (error) {
       console.error(`MCP: failed to shut down previous session state: ${formatTerminalError(error)}`);
     }
-    const init = await import("./init.ts");
-    initModule = init;
-
     if (generation !== lifecycleGeneration || !owner.isActive()) return;
 
     let runtimeConfig: McpConfig;
@@ -261,6 +258,9 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     toolLoader.sync(runtimeConfig, runtimeCache, envRaw === "__none__" ? null : envDirectToolOverride,
       specs => syncGateways(runtimeConfig, runtimeCache, specs));
 
+    const init = await import("./init.ts");
+    initModule = init;
+    if (generation !== lifecycleGeneration || !owner.isActive()) return;
     const initialization = startInitialization(init, ctx, owner, oauthRuntime, runtimeConfig, generation);
     if (envRaw !== undefined && envRaw !== "__none__") {
       const missingEnvDirectTools = getMissingConfiguredDirectToolServers(
