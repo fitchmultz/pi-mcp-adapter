@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { performance } from "node:perf_hooks";
 
-const { values } = parseArgs({ options: { source: { type: "string" }, output: { type: "string" }, fixtures: { type: "string" }, timestamp: { type: "string" } } });
+const { values } = parseArgs({ options: { source: { type: "string" }, output: { type: "string" }, fixtures: { type: "string" }, timestamp: { type: "string" }, identity: { type: "string" } } });
 const fixtureTime = Number(values.timestamp ?? Date.now());
 assert.ok(Number.isFinite(fixtureTime) && fixtureTime > 0);
 assert.ok(values.source && values.output && values.fixtures);
@@ -16,7 +17,23 @@ const agentDir = join(root, "agent");
 mkdirSync(join(agentDir, "fitch-mcp-adapter"), { recursive: true });
 Object.assign(process.env, { HOME: root, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory" });
 delete process.env.MCP_DIRECT_TOOLS;
-const sdk = await import(pathToFileURL(join(source, "node_modules/@earendil-works/pi-coding-agent/dist/index.js")).href);
+const sha256 = path => createHash("sha256").update(readFileSync(path)).digest("hex");
+const sdkIndex = realpathSync(join(source, "node_modules/@earendil-works/pi-coding-agent/dist/index.js"));
+const sdkPackage = dirname(dirname(sdkIndex));
+const sdkManifest = JSON.parse(readFileSync(join(sdkPackage, "package.json")));
+const installedLock = realpathSync(join(source, "node_modules/.package-lock.json"));
+const hostIdentity = values.identity ? JSON.parse(readFileSync(values.identity)) : null;
+const actualHost = { sdkIndex, sdkIndexSha256: sha256(sdkIndex), cliPath: join(sdkPackage, sdkManifest.bin.pi),
+  installedLock, installedLockSha256: sha256(installedLock) };
+actualHost.cliSha256 = sha256(actualHost.cliPath);
+if (hostIdentity) {
+  assert.equal(actualHost.sdkIndexSha256, hostIdentity.selected.indexSha256);
+  assert.equal(actualHost.cliSha256, hostIdentity.selected.cliSha256);
+  assert.equal(actualHost.installedLockSha256, hostIdentity.selectedInstalledLock.sha256);
+  assert.equal(sha256(hostIdentity.hostLock.path), hostIdentity.hostLock.sha256);
+  for (const artifact of hostIdentity.artifacts) assert.equal(sha256(artifact.path), artifact.sha256);
+}
+const sdk = await import(pathToFileURL(sdkIndex).href);
 const cacheModule = await import(pathToFileURL(join(source, "dist/metadata-cache.js")).href);
 const config = { mcpServers: {}, settings: { sampling: false, elicitation: false } };
 const servers = {};
@@ -33,8 +50,10 @@ const serialized = JSON.stringify({ version: 2, servers });
 writeFileSync(cachePath, serialized);
 const configPath = join(agentDir, "fitch-mcp-adapter/mcp.json");
 writeFileSync(configPath, JSON.stringify(config));
-const report = { node: process.version, hostVersion: sdk.VERSION, source, fixtureTime, metadataSha256: createHash("sha256").update(serialized).digest("hex"), cacheBytes: Buffer.byteLength(serialized), configuredServers: 8, cachedServers: 54, cachedTools: 2480,
-  micro: [], switchSession: [], sessionTree: [], work: { cacheLoads: 0, switches: 0, treeNavigations: 0, registeredTools: 0, errors: 0 } };
+const implementation = { commit: execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+  runtimeSha256: Object.fromEntries(["metadata-cache", "tool-loader", "init"].map(name => [name, sha256(join(source, `dist/${name}.js`))])) };
+const report = { node: process.version, hostVersion: sdk.VERSION, actualHost, hostIdentity, implementation, source, fixtureTime, metadataSha256: createHash("sha256").update(serialized).digest("hex"), cacheBytes: Buffer.byteLength(serialized), configuredServers: 8, cachedServers: 54, cachedTools: 2480,
+  requests: [], micro: [], switchSession: [], sessionTree: [], work: { cacheLoads: 0, switches: 0, treeNavigations: 0, registeredTools: 0, errors: 0 } };
 for (let i = 0; i < 12; i++) {
   const start = performance.now();
   const cache = cacheModule.loadMetadataCache();
@@ -42,6 +61,7 @@ for (let i = 0; i < 12; i++) {
   assert.equal(Object.keys(cache.servers).length, 54);
   assert.equal(cache.servers.fixture0.tools[79].name, "tool79");
   report.work.cacheLoads++;
+  report.requests.push({ kind: "cache-load", iteration: i, cachedServers: 54, lastTool: "tool79", assertionsPassed: true });
 }
 const settingsManager = sdk.SettingsManager.inMemory();
 const modelRuntime = await sdk.ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, modelsStorePath: join(agentDir, "models-store.json"), allowModelNetwork: false });
@@ -77,13 +97,16 @@ try {
     assert.deepEqual(runtime.session.getActiveToolNames().sort(), ["fixture1_tool1", "mcp", "mcp_search"]);
     assert.equal(runtime.session.getAllTools().filter(tool => /^fixture\d_tool\d+$/.test(tool.name)).length, 640);
     report.work.switches++;
+    report.requests.push({ kind: "session-switch", iteration: i, exposedTools: 640, active: runtime.session.getActiveToolNames().sort(), assertionsPassed: true });
     const branch = branches.get(paths[i % 2]);
     const treeStart = performance.now();
     assert.equal((await runtime.session.navigateTree(branch.first, { summarize: false })).cancelled, false);
     report.sessionTree.push(performance.now() - treeStart);
     assert.deepEqual(runtime.session.getActiveToolNames().sort(), ["fixture0_tool0", "mcp_search"]);
+    report.requests.push({ kind: "tree-first", iteration: i, active: runtime.session.getActiveToolNames().sort(), assertionsPassed: true });
     assert.equal((await runtime.session.navigateTree(branch.second, { summarize: false })).cancelled, false);
     assert.deepEqual(runtime.session.getActiveToolNames().sort(), ["fixture1_tool1", "mcp", "mcp_search"]);
+    report.requests.push({ kind: "tree-second", iteration: i, active: runtime.session.getActiveToolNames().sort(), assertionsPassed: true });
     report.work.treeNavigations += 2;
     report.work.registeredTools = runtime.session.getAllTools().length;
   }

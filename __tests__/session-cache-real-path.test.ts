@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { computeServerHash } from "../metadata-cache.ts";
@@ -13,6 +13,10 @@ afterEach(async () => {
   }
   for (const root of roots.splice(0)) {
     const entries = await readdir(root);
+    const evidenceDir = process.env.PI_COMPAT_EVIDENCE_DIR;
+    if (evidenceDir && entries.includes("sessions")) {
+      await cp(join(root, "sessions"), join(evidenceDir, "session-cache-journals", basename(root)), { recursive: true });
+    }
     await Promise.all(entries.filter(name => name !== "sessions" && !name.endsWith(".jsonl"))
       .map(name => rm(join(root, name), { recursive: true, force: true })));
     console.info(`Retained synthetic Pi journals under ${root}`);
