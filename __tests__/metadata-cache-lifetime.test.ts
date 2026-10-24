@@ -22,15 +22,19 @@ afterEach(() => {
 });
 
 describe("metadata cache lifetime", () => {
-  it("prunes expired merged records while retaining selected servers and unrecognized data", () => {
+  it("prunes expired and future-dated records while protecting current servers and unknown data", () => {
     const stale = entry(Date.now() - week - 1000);
-    const unknown = { futureFormat: true, cachedAt: stale.cachedAt };
+    const future = entry(Date.now() + week);
+    const unknown = { futureFormat: true, cachedAt: future.cachedAt };
     writeFileSync(getMetadataCachePath(), JSON.stringify({ version: 2, servers: {
       "recovery-old": stale, old: stale, selected: stale, recent: entry(), unknown,
+      "recovery-future": future, "selected-future": future,
     } }));
-    saveMetadataCache({ version: 2, servers: { current: entry() } }, true, ["selected"]);
+    saveMetadataCache({ version: 2, servers: { current: entry(), "incoming-future": future } }, true, ["selected", "selected-future"]);
     const stored = JSON.parse(readFileSync(getMetadataCachePath(), "utf8"));
-    expect(Object.keys(stored.servers).sort()).toEqual(["current", "recent", "selected", "unknown"]);
+    expect(Object.keys(stored.servers).sort()).toEqual(["current", "incoming-future", "recent", "selected", "selected-future", "unknown"]);
+    expect(stored.servers["incoming-future"]).toEqual(future);
+    expect(stored.servers["selected-future"]).toEqual(future);
     expect(stored.servers.selected).toEqual(stale);
     expect(stored.servers.unknown).toEqual(unknown);
     expect(isServerCacheValid(stored.servers.selected, definition)).toBe(false);

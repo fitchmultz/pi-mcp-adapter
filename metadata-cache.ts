@@ -95,7 +95,8 @@ export function saveMetadataCache(cache: MetadataCache, enabled = true, selected
   const protectedServers = new Set([...selectedServers, ...Object.keys(cache.servers)]);
   const now = Date.now();
   for (const [name, entry] of Object.entries(merged.servers)) {
-    if (!protectedServers.has(name) && isCacheEntry(entry) && now - entry.cachedAt > CACHE_MAX_AGE_MS) {
+    if (!protectedServers.has(name) && isCacheEntry(entry)
+      && (entry.cachedAt > now || now - entry.cachedAt > CACHE_MAX_AGE_MS)) {
       delete merged.servers[name];
     }
   }
