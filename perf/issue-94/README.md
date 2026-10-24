@@ -61,3 +61,11 @@ The package manifest, lockfile policy, optional wildcard peers, Pi 1.0.0 support
 Official Pi 1.4.0 release notes explicitly cover resumed extension-tool selections and coherent companion pinning. The test driver uses the real current APIs rather than replacing those contracts with mocks. Maintained fork main was independently resolved once as `c17adbc400319887c5ab34fce1ed2a59be746da4` and built in this isolated cloud workspace. Exact host SDK, CLI, lock, tarball, and probe evidence belongs in the qualification artifact.
 
 Installed macOS runtimes, the owner's private corpus, macOS and Android execution, live activation, and publication are NOT RUN. Historical issue measurements came from old installed builds and are diagnosis hints only. Local and GitHub qualification results are recorded separately from these source/cloud timing claims.
+
+## Completed latest-host qualification
+
+Both local shared-automation lanes pass on implementation commit `e8644bd3d7470d0564f586a98c94d25be1dd228b`, with a clean source tree. See [qualification.json](qualification.json) for exact SDK and CLI hashes, selected companions, package integrity, and lane outcomes. `qualification-evidence.tar.gz` retains both full reports, actual selected host lockfiles and trees, fork build receipt, packed adapter artifacts, native CLI stdout JSONL, and all qualification logs.
+
+The official lane uses latest stable Pi 1.4.0. The maintained fork lane uses main commit `c17adbc400319887c5ab34fce1ed2a59be746da4`, built and packed with its coherent companion graph. Each lane passes `npm run check:compat`, a fresh Git consumer install, a packed npm consumer install, and actual native CLI RPC probes. The separate packed external consumer type check also exits zero.
+
+The following evidence-only commit does not change executable source, tests, package contents, or the measured runtime patch. Current-head GitHub CI and independent review remain separate delivery gates.

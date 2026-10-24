@@ -54,3 +54,11 @@ All principle leaves and required workflow documents were read at pstack commit 
 - Build the baseline again under the selected coherent official graph and compare every emitted JavaScript hash. The output is byte-identical to the measured baseline build.
 - Required example install/build, build, typecheck, all 113 Vitest files with 1,583 tests, 93 OAuth tests, MCP conformance, both lockfile checks, and packed SDK/native/CLI proof pass locally. No standalone formatter or lint script is configured. `git diff --check` passes.
 - Standalone Pi adapter cleanup inspected every changed runtime hunk and new fixture before commit. No speculative layers, changed ceilings, checker suppressions, hidden catches, or narration comments were added. Necessary race and lifecycle comments remain.
+
+## Opening and drive pass
+
+- PR #95 is ready, open, and has auto-merge disabled. The cloud-native built-in GitHub integration is the supported authenticated forge. No `gh-personal` profile, credential shim, or GitHub MCP fallback is created.
+- Both independent local latest-host lanes pass at the clean implementation commit. Retain their exact SDK/CLI, host locks/trees, tarball identities, fork receipt, and actual CLI stdout JSONL in a public-safe artifact. The packed consumer type check also passes.
+- The Bun/gh-based pstack watcher is NOT RUN because neither executable nor a guest GitHub credential surface exists here. The supported built-in integration supplies exact-head CI and complete paginated reviews, discussions, inline comments, and review threads. Drive mode uses those actual GitHub facts. Do not claim a fabricated watcher READY event.
+- The initial head's Actions resolve, compatibility, and extras checks pass. Pi Durable and Cursor reviews are still pending as this evidence-only update is prepared. A pending review is not a clean review.
+- No external review finding has been published at this point. Recheck all review surfaces after the evidence push and before completion.
