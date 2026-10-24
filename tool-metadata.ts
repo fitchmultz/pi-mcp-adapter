@@ -1,7 +1,6 @@
 import type { McpExtensionState } from "./state.ts";
 import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
 import { formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
-import { resourceNameToToolName } from "./resource-tools.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 
@@ -240,4 +239,20 @@ function appendSchemaAnnotations(parts: string[], schema: Record<string, unknown
   if (schema.default !== undefined) {
     parts.push(`[default: ${JSON.stringify(schema.default)}]`);
   }
+}
+
+function resourceNameToToolName(name: string): string {
+  let result = name
+    .replace(/[^a-zA-Z0-9]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+/, "")  // Remove leading underscores
+    .replace(/_+$/, "")  // Remove trailing underscores
+    .toLowerCase();
+
+  // Ensure we have a valid name
+  if (!result || /^\d/.test(result)) {
+    result = "resource" + (result ? "_" + result : "");
+  }
+
+  return result;
 }

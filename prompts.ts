@@ -5,7 +5,6 @@ import type {
 } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type McpConfig, type PromptMetadata } from "./types.ts";
-import { lazyConnect } from "./init.ts";
 import { isServerCacheValid, loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
 import { logger } from "./logger.ts";
 import { truncateAtWord } from "./utils.ts";
@@ -270,6 +269,7 @@ export function createPromptCommand(
         return;
       }
 
+      const { lazyConnect } = await import("./init.ts");
       const connected = await lazyConnect(state, metadata.serverName, ctx.signal);
       if (!connected) {
         if (ctx.hasUI) {

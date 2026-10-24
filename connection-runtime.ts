@@ -111,3 +111,4 @@ export { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 export { extractOAuthConfig, isOAuthChallenge, recordOAuthChallenge, getOAuthRequest, bindOAuthRequestIssuer } from "./mcp-auth-flow.ts";
 export { registerSamplingHandler } from "./sampling-handler.ts";
 export { registerElicitationHandler } from "./elicitation-handler.ts";
+export { serverStreamResultPatchNotificationSchema } from "./ui-stream-types.ts";

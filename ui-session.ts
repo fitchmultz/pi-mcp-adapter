@@ -6,14 +6,12 @@ import type { McpExtensionState } from "./state.ts";
 import {
   createUiModelContextUpdate,
   extractUiPromptText,
-  UI_STREAM_HOST_CONTEXT_KEY,
-  UI_STREAM_REQUEST_META_KEY,
-  UI_STREAM_STRUCTURED_CONTENT_KEY,
   type UiHostContext,
   type UiMessageParams,
   type UiModelContextParams,
   type UiStreamMode,
 } from "./types.ts";
+import { UI_STREAM_HOST_CONTEXT_KEY, UI_STREAM_REQUEST_META_KEY, UI_STREAM_STRUCTURED_CONTENT_KEY } from "./ui-stream-types.ts";
 import { logger } from "./logger.ts";
 import { startUiServer, type UiServerHandle } from "./ui-server.ts";
 import { isGlimpseAvailable, openGlimpseWindow } from "./glimpse-ui.ts";

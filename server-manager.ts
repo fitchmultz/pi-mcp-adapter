@@ -20,7 +20,6 @@ import {
   type ServerStreamResultPatchNotification,
   type Transport,
   type McpTraceSettings,
-  serverStreamResultPatchNotificationSchema,
 } from "./types.ts";
 import { resolveNpxBinary } from "./npx-resolver.ts";
 import { logger } from "./logger.ts";
@@ -446,7 +445,7 @@ export class McpServerManager {
             if (traceObserver) transport = wrapTransportWithMcpTrace(transport, name, traceTransportKind(definition, transport), traceObserver);
             continue;
           }
-          this.attachAdapterNotificationHandlers(name, client);
+          this.attachAdapterNotificationHandlers(name, client, runtime.serverStreamResultPatchNotificationSchema);
 
           const instructions = client.getInstructions?.();
           const connection: ServerConnection = {
@@ -942,11 +941,14 @@ export class McpServerManager {
     }
   }
 
-  private attachAdapterNotificationHandlers(serverName: string, client: Client): void {
-    client.setNotificationHandler(serverStreamResultPatchNotificationSchema.shape.method.value,
-      { params: serverStreamResultPatchNotificationSchema.shape.params }, params => {
-        this.uiStreamListeners.get(params.streamToken)?.(serverName, params);
-      });
+  private attachAdapterNotificationHandlers(
+    serverName: string,
+    client: Client,
+    schema: ConnectionRuntime["serverStreamResultPatchNotificationSchema"],
+  ): void {
+    client.setNotificationHandler(schema.shape.method.value, { params: schema.shape.params }, params => {
+      this.uiStreamListeners.get(params.streamToken)?.(serverName, params);
+    });
   }
 
   registerUiStreamListener(streamToken: string, listener: UiStreamListener): void {

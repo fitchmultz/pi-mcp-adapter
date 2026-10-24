@@ -10,8 +10,8 @@
       "default": "./dist/index.js"
     },
     "./types": {
-      "types": "./dist/types.d.ts",
-      "default": "./dist/types.js"
+      "types": "./dist/public-types.d.ts",
+      "default": "./dist/public-types.js"
     }
   },
   "license": "MIT",

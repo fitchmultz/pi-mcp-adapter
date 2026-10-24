@@ -10,9 +10,9 @@ import {
   getVisualizationStreamEnvelope,
   getUiStreamHostContext,
   serverStreamResultPatchNotificationSchema,
-  type UiResourceContent,
   type VisualizationStreamEnvelope,
-} from "../types.ts";
+} from "../ui-stream-types.ts";
+import type { UiResourceContent } from "../types.ts";
 
 // Helper to connect to SSE and collect events
 function connectSSE(
@@ -195,8 +195,8 @@ describe("UI Streaming", () => {
     function attachNotificationHandler(manager: McpServerManager, serverName = "test-server") {
       const client = { setNotificationHandler: vi.fn() };
       (manager as unknown as {
-        attachAdapterNotificationHandlers: (serverName: string, notificationClient: { setNotificationHandler: typeof client.setNotificationHandler }) => void;
-      }).attachAdapterNotificationHandlers(serverName, client);
+        attachAdapterNotificationHandlers: (serverName: string, notificationClient: { setNotificationHandler: typeof client.setNotificationHandler }, schema: typeof serverStreamResultPatchNotificationSchema) => void;
+      }).attachAdapterNotificationHandlers(serverName, client, serverStreamResultPatchNotificationSchema);
       expect(client.setNotificationHandler).toHaveBeenCalledOnce();
       expect(client.setNotificationHandler.mock.calls[0]![0]).toBe(SERVER_STREAM_RESULT_PATCH_METHOD);
       const handler = client.setNotificationHandler.mock.calls[0]![2] as (params: {

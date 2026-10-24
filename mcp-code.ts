@@ -9,8 +9,7 @@ import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts"
 import type { McpExtensionState } from "./state.ts";
 import { catalogCoverage, toToolDescriptor } from "./tool-metadata.ts";
 import { isServerDisabled, type ContentBlock, type McpOperationContext } from "./types.ts";
-
-export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
+import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS } from "./utils.ts";
 
 class McpScriptTimeoutError extends Error {
   constructor(timeoutMs: number) {
