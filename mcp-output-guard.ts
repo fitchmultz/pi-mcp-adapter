@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, open, readFile, realpath, writeFile } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { openPlainOutput, outputRevision, plainOutputIndex, plainOutputText, preparePlainOutput } from "./mcp-output-index.ts";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { ContentBlock, McpSettings } from "./types.ts";
@@ -408,6 +408,7 @@ async function saveArtifact(kind: string, text: string | Uint8Array, outputDirec
     const dir = await mkdtemp(join(parent, "pi-mcp-output-"));
     const path = join(dir, `${kind}-${randomBytes(4).toString("hex")}.${typeof text === "string" ? "txt" : "bin"}`);
     await writeFile(path, text, { encoding: "utf8", mode: 0o600 });
+    if (kind === "output" && text.length) await preparePlainOutput(path);
     return { path };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
@@ -422,6 +423,7 @@ export async function saveMcpOutputStream(chunks: AsyncIterable<string>, outputD
     const file = await open(artifact.path, "a");
     try { for await (const chunk of chunks) await file.writeFile(chunk); }
     finally { await file.close(); }
+    await preparePlainOutput(artifact.path);
     return artifact;
   } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
 }
@@ -452,24 +454,36 @@ export async function readMcpResult(input: ReadMcpResultInput, options: McpOutpu
       if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) throw new Error("offset must be a non-negative integer and limit a positive integer");
       const maxBytes = Math.max(1, (options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES) - 256);
       const maxLines = Math.max(1, (options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES) - 1);
-      let total = 0, bytes = 0, lines = 1;
-      let page = "";
-      let finished = false;
-      for await (const chunk of createReadStream(ref, { encoding: "utf8" })) {
-        for (const char of chunk as string) {
-          if (total < offset && total + char.length > offset) throw new Error("offset must not split a Unicode surrogate pair");
-          if (total >= offset && !finished) {
-            const nextBytes = bytes + byteLength(char);
-            const nextLines = lines + (char === "\n" ? 1 : 0);
-            if (page && (nextBytes > maxBytes || nextLines > maxLines || page.length + char.length > limit)) finished = true;
-            else { page += char; bytes = nextBytes; lines = nextLines; }
+      const file = await openPlainOutput(ref);
+      try {
+        const revision = await outputRevision(file);
+        const index = await plainOutputIndex(file, ref, revision);
+        const [startCharacter, startByte] = index?.points.findLast(point => point[0] <= offset) ?? [0, 0];
+        let total = startCharacter, bytes = 0, lines = 1;
+        let page = "";
+        let finished = false;
+        if (!index || offset < index.totalCharacters) {
+          for await (const text of plainOutputText(file, startByte)) {
+            const chunkStart = total;
+            total += text.length;
+            if (finished || total <= offset) continue;
+            const from = Math.max(0, offset - chunkStart);
+            if (from > 0 && text.codePointAt(from - 1)! > 0xffff) throw new Error("offset must not split a Unicode surrogate pair");
+            for (const char of text.slice(from)) {
+              const nextBytes = bytes + byteLength(char);
+              const nextLines = lines + (char === "\n" ? 1 : 0);
+              if (page && (nextBytes > maxBytes || nextLines > maxLines || page.length + char.length > limit)) { finished = true; break; }
+              page += char; bytes = nextBytes; lines = nextLines;
+            }
+            if (index && finished) break;
           }
-          total += char.length;
         }
-      }
-      const end = offset + page.length;
-      const nextOffset = end < total ? end : null;
-      return { content: [{ type: "text" as const, text: page }, ...(nextOffset !== null ? [{ type: "text" as const, text: `[MCP result page: ${offset}–${end} of ${total} characters. Continue with offset: ${end}.]` }] : [])], details: { ref, offset, nextOffset, totalCharacters: total } };
+        if (await outputRevision(file) !== revision) throw new Error("MCP output artifact changed during read; retry read-result");
+        total = index?.totalCharacters ?? total;
+        const end = offset + page.length;
+        const nextOffset = end < total ? end : null;
+        return { content: [{ type: "text" as const, text: page }, ...(nextOffset !== null ? [{ type: "text" as const, text: `[MCP result page: ${offset}–${end} of ${total} characters. Continue with offset: ${end}.]` }] : [])], details: { ref, offset, nextOffset, totalCharacters: total } };
+      } finally { await file.close(); }
     }
     let rendered = await readFile(ref, "utf8");
     if (input.path !== undefined || input.fields !== undefined || basename(ref).startsWith("mcp-result-")) {

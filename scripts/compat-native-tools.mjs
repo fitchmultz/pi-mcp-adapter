@@ -136,7 +136,25 @@ export async function verifyNativeTools(packageRoot) {
     assert.equal(effects.filter(value => value === "hold").length, 1, "cancelled effect is never replayed");
     assert.match(readFileSync(captured, "utf8"), /SYNTHETIC-SECRET/); // Raw trusted capture is distinct from model output.
     const pins = await make({ directTools: ["echo"], eager: true });
-    await run(pins, "mcp_search", { enable: ["gateway"] });
+    await run(pins, "mcp_search", { enable: ["gateway", "script"] });
+    const plain = "é😀a".repeat(30_000);
+    const spilled = await run(pins, "mcp_script", { code: 'emit("é😀a".repeat(30000));' });
+    assert.equal(spilled.isError, false);
+    const plainRef = spilled.details.outputGuard.fullOutputPath;
+    assert.equal(readFileSync(plainRef, "utf8"), plain);
+    const effectsBeforeReadback = effects.length;
+    const page = await run(pins, "mcp", { action: "read-result", ref: plainRef, offset: 60_000, limit: 12_000 });
+    assert.equal(page.isError, false);
+    assert.equal(page.content[0].text, plain.slice(60_000, 72_000));
+    assert.equal(page.details.totalCharacters, plain.length);
+    assert.equal(page.details.nextOffset, 72_000);
+    const scriptedPage = await run(pins, "mcp_script", { code: `return await tools.readResult({ref:${JSON.stringify(plainRef)},offset:119980,limit:100});` });
+    assert.equal(scriptedPage.isError, false);
+    const readback = JSON.parse(scriptedPage.content[0].text);
+    assert.equal(readback.content[0].text, plain.slice(119_980));
+    assert.equal(readback.details.totalCharacters, plain.length);
+    assert.equal(readback.details.nextOffset, null);
+    assert.equal(effects.length, effectsBeforeReadback, "plain readback never repeats the remote operation");
     assert.ok(pins.getCallableToolNames().includes("local_echo"));
     pins.setActiveToolsByName(pins.getActiveToolNames().filter(name => name !== "local_echo"));
     await pins.reload();
