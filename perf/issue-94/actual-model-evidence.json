@@ -1,0 +1,14 @@
+{
+  "source": "Coordinator-provided supported owner-authenticated read-only chat configuration",
+  "endpoint": "Owner-authenticated READ-ONLY GET /api/chats/<this-chat>",
+  "observedAt": "2026-10-24T13:23:16.316818+00:00",
+  "provider": "openai",
+  "modelId": "gpt-6.1-sol",
+  "thinkingLevel": "xhigh",
+  "contextWindow": 300000,
+  "fastMode": null,
+  "connectionReady": true,
+  "rootRunBusy": true,
+  "configurationVersionSha256": "c52404be6ba45b2e0427d98acc645cf5eeba33d251e1acd2e798807cd4d3d5ea",
+  "attestation": "Provided by coordinator in this chat. No settings changed. Not inferred from model self-description."
+}
