@@ -478,7 +478,7 @@ export function updateMetadataCache(
     cachedAt: Date.now(),
   };
 
-  saveMetadataCache({ version: 1, servers: { [serverName]: entry } }, state.metadataCacheEnabled);
+  saveMetadataCache({ version: 1, servers: { [serverName]: entry } }, state.metadataCacheEnabled, Object.keys(state.config.mcpServers));
 }
 
 export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: string, reason: string): void {

@@ -1,5 +1,5 @@
 // metadata-cache.ts - Persistent MCP metadata cache
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { getAdapterPath } from "./agent-dir.ts";
 import { createHash } from "node:crypto";
@@ -30,6 +30,21 @@ import {
 // Version 2 stores raw descriptors; version 1 readers cannot enforce raw UI visibility.
 const CACHE_VERSION = 2;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+let snapshot: { path: string; revision: string; cache: MetadataCache | null } | undefined;
+const toolProjections = new WeakMap<ServerCacheEntry, { key: string; metadata: ToolMetadata[] }>();
+
+function cacheRevision(path: string): string {
+  const stat = statSync(path, { bigint: true });
+  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}
+
+function freezeMetadata<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeMetadata(child);
+    Object.freeze(value);
+  }
+  return value;
+}
 
 export type { CachedPrompt, CachedResource, CachedTool, MetadataCache, ServerCacheEntry } from "./types.ts";
 
@@ -40,19 +55,24 @@ export function getMetadataCachePath(): string {
 export function loadMetadataCache(enabled = true): MetadataCache | null {
   if (!enabled) return null;
   const cachePath = getMetadataCachePath();
-  if (!existsSync(cachePath)) return null;
   try {
+    const revision = cacheRevision(cachePath);
+    if (snapshot?.path === cachePath && snapshot.revision === revision) return snapshot.cache;
     const raw = JSON.parse(readFileSync(cachePath, "utf-8"));
-    if (!raw || typeof raw !== "object") return null;
-    if (raw.version !== 1 && raw.version !== CACHE_VERSION) return null;
-    if (!raw.servers || typeof raw.servers !== "object") return null;
-    return raw as MetadataCache;
+    const cache = raw && typeof raw === "object" && !Array.isArray(raw)
+      && (raw.version === 1 || raw.version === CACHE_VERSION)
+      && raw.servers && typeof raw.servers === "object" && !Array.isArray(raw.servers)
+      ? freezeMetadata(raw as MetadataCache) : null;
+    // A concurrent rename must not associate the old bytes with the new file's revision.
+    snapshot = cacheRevision(cachePath) === revision ? { path: cachePath, revision, cache } : undefined;
+    return cache;
   } catch {
+    snapshot = undefined;
     return null;
   }
 }
 
-export function saveMetadataCache(cache: MetadataCache, enabled = true): void {
+export function saveMetadataCache(cache: MetadataCache, enabled = true, selectedServers: Iterable<string> = []): void {
   if (!enabled) return;
   const cachePath = getMetadataCachePath();
   const dir = dirname(cachePath);
@@ -72,6 +92,14 @@ export function saveMetadataCache(cache: MetadataCache, enabled = true): void {
 
   merged.version = CACHE_VERSION;
   merged.servers = { ...merged.servers, ...cache.servers };
+  const protectedServers = new Set([...selectedServers, ...Object.keys(cache.servers)]);
+  const now = Date.now();
+  for (const [name, entry] of Object.entries(merged.servers)) {
+    if (!protectedServers.has(name) && isCacheEntry(entry)
+      && (entry.cachedAt > now || now - entry.cachedAt > CACHE_MAX_AGE_MS)) {
+      delete merged.servers[name];
+    }
+  }
 
   const tmpPath = `${cachePath}.${process.pid}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
@@ -112,10 +140,20 @@ export function isServerCacheValid(
   } catch {
     return false;
   }
-  if (!entry || entry.configHash !== configHash) return false;
-  if (!entry.cachedAt || typeof entry.cachedAt !== "number") return false;
+  if (!isCacheEntry(entry) || entry.configHash !== configHash) return false;
+  if (entry.cachedAt > Date.now()) return false;
   if (maxAgeMs > 0 && Date.now() - entry.cachedAt > maxAgeMs) return false;
   return true;
+}
+
+function isCacheEntry(entry: unknown): entry is ServerCacheEntry {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+  const value = entry as Partial<ServerCacheEntry>;
+  return typeof value.configHash === "string"
+    && typeof value.cachedAt === "number" && Number.isFinite(value.cachedAt) && value.cachedAt > 0
+    && Array.isArray(value.tools) && Array.isArray(value.resources)
+    && (value.prompts === undefined || Array.isArray(value.prompts))
+    && (value.instructions === undefined || typeof value.instructions === "string");
 }
 
 export function parseDirectToolSelectors(selectors: string[]): {
@@ -178,13 +216,19 @@ export function reconstructToolMetadata(
   prefix: ToolPrefix,
   definition: Pick<ServerEntry, "exposeResources" | "includeTools" | "excludeTools" | "toolPrefix" | "disabled">
 ): ToolMetadata[] {
-  return buildToolMetadata(
+  const key = JSON.stringify([serverName, prefix, definition.exposeResources, definition.includeTools,
+    definition.excludeTools, definition.toolPrefix, definition.disabled]);
+  const previous = toolProjections.get(entry);
+  if (Object.isFrozen(entry) && previous?.key === key) return previous.metadata;
+  const metadata = buildToolMetadata(
     (entry.tools ?? []).filter(tool => tool?.name).map(restoreCachedTool),
     entry.resources ?? [],
     definition,
     serverName,
     prefix,
   ).metadata;
+  if (Object.isFrozen(entry)) toolProjections.set(entry, { key, metadata: freezeMetadata(metadata) });
+  return metadata;
 }
 
 function restoreCachedTool(tool: CachedTool): McpTool {

@@ -25,6 +25,7 @@ export function createToolLoader(
 ) {
   pi.registerEntryRenderer(ENTRY, () => undefined);
   const registered = new Map<string, { selection: Selection; name: string; fingerprint: string; pinned: boolean }>();
+  const fingerprints = new WeakMap<ToolMetadata, { server: string; instructions: string | undefined; value: string }>();
   let available = new Set<string>();
   let selected = new Map<string, Selection>();
   let inactive = new Map<string, Selection>();
@@ -103,29 +104,33 @@ export function createToolLoader(
     if (!restoring) capture();
     const previousNames = new Set([...registered.values()].map(item => item.name));
     const existing = new Set(pi.getAllTools().map(tool => tool.name));
-    const specs: Array<{ spec: DirectToolSpec; selection: Selection; name: string; pinned: boolean }> = [];
+    const specs: Array<{ spec: DirectToolSpec; source: ToolMetadata; selection: Selection; name: string; pinned: boolean }> = [];
     for (const [server, definition] of Object.entries(env === null ? {} : config.mcpServers)) {
       if (isServerDisabled(definition)) continue;
       const entry = cache?.servers[server];
       const metadata = getState()?.toolMetadata.get(server) ?? (entry && isServerCacheValid(entry, definition)
         ? reconstructToolMetadata(server, entry, config.settings?.toolPrefix ?? "server", definition) : []);
       const selection = directToolSelection(config, server, env ?? undefined);
-      for (const { name: prefixedName, ...tool } of metadata) {
+      for (const source of metadata) {
+        const { name: prefixedName, ...tool } = source;
         if (tool.resourceUri) continue;
         const pinned = selection === true || (Array.isArray(selection) && selection.includes(tool.originalName));
-        specs.push({ spec: { ...tool, prefixedName, serverName: server }, selection: { server, tool: tool.originalName }, name: prefixedName, pinned });
+        specs.push({ spec: { ...tool, prefixedName, serverName: server }, source, selection: { server, tool: tool.originalName }, name: prefixedName, pinned });
       }
     }
     const counts = new Map<string, number>();
     for (const { name } of specs) counts.set(name, (counts.get(name) ?? 0) + 1);
     available = new Set();
     const enabled: string[] = [];
-    for (const { spec, selection, name, pinned } of specs) {
+    for (const { spec, source, selection, name, pinned } of specs) {
       const id = key(selection);
       if (reserved.has(name) || counts.get(name)! > 1 || (existing.has(name) && !previousNames.has(name))) continue;
       available.add(id);
       const instructions = getState()?.serverInstructions.get(spec.serverName) ?? cache?.servers[spec.serverName]?.instructions;
-      const fingerprint = JSON.stringify({ spec, name, instructions });
+      const previous = Object.isFrozen(source) ? fingerprints.get(source) : undefined;
+      const fingerprint = previous?.server === spec.serverName && previous.instructions === instructions
+        ? previous.value : JSON.stringify({ spec, name, instructions });
+      if (Object.isFrozen(source)) fingerprints.set(source, { server: spec.serverName, instructions, value: fingerprint });
       if (registered.get(id)?.fingerprint !== fingerprint) {
         pi.registerTool({
           name,
