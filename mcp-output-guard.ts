@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, open, readFile, realpath, writeFile } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { closeSync, createReadStream, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { ContentBlock, McpSettings } from "./types.ts";
@@ -12,6 +12,7 @@ export const DEFAULT_MCP_DETAILS_MAX_BYTES = 16 * 1024;
 const CONTENT_SUMMARY_LIMIT = 20;
 const KEY_PREVIEW_LIMIT = 20;
 const KEY_MAX_CHARS = 120;
+const SPOOL_WRITE_CHUNK = 1024 * 1024;
 
 type Recordish = Record<string, unknown>;
 
@@ -143,15 +144,130 @@ export async function guardMcpOutput(
   let outputGuard: McpOutputGuardDetails | undefined;
 
   if (totalStats.bytes > maxBytes || totalStats.lines > maxLines) {
-    const { path: fullOutputPath, error: writeError } = await saveArtifact("output", composedOutput, options.outputDirectory);
-    const notice = formatTruncationNotice(stats, fullOutputPath, writeError);
-    const previewBudget = reserveBudget(maxBytes, maxLines, notice + referenceSuffix);
-    const preview = truncateHead(composedOutput, previewBudget.maxBytes, previewBudget.maxLines);
-    const finalText = `${preview.content}\n\n${notice}`;
-    const finalStats = textStats(finalText + referenceSuffix);
+    const artifact = await saveArtifact("output", composedOutput, options.outputDirectory);
+    ({ content: guardedContent, outputGuard } = truncatedOutput(composedOutput, stats, artifact, imageBlocks, maxBytes, maxLines, referenceSuffix));
+  }
 
-    guardedContent = [{ type: "text" as const, text: finalText }, ...imageBlocks];
-    outputGuard = {
+  return {
+    content: withReference(guardedContent),
+    ...(outputGuard ? { outputGuard } : {}),
+    ...retained,
+  };
+}
+
+/**
+ * Guard output that arrives one block at a time without retaining all of it. Blocks stay in
+ * memory while they fit the model-visible limits. After that, the joined text is appended to
+ * one private output artifact and only the preview head and image blocks are kept. Writes are
+ * synchronous, so a producer may be released as soon as push() returns.
+ */
+export function createMcpOutputSpool(options: Pick<McpOutputGuardOptions, "enabled" | "maxBytes" | "maxLines" | "outputDirectory"> = {}) {
+  const maxBytes = options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES;
+  const maxLines = options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES;
+  let retained: ContentBlock[] | undefined = [];
+  const images: ContentBlock[] = [];
+  let pushed = 0, textBlocks = 0, bytes = 0, newlines = 0, written = 0;
+  let head = "", headBytes = 0;
+  let artifact: { path?: string; error?: string } = {};
+  let fd: number | undefined;
+  let pending: string[] = [], pendingLength = 0;
+  const lines = () => bytes === 0 ? 0 : newlines + 1;
+
+  const fail = (error: unknown) => {
+    artifact = { error: error instanceof Error ? error.message : String(error) };
+    if (fd !== undefined) try { closeSync(fd); } catch { /* the write error is the reported failure */ }
+    fd = undefined;
+  };
+  const flush = () => {
+    if (fd !== undefined && pending.length > 0) {
+      try { writeFileSync(fd, pending.length === 1 ? pending[0]! : pending.join("")); } catch (error) { fail(error); }
+    }
+    pending = [];
+    pendingLength = 0;
+  };
+  const append = (piece: string) => {
+    if (headBytes <= maxBytes) {
+      // Each UTF-16 unit is at least one UTF-8 byte, so the head exceeds every preview budget.
+      let end = Math.min(piece.length, maxBytes + 1 - headBytes);
+      const last = piece.charCodeAt(end - 1);
+      if (end < piece.length && last >= 0xd800 && last <= 0xdbff) end++;
+      const part = piece.slice(0, end);
+      head += part;
+      headBytes += byteLength(part);
+    }
+    if (fd === undefined) return;
+    if (pendingLength + piece.length > SPOOL_WRITE_CHUNK) flush();
+    pending.push(piece);
+    pendingLength += piece.length;
+  };
+  const appendText = (text: string) => {
+    if (written++ > 0) append("\n");
+    append(text);
+  };
+  const spill = (blocks: ContentBlock[]) => {
+    try {
+      const parent = options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory);
+      if (options.outputDirectory !== undefined) mkdirSync(parent, { recursive: true, mode: 0o700 });
+      const path = join(mkdtempSync(join(parent, "pi-mcp-output-")), `output-${randomBytes(4).toString("hex")}.txt`);
+      fd = openSync(path, "wx", 0o600);
+      artifact = { path };
+    } catch (error) { fail(error); }
+    for (const block of blocks) {
+      if (block.type === "image") images.push(block);
+      else appendText(block.text);
+    }
+  };
+
+  return {
+    get empty() { return pushed === 0; },
+    push(block: ContentBlock): void {
+      pushed++;
+      if (block.type === "image") {
+        (retained ?? images).push(...sanitizeContent([block]));
+        return;
+      }
+      const separator = textBlocks++ > 0 ? 1 : 0;
+      bytes += separator + byteLength(block.text);
+      newlines += separator + countNewlines(block.text);
+      if (!retained) appendText(block.text);
+      else {
+        retained.push(block);
+        if (options.enabled !== false && (bytes > maxBytes || lines() > maxLines)) {
+          const blocks = retained;
+          retained = undefined;
+          spill(blocks);
+        }
+      }
+    },
+    finish(): GuardedMcpOutput {
+      if (retained) return { content: retained };
+      flush();
+      if (fd !== undefined) {
+        try { closeSync(fd); } catch (error) { artifact = { error: error instanceof Error ? error.message : String(error) }; }
+        fd = undefined;
+      }
+      return truncatedOutput(head, { bytes, lines: lines() }, artifact, images, maxBytes, maxLines);
+    },
+  };
+}
+
+function truncatedOutput(
+  text: string,
+  stats: { bytes: number; lines: number },
+  { path: fullOutputPath, error: writeError }: { path?: string; error?: string },
+  imageBlocks: ContentBlock[],
+  maxBytes: number,
+  maxLines: number,
+  referenceSuffix = "",
+): { content: ContentBlock[]; outputGuard: McpOutputGuardDetails } {
+  const notice = formatTruncationNotice(stats, fullOutputPath, writeError);
+  const previewBudget = reserveBudget(maxBytes, maxLines, notice + referenceSuffix);
+  const preview = truncateHead(text, previewBudget.maxBytes, previewBudget.maxLines);
+  const finalText = `${preview.content}\n\n${notice}`;
+  const finalStats = textStats(finalText + referenceSuffix);
+  return {
+    content: [{ type: "text" as const, text: finalText }, ...imageBlocks],
+    outputGuard: {
       truncated: true,
       originalBytes: stats.bytes,
       returnedBytes: finalStats.bytes,
@@ -160,14 +276,14 @@ export async function guardMcpOutput(
       ...(imageBlocks.length > 0 ? { imageBlocksPassedThrough: imageBlocks.length } : {}),
       ...(fullOutputPath !== undefined ? { fullOutputPath } : {}),
       ...(writeError !== undefined ? { writeError } : {}),
-    };
-  }
-
-  return {
-    content: withReference(guardedContent),
-    ...(outputGuard ? { outputGuard } : {}),
-    ...retained,
+    },
   };
+}
+
+function countNewlines(text: string): number {
+  let count = 0;
+  for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) count++;
+  return count;
 }
 
 function sanitizeContent(content: ContentBlock[]): ContentBlock[] {
