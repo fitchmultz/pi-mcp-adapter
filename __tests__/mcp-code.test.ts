@@ -1,10 +1,16 @@
 import type { TextContent } from "@earendil-works/pi-ai";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMcpAdapter } from "../index.ts";
 import { runMcpScript } from "../mcp-code.ts";
+import { guardMcpOutput, resolveMcpOutputGuardOptions } from "../mcp-output-guard.ts";
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
+import type { McpSettings } from "../types.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/mcp-code-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
@@ -369,4 +375,62 @@ describe("runMcpScript", () => {
       globals: ["undefined", "undefined", "undefined"],
     });
   });
+});
+
+describe("runMcpScript output", () => {
+  const scriptState = (settings: McpSettings, outputDirectory: string) => ({
+    config: { mcpServers: {}, settings }, toolMetadata: new Map(), failureTracker: new Map(), completedUiSessions: [], outputDirectory,
+  }) as unknown as McpExtensionState;
+
+  it.each<McpSettings>([{ outputGuard: { maxBytes: 4096, maxLines: 40 } }, { outputGuard: false }])("streams many emits into the same guarded result as the complete output (%j)", async settings => {
+    const small = (index: number) => `${index}: π 😀 ${"é".repeat(index % 7)}${index % 10 === 0 ? "\nsecond line" : ""}`;
+    const values = [...Array.from({ length: 20 }, (_, index) => small(index)), `${"a".repeat(3000)}${"😀".repeat(2000)}`, ...Array.from({ length: 280 }, (_, index) => small(index + 20))];
+    const image = { type: "image" as const, data: "AAAA", mimeType: "image/png" };
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-script-output-"));
+    try {
+      const result = await runMcpScript(scriptState(settings, outputDirectory), `${JSON.stringify(values)}.forEach((value, index) => { if (index === 10) emit(${JSON.stringify(image)}); emit(value); });`);
+      const blocks = [...values.slice(0, 10).map(text => ({ type: "text" as const, text })), image, ...values.slice(10).map(text => ({ type: "text" as const, text }))];
+      const complete = await guardMcpOutput(blocks, resolveMcpOutputGuardOptions(settings, outputDirectory));
+      const path = (result.details as { outputGuard?: { fullOutputPath?: string } }).outputGuard?.fullOutputPath;
+      const visible = (content: unknown, outputGuard: unknown, artifact?: string) => {
+        const json = JSON.stringify({ content, outputGuard });
+        return JSON.parse(artifact ? json.replaceAll(artifact, "<artifact>") : json);
+      };
+
+      expect(visible(result.content, (result.details as { outputGuard?: unknown }).outputGuard, path)).toEqual(visible(complete.content, complete.outputGuard, complete.outputGuard?.fullOutputPath));
+      if (settings.outputGuard) expect(await readFile(path!, "utf8")).toBe(values.join("\n"));
+      else expect(path).toBeUndefined();
+    } finally { await rm(outputDirectory, { recursive: true, force: true }); }
+  });
+
+  it("keeps host memory bounded while a script emits more than the host heap", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-script-memory-"));
+    try {
+      const script = join(outputDirectory, "host.mjs");
+      await writeFile(script, `
+        import { createReadStream } from "node:fs";
+        import { createInterface } from "node:readline";
+        import { runMcpScript } from ${JSON.stringify(new URL("../mcp-code.ts", import.meta.url).href)};
+        const state = { config: { mcpServers: {}, settings: {} }, toolMetadata: new Map(), failureTracker: new Map(), completedUiSessions: [], outputDirectory: ${JSON.stringify(outputDirectory)} };
+        const start = process.memoryUsage.rss();
+        const pending = runMcpScript(state, "const chunk = 'x'.repeat(1 << 20); for (let i = 0; i < 128; i++) emit(chunk);", 60000);
+        // Hold the host event loop so the worker's output can only queue.
+        let queuedGrowth = 0;
+        for (const end = Date.now() + 2000; Date.now() < end && queuedGrowth < 128 * 2 ** 20;) queuedGrowth = Math.max(queuedGrowth, process.memoryUsage.rss() - start);
+        const { details } = await pending;
+        const lines = [];
+        for await (const line of createInterface({ input: createReadStream(details.outputGuard.fullOutputPath) })) lines.push(line.length === 2 ** 20 && !/[^x]/.test(line));
+        console.log(JSON.stringify({ queuedGrowth, details, lines }));
+      `);
+      const child = spawnSync(process.execPath, ["--max-old-space-size=64", script], { encoding: "utf8", timeout: 60_000 });
+
+      expect(child.status, child.stderr).toBe(0);
+      const report = JSON.parse(child.stdout);
+      expect(report.queuedGrowth).toBeLessThan(64 * 2 ** 20);
+      expect(report.details).not.toHaveProperty("error");
+      expect(report.details.outputGuard).toMatchObject({ originalBytes: 128 * 2 ** 20 + 127, originalLines: 128 });
+      expect(report.details.outputGuard.returnedBytes).toBeLessThanOrEqual(50 * 1024);
+      expect(report.lines).toEqual(Array(128).fill(true));
+    } finally { await rm(outputDirectory, { recursive: true, force: true }); }
+  }, 60_000);
 });
