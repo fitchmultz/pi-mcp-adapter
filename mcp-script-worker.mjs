@@ -4,6 +4,7 @@ import vm from "node:vm";
 
 const TOOLS_ENUMERATION_ERROR = "tools is not enumerable — use tools.search({ query })";
 const RESERVED_TOOL_PROPS = new Set(["then", "catch", "finally", "toJSON", "toString", "valueOf"]);
+const { code, outputFlow, outputWindow } = workerData;
 
 // Keep this formatting logic in sync with mcp-code.ts; the standalone worker cannot import the TypeScript host module.
 function needsInspectableFormatting(value, stack = new WeakSet()) {
@@ -98,7 +99,18 @@ const tools = new Proxy(Object.create(null), {
 });
 
 const emit = (value) => {
-  parentPort.postMessage({ type: "emit", block: toContentBlock(value) });
+  const block = toContentBlock(value);
+  // A running Pi keeps the adapter it loaded but starts this file from disk, so an older host passes no window.
+  if (!outputFlow) {
+    parentPort.postMessage({ type: "emit", block });
+    return;
+  }
+  // Charge each queued message too, so many tiny emits cannot outrun the host.
+  const size = (block.type === "text" ? block.text.length : block.data.length) + 256;
+  Atomics.add(outputFlow, 0, size);
+  parentPort.postMessage({ type: "emit", block, size });
+  // Block this worker, not the host, until the host consumes queued output.
+  for (let queued; (queued = Atomics.load(outputFlow, 0)) > outputWindow;) Atomics.wait(outputFlow, 0, queued);
 };
 
 const capturedConsole = Object.freeze({
@@ -118,7 +130,7 @@ try {
     codeGeneration: { strings: false, wasm: false },
     name: "mcp_script",
   });
-  const script = new vm.Script(`(async () => {\n${workerData.code}\n})()`, { filename: "mcp_script.js" });
+  const script = new vm.Script(`(async () => {\n${code}\n})()`, { filename: "mcp_script.js" });
   const returnValue = await Promise.resolve(script.runInContext(context));
   parentPort.postMessage(returnValue === undefined
     ? { type: "done" }

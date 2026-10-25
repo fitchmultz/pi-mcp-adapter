@@ -1,7 +1,8 @@
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import { formatWithOptions } from "node:util";
 import { Worker } from "node:worker_threads";
-import { guardMcpOutput, guardedMcpDetails, resolveMcpOutputGuardOptions, readMcpResult, formatMcpResultReference, formatMcpPayloadFile, type McpPayloadFile, type ReadMcpResultInput } from "./mcp-output-guard.ts";
+import { guardedMcpDetails, resolveMcpOutputGuardOptions, readMcpResult, formatMcpResultReference, formatMcpPayloadFile, type McpPayloadFile, type ReadMcpResultInput } from "./mcp-output-guard.ts";
+import { createMcpOutputSpool } from "./mcp-output-preview.ts";
 import { executeCall, executeConnect } from "./proxy-modes.ts";
 import { executeResourceList, executeResourceRead } from "./resource-tools.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
@@ -10,6 +11,9 @@ import type { McpExtensionState } from "./state.ts";
 import { catalogCoverage, toToolDescriptor } from "./tool-metadata.ts";
 import { isServerDisabled, type ContentBlock, type McpOperationContext } from "./types.ts";
 import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS } from "./utils.ts";
+
+/** UTF-16 units of emitted output, plus 256 per emit, the worker may queue before it waits for the host. */
+const SCRIPT_OUTPUT_WINDOW = 4 * 1024 * 1024;
 
 class McpScriptTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -21,7 +25,7 @@ class McpScriptTimeoutError extends Error {
 type SearchInput = { query?: unknown; server?: unknown; limit?: unknown; offset?: unknown };
 type DescribeInput = { path?: unknown; server?: unknown };
 type WorkerMessage =
-  | { type: "emit"; block: unknown }
+  | { type: "emit"; block: unknown; size: number }
   | { type: "call"; id: number; path: string; args?: unknown; server?: string }
   | { type: "search"; id: number; input?: unknown }
   | { type: "describe" | "resources" | "readResource" | "readResult"; id: number; input?: unknown }
@@ -83,7 +87,8 @@ function abortReasonError(reason: unknown): Error {
 function parseWorkerMessage(value: unknown): WorkerMessage | null {
   if (typeof value !== "object" || value === null) return null;
   const message = value as Record<string, unknown>;
-  if (message.type === "emit" && "block" in message) return { type: "emit", block: message.block };
+  // An older worker file, such as one restored by a rollback under a running Pi, neither charges the window nor sends a size.
+  if (message.type === "emit" && "block" in message) return { type: "emit", block: message.block, size: typeof message.size === "number" ? message.size : 0 };
   if (message.type === "call" && typeof message.id === "number" && typeof message.path === "string") {
     return { type: "call", id: message.id, path: message.path, ...(message.args !== undefined ? { args: message.args } : {}), ...(typeof message.server === "string" ? { server: message.server } : {}) };
   }
@@ -129,7 +134,7 @@ async function runMcpScriptOperation(
   const resolvedTimeoutMs = timeoutMs === null ? null : Number.isFinite(timeoutMs) && timeoutMs > 0
     ? Math.floor(timeoutMs)
     : DEFAULT_MCP_SCRIPT_TIMEOUT_MS;
-  const output: ContentBlock[] = [];
+  const output = createMcpOutputSpool(resolveMcpOutputGuardOptions(state.config.settings, state.outputDirectory));
   const externalSignal = combineAbortSignals(state.owner?.signal, signal);
   const timeoutController = new AbortController();
   const callSignal = combineAbortSignals(externalSignal, timeoutController.signal);
@@ -284,8 +289,9 @@ async function runMcpScriptOperation(
       throw abortReasonError(externalSignal.reason);
     }
 
+    const outputFlow = new Int32Array(new SharedArrayBuffer(4));
     worker = new Worker(new URL("./mcp-script-worker.mjs", import.meta.url), {
-      workerData: { code },
+      workerData: { code, outputFlow, outputWindow: SCRIPT_OUTPUT_WINDOW },
       env: {},
     });
     const activeWorker = worker;
@@ -296,6 +302,8 @@ async function runMcpScriptOperation(
         if (!message || completed) return;
         if (message.type === "emit") {
           output.push(toContentBlock(message.block));
+          const queued = Atomics.sub(outputFlow, 0, message.size) - message.size;
+          if (queued <= SCRIPT_OUTPUT_WINDOW / 2) Atomics.notify(outputFlow, 0);
           return;
         }
         if (message.type === "done") {
@@ -394,11 +402,10 @@ async function runMcpScriptOperation(
   }
 
   const callsSnapshot = snapshotCalls();
-  // Snapshot before the asynchronous output guard; the terminated worker can no longer emit.
-  const guarded = await guardMcpOutput(
-    [...(output.length > 0 ? output : [{ type: "text" as const, text: "(no output)" }]), ...[...payloadNotices].map(text => ({ type: "text" as const, text })), ...[...resultRefs].map(ref => ({ type: "text" as const, text: formatMcpResultReference(ref) }))],
-    resolveMcpOutputGuardOptions(state.config.settings, state.outputDirectory),
-  );
+  if (output.empty) output.push({ type: "text", text: "(no output)" });
+  for (const text of payloadNotices) output.push({ type: "text", text });
+  for (const ref of resultRefs) output.push({ type: "text", text: formatMcpResultReference(ref) });
+  const guarded = output.finish();
   return {
     content: guarded.content,
     details: {
