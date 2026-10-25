@@ -381,7 +381,7 @@ export async function readMcpResult(input: ReadMcpResultInput, options: McpOutpu
       for await (const chunk of createReadStream(ref, { encoding: "utf8" }) as AsyncIterable<string>) {
         const start = Math.max(0, offset - total);
         if (!finished && start < chunk.length) {
-          if ((chunk.charCodeAt(start) & 0xfc00) === 0xdc00 && (chunk.charCodeAt(start - 1) & 0xfc00) === 0xd800) throw new Error("offset must not split a Unicode surrogate pair");
+          if (start > 0 && chunk.codePointAt(start - 1)! > 0xffff) throw new Error("offset must not split a Unicode surrogate pair");
           for (const char of chunk.slice(start)) {
             const nextBytes = bytes + byteLength(char);
             const nextLines = lines + (char === "\n" ? 1 : 0);
