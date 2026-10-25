@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readMcpResult, retainMcpResult, saveMcpOutputStream } from "../mcp-output-guard.ts";
+import { DEFAULT_MCP_OUTPUT_MAX_BYTES, DEFAULT_MCP_OUTPUT_MAX_LINES, readMcpResult, retainMcpResult, saveMcpOutputStream } from "../mcp-output-guard.ts";
 import { executeDescribe } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
@@ -54,21 +54,27 @@ describe("review regressions: saved-result readback", () => {
     expect(splitOffset.details).toMatchObject({ error: "result_read_failed", message: "offset must not split a Unicode surrogate pair" });
   });
 
-  it("pages plain output across read chunks with exact offsets, totals and pair boundaries", async () => {
+  it("pages plain output across read chunks with exact offsets, totals, caps and pair boundaries", async () => {
     // 64 KiB file reads split this pair's UTF-8 bytes; later pairs land inside later reads.
     const expected = `${"a".repeat(65_535)}😀${"é\n".repeat(40_000)}${"😀b".repeat(30_000)}tail`;
     const saved = await saveMcpOutputStream((async function* () { yield expected.slice(0, 100_000); yield expected.slice(100_000); })(), outputDirectory);
-    let offset = 0;
-    let reconstructed = "";
-    for (let count = 0; count <= expected.length; count++) {
-      const page = await readMcpResult({ ref: saved.path!, offset, limit: 12_000 }, { outputDirectory }) as ReadSuccess;
-      expect(page.details).toMatchObject({ offset, totalCharacters: expected.length });
-      reconstructed += page.content[0]!.text;
-      if (page.details.nextOffset === null) break;
-      expect(page.details.nextOffset).toBeGreaterThan(offset);
-      offset = page.details.nextOffset;
+    // With the default limit the line cap ends some pages; with the larger limit the default byte cap ends most.
+    for (const limit of [undefined, 100_000]) {
+      let offset = 0;
+      let reconstructed = "";
+      for (let count = 0; count <= expected.length; count++) {
+        const page = await readMcpResult({ ref: saved.path!, offset, ...(limit === undefined ? {} : { limit }) }, { outputDirectory }) as ReadSuccess;
+        expect(page.details).toMatchObject({ offset, totalCharacters: expected.length });
+        const visible = page.content.map(block => block.text).join("\n");
+        expect(Buffer.byteLength(visible)).toBeLessThanOrEqual(DEFAULT_MCP_OUTPUT_MAX_BYTES);
+        expect(visible.split("\n").length).toBeLessThanOrEqual(DEFAULT_MCP_OUTPUT_MAX_LINES);
+        reconstructed += page.content[0]!.text;
+        if (page.details.nextOffset === null) break;
+        expect(page.details.nextOffset).toBeGreaterThan(offset);
+        offset = page.details.nextOffset;
+      }
+      expect(reconstructed).toBe(expected);
     }
-    expect(reconstructed).toBe(expected);
 
     const late = expected.length - 8;
     expect(await readMcpResult({ ref: saved.path!, offset: late, limit: 4 }, { outputDirectory })).toMatchObject({
