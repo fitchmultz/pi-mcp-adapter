@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, open, readFile, realpath, writeFile } from "node:fs/pro
 import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { byteLength, sanitizeContent, textStats, truncatedOutput } from "./mcp-output-preview.ts";
 import type { ContentBlock, McpSettings } from "./types.ts";
 
 export const DEFAULT_MCP_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -79,7 +80,7 @@ export interface McpPayloadFile {
 }
 export type RetainedMcpResult = Pick<GuardedMcpOutput, "mcpResult" | "resultRef" | "resultWriteError" | "payloadFiles">;
 
-export function resolveMcpOutputGuardOptions(settings?: McpSettings, outputDirectory?: string): Pick<McpOutputGuardOptions, "enabled" | "maxBytes" | "maxLines" | "detailsMaxBytes" | "outputDirectory"> {
+export function resolveMcpOutputGuardOptions(settings?: McpSettings, outputDirectory?: string): Pick<McpOutputGuardOptions, "enabled" | "detailsMaxBytes" | "outputDirectory"> & Required<Pick<McpOutputGuardOptions, "maxBytes" | "maxLines">> {
   const configured = settings?.outputGuard;
   const tuning = typeof configured === "object" && configured !== null ? configured : undefined;
   return {
@@ -143,24 +144,8 @@ export async function guardMcpOutput(
   let outputGuard: McpOutputGuardDetails | undefined;
 
   if (totalStats.bytes > maxBytes || totalStats.lines > maxLines) {
-    const { path: fullOutputPath, error: writeError } = await saveArtifact("output", composedOutput, options.outputDirectory);
-    const notice = formatTruncationNotice(stats, fullOutputPath, writeError);
-    const previewBudget = reserveBudget(maxBytes, maxLines, notice + referenceSuffix);
-    const preview = truncateHead(composedOutput, previewBudget.maxBytes, previewBudget.maxLines);
-    const finalText = `${preview.content}\n\n${notice}`;
-    const finalStats = textStats(finalText + referenceSuffix);
-
-    guardedContent = [{ type: "text" as const, text: finalText }, ...imageBlocks];
-    outputGuard = {
-      truncated: true,
-      originalBytes: stats.bytes,
-      returnedBytes: finalStats.bytes,
-      originalLines: stats.lines,
-      returnedLines: finalStats.lines,
-      ...(imageBlocks.length > 0 ? { imageBlocksPassedThrough: imageBlocks.length } : {}),
-      ...(fullOutputPath !== undefined ? { fullOutputPath } : {}),
-      ...(writeError !== undefined ? { writeError } : {}),
-    };
+    const artifact = await saveArtifact("output", composedOutput, options.outputDirectory);
+    ({ content: guardedContent, outputGuard } = truncatedOutput(composedOutput, stats, artifact, imageBlocks, maxBytes, maxLines, referenceSuffix));
   }
 
   return {
@@ -168,16 +153,6 @@ export async function guardMcpOutput(
     ...(outputGuard ? { outputGuard } : {}),
     ...retained,
   };
-}
-
-function sanitizeContent(content: ContentBlock[]): ContentBlock[] {
-  return content.map((block) => {
-    if (block.type !== "image") return block;
-    const mimeType = typeof block.mimeType === "string" && block.mimeType.trim()
-      ? block.mimeType.trim().slice(0, 100)
-      : "image/png";
-    return { ...block, mimeType };
-  });
 }
 
 function withEmptyTextFallback(content: ContentBlock[], fallback: string | undefined): ContentBlock[] {
@@ -221,59 +196,6 @@ function addAffixes(content: ContentBlock[], prefix: string, suffix: string): Co
   }
 
   return next;
-}
-
-function reserveBudget(maxBytes: number, maxLines: number, notice: string): { maxBytes: number; maxLines: number } {
-  const noticeStats = textStats(`\n\n${notice}`);
-  return {
-    maxBytes: Math.max(0, maxBytes - noticeStats.bytes),
-    maxLines: Math.max(0, maxLines - noticeStats.lines),
-  };
-}
-
-function truncateHead(text: string, maxBytes: number, maxLines: number): { content: string; bytes: number; lines: number } {
-  const lines = text.split("\n");
-  const output: string[] = [];
-  let bytes = 0;
-
-  for (const line of lines) {
-    if (output.length >= maxLines) break;
-    const separatorBytes = output.length > 0 ? 1 : 0;
-    const lineBytes = byteLength(line);
-    if (bytes + separatorBytes + lineBytes > maxBytes) {
-      const remaining = maxBytes - bytes - separatorBytes;
-      if (remaining > 0) {
-        output.push(truncateStringToBytes(line, remaining));
-      }
-      break;
-    }
-    output.push(line);
-    bytes += separatorBytes + lineBytes;
-  }
-
-  const content = output.join("\n");
-  const stats = textStats(content);
-  return { content, bytes: stats.bytes, lines: stats.lines };
-}
-
-function truncateStringToBytes(value: string, maxBytes: number): string {
-  if (byteLength(value) <= maxBytes) return value;
-  const buffer = Buffer.from(value, "utf8");
-  let end = Number.isFinite(maxBytes) ? Math.max(0, Math.floor(maxBytes)) : 0;
-  while (end > 0 && (buffer.readUInt8(end) & 0xc0) === 0x80) end--;
-  return buffer.subarray(0, end).toString("utf8");
-}
-
-function formatTruncationNotice(
-  stats: { bytes: number; lines: number },
-  fullOutputPath: string | undefined,
-  writeError: string | undefined,
-): string {
-  const base = `[MCP text output truncated: original ${stats.lines.toLocaleString()} lines / ${formatSize(stats.bytes)}.`;
-  if (fullOutputPath) {
-    return `${base} Full text saved to: ${fullOutputPath} — use read with offset/limit or grep to inspect.]`;
-  }
-  return `${base} Full output could not be saved: ${writeError ?? "unknown error"}]`;
 }
 
 /**
@@ -540,14 +462,6 @@ function safeStringify(value: unknown): string {
   }
 }
 
-function textStats(text: string): { bytes: number; lines: number } {
-  return { bytes: byteLength(text), lines: text.length === 0 ? 0 : text.split("\n").length };
-}
-
-function byteLength(text: string): number {
-  return Buffer.byteLength(text, "utf8");
-}
-
 function positiveInt(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   const integer = Math.floor(value);
@@ -560,10 +474,4 @@ function envKillSwitch(name: string): boolean | undefined {
   if (["0", "false", "no", "off"].includes(value)) return false;
   if (["1", "true", "yes", "on"].includes(value)) return true;
   return undefined;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }

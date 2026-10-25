@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stream large `mcp_script` output to its spill file while the script runs instead of holding every emitted value in the Pi process, and pause the script worker while the host catches up. Previously, large finite output could exhaust the host heap and abort Pi. The returned preview, saved file, ordering and images are unchanged. Pi processes already running when the adapter updates keep returning `mcp_script` output; one that ran `mcp_script` before the update keeps the earlier in-memory handling until it restarts.
 - Prune recognized expired and future-dated metadata entries during cache saves while preserving configured servers, explicitly supplied entries, and unknown records. Keep fresh disk merges and atomic cache replacement.
 
 ## [8.0.1] - 2026-10-13
