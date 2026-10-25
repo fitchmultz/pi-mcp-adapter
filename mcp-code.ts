@@ -11,7 +11,7 @@ import { catalogCoverage, toToolDescriptor } from "./tool-metadata.ts";
 import { isServerDisabled, type ContentBlock, type McpOperationContext } from "./types.ts";
 import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS } from "./utils.ts";
 
-/** UTF-16 units of emitted output the worker may queue before it waits for the host. */
+/** UTF-16 units of emitted output, plus 256 per emit, the worker may queue before it waits for the host. */
 const SCRIPT_OUTPUT_WINDOW = 4 * 1024 * 1024;
 
 class McpScriptTimeoutError extends Error {

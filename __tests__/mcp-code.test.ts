@@ -403,7 +403,10 @@ describe("runMcpScript output", () => {
     } finally { await rm(outputDirectory, { recursive: true, force: true }); }
   });
 
-  it("keeps host memory bounded while a script emits more than the host heap", async () => {
+  it.each([
+    { name: "1 MiB emits larger in total than the host heap", length: 2 ** 20, count: 128 },
+    { name: "a million single-character emits", length: 1, count: 1_000_000 },
+  ])("keeps host memory bounded while a script queues $name", async ({ length, count }) => {
     const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-script-memory-"));
     try {
       const script = join(outputDirectory, "host.mjs");
@@ -413,13 +416,17 @@ describe("runMcpScript output", () => {
         import { runMcpScript } from ${JSON.stringify(new URL("../mcp-code.ts", import.meta.url).href)};
         const state = { config: { mcpServers: {}, settings: {} }, toolMetadata: new Map(), failureTracker: new Map(), completedUiSessions: [], outputDirectory: ${JSON.stringify(outputDirectory)} };
         const start = process.memoryUsage.rss();
-        const pending = runMcpScript(state, "const chunk = 'x'.repeat(1 << 20); for (let i = 0; i < 128; i++) emit(chunk);", 60000);
+        const pending = runMcpScript(state, "const line = 'x'.repeat(${length}); for (let i = 0; i < ${count}; i++) emit(line);", 60000);
         // Hold the host event loop so the worker's output can only queue.
         let queuedGrowth = 0;
         for (const end = Date.now() + 2000; Date.now() < end && queuedGrowth < 128 * 2 ** 20;) queuedGrowth = Math.max(queuedGrowth, process.memoryUsage.rss() - start);
         const { details } = await pending;
-        const lines = [];
-        for await (const line of createInterface({ input: createReadStream(details.outputGuard.fullOutputPath) })) lines.push(line.length === 2 ** 20 && !/[^x]/.test(line));
+        const expected = "x".repeat(${length});
+        const lines = { total: 0, expected: 0 };
+        for await (const line of createInterface({ input: createReadStream(details.outputGuard.fullOutputPath) })) {
+          lines.total++;
+          if (line === expected) lines.expected++;
+        }
         console.log(JSON.stringify({ queuedGrowth, details, lines }));
       `);
       const child = spawnSync(process.execPath, ["--max-old-space-size=64", script], { encoding: "utf8", timeout: 60_000 });
@@ -428,9 +435,9 @@ describe("runMcpScript output", () => {
       const report = JSON.parse(child.stdout);
       expect(report.queuedGrowth).toBeLessThan(64 * 2 ** 20);
       expect(report.details).not.toHaveProperty("error");
-      expect(report.details.outputGuard).toMatchObject({ originalBytes: 128 * 2 ** 20 + 127, originalLines: 128 });
+      expect(report.details.outputGuard).toMatchObject({ originalBytes: count * (length + 1) - 1, originalLines: count });
       expect(report.details.outputGuard.returnedBytes).toBeLessThanOrEqual(50 * 1024);
-      expect(report.lines).toEqual(Array(128).fill(true));
+      expect(report.lines).toEqual({ total: count, expected: count });
     } finally { await rm(outputDirectory, { recursive: true, force: true }); }
   }, 60_000);
 });

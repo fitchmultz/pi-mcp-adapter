@@ -100,7 +100,8 @@ const tools = new Proxy(Object.create(null), {
 
 const emit = (value) => {
   const block = toContentBlock(value);
-  const size = block.type === "text" ? block.text.length : block.data.length;
+  // Charge each queued message too, so many tiny emits cannot outrun the host.
+  const size = (block.type === "text" ? block.text.length : block.data.length) + 256;
   Atomics.add(outputFlow, 0, size);
   parentPort.postMessage({ type: "emit", block, size });
   // Block this worker, not the host, until the host consumes queued output.
