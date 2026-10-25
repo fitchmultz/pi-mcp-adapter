@@ -1,7 +1,8 @@
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import { formatWithOptions } from "node:util";
 import { Worker } from "node:worker_threads";
-import { createMcpOutputSpool, guardedMcpDetails, resolveMcpOutputGuardOptions, readMcpResult, formatMcpResultReference, formatMcpPayloadFile, type McpPayloadFile, type ReadMcpResultInput } from "./mcp-output-guard.ts";
+import { guardedMcpDetails, resolveMcpOutputGuardOptions, readMcpResult, formatMcpResultReference, formatMcpPayloadFile, type McpPayloadFile, type ReadMcpResultInput } from "./mcp-output-guard.ts";
+import { createMcpOutputSpool } from "./mcp-output-preview.ts";
 import { executeCall, executeConnect } from "./proxy-modes.ts";
 import { executeResourceList, executeResourceRead } from "./resource-tools.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
