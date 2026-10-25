@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readMcpResult, retainMcpResult } from "../mcp-output-guard.ts";
+import { readMcpResult, retainMcpResult, saveMcpOutputStream } from "../mcp-output-guard.ts";
 import { executeDescribe } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
@@ -52,6 +52,37 @@ describe("review regressions: saved-result readback", () => {
     expect(second.details.nextOffset).toBe(3);
     const splitOffset = await readMcpResult({ ref: saved.resultRef!, path: "/value", offset: 2 }, { outputDirectory });
     expect(splitOffset.details).toMatchObject({ error: "result_read_failed", message: "offset must not split a Unicode surrogate pair" });
+  });
+
+  it("pages plain output across read chunks with exact offsets, totals and pair boundaries", async () => {
+    // 64 KiB file reads split this pair's UTF-8 bytes; later pairs land inside later reads.
+    const expected = `${"a".repeat(65_535)}😀${"é\n".repeat(40_000)}${"😀b".repeat(30_000)}tail`;
+    const saved = await saveMcpOutputStream((async function* () { yield expected.slice(0, 100_000); yield expected.slice(100_000); })(), outputDirectory);
+    let offset = 0;
+    let reconstructed = "";
+    for (let count = 0; count <= expected.length; count++) {
+      const page = await readMcpResult({ ref: saved.path!, offset, limit: 12_000 }, { outputDirectory }) as ReadSuccess;
+      expect(page.details).toMatchObject({ offset, totalCharacters: expected.length });
+      reconstructed += page.content[0]!.text;
+      if (page.details.nextOffset === null) break;
+      expect(page.details.nextOffset).toBeGreaterThan(offset);
+      offset = page.details.nextOffset;
+    }
+    expect(reconstructed).toBe(expected);
+
+    const late = expected.length - 8;
+    expect(await readMcpResult({ ref: saved.path!, offset: late, limit: 4 }, { outputDirectory })).toMatchObject({
+      content: [{ text: expected.slice(late, late + 4) }, { text: expect.stringContaining(`Continue with offset: ${late + 4}.`) }],
+      details: { nextOffset: late + 4, totalCharacters: expected.length },
+    });
+    for (const split of [65_536, expected.length - 6]) {
+      expect(expected.codePointAt(split - 1)).toBe(0x1f600);
+      expect((await readMcpResult({ ref: saved.path!, offset: split }, { outputDirectory })).details).toMatchObject({ error: "result_read_failed", message: "offset must not split a Unicode surrogate pair" });
+    }
+    expect(await readMcpResult({ ref: saved.path!, offset: expected.length + 1 }, { outputDirectory })).toMatchObject({
+      content: [{ text: "" }],
+      details: { offset: expected.length + 1, nextOffset: null, totalCharacters: expected.length },
+    });
   });
 
   it("keeps tiny-cap pages progressing with complete characters and recovery notices", async () => {
