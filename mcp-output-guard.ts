@@ -455,17 +455,19 @@ export async function readMcpResult(input: ReadMcpResultInput, options: McpOutpu
       let total = 0, bytes = 0, lines = 1;
       let page = "";
       let finished = false;
-      for await (const chunk of createReadStream(ref, { encoding: "utf8" })) {
-        for (const char of chunk as string) {
-          if (total < offset && total + char.length > offset) throw new Error("offset must not split a Unicode surrogate pair");
-          if (total >= offset && !finished) {
+      // The decoder never splits a pair across chunks; walk code points only inside the page.
+      for await (const chunk of createReadStream(ref, { encoding: "utf8" }) as AsyncIterable<string>) {
+        const start = Math.max(0, offset - total);
+        if (!finished && start < chunk.length) {
+          if ((chunk.charCodeAt(start) & 0xfc00) === 0xdc00 && (chunk.charCodeAt(start - 1) & 0xfc00) === 0xd800) throw new Error("offset must not split a Unicode surrogate pair");
+          for (const char of chunk.slice(start)) {
             const nextBytes = bytes + byteLength(char);
             const nextLines = lines + (char === "\n" ? 1 : 0);
-            if (page && (nextBytes > maxBytes || nextLines > maxLines || page.length + char.length > limit)) finished = true;
-            else { page += char; bytes = nextBytes; lines = nextLines; }
+            if (page && (nextBytes > maxBytes || nextLines > maxLines || page.length + char.length > limit)) { finished = true; break; }
+            page += char; bytes = nextBytes; lines = nextLines;
           }
-          total += char.length;
         }
+        total += chunk.length;
       }
       const end = offset + page.length;
       const nextOffset = end < total ? end : null;
