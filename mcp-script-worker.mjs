@@ -100,6 +100,11 @@ const tools = new Proxy(Object.create(null), {
 
 const emit = (value) => {
   const block = toContentBlock(value);
+  // A running Pi keeps the adapter it loaded but starts this file from disk, so an older host passes no window.
+  if (!outputFlow) {
+    parentPort.postMessage({ type: "emit", block });
+    return;
+  }
   // Charge each queued message too, so many tiny emits cannot outrun the host.
   const size = (block.type === "text" ? block.text.length : block.data.length) + 256;
   Atomics.add(outputFlow, 0, size);

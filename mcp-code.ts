@@ -86,7 +86,8 @@ function abortReasonError(reason: unknown): Error {
 function parseWorkerMessage(value: unknown): WorkerMessage | null {
   if (typeof value !== "object" || value === null) return null;
   const message = value as Record<string, unknown>;
-  if (message.type === "emit" && "block" in message && typeof message.size === "number") return { type: "emit", block: message.block, size: message.size };
+  // An older worker file, such as one restored by a rollback under a running Pi, neither charges the window nor sends a size.
+  if (message.type === "emit" && "block" in message) return { type: "emit", block: message.block, size: typeof message.size === "number" ? message.size : 0 };
   if (message.type === "call" && typeof message.id === "number" && typeof message.path === "string") {
     return { type: "call", id: message.id, path: message.path, ...(message.args !== undefined ? { args: message.args } : {}), ...(typeof message.server === "string" ? { server: message.server } : {}) };
   }

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { createMcpAdapter } from "../index.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { guardMcpOutput, resolveMcpOutputGuardOptions } from "../mcp-output-guard.ts";
@@ -440,4 +441,25 @@ describe("runMcpScript output", () => {
       expect(report.lines).toEqual({ total: count, expected: count });
     } finally { await rm(outputDirectory, { recursive: true, force: true }); }
   }, 60_000);
+
+  it("delivers output to a running Pi whose adapter predates output flow control", async () => {
+    // Such a host starts the updated worker file with the workerData it always sent.
+    const worker = new Worker(new URL("../mcp-script-worker.mjs", import.meta.url), { workerData: { code: `emit("a 😀"); console.log("b"); return "c";` }, env: {} });
+    const messages: unknown[] = [];
+    try {
+      await new Promise((resolve, reject) => {
+        worker.on("message", message => {
+          messages.push(message);
+          if (message.type === "done" || message.type === "error") resolve(undefined);
+        });
+        worker.on("error", reject);
+      });
+    } finally { await worker.terminate(); }
+
+    expect(messages).toEqual([
+      { type: "emit", block: { type: "text", text: "a 😀" } },
+      { type: "emit", block: { type: "text", text: "[console.log] b" } },
+      { type: "done", returnBlock: { type: "text", text: "c" } },
+    ]);
+  });
 });
