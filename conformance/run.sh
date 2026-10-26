@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 
 RESULTS_DIR="${CONFORMANCE_RESULTS_DIR:-conformance/results}"
 BASELINE="conformance/baseline-client.yml"
-CONFORMANCE="npx -y @modelcontextprotocol/conformance@0.1.16"
+CONFORMANCE="npm exec --yes --package=@modelcontextprotocol/conformance@0.1.16 -- conformance"
 DRIVER="bash conformance/driver.sh"
 TIMEOUT="${CONFORMANCE_TIMEOUT_MS:-90000}"
 

@@ -65,9 +65,11 @@ describe("incremental plain-result paging", () => {
     expect(history.append("prompts", "é😀".repeat(100_000))).toBeUndefined();
     const grown = await readFile(ref, "utf8");
     const late = grown.lastIndexOf("é");
+    const firstDeltaBytes = await measureReads(ref);
     const tail = await readMcpResult({ ref, offset: late }, { outputDirectory });
     expect(tail.content[0]!.text).toBe(grown.slice(late));
     expect(tail.details).toMatchObject({ totalCharacters: grown.length, nextOffset: null });
+    expect(await firstDeltaBytes()).toBeLessThan(256 * 1024);
     const warmBytes = await measureReads(ref);
     expect((await readMcpResult({ ref, offset: late }, { outputDirectory })).content[0]!.text).toBe(grown.slice(late));
     expect(await warmBytes()).toBeLessThan(256 * 1024);

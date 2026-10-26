@@ -43,10 +43,18 @@ export function appendPlainOutput(ref: string, text: string) {
   try {
     const after = statSync(ref, { bigint: true });
     if (after.dev !== before.dev || after.ino !== before.ino
-      || after.size !== before.size + BigInt(byteLength(text))
-      || byteLength(text) > cached.stride || text.includes("\ufffd")) return;
+      || after.size !== before.size + BigInt(byteLength(text)) || text.includes("\ufffd")) return;
     const next = { ...cached, revision: after, total: cached.total + text.length, points: [...cached.points] };
-    checkpoint(next, { bytes: Number(before.size), characters: cached.total });
+    let position = Number(before.size);
+    checkpoint(next, { bytes: position, characters: cached.total });
+    // Index only the accepted delta, keeping checkpoints on complete UTF-8 code points.
+    for (let start = 0; start < text.length;) {
+      let end = Math.min(text.length, start + 16 * 1024);
+      if (end < text.length && text.codePointAt(end - 1)! > 0xffff) end++;
+      position += byteLength(text.slice(start, end));
+      checkpoint(next, { bytes: position, characters: cached.total + end });
+      start = end;
+    }
     remember(key, next);
   } catch { /* The durable append already succeeded; leave its index invalidated. */ }
 }
