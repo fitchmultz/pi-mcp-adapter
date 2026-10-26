@@ -42,13 +42,31 @@ describe("incremental plain-result paging", () => {
     const ref = await save(text, outputDirectory);
     const read = (offset: number) => readMcpResult({ ref, offset, limit: 399 }, { outputDirectory });
     expect((await read(0)).details).toMatchObject({ totalCharacters: text.length, nextOffset: 399 });
-    const bytesRead = await measureReads(ref);
+    const fileBytes = Buffer.byteLength(text);
     for (const offset of [399, text.length - 700, 0]) {
+      const bytesRead = await measureReads(ref);
       const page = await read(offset);
       expect(page.content[0]!.text).toBe(text.slice(offset, offset + 399));
       expect(page.details).toMatchObject({ totalCharacters: text.length, nextOffset: offset + 399 });
+      // Each warm read verifies the full-content digest once, then seeks a sparse page window.
+      expect(await bytesRead()).toBeGreaterThanOrEqual(fileBytes);
+      expect(await bytesRead()).toBeLessThan(fileBytes + 512 * 1024);
     }
-    expect(await bytesRead()).toBeLessThan(512 * 1024);
+  });
+
+  it("rejects a stale index after a same-size in-place rewrite inside one timestamp grain", async () => {
+    const outputDirectory = await root();
+    const first = "stable 😀 page\n".repeat(240);
+    const ref = await save(first, outputDirectory);
+    expect((await readMcpResult({ ref, limit: 40 }, { outputDirectory })).details)
+      .toMatchObject({ totalCharacters: first.length, nextOffset: 40 });
+    // Same byte length, rewritten in place immediately so the stat grain has not advanced.
+    const second = "edited 😀 page\n".repeat(240);
+    expect(Buffer.byteLength(second)).toBe(Buffer.byteLength(first));
+    await writeFile(ref, second);
+    const page = await readMcpResult({ ref, limit: 40 }, { outputDirectory });
+    expect(page.content[0]!.text).toBe(second.slice(0, 40));
+    expect(page.details).toMatchObject({ totalCharacters: second.length, nextOffset: 40 });
   });
 
   it("advances a cached native history after accepted appends without rereading its prefix", async () => {
@@ -64,7 +82,9 @@ describe("incremental plain-result paging", () => {
     const page = await readMcpResult({ ref, offset, limit: 200 }, { outputDirectory });
     expect(page.content[0]!.text).toBe(text.slice(offset));
     expect(page.details).toMatchObject({ totalCharacters: text.length, nextOffset: null });
-    expect(await bytesRead()).toBeLessThan(256 * 1024);
+    const warmAfterAppend = Buffer.byteLength(text);
+    expect(await bytesRead()).toBeGreaterThanOrEqual(warmAfterAppend);
+    expect(await bytesRead()).toBeLessThan(warmAfterAppend + 256 * 1024);
 
     expect(history.append("prompts", "é😀".repeat(100_000))).toBeUndefined();
     const grown = await readFile(ref, "utf8");
@@ -73,10 +93,12 @@ describe("incremental plain-result paging", () => {
     const tail = await readMcpResult({ ref, offset: late }, { outputDirectory });
     expect(tail.content[0]!.text).toBe(grown.slice(late));
     expect(tail.details).toMatchObject({ totalCharacters: grown.length, nextOffset: null });
-    expect(await firstDeltaBytes()).toBeLessThan(256 * 1024);
+    expect(await firstDeltaBytes()).toBeGreaterThanOrEqual(Buffer.byteLength(grown));
+    expect(await firstDeltaBytes()).toBeLessThan(Buffer.byteLength(grown) + 256 * 1024);
     const warmBytes = await measureReads(ref);
     expect((await readMcpResult({ ref, offset: late }, { outputDirectory })).content[0]!.text).toBe(grown.slice(late));
-    expect(await warmBytes()).toBeLessThan(256 * 1024);
+    expect(await warmBytes()).toBeGreaterThanOrEqual(Buffer.byteLength(grown));
+    expect(await warmBytes()).toBeLessThan(Buffer.byteLength(grown) + 256 * 1024);
   });
 
   it("invalidates for external redaction with growth, same-size edits, truncation, rotation and removal", async () => {
@@ -138,7 +160,8 @@ describe("incremental plain-result paging", () => {
     const warm = await readMcpResult({ ref, limit: 12_000 }, { outputDirectory });
     expect(warm.content[0]!.text).toBe(beforeWarm.slice(0, 12_000));
     expect(warm.details).toMatchObject({ totalCharacters: beforeWarm.length, nextOffset: 12_000 });
-    expect((await Promise.all(reads.mock.results.map(result => result.value))).reduce((total, result) => total + result.bytesRead, 0)).toBeLessThan(128 * 1024);
+    expect((await Promise.all(reads.mock.results.map(result => result.value))).reduce((total, result) => total + result.bytesRead, 0))
+      .toBeLessThan(2 * Buffer.byteLength(beforeWarm) + 128 * 1024);
     reads.mockRestore();
     const complete = await readFile(ref, "utf8");
     const bytesRead = await measureReads(ref);
@@ -146,7 +169,7 @@ describe("incremental plain-result paging", () => {
     const tail = await readMcpResult({ ref, offset }, { outputDirectory });
     expect(tail.content[0]!.text).toBe(complete.slice(offset));
     expect(tail.details).toMatchObject({ totalCharacters: complete.length, nextOffset: null });
-    expect(await bytesRead()).toBeLessThan(128 * 1024);
+    expect(await bytesRead()).toBeLessThan(2 * Buffer.byteLength(complete) + 128 * 1024);
   });
 
   it("redecodes incomplete UTF8 on append and preserves access checks on warm indexes", async () => {

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bind cached plain-output page indexes to a SHA-256 digest of the actual file content, verified on every reuse, so a same-size in-place rewrite inside one filesystem timestamp grain can no longer serve stale checkpoints or UTF-16 totals. Verified native appends keep advancing the digest, preserving warm paging after appends; warm reads now cost one raw verification pass plus the sparse page window instead of the window alone.
 - Stream large `mcp_script` output to its spill file while the script runs instead of holding every emitted value in the Pi process, and pause the script worker while the host catches up. Previously, large finite output could exhaust the host heap and abort Pi. The returned preview, saved file, ordering and images are unchanged. Pi processes already running when the adapter updates keep returning `mcp_script` output; one that ran `mcp_script` before the update keeps the earlier in-memory handling until it restarts.
 - Prune recognized expired and future-dated metadata entries during cache saves while preserving configured servers, explicitly supplied entries, and unknown records. Keep fresh disk merges and atomic cache replacement.
 
