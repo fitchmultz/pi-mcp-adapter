@@ -56,17 +56,18 @@ describe("incremental plain-result paging", () => {
 
   it("rejects a stale index after a same-size in-place rewrite inside one timestamp grain", async () => {
     const outputDirectory = await root();
-    const first = "stable 😀 page\n".repeat(240);
-    const ref = await save(first, outputDirectory);
-    expect((await readMcpResult({ ref, limit: 40 }, { outputDirectory })).details)
-      .toMatchObject({ totalCharacters: first.length, nextOffset: 40 });
-    // Same byte length, rewritten in place immediately so the stat grain has not advanced.
-    const second = "edited 😀 page\n".repeat(240);
+    // Same byte length but different UTF-16 totals, so a stale cached total is observable.
+    // Kept tiny so the cold read's awaits stay well inside one stat grain.
+    const first = "x😀".repeat(4);
+    const second = "abcd".repeat(5);
     expect(Buffer.byteLength(second)).toBe(Buffer.byteLength(first));
+    const ref = await save(first, outputDirectory);
+    expect((await readMcpResult({ ref, limit: 4 }, { outputDirectory })).content[0]!.text).toBe("x😀x");
+    // Rewrite in place immediately so the stat grain has not advanced past the original write.
     await writeFile(ref, second);
-    const page = await readMcpResult({ ref, limit: 40 }, { outputDirectory });
-    expect(page.content[0]!.text).toBe(second.slice(0, 40));
-    expect(page.details).toMatchObject({ totalCharacters: second.length, nextOffset: 40 });
+    const page = await readMcpResult({ ref, limit: 4 }, { outputDirectory });
+    expect(page.content[0]!.text).toBe("abcd");
+    expect(page.details).toMatchObject({ totalCharacters: second.length, nextOffset: 4 });
   });
 
   it("advances a cached native history after accepted appends without rereading its prefix", async () => {
