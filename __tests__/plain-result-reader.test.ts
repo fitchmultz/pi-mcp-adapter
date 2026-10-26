@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, open, readFile, rename, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,10 +17,14 @@ vi.mock("node:fs", async importOriginal => {
 
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
-async function measureReads(ref: string) {
+async function readPrototype(ref: string) {
   const file = await open(ref);
-  const reads = vi.spyOn(Object.getPrototypeOf(file), "read").mockClear();
+  const prototype = Object.getPrototypeOf(file);
   await file.close();
+  return prototype;
+}
+async function measureReads(ref: string) {
+  const reads = vi.spyOn(await readPrototype(ref), "read").mockClear();
   io.bytes = 0;
   return async () => io.bytes + (await Promise.all(reads.mock.results.map(result => result.value))).reduce((total, result) => total + result.bytesRead, 0);
 }
@@ -86,6 +90,17 @@ describe("incremental plain-result paging", () => {
       expect(page.details).toMatchObject({ totalCharacters: text.length });
     };
     await check(await readFile(ref, "utf8"));
+    const prototype = await readPrototype(ref);
+    const originalRead = prototype.read;
+    const redacted = "redacted😀 ".repeat(30_000);
+    const reads = vi.spyOn(prototype, "read").mockImplementationOnce(async function(this: FileHandle, ...args: unknown[]) {
+      const result = await originalRead.apply(this, args);
+      await writeFile(ref, redacted);
+      expect(history.append("notifications", "after edit")).toBeUndefined();
+      return result;
+    });
+    await check(redacted + JSON.stringify({ category: "notifications", value: "after edit" }) + "\n");
+    reads.mockRestore();
     for (const text of ["redacted ".repeat(30_000), "replaced ".repeat(30_000), "short 😀"]) {
       await writeFile(ref, text);
       // A later native append must not bless an earlier external rewrite as append-only.
@@ -98,6 +113,40 @@ describe("incremental plain-result paging", () => {
     await check("rotated é😀");
     await rm(ref);
     expect((await readMcpResult({ ref }, { outputDirectory })).details).toMatchObject({ error: "result_read_failed" });
+  });
+
+  it("serves stable prefix snapshots while native appends interleave with cold and warm reads", async () => {
+    const outputDirectory = await root();
+    const history = createUiMessageHistory(outputDirectory);
+    expect(history.append("prompts", "x".repeat(1_000_000) + "😀")).toBeUndefined();
+    const ref = history.messages.historyRef!;
+    const prefix = await readFile(ref, "utf8");
+    const prototype = await readPrototype(ref);
+    const originalRead = prototype.read;
+    let appends = 0;
+    const reads = vi.spyOn(prototype, "read").mockImplementation(async function(this: FileHandle, ...args: unknown[]) {
+      const result = await originalRead.apply(this, args);
+      expect(history.append("notifications", `live😀-${++appends}`)).toBeUndefined();
+      return result;
+    });
+    const cold = await readMcpResult({ ref, limit: 12_000 }, { outputDirectory });
+    expect(cold.content[0]!.text).toBe(prefix.slice(0, 12_000));
+    expect(cold.details).toMatchObject({ totalCharacters: prefix.length, nextOffset: 12_000 });
+    expect(appends).toBeGreaterThan(0);
+    const beforeWarm = await readFile(ref, "utf8");
+    reads.mockClear();
+    const warm = await readMcpResult({ ref, limit: 12_000 }, { outputDirectory });
+    expect(warm.content[0]!.text).toBe(beforeWarm.slice(0, 12_000));
+    expect(warm.details).toMatchObject({ totalCharacters: beforeWarm.length, nextOffset: 12_000 });
+    expect((await Promise.all(reads.mock.results.map(result => result.value))).reduce((total, result) => total + result.bytesRead, 0)).toBeLessThan(128 * 1024);
+    reads.mockRestore();
+    const complete = await readFile(ref, "utf8");
+    const bytesRead = await measureReads(ref);
+    const offset = complete.lastIndexOf('{"category":');
+    const tail = await readMcpResult({ ref, offset }, { outputDirectory });
+    expect(tail.content[0]!.text).toBe(complete.slice(offset));
+    expect(tail.details).toMatchObject({ totalCharacters: complete.length, nextOffset: null });
+    expect(await bytesRead()).toBeLessThan(128 * 1024);
   });
 
   it("redecodes incomplete UTF8 on append and preserves access checks on warm indexes", async () => {

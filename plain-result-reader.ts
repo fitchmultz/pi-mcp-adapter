@@ -1,11 +1,13 @@
-import { appendFileSync, realpathSync, statSync, type BigIntStats } from "node:fs";
+import { appendFileSync, fstatSync, realpathSync, statSync, type BigIntStats } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { open, stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { byteLength } from "./mcp-output-preview.ts";
 
 type Point = { bytes: number; characters: number };
 type Index = { revision: BigIntStats; total: number; points: Point[]; stride: number };
+type Progress = Index & { cacheable: boolean };
 const indexes = new Map<string, Index>();
+const readers = new Map<string, Set<Progress>>();
 const MAX_INDEXES = 8;
 const MAX_POINTS = 1024;
 
@@ -29,33 +31,46 @@ function remember(ref: string, index: Index) {
   if (indexes.size > MAX_INDEXES) indexes.delete(indexes.keys().next().value!);
 }
 
+function extend(index: Index, after: BigIntStats, text: string) {
+  let position = Number(index.revision.size);
+  checkpoint(index, { bytes: position, characters: index.total });
+  // Index only the accepted delta, keeping checkpoints on complete UTF-8 code points.
+  for (let start = 0; start < text.length;) {
+    let end = Math.min(text.length, start + 16 * 1024);
+    if (end < text.length && text.codePointAt(end - 1)! > 0xffff) end++;
+    position += byteLength(text.slice(start, end));
+    checkpoint(index, { bytes: position, characters: index.total + end });
+    start = end;
+  }
+  index.total += text.length;
+  index.revision = after;
+}
+
 /** Only the native, synchronous history writer can certify an append. External changes invalidate. */
 export function appendPlainOutput(ref: string, text: string) {
   let key = ref, cached: Index | undefined, before: BigIntStats | undefined;
   try {
-    key = indexes.size ? realpathSync(ref) : ref;
+    key = indexes.size || readers.size ? realpathSync(ref) : ref;
     cached = indexes.get(key);
     indexes.delete(key);
-    if (cached) before = statSync(ref, { bigint: true });
+    if (cached || readers.has(key)) before = statSync(ref, { bigint: true });
   } catch { /* Cache bookkeeping must not change write acceptance. */ }
   appendFileSync(ref, text, { flush: true });
-  if (!cached || !before || !sameRevision(cached.revision, before)) return;
+  if (!before) return;
   try {
     const after = statSync(ref, { bigint: true });
     if (after.dev !== before.dev || after.ino !== before.ino
-      || after.size !== before.size + BigInt(byteLength(text)) || text.includes("\ufffd")) return;
-    const next = { ...cached, revision: after, total: cached.total + text.length, points: [...cached.points] };
-    let position = Number(before.size);
-    checkpoint(next, { bytes: position, characters: cached.total });
-    // Index only the accepted delta, keeping checkpoints on complete UTF-8 code points.
-    for (let start = 0; start < text.length;) {
-      let end = Math.min(text.length, start + 16 * 1024);
-      if (end < text.length && text.codePointAt(end - 1)! > 0xffff) end++;
-      position += byteLength(text.slice(start, end));
-      checkpoint(next, { bytes: position, characters: cached.total + end });
-      start = end;
+      || after.size !== before.size + BigInt(byteLength(text))) return;
+    if (cached && sameRevision(cached.revision, before) && !text.includes("\ufffd")) {
+      const next = { ...cached, points: [...cached.points] };
+      extend(next, after, text);
+      remember(key, next);
     }
-    remember(key, next);
+    for (const progress of readers.get(key) ?? []) {
+      if (!sameRevision(progress.revision, before)) continue;
+      extend(progress, after, text);
+      if (text.includes("\ufffd")) progress.cacheable = false;
+    }
   } catch { /* The durable append already succeeded; leave its index invalidated. */ }
 }
 
@@ -63,12 +78,19 @@ export function appendPlainOutput(ref: string, text: string) {
 export async function readPlainResult(ref: string, offset: number, limit: number, maxBytes: number, maxLines: number) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const file = await open(ref, "r");
+    let progress: Progress | undefined;
     try {
-      const revision = await file.stat({ bigint: true });
+      // Pair snapshot registration/validation with the synchronous writer without yielding between them.
+      const revision = fstatSync(file.fd, { bigint: true });
       const cached = indexes.get(ref);
       const valid = cached && sameRevision(cached.revision, revision) ? cached : undefined;
       if (!valid) indexes.delete(ref);
       const index: Index = valid ?? { revision, total: 0, points: [{ bytes: 0, characters: 0 }], stride: 64 * 1024 };
+      // Append characters stay relative until the cold scan knows the opened prefix's total.
+      progress = { revision, total: 0, points: [{ bytes: Number(revision.size), characters: 0 }], stride: index.stride, cacheable: true };
+      const active = readers.get(ref) ?? new Set<Progress>();
+      active.add(progress);
+      readers.set(ref, active);
       let point = index.points[0]!;
       if (valid) {
         for (const candidate of index.points) {
@@ -108,12 +130,24 @@ export async function readPlainResult(ref: string, offset: number, limit: number
           if (valid && finished) break;
         }
       }
-      // Never reuse totals across ordinary rewrites/redactions, truncation, rotation or file errors.
-      if (!sameRevision(revision, await file.stat({ bigint: true })) || !sameRevision(revision, await stat(ref, { bigint: true }))) continue;
+      // Only verified native appends may advance this snapshot. External edits still invalidate.
+      if (!sameRevision(progress.revision, statSync(ref, { bigint: true }))) continue;
       if (!valid) index.total = total;
-      if (cacheable) remember(ref, index);
+      // Serve the opened prefix; retain verified append checkpoints for the next read.
+      if (cacheable && progress.cacheable) {
+        const next = { ...index, revision: progress.revision, total: index.total + progress.total, points: [...index.points] };
+        for (const point of progress.points) checkpoint(next, { bytes: point.bytes, characters: index.total + point.characters });
+        remember(ref, next);
+      }
       return { page, total: index.total };
-    } finally { await file.close(); }
+    } finally {
+      if (progress) {
+        const active = readers.get(ref)!;
+        active.delete(progress);
+        if (!active.size) readers.delete(ref);
+      }
+      await file.close();
+    }
   }
   throw new Error("MCP output artifact changed while reading; retry the page");
 }
