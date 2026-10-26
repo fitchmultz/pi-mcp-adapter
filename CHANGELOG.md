@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Page saved plain-text output, such as large tool or `mcp_script` output and UI histories, by walking characters only inside the requested page and counting the rest of the file with Node's decoder. Each page still reads the whole file, so its cost still grows with file size, and offsets, totals and Unicode checks stay exact if the file changes.
+- Index saved plain-text output once, then read only the requested page's sparse file window. Native UI history appends advance the index without rescanning the prefix. Keep exact UTF-16 totals, Unicode boundaries and private-directory checks; external edits, oversized appends and incomplete UTF-8 fall back to a fresh scan. The bounded in-memory index retains checkpoints, not output text.
 - Reuse unchanged metadata-cache snapshots and derived tool descriptors across session tool synchronization. Each session and branch still restores its own selections and validates configuration, trust, and server identity.
 - Load Zod and the command, panel, gateway, script and resource modules on first MCP use instead of at extension startup, so sessions that never use MCP skip them. Server initialization modules now load during session start, after cached tools and prompt commands register. Cached tool registration, schemas, commands and first-call behavior are unchanged. Internal types no longer load Zod; the published `./types` entry still exports the same values and types, including the Zod-backed UI stream schemas.
 - Rewrite the README around installation and everyday use, add a discovery/call-flow diagram, and move detailed configuration, migration, and maintainer guidance into linked docs.

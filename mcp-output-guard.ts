@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, open, readFile, realpath, writeFile } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { readPlainResult } from "./plain-result-reader.ts";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { byteLength, sanitizeContent, textStats, truncatedOutput } from "./mcp-output-preview.ts";
@@ -374,23 +374,7 @@ export async function readMcpResult(input: ReadMcpResultInput, options: McpOutpu
       if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) throw new Error("offset must be a non-negative integer and limit a positive integer");
       const maxBytes = Math.max(1, (options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES) - 256);
       const maxLines = Math.max(1, (options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES) - 1);
-      let total = 0, bytes = 0, lines = 1;
-      let page = "";
-      let finished = false;
-      // The decoder never splits a pair across chunks; walk code points only inside the page.
-      for await (const chunk of createReadStream(ref, { encoding: "utf8" }) as AsyncIterable<string>) {
-        const start = Math.max(0, offset - total);
-        if (!finished && start < chunk.length) {
-          if (start > 0 && chunk.codePointAt(start - 1)! > 0xffff) throw new Error("offset must not split a Unicode surrogate pair");
-          for (const char of chunk.slice(start)) {
-            const nextBytes = bytes + byteLength(char);
-            const nextLines = lines + (char === "\n" ? 1 : 0);
-            if (page && (nextBytes > maxBytes || nextLines > maxLines || page.length + char.length > limit)) { finished = true; break; }
-            page += char; bytes = nextBytes; lines = nextLines;
-          }
-        }
-        total += chunk.length;
-      }
+      const { page, total } = await readPlainResult(ref, offset, limit, maxBytes, maxLines);
       const end = offset + page.length;
       const nextOffset = end < total ? end : null;
       return { content: [{ type: "text" as const, text: page }, ...(nextOffset !== null ? [{ type: "text" as const, text: `[MCP result page: ${offset}–${end} of ${total} characters. Continue with offset: ${end}.]` }] : [])], details: { ref, offset, nextOffset, totalCharacters: total } };
