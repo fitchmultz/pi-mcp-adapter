@@ -129,6 +129,23 @@ export async function verifyNativeTools(packageRoot) {
     sessions.splice(sessions.indexOf(session), 1);
     session = await make({ manager });
     assert.ok(session.getCallableToolNames().includes("local_echo"), "initial SDK resume restores selection despite native gap");
+    await run(session, "mcp_search", { enable: ["gateway", "script"] });
+    const historyText = "native é😀\n".repeat(30_000);
+    const spilled = await run(session, "mcp_script", { code: 'emit("native é😀\\n".repeat(30_000));' });
+    const ref = spilled.details.outputGuard.fullOutputPath;
+    for (const offset of [0, 220_000, 11_000]) {
+      const page = await run(session, "mcp", { action: "read-result", ref, offset, limit: 110 });
+      assert.equal(page.content[0].text, historyText.slice(offset, offset + 110));
+      assert.equal(page.details.totalCharacters, historyText.length);
+      assert.equal(page.details.nextOffset, offset + 110);
+    }
+    const scriptPage = await run(session, "mcp_script", { code: `const page = await tools.readResult({ref:${JSON.stringify(ref)},offset:220000,limit:110}); emit(page.content[0].text);` });
+    assert.equal(scriptPage.content[0].text, historyText.slice(220_000, 220_110));
+    await writeFile(ref, "redacted é😀");
+    const redactedPage = await run(session, "mcp", { action: "read-result", ref });
+    assert.equal(redactedPage.content[0].text, "redacted é😀");
+    assert.equal(redactedPage.details.totalCharacters, "redacted é😀".length);
+    console.log("[native-tools] registered gateway + script saved plain-output pages and rewrite invalidation passed");
     const pending = run(session, "native_probe", { value: "hold" });
     await started;
     await session.abort(); await pending;

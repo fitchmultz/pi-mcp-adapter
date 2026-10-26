@@ -1,9 +1,10 @@
-import { appendFileSync, createReadStream, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createReadStream, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline";
 import type { UiSessionMessages } from "./types.ts";
+import { appendPlainOutput } from "./plain-result-reader.ts";
 
 type Category = "prompts" | "intents" | "notifications";
 type Message = string | UiSessionMessages["intents"][number];
@@ -29,7 +30,7 @@ export function createUiMessageHistory(outputDirectory?: string) {
         }
         const line = JSON.stringify({ category, value }) + "\n";
         // ponytail: synchronous append owns acceptance order; upgrade to an awaited serial writer if local disk latency becomes material.
-        appendFileSync(messages.historyRef, line, { flush: true });
+        appendPlainOutput(messages.historyRef, line);
         messages.historyBytes! += Buffer.byteLength(line);
         messages.historyCount!++;
         return undefined;
