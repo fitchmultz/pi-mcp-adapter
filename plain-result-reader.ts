@@ -1,10 +1,11 @@
 import { appendFileSync, fstatSync, realpathSync, statSync, type BigIntStats } from "node:fs";
+import { createHash, type Hash } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
-import { open } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
 import { byteLength } from "./mcp-output-preview.ts";
 
 type Point = { bytes: number; characters: number };
-type Index = { revision: BigIntStats; total: number; points: Point[]; stride: number };
+type Index = { revision: BigIntStats; total: number; points: Point[]; stride: number; digest: string; hasher: Hash };
 type Progress = Index & { cacheable: boolean };
 const indexes = new Map<string, Index>();
 const readers = new Map<string, Set<Progress>>();
@@ -14,6 +15,20 @@ const MAX_POINTS = 1024;
 function sameRevision(a: BigIntStats, b: BigIntStats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size
     && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+}
+
+/** Raw full-content SHA-256. Returns "" on a short read so a truncated verify never matches. */
+async function digestOf(file: FileHandle, size: number): Promise<string> {
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let position = 0;
+  while (position < size) {
+    const { bytesRead } = await file.read(buffer, 0, Math.min(buffer.length, size - position), position);
+    if (!bytesRead) return "";
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  return hash.digest("hex");
 }
 
 function checkpoint(index: Index, point: Point) {
@@ -32,6 +47,9 @@ function remember(ref: string, index: Index) {
 }
 
 function extend(index: Index, after: BigIntStats, text: string) {
+  // Clone before updating so a shared cached hasher never advances.
+  index.hasher = index.hasher.copy();
+  index.hasher.update(text, "utf8");
   let position = Number(index.revision.size);
   checkpoint(index, { bytes: position, characters: index.total });
   // Index only the accepted delta, keeping checkpoints on complete UTF-8 code points.
@@ -44,6 +62,7 @@ function extend(index: Index, after: BigIntStats, text: string) {
   }
   index.total += text.length;
   index.revision = after;
+  index.digest = index.hasher.copy().digest("hex");
 }
 
 /** Only the native, synchronous history writer can certify an append. External changes invalidate. */
@@ -83,14 +102,26 @@ export async function readPlainResult(ref: string, offset: number, limit: number
       // Pair snapshot registration/validation with the synchronous writer without yielding between them.
       const revision = fstatSync(file.fd, { bigint: true });
       const cached = indexes.get(ref);
-      const valid = cached && sameRevision(cached.revision, revision) ? cached : undefined;
-      if (!valid) indexes.delete(ref);
-      const index: Index = valid ?? { revision, total: 0, points: [{ bytes: 0, characters: 0 }], stride: 64 * 1024 };
+      const matched = cached !== undefined && sameRevision(cached.revision, revision);
+      const fresh: Index = { revision, total: 0, points: [{ bytes: 0, characters: 0 }],
+        stride: 64 * 1024, digest: "", hasher: createHash("sha256") };
+      let index: Index = matched ? cached! : fresh;
       // Append characters stay relative until the cold scan knows the opened prefix's total.
-      progress = { revision, total: 0, points: [{ bytes: Number(revision.size), characters: 0 }], stride: index.stride, cacheable: true };
+      progress = { revision, total: 0, points: [{ bytes: Number(revision.size), characters: 0 }],
+        stride: index.stride, cacheable: true, digest: "", hasher: index.hasher.copy() };
       const active = readers.get(ref) ?? new Set<Progress>();
       active.add(progress);
       readers.set(ref, active);
+      // Matching stat fields are not an immutability proof: verify the cached digest against current
+      // bytes. Registering the snapshot first keeps live appends paired during the verification read.
+      let valid: Index | undefined = matched ? cached : undefined;
+      if (valid && valid.digest !== (await digestOf(file, Number(revision.size)))) {
+        indexes.delete(ref);
+        valid = undefined;
+        index = fresh;
+        progress.hasher = createHash("sha256");
+        progress.stride = fresh.stride;
+      }
       let point = index.points[0]!;
       if (valid) {
         for (const candidate of index.points) {
@@ -111,6 +142,7 @@ export async function readPlainResult(ref: string, offset: number, limit: number
           readPosition += bytesRead;
           const chunk = decoder.write(buffer.subarray(0, bytesRead)) + (readPosition === Number(revision.size) ? decoder.end() : "");
           if (!valid) {
+            progress.hasher.update(buffer.subarray(0, bytesRead));
             checkpoint(index, { bytes: position, characters: total });
             // Invalid/incomplete UTF8 can re-decode differently after append. Keep the full-scan fallback.
             if (chunk.includes("\ufffd")) cacheable = false;
@@ -135,7 +167,8 @@ export async function readPlainResult(ref: string, offset: number, limit: number
       if (!valid) index.total = total;
       // Serve the opened prefix; retain verified append checkpoints for the next read.
       if (cacheable && progress.cacheable) {
-        const next = { ...index, revision: progress.revision, total: index.total + progress.total, points: [...index.points] };
+        const next: Index = { ...index, revision: progress.revision, total: index.total + progress.total,
+          points: [...index.points], digest: progress.hasher.copy().digest("hex"), hasher: progress.hasher };
         for (const point of progress.points) checkpoint(next, { bytes: point.bytes, characters: index.total + point.characters });
         remember(ref, next);
       }
