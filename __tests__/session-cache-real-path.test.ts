@@ -3,13 +3,15 @@ import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import MiniSearch from "minisearch";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { computeServerHash } from "../metadata-cache.ts";
 
 const original = { HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, MCP_DIRECT_TOOLS: process.env.MCP_DIRECT_TOOLS };
 const roots: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const [key, value] of Object.entries(original)) {
     if (value === undefined) delete process.env[key]; else process.env[key] = value;
   }
@@ -66,6 +68,43 @@ async function harness(
   await session.bindExtensions({ mode: "print", onError: error => errors.push(error.error) });
   await new Promise(resolve => setImmediate(resolve));
   return { root, session, first, second, errors, cachePath, cache, configPath, definition };
+}
+
+async function liveCatalogHarness() {
+  const h = await harness();
+  const callsPath = join(h.root, "catalog-calls.txt");
+  const definition = {
+    command: process.execPath,
+    args: [resolve("__tests__/fixtures/search-catalog-server.mjs"), join(h.root, "catalog-phase"), callsPath],
+    lifecycle: "lazy" as const,
+    directTools: true,
+  };
+  const configure = async (server: object) => {
+    await writeFile(h.configPath, JSON.stringify({ mcpServers: { demo: server }, settings: { sampling: false, elicitation: false } }));
+    await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
+  };
+  await writeFile(`${h.cachePath}.replacement`, JSON.stringify({ version: 2, servers: {} }));
+  await rename(`${h.cachePath}.replacement`, h.cachePath);
+  await configure(definition);
+  let id = 0;
+  const run = async (name: string, params: Record<string, unknown>) => {
+    const tool = h.session.agent.state.tools.find(candidate => candidate.name === name);
+    if (!tool) throw new Error(`Pi tool ${name} is not active`);
+    return tool.execute(`catalog-${++id}`, params);
+  };
+  return { ...h, callsPath, definition, configure, run };
+}
+
+function matchedTools(result: { details: Record<string, unknown> }): string[] {
+  return (result.details.matches as Array<{ tool: string }>).map(match => match.tool);
+}
+
+function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
+  return result.content.filter(item => item.type === "text").map(item => item.text).join("\n");
+}
+
+function resourceUris(result: { details: Record<string, unknown> }): string[] {
+  return (result.details.items as Array<{ uri: string }>).map(item => item.uri);
 }
 
 function liveServers(lifecycle: "eager" | "lazy") {
@@ -249,4 +288,59 @@ describe("cached tool surface through Pi SessionManager", () => {
       h.session.dispose();
     }
   });
+});
+
+describe("live catalog through Pi and MCP stdio", () => {
+  it("keeps repeated calls and searches current across list changes, reconnect and config reload", async () => {
+    const add = vi.spyOn(MiniSearch.prototype, "add");
+    const h = await liveCatalogHarness();
+    const search = (query: string) => h.run("mcp_search", { query, server: "demo", enable: ["gateway"] });
+    const resources = () => h.run("mcp", { action: "resources", server: "demo" });
+    try {
+      expect(matchedTools(await search("saffron"))).toEqual(["demo_probe"]);
+      expect(matchedTools(await search("indigo"))).toEqual([]);
+      expect(matchedTools(await search("advance"))).toEqual(["demo_advance"]);
+      expect(add).toHaveBeenCalled();
+      add.mockClear();
+      expect(resultText(await h.run("demo_probe", { value: "first" }))).toContain("probe 0");
+      expect(matchedTools(await search("saffron"))).toEqual(["demo_probe"]);
+      expect(add).not.toHaveBeenCalled();
+      expect(resultText(await h.run("mcp", { action: "call", server: "demo", tool: "probe", args: {} }))).toContain("probe 0");
+      expect(resourceUris(await resources())).toEqual(["fixture://old"]);
+      expect(resultText(await h.run("mcp", { action: "read-resource", server: "demo", uri: "fixture://old" }))).toContain("resource 0");
+      expect(matchedTools(await search("saffron"))).toEqual(["demo_probe"]);
+      expect(add).not.toHaveBeenCalled();
+
+      expect(resultText(await h.run("mcp", { action: "call", server: "demo", tool: "advance", args: {} }))).toContain("catalog updated");
+      await expect.poll(async () => matchedTools(await search("quartz")), { timeout: 10000 }).toEqual(["demo_probe"]);
+      expect(add).toHaveBeenCalled();
+      await expect.poll(async () => resourceUris(await resources()), { timeout: 10000 }).toEqual(["fixture://new"]);
+      expect(matchedTools(await search("saffron"))).toEqual([]);
+      expect(matchedTools(await search("indigo"))).toEqual(["demo_hidden"]);
+      expect(h.session.getAllTools().find(tool => tool.name === "demo_probe")?.parameters)
+        .toMatchObject({ properties: { value: { description: "quartz" } } });
+      expect(resultText(await h.run("demo_probe", { value: "second" }))).toContain("probe 1");
+      expect(resultText(await h.run("mcp", { action: "read-resource", server: "demo", uri: "fixture://new" }))).toContain("resource 1");
+
+      expect((await h.run("mcp", { action: "connect", server: "demo" })).details.error).toBeUndefined();
+      expect(matchedTools(await search("quartz"))).toEqual(["demo_probe"]);
+      expect(resourceUris(await resources())).toEqual(["fixture://new"]);
+
+      const callsBeforeDenial = await readFile(h.callsPath, "utf8");
+      await h.configure({
+        ...h.definition, toolPrefix: "none", includeTools: ["probe", "hidden", "read_reference"],
+        excludeTools: ["hidden"], exposeResources: false, approveTools: ["probe"],
+      });
+      expect(matchedTools(await search("quartz"))).toEqual(["probe"]);
+      expect(matchedTools(await search("indigo"))).toEqual([]);
+      expect(matchedTools(await search("advance"))).toEqual([]);
+      expect(resourceUris(await resources())).toEqual([]);
+      expect((await h.run("probe", { value: "denied" })).details.error).toBe("approval_required");
+      expect(await readFile(h.callsPath, "utf8")).toBe(callsBeforeDenial);
+    } finally {
+      await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      h.session.dispose();
+    }
+    expect(h.errors).toEqual([]);
+  }, 30000);
 });
