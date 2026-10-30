@@ -156,14 +156,14 @@ async function openHost(options: {
       teardownStarted.resolve();
     },
   };
-  const respondToTeardowns = (error?: string) => {
+  const respondToTeardowns = (error?: { code: number; message: string }) => {
     for (const request of teardowns) {
       if (request.answered) continue;
       request.answered = true;
       dispatchWindow("message", {
         source: appWindow,
         data: error
-          ? { jsonrpc: "2.0", id: request.id, error: { code: -32603, message: error } }
+          ? { jsonrpc: "2.0", id: request.id, error }
           : { jsonrpc: "2.0", id: request.id, result: {} },
       });
     }
@@ -198,9 +198,11 @@ async function openHost(options: {
   class LiveEventSource {
     readonly connected = Promise.withResolvers<void>();
     readonly completed = Promise.withResolvers<{ reason: string }>();
+    readonly interrupted = Promise.withResolvers<void>();
     readonly listeners = new Map<string, Array<(event: { data: string }) => void>>();
     readonly request: http.ClientRequest;
     closed = false;
+    terminalEvents = 0;
     onerror?: () => void;
 
     constructor(path: string) {
@@ -224,15 +226,14 @@ async function openHost(options: {
             if (name && data !== undefined) this.dispatch(name, data);
           }
         });
-        response.on("end", () => {
-          if (!this.closed) this.onerror?.();
-        });
+        response.on("end", () => this.reportInterruption());
+        response.on("error", () => this.reportInterruption());
         this.connected.resolve();
       });
       this.request.on("error", (error) => {
         if (!this.closed) {
           this.connected.reject(error);
-          this.onerror?.();
+          this.reportInterruption();
         }
       });
     }
@@ -243,9 +244,23 @@ async function openHost(options: {
       this.listeners.set(name, listeners);
     }
 
-    dispatch(name: string, data: string): void {
+    private dispatch(name: string, data: string): void {
       for (const listener of this.listeners.get(name) ?? []) listener({ data });
-      if (name === "session-complete") this.completed.resolve(JSON.parse(data) as { reason: string });
+      if (name === "session-complete") {
+        this.terminalEvents += 1;
+        this.completed.resolve(JSON.parse(data) as { reason: string });
+      }
+    }
+
+    private reportInterruption(): void {
+      if (this.closed) return;
+      this.onerror?.();
+      this.interrupted.resolve();
+    }
+
+    disconnect(): Promise<void> {
+      this.request.destroy();
+      return this.interrupted.promise;
     }
 
     close(): void {
@@ -343,7 +358,6 @@ it("stops heartbeats immediately when the server replaces the session", async ()
   expect(host.requests("/proxy/ui/heartbeat")).toHaveLength(1);
   expect(host.eventSource.closed).toBe(true);
 
-  host.eventSource.dispatch("session-complete", JSON.stringify({ reason: "replaced" }));
   host.element("done-btn").click();
   host.element("cancel-btn").click();
   expect(host.teardowns).toHaveLength(1);
@@ -380,6 +394,40 @@ it.each(["done", "cancel"] as const)(
     await completion;
     expect(host.teardowns).toHaveLength(1);
     expect(host.closeAttempts()).toBe(1);
+  },
+);
+
+it.each(["done", "cancel"] as const)(
+  "finishes %s through its POST after the SSE connection is interrupted",
+  async (reason) => {
+    const host = await openHost();
+    await host.eventSource.disconnect();
+    expect(host.eventSource.request.destroyed).toBe(true);
+    expect(host.eventSource.closed).toBe(false);
+    expect(host.element("status").textContent).toBe("Connection lost");
+
+    host.clock.advance(10_000);
+    await host.settleRequests();
+    expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual([200]);
+
+    const completion = host.element(`${reason}-btn`).click();
+    await host.teardownStarted;
+    await host.settleRequests();
+    expect(host.completions).toEqual([reason]);
+    expect(host.requests("/proxy/ui/complete").map((request) => request.status)).toEqual([200]);
+    expect(host.eventSource.terminalEvents).toBe(0);
+    expect(host.eventSource.closed).toBe(true);
+    expect(host.teardowns).toHaveLength(1);
+
+    host.clock.advance(30_000);
+    await host.settleRequests();
+    expect(host.requests("/proxy/ui/heartbeat")).toHaveLength(1);
+    host.respondToTeardowns();
+    await completion;
+    await host.element(`${reason}-btn`).click();
+    expect(host.requests("/proxy/ui/complete")).toHaveLength(1);
+    expect(host.teardowns).toHaveLength(1);
+    await expectCompletionFallback(host);
   },
 );
 
@@ -432,10 +480,11 @@ it("reports a failed completion response without replaying an accepted operation
   expect(host.closeAttempts()).toBe(1);
 });
 
-it("keeps active heartbeats and the watchdog across a transient SSE error", async () => {
+it("keeps active heartbeats and the watchdog after the SSE connection is interrupted", async () => {
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
   const host = await openHost();
-  host.eventSource.onerror?.();
+  await host.eventSource.disconnect();
+  expect(host.eventSource.request.destroyed).toBe(true);
   expect(host.element("status").textContent).toBe("Connection lost");
 
   for (let i = 0; i < 7; i += 1) {
@@ -450,16 +499,25 @@ it("keeps active heartbeats and the watchdog across a transient SSE error", asyn
   expect(host.completions).toEqual(["stale"]);
 });
 
-it("finishes after the app rejects teardown", async () => {
+it.each([
+  { code: -32601, message: "Method not found", shouldLog: false },
+  { code: -32603, message: "Teardown rejected", shouldLog: true },
+])("finishes after teardown returns JSON-RPC error $code", async ({ code, message, shouldLog }) => {
   const host = await openHost();
   host.handle.close("replaced");
   await host.eventSource.completed.promise;
   await host.teardownStarted;
-  host.respondToTeardowns("Teardown rejected");
+  host.respondToTeardowns({ code, message });
   await expectCompletionFallback(host);
-  expect(
-    host.consoleErrors.some((args) => args.some((arg) => String(arg).includes("Teardown rejected"))),
-  ).toBe(true);
+  if (shouldLog) {
+    expect(host.consoleErrors).toHaveLength(1);
+    const logged = host.consoleErrors[0]!;
+    expect(logged[0]).toBe("[host] Resource teardown failed:");
+    expect(logged[1]).toEqual(expect.objectContaining({ code }));
+    expect(String(logged[1])).toContain(message);
+  } else {
+    expect(host.consoleErrors).toEqual([]);
+  }
   host.clock.advance(20_000);
   await host.settleRequests();
   expect(host.requests("/proxy/ui/heartbeat")).toHaveLength(0);

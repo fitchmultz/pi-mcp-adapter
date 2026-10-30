@@ -369,7 +369,8 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
       try {
         await bridge.teardownResource({});
       } catch (error) {
-        console.error("[host] Resource teardown failed:", error);
+        // Apps may omit the optional teardown handler.
+        if (error?.code !== -32601) console.error("[host] Resource teardown failed:", error);
       }
       closeOrShowDone();
     };
