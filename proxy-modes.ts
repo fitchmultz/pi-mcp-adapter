@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { Client } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
@@ -1037,7 +1038,8 @@ export async function prepareMcpConnection(state: McpExtensionState, serverName:
     // Use the live descriptor for visibility, filtering, approval, schema and UI hints.
     if (connection.tools) {
       const { metadata } = buildToolMetadata(connection.tools, connection.resources ?? [], definition, serverName, state.config.settings?.toolPrefix ?? "server");
-      state.toolMetadata.set(serverName, metadata);
+      // Search indexes by metadata-array identity, so retain it for unchanged projections.
+      if (!isDeepStrictEqual(state.toolMetadata.get(serverName), metadata)) state.toolMetadata.set(serverName, metadata);
     }
     return { connection, recoverAuthConnection, autoAuthAttempted: () => autoAuthAttempted };
   } catch (error) {
