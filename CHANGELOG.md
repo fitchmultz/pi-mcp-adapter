@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Batch metadata-cache writes across connected servers at startup and shutdown, reducing repeated disk work while preserving on-demand updates.
+- Reuse search indexes after calls when live tool metadata is unchanged; rebuild them when descriptors change.
+- Load the native MCP client SDK on first connection instead of at startup; cached discovery remains available without it.
 - Index saved plain-text output once, then read only the requested page's sparse file window. Native UI history appends, including large events, index only the new text without rescanning the prefix. Keep exact UTF-16 totals, Unicode boundaries and private-directory checks; external edits and incomplete UTF-8 fall back to a fresh scan. The bounded in-memory index retains checkpoints, not output text.
 - Reuse unchanged metadata-cache snapshots and derived tool descriptors across session tool synchronization. Each session and branch still restores its own selections and validates configuration, trust, and server identity.
 - Load Zod and the command, panel, gateway, script and resource modules on first MCP use instead of at extension startup, so sessions that never use MCP skip them. Server initialization modules now load during session start, after cached tools and prompt commands register. Cached tool registration, schemas, commands and first-call behavior are unchanged. Internal types no longer load Zod; the published `./types` entry still exports the same values and types, including the Zod-backed UI stream schemas.
@@ -17,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stop browser-host heartbeats when MCP App sessions complete, and tear down the app once on server or user completion.
+- Mark `mcp_search` schema alternatives as objects so providers requiring explicit object types accept them.
 - Bind cached plain-output page indexes to a SHA-256 digest of the actual file content, verified on every reuse, so a same-size in-place rewrite inside one filesystem timestamp grain can no longer serve stale checkpoints or UTF-16 totals. Verified native appends keep advancing the digest, preserving warm paging after appends; warm reads now cost one raw verification pass plus the sparse page window instead of the window alone.
 - Stream large `mcp_script` output to its spill file while the script runs instead of holding every emitted value in the Pi process, and pause the script worker while the host catches up. Previously, large finite output could exhaust the host heap and abort Pi. The returned preview, saved file, ordering and images are unchanged. Pi processes already running when the adapter updates keep returning `mcp_script` output; one that ran `mcp_script` before the update keeps the earlier in-memory handling until it restarts.
 - Prune recognized expired and future-dated metadata entries during cache saves while preserving configured servers, explicitly supplied entries, and unknown records. Keep fresh disk merges and atomic cache replacement.
