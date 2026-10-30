@@ -381,18 +381,23 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("does not report an unknown outcome when a rejected call times out refreshing its catalog", async () => {
     let lists = 0;
+    let received!: () => void;
+    const arrived = new Promise<void>(resolve => { received = resolve; });
     const f = await fixture(e => {
-      if (e.body.method === "tools/list" && ++lists > 1) return true;
+      if (e.body.method === "tools/list" && ++lists > 1) { received(); return true; }
       if (e.body.method !== "tools/call") return;
       rpcError(e, -32020, 400);
       return true;
     });
-    const { state } = await f.connect({ requestTimeoutMs: 80, retryOnTransportFailure: true });
-    const output = await call(state, "proxy");
+    const { state, connection } = await f.connect({ requestTimeoutMs: 10_000, retryOnTransportFailure: true });
+    connection.definition.requestTimeoutMs = 2_000;
+    const pending = call(state, "proxy");
+    expect(await Promise.race([arrived.then(() => true), pending.then(() => false)])).toBe(true);
+    const output = await pending;
     expect(output.details).toMatchObject({ error: "call_failed", message: expect.stringMatching(/timeout|timed out/i) });
     expect(lists).toBe(2);
     expect(f.calls()).toHaveLength(1);
-  });
+  }, 15_000);
 
   it.each([undefined, {}, { readOnlyHint: false }, { idempotentHint: true }, { readOnlyHint: true }])(
     "uses only explicit replay-safe annotations for transport retry: %j", async annotations => {
