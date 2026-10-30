@@ -16,6 +16,7 @@ import {
   serializePrompts,
   serializeResources,
   serializeTools,
+  type MetadataCache,
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
 import { McpServerManager } from "./server-manager.ts";
@@ -275,41 +276,48 @@ export async function initializeMcp(
   if (initialSignal?.aborted) return state;
   owner.throwIfInactive();
 
-  for (const { name, definition, connection, error } of results) {
-    owner.throwIfInactive();
-    if (error || !connection) {
-      if (initialSignal?.aborted) continue;
-      if (error) recordFailure(state, name, error);
-      const displayError = sanitizeTerminalText(error ?? "Unknown connection failure");
-      if (ui) {
-        ui.notify(`MCP: Failed to connect to ${name}: ${displayError}`, "error");
+  const startupCache: MetadataCacheUpdates = { entries: new Map() };
+  try {
+    for (const { name, definition, connection, error } of results) {
+      owner.throwIfInactive();
+      if (error || !connection) {
+        if (initialSignal?.aborted) continue;
+        saveMetadataCacheUpdates(state, startupCache);
+        if (error) recordFailure(state, name, error);
+        const displayError = sanitizeTerminalText(error ?? "Unknown connection failure");
+        if (ui) {
+          ui.notify(`MCP: Failed to connect to ${name}: ${displayError}`, "error");
+        }
+        console.error(`MCP: Failed to connect to ${name}: ${displayError}`);
+        continue;
       }
-      console.error(`MCP: Failed to connect to ${name}: ${displayError}`);
-      continue;
-    }
 
-    const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
-    toolMetadata.set(name, metadata);
-    resourceCounts.set(name, connection.resources.length);
-    if (!connection.promptDiscoveryFailed) {
-      promptMetadata.set(name, reconstructPromptMetadata(name, connection.prompts ?? [], prefix, definition));
-      promptMetadataLive.add(name);
-    }
-    if (connection.instructions) {
-      serverInstructions.set(name, connection.instructions);
-    } else {
-      serverInstructions.delete(name);
-    }
-    updateMetadataCache(state, name);
-    notifyToolMetadataUpdated(state, name, "startup");
-    markKeepAliveAfterConnect(state, name);
+      const { metadata, failedTools } = buildToolMetadata(connection.tools, connection.resources, definition, name, prefix);
+      toolMetadata.set(name, metadata);
+      resourceCounts.set(name, connection.resources.length);
+      if (!connection.promptDiscoveryFailed) {
+        promptMetadata.set(name, reconstructPromptMetadata(name, connection.prompts ?? [], prefix, definition));
+        promptMetadataLive.add(name);
+      }
+      if (connection.instructions) {
+        serverInstructions.set(name, connection.instructions);
+      } else {
+        serverInstructions.delete(name);
+      }
+      collectMetadataCacheUpdate(state, name, startupCache);
+      notifyToolMetadataUpdated(state, name, "startup");
+      markKeepAliveAfterConnect(state, name);
 
-    if (failedTools.length > 0 && ui) {
-      ui.notify(
-        `MCP: ${name} - ${failedTools.length} tools skipped`,
-        "warning"
-      );
+      if (failedTools.length > 0 && ui) {
+        saveMetadataCacheUpdates(state, startupCache);
+        ui.notify(
+          `MCP: ${name} - ${failedTools.length} tools skipped`,
+          "warning"
+        );
+      }
     }
+  } finally {
+    saveMetadataCacheUpdates(state, startupCache);
   }
 
   const connectedCount = results.filter(r => r.connection).length;
@@ -438,9 +446,15 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
   }
 }
 
-export function updateMetadataCache(
+type MetadataCacheUpdates = {
+  entries: Map<string, ServerCacheEntry>;
+  existing?: MetadataCache | null;
+};
+
+function collectMetadataCacheUpdate(
   state: McpExtensionState,
   serverName: string,
+  updates: MetadataCacheUpdates,
   options: { preserveEmptyResources?: boolean } = {},
 ): void {
   const connection = state.manager.getConnection(serverName);
@@ -450,8 +464,8 @@ export function updateMetadataCache(
   if (!definition || isServerDisabled(definition)) return;
 
   const configHash = computeServerHash(definition);
-  const existing = loadMetadataCache(state.metadataCacheEnabled);
-  const existingEntry = existing?.servers?.[serverName];
+  if (updates.existing === undefined) updates.existing = loadMetadataCache(state.metadataCacheEnabled);
+  const existingEntry = updates.existing?.servers?.[serverName];
 
   const tools = serializeTools(connection.tools);
   let resources = definition.exposeResources === false ? [] : serializeResources(connection.resources);
@@ -478,7 +492,25 @@ export function updateMetadataCache(
     cachedAt: Date.now(),
   };
 
-  saveMetadataCache({ version: 1, servers: { [serverName]: entry } }, state.metadataCacheEnabled, Object.keys(state.config.mcpServers));
+  updates.entries.set(serverName, entry);
+}
+
+function saveMetadataCacheUpdates(state: McpExtensionState, updates: MetadataCacheUpdates): void {
+  if (updates.entries.size === 0) return;
+  const servers = Object.fromEntries(updates.entries);
+  updates.entries.clear();
+  delete updates.existing;
+  saveMetadataCache({ version: 1, servers }, state.metadataCacheEnabled, Object.keys(state.config.mcpServers));
+}
+
+export function updateMetadataCache(
+  state: McpExtensionState,
+  serverName: string,
+  options: { preserveEmptyResources?: boolean } = {},
+): void {
+  const updates: MetadataCacheUpdates = { entries: new Map() };
+  collectMetadataCacheUpdate(state, serverName, updates, options);
+  saveMetadataCacheUpdates(state, updates);
 }
 
 export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: string, reason: string): void {
@@ -497,10 +529,15 @@ export function notifyToolMetadataUpdated(state: McpExtensionState, serverName: 
 }
 
 export function flushMetadataCache(state: McpExtensionState): void {
-  for (const [name, connection] of state.manager.getAllConnections()) {
-    if (connection.status === "connected") {
-      updateMetadataCache(state, name);
+  const updates: MetadataCacheUpdates = { entries: new Map() };
+  try {
+    for (const [name, connection] of state.manager.getAllConnections()) {
+      if (connection.status === "connected") {
+        collectMetadataCacheUpdate(state, name, updates);
+      }
     }
+  } finally {
+    saveMetadataCacheUpdates(state, updates);
   }
 }
 

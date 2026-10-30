@@ -1,4 +1,6 @@
 import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +27,11 @@ afterEach(async () => {
   }
 });
 
-async function harness(cachedAt = Date.now()) {
+async function harness(
+  cachedAt = Date.now(),
+  extensionPath = resolve("index.ts"),
+  initialServers?: Record<string, { command: string; args: string[]; lifecycle: "eager" | "lazy" }>,
+) {
   const root = await mkdtemp(join(tmpdir(), "mcp-session-cache-real-"));
   roots.push(root);
   const agentDir = join(root, "agent");
@@ -37,7 +43,7 @@ async function harness(cachedAt = Date.now()) {
   const definition = { command: "synthetic-never-started", lifecycle: "lazy" as const, directTools: ["pinned"] };
   const cachePath = join(adapterDir, "mcp-cache.json");
   const configPath = join(adapterDir, "mcp.json");
-  await writeFile(configPath, JSON.stringify({ mcpServers: { demo: definition }, settings: { sampling: false, elicitation: false } }));
+  await writeFile(configPath, JSON.stringify({ mcpServers: initialServers ?? { demo: definition }, settings: { sampling: false, elicitation: false } }));
   function cache(description: string) {
     return { version: 2, servers: { demo: { configHash: computeServerHash(definition), cachedAt, resources: [], tools: [
       { name: "pinned", description: "Pinned", inputSchema: { type: "object" } },
@@ -46,7 +52,7 @@ async function harness(cachedAt = Date.now()) {
   }
   await writeFile(cachePath, JSON.stringify(cache("original")));
   const settingsManager = SettingsManager.inMemory();
-  const resourceLoader = new DefaultResourceLoader({ cwd: root, agentDir, settingsManager, noExtensions: true, noSkills: true, noPromptTemplates: true, noContextFiles: true, noThemes: true, additionalExtensionPaths: [resolve("index.ts")] });
+  const resourceLoader = new DefaultResourceLoader({ cwd: root, agentDir, settingsManager, noExtensions: true, noSkills: true, noPromptTemplates: true, noContextFiles: true, noThemes: true, additionalExtensionPaths: [extensionPath] });
   await resourceLoader.reload();
   expect(resourceLoader.getExtensions().errors).toEqual([]);
   const modelRuntime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, modelsStorePath: join(agentDir, "models-store.json"), allowModelNetwork: false });
@@ -99,6 +105,19 @@ function resultText(result: { content: Array<{ type: string; text?: string }> })
 
 function resourceUris(result: { details: Record<string, unknown> }): string[] {
   return (result.details.items as Array<{ uri: string }>).map(item => item.uri);
+}
+
+function liveServers(lifecycle: "eager" | "lazy") {
+  const server = (fixture: string) => ({
+    command: process.execPath,
+    args: [resolve("__tests__/fixtures", fixture)],
+    lifecycle,
+  });
+  return {
+    first: server("delayed-mcp-server.mjs"),
+    second: server("prompts-server.mjs"),
+    third: server("output-server.mjs"),
+  };
 }
 
 describe("cached tool surface through Pi SessionManager", () => {
@@ -163,6 +182,100 @@ describe("cached tool surface through Pi SessionManager", () => {
       h.session.dispose();
     }
   });
+
+  it("persists an eager startup cohort in one replacement", async () => {
+    const servers = liveServers("eager");
+    const names = Object.keys(servers);
+    let replacements = 0;
+    let track = true;
+    const originalRename = fs.renameSync;
+    fs.renameSync = ((from, to) => {
+      const cachePath = join(process.env.PI_CODING_AGENT_DIR ?? "", "fitch-mcp-adapter", "mcp-cache.json");
+      if (track && String(to) === cachePath) replacements++;
+      return originalRename(from, to);
+    }) as typeof fs.renameSync;
+    syncBuiltinESMExports();
+    let h: Awaited<ReturnType<typeof harness>> | undefined;
+    try {
+      h = await harness(Date.now(), resolve("dist/index.js"), servers);
+      await expect.poll(async () => {
+        const stored = JSON.parse(await readFile(h!.cachePath, "utf8"));
+        return names.map(name => stored.servers[name]?.tools?.[0]?.name);
+      }, { timeout: 15_000 }).toEqual(["reload_identity", "noop", "echo"]);
+      track = false;
+      const stored = JSON.parse(await readFile(h.cachePath, "utf8"));
+      expect(stored.servers.second.prompts.map((prompt: { name: string }) => prompt.name)).toEqual(["brief", "haiku"]);
+      expect(stored.servers.third.resources).toMatchObject([{ name: "large", uri: "test://large" }]);
+      expect(h.errors).toEqual([]);
+      expect(replacements).toBe(1);
+    } finally {
+      track = false;
+      fs.renameSync = originalRename;
+      syncBuiltinESMExports();
+      if (h) {
+        await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+        h.session.dispose();
+      }
+    }
+  }, 30_000);
+
+  it("persists all connected server metadata in one shutdown replacement", async () => {
+    const h = await harness(Date.now(), resolve("dist/index.js"));
+    const servers = liveServers("lazy");
+    const expectedTools = { first: "reload_identity", second: "noop", third: "echo" };
+    const names = Object.keys(servers);
+    let shutdown = false;
+    try {
+      await writeFile(h.configPath, JSON.stringify({
+        mcpServers: servers,
+        settings: { sampling: false, elicitation: false },
+      }));
+      await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
+      await new Promise(resolve => setImmediate(resolve));
+      const proxy = h.session.agent.state.tools.find(tool => tool.name === "mcp");
+      expect(proxy).toBeDefined();
+      for (const name of names) {
+        const result = await proxy!.execute(`connect-${name}`, { action: "connect", server: name });
+        expect(result.details?.error).toBeUndefined();
+      }
+
+      const cache = JSON.parse(await readFile(h.cachePath, "utf8"));
+      for (const name of names) cache.servers[name].tools = [{ name: "stale" }];
+      cache.servers.second.prompts = [{ name: "stale" }];
+      cache.servers.third.resources = [{ name: "stale", uri: "test://stale" }];
+      cache.servers.external = { futureFormat: true };
+      await writeFile(`${h.cachePath}.replacement`, JSON.stringify(cache));
+      await rename(`${h.cachePath}.replacement`, h.cachePath);
+
+      let replacements = 0;
+      const originalRename = fs.renameSync;
+      fs.renameSync = ((from, to) => {
+        if (String(to) === h.cachePath) replacements++;
+        return originalRename(from, to);
+      }) as typeof fs.renameSync;
+      syncBuiltinESMExports();
+      try {
+        shutdown = true;
+        await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      } finally {
+        fs.renameSync = originalRename;
+        syncBuiltinESMExports();
+      }
+
+      const stored = JSON.parse(await readFile(h.cachePath, "utf8"));
+      for (const [name, expectedTool] of Object.entries(expectedTools)) {
+        expect(stored.servers[name].tools.map((tool: { name: string }) => tool.name)).toEqual([expectedTool]);
+      }
+      expect(stored.servers.second.prompts.map((prompt: { name: string }) => prompt.name)).toEqual(["brief", "haiku"]);
+      expect(stored.servers.third.resources).toMatchObject([{ name: "large", uri: "test://large" }]);
+      expect(stored.servers.external).toEqual({ futureFormat: true });
+      expect(h.errors).toEqual([]);
+      expect(replacements).toBe(1);
+    } finally {
+      if (!shutdown) await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      h.session.dispose();
+    }
+  }, 30_000);
 
   it("does not advertise future-dated metadata as a known capability", async () => {
     const h = await harness(Date.now() + 86400000);
