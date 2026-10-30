@@ -186,6 +186,7 @@ describe("live catalog through Pi and MCP stdio", () => {
     try {
       expect(matchedTools(await search("saffron"))).toEqual(["demo_probe"]);
       expect(matchedTools(await search("indigo"))).toEqual([]);
+      expect(matchedTools(await search("advance"))).toEqual(["demo_advance"]);
       expect(add).toHaveBeenCalled();
       add.mockClear();
       expect(resultText(await h.run("demo_probe", { value: "first" }))).toContain("probe 0");
@@ -214,11 +215,12 @@ describe("live catalog through Pi and MCP stdio", () => {
 
       const callsBeforeDenial = await readFile(h.callsPath, "utf8");
       await h.configure({
-        ...h.definition, toolPrefix: "none", includeTools: ["probe", "advance", "hidden", "read_reference"],
+        ...h.definition, toolPrefix: "none", includeTools: ["probe", "hidden", "read_reference"],
         excludeTools: ["hidden"], exposeResources: false, approveTools: ["probe"],
       });
       expect(matchedTools(await search("quartz"))).toEqual(["probe"]);
       expect(matchedTools(await search("indigo"))).toEqual([]);
+      expect(matchedTools(await search("advance"))).toEqual([]);
       expect(resourceUris(await resources())).toEqual([]);
       expect((await h.run("probe", { value: "denied" })).details.error).toBe("approval_required");
       expect(await readFile(h.callsPath, "utf8")).toBe(callsBeforeDenial);
