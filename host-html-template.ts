@@ -350,11 +350,6 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
         bridge.setHostContext(JSON.parse(event.data));
       } catch {}
     });
-    eventSource.addEventListener("session-complete", async () => {
-      await bridge.teardownResource({}).catch(() => {});
-      eventSource.close();
-      closeOrShowDone();
-    });
     eventSource.onerror = () => {
       setStatus("Connection lost", true);
     };
@@ -363,18 +358,35 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
       post("/proxy/ui/heartbeat", {}).catch(() => {});
     }, 10000);
 
-    const complete = async (reason) => {
-      try {
-        await post("/proxy/ui/complete", { reason });
-      } catch {}
-      try {
-        await bridge.teardownResource({});
-      } catch {}
+    let completionRequested = false;
+    let finished = false;
+    const finish = async () => {
+      if (finished) return;
+      finished = true;
       clearInterval(heartbeat);
       eventSource.close();
+
+      try {
+        await bridge.teardownResource({});
+      } catch (error) {
+        // Apps may omit the optional teardown handler.
+        if (error?.code !== -32601) console.error("[host] Resource teardown failed:", error);
+      }
       closeOrShowDone();
     };
 
+    const complete = async (reason) => {
+      if (completionRequested || finished) return;
+      completionRequested = true;
+      try {
+        await post("/proxy/ui/complete", { reason });
+      } catch (error) {
+        console.error("[host] Session completion failed:", error);
+      }
+      await finish();
+    };
+
+    eventSource.addEventListener("session-complete", finish);
     doneBtn.addEventListener("click", () => complete("done"));
     cancelBtn.addEventListener("click", () => complete("cancel"));
     window.addEventListener("keydown", (event) => {
