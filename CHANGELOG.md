@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Add a reusable release gate that exercises the retained npm candidate's native SDK, CLI, MCP tools and published types against the selected official and fork host graphs.
+
 ### Fixed
 
 - Keep the locked development Pi packages on one current official cohort so a clean install can run the native SDK tests. The Pi 1.0 support floor and optional runtime peers are unchanged.
