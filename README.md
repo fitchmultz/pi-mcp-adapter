@@ -6,14 +6,14 @@ Connect [Pi](https://github.com/earendil-works/pi) to MCP servers for browsers, 
 
 ## Install
 
-Use Pi 1.0.0 or later and Node.js 24 or later.
+Check the [Pi and Node.js requirements](https://github.com/fitchmultz/pi-mcp-adapter/blob/main/docs/reference.md#requirements).
 
 ```bash
 pi install npm:@fitchmultz/pi-mcp-adapter
 pi
 ```
 
-Restart Pi if it was open during installation. Load only one adapter per Pi host. For pre-v5 state, read the [upgrade guide](docs/migration.md) before you restart Pi.
+Restart Pi if it was open during installation. Load only one adapter per Pi host. For legacy adapter state, read the [upgrade guide](docs/migration.md) before you restart Pi.
 
 For a Git install, run `pi install git:github.com/fitchmultz/pi-mcp-adapter`.
 
@@ -80,7 +80,7 @@ If App history cannot be saved, reload or exit discards unsaved messages. Retrie
 ## Documentation
 
 - [Reference](docs/reference.md): all settings, tool actions, SDK integration, transport behavior, and limits.
-- [Upgrade guide](docs/migration.md): API changes and pre-v5 state migration.
+- [Upgrade guide](docs/migration.md): API changes and legacy state migration.
 - [Development and releases](docs/development.md): local checks and maintainer procedures.
 - [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/fitchmultz/pi-mcp-adapter/issues)
 

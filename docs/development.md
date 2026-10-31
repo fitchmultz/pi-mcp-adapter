@@ -4,7 +4,7 @@ See [AGENTS.md](../AGENTS.md) for repository test conventions and [.github/workf
 
 ## Local checks
 
-Use the npm version declared in `package.json` (`npm@12.2.0`):
+Use the npm version declared in `package.json`:
 
 ```bash
 npm ci --ignore-scripts --no-audit --no-fund
@@ -20,9 +20,9 @@ For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs
 
 ## Automatic npm releases (maintainers)
 
-Follow the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases): merge a reviewed PR into `main` with an intentional `package.json` version bump and a matching versioned `CHANGELOG.md` section. Once configured and enabled, publication is unattended after the full existing CI workflow (including extras) and candidate-tarball qualification pass. Complete any applicable package-specific release evidence before merging the bump. Automation never bumps versions, overwrites releases, or republishes an existing version; existing manual publisher instructions remain valid.
+The `npm release` workflow uses the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases) to publish an unpublished package version on `main` after the full existing CI workflow (including extras) and candidate-tarball qualification pass. Complete applicable package-specific release evidence and verify the matching npm and GitHub releases; workflow validation is not evidence of a real OIDC publication.
 
-Failed/unpublished candidates can retry daily at 12:17 UTC or via manual dispatch of `npm release` on `main`, without another bump. Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new release plans; cancel pending runs separately when needed. Workflow validation is not evidence of a completed real OIDC publication.
+Failed or unpublished candidates can retry daily at 12:17 UTC or through manual dispatch on `main`, without another bump. Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new release plans; cancel pending runs separately when needed.
 
 ## Pi release qualification
 

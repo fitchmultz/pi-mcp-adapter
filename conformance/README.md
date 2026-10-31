@@ -13,7 +13,7 @@ conformance referee
   -> referee MCP and OAuth servers
 ```
 
-The driver explicitly selects the legacy protocol profile: conformance 0.1.16 has no 2026-07-28 client profile. Modern wire behavior is covered by the real local HTTP tests in `__tests__/sdk-v2-http.test.ts`.
+The driver explicitly selects the legacy protocol profile; see the [referee compatibility details](details.md). Modern wire behavior is covered by the real local HTTP tests in `__tests__/sdk-v2-http.test.ts`.
 
 The `auth/basic-cimd` fixture requires its own document identity, so the driver supplies it through `oauth.clientMetadataUrl`. The adapter still performs native discovery and CIMD selection; no static client ID or substitute provider is used. `__tests__/oauth-cimd.test.ts` separately proves the production shared document's acceptance, PKCE, refresh and MCP use over local HTTP.
 
@@ -23,7 +23,7 @@ The `auth/cross-app-access-complete-flow` driver uses the real `oauth.crossAppAc
 
 The `auth/2025-03-26-oauth-metadata-backcompat` fixture advertises an origin authorization server but returns a path-scoped issuer. That scenario explicitly enables `oauth.skipIssuerMetadataValidation`; it is not evidence of strict-default metadata acceptance. `__tests__/sdk-v2-oauth.test.ts` separately proves strict rejection, explicit opt-out, callback validation, issuer binding, and refresh with the actual SDK.
 
-It covers the four core client scenarios and the full OAuth matrix shipped by conformance 0.1.16, 26 scenarios in total. Scope step-up must finish the client and final tool call, not just pass intermediate checks. `auth/scope-retry-limit` deliberately allows a client error after its bounded retries. The OAuth driver follows the referee's authorization redirect into the adapter's real callback server, then completes the pending flow through `completeAuthFromInput()`.
+It covers the four core client scenarios and the full OAuth matrix shipped by the referee, 26 scenarios in total. Scope step-up must finish the client and final tool call, not just pass intermediate checks. `auth/scope-retry-limit` deliberately allows a client error after its bounded retries. The OAuth driver follows the referee's authorization redirect into the adapter's real callback server, then completes the pending flow through `completeAuthFromInput()`.
 
 ## Run the tests
 
@@ -52,6 +52,6 @@ Current gaps:
 
 | Scenario | Reason |
 | --- | --- |
-| `auth/cross-app-access-complete-flow` | Stable 0.1.16's IdP OIDC document omits required `response_types_supported`, `subject_types_supported` and `id_token_signing_alg_values_supported`; the native SDK rejects it before token exchange. |
+| `auth/cross-app-access-complete-flow` | The referee's IdP OIDC document omits required `response_types_supported`, `subject_types_supported` and `id_token_signing_alg_values_supported`; the native SDK rejects it before token exchange. |
 
 Baseline comments contain the protocol-level details. Do not add a failure caused by the driver, callback-port contention, or test setup.

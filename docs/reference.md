@@ -10,6 +10,10 @@ For installation and a first task, start with the [README](../README.md). This g
 - [Typed discovery and pins](#typed-discovery-and-pinned-tools), [resources](#mcp-resources), [prompts](#mcp-prompts), and [Apps](#mcp-ui-integration)
 - [Gateway actions](#usage), [slash commands](#commands), and [limits](#limitations)
 
+## Requirements
+
+Use Pi 1.0.0 or later and Node.js 24 or later.
+
 ## What happens on first run
 
 The adapter reads standard MCP files automatically. No extra setup needed if you already have them.
