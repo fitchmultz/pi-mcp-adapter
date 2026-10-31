@@ -282,7 +282,6 @@ export async function initializeMcp(
       owner.throwIfInactive();
       if (error || !connection) {
         if (initialSignal?.aborted) continue;
-        saveMetadataCacheUpdates(state, startupCache);
         if (error) recordFailure(state, name, error);
         const displayError = sanitizeTerminalText(error ?? "Unknown connection failure");
         if (ui) {
@@ -309,7 +308,6 @@ export async function initializeMcp(
       markKeepAliveAfterConnect(state, name);
 
       if (failedTools.length > 0 && ui) {
-        saveMetadataCacheUpdates(state, startupCache);
         ui.notify(
           `MCP: ${name} - ${failedTools.length} tools skipped`,
           "warning"
@@ -498,8 +496,6 @@ function collectMetadataCacheUpdate(
 function saveMetadataCacheUpdates(state: McpExtensionState, updates: MetadataCacheUpdates): void {
   if (updates.entries.size === 0) return;
   const servers = Object.fromEntries(updates.entries);
-  updates.entries.clear();
-  delete updates.existing;
   saveMetadataCache({ version: 1, servers }, state.metadataCacheEnabled, Object.keys(state.config.mcpServers));
 }
 

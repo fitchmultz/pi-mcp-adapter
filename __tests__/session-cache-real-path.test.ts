@@ -243,7 +243,8 @@ describe("cached tool surface through Pi SessionManager", () => {
       for (const name of names) cache.servers[name].tools = [{ name: "stale" }];
       cache.servers.second.prompts = [{ name: "stale" }];
       cache.servers.third.resources = [{ name: "stale", uri: "test://stale" }];
-      cache.servers.external = { futureFormat: true };
+      const unrelatedServer = cache.servers.demo;
+      expect(unrelatedServer).toBeDefined();
       await writeFile(`${h.cachePath}.replacement`, JSON.stringify(cache));
       await rename(`${h.cachePath}.replacement`, h.cachePath);
 
@@ -268,7 +269,7 @@ describe("cached tool surface through Pi SessionManager", () => {
       }
       expect(stored.servers.second.prompts.map((prompt: { name: string }) => prompt.name)).toEqual(["brief", "haiku"]);
       expect(stored.servers.third.resources).toMatchObject([{ name: "large", uri: "test://large" }]);
-      expect(stored.servers.external).toEqual({ futureFormat: true });
+      expect(stored.servers.demo).toEqual(unrelatedServer);
       expect(h.errors).toEqual([]);
       expect(replacements).toBe(1);
     } finally {
