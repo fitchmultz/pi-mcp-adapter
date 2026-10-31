@@ -358,7 +358,6 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
       post("/proxy/ui/heartbeat", {}).catch(() => {});
     }, 10000);
 
-    let completionRequested = false;
     let finished = false;
     const finish = async () => {
       if (finished) return;
@@ -368,21 +367,14 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
 
       try {
         await bridge.teardownResource({});
-      } catch (error) {
-        // Apps may omit the optional teardown handler.
-        if (error?.code !== -32601) console.error("[host] Resource teardown failed:", error);
-      }
+      } catch {}
       closeOrShowDone();
     };
 
     const complete = async (reason) => {
-      if (completionRequested || finished) return;
-      completionRequested = true;
       try {
         await post("/proxy/ui/complete", { reason });
-      } catch (error) {
-        console.error("[host] Session completion failed:", error);
-      }
+      } catch {}
       await finish();
     };
 

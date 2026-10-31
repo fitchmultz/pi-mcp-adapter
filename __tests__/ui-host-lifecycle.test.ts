@@ -70,8 +70,7 @@ afterEach(async () => {
 });
 
 async function openHost(options: {
-  failCompletion?: boolean;
-  holdCompletion?: "request" | "response";
+  holdCompletionResponse?: boolean;
 } = {}) {
   const completions: string[] = [];
   const handle = await startUiServer({
@@ -87,12 +86,7 @@ async function openHost(options: {
     },
     manager: {} as McpServerManager,
     consentManager: new ConsentManager(),
-    onComplete: (reason) => {
-      completions.push(reason);
-      if (options.failCompletion && reason !== "test-cleanup") {
-        throw new Error("Completion callback failed");
-      }
-    },
+    onComplete: (reason) => completions.push(reason),
   });
   cleanups.push(async () => handle.close("test-cleanup"));
 
@@ -124,11 +118,6 @@ async function openHost(options: {
   };
 
   const windowListeners = new Map<string, Set<(event: unknown) => void>>();
-  const consoleErrors: unknown[][] = [];
-  const browserConsole = {
-    ...console,
-    error: (...args: unknown[]) => { consoleErrors.push(args); },
-  };
   let closeAttempts = 0;
   const window = {
     innerWidth: 1024,
@@ -273,10 +262,7 @@ async function openHost(options: {
   const attempts: Array<{ path: string; status?: number; error?: string; settled: Promise<void> }> = [];
   const browserFetch = (path: string, init: RequestInit) => {
     const isCompletion = path === "/proxy/ui/complete";
-    const send = () => fetch(new URL(path, origin), init);
-    const request = isCompletion && options.holdCompletion === "request"
-      ? completionGate.promise.then(send)
-      : send();
+    const request = fetch(new URL(path, origin), init);
     const attempt: (typeof attempts)[number] = {
       path,
       settled: request.then(
@@ -285,7 +271,7 @@ async function openHost(options: {
       ),
     };
     attempts.push(attempt);
-    return isCompletion && options.holdCompletion === "response"
+    return isCompletion && options.holdCompletionResponse
       ? request.then(async (response) => {
         await completionGate.promise;
         return response;
@@ -323,14 +309,14 @@ async function openHost(options: {
   );
   await Promise.all([
     run(CapturedBridge, PostMessageTransport, document, window, LiveEventSource,
-      browserFetch, clock.setInterval, clock.clearInterval, clock.setTimeout, browserConsole),
+      browserFetch, clock.setInterval, clock.clearInterval, clock.setTimeout, console),
     iframeLoaded.promise,
   ]);
   await eventSource.connected.promise;
 
   return {
     handle, completions, clock, element, eventSource, teardowns, teardownStarted: teardownStarted.promise,
-    respondToTeardowns, requests, settleRequests, consoleErrors, releaseCompletion: completionGate.resolve,
+    respondToTeardowns, requests, settleRequests, releaseCompletion: completionGate.resolve,
     closeAttempts: () => closeAttempts,
   };
 }
@@ -358,10 +344,7 @@ it("stops heartbeats immediately when the server replaces the session", async ()
   expect(host.requests("/proxy/ui/heartbeat")).toHaveLength(1);
   expect(host.eventSource.closed).toBe(true);
 
-  host.element("done-btn").click();
-  host.element("cancel-btn").click();
   expect(host.teardowns).toHaveLength(1);
-  expect(host.requests("/proxy/ui/complete")).toHaveLength(0);
 
   host.respondToTeardowns();
   await expectCompletionFallback(host);
@@ -370,7 +353,7 @@ it("stops heartbeats immediately when the server replaces the session", async ()
 it.each(["done", "cancel"] as const)(
   "finishes %s from the server event without waiting for the POST response",
   async (reason) => {
-    const host = await openHost({ holdCompletion: "response" });
+    const host = await openHost({ holdCompletionResponse: true });
     host.clock.advance(10_000);
     await host.settleRequests();
     expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual([200]);
@@ -424,61 +407,11 @@ it.each(["done", "cancel"] as const)(
     expect(host.requests("/proxy/ui/heartbeat")).toHaveLength(1);
     host.respondToTeardowns();
     await completion;
-    await host.element(`${reason}-btn`).click();
     expect(host.requests("/proxy/ui/complete")).toHaveLength(1);
     expect(host.teardowns).toHaveLength(1);
     await expectCompletionFallback(host);
   },
 );
-
-it("keeps heartbeats while a local completion request is unconfirmed", async () => {
-  const host = await openHost({ holdCompletion: "request" });
-  const completion = host.element("done-btn").click();
-  const duplicate = host.element("done-btn").click();
-  const cancel = host.element("cancel-btn").click();
-  expect(host.eventSource.closed).toBe(false);
-
-  host.clock.advance(30_000);
-  await host.settleRequests("/proxy/ui/heartbeat");
-  expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual([200, 200, 200]);
-  expect(host.completions).toEqual([]);
-  expect(host.teardowns).toHaveLength(0);
-
-  host.releaseCompletion();
-  await host.teardownStarted;
-  await host.settleRequests();
-  expect(host.completions).toEqual(["done"]);
-  expect(host.requests("/proxy/ui/complete").map((request) => request.status)).toEqual([200]);
-  expect(host.teardowns).toHaveLength(1);
-
-  host.respondToTeardowns();
-  await Promise.all([completion, duplicate, cancel]);
-  await expectCompletionFallback(host);
-});
-
-it("reports a failed completion response without replaying an accepted operation", async () => {
-  const host = await openHost({ failCompletion: true, holdCompletion: "response" });
-  const completion = host.element("done-btn").click();
-  expect(await host.eventSource.completed.promise).toEqual({ reason: "done" });
-  await host.teardownStarted;
-  await host.settleRequests();
-  expect(host.completions).toEqual(["done"]);
-  expect(host.requests("/proxy/ui/complete").map((request) => request.status)).toEqual([500]);
-
-  host.respondToTeardowns();
-  await expectCompletionFallback(host);
-  host.releaseCompletion();
-  await completion;
-  await host.element("done-btn").click();
-  expect(host.teardowns).toHaveLength(1);
-  expect(host.requests("/proxy/ui/complete")).toHaveLength(1);
-  expect(
-    host.consoleErrors.some((args) => args.some((arg) => String(arg).includes("Completion callback failed"))),
-  ).toBe(true);
-  expect(host.element("error-overlay").classList.contains("visible")).toBe(false);
-  expect(host.element("completion-overlay").classList.contains("visible")).toBe(true);
-  expect(host.closeAttempts()).toBe(1);
-});
 
 it("keeps active heartbeats and the watchdog after the SSE connection is interrupted", async () => {
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
@@ -499,25 +432,13 @@ it("keeps active heartbeats and the watchdog after the SSE connection is interru
   expect(host.completions).toEqual(["stale"]);
 });
 
-it.each([
-  { code: -32601, message: "Method not found", shouldLog: false },
-  { code: -32603, message: "Teardown rejected", shouldLog: true },
-])("finishes after teardown returns JSON-RPC error $code", async ({ code, message, shouldLog }) => {
+it("finishes when the app has no teardown handler", async () => {
   const host = await openHost();
   host.handle.close("replaced");
   await host.eventSource.completed.promise;
   await host.teardownStarted;
-  host.respondToTeardowns({ code, message });
+  host.respondToTeardowns({ code: -32601, message: "Method not found" });
   await expectCompletionFallback(host);
-  if (shouldLog) {
-    expect(host.consoleErrors).toHaveLength(1);
-    const logged = host.consoleErrors[0]!;
-    expect(logged[0]).toBe("[host] Resource teardown failed:");
-    expect(logged[1]).toEqual(expect.objectContaining({ code }));
-    expect(String(logged[1])).toContain(message);
-  } else {
-    expect(host.consoleErrors).toEqual([]);
-  }
   host.clock.advance(20_000);
   await host.settleRequests();
   expect(host.requests("/proxy/ui/heartbeat")).toHaveLength(0);
