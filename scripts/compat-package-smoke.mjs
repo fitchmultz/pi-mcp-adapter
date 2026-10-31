@@ -83,7 +83,7 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
   assert.ok(observed.activeTools.includes("mcp_search"));
   for (const name of ["mcp", "mcp-auth"]) assert.ok(observed.commands.includes(name), `CLI command ${name}`);
   await verifyNativeTools(packageRoot);
-  console.log(`[compat-package] ${process.argv[2] ? "Git" : "npm"} install, native SDK reload, and bundled CLI passed`);
+  console.log(`[compat-package] ${process.argv[2] ? "supplied consumer" : "npm install"}, native SDK reload, and bundled CLI passed`);
 } finally {
   try { if (session) { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); } }
   finally { rmSync(root, { recursive: true, force: true }); }

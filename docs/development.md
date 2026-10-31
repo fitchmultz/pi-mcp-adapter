@@ -24,6 +24,8 @@ The `npm release` workflow uses the [shared release procedure](https://github.co
 
 Failed or unpublished candidates can retry daily at 12:17 UTC or through manual dispatch on `main`, without another bump. Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new release plans; cancel pending runs separately when needed.
 
+The reusable `release-qualification.yml` gate installs the retained candidate tarball into an isolated consumer against each selected Pi host. It checks the native SDK and CLI, gateway/script activation and reload, local MCP transport behavior, and published declarations without repacking. Candidate and full host-graph identities are checked against the shared preparation receipt.
+
 ## Pi release qualification
 
 Pi **1.0.0** remains the support floor; host peers remain wildcard. Required qualification uses the latest stable official Pi and latest maintained fork `main`, resolving version/commit once per workflow run and retaining exact SDK/CLI evidence. Locked development dependencies are reproducible snapshots, not qualification targets. Extras use the same resolved official graph. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
