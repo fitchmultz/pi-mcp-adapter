@@ -1,0 +1,75 @@
+name: MCP adapter retained-candidate probe
+
+on:
+  push:
+    branches: [probe/mcp-s3-candidate]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  hosts:
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@71cede290e61713eb83a280b48e9eeb8394ce7b0
+    with:
+      automation-ref: 71cede290e61713eb83a280b48e9eeb8394ce7b0
+  prepare:
+    needs: hosts
+    uses: fitchmultz/.github/.github/workflows/npm-release-prepare.yml@71cede290e61713eb83a280b48e9eeb8394ce7b0
+    with:
+      automation-ref: 71cede290e61713eb83a280b48e9eeb8394ce7b0
+      source-ref: ${{ github.sha }}
+      release-source: ${{ github.sha }}
+      official-version: ${{ needs.hosts.outputs.official-version }}
+      fork-ref: ${{ needs.hosts.outputs.fork-ref }}
+  candidate:
+    needs: [hosts, prepare]
+    uses: ./.github/workflows/release-qualification.yml
+    with:
+      automation-ref: 71cede290e61713eb83a280b48e9eeb8394ce7b0
+      source-ref: ${{ github.sha }}
+      release-source: ${{ github.sha }}
+      official-version: ${{ needs.hosts.outputs.official-version }}
+      fork-ref: ${{ needs.hosts.outputs.fork-ref }}
+  qualification:
+    name: Release qualification
+    needs: [hosts, prepare, candidate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: 71cede290e61713eb83a280b48e9eeb8394ce7b0
+          path: automation
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          check-latest: true
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/npm-candidate
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-fork-host-${{ github.sha }}
+          path: ${{ runner.temp }}/fork-package
+      - name: Bind package qualification to the retained candidate
+        env:
+          SOURCE_REF: ${{ github.sha }}
+          RELEASE_SOURCE: ${{ github.sha }}
+          OFFICIAL_VERSION: ${{ needs.hosts.outputs.official-version }}
+          FORK_REF: ${{ needs.hosts.outputs.fork-ref }}
+        run: |
+          node automation/scripts/npm-release.mjs qualify \
+            --artifact "$RUNNER_TEMP/npm-candidate" --fork "$RUNNER_TEMP/fork-package" \
+            --source-ref "$SOURCE_REF" --release-source "$RELEASE_SOURCE" \
+            --official-version "$OFFICIAL_VERSION" --fork-ref "$FORK_REF" \
+            --output "$RUNNER_TEMP/npm-release-qualification"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-release-qualification
+          path: ${{ runner.temp }}/npm-release-qualification
+          if-no-files-found: error
+          retention-days: 7

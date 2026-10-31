@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep the locked development Pi packages on one current official cohort so a clean install can run the native SDK tests. The Pi 1.0 support floor and optional runtime peers are unchanged.
 
+## [8.0.3] - 2026-10-31
+
+### Changed
+
+- Exercise the retained MCP adapter candidate through the shared release qualification workflow.
+
 ## [8.0.2] - 2026-10-31
 
 ### Changed
