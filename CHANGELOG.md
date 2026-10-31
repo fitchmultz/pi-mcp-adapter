@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Link the READMEs to the exact runtime requirements and conformance referee details without pinning release versions in installation guidance.
 - Batch metadata-cache writes across connected servers at startup and shutdown, reducing repeated disk work while preserving on-demand updates.
 - Reuse search indexes after calls when live tool metadata is unchanged; rebuild them when descriptors change.
 - Load the native MCP client SDK on first connection instead of at startup; cached discovery remains available without it.
