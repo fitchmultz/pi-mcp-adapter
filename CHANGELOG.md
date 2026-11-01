@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.3 - 2026-11-01
+
+<!-- npm-release:unreleased:start -->
 ### Changed
 
 - Automatically open reviewed patch-version PRs and publish the retained candidate after full CI and package qualification.
@@ -15,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Keep the locked development Pi packages on one current official cohort so a clean install can run the native SDK tests. The Pi 1.0 support floor and optional runtime peers are unchanged.
+<!-- npm-release:unreleased:end -->
+
+- Automate qualified npm patch releases (#116) ([d2cdb1a](https://github.com/fitchmultz/pi-mcp-adapter/commit/d2cdb1a900695277281a1fae109a13727a8a1802))
+
+### What's Changed
+* Fix clean-install Pi development dependencies by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/114
+* Qualify the retained MCP adapter release candidate by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/115
+* Automate qualified npm patch releases by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/116
+
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.2...v8.0.3
 
 ## [8.0.2] - 2026-10-31
 
