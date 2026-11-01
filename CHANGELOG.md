@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Automatically open reviewed patch-version PRs and publish the retained candidate after full CI and package qualification.
 - Add a reusable release gate that exercises the retained npm candidate's native SDK, CLI, MCP tools and published types against the selected official and fork host graphs.
 
 ### Fixed

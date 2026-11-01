@@ -20,7 +20,7 @@ For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs
 
 ## Automatic npm releases (maintainers)
 
-The `npm release` workflow uses the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases) to publish an unpublished package version on `main` after the full existing CI workflow (including extras) and candidate-tarball qualification pass. Complete applicable package-specific release evidence and verify the matching npm and GitHub releases; workflow validation is not evidence of a real OIDC publication.
+The `npm version` workflow queues main merges and opens a reviewed patch-version PR through the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases). The `npm release` workflow publishes after full CI (including extras) and retained-candidate qualification pass. Verify the matching npm and GitHub releases; workflow validation is not evidence of a real OIDC publication.
 
 Failed or unpublished candidates can retry daily at 12:17 UTC or through manual dispatch on `main`, without another bump. Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new release plans; cancel pending runs separately when needed.
 
