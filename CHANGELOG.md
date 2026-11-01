@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.4 - 2026-11-01
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Use direct Flash for automatic release remediation (#118) ([376688c](https://github.com/fitchmultz/pi-mcp-adapter/commit/376688cf0e8fa50aaaa9883eee08968fc30224f9))
+
+### What's Changed
+* Use direct Flash for necessary release remediation by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/118
+
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.3...v8.0.4
+
 ## 8.0.3 - 2026-11-01
 
 <!-- npm-release:unreleased:start -->
