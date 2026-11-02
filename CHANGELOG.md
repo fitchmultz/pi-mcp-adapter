@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
-- Enforce strict lint for conformance tests (#125) ([f5e455b](https://github.com/fitchmultz/pi-mcp-adapter/commit/f5e455b383fcb260acd21e2e3015121371856b9d))
+- Enforce strict lint on real SDK HTTP tests (#150) ([293994b](https://github.com/fitchmultz/pi-mcp-adapter/commit/293994b1860a9621d06a3da64b1f02a34bf92998))
 
 ### What's Changed
 
