@@ -32,6 +32,9 @@ describe("directive policy", () => {
         'const text = "// oxlint-disable-next-line example";',
         "const regex = /https?:\\/\\//;",
         'const template = `// @ts-ignore ${regex.test("https://example.com")}`;',
+        "/* notes\n oxlint-disable no-debugger */",
+        "/*\n * eslint-disable no-debugger\n */",
+        "/** @ts-ignore\n * not a TypeScript directive */",
       ].join("\n"),
     );
     const negative = checkSource(
@@ -53,6 +56,8 @@ describe("directive policy", () => {
     ["ignore", "src.ts", "// @ts-ignore reason\nfoo();\n", "TypeScript error suppression"],
     ["triple-slash", "src.ts", "/// @ts-ignore reason\nfoo();\n", "TypeScript error suppression"],
     ["ignore suffix", "src.ts", "// @ts-ignoreXYZ\nfoo();\n", "TypeScript error suppression"],
+    ["JSDoc ignore", "src.ts", "/** @ts-ignore */\nfoo();\n", "TypeScript error suppression"],
+    ["JSDoc glued", "src.ts", "/**@ts-ignore*/\nfoo();\n", "TypeScript error suppression"],
     ["nocheck", "src.ts", "// @ts-nocheck\nfoo();\n", "TypeScript error suppression"],
     [
       "negative in implementation",
@@ -70,6 +75,18 @@ describe("directive policy", () => {
       "glued description",
       negativeTest,
       "// @ts-expect-errorThisIsNotADescription\nfoo();\n",
+      "at least ten characters",
+    ],
+    [
+      "JSDoc negative in implementation",
+      "src.ts",
+      "/** @ts-expect-error no description */\nfoo();\n",
+      "restricted to approved type tests",
+    ],
+    [
+      "JSDoc short description",
+      negativeTest,
+      "/** @ts-expect-error short */\nfoo();\n",
       "at least ten characters",
     ],
   ])("rejects %s", (_name, file, source, diagnostic) => {
@@ -90,6 +107,12 @@ describe("directive policy", () => {
 
   it("finds a TypeScript directive at the end of a block comment", () => {
     const result = checkSource("block.ts", "/* notes\n @ts-ignore */\nfoo();\n");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("block.ts:2: TypeScript error suppression");
+  });
+
+  it("finds a TypeScript directive at the end of a multiline JSDoc comment", () => {
+    const result = checkSource("block.ts", "/**\n * @ts-ignore */\nfoo();\n");
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("block.ts:2: TypeScript error suppression");
   });

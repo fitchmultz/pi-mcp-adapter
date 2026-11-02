@@ -17,7 +17,7 @@ function directiveFailure(file, comment) {
   const typeValue =
     comment.type === "Line"
       ? comment.value.replace(/^\/+/u, "").trim()
-      : (comment.value.split("\n").at(-1) ?? "").trim();
+      : (comment.value.split("\n").at(-1) ?? "").trim().replace(/^[/*]*\s*/u, "");
   if (/^@ts-(?:ignore|nocheck)/u.test(typeValue)) {
     return "TypeScript error suppression is not permitted";
   }
