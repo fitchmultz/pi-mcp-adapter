@@ -272,7 +272,7 @@ export function createMcpTraceWriter(
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const configuredPath = settings.file;
   let filePath: string;
-  if (configuredPath !== undefined && configuredPath !== "") {
+  if (typeof configuredPath === "string" && configuredPath !== "") {
     filePath = isAbsolute(configuredPath)
       ? configuredPath
       : resolve(sessionCwd ?? process.cwd(), configuredPath);
@@ -386,10 +386,10 @@ export function traceTransportKind(
   definition: { command?: string; url?: string; socket?: string },
   transport: Transport,
 ): McpTraceTransport {
-  if (definition.command !== undefined && definition.command !== "") {
+  if (typeof definition.command === "string" && definition.command !== "") {
     return "stdio";
   }
-  if (definition.socket !== undefined && definition.socket !== "") {
+  if (typeof definition.socket === "string" && definition.socket !== "") {
     return "unix-socket";
   }
   const constructorName = transport.constructor.name.toLowerCase();
@@ -399,5 +399,7 @@ export function traceTransportKind(
   if (constructorName.includes("streamable")) {
     return "streamable-http";
   }
-  return definition.url !== undefined && definition.url !== "" ? "streamable-http" : "unknown";
+  return typeof definition.url === "string" && definition.url !== ""
+    ? "streamable-http"
+    : "unknown";
 }
