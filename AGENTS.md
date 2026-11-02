@@ -7,6 +7,11 @@
 - Preserve private disk permissions, paging and UTF-8 boundaries, ordered UI history, accepted-operation no-replay and native transport cancellation/drain contracts. Slow fsync tests and dependency/package/security byte checks are not deletion candidates merely because they are slow or static.
 - Heartbeat success is not timeout prevention unless a test crosses the timer boundary. Bind occupied-port fixtures to a separately allocated port; never silently return on a collision.
 
+## Quality standard
+
+- Follow [the strict quality standard](docs/strict-quality-standard.md) and its evidence requirements for quality exceptions.
+- Run the checks in [development and release rules](docs/development.md) and the [CI contract](.github/workflows/ci.yml).
+
 ## Local validation
 
 - Qualify latest stable official Pi and latest maintained fork main using complete selected host graphs; resolve version/commit once per workflow run and retain exact SDK/CLI evidence. Locked development dependencies are reproducible snapshots, not qualification targets. Plain npm ci checks only the snapshot; the shared qualifier selects latest before the commands below.
