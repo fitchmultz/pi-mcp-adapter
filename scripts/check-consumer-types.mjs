@@ -38,7 +38,7 @@ try {
     { cwd: consumer, stdio: "inherit" },
   );
   copyFileSync(
-    join(repo, "__tests__/fixtures/published-types-consumer.mts"),
+    join(repo, "__tests__/fixtures/published-types-consumer.test-d.mts"),
     join(consumer, "consumer.mts"),
   );
   writeFileSync(

@@ -145,6 +145,7 @@ jobs:
           done
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run format:check
+      - run: npm run check:directives
       - run: npm run lint:conformance
       - run: npm run lint:prompts
       - run: npm run lint:runtime-tests
@@ -153,6 +154,7 @@ jobs:
       - run: npm run lint:state-tests
       - run: npm run lint:output-tests
       - run: npm run lint:packaging-tests
+      - run: npm run lint:quality
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: fitchmultz/.github
