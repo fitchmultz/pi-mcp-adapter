@@ -14,13 +14,13 @@ import {
   writeSharedServerEntry,
   writeStarterProjectConfig,
 } from "./config.ts";
-import { markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
+import { MAX_CONCURRENT_SERVER_CONNECTS, markKeepAliveAfterConnect, notifyToolMetadataUpdated, updateMetadataCache, updateStatusBar, getFailureAgeSeconds, getFailureMessage, clearFailure, recordFailure } from "./init.ts";
 import { loadMetadataCache, reconstructPromptMetadata } from "./metadata-cache.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
 import { supportsOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import { getAuthStorageOptions, inspectAuthForUrl } from "./mcp-auth.ts";
 import { loadOnboardingState, markSetupCompleted as persistSetupCompleted, markSharedConfigHintShown } from "./onboarding-state.ts";
-import { openPath, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
+import { openPath, parallelLimit, resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
 import { createMcpPanel } from "./mcp-panel.ts";
 import { createMcpSetupPanel } from "./mcp-setup-panel.ts";
@@ -225,9 +225,7 @@ export async function reconnectServers(
   }
 
   const names = targetServer ? [targetServer] : Object.keys(state.config.mcpServers);
-  for (const name of names) {
-    await reconnectServer(state, ctx, name);
-  }
+  await parallelLimit(names, MAX_CONCURRENT_SERVER_CONNECTS, name => reconnectServer(state, ctx, name));
 
   updateStatusBar(state);
 }
