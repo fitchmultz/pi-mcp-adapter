@@ -12,13 +12,15 @@ import {
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { z } from "zod";
 import {
   computeServerHash,
   getMetadataCachePath,
   isServerCacheValid,
   loadMetadataCache,
   saveMetadataCache,
-} from "../metadata-cache.ts";
+} from "../../metadata-cache.ts";
 
 const week = 7 * 86400000;
 const definition = { command: "synthetic-server" };
@@ -69,7 +71,9 @@ describe("metadata cache lifetime", () => {
       true,
       ["selected", "selected-future"],
     );
-    const stored = JSON.parse(readFileSync(getMetadataCachePath(), "utf8"));
+    const stored = z
+      .object({ servers: z.record(z.string(), z.unknown()) })
+      .parse(JSON.parse(readFileSync(getMetadataCachePath(), "utf8")));
     expect(Object.keys(stored.servers).sort()).toEqual([
       "current",
       "incoming-future",
@@ -94,7 +98,7 @@ describe("metadata cache lifetime", () => {
         "--input-type=module",
         "-e",
         `
-      import { saveMetadataCache } from ${JSON.stringify(new URL("../metadata-cache.ts", import.meta.url).href)};
+      import { saveMetadataCache } from ${JSON.stringify(new URL("../../metadata-cache.ts", import.meta.url).href)};
       saveMetadataCache(${JSON.stringify({ version: 2, servers: { external: entry() } })});
     `,
       ],
@@ -102,10 +106,17 @@ describe("metadata cache lifetime", () => {
     );
     expect(child.status, child.stderr).toBe(0);
     saveMetadataCache({ version: 2, servers: { last: entry() } });
-    expect(Object.keys(loadMetadataCache()!.servers).sort()).toEqual(["external", "first", "last"]);
-    expect(
-      JSON.parse(readFileSync(getMetadataCachePath(), "utf8")).servers.external.tools[0].name,
-    ).toBe("search");
+    const loaded = loadMetadataCache();
+    assert.ok(loaded);
+    expect(Object.keys(loaded.servers).sort()).toEqual(["external", "first", "last"]);
+    const stored = z
+      .object({
+        servers: z.object({
+          external: z.object({ tools: z.array(z.object({ name: z.string() })) }),
+        }),
+      })
+      .parse(JSON.parse(readFileSync(getMetadataCachePath(), "utf8")));
+    expect(stored.servers.external.tools[0]?.name).toBe("search");
   });
 
   it("observes atomic replacement even with an unchanged size and mtime, deletion, repair, and disabled reads", () => {
@@ -135,9 +146,13 @@ describe("metadata cache lifetime", () => {
     expect(loadMetadataCache()?.servers.original).toBeDefined();
     process.env.PI_CODING_AGENT_DIR = join(root, "other");
     saveMetadataCache({ version: 2, servers: { other: entry() } });
-    expect(Object.keys(loadMetadataCache()!.servers)).toEqual(["other"]);
+    const other = loadMetadataCache();
+    assert.ok(other);
+    expect(Object.keys(other.servers)).toEqual(["other"]);
     process.env.PI_CODING_AGENT_DIR = root;
-    expect(Object.keys(loadMetadataCache()!.servers)).toEqual(["original"]);
+    const original = loadMetadataCache();
+    assert.ok(original);
+    expect(Object.keys(original.servers)).toEqual(["original"]);
   });
 
   it.each([NaN, Infinity, -Infinity, -1, 0, Date.now() + week])(
@@ -148,7 +163,7 @@ describe("metadata cache lifetime", () => {
   );
 
   it("rejects recognized records with malformed descriptor collections", () => {
-    expect(isServerCacheValid({ ...entry(), tools: "bad" } as never, definition)).toBe(false);
-    expect(isServerCacheValid({ ...entry(), resources: {} } as never, definition)).toBe(false);
+    expect(isServerCacheValid({ ...entry(), tools: "bad" }, definition)).toBe(false);
+    expect(isServerCacheValid({ ...entry(), resources: {} }, definition)).toBe(false);
   });
 });
