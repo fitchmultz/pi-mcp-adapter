@@ -95,6 +95,7 @@ jobs:
       - name: Qualify official Pi
         env:
           version: ${{ needs.resolve.outputs.official-version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           node automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$GITHUB_WORKSPACE/extension" \
             --host official --target "$version" --output "$RUNNER_TEMP/official-evidence"
@@ -165,6 +166,7 @@ jobs:
       - name: Select the same latest official graph for extras
         env:
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           node --input-type=module <<'NODE'
           import { prepareHost, selectDevelopmentHost } from './automation/scripts/hosts.mjs';
