@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
-- Enforce strict lint for prompt tests (#126) ([bbc364b](https://github.com/fitchmultz/pi-mcp-adapter/commit/bbc364b42a0cea149e7cb2ac4a256fd7047e48f4))
-
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.8...v8.0.9
 
 ## 8.0.8 - 2026-11-02
