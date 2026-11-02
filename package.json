@@ -40,6 +40,7 @@
     "test:conformance": "bash conformance/run.sh",
     "lint": "oxlint --deny-warnings .",
     "lint:conformance": "oxlint --deny-warnings conformance",
+    "lint:prompts": "oxlint --deny-warnings __tests__/prompts.test.ts __tests__/prompts-sdk-integration.test.ts __tests__/test-state.ts __tests__/test-extension-context.ts",
     "lint:agent": "oxlint --deny-warnings --format=agent .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",

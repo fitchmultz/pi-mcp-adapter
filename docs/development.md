@@ -13,6 +13,7 @@ npm run --prefix examples/interactive-visualizer build
 npm run build
 npm run format:check
 npm run lint:conformance
+npm run lint:prompts
 npm run typecheck
 npm run typecheck:all
 npm test
@@ -20,6 +21,8 @@ npm run test:conformance
 ```
 
 For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$PWD" --host official --target latest --output /tmp/pi-mcp-adapter-official`, then qualify the packed latest maintained fork with `--host fork --target /path/to/fork-package`. Plain `npm ci` checks only the locked development snapshot, not latest qualification. Preserve the separate extras checks in `.github/workflows/ci.yml`.
+
+Strict lint is enforced for the conformance directory and the prompt tests and their shared fixtures. Repository-wide strict lint remains a migration target.
 
 ## Automatic npm releases (maintainers)
 
