@@ -165,7 +165,7 @@ export function computeServerHash(definition: ServerEntry): string {
 }
 
 export function isServerCacheValid(
-  entry: ServerCacheEntry,
+  entry: unknown,
   definition: ServerEntry,
   maxAgeMs: number = CACHE_MAX_AGE_MS,
 ): boolean {
