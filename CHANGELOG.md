@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.5 - 2026-11-02
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Reconnect all MCP servers concurrently (#120) ([50b4a32](https://github.com/fitchmultz/pi-mcp-adapter/commit/50b4a326471d724f42e2318e97c685c76f418f20))
+
+### What's Changed
+* Reconnect all MCP servers concurrently by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/120
+
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.4...v8.0.5
+
 ## 8.0.4 - 2026-11-01
 
 <!-- npm-release:unreleased:start -->
