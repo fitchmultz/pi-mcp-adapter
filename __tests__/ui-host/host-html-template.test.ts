@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildHostHtmlTemplate, type HostHtmlTemplateInput } from "../host-html-template.ts";
+import { buildHostHtmlTemplate, type HostHtmlTemplateInput } from "../../host-html-template.ts";
 
 function createMinimalInput(overrides: Partial<HostHtmlTemplateInput> = {}): HostHtmlTemplateInput {
   return {
@@ -181,7 +181,7 @@ describe("buildHostHtmlTemplate", () => {
 
   describe("CSP handling", () => {
     it("maps standard resourceDomains to static resource directives", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.ts");
+      const { buildCspMetaContent } = await import("../../host-html-template.ts");
 
       const csp = buildCspMetaContent({
         resourceDomains: ["https://esm.sh"],
@@ -208,7 +208,7 @@ describe("buildHostHtmlTemplate", () => {
     });
 
     it("rejects CSP source expressions that can inject directives", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.ts");
+      const { buildCspMetaContent } = await import("../../host-html-template.ts");
 
       const csp = buildCspMetaContent({
         resourceDomains: [
@@ -224,12 +224,12 @@ describe("buildHostHtmlTemplate", () => {
           "https://two sources.example.com",
           'https://evil.example.com"img-src',
           "'unsafe-eval'",
-          42 as unknown as string,
+          42,
         ],
       });
 
       expect(csp).toContain("https://safe.example.com");
-      expect(csp?.match(/https:\/\/safe\.example\.com/g)).toHaveLength(5);
+      expect(csp.match(/https:\/\/safe\.example\.com/g)).toHaveLength(5);
       expect(csp).not.toContain("evil.example.com");
       expect(csp).not.toContain("nul-evil.example.com");
       expect(csp).not.toContain("del-evil.example.com");
@@ -238,7 +238,7 @@ describe("buildHostHtmlTemplate", () => {
     });
 
     it("rejects all control characters and non-ASCII CSP sources before serialization", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.ts");
+      const { buildCspMetaContent } = await import("../../host-html-template.ts");
       const rejectedSources = [
         "https://vertical-tab.example.com\vimg-src",
         "https://unit-separator.example.com\x1Fimg-src",
@@ -252,18 +252,18 @@ describe("buildHostHtmlTemplate", () => {
         resourceDomains: ["https://safe.example.com", ...rejectedSources],
       });
 
-      expect(csp?.match(/https:\/\/safe\.example\.com/g)).toHaveLength(5);
+      expect(csp.match(/https:\/\/safe\.example\.com/g)).toHaveLength(5);
       for (const source of rejectedSources) {
         expect(csp).not.toContain(source);
       }
     });
 
     it("fails closed for malformed CSP domain containers", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.ts");
+      const { buildCspMetaContent } = await import("../../host-html-template.ts");
 
       const csp = buildCspMetaContent({
-        resourceDomains: {} as unknown as string[],
-        connectDomains: "https://api.example.com" as unknown as string[],
+        resourceDomains: {},
+        connectDomains: "https://api.example.com",
       });
 
       expect(csp).toBe(
@@ -285,7 +285,7 @@ describe("buildHostHtmlTemplate", () => {
     });
 
     it("deduplicates frame and base URI domains", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.ts");
+      const { buildCspMetaContent } = await import("../../host-html-template.ts");
 
       const csp = buildCspMetaContent({
         frameDomains: ["https://frames.example.com", "https://frames.example.com"],
@@ -294,14 +294,14 @@ describe("buildHostHtmlTemplate", () => {
 
       expect(csp).toContain("frame-src https://frames.example.com");
       expect(csp).toContain("base-uri https://base.example.com");
-      expect(csp?.match(/https:\/\/frames\.example\.com/g)).toHaveLength(1);
-      expect(csp?.match(/https:\/\/base\.example\.com/g)).toHaveLength(1);
+      expect(csp.match(/https:\/\/frames\.example\.com/g)).toHaveLength(1);
+      expect(csp.match(/https:\/\/base\.example\.com/g)).toHaveLength(1);
     });
 
     it("returns a restrictive default when the app declares no CSP metadata", async () => {
-      const { buildCspMetaContent } = await import("../host-html-template.ts");
+      const { buildCspMetaContent } = await import("../../host-html-template.ts");
 
-      expect(buildCspMetaContent(undefined)).toBe(
+      expect(buildCspMetaContent()).toBe(
         [
           "default-src 'none'",
           "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
