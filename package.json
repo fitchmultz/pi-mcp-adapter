@@ -32,7 +32,8 @@
     "build:bridge": "node ./scripts/build-app-bridge.mjs",
     "prepare": "node ./scripts/prepare.mjs",
     "check:compat": "node scripts/compat-host.mjs && npm run build && npm run typecheck && vitest run --exclude __tests__/interactive-visualizer-server.test.ts && npm run test:oauth && node scripts/compat-package-smoke.mjs",
-    "typecheck": "node ./scripts/typecheck-all.mjs",
+    "typecheck": "node ./scripts/tsc.mjs --noEmit",
+    "typecheck:all": "node ./scripts/typecheck-all.mjs",
     "test": "vitest run && npm run test:oauth",
     "test:watch": "vitest",
     "test:oauth": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --test --test-concurrency=1 mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
@@ -41,8 +42,7 @@
     "lint:agent": "oxlint --deny-warnings --format=agent .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check .",
-    "check:policy": "node scripts/check-policy.mjs"
+    "format:check": "oxfmt --check ."
   },
   "repository": {
     "type": "git",

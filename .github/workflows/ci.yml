@@ -150,6 +150,7 @@ jobs:
           path: automation
           persist-credentials: false
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run format:check
       - name: Select the same latest official graph for extras
         env:
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
@@ -186,4 +187,5 @@ jobs:
           npm ci --prefix examples/interactive-visualizer --ignore-scripts --no-audit --no-fund
           npm run --prefix examples/interactive-visualizer build
           npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts
+      - run: npm run typecheck:all
       - run: npm run test:conformance
