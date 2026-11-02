@@ -18,6 +18,7 @@ npm run lint:runtime-tests
 npm run lint:auth-tests
 npm run lint:discovery-tests
 npm run lint:state-tests
+npm run lint:output-tests
 npm run typecheck
 npm run typecheck:all
 npm test
@@ -26,7 +27,7 @@ npm run test:conformance
 
 For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$PWD" --host official --target latest --output /tmp/pi-mcp-adapter-official`, then qualify the packed latest maintained fork with `--host fork --target /path/to/fork-package`. Plain `npm ci` checks only the locked development snapshot, not latest qualification. Preserve the separate extras checks in `.github/workflows/ci.yml`.
 
-Strict lint is enforced for `conformance/`, the prompt tests and their shared fixtures, `__tests__/runtime/`, `__tests__/auth/`, `__tests__/discovery/`, `__tests__/state/`, and the pinning test fixture. Repository-wide strict lint remains a migration target.
+Strict lint is enforced for `conformance/`, the prompt tests and their shared fixtures, `__tests__/runtime/`, `__tests__/auth/`, `__tests__/discovery/`, `__tests__/state/`, `__tests__/output/`, and the pinning test fixture. Repository-wide strict lint remains a migration target.
 
 ## Automatic npm releases (maintainers)
 

@@ -1,14 +1,14 @@
-import type { TextContent } from "@earendil-works/pi-ai";
+import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   guardMcpOutput,
   retainMcpResult,
   resolveMcpOutputGuardOptions,
-  type McpResultSummary,
-} from "../mcp-output-guard.ts";
+} from "../../mcp-output-guard.ts";
 
 describe("guardMcpOutput", () => {
   it("includes readback notices in the output budget and returned byte count", async () => {
@@ -36,7 +36,8 @@ describe("guardMcpOutput", () => {
     const raw = { content: [{ type: "text", text: "x".repeat(500) }] };
     const retained = await retainMcpResult(raw, { detailsMaxBytes: 100 }, true);
     expect(retained.mcpResult).toBe(raw);
-    expect(JSON.parse(await readFile(retained.resultRef!, "utf8"))).toEqual(raw);
+    assert.ok(typeof retained.resultRef === "string");
+    expect(JSON.parse(await readFile(retained.resultRef, "utf8"))).toEqual(raw);
   });
 
   it("leaves small MCP output unchanged and keeps the raw result in details", async () => {
@@ -50,10 +51,11 @@ describe("guardMcpOutput", () => {
     });
 
     expect(guarded.content[0]).toEqual({ type: "text", text: "small result" });
-    expect(guarded.content[1]).toEqual({
-      type: "text",
-      text: expect.stringContaining(guarded.resultRef!),
-    });
+    assert.ok(typeof guarded.resultRef === "string");
+    const notice = guarded.content[1];
+    assert.ok(notice?.type === "text");
+    expect(notice).toEqual({ type: "text", text: notice.text });
+    expect(notice.text).toContain(guarded.resultRef);
     expect(guarded.outputGuard).toBeUndefined();
     expect(guarded.mcpResult).toBe(rawMcpResult);
   });
@@ -108,18 +110,23 @@ describe("guardMcpOutput", () => {
     });
     expect(guarded.outputGuard?.fullOutputPath).toBeTruthy();
     expect(guarded.content).toHaveLength(2);
-    expect(guarded.content[1]).toMatchObject({ text: expect.stringContaining(guarded.resultRef!) });
+    assert.ok(typeof guarded.resultRef === "string");
+    const notice = guarded.content[1];
+    assert.ok(notice?.type === "text");
+    expect(notice.text).toContain(guarded.resultRef);
     expect(guarded.content[0]).toMatchObject({ type: "text" });
-    const returnedText =
-      guarded.content[0]!.type === "text" ? (guarded.content[0] as TextContent).text : "";
+    const first = guarded.content[0];
+    assert.ok(first?.type === "text");
+    const returnedText = first.text;
     expect(returnedText).toContain("MCP text output truncated");
     expect(returnedText).toContain("Full text saved to:");
     expect(returnedText).not.toContain("line-19");
 
-    const saved = await readFile(guarded.outputGuard!.fullOutputPath!, "utf8");
+    assert.ok(typeof guarded.outputGuard?.fullOutputPath === "string");
+    const saved = await readFile(guarded.outputGuard.fullOutputPath, "utf8");
     expect(saved).toBe(text);
 
-    const summary = guarded.mcpResult as McpResultSummary;
+    const summary = z.looseObject({ fullResultPath: z.string() }).parse(guarded.mcpResult);
     expect(summary).toMatchObject({ omitted: true, isError: false, contentBlocks: 1 });
     expect(summary.fullResultPath).toBeTruthy();
     expect(summary.structuredContentSummary).toMatchObject({ omitted: true });
@@ -143,8 +150,9 @@ describe("guardMcpOutput", () => {
       detailsMaxBytes: 100,
       rawMcpResult,
     });
-    expect((summarized.mcpResult as McpResultSummary).omitted).toBe(true);
-    expect((summarized.mcpResult as McpResultSummary).fullResultPath).toBeTruthy();
+    const summary = z.looseObject({ fullResultPath: z.string() }).parse(summarized.mcpResult);
+    expect(summary.omitted).toBe(true);
+    expect(summary.fullResultPath).toBeTruthy();
   });
 
   it("spills the oversized raw result as compact JSON and reports its compact byte size", async () => {
@@ -158,12 +166,14 @@ describe("guardMcpOutput", () => {
       rawMcpResult,
     });
 
-    const summary = guarded.mcpResult as McpResultSummary;
+    const summary = z
+      .looseObject({ fullResultPath: z.string(), rawResultBytes: z.number() })
+      .parse(guarded.mcpResult);
     expect(summary.omitted).toBe(true);
     expect(summary.fullResultPath).toBeTruthy();
 
     const compact = JSON.stringify(rawMcpResult);
-    const saved = await readFile(summary.fullResultPath!, "utf8");
+    const saved = await readFile(summary.fullResultPath, "utf8");
     expect(saved).toBe(compact);
     expect(saved).not.toContain("\n");
     expect(summary.rawResultBytes).toBe(Buffer.byteLength(compact, "utf8"));
@@ -190,10 +200,11 @@ describe("guardMcpOutput", () => {
 
     expect(guarded.outputGuard).toMatchObject({ truncated: true, imageBlocksPassedThrough: 1 });
     expect(guarded.content).toHaveLength(2);
-    expect(guarded.content[0]!.type).toBe("text");
+    expect(guarded.content[0]?.type).toBe("text");
     expect(guarded.content[1]).toEqual(image);
 
-    const saved = await readFile(guarded.outputGuard!.fullOutputPath!, "utf8");
+    assert.ok(typeof guarded.outputGuard?.fullOutputPath === "string");
+    const saved = await readFile(guarded.outputGuard.fullOutputPath, "utf8");
     expect(saved).toBe(text);
   });
 
@@ -205,8 +216,9 @@ describe("guardMcpOutput", () => {
     });
 
     expect(guarded.outputGuard).toMatchObject({ truncated: true, originalLines: 30 });
-    const returnedText =
-      guarded.content[0]!.type === "text" ? (guarded.content[0] as TextContent).text : "";
+    const first = guarded.content[0];
+    assert.ok(first?.type === "text");
+    const returnedText = first.text;
     expect(returnedText).toContain("entry-0");
     expect(returnedText).not.toContain("entry-29");
   });
@@ -220,7 +232,8 @@ describe("guardMcpOutput", () => {
     });
 
     expect(guarded.outputGuard?.fullOutputPath).toBeTruthy();
-    const saved = await readFile(guarded.outputGuard!.fullOutputPath!, "utf8");
+    assert.ok(typeof guarded.outputGuard?.fullOutputPath === "string");
+    const saved = await readFile(guarded.outputGuard.fullOutputPath, "utf8");
     expect(saved).toBe("Error: body\n\nExpected parameters:\n{}");
   });
 
