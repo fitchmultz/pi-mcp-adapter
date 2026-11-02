@@ -1,5 +1,6 @@
 import http from "node:http";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,7 +15,11 @@ const requestSchema = z.object({
   method: z.string(),
   id: z.union([z.string(), z.number()]).optional(),
 });
-const traceSchema = z.object({ direction: z.string(), method: z.string().optional() });
+const traceSchema = z.object({
+  direction: z.string(),
+  method: z.string().optional(),
+  transport: z.string(),
+});
 
 async function readRequest(req: http.IncomingMessage): Promise<z.infer<typeof requestSchema>> {
   let body = "";
@@ -195,137 +200,168 @@ describe("McpServerManager StreamableHTTP transport", () => {
     });
   });
 
-  it("resolves command-backed HTTP secrets without falling back to SSE on GET 405", async () => {
-    const requests: string[] = [];
-    const server = http.createServer(
-      handler(async (req, res) => {
-        requests.push(`${String(req.method)} ${String(req.url)}`);
+  it.each(["configured-path", "null-file", "null-command", "null-socket"])(
+    "resolves command-backed HTTP secrets without falling back to SSE on GET 405 with %s tracing config",
+    async (variant) => {
+      const requests: string[] = [];
+      const server = http.createServer(
+        handler(async (req, res) => {
+          requests.push(`${String(req.method)} ${String(req.url)}`);
 
-        if (
-          req.headers.authorization !== "Bearer command-token" ||
-          req.headers["x-command-secret"] !== "command-header"
-        ) {
-          res.writeHead(401).end("Unauthorized");
-          return;
-        }
+          if (
+            req.headers.authorization !== "Bearer command-token" ||
+            req.headers["x-command-secret"] !== "command-header"
+          ) {
+            res.writeHead(401).end("Unauthorized");
+            return;
+          }
 
-        if (req.method === "GET") {
-          res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
-          return;
-        }
+          if (req.method === "GET") {
+            res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
+            return;
+          }
 
-        if (req.method !== "POST") {
-          res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
-          return;
-        }
+          if (req.method !== "POST") {
+            res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
+            return;
+          }
 
-        const message = await readRequest(req);
-        if (message.method === "server/discover") {
-          res.writeHead(200, { "content-type": "application/json" }).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: message.id,
-              error: { code: -32601, message: "Method not found" },
-            }),
-          );
-          return;
-        }
+          const message = await readRequest(req);
+          if (message.method === "server/discover") {
+            res.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: message.id,
+                error: { code: -32601, message: "Method not found" },
+              }),
+            );
+            return;
+          }
 
-        if (message.method === "initialize") {
-          res.writeHead(200, { "content-type": "application/json" }).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: message.id,
-              result: {
-                protocolVersion: "2025-06-18",
-                capabilities: { tools: {}, resources: {} },
-                serverInfo: { name: "post-only", version: "1.0.0" },
-              },
-            }),
-          );
-          return;
-        }
+          if (message.method === "initialize") {
+            res.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: {
+                  protocolVersion: "2025-06-18",
+                  capabilities: { tools: {}, resources: {} },
+                  serverInfo: { name: "post-only", version: "1.0.0" },
+                },
+              }),
+            );
+            return;
+          }
 
-        if (message.method === "notifications/initialized") {
-          res.writeHead(202).end();
-          return;
-        }
+          if (message.method === "notifications/initialized") {
+            res.writeHead(202).end();
+            return;
+          }
 
-        if (message.method === "tools/list") {
-          res.writeHead(200, { "content-type": "application/json" }).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: message.id,
-              result: { tools: [] },
-            }),
-          );
-          return;
-        }
+          if (message.method === "tools/list") {
+            res.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: { tools: [] },
+              }),
+            );
+            return;
+          }
 
-        if (message.method === "resources/list") {
-          res.writeHead(200, { "content-type": "application/json" }).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: message.id,
-              result: { resources: [] },
-            }),
-          );
-          return;
-        }
+          if (message.method === "resources/list") {
+            res.writeHead(200, { "content-type": "application/json" }).end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: { resources: [] },
+              }),
+            );
+            return;
+          }
 
-        res.writeHead(500).end(`unexpected method: ${message.method}`);
-      }),
-    );
-    servers.push(server);
+          res.writeHead(500).end(`unexpected method: ${message.method}`);
+        }),
+      );
+      servers.push(server);
 
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", resolve);
-    });
-    const address = server.address();
-    if (address === null || typeof address === "string") {
-      throw new Error("server did not bind to a TCP port");
-    }
-
-    const manager = new McpServerManager();
-    const traceDirectory = await mkdtemp(join(tmpdir(), "pi-mcp-trace-"));
-    temporaryDirectories.push(traceDirectory);
-    manager.setTraceConfig({ enabled: true, file: join(traceDirectory, "mcp.jsonl") });
-    try {
-      const connection = await manager.connect("post-only", {
-        url: `http://127.0.0.1:${address.port}/mcp`,
-        auth: "bearer",
-        bearerToken: `!node -e "process.stdout.write('command-token')"`,
-        headers: {
-          "X-Command-Secret": `!node -e "process.stdout.write('command-header')"`,
-        },
+      await new Promise<void>((resolve) => {
+        server.listen(0, "127.0.0.1", resolve);
       });
-
-      for (let attempt = 0; attempt < 20 && !requests.includes("GET /mcp"); attempt++) {
-        await new Promise((resolve) => {
-          setTimeout(resolve, 5);
-        });
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("server did not bind to a TCP port");
       }
 
-      expect(connection.status).toBe("connected");
-      expect(connection.tools).toEqual([]);
-      expect(connection.resources).toEqual([]);
-      expect(requests).toContain("GET /mcp");
-      // The SDK probes the optional GET stream once, then keeps the successful
-      // POST-based session without an SSE fallback or retry storm.
-      expect(requests.filter((request) => request === "GET /mcp")).toHaveLength(1);
+      const traceDirectory = await mkdtemp(join(tmpdir(), "pi-mcp-trace-"));
+      temporaryDirectories.push(traceDirectory);
+      const traces = join(traceDirectory, ".pi/fitch-mcp-adapter/traces");
+      const configPath = join(traceDirectory, "mcp.json");
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            "post-only": {
+              url: `http://127.0.0.1:${address.port}/mcp`,
+              auth: "bearer",
+              bearerToken: `!node -e "process.stdout.write('command-token')"`,
+              headers: {
+                "X-Command-Secret": `!node -e "process.stdout.write('command-header')"`,
+              },
+              ...(variant === "null-command" ? { command: null } : {}),
+              ...(variant === "null-socket" ? { socket: null } : {}),
+            },
+          },
+          settings: {
+            trace: {
+              enabled: true,
+              file: variant === "null-file" ? null : join(traces, "mcp.jsonl"),
+            },
+          },
+        }),
+      );
+      const config = loadMcpConfig(configPath, traceDirectory);
+      const definition = config.mcpServers["post-only"];
+      assert.ok(definition);
+      const manager = new McpServerManager(traceDirectory);
+      manager.setTraceConfig(config.settings?.trace);
+      try {
+        const connection = await manager.connect("post-only", definition);
 
-      await manager.close("post-only");
-      const traceLines = (await readFile(join(traceDirectory, "mcp.jsonl"), "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => traceSchema.parse(JSON.parse(line)));
-      expect(
-        traceLines.filter(
-          (event) => event.direction === "outbound" && event.method === "initialize",
-        ),
-      ).toHaveLength(1);
-    } finally {
-      await manager.close("post-only");
-    }
-  });
+        for (let attempt = 0; attempt < 20 && !requests.includes("GET /mcp"); attempt++) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, 5);
+          });
+        }
+
+        expect(connection.status).toBe("connected");
+        expect(connection.tools).toEqual([]);
+        expect(connection.resources).toEqual([]);
+        expect(requests).toContain("GET /mcp");
+        // The SDK probes the optional GET stream once, then keeps the successful
+        // POST-based session without an SSE fallback or retry storm.
+        expect(requests.filter((request) => request === "GET /mcp")).toHaveLength(1);
+
+        await manager.close("post-only");
+        const files = await readdir(traces);
+        expect(files).toHaveLength(1);
+        const file = files[0];
+        assert.ok(file !== undefined);
+        const traceLines = (await readFile(join(traces, file), "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => traceSchema.parse(JSON.parse(line)));
+        expect(
+          traceLines.filter(
+            (event) => event.direction === "outbound" && event.method === "initialize",
+          ),
+        ).toHaveLength(1);
+        expect(new Set(traceLines.map((event) => event.transport))).toEqual(
+          new Set(["streamable-http"]),
+        );
+      } finally {
+        await manager.close("post-only");
+      }
+    },
+  );
 });
