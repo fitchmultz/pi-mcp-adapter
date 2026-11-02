@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMcpPanel } from "../mcp-panel.ts";
-import { computeServerHash, type MetadataCache } from "../metadata-cache.ts";
-import type { McpConfig, McpPanelCallbacks, McpPanelResult } from "../types.ts";
+import { noop } from "./helpers.ts";
+import { createMcpPanel } from "../../mcp-panel.ts";
+import { computeServerHash, type MetadataCache } from "../../metadata-cache.ts";
+import type { McpConfig, McpPanelCallbacks, McpPanelResult } from "../../types.ts";
 
 function stripAnsi(input: string): string {
   return input.replace(/\x1b\[[0-9;]*m/g, "");
@@ -41,8 +42,8 @@ function createFailedPanel(
     createCache(config),
     new Map(),
     callbacks,
-    { requestRender: () => {} },
-    () => {},
+    { requestRender: noop },
+    noop,
   );
   const output = stripAnsi(panel.render(width).join("\n"));
   panel.dispose();
@@ -50,11 +51,15 @@ function createFailedPanel(
 }
 
 function createCache(config: McpConfig): MetadataCache {
+  const atlassian = config.mcpServers.atlassian;
+  if (atlassian === undefined) {
+    throw new Error("Expected atlassian server in panel test config");
+  }
   return {
     version: 1,
     servers: {
       atlassian: {
-        configHash: computeServerHash(config.mcpServers.atlassian!),
+        configHash: computeServerHash(atlassian),
         cachedAt: Date.now(),
         tools: [
           {
@@ -78,8 +83,8 @@ describe("mcp-panel rendering", () => {
       createCache(config),
       new Map(),
       createCallbacks(),
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("\r");
@@ -110,8 +115,8 @@ describe("mcp-panel rendering", () => {
       createCache(config),
       new Map([["atlassian", { path: "/pi/mcp.json", kind: "import", importKind: "cursor" }]]),
       createCallbacks(),
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     for (const key of keys) {
@@ -129,8 +134,8 @@ describe("mcp-panel rendering", () => {
       createCache(config),
       new Map(),
       createCallbacks(),
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
       { noticeLines: ["Open \x1b]8;;https://example.invalid/notice\x07docs\x1b]8;;\x07 now"] },
     );
 
@@ -149,8 +154,8 @@ describe("mcp-panel rendering", () => {
       createCache(config),
       new Map(),
       createCallbacks(),
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
       { noticeLines: ["Open \x1b]8;;https://secret.invalid/truncated"] },
     );
 
@@ -186,7 +191,7 @@ describe("mcp-panel rendering", () => {
       createCache(config),
       new Map(),
       createCallbacks(),
-      { requestRender: () => {} },
+      { requestRender: noop },
       done,
     );
 
@@ -200,9 +205,9 @@ describe("mcp-panel rendering", () => {
     panel.handleInput("\r");
 
     expect(done).toHaveBeenCalledTimes(1);
-    const result = done.mock.calls[0]![0];
-    expect(result.cancelled).toBe(false);
-    expect(result.changes.get("atlassian")).toEqual(["search\u0007issues"]);
+    const result = done.mock.calls.at(0)?.[0];
+    expect(result?.cancelled).toBe(false);
+    expect(result?.changes.get("atlassian")).toEqual(["search\u0007issues"]);
     panel.dispose();
   });
 });
