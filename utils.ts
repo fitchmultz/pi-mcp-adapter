@@ -20,6 +20,8 @@ function readAdapterVersion(): string {
 
 export const ADAPTER_VERSION = readAdapterVersion();
 export const DEFAULT_MCP_SCRIPT_TIMEOUT_MS = 30_000;
+/** Most servers one multi-server pass connects at once. */
+export const MAX_CONCURRENT_SERVER_CONNECTS = 10;
 
 export function normalizeRequestTimeoutMs(timeoutMs: number | undefined): number | undefined {
   return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0

@@ -27,7 +27,12 @@ import {
 } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
-import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS, formatTerminalError, parallelLimit } from "./utils.ts";
+import {
+  DEFAULT_MCP_SCRIPT_TIMEOUT_MS,
+  formatTerminalError,
+  MAX_CONCURRENT_SERVER_CONNECTS,
+  parallelLimit,
+} from "./utils.ts";
 import { type McpOAuthRuntime, createOAuthRuntime, shutdownOAuth } from "./mcp-oauth-runtime.ts";
 import { renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
 import {
@@ -260,16 +265,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           }
           syncToolSurface(ctx);
         };
-        await parallelLimit(
-          toolLoader
-            .selectedServers()
-            .filter(
-              (server) =>
-                !nextState.toolMetadata.has(server) && nextState.config.mcpServers[server],
-            ),
-          init.MAX_CONCURRENT_SERVER_CONNECTS,
-          (server) => init.lazyConnect(nextState, server, owner.signal),
-        );
+        const uncachedSelectedServers = toolLoader
+          .selectedServers()
+          .filter(
+            (server) => !nextState.toolMetadata.has(server) && nextState.config.mcpServers[server],
+          );
+        if (uncachedSelectedServers.length > 0) {
+          await parallelLimit(uncachedSelectedServers, MAX_CONCURRENT_SERVER_CONNECTS, (server) =>
+            init.lazyConnect(nextState, server, owner.signal),
+          );
+        }
         owner.throwIfInactive();
         syncPromptCommands();
         syncToolSurface(ctx);
