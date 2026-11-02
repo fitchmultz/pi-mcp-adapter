@@ -1,22 +1,29 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
+import assert from "node:assert/strict";
 
-const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")) as {
-  name?: string;
-  bin?: Record<string, string>;
-  repository?: { url?: string };
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
-  files?: string[];
-  peerDependencies?: Record<string, string>;
-  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
-  exports?: Record<string, unknown>;
-  types?: string;
-  scripts?: Record<string, string>;
-};
+const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+const stringRecord = z.record(z.string(), z.string());
+const packageJson = z
+  .object({
+    name: z.string().optional(),
+    bin: stringRecord.optional(),
+    repository: z.object({ url: z.string().optional() }).optional(),
+    dependencies: stringRecord.optional(),
+    devDependencies: stringRecord.optional(),
+    files: z.array(z.string()).optional(),
+    peerDependencies: stringRecord.optional(),
+    peerDependenciesMeta: z
+      .record(z.string(), z.object({ optional: z.boolean().optional() }))
+      .optional(),
+    exports: z.record(z.string(), z.unknown()).optional(),
+    types: z.string().optional(),
+    scripts: stringRecord.optional(),
+  })
+  .parse(JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")));
 
 const hostPeerPackages = [
   "@earendil-works/pi-ai",
@@ -49,7 +56,9 @@ describe("package.json files", () => {
 describe("public OAuth client metadata", () => {
   it("defines and publishes the shared native public-client identity for source consumers", () => {
     expect(packageJson.files).toContain("docs/client-metadata.json");
-    const metadata = JSON.parse(readFileSync(join(repoRoot, "docs/client-metadata.json"), "utf-8"));
+    const metadata: unknown = JSON.parse(
+      readFileSync(join(repoRoot, "docs/client-metadata.json"), "utf-8"),
+    );
 
     expect(metadata).toEqual({
       client_id: "https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json",
@@ -91,10 +100,18 @@ describe("package.json dependency policy", () => {
         packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
       );
     }
-    const lock = JSON.parse(readFileSync(join(repoRoot, "package-lock.json"), "utf-8"));
+    const lock = z
+      .object({
+        packages: z.record(
+          z.string(),
+          z.object({ version: z.string().optional(), dependencies: stringRecord.optional() }),
+        ),
+      })
+      .parse(JSON.parse(readFileSync(join(repoRoot, "package-lock.json"), "utf-8")));
     const baseline = lock.packages["node_modules/@earendil-works/pi-coding-agent"];
+    assert.ok(baseline !== undefined);
     expect(baseline.version).toBe(packageJson.devDependencies?.["@earendil-works/pi-coding-agent"]);
-    expect(packageJson.devDependencies?.typebox).toBe(baseline.dependencies.typebox);
+    expect(packageJson.devDependencies?.typebox).toBe(baseline.dependencies?.typebox);
   });
 
   it("uses stable split SDK v2 and Apps v2 without SDK v1", () => {
@@ -119,9 +136,13 @@ describe("package.json dependency policy", () => {
   });
 
   it("uses the same Apps v2 graph in the interactive visualizer", () => {
-    const example = JSON.parse(
-      readFileSync(join(repoRoot, "examples/interactive-visualizer/package.json"), "utf-8"),
-    );
+    const example = z
+      .object({ dependencies: stringRecord, devDependencies: stringRecord })
+      .parse(
+        JSON.parse(
+          readFileSync(join(repoRoot, "examples/interactive-visualizer/package.json"), "utf-8"),
+        ),
+      );
     for (const name of ["client", "core", "ext-apps"]) {
       expect(example.dependencies[`@modelcontextprotocol/${name}`]).toBe(
         packageJson.dependencies?.[`@modelcontextprotocol/${name}`],

@@ -16,12 +16,12 @@ import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 
 const execFile = promisify(execFileCallback);
-const buildScript = fileURLToPath(new URL("../scripts/build.mjs", import.meta.url));
+const buildScript = fileURLToPath(new URL("../../scripts/build.mjs", import.meta.url));
 const RUNTIME_ASSETS = ["mcp-keyring-helper.cjs", "mcp-script-worker.mjs", "app-bridge.bundle.js"];
 
-const tscStub = fileURLToPath(new URL("./fixtures/build-tsc-stub.cjs", import.meta.url));
+const tscStub = fileURLToPath(new URL("../fixtures/build-tsc-stub.cjs", import.meta.url));
 const faultPreload = fileURLToPath(
-  new URL("./fixtures/build-fs-fault-preload.mjs", import.meta.url),
+  new URL("../fixtures/build-fs-fault-preload.mjs", import.meta.url),
 );
 
 function makeFixture(): string {
@@ -54,12 +54,21 @@ async function runBuild(cwd: string, env: Record<string, string> = {}, nodeArgs:
   try {
     const { stderr } = await execFile(process.execPath, [...nodeArgs, buildScript], {
       cwd,
-      env: { ...process.env, PATH: `${join(cwd, "bin")}${delimiter}${process.env.PATH}`, ...env },
+      env: {
+        ...process.env,
+        PATH: `${join(cwd, "bin")}${delimiter}${String(process.env.PATH)}`,
+        ...env,
+      },
     });
     return { code: 0, stderr };
   } catch (error) {
-    const failure = error as { code?: number; stderr?: string };
-    return { code: failure.code ?? 1, stderr: failure.stderr ?? "" };
+    const failure = typeof error === "object" && error !== null ? error : {};
+    const code = "code" in failure ? failure.code : undefined;
+    const stderr = "stderr" in failure ? failure.stderr : undefined;
+    return {
+      code: typeof code === "number" || typeof code === "string" ? code : 1,
+      stderr: typeof stderr === "string" ? stderr : "",
+    };
   }
 }
 
