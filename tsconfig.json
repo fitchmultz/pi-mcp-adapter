@@ -7,12 +7,30 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "strict": true,
-    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
     "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedSideEffectImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowJs": true,
+    "checkJs": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "noCheck": false,
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["*.ts", "__tests__/**/*.ts"]
+  "include": [
+    "*.ts",
+    "*.mts",
+    "*.js",
+    "*.mjs",
+    "*.cjs",
+    "__tests__/**/*",
+    "scripts/**/*",
+    "conformance/**/*.ts"
+  ],
+  "exclude": ["app-bridge.bundle.js", "dist", "node_modules", "examples"]
 }
