@@ -1,12 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+
+type ErrorHandler = (error?: NodeJS.ErrnoException) => void;
 
 type MockServer = {
-  once: ReturnType<typeof vi.fn>;
-  listen: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
-  unref: ReturnType<typeof vi.fn>;
-  address: ReturnType<typeof vi.fn>;
-  handlers: Map<string, (error?: NodeJS.ErrnoException) => void>;
+  once: Mock<(event: string, handler: ErrorHandler) => MockServer>;
+  listen: Mock<(port: number, host: string, onListen: () => void) => void>;
+  close: Mock<(cb?: () => void) => void>;
+  unref: Mock<() => void>;
+  address: Mock<() => { address: string; family: string; port: number }>;
+  handlers: Map<string, ErrorHandler>;
 };
 
 const mocks = vi.hoisted(() => {
@@ -16,6 +19,7 @@ const mocks = vi.hoisted(() => {
     callbackPath: "/callback",
   };
 
+  const servers: MockServer[] = [];
   const runtime = {
     assignedPort: 4338,
     listenImpl: (
@@ -23,27 +27,33 @@ const mocks = vi.hoisted(() => {
       _port: number,
       _host: string,
       onListen: () => void,
-      _handlers: Map<string, (error?: NodeJS.ErrnoException) => void>,
+      _handlers: Map<string, ErrorHandler>,
     ) => {
       onListen();
     },
-    servers: [] as MockServer[],
+    servers,
   };
 
-  const createServer = vi.fn((_handler: unknown) => {
-    const handlers = new Map<string, (error?: NodeJS.ErrnoException) => void>();
+  const createServer = vi.fn<(_handler: unknown) => MockServer>((_handler) => {
+    const handlers = new Map<string, ErrorHandler>();
     const server: MockServer = {
       handlers,
-      once: vi.fn((event: string, handler: (error?: NodeJS.ErrnoException) => void) => {
+      once: vi.fn<(event: string, handler: ErrorHandler) => MockServer>((event, handler) => {
         handlers.set(event, handler);
         return server;
       }),
-      listen: vi.fn((port: number, host: string, onListen: () => void) => {
-        runtime.listenImpl(server, port, host, onListen, handlers);
-      }),
-      close: vi.fn((cb?: () => void) => cb?.()),
-      unref: vi.fn(),
-      address: vi.fn(() => ({ address: "127.0.0.1", family: "IPv4", port: runtime.assignedPort })),
+      listen: vi.fn<(port: number, host: string, onListen: () => void) => void>(
+        (port, host, onListen) => {
+          runtime.listenImpl(server, port, host, onListen, handlers);
+        },
+      ),
+      close: vi.fn<(cb?: () => void) => void>((cb) => cb?.()),
+      unref: vi.fn<() => void>(),
+      address: vi.fn<() => { address: string; family: string; port: number }>(() => ({
+        address: "127.0.0.1",
+        family: "IPv4",
+        port: runtime.assignedPort,
+      })),
     };
 
     runtime.servers.push(server);
@@ -54,13 +64,13 @@ const mocks = vi.hoisted(() => {
     state,
     runtime,
     createServer,
-    getConfiguredOAuthCallbackPort: vi.fn(() => state.configuredPort),
-    getOAuthCallbackPort: vi.fn(() => state.activePort),
-    getOAuthCallbackPath: vi.fn(() => state.callbackPath),
-    setOAuthCallbackPath: vi.fn((path: string) => {
+    getConfiguredOAuthCallbackPort: vi.fn<() => number>(() => state.configuredPort),
+    getOAuthCallbackPort: vi.fn<() => number>(() => state.activePort),
+    getOAuthCallbackPath: vi.fn<() => string>(() => state.callbackPath),
+    setOAuthCallbackPath: vi.fn<(path: string) => void>((path) => {
       state.callbackPath = path.startsWith("/") ? path : `/${path}`;
     }),
-    setOAuthCallbackPort: vi.fn((port: number) => {
+    setOAuthCallbackPort: vi.fn<(port: number) => void>((port) => {
       state.activePort = port;
     }),
   };
@@ -70,7 +80,7 @@ vi.mock("http", () => ({
   createServer: mocks.createServer,
 }));
 
-vi.mock("../mcp-oauth-callback-config.ts", () => ({
+vi.mock("../../mcp-oauth-callback-config.ts", () => ({
   DEFAULT_OAUTH_CALLBACK_PATH: "/callback",
   getConfiguredOAuthCallbackPort: mocks.getConfiguredOAuthCallbackPort,
   getOAuthCallbackPath: mocks.getOAuthCallbackPath,
@@ -98,8 +108,24 @@ describe("mcp-callback-server", () => {
     mocks.setOAuthCallbackPort.mockClear();
   });
 
+  it("allows a process with a live callback listener to exit naturally", () => {
+    const callbackModule = new URL("../../mcp-callback-server.ts", import.meta.url).href;
+    const script = `
+      import { ensureCallbackServer } from ${JSON.stringify(callbackModule)};
+      await ensureCallbackServer({ callbackHost: "127.0.0.1" });
+      console.log("callback-bound");
+    `;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("callback-bound");
+  }, 10_000);
+
   it("binds localhost on an OS-assigned port and unrefs after a successful non-strict bind", async () => {
-    const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer } = await import("../../mcp-callback-server.ts");
 
     await ensureCallbackServer();
 
@@ -113,7 +139,7 @@ describe("mcp-callback-server", () => {
   });
 
   it("binds the configured localhost port exactly in strict mode", async () => {
-    const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer } = await import("../../mcp-callback-server.ts");
 
     await ensureCallbackServer({ strictPort: true });
 
@@ -131,7 +157,7 @@ describe("mcp-callback-server", () => {
   });
 
   it("binds an explicit loopback host and port exactly in strict mode", async () => {
-    const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer } = await import("../../mcp-callback-server.ts");
 
     await ensureCallbackServer({
       strictPort: true,
@@ -156,12 +182,12 @@ describe("mcp-callback-server", () => {
 
   it("does not unref when bind fails", async () => {
     mocks.runtime.listenImpl = (_server, _port, _host, _onListen, handlers) => {
-      Promise.resolve().then(() => {
+      queueMicrotask(() => {
         handlers.get("error")?.(Object.assign(new Error("EADDRINUSE"), { code: "EADDRINUSE" }));
       });
     };
 
-    const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer } = await import("../../mcp-callback-server.ts");
 
     await expect(ensureCallbackServer({ strictPort: true })).rejects.toThrow(/already in use/);
     expect(mocks.runtime.servers[0]?.unref).not.toHaveBeenCalled();
@@ -173,7 +199,7 @@ describe("mcp-callback-server", () => {
       resolveListen = onListen;
     };
 
-    const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer } = await import("../../mcp-callback-server.ts");
 
     const first = ensureCallbackServer();
     const second = ensureCallbackServer();
@@ -193,7 +219,8 @@ describe("mcp-callback-server", () => {
       resolveListen = onListen;
     };
 
-    const { ensureCallbackServer, stopCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer, stopCallbackServer } =
+      await import("../../mcp-callback-server.ts");
     const starting = ensureCallbackServer();
     await Promise.resolve();
     const stopping = stopCallbackServer();
@@ -215,26 +242,35 @@ describe("mcp-callback-server", () => {
       resolveListen = onListen;
     };
 
-    const { ensureCallbackServer, stopCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer, stopCallbackServer } =
+      await import("../../mcp-callback-server.ts");
     const starting = ensureCallbackServer();
     await Promise.resolve();
     const queued = ensureCallbackServer({ strictPort: true });
-    const queuedResult = expect(queued).rejects.toThrow("OAuth callback server stopped");
+    const queuedResult = queued.then(
+      () => null,
+      (error: unknown) => error,
+    );
     const stopping = stopCallbackServer();
     resolveListen?.();
 
     await expect(starting).resolves.toBeUndefined();
-    await queuedResult;
+    expect(await queuedResult).toMatchObject({ message: "OAuth callback server stopped" });
     await expect(stopping).resolves.toBeUndefined();
     expect(mocks.runtime.servers).toHaveLength(1);
     expect(mocks.runtime.servers[0]?.close).toHaveBeenCalledTimes(1);
   });
 
   it("rejects callback startup issued while shutdown is closing the server", async () => {
-    const { ensureCallbackServer, stopCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer, stopCallbackServer } =
+      await import("../../mcp-callback-server.ts");
     await ensureCallbackServer();
     let finishClose: (() => void) | undefined;
-    mocks.runtime.servers[0]!.close.mockImplementation((callback?: () => void) => {
+    const server = mocks.runtime.servers[0];
+    if (server === undefined) {
+      throw new Error("Callback server was not created");
+    }
+    server.close.mockImplementation((callback?: () => void) => {
       finishClose = callback;
     });
 
@@ -252,7 +288,7 @@ describe("mcp-callback-server", () => {
   });
 
   it("rebinds to the configured port when strict mode is requested", async () => {
-    const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer } = await import("../../mcp-callback-server.ts");
 
     await ensureCallbackServer();
     expect(mocks.state.activePort).toBe(4338);
@@ -269,14 +305,14 @@ describe("mcp-callback-server", () => {
   });
 
   it("keeps the existing callback server when strict rebind fails", async () => {
-    const { ensureCallbackServer } = await import("../mcp-callback-server.ts");
+    const { ensureCallbackServer } = await import("../../mcp-callback-server.ts");
 
     await ensureCallbackServer();
     expect(mocks.state.activePort).toBe(4338);
 
     mocks.runtime.listenImpl = (_server, port, _host, onListen, handlers) => {
       if (port === mocks.state.configuredPort) {
-        Promise.resolve().then(() => {
+        queueMicrotask(() => {
           handlers.get("error")?.(Object.assign(new Error("EADDRINUSE"), { code: "EADDRINUSE" }));
         });
         return;
@@ -293,7 +329,7 @@ describe("mcp-callback-server", () => {
 
   it("reserves callback state inside ensureCallbackServer before releasing the startup lock", async () => {
     const { ensureCallbackServer, releaseCallbackServer } =
-      await import("../mcp-callback-server.ts");
+      await import("../../mcp-callback-server.ts");
 
     await ensureCallbackServer({ oauthState: "atomic-reserved-state", reserveState: true });
 
@@ -307,7 +343,7 @@ describe("mcp-callback-server", () => {
 
   it("does not switch host or path while callback state reserved by ensureCallbackServer", async () => {
     const { ensureCallbackServer, releaseCallbackServer } =
-      await import("../mcp-callback-server.ts");
+      await import("../../mcp-callback-server.ts");
 
     await ensureCallbackServer({
       callbackPath: "/first/callback",
@@ -329,7 +365,7 @@ describe("mcp-callback-server", () => {
 
   it("does not switch ports in strict mode while callbacks are pending", async () => {
     const { ensureCallbackServer, waitForCallback, cancelPendingCallback } =
-      await import("../mcp-callback-server.ts");
+      await import("../../mcp-callback-server.ts");
 
     await ensureCallbackServer();
     const pending = waitForCallback("pending-state");
