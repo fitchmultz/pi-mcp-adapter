@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.6 - 2026-11-02
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Raise the Pi floor to 1.5.0 (#122) ([fc9bed1](https://github.com/fitchmultz/pi-mcp-adapter/commit/fc9bed1ac87fcfaabeca626115dbe107c0e63ac9))
+
+### What's Changed
+* Raise the Pi floor to 1.5.0 by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/122
+
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.5...v8.0.6
+
 ## 8.0.5 - 2026-11-02
 
 <!-- npm-release:unreleased:start -->
