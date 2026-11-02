@@ -1,6 +1,6 @@
 # Development and releases
 
-See [AGENTS.md](../AGENTS.md) for repository test conventions and [.github/workflows/ci.yml](../.github/workflows/ci.yml) for the full CI contract.
+See [AGENTS.md](../AGENTS.md) for repository test conventions, the [strict quality standard](strict-quality-standard.md) for quality requirements, and [.github/workflows/ci.yml](../.github/workflows/ci.yml) for the full CI contract.
 
 ## Local checks
 
