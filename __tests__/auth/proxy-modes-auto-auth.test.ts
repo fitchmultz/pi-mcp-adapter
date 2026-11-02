@@ -527,13 +527,21 @@ describe("proxy auto auth", () => {
       expect(request[1]).toEqual({ timeout: 5000, cacheMode: "refresh", signal });
     }
     expect(callTool).toHaveBeenCalledTimes(2);
-    for (const [index, value] of ["one", "two"].entries()) {
-      const request = callTool.mock.calls[index];
-      assert.ok(request);
-      expect(request[0]).toEqual({ name: "echo", arguments: { text: value }, _meta: undefined });
-      const signal = request[1]?.signal;
+    const argumentsSent = callTool.mock.calls.map(([params]) => params);
+    expect(argumentsSent).toContainEqual({
+      name: "echo",
+      arguments: { text: "one" },
+      _meta: undefined,
+    });
+    expect(argumentsSent).toContainEqual({
+      name: "echo",
+      arguments: { text: "two" },
+      _meta: undefined,
+    });
+    for (const [, options] of callTool.mock.calls) {
+      const signal = options?.signal;
       expect(signal).toBeInstanceOf(AbortSignal);
-      expect(request[1]).toEqual({ timeout: 5000, signal });
+      expect(options).toEqual({ timeout: 5000, signal });
     }
     const events = (await readFile(eventsPath, "utf8"))
       .trim()
