@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.7 - 2026-11-02
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Adopt strict quality toolchain and formatting (1/2) (#124) ([d88b71a](https://github.com/fitchmultz/pi-mcp-adapter/commit/d88b71a70b48ec2f44563a79489abddca6af6adf))
+
+### What's Changed
+
+- Adopt strict quality toolchain and formatting (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/124
+- Enforce strict lint for conformance tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/125
+- Enforce strict lint for prompt tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/126
+- Enforce strict lint for runtime integration tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/127
+- Enforce strict lint for auto-auth tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/128
+- Enforce strict lint for discovery and result tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/130
+- perf: parallelize independent awaits in hot paths by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/129
+- Enforce strict lint for state and callback tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/131
+- Enforce strict lint for output storage tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/132
+- Enforce strict lint on packaging tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/133
+- Enforce strict lint on transport tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/134
+- Enforce strict lint on instruction tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/135
+- Enforce strict lint on lazy startup tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/137
+- Check source directives during quality migration by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/136
+- Enforce strict lint on metadata cache tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/138
+- Enforce strict lint on resource discovery tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/139
+- Adopt the strict quality engineering standard by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/140
+- Enforce strict lint on UI host tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/141
+- Authenticate official host qualification requests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/143
+- Enforce strict lint on panel tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/142
+- Verify strict policy and compiler coverage by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/144
+- Enforce strict lint on callback lifecycle tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/145
+- Enforce strict lint on credential storage tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/146
+- Qualify startup cancellation through native HTTP transports by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/147
+- Enforce operation-bound exceptions for protocol tracing by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/148
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.6...v8.0.7
+
 ## 8.0.6 - 2026-11-02
 
 <!-- npm-release:unreleased:start -->
