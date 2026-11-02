@@ -152,7 +152,7 @@ describe("canonical tool catalog", () => {
     expect(findToolByName(metadata, "demo_read_guide")).toBeUndefined();
   });
 
-  it("preserves complete raw descriptors through cache, live metadata and direct selection", () => {
+  it("preserves complete raw descriptors through cache, live metadata and direct selection", async () => {
     const definition: ServerEntry = { directTools: true };
     const entry = cacheEntry([descriptor], definition);
     expect(entry.tools).toEqual([descriptor]);
@@ -170,7 +170,7 @@ describe("canonical tool catalog", () => {
       uiStreamMode: "stream-first",
     });
     expect(live[0]?.inputSchema).toBe(descriptor.inputSchema);
-    const direct = resolvePinnedTools(
+    const direct = await resolvePinnedTools(
       { mcpServers: { linear: definition } },
       { version: 1, servers: { linear: stored } },
       "server",
@@ -179,7 +179,7 @@ describe("canonical tool catalog", () => {
     expect(direct).toEqual([{ ...metadata, serverName: "linear", prefixedName: name }]);
   });
 
-  it("applies visibility and configured filters identically to live, cached and pinned tools", () => {
+  it("applies visibility and configured filters identically to live, cached and pinned tools", async () => {
     const tools = [
       { name: "visible" },
       { name: "app_only", _meta: { ui: { visibility: ["app"] } } },
@@ -201,16 +201,15 @@ describe("canonical tool catalog", () => {
     expect(rankToolMatches(state, "app only invalid empty malformed")).toEqual([]);
     const config = { mcpServers: { demo: definition } };
     const cache = { version: 1, servers: { demo: entry } };
-    expect(resolvePinnedTools(config, cache, "server").map((tool) => tool.originalName)).toEqual([
-      "visible",
-      "both",
-    ]);
-    expect(resolvePinnedTools(config, cache, "server", ["demo/app_only"])).toEqual([]);
+    expect(
+      (await resolvePinnedTools(config, cache, "server")).map((tool) => tool.originalName),
+    ).toEqual(["visible", "both"]);
+    expect(await resolvePinnedTools(config, cache, "server", ["demo/app_only"])).toEqual([]);
     definition.directTools = false;
-    expect(resolvePinnedTools(config, cache, "server", ["demo/visible"])).toHaveLength(1);
+    expect(await resolvePinnedTools(config, cache, "server", ["demo/visible"])).toHaveLength(1);
   });
 
-  it("reconstructs old flattened UI cache records without exposing app-only tools", () => {
+  it("reconstructs old flattened UI cache records without exposing app-only tools", async () => {
     const definition: ServerEntry = { directTools: true };
     const entry: ServerCacheEntry = {
       ...cacheEntry([], definition),
@@ -234,15 +233,17 @@ describe("canonical tool catalog", () => {
       uiStreamMode: "eager",
     });
     expect(
-      resolvePinnedTools(
-        { mcpServers: { demo: definition } },
-        { version: 1, servers: { demo: entry } },
-        "server",
+      (
+        await resolvePinnedTools(
+          { mcpServers: { demo: definition } },
+          { version: 1, servers: { demo: entry } },
+          "server",
+        )
       ).map((tool) => tool.originalName),
     ).toEqual(["legacy", "plain"]);
   });
 
-  it("keeps resource aliases readable but never registers them as pinned functions", () => {
+  it("keeps resource aliases readable but never registers them as pinned functions", async () => {
     const definition = {
       directTools: true,
       includeTools: ["demo_*"],
@@ -275,14 +276,16 @@ describe("canonical tool catalog", () => {
       resourceDescriptor: resources[0],
     });
     expect(
-      resolvePinnedTools(
-        { mcpServers: { demo: definition } },
-        { version: 1, servers: { demo: entry } },
-        "server",
+      (
+        await resolvePinnedTools(
+          { mcpServers: { demo: definition } },
+          { version: 1, servers: { demo: entry } },
+          "server",
+        )
       ).map((tool) => tool.originalName),
     ).toEqual(["get_guide"]);
     expect(
-      resolvePinnedTools(
+      await resolvePinnedTools(
         { mcpServers: { demo: definition } },
         { version: 1, servers: { demo: entry } },
         "server",

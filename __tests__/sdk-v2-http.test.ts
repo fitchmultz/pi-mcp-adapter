@@ -837,7 +837,7 @@ describe("published SDK v2 over real local HTTP", () => {
     };
     const metadata = reconstructToolMetadata("local", entry, "server", definition);
     expect(metadata).toEqual(state.toolMetadata.get("local"));
-    const specs = resolvePinnedTools(
+    const specs = await resolvePinnedTools(
       state.config,
       { version: 1, servers: { local: entry } },
       "server",

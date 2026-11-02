@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toolErrorOverride } from "../error-signal.ts";
+import { toolErrorOverride } from "../../error-signal.ts";
 
 describe("toolErrorOverride", () => {
   it("flags tool-execution failures (tool_error, call_failed)", () => {
@@ -16,9 +16,10 @@ describe("toolErrorOverride", () => {
     expect(toolErrorOverride({ ok: true })).toBeUndefined(); // no error breadcrumb at all
   });
 
-  it("ignores malformed details (nullish, non-object, non-string error)", () => {
-    expect(toolErrorOverride(undefined)).toBeUndefined();
-    expect(toolErrorOverride("tool_error")).toBeUndefined();
-    expect(toolErrorOverride({ error: 123 })).toBeUndefined();
-  });
+  it.each([undefined, null, "tool_error", { error: 123 }])(
+    "ignores malformed details: %j",
+    (details) => {
+      expect(toolErrorOverride(details)).toBeUndefined();
+    },
+  );
 });

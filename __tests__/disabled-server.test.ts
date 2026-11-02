@@ -74,7 +74,7 @@ function disabledState() {
 afterEach(() => vi.restoreAllMocks());
 
 describe("disabled MCP servers", () => {
-  it("only literal true disables direct tools and configured bootstrap", () => {
+  it("only literal true disables direct tools and configured bootstrap", async () => {
     const config = {
       settings: { directTools: true },
       mcpServers: {
@@ -102,7 +102,7 @@ describe("disabled MCP servers", () => {
     };
 
     expect(
-      resolvePinnedTools(config, directCache, "server")
+      (await resolvePinnedTools(config, directCache, "server"))
         .map((spec) => spec.serverName)
         .sort(),
     ).toEqual(["enabled", "string"]);
