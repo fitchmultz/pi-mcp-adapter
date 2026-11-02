@@ -304,7 +304,8 @@
       "files": [
         "**/*.test.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
         "**/*.spec.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
-        "**/__tests__/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"
+        "**/__tests__/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+        "conformance/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"
       ],
       "rules": {
         "complexity": [

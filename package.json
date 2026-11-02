@@ -39,6 +39,7 @@
     "test:oauth": "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --test --test-concurrency=1 mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
     "test:conformance": "bash conformance/run.sh",
     "lint": "oxlint --deny-warnings .",
+    "lint:conformance": "oxlint --deny-warnings conformance",
     "lint:agent": "oxlint --deny-warnings --format=agent .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",

@@ -30,8 +30,11 @@ It covers the four core client scenarios and the full OAuth matrix shipped by th
 From the repository root:
 
 ```sh
+npm run lint:conformance
 npm run test:conformance
 ```
+
+The lint command checks all maintained JavaScript and TypeScript in `conformance/` with the test-support profile.
 
 Run one scenario while developing:
 

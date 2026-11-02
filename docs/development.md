@@ -11,7 +11,10 @@ npm ci --ignore-scripts --no-audit --no-fund
 npm ci --prefix examples/interactive-visualizer --ignore-scripts --no-audit --no-fund
 npm run --prefix examples/interactive-visualizer build
 npm run build
+npm run format:check
+npm run lint:conformance
 npm run typecheck
+npm run typecheck:all
 npm test
 npm run test:conformance
 ```
