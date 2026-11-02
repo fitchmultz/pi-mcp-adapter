@@ -1,11 +1,11 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { runToolCall } from "../proxy-modes.ts";
-import { createMcpRuntimeOwner } from "../runtime-owner.ts";
-import { McpServerManager } from "../server-manager.ts";
-import type { McpExtensionState } from "../state.ts";
+import { runToolCall } from "../../proxy-modes.ts";
+import { createMcpRuntimeOwner } from "../../runtime-owner.ts";
+import { McpServerManager } from "../../server-manager.ts";
+import { createTestState } from "../test-state.ts";
 
-const fixture = fileURLToPath(new URL("./fixtures/mcp-code-server.mjs", import.meta.url));
+const fixture = fileURLToPath(new URL("../fixtures/mcp-code-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
 
 describe("cancellation while operation-only modules load", () => {
@@ -28,14 +28,14 @@ describe("cancellation while operation-only modules load", () => {
         const nativeCall = vi.spyOn(connection.client, "callTool");
         const increment = vi.spyOn(manager, "incrementInFlight");
         const decrement = vi.spyOn(manager, "decrementInFlight");
-        const beforeDispatch = vi.fn(async () => {});
-        const capture = vi.fn(async () => {});
-        const state = {
+        const beforeDispatch = vi.fn<() => Promise<void>>().mockResolvedValue();
+        const capture = vi.fn<() => Promise<void>>().mockResolvedValue();
+        const state = createTestState({
           owner,
           manager,
           config: { settings: {}, mcpServers: { fixture: definition } },
           onToolCall: capture,
-        } as unknown as McpExtensionState;
+        });
         const ownedSignal = AbortSignal.any([controller.signal, owner.signal]);
         const reason = `${cancel} cancelled during lazy import`;
         const pending = runToolCall(
@@ -48,7 +48,7 @@ describe("cancellation while operation-only modules load", () => {
             ownedSignal,
             signal: controller.signal,
             beforeDispatch,
-            recoverAuthConnection: async () => {},
+            recoverAuthConnection: () => Promise.reject(new Error("Unexpected OAuth request")),
             authRequiredMessage: () => "Unexpected OAuth request",
             autoAuthAttempted: () => false,
           },
