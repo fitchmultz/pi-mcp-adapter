@@ -15,8 +15,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../config.ts", () => ({
   loadMcpConfig: vi.fn(() => mocks.config),
   resolveConfiguredOAuthDir: vi.fn((raw, cwd = process.cwd()) => {
-    if (raw === undefined || raw === null) return undefined;
-    if (typeof raw !== "string") throw new Error("settings.oauthDir must be a string");
+    if (raw === undefined || raw === null) {
+      return undefined;
+    }
+    if (typeof raw !== "string") {
+      throw new Error("settings.oauthDir must be a string");
+    }
     const trimmed = raw.trim();
     return trimmed ? join(cwd, trimmed) : undefined;
   }),
@@ -39,7 +43,9 @@ vi.mock("../metadata-cache.ts", () => ({
 }));
 
 vi.mock("../server-manager.ts", () => ({
-  McpServerManager: vi.fn(function () { return mocks.manager; }),
+  McpServerManager: vi.fn(function () {
+    return mocks.manager;
+  }),
 }));
 
 vi.mock("../tool-metadata.ts", () => ({
@@ -65,11 +71,12 @@ function createManager() {
     setMetadataListChangedListener: vi.fn((listener) => {
       metadataListChanged = listener;
     }),
-    emitMetadataListChanged: (serverName = "srv", reason = "resources-list-changed") => metadataListChanged?.(serverName, reason),
+    emitMetadataListChanged: (serverName = "srv", reason = "resources-list-changed") =>
+      metadataListChanged?.(serverName, reason),
     setSamplingConfig: vi.fn(),
     setElicitationConfig: vi.fn(),
     getConnection: vi.fn(() => current),
-    getAllConnections: vi.fn(() => current ? new Map([["srv", current]]) : new Map()),
+    getAllConnections: vi.fn(() => (current ? new Map([["srv", current]]) : new Map())),
     connect: vi.fn(async () => {
       current = connection;
       return connection;
@@ -120,12 +127,15 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     mocks.config.mcpServers.srv.directTools = false;
     const { initializeMcp } = await import("../init.ts");
 
-    const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
-      cwd: tempDir,
-      hasUI: false,
-      mode: "headless",
-      signal: undefined,
-    } as any);
+    const state = await initializeMcp(
+      { getFlag: vi.fn(() => {}) } as any,
+      {
+        cwd: tempDir,
+        hasUI: false,
+        mode: "headless",
+        signal: undefined,
+      } as any,
+    );
 
     mocks.manager.clear();
     await (state.lifecycle as any).checkConnections();
@@ -145,12 +155,15 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     mocks.manager.connect.mockRejectedValueOnce(new Error("bootstrap failed"));
     const { initializeMcp } = await import("../init.ts");
 
-    const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
-      cwd: tempDir,
-      hasUI: false,
-      mode: "headless",
-      signal: undefined,
-    } as any);
+    const state = await initializeMcp(
+      { getFlag: vi.fn(() => {}) } as any,
+      {
+        cwd: tempDir,
+        hasUI: false,
+        mode: "headless",
+        signal: undefined,
+      } as any,
+    );
 
     expect(state.failureTracker.has("srv")).toBe(true);
     expect(state.failureMessages.get("srv")).toBe("bootstrap failed");
@@ -167,12 +180,15 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     mocks.manager.connect.mockRejectedValueOnce(new Error("startup failed"));
     const { initializeMcp } = await import("../init.ts");
 
-    const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
-      cwd: tempDir,
-      hasUI: false,
-      mode: "headless",
-      signal: undefined,
-    } as any);
+    const state = await initializeMcp(
+      { getFlag: vi.fn(() => {}) } as any,
+      {
+        cwd: tempDir,
+        hasUI: false,
+        mode: "headless",
+        signal: undefined,
+      } as any,
+    );
 
     expect(mocks.manager.connect).toHaveBeenCalledTimes(2);
     expect(state.failureTracker.has("srv")).toBe(false);
@@ -186,22 +202,32 @@ describe("lazy-keep-alive initializeMcp integration", () => {
       settings: {},
       mcpServers: { srv: { command: "demo", lifecycle: "eager" } },
     };
-    mocks.manager.connect.mockRejectedValueOnce(new Error("stderr \x1b]52;c;clipboard-secret\x07startup failed"));
+    mocks.manager.connect.mockRejectedValueOnce(
+      new Error("stderr \x1b]52;c;clipboard-secret\x07startup failed"),
+    );
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { initializeMcp } = await import("../init.ts");
     const ui = { setStatus: vi.fn(), notify: vi.fn() };
 
-    const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
-      cwd: tempDir,
-      hasUI: true,
-      mode: "tui",
-      ui,
-      signal: undefined,
-    } as any);
+    const state = await initializeMcp(
+      { getFlag: vi.fn(() => {}) } as any,
+      {
+        cwd: tempDir,
+        hasUI: true,
+        mode: "tui",
+        ui,
+        signal: undefined,
+      } as any,
+    );
 
     expect(state.failureMessages.get("srv")).toContain("clipboard-secret");
-    expect(ui.notify).toHaveBeenCalledWith("MCP: Failed to connect to srv: stderr startup failed", "error");
-    expect(consoleError).toHaveBeenCalledWith("MCP: Failed to connect to srv: stderr startup failed");
+    expect(ui.notify).toHaveBeenCalledWith(
+      "MCP: Failed to connect to srv: stderr startup failed",
+      "error",
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      "MCP: Failed to connect to srv: stderr startup failed",
+    );
   });
 
   it("honors the status icon opt-out during eager startup", async () => {
@@ -214,12 +240,15 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const { initializeMcp } = await import("../init.ts");
     const ui = { setStatus: vi.fn(), notify: vi.fn() };
 
-    await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
-      cwd: tempDir,
-      hasUI: true,
-      mode: "tui",
-      ui,
-    } as any);
+    await initializeMcp(
+      { getFlag: vi.fn(() => {}) } as any,
+      {
+        cwd: tempDir,
+        hasUI: true,
+        mode: "tui",
+        ui,
+      } as any,
+    );
 
     expect(ui.setStatus).toHaveBeenCalledWith("mcp", "MCP: connecting to 1 servers...");
   });
@@ -239,29 +268,38 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const { initializeMcp } = await import("../init.ts");
     const ui = { setStatus: vi.fn(), notify: vi.fn() };
 
-    const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
-      cwd: tempDir,
-      hasUI: true,
-      mode: "tui",
-      ui,
-      signal: controller.signal,
-    } as any);
+    const state = await initializeMcp(
+      { getFlag: vi.fn(() => {}) } as any,
+      {
+        cwd: tempDir,
+        hasUI: true,
+        mode: "tui",
+        ui,
+        signal: controller.signal,
+      } as any,
+    );
 
     expect(state.failureTracker.size).toBe(0);
     expect(state.failureMessages.size).toBe(0);
-    expect(ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("Failed to connect"), "error");
+    expect(ui.notify).not.toHaveBeenCalledWith(
+      expect.stringContaining("Failed to connect"),
+      "error",
+    );
   });
 
   it("does not preserve stale cached resources after authoritative list-change removal", async () => {
     mocks.config.mcpServers.srv.lifecycle = "eager";
     const { initializeMcp, updateMetadataCache } = await import("../init.ts");
 
-    const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
-      cwd: tempDir,
-      hasUI: false,
-      mode: "headless",
-      signal: undefined,
-    } as any);
+    const state = await initializeMcp(
+      { getFlag: vi.fn(() => {}) } as any,
+      {
+        cwd: tempDir,
+        hasUI: false,
+        mode: "headless",
+        signal: undefined,
+      } as any,
+    );
 
     mocks.cache = {
       version: 1,
@@ -276,7 +314,9 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     };
 
     updateMetadataCache(state, "srv");
-    expect((mocks.cache?.servers.srv as any).resources).toEqual([{ uri: "ui://old", name: "Old resource" }]);
+    expect((mocks.cache?.servers.srv as any).resources).toEqual([
+      { uri: "ui://old", name: "Old resource" },
+    ]);
 
     updateMetadataCache(state, "srv", { preserveEmptyResources: false });
     expect((mocks.cache?.servers.srv as any).resources).toEqual([]);
@@ -288,12 +328,15 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["srv"]);
     const { initializeMcp } = await import("../init.ts");
 
-    const state = await initializeMcp({ getFlag: vi.fn(() => undefined) } as any, {
-      cwd: tempDir,
-      hasUI: false,
-      mode: "headless",
-      signal: undefined,
-    } as any);
+    const state = await initializeMcp(
+      { getFlag: vi.fn(() => {}) } as any,
+      {
+        cwd: tempDir,
+        hasUI: false,
+        mode: "headless",
+        signal: undefined,
+      } as any,
+    );
 
     mocks.manager.clear();
     await (state.lifecycle as any).checkConnections();

@@ -18,7 +18,12 @@ describe("interactive visualizer", () => {
       });
       const result = await connection.client.callTool({
         name: "show_chart",
-        arguments: { type: "bar", title: "Local test", labels: "A", datasets: '[{"label":"Test","data":[1]}]' },
+        arguments: {
+          type: "bar",
+          title: "Local test",
+          labels: "A",
+          datasets: '[{"label":"Test","data":[1]}]',
+        },
         _meta: { "pi-mcp-adapter/stream-token": "example-stream" },
       });
       expect(result.isError).not.toBe(true);

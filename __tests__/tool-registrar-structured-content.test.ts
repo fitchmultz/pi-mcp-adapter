@@ -8,7 +8,10 @@ describe("resolveMcpResultContent", () => {
       structuredContent: { extra: true },
     });
 
-    expect(blocks).toEqual([{ type: "text", text: "hello" }, { type: "text", text: JSON.stringify({ extra: true }, null, 2) }]);
+    expect(blocks).toEqual([
+      { type: "text", text: "hello" },
+      { type: "text", text: JSON.stringify({ extra: true }, null, 2) },
+    ]);
   });
 
   it("falls back to structuredContent when content is empty", () => {
@@ -18,18 +21,14 @@ describe("resolveMcpResultContent", () => {
       structuredContent: structured,
     });
 
-    expect(blocks).toEqual([
-      { type: "text", text: JSON.stringify(structured, null, 2) },
-    ]);
+    expect(blocks).toEqual([{ type: "text", text: JSON.stringify(structured, null, 2) }]);
   });
 
   it("falls back to structuredContent when content is omitted entirely", () => {
     const structured = { value: 42 };
     const blocks = resolveMcpResultContent({ structuredContent: structured });
 
-    expect(blocks).toEqual([
-      { type: "text", text: JSON.stringify(structured, null, 2) },
-    ]);
+    expect(blocks).toEqual([{ type: "text", text: JSON.stringify(structured, null, 2) }]);
   });
 
   it("returns empty array when both content and structuredContent are absent", () => {
@@ -37,16 +36,20 @@ describe("resolveMcpResultContent", () => {
     expect(resolveMcpResultContent({})).toEqual([]);
   });
 
-  it.each([null, false, 0])("preserves JSON primitive structuredContent %s", structuredContent => {
-    expect(resolveMcpResultContent({ content: [], structuredContent }))
-      .toEqual([{ type: "text", text: JSON.stringify(structuredContent) }]);
-  });
+  it.each([null, false, 0])(
+    "preserves JSON primitive structuredContent %s",
+    (structuredContent) => {
+      expect(resolveMcpResultContent({ content: [], structuredContent })).toEqual([
+        { type: "text", text: JSON.stringify(structuredContent) },
+      ]);
+    },
+  );
 
   it("treats an empty structuredContent object as a present payload", () => {
     // guards against a truthy check that would drop a legitimately empty object
-    expect(
-      resolveMcpResultContent({ content: [], structuredContent: {} }),
-    ).toEqual([{ type: "text", text: "{}" }]);
+    expect(resolveMcpResultContent({ content: [], structuredContent: {} })).toEqual([
+      { type: "text", text: "{}" },
+    ]);
   });
 
   it("preserves images beside structured content", () => {
@@ -55,7 +58,10 @@ describe("resolveMcpResultContent", () => {
       structuredContent: { caption: "image" },
     });
 
-    expect(blocks).toEqual([{ type: "image", data: "abc", mimeType: "image/png" }, { type: "text", text: JSON.stringify({ caption: "image" }, null, 2) }]);
+    expect(blocks).toEqual([
+      { type: "image", data: "abc", mimeType: "image/png" },
+      { type: "text", text: JSON.stringify({ caption: "image" }, null, 2) },
+    ]);
   });
 
   it("degrades gracefully when structuredContent is not serializable", () => {

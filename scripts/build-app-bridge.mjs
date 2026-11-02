@@ -3,7 +3,8 @@ import { build } from "esbuild";
 
 await build({
   stdin: {
-    contents: 'export { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";',
+    contents:
+      'export { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";',
     resolveDir: process.cwd(),
   },
   bundle: true,

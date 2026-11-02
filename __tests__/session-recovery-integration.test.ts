@@ -37,22 +37,28 @@ describe("session recovery — Streamable HTTP wire path", () => {
       }
 
       let body = "";
-      for await (const chunk of req) body += chunk;
+      for await (const chunk of req) {
+        body += chunk;
+      }
       const message = JSON.parse(body) as { id?: string | number; method?: string };
 
       if (message.method === "initialize") {
-        res.writeHead(200, {
-          "content-type": "application/json",
-          "mcp-session-id": `session-${++sessionCount}`,
-        }).end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: message.id,
-          result: {
-            protocolVersion: "2025-06-18",
-            capabilities: { tools: {}, resources: {} },
-            serverInfo: { name: "stale-session", version: "1.0.0" },
-          },
-        }));
+        res
+          .writeHead(200, {
+            "content-type": "application/json",
+            "mcp-session-id": `session-${++sessionCount}`,
+          })
+          .end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: {
+                protocolVersion: "2025-06-18",
+                capabilities: { tools: {}, resources: {} },
+                serverInfo: { name: "stale-session", version: "1.0.0" },
+              },
+            }),
+          );
         return;
       }
 
@@ -62,58 +68,73 @@ describe("session recovery — Streamable HTTP wire path", () => {
       }
 
       if (message.method === "tools/list") {
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: message.id,
-          result: { tools: [{ name: "search", inputSchema: { type: "object", properties: {} } }] },
-        }));
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              tools: [{ name: "search", inputSchema: { type: "object", properties: {} } }],
+            },
+          }),
+        );
         return;
       }
 
       if (message.method === "resources/list") {
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: message.id,
-          result: { resources: [] },
-        }));
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { resources: [] },
+          }),
+        );
         return;
       }
 
       if (message.method === "tools/call") {
         toolCalls += 1;
         const sessionId = req.headers["mcp-session-id"];
-        toolCallSessionIds.push(Array.isArray(sessionId) ? sessionId[0]! : sessionId ?? "");
+        toolCallSessionIds.push(Array.isArray(sessionId) ? sessionId[0]! : (sessionId ?? ""));
         if (toolCalls === 1) {
-          res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32000, message: "Bad Request: Server not initialized" },
-          }));
+          res.writeHead(400, { "content-type": "application/json" }).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: null,
+              error: { code: -32000, message: "Bad Request: Server not initialized" },
+            }),
+          );
           return;
         }
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: message.id,
-          result: { content: [{ type: "text", text: "ok" }] },
-        }));
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { content: [{ type: "text", text: "ok" }] },
+          }),
+        );
         return;
       }
 
       res.writeHead(500).end(`unexpected method: ${message.method}`);
     });
 
-    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+    if (!address || typeof address === "string") {
+      throw new Error("server did not bind to a TCP port");
+    }
 
     const manager = new McpServerManager();
-    const definition = { url: `http://127.0.0.1:${address.port}/mcp`, protocolVersion: "legacy" as const };
+    const definition = {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+      protocolVersion: "legacy" as const,
+    };
     try {
       await manager.connect("demo", definition);
       const result = await withSessionRecovery(
         { manager, config: { mcpServers: { demo: definition } } },
         "demo",
-        connection => connection.client.callTool({ name: "search", arguments: {} }),
+        (connection) => connection.client.callTool({ name: "search", arguments: {} }),
       );
 
       expect(result.content[0]).toMatchObject({ type: "text", text: "ok" });
@@ -122,7 +143,9 @@ describe("session recovery — Streamable HTTP wire path", () => {
       expect(toolCallSessionIds[0]).not.toBe(toolCallSessionIds[1]);
     } finally {
       await manager.close("demo").catch(() => {});
-      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
     }
   });
 });
@@ -136,21 +159,27 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })),
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
       client: {
-        callTool: vi.fn().mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
+        callTool: vi
+          .fn()
+          .mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
       },
     };
 
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -170,7 +199,12 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
 
     expect(stale.client.callTool).toHaveBeenCalledTimes(1);
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
+    expect(manager.reconnect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      stale,
+      expect.any(AbortSignal),
+    );
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
     expect((result.content[0] as { text: string }).text).toContain("ok");
   });
@@ -183,21 +217,25 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi.fn().mockRejectedValueOnce(new ProtocolError(-32000, "Server not initialized")),
+        callTool: vi
+          .fn()
+          .mockRejectedValueOnce(new ProtocolError(-32000, "Server not initialized")),
       },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
       client: {
-        callTool: vi.fn().mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
+        callTool: vi
+          .fn()
+          .mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
       },
     };
 
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -217,7 +255,12 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
 
     expect(stale.client.callTool).toHaveBeenCalledTimes(1);
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
+    expect(manager.reconnect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      stale,
+      expect.any(AbortSignal),
+    );
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
     expect((result.content[0] as { text: string }).text).toContain("ok");
   });
@@ -229,18 +272,22 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValue(new ProtocolError(-32000, "Server not initialized")) },
+      client: {
+        callTool: vi.fn().mockRejectedValue(new ProtocolError(-32000, "Server not initialized")),
+      },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn().mockRejectedValue(new ProtocolError(-32000, "Server not initialized")) },
+      client: {
+        callTool: vi.fn().mockRejectedValue(new ProtocolError(-32000, "Server not initialized")),
+      },
     };
 
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -271,18 +318,30 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
+      client: {
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
+      },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
+      client: {
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
+      },
     };
 
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -321,21 +380,27 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })),
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
       client: {
-        callTool: vi.fn().mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
+        callTool: vi
+          .fn()
+          .mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
       },
     };
 
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -344,23 +409,34 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const state = {
       config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
       manager,
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
 
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search",
+      },
+    );
 
     const result = await executor("id", { q: "hello" }, undefined, undefined, undefined as any);
 
     expect(stale.client.callTool).toHaveBeenCalledTimes(1);
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
+    expect(manager.reconnect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      stale,
+      expect.any(AbortSignal),
+    );
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
     expect((result.content[0] as { text: string }).text).toContain("ok");
   });
@@ -373,21 +449,25 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi.fn().mockRejectedValueOnce(new ProtocolError(-32000, "Server not initialized")),
+        callTool: vi
+          .fn()
+          .mockRejectedValueOnce(new ProtocolError(-32000, "Server not initialized")),
       },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
       client: {
-        callTool: vi.fn().mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
+        callTool: vi
+          .fn()
+          .mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
       },
     };
 
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -396,23 +476,34 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const state = {
       config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
       manager,
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
 
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search",
+      },
+    );
 
     const result = await executor("id", { q: "hello" }, undefined, undefined, undefined as any);
 
     expect(stale.client.callTool).toHaveBeenCalledTimes(1);
     expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, expect.any(AbortSignal));
+    expect(manager.reconnect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      stale,
+      expect.any(AbortSignal),
+    );
     expect(manager.reconnect).toHaveBeenCalledTimes(1);
     expect((result.content[0] as { text: string }).text).toContain("ok");
   });
@@ -424,18 +515,30 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const stale = {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
+      client: {
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
+      },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
+      client: {
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
+      },
     };
 
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -444,17 +547,23 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const state = {
       config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
       manager,
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
 
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search",
+      },
+    );
 
     const result = await executor("id", {}, undefined, undefined, undefined as any);
 

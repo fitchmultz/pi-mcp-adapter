@@ -12,11 +12,11 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     this.options = options;
     this.setRequestHandler = vi.fn();
     this.setNotificationHandler = vi.fn();
-    this.connect = vi.fn(async () => undefined);
+    this.connect = vi.fn(async () => {});
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
     this.getInstructions = vi.fn(() => mocks.instructions);
-    this.close = vi.fn(async () => undefined);
+    this.close = vi.fn(async () => {});
     mocks.clients.push(this);
   }),
   StreamableHTTPClientTransport: vi.fn(),
@@ -26,8 +26,8 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
 vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
-    this.send = vi.fn(async () => undefined);
-    this.close = vi.fn(async () => undefined);
+    this.send = vi.fn(async () => {});
+    this.close = vi.fn(async () => {});
   }),
 }));
 
@@ -59,6 +59,4 @@ describe("McpServerManager instructions", () => {
 
     expect(connection.instructions).toBeUndefined();
   });
-
-
 });

@@ -14,8 +14,11 @@ describe("onboarding state", () => {
 
   afterEach(() => {
     process.env.HOME = originalHome;
-    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    if (originalAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    }
   });
 
   it("returns the default state when no file exists", async () => {

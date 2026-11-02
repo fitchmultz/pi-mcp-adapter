@@ -17,7 +17,7 @@ async function request(
     method?: string;
     body?: unknown;
     headers?: Record<string, string>;
-  } = {}
+  } = {},
 ): Promise<{ status: number; body: unknown; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -45,7 +45,7 @@ async function request(
           }
           resolve({ status: res.statusCode ?? 0, body, headers: res.headers });
         });
-      }
+      },
     );
     req.on("error", reject);
     if (options.body) {
@@ -83,7 +83,7 @@ function connectSSE(
           buffer += chunk.toString();
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
-          
+
           for (const line of lines) {
             if (line.startsWith("id: ")) {
               eventId = line.slice(4);
@@ -106,7 +106,7 @@ function connectSSE(
             req.destroy();
           },
         });
-      }
+      },
     );
     req.on("error", reject);
     req.end();
@@ -167,10 +167,11 @@ function createServerOptions(overrides: Partial<UiServerOptions> = {}): UiServer
 
 async function getUiAppUrl(handle: UiServerHandle): Promise<string> {
   const host = await request(handle.url);
-  const match = typeof host.body === "string"
-    ? host.body.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/)
-    : null;
-  if (!match?.[1]) throw new Error("UI resource token missing from host page");
+  const match =
+    typeof host.body === "string" ? host.body.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/) : null;
+  if (!match?.[1]) {
+    throw new Error("UI resource token missing from host page");
+  }
   return `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(match[1])}`;
 }
 
@@ -181,7 +182,9 @@ describe("UiServer", () => {
     if (handle) {
       const ref = handle.getSessionMessages().historyRef;
       handle.close("test-cleanup");
-      if (ref) await rm(dirname(ref), { recursive: true, force: true });
+      if (ref) {
+        await rm(dirname(ref), { recursive: true, force: true });
+      }
       handle = null;
     }
   });
@@ -216,10 +219,12 @@ describe("UiServer", () => {
     });
 
     it("includes server and tool name in handle", async () => {
-      handle = await startUiServer(createServerOptions({
-        serverName: "my-server",
-        toolName: "my_tool",
-      }));
+      handle = await startUiServer(
+        createServerOptions({
+          serverName: "my-server",
+          toolName: "my_tool",
+        }),
+      );
 
       expect(handle.serverName).toBe("my-server");
       expect(handle.toolName).toBe("my_tool");
@@ -306,7 +311,10 @@ describe("UiServer", () => {
 
       expect(resourceToken).toBeTruthy();
       expect(resourceToken).not.toBe(handle.sessionToken);
-      expect((await request(`http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`)).status).toBe(403);
+      expect(
+        (await request(`http://localhost:${handle.port}/ui-app?session=${handle.sessionToken}`))
+          .status,
+      ).toBe(403);
 
       const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
         method: "POST",
@@ -329,18 +337,20 @@ describe("UiServer", () => {
   <script type="module">import "https://esm.sh/example";</script>
 </body>
 </html>`;
-      handle = await startUiServer(createServerOptions({
-        resource: createMockResource({
-          html: appHtml,
-          meta: {
-            permissions: [] as UiResourcePermissions,
-            csp: {
-              resourceDomains: ["https://esm.sh"],
-              connectDomains: ["https://api.excalidraw.com"],
+      handle = await startUiServer(
+        createServerOptions({
+          resource: createMockResource({
+            html: appHtml,
+            meta: {
+              permissions: [] as UiResourcePermissions,
+              csp: {
+                resourceDomains: ["https://esm.sh"],
+                connectDomains: ["https://api.excalidraw.com"],
+              },
             },
-          },
+          }),
         }),
-      }));
+      );
       const url = await getUiAppUrl(handle);
 
       const res = await request(url);
@@ -349,7 +359,9 @@ describe("UiServer", () => {
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("text/html");
       expect(cspHeader).toContain("default-src 'none'");
-      expect(cspHeader).toContain("sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads");
+      expect(cspHeader).toContain(
+        "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
+      );
       expect(cspHeader).not.toContain("allow-popups-to-escape-sandbox");
       expect(cspHeader).not.toContain("allow-same-origin");
       expect(cspHeader).toContain("script-src 'self' 'unsafe-inline' https://esm.sh");
@@ -360,39 +372,45 @@ describe("UiServer", () => {
 
     it("rejects malformed CSP metadata before writing the response header", async () => {
       const appHtml = "<h1>Original App</h1>";
-      handle = await startUiServer(createServerOptions({
-        resource: createMockResource({
-          html: appHtml,
-          meta: {
-            permissions: [] as UiResourcePermissions,
-            csp: {
-              resourceDomains: [
-                "https://safe.example.com",
-                "https://c1.example.com\x80img-src",
-                "https://emoji.example.com/😀",
-              ],
+      handle = await startUiServer(
+        createServerOptions({
+          resource: createMockResource({
+            html: appHtml,
+            meta: {
+              permissions: [] as UiResourcePermissions,
+              csp: {
+                resourceDomains: [
+                  "https://safe.example.com",
+                  "https://c1.example.com\x80img-src",
+                  "https://emoji.example.com/😀",
+                ],
+              },
             },
-          },
+          }),
         }),
-      }));
+      );
 
       const res = await request(await getUiAppUrl(handle));
 
       expect(res.status).toBe(200);
       expect(res.headers["content-security-policy"]).toContain("https://safe.example.com");
-      expect(res.headers["content-security-policy"]).not.toContain("https://c1.example.com\x80img-src");
+      expect(res.headers["content-security-policy"]).not.toContain(
+        "https://c1.example.com\x80img-src",
+      );
       expect(res.headers["content-security-policy"]).not.toContain("https://emoji.example.com/😀");
       expect(res.body).toBe(appHtml);
     });
 
     it("emits trusted default CSP headers for an empty normalized CSP", async () => {
       const appHtml = "<h1>Original App</h1>";
-      handle = await startUiServer(createServerOptions({
-        resource: createMockResource({
-          html: appHtml,
-          meta: { permissions: [] as UiResourcePermissions, csp: {} },
+      handle = await startUiServer(
+        createServerOptions({
+          resource: createMockResource({
+            html: appHtml,
+            meta: { permissions: [] as UiResourcePermissions, csp: {} },
+          }),
         }),
-      }));
+      );
 
       const res = await request(await getUiAppUrl(handle));
 
@@ -436,7 +454,9 @@ describe("UiServer", () => {
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("javascript");
       expect(res.headers["cache-control"]).toContain("max-age");
-      expect(res.body).toBe(await readFile(new URL("../app-bridge.bundle.js", import.meta.url), "utf8"));
+      expect(res.body).toBe(
+        await readFile(new URL("../app-bridge.bundle.js", import.meta.url), "utf8"),
+      );
     });
   });
 
@@ -502,7 +522,8 @@ describe("UiServer", () => {
       handle = await startUiServer(createServerOptions());
       const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;
 
-      const firstConnectionEvents: Array<{ name: string; data: unknown; id?: string | undefined }> = [];
+      const firstConnectionEvents: Array<{ name: string; data: unknown; id?: string | undefined }> =
+        [];
       const firstConnection = await connectSSE(url, (name, data, eventId) => {
         firstConnectionEvents.push({ name, data, id: eventId });
       });
@@ -638,10 +659,12 @@ describe("UiServer", () => {
           tools: [{ name: "open_ui" }, { name: "excluded" }, { name: "not_included" }],
         }),
       });
-      handle = await startUiServer(createServerOptions({
-        manager,
-        config: { mcpServers: { "test-server": definition } },
-      }));
+      handle = await startUiServer(
+        createServerOptions({
+          manager,
+          config: { mcpServers: { "test-server": definition } },
+        }),
+      );
 
       for (const name of ["excluded", "not_included"]) {
         const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
@@ -649,7 +672,10 @@ describe("UiServer", () => {
           body: { token: handle.sessionToken, params: { name, arguments: {} } },
         });
         expect(res.status).toBe(403);
-        expect(res.body).toEqual({ ok: false, error: `MCP tool "${name}" is not callable by apps` });
+        expect(res.body).toEqual({
+          ok: false,
+          error: `MCP tool "${name}" is not callable by apps`,
+        });
       }
       expect(mockClient.callTool).not.toHaveBeenCalled();
 
@@ -756,7 +782,10 @@ describe("UiServer", () => {
       });
 
       expect(res.status).toBe(403);
-      expect(res.body).toEqual({ ok: false, error: 'MCP tool "model_only" is not callable by apps' });
+      expect(res.body).toEqual({
+        ok: false,
+        error: 'MCP tool "model_only" is not callable by apps',
+      });
       expect(mockClient.callTool).not.toHaveBeenCalled();
     });
 
@@ -931,22 +960,39 @@ describe("UiServer", () => {
         await writeFile(blocked, "not a directory");
         const notify = vi.fn();
         const onMessage = vi.fn();
-        handle = await startUiServer(createServerOptions({
-          state: { outputDirectory: blocked, ui: { notify } } as unknown as McpExtensionState,
-          onMessage,
-        }));
+        handle = await startUiServer(
+          createServerOptions({
+            state: { outputDirectory: blocked, ui: { notify } } as unknown as McpExtensionState,
+            onMessage,
+          }),
+        );
         const res = await request(`http://localhost:${handle.port}/proxy/ui/message`, {
           method: "POST",
-          body: { token: handle.sessionToken, params: { type: "prompt", prompt: "recover this message" } },
+          body: {
+            token: handle.sessionToken,
+            params: { type: "prompt", prompt: "recover this message" },
+          },
         });
         expect(res.status).toBe(200);
-        expect(res.body).toMatchObject({ ok: true, warning: expect.stringContaining("remain in memory") });
+        expect(res.body).toMatchObject({
+          ok: true,
+          warning: expect.stringContaining("remain in memory"),
+        });
         expect(notify).toHaveBeenCalledWith(expect.stringContaining("remain in memory"), "warning");
-        expect(res.body).toMatchObject({ warning: expect.stringContaining("lost on reload or process exit") });
-        expect(notify).toHaveBeenCalledWith(expect.stringContaining("lost on reload or process exit"), "warning");
+        expect(res.body).toMatchObject({
+          warning: expect.stringContaining("lost on reload or process exit"),
+        });
+        expect(notify).toHaveBeenCalledWith(
+          expect.stringContaining("lost on reload or process exit"),
+          "warning",
+        );
         expect(onMessage).toHaveBeenCalledWith({ type: "prompt", prompt: "recover this message" });
-        expect((await materializeUiMessages(handle.getSessionMessages())).prompts).toEqual(["recover this message"]);
-      } finally { await rm(root, { recursive: true, force: true }); }
+        expect((await materializeUiMessages(handle.getSessionMessages())).prompts).toEqual([
+          "recover this message",
+        ]);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
     });
 
     it("rejects anonymous messages", async () => {
@@ -1097,9 +1143,11 @@ describe("UiServer", () => {
     });
 
     it("rejects unavailable mode", async () => {
-      handle = await startUiServer(createServerOptions({
-        hostContext: { displayMode: "inline", availableDisplayModes: ["inline"] },
-      }));
+      handle = await startUiServer(
+        createServerOptions({
+          hostContext: { displayMode: "inline", availableDisplayModes: ["inline"] },
+        }),
+      );
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/request-display-mode`, {
         method: "POST",
@@ -1230,12 +1278,16 @@ describe("UiServer", () => {
       });
 
       expect(res.status).toBe(200);
-      expect(onContextUpdate).toHaveBeenCalledWith({ content: [{ type: "text", text: "some context data" }] });
-      expect(handle.getSessionMessages().contexts).toEqual([{
-        payload: { content: [{ type: "text", text: "some context data" }] },
-        summary: '{"content":[{"type":"text","text":"some context data"}]}',
-        truncated: false,
-      }]);
+      expect(onContextUpdate).toHaveBeenCalledWith({
+        content: [{ type: "text", text: "some context data" }],
+      });
+      expect(handle.getSessionMessages().contexts).toEqual([
+        {
+          payload: { content: [{ type: "text", text: "some context data" }] },
+          summary: '{"content":[{"type":"text","text":"some context data"}]}',
+          truncated: false,
+        },
+      ]);
     });
 
     it("rejects malformed context updates", async () => {
@@ -1278,7 +1330,9 @@ describe("UiServer", () => {
     it("returns 404 for unknown GET routes", async () => {
       handle = await startUiServer(createServerOptions());
 
-      const res = await request(`http://localhost:${handle.port}/unknown?session=${handle.sessionToken}`);
+      const res = await request(
+        `http://localhost:${handle.port}/unknown?session=${handle.sessionToken}`,
+      );
 
       expect(res.status).toBe(404);
     });
@@ -1317,7 +1371,9 @@ describe("UiServer", () => {
 
   describe("initialResultPromise", () => {
     it("pushes result when promise resolves", async () => {
-      const resultPromise = Promise.resolve({ data: "initial" }) as unknown as NonNullable<UiServerOptions["initialResultPromise"]>;
+      const resultPromise = Promise.resolve({ data: "initial" }) as unknown as NonNullable<
+        UiServerOptions["initialResultPromise"]
+      >;
       handle = await startUiServer(createServerOptions({ initialResultPromise: resultPromise }));
 
       const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;
@@ -1357,7 +1413,7 @@ describe("UiServer", () => {
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/heartbeat`, {
         method: "POST",
-        body: "not json" as unknown,
+        body: "not json",
         headers: { "Content-Type": "text/plain" },
       });
 
@@ -1380,7 +1436,7 @@ describe("UiServer", () => {
           (res) => {
             res.on("data", () => {});
             res.on("end", () => resolve({ status: res.statusCode ?? 0 }));
-          }
+          },
         );
         req.on("error", reject);
         req.end(); // No body

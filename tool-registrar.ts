@@ -9,24 +9,45 @@ import { toolErrorOverride } from "./error-signal.ts";
 
 /** Overflow/not-run outcomes are receipts, never a fabricated server-schema result. */
 export function nativeMcpOutputSchema(schema: Record<string, unknown>) {
-  return Type.Union([Type.Unsafe(schema), Type.Object({
-    mcpAdapter: Type.Object({
-      omitted: Type.Literal(true),
-      resultRef: Type.Optional(Type.String()),
-      error: Type.Optional(Type.String()),
+  return Type.Union([
+    Type.Unsafe(schema),
+    Type.Object({
+      mcpAdapter: Type.Object({
+        omitted: Type.Literal(true),
+        resultRef: Type.Optional(Type.String()),
+        error: Type.Optional(Type.String()),
+      }),
     }),
-  })]);
+  ]);
 }
 
-export function nativeMcpResult(result: AgentToolResult<Record<string, unknown>>, structured = false): AgentToolResult<Record<string, unknown>> {
+export function nativeMcpResult(
+  result: AgentToolResult<Record<string, unknown>>,
+  structured = false,
+): AgentToolResult<Record<string, unknown>> {
   const { details } = result;
   const raw = details.mcpResult as { structuredContent?: JsonValue } | undefined;
   return {
     ...result,
     ...toolErrorOverride(details),
-    ...(structured ? { structuredContent: !details.outputGuard && (!details.error || details.error === "tool_error") && raw?.structuredContent !== undefined
-      ? raw.structuredContent
-      : { mcpAdapter: { omitted: true, ...(typeof details.resultRef === "string" ? { resultRef: details.resultRef } : {}), ...(typeof details.error === "string" ? { error: details.error } : {}) } } } : {}),
+    ...(structured
+      ? {
+          structuredContent:
+            !details.outputGuard &&
+            (!details.error || details.error === "tool_error") &&
+            raw?.structuredContent !== undefined
+              ? raw.structuredContent
+              : {
+                  mcpAdapter: {
+                    omitted: true,
+                    ...(typeof details.resultRef === "string"
+                      ? { resultRef: details.resultRef }
+                      : {}),
+                    ...(typeof details.error === "string" ? { error: details.error } : {}),
+                  },
+                },
+        }
+      : {}),
   };
 }
 
@@ -34,7 +55,7 @@ export function nativeMcpResult(result: AgentToolResult<Record<string, unknown>>
  * Transform MCP content types to Pi content blocks.
  */
 export function transformMcpContent(content: McpContent[]): ContentBlock[] {
-  return content.map(c => {
+  return content.map((c) => {
     if (c.type === "text") {
       return { type: "text" as const, text: c.text ?? "" };
     }
@@ -47,7 +68,9 @@ export function transformMcpContent(content: McpContent[]): ContentBlock[] {
     }
     if (c.type === "resource") {
       const resourceUri = c.resource?.uri ?? "(no URI)";
-      const resourceContent = c.resource?.text ?? (c.resource?.blob !== undefined ? "[Binary content; not rendered]" : "(no content)");
+      const resourceContent =
+        c.resource?.text ??
+        (c.resource?.blob !== undefined ? "[Binary content; not rendered]" : "(no content)");
       return {
         type: "text" as const,
         text: `[Resource: ${resourceUri}]\n${resourceContent}`,
@@ -73,7 +96,9 @@ export function transformMcpContent(content: McpContent[]): ContentBlock[] {
 
 /** Human content and structured content are complementary protocol fields. */
 export function resolveMcpResultContent(result: Record<string, unknown>): ContentBlock[] {
-  const blocks = transformMcpContent((Array.isArray(result.content) ? result.content : []) as McpContent[]);
+  const blocks = transformMcpContent(
+    (Array.isArray(result.content) ? result.content : []) as McpContent[],
+  );
   if (result.structuredContent !== undefined) {
     blocks.push({ type: "text", text: stringifyStructuredContent(result.structuredContent) });
   }
@@ -81,12 +106,21 @@ export function resolveMcpResultContent(result: Record<string, unknown>): Conten
 }
 
 /** Persist content the model cannot consume; never imply an audio/blob payload was rendered. */
-export function renderMcpResultContent(result: Record<string, unknown>, payloadFiles: McpPayloadFile[] = []): ContentBlock[] {
+export function renderMcpResultContent(
+  result: Record<string, unknown>,
+  payloadFiles: McpPayloadFile[] = [],
+): ContentBlock[] {
   const content: McpContent[] = Array.isArray(result.contents)
-    ? result.contents.map(resource => typeof resource.text === "string" ? { type: "text", text: resource.text } : { type: "resource", resource })
-    : Array.isArray(result.content) ? result.content : [];
+    ? result.contents.map((resource) =>
+        typeof resource.text === "string"
+          ? { type: "text", text: resource.text }
+          : { type: "resource", resource },
+      )
+    : Array.isArray(result.content)
+      ? result.content
+      : [];
   const rendered = content.map((block, index) => {
-    const file = payloadFiles.find(file => file.index === index);
+    const file = payloadFiles.find((file) => file.index === index);
     return file ? { type: "text" as const, text: formatMcpPayloadFile(file) } : block;
   });
   return resolveMcpResultContent({ ...result, content: rendered });

@@ -36,7 +36,14 @@ function createFailedPanel(
     getConnectionStatus: () => connectionStatus,
     getFailureMessage: () => failureMessage,
   };
-  const panel = createMcpPanel(config, createCache(config), new Map(), callbacks, { requestRender: () => {} }, () => {});
+  const panel = createMcpPanel(
+    config,
+    createCache(config),
+    new Map(),
+    callbacks,
+    { requestRender: () => {} },
+    () => {},
+  );
   const output = stripAnsi(panel.render(width).join("\n"));
   panel.dispose();
   return output;
@@ -52,7 +59,8 @@ function createCache(config: McpConfig): MetadataCache {
         tools: [
           {
             name: "search\u0007issues",
-            description: "Search\r\n\x1b[31m\x9d8;;https://example.invalid/issues\x1b\\issues\x9d8;;\x1b\\\x1b[0m\tby query\u0000now",
+            description:
+              "Search\r\n\x1b[31m\x9d8;;https://example.invalid/issues\x1b\\issues\x9d8;;\x1b\\\x1b[0m\tby query\u0000now",
           },
           { name: "list_projects", description: "List projects" },
         ],
@@ -81,7 +89,9 @@ describe("mcp-panel rendering", () => {
 
     expect(output).toContain("search issues");
     expect(output).toContain("Search issues by query now");
-    expect(lines.some((line) => /[\r\n\u0000-\u001f\u007f-\u009f]/.test(stripAnsi(line)))).toBe(false);
+    expect(lines.some((line) => /[\r\n\u0000-\u001f\u007f-\u009f]/.test(stripAnsi(line)))).toBe(
+      false,
+    );
     expect(output).not.toContain("[31m");
     expect(output).not.toContain("\x1b]");
     expect(output).not.toContain("\x9d");
@@ -104,7 +114,9 @@ describe("mcp-panel rendering", () => {
       () => {},
     );
 
-    for (const key of keys) panel.handleInput(key);
+    for (const key of keys) {
+      panel.handleInput(key);
+    }
     const output = stripAnsi(panel.render(82).join("\n"));
     expect(output).toContain("Only tool selections save to Pi config.");
     panel.dispose();
@@ -150,11 +162,14 @@ describe("mcp-panel rendering", () => {
   });
 
   it("renders the selected failure reason wrapped without truncating useful context", () => {
-    const reason = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is it running?";
+    const reason =
+      "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is it running?";
     const output = createFailedPanel("failed", reason, 60);
 
     expect(output).toContain("failed");
-    for (const word of reason.split(/\s+/)) expect(output).toContain(word);
+    for (const word of reason.split(/\s+/)) {
+      expect(output).toContain(word);
+    }
     expect(output.split("\n").filter((line) => /docker/i.test(line)).length).toBeGreaterThan(1);
     expect(output).not.toContain("…");
   });

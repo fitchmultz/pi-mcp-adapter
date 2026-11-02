@@ -66,12 +66,12 @@ return page;
 Gateway equivalents require explicit actions:
 
 ```js
-mcp({ action: "search", query: "search issues", server: "github" })
-mcp({ action: "describe", tool: "github_search_issues" })
-mcp({ action: "call", tool: "github_search_issues", args: { query: "is:open" } })
-mcp({ action: "resources", server: "docs" })
-mcp({ action: "read-resource", server: "docs", uri: "docs://guide" })
-mcp({ action: "read-result", ref: "/returned/result/path", path: "/structuredContent" })
+mcp({ action: "search", query: "search issues", server: "github" });
+mcp({ action: "describe", tool: "github_search_issues" });
+mcp({ action: "call", tool: "github_search_issues", args: { query: "is:open" } });
+mcp({ action: "resources", server: "docs" });
+mcp({ action: "read-resource", server: "docs", uri: "docs://guide" });
+mcp({ action: "read-result", ref: "/returned/result/path", path: "/structuredContent" });
 ```
 
 Gateway search returns schemas without activating functions; use it when only `mcp` is allowed. New gateway calls use object `args`. Optional v5 mode fields and JSON-string arguments are only a stored-call ingress compatibility path.

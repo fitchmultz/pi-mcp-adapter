@@ -2,8 +2,8 @@ import type { Api, AssistantMessage, Message, Model, TextContent } from "@earend
 import { truncateAtWord } from "./utils.ts";
 import { throwIfAborted } from "./abort.ts";
 import type { ExtensionUIContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { Client } from "@modelcontextprotocol/client";
 import {
+  type Client,
   type CreateMessageRequest,
   type CreateMessageResult,
   type ModelPreferences,
@@ -25,10 +25,12 @@ export type ServerSamplingConfig = Omit<SamplingHandlerOptions, "serverName">;
 export function registerSamplingHandler(
   client: Client,
   options: SamplingHandlerOptions,
-  own: (run: () => Promise<CreateMessageResult>) => Promise<CreateMessageResult> = run => run(),
+  own: (run: () => Promise<CreateMessageResult>) => Promise<CreateMessageResult> = (run) => run(),
 ): void {
   // Own the handler's real promise, not the SDK caller's cancellable response facade.
-  client.setRequestHandler("sampling/createMessage", request => own(() => handleSamplingRequest(options, request)));
+  client.setRequestHandler("sampling/createMessage", (request) =>
+    own(() => handleSamplingRequest(options, request)),
+  );
 }
 
 export async function handleSamplingRequest(
@@ -61,13 +63,22 @@ export async function handleSamplingRequest(
   await confirmSampling(
     options,
     "Approve MCP sampling request",
-    formatRequestApproval(options.serverName, `${model.provider}/${model.id}`, params.systemPrompt, messages),
+    formatRequestApproval(
+      options.serverName,
+      `${model.provider}/${model.id}`,
+      params.systemPrompt,
+      messages,
+    ),
   );
   throwIfAborted(signal);
 
-  const supportsTemperature = model.compat && "supportsTemperature" in model.compat
-    ? model.compat.supportsTemperature !== false
-    : !(model.id === "gpt-6-astra" && (model.api === "openai-responses" || model.api === "openai-codex-responses"));
+  const supportsTemperature =
+    model.compat && "supportsTemperature" in model.compat
+      ? model.compat.supportsTemperature !== false
+      : !(
+          model.id === "gpt-6-astra" &&
+          (model.api === "openai-responses" || model.api === "openai-codex-responses")
+        );
   const result = await options.modelRegistry.complete(
     model,
     {
@@ -76,8 +87,10 @@ export async function handleSamplingRequest(
     },
     {
       maxTokens: params.maxTokens,
-      ...(supportsTemperature && params.temperature !== undefined ? { temperature: params.temperature } : {}),
-      ...(params.metadata !== undefined ? { metadata: params.metadata as Record<string, unknown> } : {}),
+      ...(supportsTemperature && params.temperature !== undefined
+        ? { temperature: params.temperature }
+        : {}),
+      ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
       ...(signal ? { signal } : {}),
     },
   );
@@ -98,7 +111,9 @@ function formatRequestApproval(
   systemPrompt: string | undefined,
   messages: Message[],
 ): string {
-  const lines = [`${serverName} wants to sample ${messages.length} message${messages.length === 1 ? "" : "s"} with ${modelName}.`];
+  const lines = [
+    `${serverName} wants to sample ${messages.length} message${messages.length === 1 ? "" : "s"} with ${modelName}.`,
+  ];
   if (systemPrompt) {
     lines.push(`System: ${truncateAtWord(systemPrompt, 400)}`);
   }
@@ -109,19 +124,32 @@ function formatRequestApproval(
 }
 
 function formatResponseApproval(serverName: string, response: CreateMessageResult): string {
-  const text = response.content.type === "text" ? response.content.text : `[${response.content.type} content]`;
+  const text =
+    response.content.type === "text" ? response.content.text : `[${response.content.type} content]`;
   return `${serverName} will receive this response from ${response.model}:\n\n${truncateAtWord(text, 1000)}`;
 }
 
 function messageText(message: Message): string {
-  if (typeof message.content === "string") return message.content;
-  return message.content.map((block) => {
-    if (block.type === "text") return block.text;
-    if (block.type === "image") return `[image: ${block.mimeType}]`;
-    if (block.type === "thinking") return "[thinking]";
-    if (block.type === "toolCall") return `[tool call: ${block.name}]`;
-    return "[content]";
-  }).join("\n");
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+  return message.content
+    .map((block) => {
+      if (block.type === "text") {
+        return block.text;
+      }
+      if (block.type === "image") {
+        return `[image: ${block.mimeType}]`;
+      }
+      if (block.type === "thinking") {
+        return "[thinking]";
+      }
+      if (block.type === "toolCall") {
+        return `[tool call: ${block.name}]`;
+      }
+      return "[content]";
+    })
+    .join("\n");
 }
 
 async function resolveSamplingModel(
@@ -133,7 +161,9 @@ async function resolveSamplingModel(
 
   for (const hint of modelPreferences?.hints ?? []) {
     const normalizedHint = hint.name?.trim().toLowerCase();
-    if (!normalizedHint) continue;
+    if (!normalizedHint) {
+      continue;
+    }
     for (const model of availableModels) {
       const searchableNames = [`${model.provider}/${model.id}`, model.id, model.name];
       if (searchableNames.some((name) => name.toLowerCase().includes(normalizedHint))) {
@@ -143,7 +173,9 @@ async function resolveSamplingModel(
   }
 
   const currentModel = options.getCurrentModel();
-  if (currentModel) addSamplingCandidate(candidates, currentModel);
+  if (currentModel) {
+    addSamplingCandidate(candidates, currentModel);
+  }
 
   for (const model of availableModels) {
     addSamplingCandidate(candidates, model);
@@ -155,7 +187,7 @@ async function resolveSamplingModel(
     throwIfAborted(signal);
     const auth = await options.modelRegistry.getApiKeyAndHeaders(model);
     throwIfAborted(signal);
-    if (auth.ok === false) {
+    if (!auth.ok) {
       errors.push(`${model.provider}/${model.id}: ${auth.error}`);
       continue;
     }
@@ -169,15 +201,27 @@ async function resolveSamplingModel(
 }
 
 function addSamplingCandidate(candidates: Model<Api>[], model: Model<Api>): void {
-  if (!candidates.some((candidate) => candidate.provider === model.provider && candidate.id === model.id)) {
+  if (
+    !candidates.some(
+      (candidate) => candidate.provider === model.provider && candidate.id === model.id,
+    )
+  ) {
     candidates.push(model);
   }
 }
 
-async function confirmSampling(options: SamplingHandlerOptions, title: string, message: string): Promise<void> {
-  if (options.autoApprove) return;
+async function confirmSampling(
+  options: SamplingHandlerOptions,
+  title: string,
+  message: string,
+): Promise<void> {
+  if (options.autoApprove) {
+    return;
+  }
   if (!options.ui) {
-    throw new Error("MCP sampling requires interactive approval. Set settings.samplingAutoApprove to true to allow it without UI.");
+    throw new Error(
+      "MCP sampling requires interactive approval. Set settings.samplingAutoApprove to true to allow it without UI.",
+    );
   }
   const approved = await options.ui.confirm(title, message);
   if (!approved) {
@@ -231,8 +275,12 @@ function convertAssistantResult(message: AssistantMessage): CreateMessageResult 
 
   const text = message.content
     .map((block) => {
-      if (block.type === "text") return block.text;
-      if (block.type === "thinking") return undefined;
+      if (block.type === "text") {
+        return block.text;
+      }
+      if (block.type === "thinking") {
+        return undefined;
+      }
       throw new Error(`MCP sampling result ${block.type} content is not supported`);
     })
     .filter((value): value is string => value !== undefined)
@@ -252,9 +300,15 @@ function convertAssistantResult(message: AssistantMessage): CreateMessageResult 
 }
 
 function mapStopReason(reason: AssistantMessage["stopReason"]): CreateMessageResult["stopReason"] {
-  if (reason === "stop") return "endTurn";
-  if (reason === "length") return "maxTokens";
-  if (reason === "toolUse") return "toolUse";
+  if (reason === "stop") {
+    return "endTurn";
+  }
+  if (reason === "length") {
+    return "maxTokens";
+  }
+  if (reason === "toolUse") {
+    return "toolUse";
+  }
   return reason;
 }
 

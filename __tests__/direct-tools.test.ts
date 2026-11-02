@@ -8,11 +8,11 @@ import {
   getMissingConfiguredDirectToolServers,
   isServerCacheValid,
   type MetadataCache,
+  reconstructToolMetadata,
 } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { formatToolName } from "../types.ts";
 import type { McpConfig, ServerEntry } from "../types.ts";
-import { reconstructToolMetadata } from "../metadata-cache.ts";
 
 const originalHashEnv = {
   MCP_HASH_CWD: process.env.MCP_HASH_CWD,
@@ -38,7 +38,9 @@ describe("formatToolName", () => {
     expect(formatToolName("namespace.tool", "demo", "server")).toBe("demo_namespace_tool");
     expect(formatToolName("namespace.tool", "demo-mcp", "short")).toBe("demo_namespace_tool");
     expect(formatToolName("namespace.tool", "demo", "none")).toBe("namespace_tool");
-    expect(formatToolName("namespace.tool", "demo-mcp", "mcp")).toBe("mcp__demo_mcp_namespace_tool");
+    expect(formatToolName("namespace.tool", "demo-mcp", "mcp")).toBe(
+      "mcp__demo_mcp_namespace_tool",
+    );
   });
 });
 
@@ -64,11 +66,13 @@ describe("buildProxyDescription", () => {
   });
 
   it("lists enabled servers without requiring cached metadata or exposing filters", () => {
-    const description = buildProxyDescription({ mcpServers: {
-      figma: { command: "figma", excludeTools: ["get_screenshot"] },
-      disabled: { command: "disabled", disabled: true },
-      docs: { url: "https://example.test/mcp" },
-    } });
+    const description = buildProxyDescription({
+      mcpServers: {
+        figma: { command: "figma", excludeTools: ["get_screenshot"] },
+        disabled: { command: "disabled", disabled: true },
+        docs: { url: "https://example.test/mcp" },
+      },
+    });
 
     expect(description).toContain("Configured servers: docs, figma.");
     expect(description).not.toContain("disabled");
@@ -76,12 +80,18 @@ describe("buildProxyDescription", () => {
   });
 
   it("keeps the description unchanged when connection credentials and URLs change", () => {
-    const config: McpConfig = { mcpServers: {
-      demo: { url: "https://example.test/mcp?session=old", headers: { Authorization: "Bearer old" } },
-    } };
+    const config: McpConfig = {
+      mcpServers: {
+        demo: {
+          url: "https://example.test/mcp?session=old",
+          headers: { Authorization: "Bearer old" },
+        },
+      },
+    };
     const before = buildProxyDescription(config);
     config.mcpServers.demo = {
-      url: "https://example.test/mcp?session=new", headers: { Authorization: "Bearer new" },
+      url: "https://example.test/mcp?session=new",
+      headers: { Authorization: "Bearer new" },
     };
 
     expect(buildProxyDescription(config)).toBe(before);
@@ -115,12 +125,17 @@ describe("metadata cache hashing", () => {
   it("treats cached URL placeholders with missing environment variables as cache misses", () => {
     delete process.env.MCP_HASH_URL;
 
-    expect(isServerCacheValid({
-      configHash: "cached",
-      cachedAt: Date.now(),
-      tools: [],
-      resources: [],
-    }, { url: "https://${MCP_HASH_URL}/mcp" })).toBe(false);
+    expect(
+      isServerCacheValid(
+        {
+          configHash: "cached",
+          cachedAt: Date.now(),
+          tools: [],
+          resources: [],
+        },
+        { url: "https://${MCP_HASH_URL}/mcp" },
+      ),
+    ).toBe(false);
   });
 
   it("skips cached direct tools when URL placeholders are missing", () => {
@@ -175,13 +190,24 @@ describe("metadata cache hashing", () => {
 
   it("hashes interpolated header values", () => {
     process.env.MCP_HASH_HEADER = "header-one";
-    const first = computeServerHash({ url: "https://example.test/mcp", headers: { "x-root": "$env:MCP_HASH_HEADER" } });
+    const first = computeServerHash({
+      url: "https://example.test/mcp",
+      headers: { "x-root": "$env:MCP_HASH_HEADER" },
+    });
 
     process.env.MCP_HASH_HEADER = "header-two";
-    const second = computeServerHash({ url: "https://example.test/mcp", headers: { "x-root": "$env:MCP_HASH_HEADER" } });
+    const second = computeServerHash({
+      url: "https://example.test/mcp",
+      headers: { "x-root": "$env:MCP_HASH_HEADER" },
+    });
 
     expect(first).not.toBe(second);
-    expect(computeServerHash({ url: "https://example.test/mcp", headers: { "x-root": "$env:MCP_HASH_HEADER" } })).toBe(
+    expect(
+      computeServerHash({
+        url: "https://example.test/mcp",
+        headers: { "x-root": "$env:MCP_HASH_HEADER" },
+      }),
+    ).toBe(
       computeServerHash({ url: "https://example.test/mcp", headers: { "x-root": "header-two" } }),
     );
   });
@@ -194,32 +220,73 @@ describe("metadata cache hashing", () => {
 
   it("hashes the effective bearerTokenEnv value", () => {
     process.env.MCP_HASH_TOKEN = "token-one";
-    const first = computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerTokenEnv: "MCP_HASH_TOKEN" });
+    const first = computeServerHash({
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerTokenEnv: "MCP_HASH_TOKEN",
+    });
 
     process.env.MCP_HASH_TOKEN = "token-two";
-    const second = computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerTokenEnv: "MCP_HASH_TOKEN" });
+    const second = computeServerHash({
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerTokenEnv: "MCP_HASH_TOKEN",
+    });
 
     expect(first).not.toBe(second);
-    expect(computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerTokenEnv: "MCP_HASH_TOKEN" })).toBe(
-      computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "token-two", bearerTokenEnv: "MCP_HASH_TOKEN" }),
+    expect(
+      computeServerHash({
+        url: "https://example.test/mcp",
+        auth: "bearer",
+        bearerTokenEnv: "MCP_HASH_TOKEN",
+      }),
+    ).toBe(
+      computeServerHash({
+        url: "https://example.test/mcp",
+        auth: "bearer",
+        bearerToken: "token-two",
+        bearerTokenEnv: "MCP_HASH_TOKEN",
+      }),
     );
   });
 
   it("hashes interpolated bearerToken values", () => {
     process.env.MCP_HASH_TOKEN = "token-one";
-    const first = computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "${MCP_HASH_TOKEN}" });
+    const first = computeServerHash({
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerToken: "${MCP_HASH_TOKEN}",
+    });
 
     process.env.MCP_HASH_TOKEN = "token-two";
-    const second = computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "${MCP_HASH_TOKEN}" });
+    const second = computeServerHash({
+      url: "https://example.test/mcp",
+      auth: "bearer",
+      bearerToken: "${MCP_HASH_TOKEN}",
+    });
 
     expect(first).not.toBe(second);
-    expect(computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "$env:MCP_HASH_TOKEN" })).toBe(
-      computeServerHash({ url: "https://example.test/mcp", auth: "bearer", bearerToken: "token-two" }),
+    expect(
+      computeServerHash({
+        url: "https://example.test/mcp",
+        auth: "bearer",
+        bearerToken: "$env:MCP_HASH_TOKEN",
+      }),
+    ).toBe(
+      computeServerHash({
+        url: "https://example.test/mcp",
+        auth: "bearer",
+        bearerToken: "token-two",
+      }),
     );
   });
 
   it("invalidates cached metadata when an interpolated bearerToken env value changes", () => {
-    const definition = { url: "https://example.test/mcp", auth: "bearer" as const, bearerToken: "${MCP_HASH_TOKEN}" };
+    const definition = {
+      url: "https://example.test/mcp",
+      auth: "bearer" as const,
+      bearerToken: "${MCP_HASH_TOKEN}",
+    };
     process.env.MCP_HASH_TOKEN = "token-one";
     const entry = {
       configHash: computeServerHash(definition),
@@ -258,11 +325,13 @@ describe("direct tool metadata bootstrap", () => {
       },
     };
 
-    expect(getMissingConfiguredDirectToolServers(
-      config,
-      cache,
-      ["selected/search", "cached", "disabled"],
-    )).toEqual(["selected"]);
+    expect(
+      getMissingConfiguredDirectToolServers(config, cache, [
+        "selected/search",
+        "cached",
+        "disabled",
+      ]),
+    ).toEqual(["selected"]);
   });
 });
 
@@ -278,10 +347,8 @@ describe("excludeTools filtering", () => {
       [
         { name: "get_screenshot", description: "Screenshot" },
         { name: "get_nodes", description: "Nodes" },
-      ] as any,
-      [
-        { name: "figjam", uri: "ui://figjam", description: "FigJam" },
-      ] as any,
+      ],
+      [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }],
       definition,
       "figma",
       "server",
@@ -322,7 +389,7 @@ describe("excludeTools filtering", () => {
     ];
     const resources = [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }];
 
-    const { metadata } = buildToolMetadata(tools as any, resources as any, definition, "figma", "server");
+    const { metadata } = buildToolMetadata(tools, resources, definition, "figma", "server");
 
     expect(metadata.map((tool) => tool.name)).toEqual(["figma_get_nodes", "figma_read_figjam"]);
 
@@ -338,12 +405,15 @@ describe("excludeTools filtering", () => {
       definition,
     );
 
-    expect(reconstructed.map((tool) => tool.name)).toEqual(["figma_get_nodes", "figma_read_figjam"]);
+    expect(reconstructed.map((tool) => tool.name)).toEqual([
+      "figma_get_nodes",
+      "figma_read_figjam",
+    ]);
   });
 
   it("honors per-server toolPrefix while building live metadata", () => {
     const { metadata } = buildToolMetadata(
-      [{ name: "search", description: "Search" }] as any,
+      [{ name: "search", description: "Search" }],
       [],
       { command: "npx", args: ["-y", "github"], toolPrefix: "none" },
       "github",
@@ -355,7 +425,7 @@ describe("excludeTools filtering", () => {
 
   it("sanitizes registered names while preserving raw MCP names", () => {
     const { metadata } = buildToolMetadata(
-      [{ name: "namespace.tool", description: "Namespaced tool" }] as any,
+      [{ name: "namespace.tool", description: "Namespaced tool" }],
       [],
       { command: "npx", args: ["-y", "demo"] },
       "demo",
@@ -376,8 +446,8 @@ describe("excludeTools filtering", () => {
         { name: "namespace.tool", description: "Dotted" },
         { name: "namespace_tool", description: "Underscored" },
         { name: "read_namespace.tool", description: "Tool before colliding resource" },
-      ] as any,
-      [{ name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" }] as any,
+      ],
+      [{ name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" }],
       { command: "npx", args: ["-y", "demo"] },
       "demo",
       "server",
@@ -402,7 +472,9 @@ describe("excludeTools filtering", () => {
           { name: "namespace_tool", description: "Underscored" },
           { name: "read_namespace.tool", description: "Tool before colliding resource" },
         ],
-        resources: [{ name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" }],
+        resources: [
+          { name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" },
+        ],
       },
       "server",
       { command: "npx", args: ["-y", "demo"] } as ServerEntry,
@@ -439,9 +511,7 @@ describe("excludeTools filtering", () => {
             { name: "get_screenshot", description: "Screenshot" },
             { name: "get_nodes", description: "Nodes" },
           ],
-          resources: [
-            { name: "figjam", uri: "ui://figjam", description: "FigJam" },
-          ],
+          resources: [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }],
         },
       },
     };

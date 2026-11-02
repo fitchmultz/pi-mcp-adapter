@@ -40,7 +40,10 @@ describe("normalizeDirectToolInputSchema", () => {
 
   it("does not reuse ambient cache metadata for a different programmatic server identity", () => {
     const ambientDefinition = { url: "https://ambient.example.com/mcp" };
-    const programmaticDefinition = { url: "https://programmatic.example.com/mcp", directTools: true as const };
+    const programmaticDefinition = {
+      url: "https://programmatic.example.com/mcp",
+      directTools: true as const,
+    };
     const cache: MetadataCache = {
       version: 1,
       servers: {
@@ -53,6 +56,8 @@ describe("normalizeDirectToolInputSchema", () => {
       },
     };
 
-    expect(resolvePinnedTools({ mcpServers: { shared: programmaticDefinition } }, cache, "server")).toEqual([]);
+    expect(
+      resolvePinnedTools({ mcpServers: { shared: programmaticDefinition } }, cache, "server"),
+    ).toEqual([]);
   });
 });

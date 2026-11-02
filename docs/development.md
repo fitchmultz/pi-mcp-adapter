@@ -42,4 +42,3 @@ provides a pinned native build (validated with `7.1.0-dev.20260904.1`). npm's Ty
 package has no Android binary, and its Linux binary probes a syscall Android blocks.
 macOS/Linux use the package-local pinned compiler. Published precompiled packages
 do not need a compiler at runtime.
-

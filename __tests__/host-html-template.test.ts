@@ -26,13 +26,13 @@ describe("buildHostHtmlTemplate", () => {
       const html = buildHostHtmlTemplate(createMinimalInput());
 
       expect(html).toContain("<!doctype html>");
-      expect(html).toContain("<html lang=\"en\">");
+      expect(html).toContain('<html lang="en">');
       expect(html).toContain("</html>");
     });
 
     it("includes title with server and tool name", () => {
       const html = buildHostHtmlTemplate(
-        createMinimalInput({ serverName: "my-server", toolName: "my-tool" })
+        createMinimalInput({ serverName: "my-server", toolName: "my-tool" }),
       );
 
       expect(html).toContain("<title>MCP UI - my-server / my-tool</title>");
@@ -40,7 +40,7 @@ describe("buildHostHtmlTemplate", () => {
 
     it("includes header with server and tool info", () => {
       const html = buildHostHtmlTemplate(
-        createMinimalInput({ serverName: "demo-server", toolName: "widget-tool" })
+        createMinimalInput({ serverName: "demo-server", toolName: "widget-tool" }),
       );
 
       expect(html).toContain('id="server-name"');
@@ -52,7 +52,9 @@ describe("buildHostHtmlTemplate", () => {
       const html = buildHostHtmlTemplate(createMinimalInput());
 
       expect(html).toContain('<iframe id="mcp-app"');
-      expect(html).toContain('sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"');
+      expect(html).toContain(
+        'sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"',
+      );
       expect(html).not.toContain("allow-popups-to-escape-sandbox");
       expect(html).not.toContain("allow-same-origin");
       expect(html).toContain('referrerpolicy="no-referrer"');
@@ -61,7 +63,9 @@ describe("buildHostHtmlTemplate", () => {
     it("rejects nested-frame protocol and raw messages by binding to the sandboxed app frame", () => {
       const html = buildHostHtmlTemplate(createMinimalInput());
 
-      expect(html).toContain("new PostMessageTransport(iframe.contentWindow, iframe.contentWindow)");
+      expect(html).toContain(
+        "new PostMessageTransport(iframe.contentWindow, iframe.contentWindow)",
+      );
       expect(html).toContain("if (event.source !== iframe.contentWindow) return;");
       expect(html).not.toContain("new PostMessageTransport(iframe.contentWindow, null)");
     });
@@ -91,18 +95,20 @@ describe("buildHostHtmlTemplate", () => {
         createMinimalInput({
           sessionToken: "secret-session-token",
           uiResourceToken: "app-resource-token",
-        })
+        }),
       );
 
       expect(html).toContain('const SESSION_TOKEN = "secret-session-token"');
       expect(html).toContain('const UI_RESOURCE_TOKEN = "app-resource-token"');
-      expect(html).toContain('iframe.src = "/ui-app?resource=" + encodeURIComponent(UI_RESOURCE_TOKEN)');
+      expect(html).toContain(
+        'iframe.src = "/ui-app?resource=" + encodeURIComponent(UI_RESOURCE_TOKEN)',
+      );
       expect(html).not.toContain('iframe.src = "/ui-app?session="');
     });
 
     it("injects tool arguments", () => {
       const html = buildHostHtmlTemplate(
-        createMinimalInput({ toolArgs: { location: "NYC", units: "metric" } })
+        createMinimalInput({ toolArgs: { location: "NYC", units: "metric" } }),
       );
 
       expect(html).toContain('"location"');
@@ -118,7 +124,7 @@ describe("buildHostHtmlTemplate", () => {
             displayMode: "fullscreen",
             theme: "dark",
           },
-        })
+        }),
       );
 
       expect(html).toContain('"displayMode"');
@@ -131,7 +137,7 @@ describe("buildHostHtmlTemplate", () => {
       const html = buildHostHtmlTemplate(
         createMinimalInput({
           toolArgs: { script: "<script>alert('xss')</script>" },
-        })
+        }),
       );
 
       // Should be escaped
@@ -142,27 +148,23 @@ describe("buildHostHtmlTemplate", () => {
 
   describe("consent handling", () => {
     it("injects requireToolConsent=false", () => {
-      const html = buildHostHtmlTemplate(
-        createMinimalInput({ requireToolConsent: false })
-      );
+      const html = buildHostHtmlTemplate(createMinimalInput({ requireToolConsent: false }));
 
       expect(html).toContain("const REQUIRE_TOOL_CONSENT = false");
     });
 
     it("injects requireToolConsent=true", () => {
-      const html = buildHostHtmlTemplate(
-        createMinimalInput({ requireToolConsent: true })
-      );
+      const html = buildHostHtmlTemplate(createMinimalInput({ requireToolConsent: true }));
 
       expect(html).toContain("const REQUIRE_TOOL_CONSENT = true");
     });
 
     it("records explicit consent denials", () => {
-      const html = buildHostHtmlTemplate(
-        createMinimalInput({ requireToolConsent: true })
-      );
+      const html = buildHostHtmlTemplate(createMinimalInput({ requireToolConsent: true }));
 
-      expect(html).toContain('await post("/proxy/ui/consent", { approved: false }).catch(() => {});');
+      expect(html).toContain(
+        'await post("/proxy/ui/consent", { approved: false }).catch(() => {});',
+      );
       expect(html).toContain("Tool call denied by user.");
     });
   });
@@ -170,7 +172,7 @@ describe("buildHostHtmlTemplate", () => {
   describe("iframe permissions", () => {
     it("sets allow attribute when provided", () => {
       const html = buildHostHtmlTemplate(
-        createMinimalInput({ allowAttribute: "camera; microphone" })
+        createMinimalInput({ allowAttribute: "camera; microphone" }),
       );
 
       expect(html).toContain('const ALLOW_ATTRIBUTE = "camera; microphone"');
@@ -186,20 +188,22 @@ describe("buildHostHtmlTemplate", () => {
         connectDomains: ["https://api.example.com"],
       });
 
-      expect(csp).toBe([
-        "default-src 'none'",
-        "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
-        "script-src 'self' 'unsafe-inline' https://esm.sh",
-        "style-src 'self' 'unsafe-inline' https://esm.sh",
-        "font-src 'self' https://esm.sh",
-        "img-src 'self' data: https://esm.sh",
-        "media-src 'self' data: https://esm.sh",
-        "connect-src https://api.example.com",
-        "frame-src 'none'",
-        "worker-src 'none'",
-        "object-src 'none'",
-        "base-uri 'self'",
-      ].join("; "));
+      expect(csp).toBe(
+        [
+          "default-src 'none'",
+          "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
+          "script-src 'self' 'unsafe-inline' https://esm.sh",
+          "style-src 'self' 'unsafe-inline' https://esm.sh",
+          "font-src 'self' https://esm.sh",
+          "img-src 'self' data: https://esm.sh",
+          "media-src 'self' data: https://esm.sh",
+          "connect-src https://api.example.com",
+          "frame-src 'none'",
+          "worker-src 'none'",
+          "object-src 'none'",
+          "base-uri 'self'",
+        ].join("; "),
+      );
       expect(csp).not.toContain("'unsafe-eval'");
     });
 
@@ -218,7 +222,7 @@ describe("buildHostHtmlTemplate", () => {
           "https://nul-evil.example.com\0img-src",
           "https://del-evil.example.com\x7Fimg-src",
           "https://two sources.example.com",
-          "https://evil.example.com\"img-src",
+          'https://evil.example.com"img-src',
           "'unsafe-eval'",
           42 as unknown as string,
         ],
@@ -262,20 +266,22 @@ describe("buildHostHtmlTemplate", () => {
         connectDomains: "https://api.example.com" as unknown as string[],
       });
 
-      expect(csp).toBe([
-        "default-src 'none'",
-        "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
-        "script-src 'self' 'unsafe-inline'",
-        "style-src 'self' 'unsafe-inline'",
-        "font-src 'self'",
-        "img-src 'self' data:",
-        "media-src 'self' data:",
-        "connect-src 'none'",
-        "frame-src 'none'",
-        "worker-src 'none'",
-        "object-src 'none'",
-        "base-uri 'self'",
-      ].join("; "));
+      expect(csp).toBe(
+        [
+          "default-src 'none'",
+          "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
+          "script-src 'self' 'unsafe-inline'",
+          "style-src 'self' 'unsafe-inline'",
+          "font-src 'self'",
+          "img-src 'self' data:",
+          "media-src 'self' data:",
+          "connect-src 'none'",
+          "frame-src 'none'",
+          "worker-src 'none'",
+          "object-src 'none'",
+          "base-uri 'self'",
+        ].join("; "),
+      );
     });
 
     it("deduplicates frame and base URI domains", async () => {
@@ -295,23 +301,23 @@ describe("buildHostHtmlTemplate", () => {
     it("returns a restrictive default when the app declares no CSP metadata", async () => {
       const { buildCspMetaContent } = await import("../host-html-template.ts");
 
-      expect(buildCspMetaContent(undefined)).toBe([
-        "default-src 'none'",
-        "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
-        "script-src 'self' 'unsafe-inline'",
-        "style-src 'self' 'unsafe-inline'",
-        "font-src 'self'",
-        "img-src 'self' data:",
-        "media-src 'self' data:",
-        "connect-src 'none'",
-        "frame-src 'none'",
-        "worker-src 'none'",
-        "object-src 'none'",
-        "base-uri 'self'",
-      ].join("; "));
+      expect(buildCspMetaContent(undefined)).toBe(
+        [
+          "default-src 'none'",
+          "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
+          "script-src 'self' 'unsafe-inline'",
+          "style-src 'self' 'unsafe-inline'",
+          "font-src 'self'",
+          "img-src 'self' data:",
+          "media-src 'self' data:",
+          "connect-src 'none'",
+          "frame-src 'none'",
+          "worker-src 'none'",
+          "object-src 'none'",
+          "base-uri 'self'",
+        ].join("; "),
+      );
     });
-
-
   });
 
   describe("module loading", () => {
@@ -325,7 +331,7 @@ describe("buildHostHtmlTemplate", () => {
       const html = buildHostHtmlTemplate(
         createMinimalInput({
           appBridgeModuleUrl: "https://cdn.example.com/app-bridge.js",
-        })
+        }),
       );
 
       expect(html).toContain("https://cdn.example.com/app-bridge.js");
@@ -336,7 +342,9 @@ describe("buildHostHtmlTemplate", () => {
     it("registers the stream patch notification method", () => {
       const html = buildHostHtmlTemplate(createMinimalInput());
 
-      expect(html).toContain('const STREAM_PATCH_METHOD = "notifications/pi-mcp-adapter/ui-result-patch"');
+      expect(html).toContain(
+        'const STREAM_PATCH_METHOD = "notifications/pi-mcp-adapter/ui-result-patch"',
+      );
       expect(html).toContain('eventSource.addEventListener("result-patch"');
       expect(html).toContain("bridge.notification({");
     });
@@ -355,16 +363,18 @@ describe("buildHostHtmlTemplate", () => {
         }),
       );
 
-      expect(html).toContain('const streamMode = initialStreamContext?.mode === "stream-first" ? "stream-first" : "eager";');
+      expect(html).toContain(
+        'const streamMode = initialStreamContext?.mode === "stream-first" ? "stream-first" : "eager";',
+      );
       expect(html).toContain('if (streamMode !== "stream-first") {');
-      expect(html).toContain('bridge.sendToolInput({ arguments: TOOL_ARGS });');
+      expect(html).toContain("bridge.sendToolInput({ arguments: TOOL_ARGS });");
     });
   });
 
   describe("XSS prevention", () => {
     it("escapes server name in title", () => {
       const html = buildHostHtmlTemplate(
-        createMinimalInput({ serverName: "<script>evil</script>" })
+        createMinimalInput({ serverName: "<script>evil</script>" }),
       );
 
       expect(html).toContain("&lt;script&gt;evil&lt;/script&gt;");
@@ -373,7 +383,7 @@ describe("buildHostHtmlTemplate", () => {
 
     it("escapes tool name in title", () => {
       const html = buildHostHtmlTemplate(
-        createMinimalInput({ toolName: '<img onerror="alert(1)">' })
+        createMinimalInput({ toolName: '<img onerror="alert(1)">' }),
       );
 
       expect(html).toContain("&lt;img onerror=");
@@ -383,7 +393,7 @@ describe("buildHostHtmlTemplate", () => {
       const html = buildHostHtmlTemplate(
         createMinimalInput({
           toolArgs: { text: "line\u2028separator\u2029here" },
-        })
+        }),
       );
 
       // Should be escaped to prevent JS parsing issues

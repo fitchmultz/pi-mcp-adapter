@@ -1,7 +1,6 @@
 import { Server } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import {
-} from "@modelcontextprotocol/core";
+import {} from "@modelcontextprotocol/core";
 
 // A minimal MCP server that advertises the `prompts` capability and returns
 // deterministic content, used by prompts-sdk-integration.test.ts to exercise

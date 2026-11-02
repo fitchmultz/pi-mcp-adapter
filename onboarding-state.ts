@@ -20,11 +20,15 @@ export function getOnboardingStatePath(): string {
 
 export function loadOnboardingState(): McpOnboardingState {
   const path = getOnboardingStatePath();
-  if (!existsSync(path)) return { ...DEFAULT_STATE };
+  if (!existsSync(path)) {
+    return { ...DEFAULT_STATE };
+  }
 
   try {
     const raw = JSON.parse(readFileSync(path, "utf-8")) as Partial<McpOnboardingState>;
-    if (!raw || typeof raw !== "object") return { ...DEFAULT_STATE };
+    if (!raw || typeof raw !== "object") {
+      return { ...DEFAULT_STATE };
+    }
     return {
       version: 1,
       sharedConfigHintShown: raw.sharedConfigHintShown === true,
@@ -43,7 +47,9 @@ export function saveOnboardingState(state: McpOnboardingState): void {
   renameSync(tmpPath, path);
 }
 
-export function updateOnboardingState(updater: (state: McpOnboardingState) => McpOnboardingState): McpOnboardingState {
+export function updateOnboardingState(
+  updater: (state: McpOnboardingState) => McpOnboardingState,
+): McpOnboardingState {
   const next = updater(loadOnboardingState());
   saveOnboardingState(next);
   return next;

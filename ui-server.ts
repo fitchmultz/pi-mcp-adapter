@@ -11,7 +11,11 @@ import { buildHostHtmlTemplate, buildCspMetaContent } from "./host-html-template
 import { logger } from "./logger.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { McpExtensionState } from "./state.ts";
-import { SessionRecoveryAuthRequiredError, withSessionRecovery, type SessionRecoveryDeps } from "./session-recovery.ts";
+import {
+  SessionRecoveryAuthRequiredError,
+  withSessionRecovery,
+  type SessionRecoveryDeps,
+} from "./session-recovery.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { extractUiToolVisibility, isUiToolCallableByApp } from "./ui-tool-visibility.ts";
 import { createUiMessageHistory } from "./ui-message-history.ts";
@@ -95,7 +99,7 @@ export interface UiServerHandle {
 export async function startUiServer(options: UiServerOptions): Promise<UiServerHandle> {
   const sessionToken = options.sessionToken ?? randomUUID();
   const uiResourceToken = randomUUID();
-  const log = logger.child({ 
+  const log = logger.child({
     component: "UiServer",
     server: options.serverName,
     tool: options.toolName,
@@ -145,8 +149,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   };
 
   const updateStreamSummary = (payload: unknown) => {
-    const envelope = getVisualizationStreamEnvelope((payload as { structuredContent?: unknown } | null)?.structuredContent);
-    if (!envelope) return;
+    const envelope = getVisualizationStreamEnvelope(
+      (payload as { structuredContent?: unknown } | null)?.structuredContent,
+    );
+    if (!envelope) {
+      return;
+    }
     if (!streamSummary) {
       streamSummary = {
         streamId: envelope.streamId,
@@ -160,8 +168,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       streamSummary.phases.push(envelope.phase);
     }
     streamSummary.finalStatus = envelope.status;
-    if (envelope.message !== undefined) streamSummary.lastMessage = envelope.message;
-    else delete streamSummary.lastMessage;
+    if (envelope.message !== undefined) {
+      streamSummary.lastMessage = envelope.message;
+    } else {
+      delete streamSummary.lastMessage;
+    }
   };
 
   const serializeEvent = (eventId: number, name: string, payload: unknown): string => {
@@ -171,8 +182,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   const getLatestCheckpointIndex = () => {
     for (let index = eventLog.length - 1; index >= 0; index -= 1) {
       const entry = eventLog[index];
-      if (!entry) continue;
-      const envelope = getVisualizationStreamEnvelope((entry.payload as { structuredContent?: unknown } | null)?.structuredContent);
+      if (!entry) {
+        continue;
+      }
+      const envelope = getVisualizationStreamEnvelope(
+        (entry.payload as { structuredContent?: unknown } | null)?.structuredContent,
+      );
       if (envelope?.frameType === "checkpoint" || envelope?.frameType === "final") {
         return index;
       }
@@ -181,7 +196,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   };
 
   const pruneEventLog = () => {
-    if (eventLog.length <= MAX_EVENT_LOG) return;
+    if (eventLog.length <= MAX_EVENT_LOG) {
+      return;
+    }
     const latestCheckpointIndex = getLatestCheckpointIndex();
 
     if (latestCheckpointIndex > 0) {
@@ -194,7 +211,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   };
 
   const pushEvent = (name: string, payload: unknown) => {
-    if (completed) return;
+    if (completed) {
+      return;
+    }
     const eventId = nextEventId++;
     eventLog.push({ id: eventId, name, payload });
     updateStreamSummary(payload);
@@ -238,13 +257,17 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   };
 
   const stopWatchdog = () => {
-    if (!watchdog) return;
+    if (!watchdog) {
+      return;
+    }
     clearInterval(watchdog);
     watchdog = null;
   };
 
   const markCompleted = (reason: string) => {
-    if (completed) return;
+    if (completed) {
+      return;
+    }
     log.debug("Session completed", { reason });
     pushEvent("session-complete", { reason });
     completed = true;
@@ -270,14 +293,19 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
 
       if (method === "GET" && url.pathname === "/") {
         if (!url.searchParams.has("session")) {
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+          res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
           res.end(
-            "<!doctype html><html><head><meta charset=\"utf-8\"><title>MCP UI</title></head>" +
+            '<!doctype html><html><head><meta charset="utf-8"><title>MCP UI</title></head>' +
               "<body><p>Open the authenticated MCP UI URL shown by Pi.</p></body></html>",
           );
           return;
         }
-        if (!validateTokenQuery(url, sessionToken, res)) return;
+        if (!validateTokenQuery(url, sessionToken, res)) {
+          return;
+        }
         touchHeartbeat();
 
         const html = buildHostHtmlTemplate({
@@ -301,7 +329,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (method === "GET" && url.pathname === "/events") {
-        if (!validateTokenQuery(url, sessionToken, res)) return;
+        if (!validateTokenQuery(url, sessionToken, res)) {
+          return;
+        }
         touchHeartbeat();
         log.debug("SSE client connected", { clientCount: sseClients.size + 1 });
         res.writeHead(200, {
@@ -312,7 +342,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         });
         res.write(": connected\n\n");
         sseClients.add(res);
-        replayEvents(res, req.headers["last-event-id"] ? String(req.headers["last-event-id"]) : null);
+        replayEvents(
+          res,
+          req.headers["last-event-id"] ? String(req.headers["last-event-id"]) : null,
+        );
         req.on("close", () => {
           sseClients.delete(res);
         });
@@ -320,13 +353,17 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (method === "GET" && url.pathname === "/health") {
-        if (!validateTokenQuery(url, sessionToken, res)) return;
+        if (!validateTokenQuery(url, sessionToken, res)) {
+          return;
+        }
         sendJson(res, 200, { ok: true, result: { healthy: true } });
         return;
       }
 
       if (method === "GET" && url.pathname === "/ui-app") {
-        if (!validateTokenQuery(url, uiResourceToken, res, "resource")) return;
+        if (!validateTokenQuery(url, uiResourceToken, res, "resource")) {
+          return;
+        }
         touchHeartbeat();
         // Enforce host metadata independently of where app HTML places its document head.
         const cspContent = buildCspMetaContent(options.resource.meta.csp);
@@ -361,11 +398,21 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       const body = await parseBody(req, res);
-      if (!body) return;
-      if (!validateTokenBody(body, sessionToken, res)) return;
+      if (!body) {
+        return;
+      }
+      if (!validateTokenBody(body, sessionToken, res)) {
+        return;
+      }
       // A partial upload is not accepted until its authenticated body is complete.
-      if (completed && (url.pathname === "/proxy/ui/message" || url.pathname === "/proxy/ui/context")) {
-        sendJson(res, 409, { ok: false, error: "UI session is complete; message was not accepted" });
+      if (
+        completed &&
+        (url.pathname === "/proxy/ui/message" || url.pathname === "/proxy/ui/context")
+      ) {
+        sendJson(res, 409, {
+          ok: false,
+          error: "UI session is complete; message was not accepted",
+        });
         return;
       }
       const params = body.params ?? {};
@@ -381,10 +428,16 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
 
         const connection = options.manager.getConnection(options.serverName);
         if (!connection || connection.status !== "connected") {
-          sendJson(res, 503, { ok: false, error: `Server "${options.serverName}" is not connected` });
+          sendJson(res, 503, {
+            ok: false,
+            error: `Server "${options.serverName}" is not connected`,
+          });
           return;
         }
-        if (isServerDisabled(options.config?.mcpServers[options.serverName]) || isServerDisabled(connection.definition)) {
+        if (
+          isServerDisabled(options.config?.mcpServers[options.serverName]) ||
+          isServerDisabled(connection.definition)
+        ) {
           sendJson(res, 503, { ok: false, error: `Server "${options.serverName}" is disabled` });
           return;
         }
@@ -392,26 +445,37 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         const definition = options.config?.mcpServers[options.serverName] ?? connection.definition;
         const toolDefinitions = Array.isArray(connection.tools) ? connection.tools : [];
         const toolDefinition = toolDefinitions.find((tool) => tool.name === callParams.name);
-        if (!toolDefinition || !isToolAllowed(
-          callParams.name,
-          options.serverName,
-          resolveToolPrefix(definition, options.config?.settings?.toolPrefix),
-          definition?.includeTools,
-          definition?.excludeTools,
-        )) {
-          sendJson(res, 403, { ok: false, error: `MCP tool "${callParams.name}" is not callable by apps` });
+        if (
+          !toolDefinition ||
+          !isToolAllowed(
+            callParams.name,
+            options.serverName,
+            resolveToolPrefix(definition, options.config?.settings?.toolPrefix),
+            definition?.includeTools,
+            definition?.excludeTools,
+          )
+        ) {
+          sendJson(res, 403, {
+            ok: false,
+            error: `MCP tool "${callParams.name}" is not callable by apps`,
+          });
           return;
         }
         const uiVisibility = extractUiToolVisibility(toolDefinition._meta);
         if (!isUiToolCallableByApp(uiVisibility)) {
-          sendJson(res, 403, { ok: false, error: `MCP tool "${callParams.name}" is not callable by apps` });
+          sendJson(res, 403, {
+            ok: false,
+            error: `MCP tool "${callParams.name}" is not callable by apps`,
+          });
           return;
         }
 
         const callArgs = {
           name: callParams.name,
           arguments:
-            callParams.arguments && typeof callParams.arguments === "object" && !Array.isArray(callParams.arguments)
+            callParams.arguments &&
+            typeof callParams.arguments === "object" &&
+            !Array.isArray(callParams.arguments)
               ? callParams.arguments
               : {},
         };
@@ -419,7 +483,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           name: callParams.name,
           originalName: callParams.name,
           description: toolDefinition?.description ?? "",
-          ...(toolDefinition?.inputSchema !== undefined ? { inputSchema: toolDefinition.inputSchema } : {}),
+          ...(toolDefinition?.inputSchema !== undefined
+            ? { inputSchema: toolDefinition.inputSchema }
+            : {}),
           ...(uiVisibility !== undefined ? { uiVisibility } : {}),
         };
         const approval = options.state
@@ -430,10 +496,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               callArgs.arguments,
               options.state.owner?.signal,
             )
-          : options.config && isToolCallApprovalRequired(options.config, options.serverName, toolMeta)
+          : options.config &&
+              isToolCallApprovalRequired(options.config, options.serverName, toolMeta)
             ? { ok: false as const, reason: "approval_required_headless" as const }
             : { ok: true as const };
-        if (approval.ok === false) {
+        if (!approval.ok) {
           const denied = approval.reason === "denied";
           const message = denied
             ? `The user declined approval to run MCP tool "${callParams.name}" on server "${options.serverName}".`
@@ -463,9 +530,16 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
                   ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
                 },
                 options.serverName,
-                (conn) => conn.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName)),
+                (conn) =>
+                  conn.client.callTool(
+                    callArgs,
+                    options.manager.getRequestOptions?.(options.serverName),
+                  ),
               )
-            : await connection.client.callTool(callArgs, options.manager.getRequestOptions?.(options.serverName));
+            : await connection.client.callTool(
+                callArgs,
+                options.manager.getRequestOptions?.(options.serverName),
+              );
           sendJson(res, 200, { ok: true, result });
         } finally {
           options.manager.decrementInFlight(options.serverName);
@@ -475,7 +549,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/consent") {
-        const approved = !!(params as { approved?: boolean }).approved;
+        const approved = Boolean((params as { approved?: boolean }).approved);
         options.consentManager.registerDecision(options.serverName, approved);
         sendJson(res, 200, { ok: true, result: { approved } });
         return;
@@ -484,7 +558,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       if (url.pathname === "/proxy/ui/message") {
         const msgParams = params as UiMessageParams;
         const promptText = extractUiPromptText(msgParams);
-        
+
         // Track messages by type (order: prompt → intent → notify)
         // Must match the order in index.ts onMessage handler
         let warning: string | undefined;
@@ -507,7 +581,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
             log.debug("UI notification", { message: notifyText.slice(0, 100) });
           }
         }
-        
+
         await options.onMessage?.(msgParams);
         if (warning) {
           log.warn(warning);
@@ -521,15 +595,24 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
         const content = params.content;
         const structuredContent = params.structuredContent;
         if (
-          (content !== undefined && (!Array.isArray(content) || content.some((block) => !ContentBlockSchema.safeParse(block).success))) ||
-          (structuredContent !== undefined && (!structuredContent || typeof structuredContent !== "object" || Array.isArray(structuredContent)))
+          (content !== undefined &&
+            (!Array.isArray(content) ||
+              content.some((block) => !ContentBlockSchema.safeParse(block).success))) ||
+          (structuredContent !== undefined &&
+            (!structuredContent ||
+              typeof structuredContent !== "object" ||
+              Array.isArray(structuredContent)))
         ) {
           sendJson(res, 400, { ok: false, error: "Invalid update-model-context params" });
           return;
         }
         const ctxParams: UiModelContextParams = {
-          ...(content !== undefined ? { content: content as NonNullable<UiModelContextParams["content"]> } : {}),
-          ...(structuredContent !== undefined ? { structuredContent: structuredContent as Record<string, unknown> } : {}),
+          ...(content !== undefined
+            ? { content: content as NonNullable<UiModelContextParams["content"]> }
+            : {}),
+          ...(structuredContent !== undefined
+            ? { structuredContent: structuredContent as Record<string, unknown> }
+            : {}),
         };
         const update = createUiModelContextUpdate(ctxParams);
         if (update) {
@@ -538,7 +621,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
             sessionMessages.contexts.shift();
           }
         }
-        log.debug("UI context update", { hasContent: !!ctxParams.content, hasUpdate: !!update });
+        log.debug("UI context update", {
+          hasContent: Boolean(ctxParams.content),
+          hasUpdate: Boolean(update),
+        });
         await options.onContextUpdate?.(ctxParams);
         sendJson(res, 200, { ok: true, result: {} });
         return;
@@ -585,9 +671,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/complete") {
-        const reason = typeof (params as { reason?: string }).reason === "string"
-          ? (params as { reason?: string }).reason!
-          : "done";
+        const reason =
+          typeof (params as { reason?: string }).reason === "string"
+            ? (params as { reason?: string }).reason!
+            : "done";
         markCompleted(reason);
         sendJson(res, 200, { ok: true, result: {} });
         setTimeout(() => {
@@ -603,9 +690,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     } catch (error) {
       if (error instanceof SessionRecoveryAuthRequiredError) {
         const fallback = `Server "${options.serverName}" requires OAuth authentication. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${options.serverName}" }) to get a browser URL, or /mcp-auth ${options.serverName} in an interactive local session.`;
-        const message = error.authMessage ?? (options.config
-          ? formatAuthRequiredMessage(options.config, options.serverName, fallback)
-          : fallback);
+        const message =
+          error.authMessage ??
+          (options.config
+            ? formatAuthRequiredMessage(options.config, options.serverName, fallback)
+            : fallback);
         sendJson(res, 401, { ok: false, error: message });
         return;
       }
@@ -624,13 +713,17 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       (error) => {
         const reason = error instanceof Error ? error.message : String(error);
         pushEvent("tool-cancelled", { reason });
-      }
+      },
     );
   }
 
   watchdog = setInterval(() => {
-    if (completed) return;
-    if (Date.now() - lastHeartbeatAt <= ABANDONED_GRACE_MS) return;
+    if (completed) {
+      return;
+    }
+    if (Date.now() - lastHeartbeatAt <= ABANDONED_GRACE_MS) {
+      return;
+    }
     markCompleted("stale");
     try {
       server.close();
@@ -702,7 +795,8 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           pushEvent("host-context", context);
         },
         getSessionMessages: () => ({ ...sessionMessages }),
-        getStreamSummary: () => streamSummary ? { ...streamSummary, phases: [...streamSummary.phases] } : undefined,
+        getStreamSummary: () =>
+          streamSummary ? { ...streamSummary, phases: [...streamSummary.phases] } : undefined,
       };
 
       resolve(handle);
@@ -724,7 +818,10 @@ async function parseBody(
     }
     return body as UiProxyRequestBody<Record<string, unknown>>;
   } catch (error) {
-    sendJson(res, 400, { ok: false, error: error instanceof Error ? error.message : "Invalid body" });
+    sendJson(res, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : "Invalid body",
+    });
     return null;
   }
 }
@@ -757,11 +854,15 @@ function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 function resolvePortCandidates(port: number | undefined): number[] {
-  if (port !== undefined) return [port];
+  if (port !== undefined) {
+    return [port];
+  }
   const candidates: number[] = [];
   const count = MOSHI_DISCOVERY_PORT_END - MOSHI_DISCOVERY_PORT_START + 1;
   for (let offset = 0; offset < count; offset += 1) {
-    const candidate = MOSHI_DISCOVERY_PORT_START + ((nextMoshiDiscoveryPort - MOSHI_DISCOVERY_PORT_START + offset) % count);
+    const candidate =
+      MOSHI_DISCOVERY_PORT_START +
+      ((nextMoshiDiscoveryPort - MOSHI_DISCOVERY_PORT_START + offset) % count);
     candidates.push(candidate);
   }
   candidates.push(0);
@@ -769,7 +870,9 @@ function resolvePortCandidates(port: number | undefined): number[] {
 }
 
 function rememberMoshiDiscoveryPort(port: number): void {
-  if (port < MOSHI_DISCOVERY_PORT_START || port > MOSHI_DISCOVERY_PORT_END) return;
+  if (port < MOSHI_DISCOVERY_PORT_START || port > MOSHI_DISCOVERY_PORT_END) {
+    return;
+  }
   nextMoshiDiscoveryPort = port >= MOSHI_DISCOVERY_PORT_END ? MOSHI_DISCOVERY_PORT_START : port + 1;
 }
 
@@ -803,11 +906,7 @@ function validateTokenBody(
   return true;
 }
 
-function sendJson<T>(
-  res: ServerResponse,
-  status: number,
-  payload: UiProxyResult<T>,
-): void {
+function sendJson<T>(res: ServerResponse, status: number, payload: UiProxyResult<T>): void {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",

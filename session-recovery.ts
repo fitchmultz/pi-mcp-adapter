@@ -21,7 +21,16 @@
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
 import { AsyncLocalStorage } from "node:async_hooks";
-import { SdkError, SdkHttpError, SdkErrorCode, ProtocolError, InsufficientScopeError, UnauthorizedError, type FetchLike, type Transport } from "@modelcontextprotocol/client";
+import {
+  SdkError,
+  SdkHttpError,
+  SdkErrorCode,
+  ProtocolError,
+  InsufficientScopeError,
+  UnauthorizedError,
+  type FetchLike,
+  type Transport,
+} from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { isServerDisabled, isNonInteractiveOAuth, type McpConfig } from "./types.ts";
@@ -40,15 +49,23 @@ type ToolCallOutcome = { pending: boolean; cleanup: Set<() => void> };
 const toolCallOutcome = new AsyncLocalStorage<ToolCallOutcome>();
 
 /** Interrupted outcome reporting is separate from the transport retry policy. */
-export async function trackToolCallOutcome<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function trackToolCallOutcome<T>(
+  fn: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   const outcome: ToolCallOutcome = { pending: false, cleanup: new Set() };
   return toolCallOutcome.run(outcome, async () => {
     try {
       return await fn();
     } catch (error) {
-      if (outcome.pending && error instanceof Error
-        && (signal?.aborted || (error instanceof SdkError
-          && (error.code === SdkErrorCode.RequestTimeout || error.code === SdkErrorCode.ConnectionClosed)))) {
+      if (
+        outcome.pending &&
+        error instanceof Error &&
+        (signal?.aborted ||
+          (error instanceof SdkError &&
+            (error.code === SdkErrorCode.RequestTimeout ||
+              error.code === SdkErrorCode.ConnectionClosed)))
+      ) {
         // Abort reasons can be shared by calls that never reached dispatch.
         const interrupted = new Error(error.message, { cause: error });
         interruptedToolCalls.add(interrupted);
@@ -56,7 +73,9 @@ export async function trackToolCallOutcome<T>(fn: () => Promise<T>, signal?: Abo
       }
       throw error;
     } finally {
-      for (const cleanup of outcome.cleanup) cleanup();
+      for (const cleanup of outcome.cleanup) {
+        cleanup();
+      }
     }
   });
 }
@@ -75,7 +94,9 @@ const toolSend = new AsyncLocalStorage<ToolSend | undefined>();
 /** Retain fetch/body-error origin without parsing or buffering the response. */
 export const trackToolTransportFailure: FetchLike = async (input, init) => {
   const pending = toolSend.getStore();
-  if (pending) pending.bodyFailure = undefined;
+  if (pending) {
+    pending.bodyFailure = undefined;
+  }
   let toolPost = false;
   if (pending && init?.method === "POST" && typeof init.body === "string") {
     try {
@@ -83,40 +104,60 @@ export const trackToolTransportFailure: FetchLike = async (input, init) => {
       toolPost = request.method === "tools/call" && request.id === pending.id;
     } catch {}
   }
-  if (toolPost && pending?.outcome) pending.outcome.pending = true;
+  if (toolPost && pending?.outcome) {
+    pending.outcome.pending = true;
+  }
   try {
     const response = await fetch(input, init);
-    if (toolPost && !response.ok && response.status < 500 && pending?.outcome) pending.outcome.pending = false;
+    if (toolPost && !response.ok && response.status < 500 && pending?.outcome) {
+      pending.outcome.pending = false;
+    }
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     const observeBody = response.ok
       ? mediaType === "text/event-stream" || (toolPost && mediaType === "application/json")
       : toolPost && response.status >= 500;
-    if (!pending || !response.body || !observeBody) return response;
+    if (!pending || !response.body || !observeBody) {
+      return response;
+    }
     pending.streaming = response.ok && mediaType === "text/event-stream";
     // The native end hook has no error argument. Only a failed body read proves loss.
     const reader = response.body.getReader();
-    return new Response(new ReadableStream({
-      async pull(controller) {
-        try {
-          const { done, value } = await reader.read();
-          if (done) { controller.close(); reader.releaseLock(); }
-          else controller.enqueue(value);
-        } catch (error) {
-          // Native intentional closure suppresses onRequestStreamEnd.
-          if (init?.signal?.aborted) pending.finishSend();
-          else if (error instanceof Error) {
-            pending.bodyFailure = error;
-            if (!pending.streaming) interruptedToolCalls.add(error);
+    return new Response(
+      new ReadableStream({
+        async pull(controller) {
+          try {
+            const { done, value } = await reader.read();
+            if (done) {
+              controller.close();
+              reader.releaseLock();
+            } else {
+              controller.enqueue(value);
+            }
+          } catch (error) {
+            // Native intentional closure suppresses onRequestStreamEnd.
+            if (init?.signal?.aborted) {
+              pending.finishSend();
+            } else if (error instanceof Error) {
+              pending.bodyFailure = error;
+              if (!pending.streaming) {
+                interruptedToolCalls.add(error);
+              }
+            }
+            controller.error(error);
+            reader.releaseLock();
           }
-          controller.error(error);
-          reader.releaseLock();
-        }
-      },
-      cancel: reason => reader.cancel(reason).finally(() => reader.releaseLock()),
-    }), response);
+        },
+        cancel: (reason) => reader.cancel(reason).finally(() => reader.releaseLock()),
+      }),
+      response,
+    );
   } catch (error) {
-    if (error instanceof Error && !init?.signal?.aborted && init?.method === "POST"
-      && new Headers(init.headers).get("Mcp-Method") === "tools/call") {
+    if (
+      error instanceof Error &&
+      !init?.signal?.aborted &&
+      init?.method === "POST" &&
+      new Headers(init.headers).get("Mcp-Method") === "tools/call"
+    ) {
       toolTransportFailures.add(error);
     }
     throw error;
@@ -128,73 +169,116 @@ export function trackToolTransport(transport: Transport, http = false): void {
   const requests = new Map<string | number, ToolSend>();
   const onmessage = transport.onmessage;
   transport.onmessage = (message, extra) => {
-    const pending = ("id" in message && message.id !== undefined ? requests.get(message.id) : undefined) ?? toolSend.getStore();
-    if (pending && "id" in message && message.id === pending.id && ("result" in message || "error" in message)) {
+    const pending =
+      ("id" in message && message.id !== undefined ? requests.get(message.id) : undefined) ??
+      toolSend.getStore();
+    if (
+      pending &&
+      "id" in message &&
+      message.id === pending.id &&
+      ("result" in message || "error" in message)
+    ) {
       pending.responseReceived = true;
-      if (pending.outcome) pending.outcome.pending = false;
+      if (pending.outcome) {
+        pending.outcome.pending = false;
+      }
       requests.delete(pending.id);
       pending.finishSend();
     }
     onmessage?.(message, extra);
   };
   const onerror = transport.onerror;
-  transport.onerror = error => {
+  transport.onerror = (error) => {
     const pending = toolSend.getStore();
     // Reader failures are observed before the SDK reports them; earlier parser errors are not retryable.
-    if (pending && !pending.bodyFailure) pending.otherFailure ??= error;
+    if (pending && !pending.bodyFailure) {
+      pending.otherFailure ??= error;
+    }
     onerror?.(error);
   };
   const send = transport.send.bind(transport);
   transport.send = async (message, options) => {
     try {
       if (!("method" in message && message.method === "tools/call" && "id" in message)) {
-        return await toolSend.run(undefined, () => send(message, options));
+        await toolSend.run(undefined, () => send(message, options));
+        return;
       }
       const pending: ToolSend = {
-        id: message.id, outcome: toolCallOutcome.getStore(), streaming: false, responseReceived: false,
-        bodyFailure: undefined, otherFailure: undefined,
+        id: message.id,
+        outcome: toolCallOutcome.getStore(),
+        streaming: false,
+        responseReceived: false,
+        bodyFailure: undefined,
+        otherFailure: undefined,
         finishSend: () => {},
       };
       if (pending.outcome) {
         requests.set(message.id, pending);
         pending.outcome.cleanup.add(() => requests.delete(message.id));
-        if (!http) pending.outcome.pending = true;
+        if (!http) {
+          pending.outcome.pending = true;
+        }
       }
       try {
         if (!options?.requestSignal) {
-          return await toolSend.run(pending, () => send(message, options));
+          await toolSend.run(pending, () => send(message, options));
+          return;
         }
-        await abortable(new Promise<void>((resolve, reject) => {
-          pending.finishSend = resolve;
-          void toolSend.run(pending, () => send(message, {
-            ...options,
-            onRequestStreamEnd: () => {
-              options.onRequestStreamEnd?.();
-              const error = pending.otherFailure ?? pending.bodyFailure;
-              if (!pending.responseReceived && error) {
-                if (!pending.otherFailure) toolTransportFailures.add(error);
-                reject(error);
-              } else resolve();
-            },
-          })).then(() => { if (!pending.streaming) resolve(); }, reject);
-        }), options.requestSignal);
+        await abortable(
+          new Promise<void>((resolve, reject) => {
+            pending.finishSend = resolve;
+            void toolSend
+              .run(pending, () =>
+                send(message, {
+                  ...options,
+                  onRequestStreamEnd: () => {
+                    options.onRequestStreamEnd?.();
+                    const error = pending.otherFailure ?? pending.bodyFailure;
+                    if (!pending.responseReceived && error) {
+                      if (!pending.otherFailure) {
+                        toolTransportFailures.add(error);
+                      }
+                      reject(error);
+                    } else {
+                      resolve();
+                    }
+                  },
+                }),
+              )
+              .then(() => {
+                if (!pending.streaming) {
+                  resolve();
+                }
+              }, reject);
+          }),
+          options.requestSignal,
+        );
       } catch (error) {
         // Local send failures are distinct from a sent request waiting for its reply.
-        if (!http && pending.outcome) pending.outcome.pending = false;
+        if (!http && pending.outcome) {
+          pending.outcome.pending = false;
+        }
         throw error;
       } finally {
         pending.finishSend = () => {};
       }
     } catch (error) {
-      if ("method" in message && message.method === "tools/call"
-        && error instanceof SdkHttpError && error.code === SdkErrorCode.ClientHttpNotImplemented
-        && error.status >= 500 && error.status < 600) {
+      if (
+        "method" in message &&
+        message.method === "tools/call" &&
+        error instanceof SdkHttpError &&
+        error.code === SdkErrorCode.ClientHttpNotImplemented &&
+        error.status >= 500 &&
+        error.status < 600
+      ) {
         let errorBody = false;
         try {
           const body = JSON.parse(String(error.data.text));
           errorBody = body?.jsonrpc === "2.0" && body.error !== undefined;
         } catch {}
-        if (!errorBody) toolTransportFailures.add(error);
+        if (!errorBody) {
+          toolTransportFailures.add(error);
+        }
       }
       throw error;
     }
@@ -218,16 +302,22 @@ const SERVER_NOT_INITIALIZED_MCP_MESSAGES = new Set([
 ]);
 
 export function isTerminatedSession(err: unknown, hadSessionId: boolean): boolean {
-  if (!hadSessionId) return false;
-  if (err instanceof SdkHttpError) {
-    return err.status === 404
-      || (err.status === 400
-        && /"code"\s*:\s*-32000/.test(err.message)
-        && /"message"\s*:\s*"Bad Request: Server not initialized"/.test(err.message));
+  if (!hadSessionId) {
+    return false;
   }
-  return err instanceof ProtocolError
-    && err.code === -32000
-    && SERVER_NOT_INITIALIZED_MCP_MESSAGES.has(err.message);
+  if (err instanceof SdkHttpError) {
+    return (
+      err.status === 404 ||
+      (err.status === 400 &&
+        /"code"\s*:\s*-32000/.test(err.message) &&
+        /"message"\s*:\s*"Bad Request: Server not initialized"/.test(err.message))
+    );
+  }
+  return (
+    err instanceof ProtocolError &&
+    err.code === -32000 &&
+    SERVER_NOT_INITIALIZED_MCP_MESSAGES.has(err.message)
+  );
 }
 
 function hasSessionId(connection: ServerConnection): boolean {
@@ -243,7 +333,9 @@ export class SessionRecoveryAuthRequiredError extends Error {
   readonly authMessage: string | undefined;
 
   constructor(serverName: string, authMessage?: string) {
-    super(authMessage ?? `MCP server "${serverName}" requires OAuth authentication after reconnect.`);
+    super(
+      authMessage ?? `MCP server "${serverName}" requires OAuth authentication after reconnect.`,
+    );
     this.serverName = serverName;
     this.authMessage = authMessage;
     this.name = "SessionRecoveryAuthRequiredError";
@@ -261,7 +353,11 @@ export interface SessionRecoveryDeps {
   signal?: AbortSignal;
   /** Only replay-safe tool calls may opt into a same-client retry of a proven modern POST transport failure. */
   retryOnTransportFailure?: boolean;
-  onNeedsAuth?: (serverName: string, signal?: AbortSignal, challenge?: AuthChallengeContext) => Promise<ServerConnection | undefined>;
+  onNeedsAuth?: (
+    serverName: string,
+    signal?: AbortSignal,
+    challenge?: AuthChallengeContext,
+  ) => Promise<ServerConnection | undefined>;
 }
 
 /**
@@ -284,7 +380,9 @@ export async function withSessionRecovery<T>(
 
   const reconnect = async (stale: ServerConnection, error: unknown): Promise<ServerConnection> => {
     const definition = deps.config.mcpServers[serverName];
-    if (!definition) throw error;
+    if (!definition) {
+      throw error;
+    }
     throwIfAborted(deps.signal);
     let fresh = stale;
     if (fresh.status !== "needs-auth") {
@@ -294,23 +392,41 @@ export async function withSessionRecovery<T>(
     }
     throwIfAborted(deps.signal);
     if (fresh.status === "needs-auth" && deps.onNeedsAuth) {
-      fresh = await abortable(deps.onNeedsAuth(serverName, deps.signal), deps.signal) ?? fresh;
+      fresh = (await abortable(deps.onNeedsAuth(serverName, deps.signal), deps.signal)) ?? fresh;
       throwIfAborted(deps.signal);
     }
-    if (fresh.status === "needs-auth") throw new SessionRecoveryAuthRequiredError(serverName);
-    if (fresh.status !== "connected") throw error;
+    if (fresh.status === "needs-auth") {
+      throw new SessionRecoveryAuthRequiredError(serverName);
+    }
+    if (fresh.status !== "connected") {
+      throw error;
+    }
     return fresh;
   };
 
-  const isRecoverableAuth = (error: unknown, failed: ServerConnection, activating = false): error is Error => {
+  const isRecoverableAuth = (
+    error: unknown,
+    failed: ServerConnection,
+    activating = false,
+  ): error is Error => {
     const definition = deps.config.mcpServers[serverName];
-    if (!definition || isServerDisabled(definition) || !supportsOAuth(definition)) return false;
+    if (!definition || isServerDisabled(definition) || !supportsOAuth(definition)) {
+      return false;
+    }
     if (error instanceof SdkHttpError) {
       // A provider's exhausted native 401/M2M retry is terminal, not another consent cycle.
-      return failed.oauthProvider === false && error.status === 401 && error.code !== SdkErrorCode.ClientHttpAuthentication;
+      return (
+        failed.oauthProvider === false &&
+        error.status === 401 &&
+        error.code !== SdkErrorCode.ClientHttpAuthentication
+      );
     }
-    if (failed.oauthProvider && isNonInteractiveOAuth(definition.oauth)) return false;
-    return error instanceof InsufficientScopeError || (activating && error instanceof UnauthorizedError);
+    if (failed.oauthProvider && isNonInteractiveOAuth(definition.oauth)) {
+      return false;
+    }
+    return (
+      error instanceof InsufficientScopeError || (activating && error instanceof UnauthorizedError)
+    );
   };
 
   const terminalDispatch = async (fresh: ServerConnection): Promise<T> => {
@@ -319,7 +435,9 @@ export async function withSessionRecovery<T>(
       return await fn(fresh);
     } catch (error) {
       throwIfAborted(deps.signal);
-      if (isRecoverableAuth(error, fresh)) throw new SessionRecoveryAuthRequiredError(serverName);
+      if (isRecoverableAuth(error, fresh)) {
+        throw new SessionRecoveryAuthRequiredError(serverName);
+      }
       throw error;
     }
   };
@@ -328,7 +446,9 @@ export async function withSessionRecovery<T>(
     const definition = deps.config.mcpServers[serverName]!;
     const current = deps.manager.getConnection(serverName);
     if (current && current !== failed && failed.oauthProvider !== false) {
-      return terminalDispatch(current.status === "connected" ? current : await reconnect(current, error));
+      return terminalDispatch(
+        current.status === "connected" ? current : await reconnect(current, error),
+      );
     }
 
     if (failed.oauthProvider === false) {
@@ -340,15 +460,25 @@ export async function withSessionRecovery<T>(
           return await fn(failed);
         } catch (providerError) {
           throwIfAborted(deps.signal);
-          if (!isRecoverableAuth(providerError, failed, true)) throw providerError;
+          if (!isRecoverableAuth(providerError, failed, true)) {
+            throw providerError;
+          }
           error = providerError;
         }
       }
     }
-    if (isNonInteractiveOAuth(definition.oauth)) throw error;
-    const fresh = await abortable(deps.onNeedsAuth?.(serverName, deps.signal, { connection: failed, error }) ?? Promise.resolve(undefined), deps.signal);
+    if (isNonInteractiveOAuth(definition.oauth)) {
+      throw error;
+    }
+    const fresh = await abortable(
+      deps.onNeedsAuth?.(serverName, deps.signal, { connection: failed, error }) ??
+        Promise.resolve(undefined),
+      deps.signal,
+    );
     throwIfAborted(deps.signal);
-    if (!fresh || fresh === failed || fresh.status !== "connected") throw new SessionRecoveryAuthRequiredError(serverName);
+    if (!fresh || fresh === failed || fresh.status !== "connected") {
+      throw new SessionRecoveryAuthRequiredError(serverName);
+    }
     return terminalDispatch(fresh);
   };
 
@@ -362,11 +492,15 @@ export async function withSessionRecovery<T>(
     return await fn(connection);
   } catch (err) {
     throwIfAborted(deps.signal);
-    if (isRecoverableAuth(err, connection)) return recoverAuth(connection, err);
-    if (deps.retryOnTransportFailure === true
-      && deps.config.mcpServers[serverName]?.retryOnTransportFailure === true
-      && connection.client.getProtocolEra?.() === "modern"
-      && isToolTransportFailure(err)) {
+    if (isRecoverableAuth(err, connection)) {
+      return recoverAuth(connection, err);
+    }
+    if (
+      deps.retryOnTransportFailure === true &&
+      deps.config.mcpServers[serverName]?.retryOnTransportFailure === true &&
+      connection.client.getProtocolEra?.() === "modern" &&
+      isToolTransportFailure(err)
+    ) {
       return terminalDispatch(connection);
     }
     if (!isTerminatedSession(err, hadSessionId)) {

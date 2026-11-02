@@ -37,7 +37,7 @@ const { session } = await createAgentSession({
   tools: ["demo_reload_identity"],
 });
 session.extensionRunner.setFlagValue("mcp-config", configPath);
-await session.bindExtensions({ mode: "print", onError: error => console.error(error.error) });
+await session.bindExtensions({ mode: "print", onError: (error) => console.error(error.error) });
 
 try {
   await session.reload();

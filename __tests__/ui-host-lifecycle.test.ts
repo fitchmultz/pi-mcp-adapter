@@ -7,7 +7,10 @@ import { startUiServer } from "../ui-server.ts";
 class BrowserClock {
   private now = 0;
   private nextId = 0;
-  private tasks = new Map<number, { at: number; interval?: number; callback: () => void }>();
+  private readonly tasks = new Map<
+    number,
+    { at: number; interval?: number; callback: () => void }
+  >();
 
   setInterval = (callback: () => void, interval: number): number => {
     const id = ++this.nextId;
@@ -29,11 +32,16 @@ class BrowserClock {
     const end = this.now + ms;
     while (true) {
       const next = [...this.tasks.entries()].sort((a, b) => a[1].at - b[1].at)[0];
-      if (!next || next[1].at > end) break;
+      if (!next || next[1].at > end) {
+        break;
+      }
       const [id, task] = next;
       this.now = task.at;
-      if (task.interval !== undefined) task.at += task.interval;
-      else this.tasks.delete(id);
+      if (task.interval !== undefined) {
+        task.at += task.interval;
+      } else {
+        this.tasks.delete(id);
+      }
       task.callback();
     }
     this.now = end;
@@ -43,8 +51,8 @@ class BrowserClock {
 class Element {
   textContent = "";
   style: Record<string, string> = {};
-  private classes = new Set<string>();
-  private listeners = new Map<string, Array<() => unknown>>();
+  private readonly classes = new Set<string>();
+  private readonly listeners = new Map<string, Array<() => unknown>>();
   classList = {
     add: (name: string) => this.classes.add(name),
     contains: (name: string) => this.classes.has(name),
@@ -64,15 +72,19 @@ class Element {
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()!();
+  while (cleanups.length) {
+    await cleanups.pop()!();
+  }
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
-async function openHost(options: {
-  failCompletion?: boolean;
-  holdCompletion?: "request" | "response";
-} = {}) {
+async function openHost(
+  options: {
+    failCompletion?: boolean;
+    holdCompletion?: "request" | "response";
+  } = {},
+) {
   const completions: string[] = [];
   const handle = await startUiServer({
     port: 0,
@@ -101,25 +113,33 @@ async function openHost(options: {
   expect(page.status).toBe(200);
   const html = await page.text();
   const moduleScript = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
-  if (!moduleScript) throw new Error("Served host module not found");
+  if (!moduleScript) {
+    throw new Error("Served host module not found");
+  }
   const script = moduleScript.replace(/^\s*import\s+[^;]+;/, "");
-  if (script === moduleScript) throw new Error("Served host module import not found");
+  if (script === moduleScript) {
+    throw new Error("Served host module import not found");
+  }
 
   const clock = new BrowserClock();
-  const elements = new Map([
-    "mcp-app",
-    "status",
-    "done-btn",
-    "cancel-btn",
-    "error-overlay",
-    "completion-overlay",
-    "error-message",
-    "server-name",
-    "tool-name",
-  ].map((id) => [id, new Element()]));
+  const elements = new Map(
+    [
+      "mcp-app",
+      "status",
+      "done-btn",
+      "cancel-btn",
+      "error-overlay",
+      "completion-overlay",
+      "error-message",
+      "server-name",
+      "tool-name",
+    ].map((id) => [id, new Element()]),
+  );
   const element = (id: string) => {
     const result = elements.get(id);
-    if (!result) throw new Error(`Missing element ${id}`);
+    if (!result) {
+      throw new Error(`Missing element ${id}`);
+    }
     return result;
   };
 
@@ -127,12 +147,16 @@ async function openHost(options: {
   const consoleErrors: unknown[][] = [];
   const browserConsole = {
     ...console,
-    error: (...args: unknown[]) => { consoleErrors.push(args); },
+    error: (...args: unknown[]) => {
+      consoleErrors.push(args);
+    },
   };
   let closeAttempts = 0;
   const window = {
     innerWidth: 1024,
-    close: () => { closeAttempts += 1; },
+    close: () => {
+      closeAttempts += 1;
+    },
     addEventListener: (name: string, listener: (event: unknown) => void) => {
       const listeners = windowListeners.get(name) ?? new Set();
       listeners.add(listener);
@@ -143,7 +167,9 @@ async function openHost(options: {
     },
   };
   const dispatchWindow = (name: string, event: unknown) => {
-    for (const listener of windowListeners.get(name) ?? []) listener(event);
+    for (const listener of windowListeners.get(name) ?? []) {
+      listener(event);
+    }
   };
   vi.stubGlobal("window", window);
 
@@ -151,14 +177,18 @@ async function openHost(options: {
   const teardowns: Array<{ id: number | string; answered: boolean }> = [];
   const appWindow = {
     postMessage: (message: { method?: string; id?: number | string }) => {
-      if (message.method !== "ui/resource-teardown" || message.id === undefined) return;
+      if (message.method !== "ui/resource-teardown" || message.id === undefined) {
+        return;
+      }
       teardowns.push({ id: message.id, answered: false });
       teardownStarted.resolve();
     },
   };
   const respondToTeardowns = (error?: { code: number; message: string }) => {
     for (const request of teardowns) {
-      if (request.answered) continue;
+      if (request.answered) {
+        continue;
+      }
       request.answered = true;
       dispatchWindow("message", {
         source: appWindow,
@@ -180,7 +210,9 @@ async function openHost(options: {
     set: (path: string) => {
       void fetch(new URL(path, origin))
         .then(async (response) => {
-          if (!response.ok) throw new Error(`App load failed: ${response.status}`);
+          if (!response.ok) {
+            throw new Error(`App load failed: ${response.status}`);
+          }
           await response.text();
           iframe.onload?.();
           iframeLoaded.resolve();
@@ -223,7 +255,9 @@ async function openHost(options: {
             buffer = buffer.slice(end + 2);
             const name = frame.match(/^event:\s*(.*)$/m)?.[1];
             const data = frame.match(/^data:\s*(.*)$/m)?.[1];
-            if (name && data !== undefined) this.dispatch(name, data);
+            if (name && data !== undefined) {
+              this.dispatch(name, data);
+            }
           }
         });
         response.on("end", () => this.reportInterruption());
@@ -245,7 +279,9 @@ async function openHost(options: {
     }
 
     private dispatch(name: string, data: string): void {
-      for (const listener of this.listeners.get(name) ?? []) listener({ data });
+      for (const listener of this.listeners.get(name) ?? []) {
+        listener({ data });
+      }
       if (name === "session-complete") {
         this.terminalEvents += 1;
         this.completed.resolve(JSON.parse(data) as { reason: string });
@@ -253,7 +289,9 @@ async function openHost(options: {
     }
 
     private reportInterruption(): void {
-      if (this.closed) return;
+      if (this.closed) {
+        return;
+      }
       this.onerror?.();
       this.interrupted.resolve();
     }
@@ -270,26 +308,32 @@ async function openHost(options: {
   }
 
   const completionGate = Promise.withResolvers<void>();
-  const attempts: Array<{ path: string; status?: number; error?: string; settled: Promise<void> }> = [];
+  const attempts: Array<{ path: string; status?: number; error?: string; settled: Promise<void> }> =
+    [];
   const browserFetch = (path: string, init: RequestInit) => {
     const isCompletion = path === "/proxy/ui/complete";
     const send = () => fetch(new URL(path, origin), init);
-    const request = isCompletion && options.holdCompletion === "request"
-      ? completionGate.promise.then(send)
-      : send();
+    const request =
+      isCompletion && options.holdCompletion === "request"
+        ? completionGate.promise.then(send)
+        : send();
     const attempt: (typeof attempts)[number] = {
       path,
       settled: request.then(
-        (response) => { attempt.status = response.status; },
-        (error: unknown) => { attempt.error = String(error); },
+        (response) => {
+          attempt.status = response.status;
+        },
+        (error: unknown) => {
+          attempt.error = String(error);
+        },
       ),
     };
     attempts.push(attempt);
     return isCompletion && options.holdCompletion === "response"
       ? request.then(async (response) => {
-        await completionGate.promise;
-        return response;
-      })
+          await completionGate.promise;
+          return response;
+        })
       : request;
   };
   const requests = (path: string) => attempts.filter((attempt) => attempt.path === path);
@@ -300,8 +344,12 @@ async function openHost(options: {
   const bundle = await fetch(`${origin}/app-bridge.bundle.js`);
   expect(bundle.status).toBe(200);
   const bundleUrl = `data:text/javascript;base64,${Buffer.from(await bundle.text()).toString("base64")}`;
-  const { AppBridge, PostMessageTransport }: typeof import("@modelcontextprotocol/ext-apps/app-bridge") =
-    await import(/* @vite-ignore */ bundleUrl);
+  const {
+    AppBridge,
+    PostMessageTransport,
+  }: typeof import("@modelcontextprotocol/ext-apps/app-bridge") = await import(
+    /* @vite-ignore */ bundleUrl
+  );
   let bridge: InstanceType<typeof AppBridge> | undefined;
   class CapturedBridge extends AppBridge {
     constructor(...args: ConstructorParameters<typeof AppBridge>) {
@@ -317,20 +365,48 @@ async function openHost(options: {
   });
 
   const run = new Function(
-    "AppBridge", "PostMessageTransport", "document", "window", "EventSource",
-    "fetch", "setInterval", "clearInterval", "setTimeout", "console",
+    "AppBridge",
+    "PostMessageTransport",
+    "document",
+    "window",
+    "EventSource",
+    "fetch",
+    "setInterval",
+    "clearInterval",
+    "setTimeout",
+    "console",
     `return (async () => { ${script} })();`,
   );
   await Promise.all([
-    run(CapturedBridge, PostMessageTransport, document, window, LiveEventSource,
-      browserFetch, clock.setInterval, clock.clearInterval, clock.setTimeout, browserConsole),
+    run(
+      CapturedBridge,
+      PostMessageTransport,
+      document,
+      window,
+      LiveEventSource,
+      browserFetch,
+      clock.setInterval,
+      clock.clearInterval,
+      clock.setTimeout,
+      browserConsole,
+    ),
     iframeLoaded.promise,
   ]);
   await eventSource.connected.promise;
 
   return {
-    handle, completions, clock, element, eventSource, teardowns, teardownStarted: teardownStarted.promise,
-    respondToTeardowns, requests, settleRequests, consoleErrors, releaseCompletion: completionGate.resolve,
+    handle,
+    completions,
+    clock,
+    element,
+    eventSource,
+    teardowns,
+    teardownStarted: teardownStarted.promise,
+    respondToTeardowns,
+    requests,
+    settleRequests,
+    consoleErrors,
+    releaseCompletion: completionGate.resolve,
     closeAttempts: () => closeAttempts,
   };
 }
@@ -440,7 +516,9 @@ it("keeps heartbeats while a local completion request is unconfirmed", async () 
 
   host.clock.advance(30_000);
   await host.settleRequests("/proxy/ui/heartbeat");
-  expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual([200, 200, 200]);
+  expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual([
+    200, 200, 200,
+  ]);
   expect(host.completions).toEqual([]);
   expect(host.teardowns).toHaveLength(0);
 
@@ -473,7 +551,9 @@ it("reports a failed completion response without replaying an accepted operation
   expect(host.teardowns).toHaveLength(1);
   expect(host.requests("/proxy/ui/complete")).toHaveLength(1);
   expect(
-    host.consoleErrors.some((args) => args.some((arg) => String(arg).includes("Completion callback failed"))),
+    host.consoleErrors.some((args) =>
+      args.some((arg) => String(arg).includes("Completion callback failed")),
+    ),
   ).toBe(true);
   expect(host.element("error-overlay").classList.contains("visible")).toBe(false);
   expect(host.element("completion-overlay").classList.contains("visible")).toBe(true);
@@ -492,7 +572,9 @@ it("keeps active heartbeats and the watchdog after the SSE connection is interru
     await host.settleRequests();
     vi.advanceTimersByTime(10_000);
   }
-  expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual(Array(7).fill(200));
+  expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual(
+    Array(7).fill(200),
+  );
   expect(host.completions).toEqual([]);
 
   vi.advanceTimersByTime(65_000);

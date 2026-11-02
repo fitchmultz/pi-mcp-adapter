@@ -18,7 +18,7 @@ import type { UiResourceContent } from "../types.ts";
 function connectSSE(
   url: string,
   onEvent: (name: string, data: unknown, eventId?: string) => void,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
 ): Promise<{ close: () => void }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -59,7 +59,7 @@ function connectSSE(
           }
         });
         resolve({ close: () => req.destroy() });
-      }
+      },
     );
     req.on("error", reject);
     req.end();
@@ -96,7 +96,9 @@ describe("UI Streaming", () => {
 
     it("returns undefined for invalid stream context", () => {
       expect(getUiStreamHostContext({ [UI_STREAM_HOST_CONTEXT_KEY]: "invalid" })).toBeUndefined();
-      expect(getUiStreamHostContext({ [UI_STREAM_HOST_CONTEXT_KEY]: { mode: "invalid" } })).toBeUndefined();
+      expect(
+        getUiStreamHostContext({ [UI_STREAM_HOST_CONTEXT_KEY]: { mode: "invalid" } }),
+      ).toBeUndefined();
     });
 
     it("parses valid eager stream context", () => {
@@ -148,9 +150,11 @@ describe("UI Streaming", () => {
     });
 
     it("returns undefined for invalid envelope", () => {
-      expect(getVisualizationStreamEnvelope({
-        [UI_STREAM_STRUCTURED_CONTENT_KEY]: { streamId: "abc" }, // missing required fields
-      })).toBeUndefined();
+      expect(
+        getVisualizationStreamEnvelope({
+          [UI_STREAM_STRUCTURED_CONTENT_KEY]: { streamId: "abc" }, // missing required fields
+        }),
+      ).toBeUndefined();
     });
 
     it("parses valid envelope", () => {
@@ -194,11 +198,23 @@ describe("UI Streaming", () => {
   describe("McpServerManager stream listeners", () => {
     function attachNotificationHandler(manager: McpServerManager, serverName = "test-server") {
       const client = { setNotificationHandler: vi.fn() };
-      (manager as unknown as {
-        attachAdapterNotificationHandlers: (serverName: string, notificationClient: { setNotificationHandler: typeof client.setNotificationHandler }, schema: typeof serverStreamResultPatchNotificationSchema) => void;
-      }).attachAdapterNotificationHandlers(serverName, client, serverStreamResultPatchNotificationSchema);
+      (
+        manager as unknown as {
+          attachAdapterNotificationHandlers: (
+            serverName: string,
+            notificationClient: { setNotificationHandler: typeof client.setNotificationHandler },
+            schema: typeof serverStreamResultPatchNotificationSchema,
+          ) => void;
+        }
+      ).attachAdapterNotificationHandlers(
+        serverName,
+        client,
+        serverStreamResultPatchNotificationSchema,
+      );
       expect(client.setNotificationHandler).toHaveBeenCalledOnce();
-      expect(client.setNotificationHandler.mock.calls[0]![0]).toBe(SERVER_STREAM_RESULT_PATCH_METHOD);
+      expect(client.setNotificationHandler.mock.calls[0]![0]).toBe(
+        SERVER_STREAM_RESULT_PATCH_METHOD,
+      );
       const handler = client.setNotificationHandler.mock.calls[0]![2] as (params: {
         streamToken: string;
         result: { content?: unknown[]; structuredContent?: Record<string, unknown> };
@@ -288,21 +304,23 @@ describe("UI Streaming", () => {
     });
 
     it("sends result-patch events with stream envelope", async () => {
-      handle = await startUiServer(createServerOptions({
-        hostContext: {
-          [UI_STREAM_HOST_CONTEXT_KEY]: {
-            mode: "stream-first",
-            streamId: "test-stream",
-            intermediateResultPatches: true,
-            partialInput: false,
+      handle = await startUiServer(
+        createServerOptions({
+          hostContext: {
+            [UI_STREAM_HOST_CONTEXT_KEY]: {
+              mode: "stream-first",
+              streamId: "test-stream",
+              intermediateResultPatches: true,
+              partialInput: false,
+            },
           },
-        },
-      }));
+        }),
+      );
 
       const events: Array<{ name: string; data: unknown; id?: string | undefined }> = [];
       const sse = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
-        (name, data, id) => events.push({ name, data, id })
+        (name, data, id) => events.push({ name, data, id }),
       );
 
       // Send a result patch
@@ -328,7 +346,7 @@ describe("UI Streaming", () => {
       expect(patchEvents).toHaveLength(1);
 
       const envelope = getVisualizationStreamEnvelope(
-        (patchEvents[0]!.data as { structuredContent?: unknown })?.structuredContent
+        (patchEvents[0]!.data as { structuredContent?: unknown })?.structuredContent,
       );
       expect(envelope?.frameType).toBe("patch");
       expect(envelope?.phase).toBe("shell");
@@ -340,7 +358,11 @@ describe("UI Streaming", () => {
       const eventIds: string[] = [];
       const sse = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
-        (_name, _data, id) => { if (id) eventIds.push(id); }
+        (_name, _data, id) => {
+          if (id) {
+            eventIds.push(id);
+          }
+        },
       );
 
       handle.sendResultPatch({ content: [] });
@@ -364,7 +386,7 @@ describe("UI Streaming", () => {
       const firstEvents: Array<{ name: string; id?: string | undefined }> = [];
       const sse1 = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
-        (name, _data, id) => firstEvents.push({ name, id })
+        (name, _data, id) => firstEvents.push({ name, id }),
       );
 
       handle.sendResultPatch({ content: [{ type: "text", text: "patch-1" }] });
@@ -385,7 +407,7 @@ describe("UI Streaming", () => {
       const sse2 = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
         (name, _data, id) => replayedEvents.push({ name, id }),
-        { "Last-Event-ID": firstPatchId! }
+        { "Last-Event-ID": firstPatchId! },
       );
 
       await new Promise((r) => setTimeout(r, 50));
@@ -402,14 +424,18 @@ describe("UI Streaming", () => {
       // Send patches and a checkpoint
       const sse1 = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
-        () => {}
+        () => {},
       );
 
       handle.sendResultPatch({
         content: [],
         structuredContent: {
           [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
-            streamId: "s1", sequence: 0, frameType: "patch", phase: "shell", status: "ok",
+            streamId: "s1",
+            sequence: 0,
+            frameType: "patch",
+            phase: "shell",
+            status: "ok",
           },
         },
       });
@@ -417,7 +443,11 @@ describe("UI Streaming", () => {
         content: [],
         structuredContent: {
           [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
-            streamId: "s1", sequence: 1, frameType: "checkpoint", phase: "detail", status: "ok",
+            streamId: "s1",
+            sequence: 1,
+            frameType: "checkpoint",
+            phase: "detail",
+            status: "ok",
           },
         },
       });
@@ -425,7 +455,11 @@ describe("UI Streaming", () => {
         content: [],
         structuredContent: {
           [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
-            streamId: "s1", sequence: 2, frameType: "patch", phase: "detail", status: "ok",
+            streamId: "s1",
+            sequence: 2,
+            frameType: "patch",
+            phase: "detail",
+            status: "ok",
           },
         },
       });
@@ -437,7 +471,7 @@ describe("UI Streaming", () => {
       const freshEvents: Array<{ data: unknown }> = [];
       const sse2 = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
-        (_name, data) => freshEvents.push({ data })
+        (_name, data) => freshEvents.push({ data }),
       );
 
       await new Promise((r) => setTimeout(r, 50));
@@ -445,7 +479,11 @@ describe("UI Streaming", () => {
 
       // Should have replayed checkpoint and subsequent patches
       const envelopes = freshEvents
-        .map((e) => getVisualizationStreamEnvelope((e.data as { structuredContent?: unknown })?.structuredContent))
+        .map((e) =>
+          getVisualizationStreamEnvelope(
+            (e.data as { structuredContent?: unknown })?.structuredContent,
+          ),
+        )
         .filter(Boolean) as VisualizationStreamEnvelope[];
 
       expect(envelopes).toHaveLength(2);
@@ -453,22 +491,28 @@ describe("UI Streaming", () => {
     });
 
     it("tracks stream summary", async () => {
-      handle = await startUiServer(createServerOptions({
-        hostContext: {
-          [UI_STREAM_HOST_CONTEXT_KEY]: {
-            mode: "stream-first",
-            streamId: "summary-test",
-            intermediateResultPatches: true,
-            partialInput: false,
+      handle = await startUiServer(
+        createServerOptions({
+          hostContext: {
+            [UI_STREAM_HOST_CONTEXT_KEY]: {
+              mode: "stream-first",
+              streamId: "summary-test",
+              intermediateResultPatches: true,
+              partialInput: false,
+            },
           },
-        },
-      }));
+        }),
+      );
 
       handle.sendResultPatch({
         content: [],
         structuredContent: {
           [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
-            streamId: "summary-test", sequence: 0, frameType: "patch", phase: "shell", status: "ok",
+            streamId: "summary-test",
+            sequence: 0,
+            frameType: "patch",
+            phase: "shell",
+            status: "ok",
           },
         },
       });
@@ -476,7 +520,11 @@ describe("UI Streaming", () => {
         content: [],
         structuredContent: {
           [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
-            streamId: "summary-test", sequence: 1, frameType: "patch", phase: "structure", status: "ok",
+            streamId: "summary-test",
+            sequence: 1,
+            frameType: "patch",
+            phase: "structure",
+            status: "ok",
           },
         },
       });
@@ -484,7 +532,11 @@ describe("UI Streaming", () => {
         content: [],
         structuredContent: {
           [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
-            streamId: "summary-test", sequence: 2, frameType: "final", phase: "settled", status: "ok",
+            streamId: "summary-test",
+            sequence: 2,
+            frameType: "final",
+            phase: "settled",
+            status: "ok",
             message: "Complete",
           },
         },

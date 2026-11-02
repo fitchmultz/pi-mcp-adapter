@@ -6,37 +6,45 @@ const draft07 = "http://json-schema.org/draft-07/schema#";
 const draft07Https = "https://json-schema.org/draft-07/schema#";
 
 function validate(schema: Record<string, unknown>, value: unknown) {
-  return new AjvJsonSchemaValidator().getValidator(schema as JsonSchemaType)(value);
+  return new AjvJsonSchemaValidator().getValidator(schema)(value);
 }
 
 describe("SDK schema dialect compatibility", () => {
-  it.each([draft07, draft07Https])("routes %s to draft-07 semantics", schema => {
-    const result = validate({
-      $schema: schema,
-      type: "object",
-      properties: {
-        values: {
-          type: "array",
-          items: [{ type: "string" }, { type: "number" }],
-          additionalItems: false,
+  it.each([draft07, draft07Https])("routes %s to draft-07 semantics", (schema) => {
+    const result = validate(
+      {
+        $schema: schema,
+        type: "object",
+        properties: {
+          values: {
+            type: "array",
+            items: [{ type: "string" }, { type: "number" }],
+            additionalItems: false,
+          },
         },
+        required: ["values"],
       },
-      required: ["values"],
-    }, { values: ["ok", 1] });
+      { values: ["ok", 1] },
+    );
 
     expect(result).toMatchObject({ valid: true, data: { values: ["ok", 1] } });
-    expect(validate({
-      $schema: schema,
-      type: "object",
-      properties: {
-        values: {
-          type: "array",
-          items: [{ type: "string" }, { type: "number" }],
-          additionalItems: false,
+    expect(
+      validate(
+        {
+          $schema: schema,
+          type: "object",
+          properties: {
+            values: {
+              type: "array",
+              items: [{ type: "string" }, { type: "number" }],
+              additionalItems: false,
+            },
+          },
+          required: ["values"],
         },
-      },
-      required: ["values"],
-    }, { values: ["ok", 1, true] }).valid).toBe(false);
+        { values: ["ok", 1, true] },
+      ).valid,
+    ).toBe(false);
   });
 
   it("enforces draft-07 formats", () => {
@@ -64,7 +72,10 @@ describe("SDK schema dialect compatibility", () => {
       required: ["values"],
     };
 
-    for (const candidate of [schema, { $schema: "https://json-schema.org/draft/2020-12/schema", ...schema }]) {
+    for (const candidate of [
+      schema,
+      { $schema: "https://json-schema.org/draft/2020-12/schema", ...schema },
+    ]) {
       expect(validate(candidate, { values: ["ok", 1] }).valid).toBe(true);
       expect(validate(candidate, { values: ["ok", 1, true] }).valid).toBe(false);
     }
@@ -86,17 +97,30 @@ describe("SDK schema dialect compatibility", () => {
   });
 
   it("does not downgrade an unsupported explicit dialect", () => {
-    expect(() => validate({
-      $schema: "https://example.com/custom-schema",
-      type: "object",
-    }, {})).toThrow(/unsupported.*dialect|2020-12/i);
+    expect(() =>
+      validate(
+        {
+          $schema: "https://example.com/custom-schema",
+          type: "object",
+        },
+        {},
+      ),
+    ).toThrow(/unsupported.*dialect|2020-12/i);
   });
 
   it("creates isolated validator providers", () => {
     const first = new AjvJsonSchemaValidator();
     const second = new AjvJsonSchemaValidator();
-    const firstSchema = { $schema: draft07, $id: "https://example.com/shared-schema", type: "string" };
-    const secondSchema = { $schema: draft07, $id: "https://example.com/shared-schema", type: "number" };
+    const firstSchema = {
+      $schema: draft07,
+      $id: "https://example.com/shared-schema",
+      type: "string",
+    };
+    const secondSchema = {
+      $schema: draft07,
+      $id: "https://example.com/shared-schema",
+      type: "number",
+    };
 
     expect(first.getValidator(firstSchema as JsonSchemaType)("ok").valid).toBe(true);
     expect(second.getValidator(secondSchema as JsonSchemaType)(42).valid).toBe(true);

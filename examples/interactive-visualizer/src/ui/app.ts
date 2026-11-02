@@ -57,11 +57,17 @@ function renderSvg(svg: string) {
   // Wire up clickable choice nodes
   container.addEventListener("click", async (e) => {
     const target = (e.target as Element).closest("[data-choice]");
-    if (!target) return;
+    if (!target) {
+      return;
+    }
     const choice = target.getAttribute("data-choice");
-    if (!choice) return;
+    if (!choice) {
+      return;
+    }
     const label = target.textContent?.trim() || choice;
-    await app.sendMessage({ role: "user", content: [{ type: "text", text: `Chose: ${label}` }] }).catch(() => {});
+    await app
+      .sendMessage({ role: "user", content: [{ type: "text", text: `Chose: ${label}` }] })
+      .catch(() => {});
   });
 
   appendMessageForm();
@@ -86,13 +92,17 @@ function appendMessageForm() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const text = input.value.trim();
-    if (!text) return;
+    if (!text) {
+      return;
+    }
     input.value = "";
     status.textContent = "Sending...";
     try {
       await app.sendMessage({ role: "user", content: [{ type: "text", text }] });
       status.textContent = "Sent!";
-      setTimeout(() => { status.textContent = ""; }, 2000);
+      setTimeout(() => {
+        status.textContent = "";
+      }, 2000);
     } catch (err) {
       status.textContent = `Failed: ${err instanceof Error ? err.message : err}`;
     }
@@ -101,15 +111,24 @@ function appendMessageForm() {
 
 function extractContent(data: Record<string, unknown>) {
   const sc = data.structuredContent as Record<string, unknown> | undefined;
-  if (sc?.svg) return { type: "svg" as const, svg: sc.svg as string };
-  if (sc?.chart) return { type: "chart" as const, chart: sc.chart as ChartSpec };
-  return undefined;
+  if (sc?.svg) {
+    return { type: "svg" as const, svg: sc.svg as string };
+  }
+  if (sc?.chart) {
+    return { type: "chart" as const, chart: sc.chart as ChartSpec };
+  }
+  return;
 }
 
 function renderContent(content: ReturnType<typeof extractContent>) {
-  if (!content) return;
-  if (content.type === "svg") renderSvg(content.svg);
-  else renderChart(content.chart);
+  if (!content) {
+    return;
+  }
+  if (content.type === "svg") {
+    renderSvg(content.svg);
+  } else {
+    renderChart(content.chart);
+  }
 }
 
 app.setNotificationHandler(uiStreamResultPatchNotificationSchema, (notification) => {
@@ -117,11 +136,13 @@ app.setNotificationHandler(uiStreamResultPatchNotificationSchema, (notification)
 });
 
 app.ontoolresult = (result) => {
-  renderContent(extractContent(result as Record<string, unknown>));
+  renderContent(extractContent(result));
 };
 
 app.ontoolinput = async ({ arguments: args }) => {
-  if (!args) return;
+  if (!args) {
+    return;
+  }
   try {
     if (args.type && args.labels && args.datasets) {
       const labels = Array.isArray(args.labels)

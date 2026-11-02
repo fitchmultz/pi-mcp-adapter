@@ -8,7 +8,7 @@ import type { McpExtensionState } from "../state.ts";
 import type { DirectToolSpec, ToolMetadata } from "../types.ts";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 
-const mocks = vi.hoisted(() => ({ open: vi.fn(async () => undefined) }));
+const mocks = vi.hoisted(() => ({ open: vi.fn(async () => {}) }));
 vi.mock("open", () => ({ default: mocks.open }));
 
 const fixture = fileURLToPath(new URL("./fixtures/elicitation-server.mjs", import.meta.url));
@@ -49,32 +49,38 @@ function createState(manager: McpServerManager, metadata: ToolMetadata[]): McpEx
 }
 
 function resultText(result: { content?: Array<{ type: string; text?: string }> }): string {
-  return result.content?.find(item => item.type === "text")?.text ?? "";
+  return result.content?.find((item) => item.type === "text")?.text ?? "";
 }
 
 describe("elicitation with the real MCP SDK", () => {
   beforeEach(() => mocks.open.mockClear());
 
   afterEach(async () => {
-    await Promise.all(managers.splice(0).map(manager => manager.closeAll()));
+    await Promise.all(managers.splice(0).map((manager) => manager.closeAll()));
   });
 
   it.each([
     ["tui", { form: {}, url: {} }],
     ["rpc", { form: {} }],
-  ] as const)("advertises stock Pi %s capabilities and completes form elicitation", async (mode, capabilities) => {
-    const { manager } = await createConnectedManager(mode, ["Continue", "Enter value", "Submit"]);
-    const connection = manager.getConnection("real")!;
+  ] as const)(
+    "advertises stock Pi %s capabilities and completes form elicitation",
+    async (mode, capabilities) => {
+      const { manager } = await createConnectedManager(mode, ["Continue", "Enter value", "Submit"]);
+      const connection = manager.getConnection("real")!;
 
-    const capabilityResult = await connection.client.callTool({ name: "capabilities", arguments: {} });
-    expect(JSON.parse(resultText(capabilityResult))).toEqual(capabilities);
+      const capabilityResult = await connection.client.callTool({
+        name: "capabilities",
+        arguments: {},
+      });
+      expect(JSON.parse(resultText(capabilityResult))).toEqual(capabilities);
 
-    const formResult = await connection.client.callTool({ name: "form", arguments: {} });
-    expect(JSON.parse(resultText(formResult))).toEqual({
-      action: "accept",
-      content: { name: "stock-pi-user" },
-    });
-  });
+      const formResult = await connection.client.callTool({ name: "form", arguments: {} });
+      expect(JSON.parse(resultText(formResult))).toEqual({
+        action: "accept",
+        content: { name: "stock-pi-user" },
+      });
+    },
+  );
 
   it("rejects URL elicitation over real SDK dispatch in stock Pi RPC mode", async () => {
     const { manager } = await createConnectedManager("rpc");
@@ -104,8 +110,16 @@ describe("elicitation with the real MCP SDK", () => {
   it.each([
     ["proxy tool", { originalName: "url-required" }, "proxy"],
     ["direct tool", { originalName: "url-required" }, "direct"],
-    ["proxy resource", { originalName: "read_url_required_resource", resourceUri: "test://url-required" }, "proxy"],
-    ["direct resource", { originalName: "read_url_required_resource", resourceUri: "test://url-required" }, "direct"],
+    [
+      "proxy resource",
+      { originalName: "read_url_required_resource", resourceUri: "test://url-required" },
+      "proxy",
+    ],
+    [
+      "direct resource",
+      { originalName: "read_url_required_resource", resourceUri: "test://url-required" },
+      "direct",
+    ],
     ["proxy UI resource", { originalName: "app", uiResourceUri: "ui://url-required" }, "proxy"],
     ["direct UI resource", { originalName: "app", uiResourceUri: "ui://url-required" }, "direct"],
   ] as const)("handles real -32042 errors from a %s", async (_label, spec, adapter) => {
@@ -117,18 +131,19 @@ describe("elicitation with the real MCP SDK", () => {
     };
     const state = createState(manager, [metadata]);
 
-    const result = adapter === "proxy"
-      ? await executeCall(state, metadata.name, {}, "real")
-      : await createDirectToolExecutor(
-          () => state,
-          () => null,
-          {
-            serverName: "real",
-            prefixedName: metadata.name,
-            description: metadata.description,
-            ...spec,
-          } as DirectToolSpec,
-        )("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
+    const result =
+      adapter === "proxy"
+        ? await executeCall(state, metadata.name, {}, "real")
+        : await createDirectToolExecutor(
+            () => state,
+            () => null,
+            {
+              serverName: "real",
+              prefixedName: metadata.name,
+              description: metadata.description,
+              ...spec,
+            },
+          )("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
 
     expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });
     expect(result.content[0]).toMatchObject({

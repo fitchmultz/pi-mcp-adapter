@@ -5,7 +5,7 @@ import { join } from "node:path";
 const mocks = vi.hoisted(() => ({
   clients: [] as any[],
   transports: [] as any[],
-  open: vi.fn(async () => undefined),
+  open: vi.fn(async () => {}),
 }));
 
 vi.mock("open", () => ({ default: mocks.open }));
@@ -17,11 +17,11 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     this.options = options;
     this.setRequestHandler = vi.fn();
     this.setNotificationHandler = vi.fn();
-    this.connect = vi.fn(async () => undefined);
+    this.connect = vi.fn(async () => {});
     this.getServerCapabilities = vi.fn(() => ({ tools: {}, resources: {} }));
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
-    this.close = vi.fn(async () => undefined);
+    this.close = vi.fn(async () => {});
     mocks.clients.push(this);
   }),
   StreamableHTTPClientTransport: vi.fn(),
@@ -31,8 +31,8 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
 vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
-    this.send = vi.fn(async () => undefined);
-    this.close = vi.fn(async () => undefined);
+    this.send = vi.fn(async () => {});
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
   }),
 }));
@@ -64,8 +64,8 @@ describe("McpServerManager sampling", () => {
     manager.setSamplingConfig({
       autoApprove: true,
       modelRegistry: {} as any,
-      getCurrentModel: () => undefined,
-      getSignal: () => undefined,
+      getCurrentModel: () => {},
+      getSignal: () => {},
     });
 
     await manager.connect("demo", { command: "node", args: ["server.js"] });
@@ -162,10 +162,13 @@ describe("McpServerManager sampling", () => {
     };
     const manager = new McpServerManager();
     manager.setElicitationConfig({ allowUrl: true, ui: ui as any });
-    const result = await manager.handleUrlElicitationRequired("demo", new UrlElicitationRequiredError([
-      { mode: "url", message: "First", elicitationId: "one", url: "https://example.com/one" },
-      { mode: "url", message: "Second", elicitationId: "two", url: "https://example.com/two" },
-    ]));
+    const result = await manager.handleUrlElicitationRequired(
+      "demo",
+      new UrlElicitationRequiredError([
+        { mode: "url", message: "First", elicitationId: "one", url: "https://example.com/one" },
+        { mode: "url", message: "Second", elicitationId: "two", url: "https://example.com/two" },
+      ]),
+    );
 
     expect(result).toBe("accept");
     expect(mocks.open).toHaveBeenNthCalledWith(1, "https://example.com/one");
@@ -178,8 +181,8 @@ describe("McpServerManager sampling", () => {
     manager.setSamplingConfig({
       autoApprove: true,
       modelRegistry: {} as any,
-      getCurrentModel: () => undefined,
-      getSignal: () => undefined,
+      getCurrentModel: () => {},
+      getSignal: () => {},
     });
     manager.setElicitationConfig({
       allowUrl: true,
@@ -228,7 +231,9 @@ describe("McpServerManager sampling", () => {
     const freshResources = [{ uri: "file://fresh", name: "Fresh resource" }];
 
     oldClient.options.listChanged.tools.onChanged(null, [{ name: "stale_tool" }]);
-    oldClient.options.listChanged.resources.onChanged(null, [{ uri: "file://stale", name: "Stale resource" }]);
+    oldClient.options.listChanged.resources.onChanged(null, [
+      { uri: "file://stale", name: "Stale resource" },
+    ]);
     expect(manager.getConnection("demo")?.tools).toEqual([]);
     expect(manager.getConnection("demo")?.resources).toEqual([]);
     expect(metadataChanged).not.toHaveBeenCalled();
@@ -308,8 +313,16 @@ describe("McpServerManager sampling", () => {
 
     const client = mocks.clients[0];
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 2500 });
-    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 2500, cacheMode: "refresh", signal: expect.any(AbortSignal) });
-    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 2500, cacheMode: "refresh", signal: expect.any(AbortSignal) });
+    expect(client.listTools).toHaveBeenCalledWith(undefined, {
+      timeout: 2500,
+      cacheMode: "refresh",
+      signal: expect.any(AbortSignal),
+    });
+    expect(client.listResources).toHaveBeenCalledWith(undefined, {
+      timeout: 2500,
+      cacheMode: "refresh",
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("prefers the per-server timeout for connect and discovery requests", async () => {
@@ -321,8 +334,16 @@ describe("McpServerManager sampling", () => {
 
     const client = mocks.clients[0];
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 5000 });
-    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh", signal: expect.any(AbortSignal) });
-    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh", signal: expect.any(AbortSignal) });
+    expect(client.listTools).toHaveBeenCalledWith(undefined, {
+      timeout: 5000,
+      cacheMode: "refresh",
+      signal: expect.any(AbortSignal),
+    });
+    expect(client.listResources).toHaveBeenCalledWith(undefined, {
+      timeout: 5000,
+      cacheMode: "refresh",
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("builds request options from global and per-server timeouts", async () => {
@@ -331,7 +352,11 @@ describe("McpServerManager sampling", () => {
     manager.setDefaultRequestTimeoutMs(2500);
 
     await manager.connect("demo", { command: "node", args: ["server.js"], requestTimeoutMs: 5000 });
-    await manager.connect("sdk-default", { command: "node", args: ["server.js"], requestTimeoutMs: 0 });
+    await manager.connect("sdk-default", {
+      command: "node",
+      args: ["server.js"],
+      requestTimeoutMs: 0,
+    });
 
     const signal = new AbortController().signal;
     expect(manager.getRequestOptions("demo", signal)).toEqual({ signal, timeout: 5000 });

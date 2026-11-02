@@ -1,6 +1,6 @@
 /**
  * Integration tests for MCP UI flow
- * 
+ *
  * These tests exercise the full flow from tool call with UI resource
  * through browser communication back to agent message retrieval.
  */
@@ -18,7 +18,7 @@ import type { UiResourceContent, UiResourcePermissions, UiSessionMessages } from
 // Helper to make HTTP requests
 async function request(
   url: string,
-  options: { method?: string; body?: unknown } = {}
+  options: { method?: string; body?: unknown } = {},
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -43,18 +43,20 @@ async function request(
           }
           resolve({ status: res.statusCode ?? 0, body });
         });
-      }
+      },
     );
     req.on("error", reject);
-    if (options.body) req.write(JSON.stringify(options.body));
+    if (options.body) {
+      req.write(JSON.stringify(options.body));
+    }
     req.end();
   });
 }
 
 // Simulate browser behavior
 class BrowserSimulator {
-  private serverUrl: string;
-  private sessionToken: string;
+  private readonly serverUrl: string;
+  private readonly sessionToken: string;
 
   constructor(handle: UiServerHandle) {
     this.serverUrl = `http://localhost:${handle.port}`;
@@ -63,7 +65,9 @@ class BrowserSimulator {
 
   async loadPage(): Promise<string> {
     const res = await request(`${this.serverUrl}/?session=${this.sessionToken}`);
-    if (res.status !== 200) throw new Error(`Page load failed: ${res.status}`);
+    if (res.status !== 200) {
+      throw new Error(`Page load failed: ${res.status}`);
+    }
     return res.body as string;
   }
 
@@ -75,7 +79,9 @@ class BrowserSimulator {
         params: { type: "prompt", prompt },
       },
     });
-    if (res.status !== 200) throw new Error(`Send prompt failed: ${res.status}`);
+    if (res.status !== 200) {
+      throw new Error(`Send prompt failed: ${res.status}`);
+    }
   }
 
   async sendIntent(intent: string, params?: Record<string, unknown>): Promise<void> {
@@ -86,7 +92,9 @@ class BrowserSimulator {
         params: { type: "intent", intent, params },
       },
     });
-    if (res.status !== 200) throw new Error(`Send intent failed: ${res.status}`);
+    if (res.status !== 200) {
+      throw new Error(`Send intent failed: ${res.status}`);
+    }
   }
 
   async sendNotification(message: string): Promise<void> {
@@ -97,7 +105,9 @@ class BrowserSimulator {
         params: { type: "notify", message },
       },
     });
-    if (res.status !== 200) throw new Error(`Send notification failed: ${res.status}`);
+    if (res.status !== 200) {
+      throw new Error(`Send notification failed: ${res.status}`);
+    }
   }
 
   async callTool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
@@ -108,7 +118,9 @@ class BrowserSimulator {
         params: { name, arguments: args },
       },
     });
-    if (res.status !== 200) throw new Error(`Tool call failed: ${res.status}`);
+    if (res.status !== 200) {
+      throw new Error(`Tool call failed: ${res.status}`);
+    }
     return (res.body as { result: unknown }).result;
   }
 
@@ -120,7 +132,9 @@ class BrowserSimulator {
         params: { approved: true },
       },
     });
-    if (res.status !== 200) throw new Error(`Consent failed: ${res.status}`);
+    if (res.status !== 200) {
+      throw new Error(`Consent failed: ${res.status}`);
+    }
   }
 
   async heartbeat(): Promise<void> {
@@ -128,7 +142,9 @@ class BrowserSimulator {
       method: "POST",
       body: { token: this.sessionToken, params: {} },
     });
-    if (res.status !== 200) throw new Error(`Heartbeat failed: ${res.status}`);
+    if (res.status !== 200) {
+      throw new Error(`Heartbeat failed: ${res.status}`);
+    }
   }
 
   async complete(reason = "done"): Promise<void> {
@@ -139,7 +155,9 @@ class BrowserSimulator {
         params: { reason },
       },
     });
-    if (res.status !== 200) throw new Error(`Complete failed: ${res.status}`);
+    if (res.status !== 200) {
+      throw new Error(`Complete failed: ${res.status}`);
+    }
   }
 }
 
@@ -158,7 +176,9 @@ function createIntegrationManager(): McpServerManager {
       client: {
         callTool: vi.fn().mockImplementation(async ({ name }) => {
           const tool = tools.get(name);
-          if (!tool) throw new Error(`Unknown tool: ${name}`);
+          if (!tool) {
+            throw new Error(`Unknown tool: ${name}`);
+          }
           if ((tool as { delay?: number }).delay) {
             await new Promise((r) => setTimeout(r, (tool as { delay: number }).delay));
           }
@@ -205,7 +225,9 @@ describe("MCP UI Integration", () => {
     if (handle) {
       const ref = handle.getSessionMessages().historyRef;
       handle.close("test-cleanup");
-      if (ref) await rm(dirname(ref), { recursive: true, force: true });
+      if (ref) {
+        await rm(dirname(ref), { recursive: true, force: true });
+      }
       handle = null;
     }
   });
@@ -215,7 +237,7 @@ describe("MCP UI Integration", () => {
       // 1. Agent calls tool with UI
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager(); // No consent prompts
-      
+
       const resource: UiResourceContent = {
         uri: "ui://test/app",
         html: "<h1>Test App</h1>",
@@ -223,9 +245,15 @@ describe("MCP UI Integration", () => {
         meta: { permissions: [] as UiResourcePermissions },
       };
 
-      const receivedMessages: Omit<UiSessionMessages, "contexts"> = { prompts: [], notifications: [], intents: [] };
+      const receivedMessages: Omit<UiSessionMessages, "contexts"> = {
+        prompts: [],
+        notifications: [],
+        intents: [],
+      };
       const onMessage = vi.fn().mockImplementation((params) => {
-        if (params.type === "prompt") receivedMessages.prompts.push(params.prompt);
+        if (params.type === "prompt") {
+          receivedMessages.prompts.push(params.prompt);
+        }
       });
 
       handle = await startUiServer({
@@ -262,7 +290,7 @@ describe("MCP UI Integration", () => {
     it("handles multiple messages in conversation", async () => {
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager();
-      
+
       const resource: UiResourceContent = {
         uri: "ui://test/chat",
         html: "<div id='chat'></div>",
@@ -303,7 +331,7 @@ describe("MCP UI Integration", () => {
     it("handles consent flow for tool calls", async () => {
       const manager = createIntegrationManager();
       const consentManager = new ConsentManager();
-      
+
       const resource: UiResourceContent = {
         uri: "ui://test/app",
         html: "<h1>App</h1>",
@@ -337,7 +365,7 @@ describe("MCP UI Integration", () => {
     it("tracks in-flight requests correctly", async () => {
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager();
-      
+
       const resource: UiResourceContent = {
         uri: "ui://test/app",
         html: "<h1>App</h1>",
@@ -358,10 +386,7 @@ describe("MCP UI Integration", () => {
       await browser.loadPage();
 
       // Call multiple tools
-      await Promise.all([
-        browser.callTool("get_data"),
-        browser.callTool("save_file"),
-      ]);
+      await Promise.all([browser.callTool("get_data"), browser.callTool("save_file")]);
 
       // Both should have incremented/decremented
       expect(manager.incrementInFlight).toHaveBeenCalledTimes(2);
@@ -394,7 +419,9 @@ describe("MCP UI Integration", () => {
       const html = await browser.loadPage();
       const resourceToken = html.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/)?.[1];
       expect(resourceToken).toBeDefined();
-      const response = await request(`http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(resourceToken!)}`);
+      const response = await request(
+        `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(resourceToken!)}`,
+      );
       expect(response.status).toBe(200);
       expect(response.body).toBe(resource.html);
     });
@@ -405,7 +432,7 @@ describe("MCP UI Integration", () => {
       const onComplete = vi.fn();
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager();
-      
+
       handle = await startUiServer({
         serverName: "test-server",
         toolName: "test_tool",
@@ -445,7 +472,7 @@ describe("MCP UI Integration", () => {
       } as unknown as McpServerManager;
 
       const consentManager = approvedConsentManager();
-      
+
       handle = await startUiServer({
         serverName: "error-server",
         toolName: "error_tool",
@@ -477,7 +504,7 @@ describe("MCP UI Integration", () => {
       } as unknown as McpServerManager;
 
       const consentManager = approvedConsentManager();
-      
+
       handle = await startUiServer({
         serverName: "disconnected-server",
         toolName: "test_tool",
@@ -504,7 +531,7 @@ describe("MCP UI Integration", () => {
     it("allows switching display modes", async () => {
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager();
-      
+
       handle = await startUiServer({
         serverName: "test-server",
         toolName: "test_tool",

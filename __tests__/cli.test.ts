@@ -1,10 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 
-type CliMain = (argv: string[], log: (line: string) => void, error: (line: string) => void) => Promise<number>;
+type CliMain = (
+  argv: string[],
+  log: (line: string) => void,
+  error: (line: string) => void,
+) => Promise<number>;
 
 async function loadMain(): Promise<CliMain> {
   return (await import("../cli.js")).main;
@@ -51,7 +62,11 @@ describe("cli init helper", () => {
     const logs: string[] = [];
     const errors: string[] = [];
     const main = await loadMain();
-    const exitCode = await main(["init"], (line) => logs.push(line), (line) => errors.push(line));
+    const exitCode = await main(
+      ["init"],
+      (line) => logs.push(line),
+      (line) => errors.push(line),
+    );
 
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
@@ -71,12 +86,20 @@ describe("cli init helper", () => {
 
     const codexConfigPath = join(home, ".codex", "config.toml");
     mkdirSync(dirname(codexConfigPath), { recursive: true });
-    writeFileSync(codexConfigPath, '[mcp_servers.context7]\nurl = "https://mcp.context7.com/mcp"\n', "utf-8");
+    writeFileSync(
+      codexConfigPath,
+      '[mcp_servers.context7]\nurl = "https://mcp.context7.com/mcp"\n',
+      "utf-8",
+    );
 
     const logs: string[] = [];
     const errors: string[] = [];
     const main = await loadMain();
-    const exitCode = await main(["init", "--dry-run"], (line) => logs.push(line), (line) => errors.push(line));
+    const exitCode = await main(
+      ["init", "--dry-run"],
+      (line) => logs.push(line),
+      (line) => errors.push(line),
+    );
 
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
@@ -92,24 +115,34 @@ describe("cli init helper", () => {
     process.chdir(project);
 
     mkdirSync(join(home, ".pi", "agent", "fitch-mcp-adapter"), { recursive: true });
-    writeFileSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), `{
+    writeFileSync(
+      join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"),
+      `{
       // Existing config stays editable by humans.
       "imports": ["vscode",],
       "mcpServers": {
         "existing": { "command": "existing" },
       },
-    }`, "utf-8");
+    }`,
+      "utf-8",
+    );
 
     const logs: string[] = [];
     const errors: string[] = [];
     const main = await loadMain();
-    const exitCode = await main(["init", "--dry-run"], (line) => logs.push(line), (line) => errors.push(line));
+    const exitCode = await main(
+      ["init", "--dry-run"],
+      (line) => logs.push(line),
+      (line) => errors.push(line),
+    );
 
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
     const output = logs.join("\n");
     expect(output).toContain(`User-global .agents MCP: ${join(home, ".agents", "mcp.json")}`);
-    expect(output).toContain(`User-global .agents nested MCP: ${join(home, ".agents", "mcp", "mcp.json")}`);
+    expect(output).toContain(
+      `User-global .agents nested MCP: ${join(home, ".agents", "mcp", "mcp.json")}`,
+    );
     expect(output).toContain("No Pi config changes needed.");
   });
 
@@ -125,12 +158,18 @@ describe("cli init helper", () => {
     const logs: string[] = [];
     const errors: string[] = [];
     const main = await loadMain();
-    const exitCode = await main(["init", "--discover-host-configs"], (line) => logs.push(line), (line) => errors.push(line));
+    const exitCode = await main(
+      ["init", "--discover-host-configs"],
+      (line) => logs.push(line),
+      (line) => errors.push(line),
+    );
 
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
     const piConfigPath = join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json");
-    expect(JSON.parse(readFileSync(piConfigPath, "utf-8")).settings).toEqual({ hostConfigDiscovery: "on" });
+    expect(JSON.parse(readFileSync(piConfigPath, "utf-8")).settings).toEqual({
+      hostConfigDiscovery: "on",
+    });
     expect(readFileSync(hostPath, "utf-8")).toContain("cursorServer");
     expect(logs.join("\n")).toContain("Opting in to host-specific fallback discovery");
   });
@@ -152,7 +191,11 @@ describe("cli init helper", () => {
     const logs: string[] = [];
     const errors: string[] = [];
     const main = await loadMain();
-    const exitCode = await main(["init"], (line) => logs.push(line), (line) => errors.push(line));
+    const exitCode = await main(
+      ["init"],
+      (line) => logs.push(line),
+      (line) => errors.push(line),
+    );
 
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
@@ -191,7 +234,11 @@ describe("cli init helper", () => {
     const logs: string[] = [];
     const errors: string[] = [];
     const main = await loadMain();
-    const exitCode = await main(["install"], (line) => logs.push(line), (line) => errors.push(line));
+    const exitCode = await main(
+      ["install"],
+      (line) => logs.push(line),
+      (line) => errors.push(line),
+    );
 
     expect(exitCode).toBe(1);
     expect(errors.join("\n")).toContain("Use `pi install npm:@fitchmultz/pi-mcp-adapter` instead");

@@ -12,19 +12,21 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     this.setRequestHandler = vi.fn();
     this.setNotificationHandler = vi.fn();
     this.connect = vi.fn(async (transport: any) => {
-      if (mocks.connectImpl) return mocks.connectImpl(transport);
+      if (mocks.connectImpl) {
+        return mocks.connectImpl(transport);
+      }
     });
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
-    this.close = vi.fn(async () => undefined);
+    this.close = vi.fn(async () => {});
   }),
   StreamableHTTPClientTransport: vi.fn().mockImplementation(function (this: any) {
-    this.send = vi.fn(async () => undefined);
-    this.close = vi.fn(async () => undefined);
+    this.send = vi.fn(async () => {});
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
   }),
   SSEClientTransport: vi.fn().mockImplementation(function (this: any) {
-    this.close = vi.fn(async () => undefined);
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
   }),
 }));
@@ -33,8 +35,8 @@ vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: any) {
     this.options = options;
     this.stderr = options?.stderr === "pipe" ? new PassThrough() : null;
-    this.send = vi.fn(async () => undefined);
-    this.close = vi.fn(async () => undefined);
+    this.send = vi.fn(async () => {});
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
   }),
 }));
@@ -69,7 +71,9 @@ describe("McpServerManager stderr capture", () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
     mocks.connectImpl = async (transport) => {
-      transport.stderr.write("Cannot connect to the Docker daemon at unix:///var/run/docker.sock.\n");
+      transport.stderr.write(
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock.\n",
+      );
       await new Promise((resolve) => setImmediate(resolve));
       throw new Error("MCP error -32000: Connection closed");
     };
@@ -96,21 +100,30 @@ describe("McpServerManager stderr capture", () => {
       capturedError = error as Error;
     }
     expect(capturedError?.cause).toBe(connectionError);
-    expect(Buffer.byteLength(capturedError?.message ?? "", "utf8")).toBeLessThanOrEqual(8_192 + 100);
+    expect(Buffer.byteLength(capturedError?.message ?? "", "utf8")).toBeLessThanOrEqual(
+      8_192 + 100,
+    );
   });
 
   it("keeps connection errors unchanged without sending a redundant HTTP probe", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>Not found</html>", {
-      status: 404,
-      headers: { "content-type": "text/html" },
-    })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("<html>Not found</html>", {
+          status: 404,
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
     mocks.connectImpl = async () => {
       throw new Error("MCP error -32000: Connection closed");
     };
 
-    await expect(manager.connect("stdio", { command: "node" })).rejects.toThrow(/^MCP error -32000: Connection closed$/);
+    await expect(manager.connect("stdio", { command: "node" })).rejects.toThrow(
+      /^MCP error -32000: Connection closed$/,
+    );
     await expect(manager.connect("http", { url: "https://example.com/mcp" })).rejects.toThrow(
       /^MCP error -32000: Connection closed$/,
     );

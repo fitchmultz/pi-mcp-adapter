@@ -1,8 +1,9 @@
 import http from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadMcpConfig } from "../config.ts";
 import { McpServerManager } from "../server-manager.ts";
 
 const servers: http.Server[] = [];
@@ -23,16 +24,26 @@ async function withAuthStore(value: string, run: () => Promise<void>): Promise<v
 }
 
 afterEach(async () => {
-  await Promise.all(servers.map(server => new Promise<void>((resolve, reject) => {
-    server.close(error => error ? reject(error) : resolve());
-  })));
-  await Promise.all(temporaryDirectories.map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    servers.map(
+      (server) =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        }),
+    ),
+  );
+  await Promise.all(
+    temporaryDirectories.map((directory) => rm(directory, { recursive: true, force: true })),
+  );
   servers.length = 0;
   temporaryDirectories.length = 0;
 });
 
 describe("McpServerManager StreamableHTTP transport", () => {
-  it("does not read unavailable secure storage for an unauthenticated URL-only server", async () => {
+  it.each([
+    ["omitted", undefined],
+    ["null", null],
+  ])("connects an unauthenticated URL-only server with OAuth %s", async (_name, oauth) => {
     await withAuthStore("unavailable", async () => {
       const server = http.createServer(async (req, res) => {
         if (req.method === "GET") {
@@ -45,32 +56,41 @@ describe("McpServerManager StreamableHTTP transport", () => {
         }
 
         let body = "";
-        for await (const chunk of req) body += chunk;
+        for await (const chunk of req) {
+          body += chunk;
+        }
         const message = JSON.parse(body) as { id?: string | number; method?: string };
         if (message.method === "server/discover") {
-          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-            jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" },
-          }));
+          res.writeHead(200, { "content-type": "application/json" }).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: { code: -32601, message: "Method not found" },
+            }),
+          );
           return;
         }
-        const result = message.method === "initialize"
-          ? {
-              protocolVersion: "2025-06-18",
-              capabilities: { tools: {}, resources: {} },
-              serverInfo: { name: "unauthenticated", version: "1.0.0" },
-            }
-          : message.method === "tools/list"
-            ? { tools: [] }
-            : message.method === "resources/list"
-              ? { resources: [] }
-              : undefined;
+        const result =
+          message.method === "initialize"
+            ? {
+                protocolVersion: "2025-06-18",
+                capabilities: { tools: {}, resources: {} },
+                serverInfo: { name: "unauthenticated", version: "1.0.0" },
+              }
+            : message.method === "tools/list"
+              ? { tools: [] }
+              : message.method === "resources/list"
+                ? { resources: [] }
+                : undefined;
 
         if (result) {
-          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-            jsonrpc: "2.0",
-            id: message.id,
-            result,
-          }));
+          res.writeHead(200, { "content-type": "application/json" }).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              result,
+            }),
+          );
           return;
         }
         if (message.method === "notifications/initialized") {
@@ -81,14 +101,30 @@ describe("McpServerManager StreamableHTTP transport", () => {
       });
       servers.push(server);
 
-      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const address = server.address();
-      if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+      if (!address || typeof address === "string") {
+        throw new Error("server did not bind to a TCP port");
+      }
 
+      const directory = await mkdtemp(join(tmpdir(), "pi-mcp-unauthenticated-"));
+      temporaryDirectories.push(directory);
+      const configPath = join(directory, "mcp.json");
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            unauthenticated: { url: `http://127.0.0.1:${address.port}/mcp`, oauth },
+          },
+        }),
+      );
+      const definition = loadMcpConfig(configPath, directory).mcpServers.unauthenticated;
+      expect(definition).toBeDefined();
+      if (definition === undefined) {
+        throw new Error("configured server not loaded");
+      }
       const manager = new McpServerManager();
-      const connection = await manager.connect("unauthenticated", {
-        url: `http://127.0.0.1:${address.port}/mcp`,
-      });
+      const connection = await manager.connect("unauthenticated", definition);
 
       expect(connection.status).toBe("connected");
       await manager.close("unauthenticated");
@@ -98,21 +134,28 @@ describe("McpServerManager StreamableHTTP transport", () => {
   it("fails closed for explicit OAuth when secure storage is unavailable", async () => {
     await withAuthStore("unavailable", async () => {
       const server = http.createServer((_req, res) => {
-        res.writeHead(401, {
-          "WWW-Authenticate": 'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource"',
-        }).end("Unauthorized");
+        res
+          .writeHead(401, {
+            "WWW-Authenticate":
+              'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource"',
+          })
+          .end("Unauthorized");
       });
       servers.push(server);
 
-      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const address = server.address();
-      if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+      if (!address || typeof address === "string") {
+        throw new Error("server did not bind to a TCP port");
+      }
 
       const manager = new McpServerManager();
-      await expect(manager.connect("oauth", {
-        url: `http://127.0.0.1:${address.port}/mcp`,
-        auth: "oauth",
-      })).rejects.toThrow(/Failed to read OAuth credentials.*OS secure credential store/);
+      await expect(
+        manager.connect("oauth", {
+          url: `http://127.0.0.1:${address.port}/mcp`,
+          auth: "oauth",
+        }),
+      ).rejects.toThrow(/Failed to read OAuth credentials.*OS secure credential store/);
     });
   });
 
@@ -121,7 +164,10 @@ describe("McpServerManager StreamableHTTP transport", () => {
     const server = http.createServer(async (req, res) => {
       requests.push(`${req.method} ${req.url}`);
 
-      if (req.headers.authorization !== "Bearer command-token" || req.headers["x-command-secret"] !== "command-header") {
+      if (
+        req.headers.authorization !== "Bearer command-token" ||
+        req.headers["x-command-secret"] !== "command-header"
+      ) {
         res.writeHead(401).end("Unauthorized");
         return;
       }
@@ -137,25 +183,33 @@ describe("McpServerManager StreamableHTTP transport", () => {
       }
 
       let body = "";
-      for await (const chunk of req) body += chunk;
+      for await (const chunk of req) {
+        body += chunk;
+      }
       const message = JSON.parse(body) as { id?: string | number; method?: string };
       if (message.method === "server/discover") {
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-          jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" },
-        }));
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32601, message: "Method not found" },
+          }),
+        );
         return;
       }
 
       if (message.method === "initialize") {
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: message.id,
-          result: {
-            protocolVersion: "2025-06-18",
-            capabilities: { tools: {}, resources: {} },
-            serverInfo: { name: "post-only", version: "1.0.0" },
-          },
-        }));
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: { tools: {}, resources: {} },
+              serverInfo: { name: "post-only", version: "1.0.0" },
+            },
+          }),
+        );
         return;
       }
 
@@ -165,20 +219,24 @@ describe("McpServerManager StreamableHTTP transport", () => {
       }
 
       if (message.method === "tools/list") {
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: message.id,
-          result: { tools: [] },
-        }));
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { tools: [] },
+          }),
+        );
         return;
       }
 
       if (message.method === "resources/list") {
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-          jsonrpc: "2.0",
-          id: message.id,
-          result: { resources: [] },
-        }));
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { resources: [] },
+          }),
+        );
         return;
       }
 
@@ -186,9 +244,11 @@ describe("McpServerManager StreamableHTTP transport", () => {
     });
     servers.push(server);
 
-    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("server did not bind to a TCP port");
+    if (!address || typeof address === "string") {
+      throw new Error("server did not bind to a TCP port");
+    }
 
     const manager = new McpServerManager();
     const traceDirectory = await mkdtemp(join(tmpdir(), "pi-mcp-trace-"));
@@ -205,7 +265,7 @@ describe("McpServerManager StreamableHTTP transport", () => {
       });
 
       for (let attempt = 0; attempt < 20 && !requests.includes("GET /mcp"); attempt++) {
-        await new Promise(resolve => setTimeout(resolve, 5));
+        await new Promise((resolve) => setTimeout(resolve, 5));
       }
 
       expect(connection.status).toBe("connected");
@@ -214,14 +274,18 @@ describe("McpServerManager StreamableHTTP transport", () => {
       expect(requests).toContain("GET /mcp");
       // The SDK probes the optional GET stream once, then keeps the successful
       // POST-based session without an SSE fallback or retry storm.
-      expect(requests.filter(request => request === "GET /mcp")).toHaveLength(1);
+      expect(requests.filter((request) => request === "GET /mcp")).toHaveLength(1);
 
       await manager.close("post-only");
       const traceLines = (await readFile(join(traceDirectory, "mcp.jsonl"), "utf8"))
         .trim()
         .split("\n")
-        .map(line => JSON.parse(line) as { direction: string; method?: string });
-      expect(traceLines.filter(event => event.direction === "outbound" && event.method === "initialize")).toHaveLength(1);
+        .map((line) => JSON.parse(line) as { direction: string; method?: string });
+      expect(
+        traceLines.filter(
+          (event) => event.direction === "outbound" && event.method === "initialize",
+        ),
+      ).toHaveLength(1);
     } finally {
       await manager.close("post-only").catch(() => {});
     }

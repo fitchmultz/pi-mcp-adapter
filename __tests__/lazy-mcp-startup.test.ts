@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 // The parent may import the SDK transitively while calculating cache hashes. Only
@@ -31,7 +31,10 @@ describe("cached lazy MCP startup through native Pi", () => {
       settings: { sampling: false, elicitation: false },
     };
     const servers: Record<string, ServerCacheEntry> = {};
-    const serverNames = Array.from({ length: 15 }, (_, index) => `lazy${String(index).padStart(2, "0")}`);
+    const serverNames = Array.from(
+      { length: 15 },
+      (_, index) => `lazy${String(index).padStart(2, "0")}`,
+    );
     for (const name of serverNames) {
       const definition = {
         command: process.execPath,
@@ -48,7 +51,11 @@ describe("cached lazy MCP startup through native Pi", () => {
           {
             name: "echo",
             description: `Cached echo from ${name}`,
-            inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+            inputSchema: {
+              type: "object",
+              properties: { text: { type: "string" } },
+              required: ["text"],
+            },
           },
           {
             name: "dashboard",
@@ -57,8 +64,21 @@ describe("cached lazy MCP startup through native Pi", () => {
             _meta: { ui: { resourceUri: `ui://${name}/dashboard`, visibility: ["model", "app"] } },
           },
         ],
-        resources: [{ name: "guide", uri: `docs://${name}/guide`, description: `Cached guide from ${name}`, mimeType: "text/plain" }],
-        prompts: [{ name: "brief", description: `Cached brief from ${name}`, arguments: [{ name: "topic", required: true }] }],
+        resources: [
+          {
+            name: "guide",
+            uri: `docs://${name}/guide`,
+            description: `Cached guide from ${name}`,
+            mimeType: "text/plain",
+          },
+        ],
+        prompts: [
+          {
+            name: "brief",
+            description: `Cached brief from ${name}`,
+            arguments: [{ name: "topic", required: true }],
+          },
+        ],
         instructions: `Cached instructions from ${name}`,
       };
     }
@@ -84,7 +104,7 @@ describe("cached lazy MCP startup through native Pi", () => {
       { cwd: process.cwd(), env, timeout: 60_000, maxBuffer: 2 * 1024 * 1024 },
     );
     expect(stderr).not.toContain("MCP initialization failed");
-    const line = stdout.split("\n").find(value => value.startsWith("LAZY_MCP_STARTUP="));
+    const line = stdout.split("\n").find((value) => value.startsWith("LAZY_MCP_STARTUP="));
     expect(line, stdout).toBeDefined();
     const report = JSON.parse(line!.slice("LAZY_MCP_STARTUP=".length)) as {
       sourceLoaded: boolean;
@@ -103,21 +123,46 @@ describe("cached lazy MCP startup through native Pi", () => {
     };
     expect(report.sourceLoaded).toBe(true);
     expect(report.errors).toEqual([]);
-    expect(report.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(["mcp", "mcp_search", "mcp_script", "lazy00_echo"]));
-    expect(report.tools.filter(tool => /^lazy\d+_/.test(tool.name)).map(tool => tool.name).sort())
-      .toEqual(serverNames.flatMap(name => [`${name}_dashboard`, `${name}_echo`]));
-    expect(report.tools).toContainEqual(expect.objectContaining({
-      name: "lazy00_echo",
-      description: expect.stringContaining("Cached echo from lazy00"),
-      parameters: expect.objectContaining({ required: ["text"], properties: { text: { type: "string" } } }),
-    }));
+    expect(report.tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["mcp", "mcp_search", "mcp_script", "lazy00_echo"]),
+    );
+    expect(
+      report.tools
+        .filter((tool) => /^lazy\d+_/.test(tool.name))
+        .map((tool) => tool.name)
+        .sort(),
+    ).toEqual(serverNames.flatMap((name) => [`${name}_dashboard`, `${name}_echo`]));
+    expect(report.tools).toContainEqual(
+      expect.objectContaining({
+        name: "lazy00_echo",
+        description: expect.stringContaining("Cached echo from lazy00"),
+        parameters: expect.objectContaining({
+          required: ["text"],
+          properties: { text: { type: "string" } },
+        }),
+      }),
+    );
     expect(report.activeTools).toEqual(["lazy00_echo", "mcp_search"]);
-    expect(report.commands.filter(command => command.name.startsWith("mcp__"))).toEqual(serverNames.map(name => ({
-      name: `mcp__${name}__brief`, description: `MCP: Cached brief from ${name}`,
-    })));
+    expect(report.commands.filter((command) => command.name.startsWith("mcp__"))).toEqual(
+      serverNames.map((name) => ({
+        name: `mcp__${name}__brief`,
+        description: `MCP: Cached brief from ${name}`,
+      })),
+    );
     expect(report.startupStatus).toEqual({
-      version: 1, totalTools: 30, totalResources: 15, connectedCount: 0, disabledCount: 0,
-      servers: serverNames.map(name => ({ name, status: "cached", catalogKnown: true, toolCount: 2, resourceCount: 1, disabled: false })),
+      version: 1,
+      totalTools: 30,
+      totalResources: 15,
+      connectedCount: 0,
+      disabledCount: 0,
+      servers: serverNames.map((name) => ({
+        name,
+        status: "cached",
+        catalogKnown: true,
+        toolCount: 2,
+        resourceCount: 1,
+        disabled: false,
+      })),
     });
     expect(report.eventsBeforeCall).toEqual([]);
     expect(report.call.isError, JSON.stringify(report.call)).not.toBe(true);
@@ -127,8 +172,12 @@ describe("cached lazy MCP startup through native Pi", () => {
       { event: "spawn", server: "lazy00" },
       { event: "call", server: "lazy00", text: "first use" },
     ]);
-    expect(report.afterCallSdkModules.some(url => /@modelcontextprotocol\/client\//.test(url))).toBe(true);
-    expect(report.afterCallSdkModules.some(url => /@modelcontextprotocol\/core\//.test(url))).toBe(true);
+    expect(
+      report.afterCallSdkModules.some((url) => /@modelcontextprotocol\/client\//.test(url)),
+    ).toBe(true);
+    expect(
+      report.afterCallSdkModules.some((url) => /@modelcontextprotocol\/core\//.test(url)),
+    ).toBe(true);
     expect(report.afterCallZodModules).not.toEqual([]);
     // Keep these last so the baseline also exercises the real first-call boundary.
     expect(report.startupSdkModules).toEqual([]);

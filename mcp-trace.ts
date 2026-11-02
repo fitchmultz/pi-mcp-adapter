@@ -1,8 +1,7 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { Transport } from "@modelcontextprotocol/client";
-import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
+import type { Transport, JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
 
 export const MCP_TRACE_SCHEMA_VERSION = 1;
 export const DEFAULT_MCP_TRACE_MAX_BYTES = 256 * 1024;
@@ -49,7 +48,9 @@ export interface McpTraceWriterOptions {
 }
 
 function boundedPositiveInteger(value: number | undefined, fallback: number): number {
-  if (!Number.isFinite(value) || value === undefined || value <= 0) return fallback;
+  if (!Number.isFinite(value) || value === undefined || value <= 0) {
+    return fallback;
+  }
   return Math.floor(value);
 }
 
@@ -61,20 +62,33 @@ export function redactTraceText(value: string, maxLength = 160): string {
   let redacted = value
     .replace(/\b[a-z][a-z\d+.-]*:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")
     .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "[REDACTED_AUTH]")
-    .replace(/\b(?:token|secret|password|passwd|api[_-]?key|authorization|cookie)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]");
-  if (redacted.length > maxLength) redacted = `${redacted.slice(0, maxLength - 1)}…`;
+    .replace(
+      /\b(?:token|secret|password|passwd|api[_-]?key|authorization|cookie)\s*[:=]\s*[^\s,;]+/gi,
+      "$1=[REDACTED]",
+    );
+  if (redacted.length > maxLength) {
+    redacted = `${redacted.slice(0, maxLength - 1)}…`;
+  }
   return redacted;
 }
 
 function messageKind(message: JSONRPCMessage): McpTraceMessageKind {
-  if ("method" in message) return "id" in message ? "request" : "notification";
+  if ("method" in message) {
+    return "id" in message ? "request" : "notification";
+  }
   return "response";
 }
 
 function traceId(value: unknown): string | number | null | undefined {
-  if (value === null) return null;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") return "[REDACTED_ID]";
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return "[REDACTED_ID]";
+  }
   return undefined;
 }
 
@@ -106,10 +120,16 @@ export function createMcpTraceEvent(
     status,
     ...(bytes !== undefined ? { bytes } : {}),
   };
-  if ("method" in message) event.method = redactTraceText(message.method, 120);
-  if ("id" in message) event.id = traceId(message.id) ?? null;
+  if ("method" in message) {
+    event.method = redactTraceText(message.method, 120);
+  }
+  if ("id" in message) {
+    event.id = traceId(message.id) ?? null;
+  }
   const relatedRequestId = traceId(options?.relatedRequestId);
-  if (relatedRequestId !== undefined && relatedRequestId !== null) event.relatedRequestId = relatedRequestId;
+  if (relatedRequestId !== undefined && relatedRequestId !== null) {
+    event.relatedRequestId = relatedRequestId;
+  }
   if ("error" in message && message.error && typeof message.error.code === "number") {
     event.errorCode = message.error.code;
   }
@@ -139,19 +159,25 @@ export class McpTraceWriter {
     this.options = options;
     this.maxBytes = boundedPositiveInteger(options.maxBytes, DEFAULT_MCP_TRACE_MAX_BYTES);
     this.maxEvents = boundedPositiveInteger(options.maxEvents, DEFAULT_MCP_TRACE_MAX_EVENTS);
-    this.append = options.appendFile ?? (async (path, data, appendOptions) => {
-      await appendFile(path, data, appendOptions);
-    });
-    this.resetFile = options.writeFile ?? (async (path, data, writeOptions) => {
-      await writeFile(path, data, writeOptions);
-    });
-    this.makeDirectory = options.mkdir ?? (async path => {
-      await mkdir(path, { recursive: true });
-      return undefined;
-    });
+    this.append =
+      options.appendFile ??
+      (async (path, data, appendOptions) => {
+        await appendFile(path, data, appendOptions);
+      });
+    this.resetFile =
+      options.writeFile ??
+      (async (path, data, writeOptions) => {
+        await writeFile(path, data, writeOptions);
+      });
+    this.makeDirectory =
+      options.mkdir ??
+      (async (path) => {
+        await mkdir(path, { recursive: true });
+        return;
+      });
     this.fileReady = this.makeDirectory(dirname(this.options.filePath), { recursive: true })
       .then(() => this.resetFile(this.options.filePath, "", { encoding: "utf8" }))
-      .catch(error => {
+      .catch((error) => {
         // Tracing must never change MCP request/response behavior.
         this.persistenceError = error;
         this.initializationFailed = true;
@@ -172,7 +198,9 @@ export class McpTraceWriter {
   }
 
   write(event: McpTraceEvent): void {
-    if (this.disabled || this.eventsWritten >= this.maxEvents) return;
+    if (this.disabled || this.eventsWritten >= this.maxEvents) {
+      return;
+    }
     let line: string;
     try {
       line = `${JSON.stringify(event)}\n`;
@@ -188,21 +216,27 @@ export class McpTraceWriter {
 
     this.bytesWritten += bytes;
     this.eventsWritten += 1;
-    this.queue = this.queue.then(async () => {
-      await this.fileReady;
-      if (this.initializationFailed) return;
-      await this.append(this.options.filePath, line, { encoding: "utf8" });
-    }).catch(error => {
-      // Tracing must never change MCP request/response behavior.
-      this.persistenceError ??= error;
-      this.disabled = true;
-    });
+    this.queue = this.queue
+      .then(async () => {
+        await this.fileReady;
+        if (this.initializationFailed) {
+          return;
+        }
+        await this.append(this.options.filePath, line, { encoding: "utf8" });
+      })
+      .catch((error) => {
+        // Tracing must never change MCP request/response behavior.
+        this.persistenceError ??= error;
+        this.disabled = true;
+      });
   }
 
   async flush(strict = false): Promise<void> {
     await this.fileReady;
     await this.queue;
-    if (strict && this.persistenceError !== undefined) throw this.persistenceError;
+    if (strict && this.persistenceError !== undefined) {
+      throw this.persistenceError;
+    }
   }
 }
 
@@ -214,8 +248,16 @@ export function createMcpTraceWriter(
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const configuredPath = settings.file;
   const filePath = configuredPath
-    ? (isAbsolute(configuredPath) ? configuredPath : resolve(sessionCwd ?? process.cwd(), configuredPath))
-    : resolve(sessionCwd ?? process.cwd(), ".pi", "fitch-mcp-adapter", "traces", `mcp-${timestamp}-${randomSuffix}.jsonl`);
+    ? isAbsolute(configuredPath)
+      ? configuredPath
+      : resolve(sessionCwd ?? process.cwd(), configuredPath)
+    : resolve(
+        sessionCwd ?? process.cwd(),
+        ".pi",
+        "fitch-mcp-adapter",
+        "traces",
+        `mcp-${timestamp}-${randomSuffix}.jsonl`,
+      );
   return new McpTraceWriter({
     filePath,
     ...(settings.maxBytes !== undefined ? { maxBytes: settings.maxBytes } : {}),
@@ -262,15 +304,19 @@ export function wrapTransportWithMcpTrace(
     try {
       await send(message, options);
       for (const item of messages) {
-        record(createMcpTraceEvent("outbound", server, transportKind, item, "sent", {
-          durationMs: performance.now() - started,
-        }));
+        record(
+          createMcpTraceEvent("outbound", server, transportKind, item, "sent", {
+            durationMs: performance.now() - started,
+          }),
+        );
       }
     } catch (error) {
       for (const item of messages) {
-        record(createMcpTraceEvent("outbound", server, transportKind, item, "error", {
-          durationMs: performance.now() - started,
-        }));
+        record(
+          createMcpTraceEvent("outbound", server, transportKind, item, "error", {
+            durationMs: performance.now() - started,
+          }),
+        );
       }
       throw error;
     }
@@ -279,20 +325,33 @@ export function wrapTransportWithMcpTrace(
     configurable: true,
     get: () => messageHandler,
     set: (handler: Transport["onmessage"]) => {
-      messageHandler = handler ? (message: JSONRPCMessage, extra?: MessageExtraInfo) => {
-        record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
-        handler(message, extra);
-      } : undefined;
+      messageHandler = handler
+        ? (message: JSONRPCMessage, extra?: MessageExtraInfo) => {
+            record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
+            handler(message, extra);
+          }
+        : undefined;
     },
   });
   return transport;
 }
 
-export function traceTransportKind(definition: { command?: string; url?: string; socket?: string }, transport: Transport): McpTraceTransport {
-  if (definition.command) return "stdio";
-  if (definition.socket) return "unix-socket";
+export function traceTransportKind(
+  definition: { command?: string; url?: string; socket?: string },
+  transport: Transport,
+): McpTraceTransport {
+  if (definition.command) {
+    return "stdio";
+  }
+  if (definition.socket) {
+    return "unix-socket";
+  }
   const constructorName = transport.constructor?.name.toLowerCase() ?? "";
-  if (constructorName.includes("sse")) return "sse";
-  if (constructorName.includes("streamable")) return "streamable-http";
+  if (constructorName.includes("sse")) {
+    return "sse";
+  }
+  if (constructorName.includes("streamable")) {
+    return "streamable-http";
+  }
   return definition.url ? "streamable-http" : "unknown";
 }

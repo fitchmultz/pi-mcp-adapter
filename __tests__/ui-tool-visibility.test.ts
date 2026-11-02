@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { reconstructToolMetadata, serializeTools } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
-import { extractUiToolVisibility, isUiToolCallableByApp, isUiToolVisibleToModel } from "../ui-tool-visibility.ts";
+import {
+  extractUiToolVisibility,
+  isUiToolCallableByApp,
+  isUiToolVisibleToModel,
+} from "../ui-tool-visibility.ts";
 import type { McpTool, ServerCacheEntry } from "../types.ts";
 
 const tools: McpTool[] = [
@@ -15,7 +19,10 @@ describe("MCP Apps tool visibility", () => {
     const { metadata } = buildToolMetadata(tools, [], {}, "demo", "server");
 
     expect(metadata.map((tool) => tool.originalName)).toEqual(["visible", "both"]);
-    expect(metadata.find((tool) => tool.originalName === "both")?.uiVisibility).toEqual(["model", "app"]);
+    expect(metadata.find((tool) => tool.originalName === "both")?.uiVisibility).toEqual([
+      "model",
+      "app",
+    ]);
   });
 
   it("omits cached app-only tools when reconstructing model metadata", () => {
@@ -38,9 +45,13 @@ describe("MCP Apps tool visibility", () => {
     expect(isUiToolVisibleToModel(visibility)).toBe(false);
     expect(isUiToolCallableByApp(visibility)).toBe(false);
 
-    const { metadata } = buildToolMetadata([
-      { name: "bad", _meta: { ui: { visibility: ["app", "mdoel"] } } },
-    ], [], {}, "demo", "server");
+    const { metadata } = buildToolMetadata(
+      [{ name: "bad", _meta: { ui: { visibility: ["app", "mdoel"] } } }],
+      [],
+      {},
+      "demo",
+      "server",
+    );
 
     expect(metadata).toEqual([]);
   });

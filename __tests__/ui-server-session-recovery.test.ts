@@ -8,7 +8,7 @@ import type { UiResourceContent, UiResourcePermissions, McpConfig } from "../typ
 // Same HTTP helper as __tests__/ui-server.test.ts.
 async function request(
   url: string,
-  options: { method?: string; body?: unknown } = {}
+  options: { method?: string; body?: unknown } = {},
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -33,10 +33,12 @@ async function request(
           }
           resolve({ status: res.statusCode ?? 0, body });
         });
-      }
+      },
     );
     req.on("error", reject);
-    if (options.body) req.write(JSON.stringify(options.body));
+    if (options.body) {
+      req.write(JSON.stringify(options.body));
+    }
     req.end();
   });
 }
@@ -74,13 +76,21 @@ describe("UiServer /proxy/tools/call session recovery", () => {
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
+      client: {
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
+      },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
     const fresh = {
       status: "connected",
       transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }) },
+      client: {
+        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }),
+      },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
 
@@ -90,10 +100,12 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     } as unknown as McpServerManager;
 
-    const config: McpConfig = { mcpServers: { "test-server": { url: "https://api.example.com/mcp" } } };
+    const config: McpConfig = {
+      mcpServers: { "test-server": { url: "https://api.example.com/mcp" } },
+    };
 
     const options: UiServerOptions = {
       serverName: "test-server",
@@ -113,10 +125,17 @@ describe("UiServer /proxy/tools/call session recovery", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "tool result" }] } });
-    expect((stale.client.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
-    expect((fresh.client.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("test-server", config.mcpServers["test-server"], stale);
+    expect(res.body).toEqual({
+      ok: true,
+      result: { content: [{ type: "text", text: "tool result" }] },
+    });
+    expect(stale.client.callTool as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    expect(fresh.client.callTool as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    expect(manager.reconnect).toHaveBeenCalledWith(
+      "test-server",
+      config.mcpServers["test-server"],
+      stale,
+    );
   });
 
   it("returns auth guidance when recovery reconnect needs auth and no callback can refresh it", async () => {
@@ -125,7 +144,13 @@ describe("UiServer /proxy/tools/call session recovery", () => {
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
+      client: {
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
+      },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
     const needsAuth = {
@@ -141,7 +166,7 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     } as unknown as McpServerManager;
 
     handle = await startUiServer({
@@ -172,7 +197,13 @@ describe("UiServer /proxy/tools/call session recovery", () => {
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValueOnce(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
+      client: {
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
+      },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
     const needsAuth = {
@@ -184,7 +215,9 @@ describe("UiServer /proxy/tools/call session recovery", () => {
     const fresh = {
       status: "connected",
       transport: { sessionId: "session-3" },
-      client: { callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "after auth" }] }) },
+      client: {
+        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "after auth" }] }),
+      },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
 
@@ -194,7 +227,7 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     } as unknown as McpServerManager;
     const onNeedsAuth = vi.fn(async () => fresh);
 
@@ -215,9 +248,12 @@ describe("UiServer /proxy/tools/call session recovery", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, result: { content: [{ type: "text", text: "after auth" }] } });
+    expect(res.body).toEqual({
+      ok: true,
+      result: { content: [{ type: "text", text: "after auth" }] },
+    });
     expect(onNeedsAuth).toHaveBeenCalledWith("test-server", undefined);
-    expect((fresh.client.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect(fresh.client.callTool as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
   it("runs without recovery (unchanged pre-existing behavior) when config is not supplied", async () => {
@@ -226,7 +262,13 @@ describe("UiServer /proxy/tools/call session recovery", () => {
     const stale = {
       status: "connected",
       transport: { sessionId: "session-1" },
-      client: { callTool: vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", { status: 404 })) },
+      client: {
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
+      },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
 
@@ -236,7 +278,7 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     } as unknown as McpServerManager;
 
     const options: UiServerOptions = {
@@ -258,6 +300,6 @@ describe("UiServer /proxy/tools/call session recovery", () => {
 
     expect(res.status).toBe(500);
     expect(manager.reconnect).not.toHaveBeenCalled();
-    expect((stale.client.callTool as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect(stale.client.callTool as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 });

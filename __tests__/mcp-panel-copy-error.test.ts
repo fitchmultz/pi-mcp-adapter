@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  copyToClipboard: vi.fn(async (_text: string) => undefined),
+  copyToClipboard: vi.fn(async (_text: string) => {}),
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({ copyToClipboard: mocks.copyToClipboard }));
@@ -24,19 +24,25 @@ describe("mcp-panel failure copy", () => {
     const cache = {
       version: 1 as const,
       servers: {
-        demo: { configHash: computeServerHash(config.mcpServers.demo), cachedAt: Date.now(), tools: [], resources: [] },
+        demo: {
+          configHash: computeServerHash(config.mcpServers.demo),
+          cachedAt: Date.now(),
+          tools: [],
+          resources: [],
+        },
       },
     };
     const panel = createMcpPanel(
-      config as any,
-      cache as any,
+      config,
+      cache,
       new Map(),
       {
         reconnect: async () => true,
         canAuthenticate: () => false,
         authenticate: async () => ({ ok: false }),
         getConnectionStatus: () => "failed",
-        getFailureMessage: () => "connection failed\n\x1b]8;;https://secret.invalid\x07details\x1b]8;;\x07",
+        getFailureMessage: () =>
+          "connection failed\n\x1b]8;;https://secret.invalid\x07details\x1b]8;;\x07",
         refreshCacheAfterReconnect: () => null,
       },
       { requestRender: () => {} },
@@ -57,7 +63,7 @@ describe("mcp-panel failure copy", () => {
     const { createMcpPanel } = await import("../mcp-panel.ts");
     const config = { mcpServers: { demo: { command: "node" } } };
     const panel = createMcpPanel(
-      config as any,
+      config,
       null,
       new Map(),
       {

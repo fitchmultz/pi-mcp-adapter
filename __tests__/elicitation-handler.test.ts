@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElicitRequest } from "@modelcontextprotocol/client";
 
 const mocks = vi.hoisted(() => ({
-  open: vi.fn(async () => undefined),
+  open: vi.fn(async () => {}),
 }));
 
 vi.mock("open", () => ({ default: mocks.open }));
 
 function request(params: ElicitRequest["params"]): ElicitRequest {
-  return { method: "elicitation/create", params } as ElicitRequest;
+  return { method: "elicitation/create", params };
 }
 
 describe("MCP elicitation", () => {
@@ -20,7 +20,8 @@ describe("MCP elicitation", () => {
   it("collects a form with stock Pi dialogs and lets the user review it before sending", async () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = {
-      select: vi.fn()
+      select: vi
+        .fn()
         .mockResolvedValueOnce("Continue")
         .mockResolvedValueOnce("Enter value")
         .mockResolvedValueOnce("Submit"),
@@ -55,7 +56,8 @@ describe("MCP elicitation", () => {
   it("lets the user edit a value from the review screen", async () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = {
-      select: vi.fn()
+      select: vi
+        .fn()
         .mockResolvedValueOnce("Continue")
         .mockResolvedValueOnce("Enter value")
         .mockResolvedValueOnce("Edit")
@@ -85,12 +87,14 @@ describe("MCP elicitation", () => {
   it("validates form values and lets the user correct invalid input", async () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = {
-      select: vi.fn()
+      select: vi
+        .fn()
         .mockResolvedValueOnce("Continue")
         .mockResolvedValueOnce("Enter value")
         .mockResolvedValueOnce("Enter value")
         .mockResolvedValueOnce("Submit"),
-      input: vi.fn()
+      input: vi
+        .fn()
         .mockResolvedValueOnce("not-an-email")
         .mockResolvedValueOnce("octocat@example.com"),
       notify: vi.fn(),
@@ -123,7 +127,8 @@ describe("MCP elicitation", () => {
   ] as const)("rejects blank %s input and reprompts when required=%s", async (type, required) => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = {
-      select: vi.fn()
+      select: vi
+        .fn()
         .mockResolvedValueOnce("Continue")
         .mockResolvedValueOnce("Enter value")
         .mockResolvedValueOnce("Enter value")
@@ -158,16 +163,26 @@ describe("MCP elicitation", () => {
       requestedSchema: { type: "object", properties: {} },
     });
 
-    await expect(handleElicitationRequest({
-      serverName: "demo",
-      ui: { select: vi.fn().mockResolvedValue("Decline") } as any,
-      allowUrl: true,
-    }, params)).resolves.toEqual({ action: "decline" });
-    await expect(handleElicitationRequest({
-      serverName: "demo",
-      ui: { select: vi.fn().mockResolvedValue(undefined) } as any,
-      allowUrl: true,
-    }, params)).resolves.toEqual({ action: "cancel" });
+    await expect(
+      handleElicitationRequest(
+        {
+          serverName: "demo",
+          ui: { select: vi.fn().mockResolvedValue("Decline") } as any,
+          allowUrl: true,
+        },
+        params,
+      ),
+    ).resolves.toEqual({ action: "decline" });
+    await expect(
+      handleElicitationRequest(
+        {
+          serverName: "demo",
+          ui: { select: vi.fn().mockResolvedValue(undefined) } as any,
+          allowUrl: true,
+        },
+        params,
+      ),
+    ).resolves.toEqual({ action: "cancel" });
   });
 
   it("does not open URL elicitations that are declined or dismissed", async () => {
@@ -179,16 +194,26 @@ describe("MCP elicitation", () => {
       url: "https://example.com/authorize",
     });
 
-    await expect(handleElicitationRequest({
-      serverName: "demo",
-      ui: { select: vi.fn().mockResolvedValue("Decline") } as any,
-      allowUrl: true,
-    }, params)).resolves.toEqual({ action: "decline" });
-    await expect(handleElicitationRequest({
-      serverName: "demo",
-      ui: { select: vi.fn().mockResolvedValue(undefined) } as any,
-      allowUrl: true,
-    }, params)).resolves.toEqual({ action: "cancel" });
+    await expect(
+      handleElicitationRequest(
+        {
+          serverName: "demo",
+          ui: { select: vi.fn().mockResolvedValue("Decline") } as any,
+          allowUrl: true,
+        },
+        params,
+      ),
+    ).resolves.toEqual({ action: "decline" });
+    await expect(
+      handleElicitationRequest(
+        {
+          serverName: "demo",
+          ui: { select: vi.fn().mockResolvedValue(undefined) } as any,
+          allowUrl: true,
+        },
+        params,
+      ),
+    ).resolves.toEqual({ action: "cancel" });
     expect(mocks.open).not.toHaveBeenCalled();
   });
 
@@ -212,17 +237,20 @@ describe("MCP elicitation", () => {
       }),
     );
 
-    expect(ui.select).toHaveBeenCalledWith([
-      "MCP Browser Request",
-      "Server: payments",
-      "",
-      "Authorize the payment provider",
-      "",
-      "Host: checkout.example.com",
-      `Full URL: ${url}`,
-      "",
-      "Open this URL in your browser?",
-    ].join("\n"), ["Open", "Decline"]);
+    expect(ui.select).toHaveBeenCalledWith(
+      [
+        "MCP Browser Request",
+        "Server: payments",
+        "",
+        "Authorize the payment provider",
+        "",
+        "Host: checkout.example.com",
+        `Full URL: ${url}`,
+        "",
+        "Open this URL in your browser?",
+      ].join("\n"),
+      ["Open", "Decline"],
+    );
     expect(mocks.open).toHaveBeenCalledWith(url);
     expect(onUrlAccepted).toHaveBeenCalledWith("payment-1");
     expect(result).toEqual({ action: "accept" });
@@ -232,15 +260,17 @@ describe("MCP elicitation", () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = { select: vi.fn(), input: vi.fn(), notify: vi.fn() };
 
-    await expect(handleElicitationRequest(
-      { serverName: "demo", ui: ui as any, allowUrl: false },
-      request({
-        mode: "url",
-        message: "Authorize",
-        elicitationId: "auth-1",
-        url: "https://example.com/authorize",
-      }),
-    )).rejects.toMatchObject({ code: -32602 });
+    await expect(
+      handleElicitationRequest(
+        { serverName: "demo", ui: ui as any, allowUrl: false },
+        request({
+          mode: "url",
+          message: "Authorize",
+          elicitationId: "auth-1",
+          url: "https://example.com/authorize",
+        }),
+      ),
+    ).rejects.toMatchObject({ code: -32602 });
     expect(ui.select).not.toHaveBeenCalled();
   });
 
@@ -248,15 +278,17 @@ describe("MCP elicitation", () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = { select: vi.fn(), input: vi.fn(), notify: vi.fn() };
 
-    await expect(handleElicitationRequest(
-      { serverName: "demo", ui: ui as any, allowUrl: true },
-      request({
-        mode: "url",
-        message: "Open a file",
-        elicitationId: "file-1",
-        url: "file:///etc/passwd",
-      }),
-    )).rejects.toMatchObject({ code: -32602 });
+    await expect(
+      handleElicitationRequest(
+        { serverName: "demo", ui: ui as any, allowUrl: true },
+        request({
+          mode: "url",
+          message: "Open a file",
+          elicitationId: "file-1",
+          url: "file:///etc/passwd",
+        }),
+      ),
+    ).rejects.toMatchObject({ code: -32602 });
     expect(ui.select).not.toHaveBeenCalled();
     expect(mocks.open).not.toHaveBeenCalled();
   });
@@ -287,7 +319,8 @@ describe("MCP elicitation", () => {
   it("supports every primitive form field, defaults, and omission", async () => {
     const { handleElicitationRequest } = await import("../elicitation-handler.ts");
     const ui = {
-      select: vi.fn()
+      select: vi
+        .fn()
         .mockResolvedValueOnce("Continue")
         .mockResolvedValueOnce("Use default")
         .mockResolvedValueOnce("Medium (medium)")

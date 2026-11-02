@@ -6,7 +6,9 @@ import type { McpExtensionState } from "../state.ts";
 const SHORT_INSTRUCTIONS = "Call read_skill with a skill name before answering.";
 const LONG_INSTRUCTIONS = `Available skills: ${Array.from({ length: 40 }, (_, i) => `skill-${i}`).join(", ")}. Call read_skill with a skill name to load one.`;
 
-function createState(overrides: { instructions?: string; connected?: boolean; noTools?: boolean } = {}): McpExtensionState {
+function createState(
+  overrides: { instructions?: string; connected?: boolean; noTools?: boolean } = {},
+): McpExtensionState {
   return {
     config: {
       mcpServers: {
@@ -39,7 +41,9 @@ describe("proxy instructions", () => {
   it("includes short server instructions in full in the listing", () => {
     const result = executeList(createState({ instructions: SHORT_INSTRUCTIONS }), "demo");
 
-    expect((result.content[0] as TextContent).text).toContain(`Server instructions:\n${SHORT_INSTRUCTIONS}`);
+    expect((result.content[0] as TextContent).text).toContain(
+      `Server instructions:\n${SHORT_INSTRUCTIONS}`,
+    );
     expect((result.content[0] as TextContent).text).not.toContain('mcp({ action: "instructions"');
     expect(result.details).toMatchObject({ mode: "list", hasInstructions: true });
   });
@@ -49,7 +53,9 @@ describe("proxy instructions", () => {
 
     expect((result.content[0] as TextContent).text).toContain("Server instructions:");
     expect((result.content[0] as TextContent).text).not.toContain(LONG_INSTRUCTIONS);
-    expect((result.content[0] as TextContent).text).toContain('Use mcp({ action: "instructions", server: "demo" }) for the full text.');
+    expect((result.content[0] as TextContent).text).toContain(
+      'Use mcp({ action: "instructions", server: "demo" }) for the full text.',
+    );
   });
 
   it("leaves the listing unchanged when a server has no instructions", () => {
@@ -60,22 +66,38 @@ describe("proxy instructions", () => {
   });
 
   it("includes instructions for connected and cached servers with no visible tools", () => {
-    const connected = executeList(createState({ instructions: SHORT_INSTRUCTIONS, connected: true, noTools: true }), "demo");
-    const cached = executeList(createState({ instructions: SHORT_INSTRUCTIONS, noTools: true }), "demo");
+    const connected = executeList(
+      createState({ instructions: SHORT_INSTRUCTIONS, connected: true, noTools: true }),
+      "demo",
+    );
+    const cached = executeList(
+      createState({ instructions: SHORT_INSTRUCTIONS, noTools: true }),
+      "demo",
+    );
 
     expect((connected.content[0] as TextContent).text).toContain('Server "demo" has no tools');
-    expect((connected.content[0] as TextContent).text).toContain(`Server instructions:\n${SHORT_INSTRUCTIONS}`);
+    expect((connected.content[0] as TextContent).text).toContain(
+      `Server instructions:\n${SHORT_INSTRUCTIONS}`,
+    );
     expect(connected.details).toMatchObject({ mode: "list", count: 0, hasInstructions: true });
     expect((cached.content[0] as TextContent).text).toContain('Server "demo" has no cached tools');
-    expect((cached.content[0] as TextContent).text).toContain(`Server instructions:\n${SHORT_INSTRUCTIONS}`);
+    expect((cached.content[0] as TextContent).text).toContain(
+      `Server instructions:\n${SHORT_INSTRUCTIONS}`,
+    );
     expect(cached.details).toMatchObject({ mode: "list", count: 0, hasInstructions: true });
   });
 
   it("returns the full instructions text", () => {
     const result = executeInstructions(createState({ instructions: LONG_INSTRUCTIONS }), "demo");
 
-    expect((result.content[0] as TextContent).text).toBe(`demo instructions:\n\n${LONG_INSTRUCTIONS}`);
-    expect(result.details).toMatchObject({ mode: "instructions", server: "demo", length: LONG_INSTRUCTIONS.length });
+    expect((result.content[0] as TextContent).text).toBe(
+      `demo instructions:\n\n${LONG_INSTRUCTIONS}`,
+    );
+    expect(result.details).toMatchObject({
+      mode: "instructions",
+      server: "demo",
+      length: LONG_INSTRUCTIONS.length,
+    });
   });
 
   it("reports unknown servers", () => {
@@ -88,14 +110,18 @@ describe("proxy instructions", () => {
   it("reports connected servers that provide no instructions", () => {
     const result = executeInstructions(createState({ connected: true }), "demo");
 
-    expect((result.content[0] as TextContent).text).toBe('Server "demo" does not provide instructions.');
+    expect((result.content[0] as TextContent).text).toBe(
+      'Server "demo" does not provide instructions.',
+    );
     expect(result.details).toMatchObject({ mode: "instructions", error: "no_instructions" });
   });
 
   it("suggests connecting when no instructions are cached", () => {
     const result = executeInstructions(createState(), "demo");
 
-    expect((result.content[0] as TextContent).text).toContain('mcp({ action: "connect", server: "demo" })');
+    expect((result.content[0] as TextContent).text).toContain(
+      'mcp({ action: "connect", server: "demo" })',
+    );
     expect(result.details).toMatchObject({ mode: "instructions", error: "not_connected" });
   });
 });

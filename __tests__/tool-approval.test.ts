@@ -12,11 +12,13 @@ const tool: ToolMetadata = {
   description: "Search records",
 };
 
-function createState(options: {
-  approveTools?: boolean | string[];
-  decision?: "Allow once" | "Allow for session" | "Deny";
-  interactive?: boolean;
-} = {}) {
+function createState(
+  options: {
+    approveTools?: boolean | string[];
+    decision?: "Allow once" | "Allow for session" | "Deny";
+    interactive?: boolean;
+  } = {},
+) {
   const callTool = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "called" }] });
   const select = vi.fn().mockResolvedValue(options.decision ?? "Allow once");
   const connection = {
@@ -43,7 +45,7 @@ function createState(options: {
     approvedToolCalls: new Map<string, true>(),
     manager: {
       getConnection: () => connection,
-      getRequestOptions: () => undefined,
+      getRequestOptions: () => {},
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -68,12 +70,19 @@ describe("tool approval", () => {
       },
       {
         config: { mcpServers: { "docs-mcp": {} }, settings: { approveTools: ["docs_read_*"] } },
-        meta: { name: "docs_read_handbook", originalName: "read_handbook", description: "Read handbook", resourceUri: "docs://handbook" },
+        meta: {
+          name: "docs_read_handbook",
+          originalName: "read_handbook",
+          description: "Read handbook",
+          resourceUri: "docs://handbook",
+        },
       },
     ];
 
     for (const { config, meta } of cases) {
-      expect(isToolCallApprovalRequired(config, Object.keys(config.mcpServers)[0]!, meta)).toBe(true);
+      expect(isToolCallApprovalRequired(config, Object.keys(config.mcpServers)[0]!, meta)).toBe(
+        true,
+      );
     }
   });
 
@@ -100,12 +109,16 @@ describe("tool approval", () => {
     expect(proxy.callTool).not.toHaveBeenCalled();
 
     const direct = createState({ approveTools: true, decision: "Deny" });
-    const execute = createDirectToolExecutor(() => direct.state, () => null, {
-      serverName: "demo",
-      originalName: "search-records",
-      prefixedName: "demo_search-records",
-      description: "Search records",
-    });
+    const execute = createDirectToolExecutor(
+      () => direct.state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search-records",
+        prefixedName: "demo_search-records",
+        description: "Search records",
+      },
+    );
     await expect(execute("call-1", {}, undefined, undefined, {} as never)).resolves.toMatchObject({
       details: { error: "approval_denied", server: "demo", tool: "search-records" },
     });
@@ -114,14 +127,14 @@ describe("tool approval", () => {
 
   it("caches only Allow for session decisions", async () => {
     const session = createState({ approveTools: true, decision: "Allow for session" });
-    await ensureToolCallApproved(session.state, "demo", tool, {}, undefined);
-    await ensureToolCallApproved(session.state, "demo", tool, {}, undefined);
+    await ensureToolCallApproved(session.state, "demo", tool, {});
+    await ensureToolCallApproved(session.state, "demo", tool, {});
     expect(session.select).toHaveBeenCalledTimes(1);
     expect(session.state.approvedToolCalls.has("demo\u0000search-records")).toBe(true);
 
     const once = createState({ approveTools: true, decision: "Allow once" });
-    await ensureToolCallApproved(once.state, "demo", tool, {}, undefined);
-    await ensureToolCallApproved(once.state, "demo", tool, {}, undefined);
+    await ensureToolCallApproved(once.state, "demo", tool, {});
+    await ensureToolCallApproved(once.state, "demo", tool, {});
     expect(once.select).toHaveBeenCalledTimes(2);
     expect(once.state.approvedToolCalls.size).toBe(0);
   });
@@ -142,7 +155,11 @@ describe("tool approval", () => {
   it("marks gated tools in describe and search output without hiding them", () => {
     const { state } = createState({ approveTools: true });
 
-    expect(JSON.parse((executeDescribe(state, tool.name).content[0] as TextContent).text)).toMatchObject({ name: "search-records", approvalRequired: true });
-    expect((executeSearch(state, "search", undefined, false).content[0] as TextContent).text).toContain("(requires approval)");
+    expect(
+      JSON.parse((executeDescribe(state, tool.name).content[0] as TextContent).text),
+    ).toMatchObject({ name: "search-records", approvalRequired: true });
+    expect(
+      (executeSearch(state, "search", undefined, false).content[0] as TextContent).text,
+    ).toContain("(requires approval)");
   });
 });

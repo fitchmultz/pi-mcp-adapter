@@ -2,7 +2,14 @@ import type { ReadResourceResult } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import type { McpServerManager } from "./server-manager.ts";
-import { isServerDisabled, type McpConfig, type UiResourceContent, type UiResourceCsp, type UiResourceMeta, type UiResourcePermissions } from "./types.ts";
+import {
+  isServerDisabled,
+  type McpConfig,
+  type UiResourceContent,
+  type UiResourceCsp,
+  type UiResourceMeta,
+  type UiResourcePermissions,
+} from "./types.ts";
 
 // MCP Apps resource media type; metadata reads must not import the app bridge.
 export const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
@@ -22,19 +29,24 @@ interface ReadUiResourceOptions {
 }
 
 export class UiResourceHandler {
-  private log = logger.child({ component: "UiResourceHandler" });
+  private readonly log = logger.child({ component: "UiResourceHandler" });
 
-  private manager: McpServerManager;
-  private config: McpConfig | undefined;
+  private readonly manager: McpServerManager;
+  private readonly config: McpConfig | undefined;
 
   constructor(manager: McpServerManager, config?: McpConfig) {
     this.manager = manager;
     this.config = config;
   }
 
-  async readUiResource(serverName: string, uri: string, options: ReadUiResourceOptions = {}): Promise<UiResourceContent> {
+  async readUiResource(
+    serverName: string,
+    uri: string,
+    options: ReadUiResourceOptions = {},
+  ): Promise<UiResourceContent> {
     const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
-    const { SessionRecoveryAuthRequiredError, withSessionRecovery } = await import("./session-recovery.ts");
+    const { SessionRecoveryAuthRequiredError, withSessionRecovery } =
+      await import("./session-recovery.ts");
     const log = this.log.child({ server: serverName, uri });
 
     if (!uri.startsWith("ui://")) {
@@ -61,7 +73,11 @@ export class UiResourceHandler {
               ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
             },
             serverName,
-            (connection) => connection.client.readResource({ uri }, this.manager.getRequestOptions(serverName, options.signal)),
+            (connection) =>
+              connection.client.readResource(
+                { uri },
+                this.manager.getRequestOptions(serverName, options.signal),
+              ),
           );
         } finally {
           this.manager.decrementInFlight(serverName);
@@ -71,11 +87,18 @@ export class UiResourceHandler {
         result = await this.manager.readResource(serverName, uri, options.signal);
       }
     } catch (error) {
-      if (error instanceof UrlElicitationRequiredError || error instanceof SessionRecoveryAuthRequiredError) throw error;
+      if (
+        error instanceof UrlElicitationRequiredError ||
+        error instanceof SessionRecoveryAuthRequiredError
+      ) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : String(error);
       log.error("Failed to read resource", error instanceof Error ? error : undefined);
-      throw new Error(`Failed to fetch UI resource "${uri}": ${message}`,
-        error instanceof Error ? { cause: error } : undefined);
+      throw new Error(
+        `Failed to fetch UI resource "${uri}": ${message}`,
+        error instanceof Error ? { cause: error } : undefined,
+      );
     }
 
     const content = selectContent(result, uri);
@@ -84,7 +107,7 @@ export class UiResourceHandler {
     if (mimeType && !isHtmlMimeType(mimeType)) {
       log.warn("Unsupported MIME type", { mimeType });
       throw new Error(
-        `Invalid UI resource "${uri}": unsupported MIME type "${mimeType}" (expected text/html or ${RESOURCE_MIME_TYPE})`
+        `Invalid UI resource "${uri}": unsupported MIME type "${mimeType}" (expected text/html or ${RESOURCE_MIME_TYPE})`,
       );
     }
 
@@ -97,9 +120,9 @@ export class UiResourceHandler {
     const contentMeta = extractUiMeta(content._meta);
     const listMeta = extractUiMeta(this.getListResourceMeta(serverName, uri));
 
-    log.debug("Resource loaded successfully", { 
+    log.debug("Resource loaded successfully", {
       contentLength: html.length,
-      hasCsp: !!contentMeta.csp || !!listMeta.csp,
+      hasCsp: Boolean(contentMeta.csp) || Boolean(listMeta.csp),
     });
 
     return {
@@ -107,11 +130,15 @@ export class UiResourceHandler {
       html,
       mimeType: mimeType ?? RESOURCE_MIME_TYPE,
       meta: {
-        ...((contentMeta.csp ?? listMeta.csp) !== undefined ? { csp: contentMeta.csp ?? listMeta.csp } : {}),
+        ...((contentMeta.csp ?? listMeta.csp) !== undefined
+          ? { csp: contentMeta.csp ?? listMeta.csp }
+          : {}),
         ...((contentMeta.permissions ?? listMeta.permissions) !== undefined
           ? { permissions: contentMeta.permissions ?? listMeta.permissions }
           : {}),
-        ...((contentMeta.domain ?? listMeta.domain) !== undefined ? { domain: contentMeta.domain ?? listMeta.domain } : {}),
+        ...((contentMeta.domain ?? listMeta.domain) !== undefined
+          ? { domain: contentMeta.domain ?? listMeta.domain }
+          : {}),
         ...((contentMeta.prefersBorder ?? listMeta.prefersBorder) !== undefined
           ? { prefersBorder: contentMeta.prefersBorder ?? listMeta.prefersBorder }
           : {}),
@@ -119,11 +146,18 @@ export class UiResourceHandler {
     };
   }
 
-  private getListResourceMeta(serverName: string, uri: string): Record<string, unknown> | undefined {
+  private getListResourceMeta(
+    serverName: string,
+    uri: string,
+  ): Record<string, unknown> | undefined {
     const connection = this.manager.getConnection(serverName);
-    if (!connection?.resources?.length) return undefined;
+    if (!connection?.resources?.length) {
+      return undefined;
+    }
     const resource = connection.resources.find((entry) => entry.uri === uri);
-    if (!resource || !resource._meta || typeof resource._meta !== "object") return undefined;
+    if (!resource || !resource._meta || typeof resource._meta !== "object") {
+      return undefined;
+    }
     return resource._meta;
   }
 }
@@ -135,12 +169,16 @@ function selectContent(result: ReadResourceResult, preferredUri: string): Resour
   }
 
   const byUri = contents.find((content) => content.uri === preferredUri);
-  if (byUri) return byUri;
+  if (byUri) {
+    return byUri;
+  }
 
   const byHtmlMime = contents.find(
-    (content) => content.mimeType && isHtmlMimeType(content.mimeType)
+    (content) => content.mimeType && isHtmlMimeType(content.mimeType),
   );
-  if (byHtmlMime) return byHtmlMime;
+  if (byHtmlMime) {
+    return byHtmlMime;
+  }
 
   const firstContent = contents[0];
   if (!firstContent) {
@@ -180,28 +218,31 @@ const UI_CSP_DOMAIN_FIELDS: readonly (keyof UiResourceCsp)[] = [
 ];
 
 function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMeta {
-  if (!meta || typeof meta !== "object") return {};
+  if (!meta || typeof meta !== "object") {
+    return {};
+  }
 
   const ui = isRecord(meta.ui) ? meta.ui : undefined;
   const out: UiResourceMeta = {};
   const openAiCsp = hasOwnProperty(meta, "openai/widgetCSP")
     ? normalizeOpenAiWidgetCsp(meta["openai/widgetCSP"])
     : undefined;
-  const hasStandardCsp = !!ui && hasOwnProperty(ui, "csp");
+  const hasStandardCsp = ui !== undefined && hasOwnProperty(ui, "csp");
   const standardCspValue = hasStandardCsp ? ui.csp : undefined;
 
   if (hasStandardCsp && !isRecord(standardCspValue)) {
     // A declared canonical container takes precedence even when malformed.
     out.csp = {};
   } else {
-    const standardCsp = hasStandardCsp
-      ? normalizeUiResourceCsp(standardCspValue)
-      : undefined;
+    const standardCsp = hasStandardCsp ? normalizeUiResourceCsp(standardCspValue) : undefined;
     if (openAiCsp || standardCsp) {
       out.csp = { ...openAiCsp, ...standardCsp };
       if (isRecord(standardCspValue)) {
         for (const [, standardField] of OPENAI_CSP_FIELD_MAPPINGS) {
-          if (hasOwnProperty(standardCspValue, standardField) && !copyStringArray(standardCspValue[standardField])) {
+          if (
+            hasOwnProperty(standardCspValue, standardField) &&
+            !copyStringArray(standardCspValue[standardField])
+          ) {
             delete out.csp[standardField];
           }
         }
@@ -210,7 +251,7 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
   }
 
   if (ui && isRecord(ui.permissions)) {
-    out.permissions = ui.permissions as UiResourcePermissions;
+    out.permissions = ui.permissions;
   }
   if (ui && typeof ui.domain === "string") {
     out.domain = ui.domain;
@@ -223,23 +264,31 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
 }
 
 function normalizeUiResourceCsp(value: unknown): UiResourceCsp {
-  if (!isRecord(value)) return {};
+  if (!isRecord(value)) {
+    return {};
+  }
 
   const csp: UiResourceCsp = {};
   for (const field of UI_CSP_DOMAIN_FIELDS) {
     const domains = copyStringArray(value[field]);
-    if (domains) csp[field] = domains;
+    if (domains) {
+      csp[field] = domains;
+    }
   }
   return csp;
 }
 
 function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp {
-  if (!isRecord(value)) return {};
+  if (!isRecord(value)) {
+    return {};
+  }
 
   const csp: UiResourceCsp = {};
   for (const [sourceField, targetField] of OPENAI_CSP_FIELD_MAPPINGS) {
     const domains = copyStringArray(value[sourceField]);
-    if (domains) csp[targetField] = domains;
+    if (domains) {
+      csp[targetField] = domains;
+    }
   }
   return csp;
 }

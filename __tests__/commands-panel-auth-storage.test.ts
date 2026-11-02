@@ -4,8 +4,11 @@ import { openMcpAuthPanel, openMcpPanel } from "../commands.ts";
 const previousAuthStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
 
 afterEach(() => {
-  if (previousAuthStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
-  else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = previousAuthStore;
+  if (previousAuthStore === undefined) {
+    delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+  } else {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = previousAuthStore;
+  }
 });
 
 function stripAnsi(input: string): string {
@@ -34,23 +37,32 @@ function createState() {
       },
     },
     authStorageOptions: {},
-    manager: { getConnection: () => undefined },
+    manager: { getConnection: () => {} },
     failureTracker: new Map(),
     failureMessages: new Map(),
   } as any;
 }
 
 describe("MCP panels with unavailable OAuth credential storage", () => {
-  it.each([openMcpPanel, (state: any, _pi: any, ctx: any) => openMcpAuthPanel(state, ctx)])("does not inspect browser credentials for CAA status", async openPanel => {
-    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
-    const state = createState();
-    state.config.mcpServers.oauth.oauth = { crossAppAccess: { idpUrl: "https://idp.example", clientId: "idp", idToken: "!exit 99" } };
-    const { ui, getRendered } = createPanelHarness();
-    await openPanel(state, {} as any, { hasUI: true, mode: "tui", isProjectTrusted: () => true, cwd: "/tmp", ui } as any);
-    expect(getRendered()).not.toContain("needs auth");
-    expect(getRendered()).not.toContain("OAuth credential store unavailable");
-    expect(getRendered()).not.toContain("failed");
-  });
+  it.each([openMcpPanel, (state: any, _pi: any, ctx: any) => openMcpAuthPanel(state, ctx)])(
+    "does not inspect browser credentials for CAA status",
+    async (openPanel) => {
+      process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
+      const state = createState();
+      state.config.mcpServers.oauth.oauth = {
+        crossAppAccess: { idpUrl: "https://idp.example", clientId: "idp", idToken: "!exit 99" },
+      };
+      const { ui, getRendered } = createPanelHarness();
+      await openPanel(
+        state,
+        {} as any,
+        { hasUI: true, mode: "tui", isProjectTrusted: () => true, cwd: "/tmp", ui } as any,
+      );
+      expect(getRendered()).not.toContain("needs auth");
+      expect(getRendered()).not.toContain("OAuth credential store unavailable");
+      expect(getRendered()).not.toContain("failed");
+    },
+  );
   it.each([
     ["/mcp", (state: any, ctx: any) => openMcpPanel(state, {} as any, ctx)],
     ["/mcp-auth", (state: any, ctx: any) => openMcpAuthPanel(state, ctx)],
@@ -58,10 +70,15 @@ describe("MCP panels with unavailable OAuth credential storage", () => {
     process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
     const { ui, getRendered } = createPanelHarness();
 
-    await expect(openPanel(
-      createState(),
-      { hasUI: true, mode: "tui", isProjectTrusted: () => true, cwd: "/tmp", ui } as any,
-    )).resolves.toEqual({ configChanged: false });
+    await expect(
+      openPanel(createState(), {
+        hasUI: true,
+        mode: "tui",
+        isProjectTrusted: () => true,
+        cwd: "/tmp",
+        ui,
+      } as any),
+    ).resolves.toEqual({ configChanged: false });
 
     expect(getRendered()).toContain("failed");
     expect(getRendered()).not.toContain("needs auth");

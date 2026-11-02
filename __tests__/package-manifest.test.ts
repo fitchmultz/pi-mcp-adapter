@@ -29,7 +29,9 @@ describe("package.json files", () => {
   it("uses the owned package, helper executable and repository", () => {
     expect(packageJson.name).toBe("@fitchmultz/pi-mcp-adapter");
     expect(packageJson.bin).toEqual({ "fitch-mcp-adapter": "cli.js" });
-    expect(packageJson.repository?.url).toBe("git+https://github.com/fitchmultz/pi-mcp-adapter.git");
+    expect(packageJson.repository?.url).toBe(
+      "git+https://github.com/fitchmultz/pi-mcp-adapter.git",
+    );
     expect(packageJson.files).toContain("OAUTH.md");
   });
 
@@ -85,7 +87,9 @@ describe("package.json dependency policy", () => {
       expect(packageJson.devDependencies?.[name]).toMatch(/^\d+\.\d+\.\d+$/);
     }
     for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-tui"]) {
-      expect(packageJson.devDependencies?.[name]).toBe(packageJson.devDependencies?.["@earendil-works/pi-coding-agent"]);
+      expect(packageJson.devDependencies?.[name]).toBe(
+        packageJson.devDependencies?.["@earendil-works/pi-coding-agent"],
+      );
     }
     const lock = JSON.parse(readFileSync(join(repoRoot, "package-lock.json"), "utf-8"));
     const baseline = lock.packages["node_modules/@earendil-works/pi-coding-agent"];
@@ -97,7 +101,9 @@ describe("package.json dependency policy", () => {
     const deps = packageJson.dependencies ?? {};
     expect(deps["@modelcontextprotocol/sdk"]).toBeUndefined();
     expect(deps["@modelcontextprotocol/client"]).toBe(deps["@modelcontextprotocol/core"]);
-    expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBe(deps["@modelcontextprotocol/core"]);
+    expect(packageJson.devDependencies?.["@modelcontextprotocol/server"]).toBe(
+      deps["@modelcontextprotocol/core"],
+    );
     expect(deps["@modelcontextprotocol/ext-apps"]).toMatch(/^2\./);
     expect(deps["@modelcontextprotocol/server"]).toBeUndefined();
     expect(packageJson.peerDependencies?.["@modelcontextprotocol/server"]).toBeUndefined();
@@ -113,11 +119,17 @@ describe("package.json dependency policy", () => {
   });
 
   it("uses the same Apps v2 graph in the interactive visualizer", () => {
-    const example = JSON.parse(readFileSync(join(repoRoot, "examples/interactive-visualizer/package.json"), "utf-8"));
+    const example = JSON.parse(
+      readFileSync(join(repoRoot, "examples/interactive-visualizer/package.json"), "utf-8"),
+    );
     for (const name of ["client", "core", "ext-apps"]) {
-      expect(example.dependencies[`@modelcontextprotocol/${name}`]).toBe(packageJson.dependencies?.[`@modelcontextprotocol/${name}`]);
+      expect(example.dependencies[`@modelcontextprotocol/${name}`]).toBe(
+        packageJson.dependencies?.[`@modelcontextprotocol/${name}`],
+      );
     }
-    expect(example.dependencies["@modelcontextprotocol/server"]).toBe(packageJson.devDependencies?.["@modelcontextprotocol/server"]);
+    expect(example.dependencies["@modelcontextprotocol/server"]).toBe(
+      packageJson.devDependencies?.["@modelcontextprotocol/server"],
+    );
     expect(example.dependencies["@modelcontextprotocol/sdk"]).toBeUndefined();
     expect(example.dependencies.zod).toBe(packageJson.dependencies?.zod);
     expect(example.devDependencies.esbuild).toBe(packageJson.devDependencies?.esbuild);

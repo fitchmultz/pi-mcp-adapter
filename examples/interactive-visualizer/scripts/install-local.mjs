@@ -7,18 +7,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const distServer = path.join(root, "dist", "server.js");
 const configuredAgentDir = process.env.PI_CODING_AGENT_DIR?.trim();
-const agentDir = !configuredAgentDir ? path.join(homedir(), ".pi", "agent")
-  : configuredAgentDir === "~" ? homedir()
-  : configuredAgentDir.startsWith("~/") ? path.resolve(homedir(), configuredAgentDir.slice(2))
-  : path.resolve(configuredAgentDir);
+const agentDir = !configuredAgentDir
+  ? path.join(homedir(), ".pi", "agent")
+  : configuredAgentDir === "~"
+    ? homedir()
+    : configuredAgentDir.startsWith("~/")
+      ? path.resolve(homedir(), configuredAgentDir.slice(2))
+      : path.resolve(configuredAgentDir);
 const configPath = path.join(agentDir, "fitch-mcp-adapter", "mcp.json");
 const serverName = "interactive-visualizer";
 
-function isInstalledExample(entry) {
-  return !!entry
-    && entry.command === process.execPath
-    && Array.isArray(entry.args)
-    && entry.args[0] === distServer;
+function isInstalledExample(/** @type {Record<string, unknown> | null | undefined} */ entry) {
+  if (entry === null || entry === undefined) {
+    return false;
+  }
+  return (
+    entry.command === process.execPath && Array.isArray(entry.args) && entry.args[0] === distServer
+  );
 }
 
 async function loadConfig() {
@@ -38,7 +43,9 @@ config.mcpServers = config.mcpServers ?? {};
 const existing = config.mcpServers[serverName];
 
 if (existing && !isInstalledExample(existing)) {
-  console.error(`Refusing to overwrite existing ${serverName} entry in ${configPath} because it does not match this local example install.`);
+  console.error(
+    `Refusing to overwrite existing ${serverName} entry in ${configPath} because it does not match this local example install.`,
+  );
   process.exit(1);
 }
 

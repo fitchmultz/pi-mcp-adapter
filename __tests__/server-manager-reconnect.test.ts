@@ -32,13 +32,16 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
       }),
       listTools: vi.fn(async () => ({ tools: [] })),
       listResources: vi.fn(async () => ({ resources: [] })),
-      close: vi.fn(async () => undefined),
+      close: vi.fn(async () => {}),
     };
     mocks.clients.push(client);
     return client;
   }),
-  StreamableHTTPClientTransport: vi.fn().mockImplementation(function (url: URL, options: TransportOptions) {
-    const transport = { url, options, send: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function (
+    url: URL,
+    options: TransportOptions,
+  ) {
+    const transport = { url, options, send: vi.fn(async () => {}), close: vi.fn(async () => {}) };
     mocks.httpTransports.push(transport);
     return transport;
   }),
@@ -59,7 +62,9 @@ describe("McpServerManager connections", () => {
     mocks.httpTransports.length = 0;
     mocks.connectGate = undefined;
     let resolve!: () => void;
-    const promise = new Promise<void>(entered => { resolve = entered; });
+    const promise = new Promise<void>((entered) => {
+      resolve = entered;
+    });
     mocks.connectStarted = { promise, resolve };
   });
 
@@ -69,7 +74,9 @@ describe("McpServerManager connections", () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
     let releaseConnect!: () => void;
-    mocks.connectGate = new Promise<void>(resolve => { releaseConnect = resolve; });
+    mocks.connectGate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
     const connecting = manager.connect("remote", def);
 
     try {
@@ -96,18 +103,20 @@ describe("McpServerManager connections", () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
     let releaseConnect!: () => void;
-    mocks.connectGate = new Promise<void>(resolve => { releaseConnect = resolve; });
+    mocks.connectGate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
     const controller = new AbortController();
     const reason = new Error("stop waiting");
 
     const first = manager.connect("remote", def, controller.signal);
-    const second = manager.connect("remote", def).catch(error => error);
+    const second = manager.connect("remote", def).catch((error) => error);
     try {
       // Cancel an actual native connect wait, not the preceding lazy import.
       await mocks.connectStarted!.promise;
       controller.abort(reason);
       await expect(first).rejects.toBe(reason);
-      const third = manager.connect("remote", def).catch(error => error);
+      const third = manager.connect("remote", def).catch((error) => error);
       expect(mocks.clients).toHaveLength(1);
 
       releaseConnect();
@@ -125,7 +134,9 @@ describe("McpServerManager connections", () => {
     const { McpServerManager } = await import("../server-manager.ts");
     const manager = new McpServerManager();
     let releaseConnect!: () => void;
-    mocks.connectGate = new Promise<void>(resolve => { releaseConnect = resolve; });
+    mocks.connectGate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
     const controller = new AbortController();
     const first = manager.connect("remote", def, controller.signal);
 
@@ -191,7 +202,9 @@ describe("McpServerManager connections", () => {
 
     const stale = await manager.connect("remote", def);
     let releaseConnect!: () => void;
-    mocks.connectGate = new Promise<void>(resolve => { releaseConnect = resolve; });
+    mocks.connectGate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
     const reason = new Error("stop waiting");
     const controller = new AbortController();
 

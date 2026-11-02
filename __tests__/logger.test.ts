@@ -3,10 +3,10 @@ import { logger } from "../logger.ts";
 
 describe("Logger", () => {
   beforeEach(() => {
-    vi.spyOn(console, "debug").mockImplementation(() => undefined);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
     logger.setLevel("debug");
   });
 
@@ -41,7 +41,9 @@ describe("Logger", () => {
 
   it("formats call and child context", () => {
     logger.info("direct", { server: "test-server", tool: "test-tool" });
-    logger.child({ server: "child-server" }).child({ session: "session123" })
+    logger
+      .child({ server: "child-server" })
+      .child({ session: "session123" })
       .info("child", { tool: "child-tool" });
 
     expect(console.log).toHaveBeenNthCalledWith(

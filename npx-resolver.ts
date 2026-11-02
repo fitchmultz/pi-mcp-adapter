@@ -1,5 +1,17 @@
 // npx-resolver.ts - Resolve npx/npm exec binaries to avoid npm parent processes
-import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  realpathSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+  renameSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  closeSync,
+} from "node:fs";
 import { join, dirname, extname, resolve, sep } from "node:path";
 import { getAdapterPath } from "./agent-dir.ts";
 import { throwIfAborted } from "./abort.ts";
@@ -7,7 +19,8 @@ import crossSpawn from "cross-spawn";
 
 const CACHE_VERSION = 1;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const EXACT_PACKAGE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
+const EXACT_PACKAGE_VERSION_RE =
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
 interface NpxCacheEntry {
   resolvedBin: string;
@@ -44,25 +57,26 @@ export async function resolveNpxBinary(
   signal?: AbortSignal,
 ): Promise<NpxResolution | null> {
   throwIfAborted(signal);
-  const parsed = command === "npx"
-    ? parseNpxArgs(args)
-    : command === "npm"
-      ? parseNpmExecArgs(args)
-      : null;
+  const parsed =
+    command === "npx" ? parseNpxArgs(args) : command === "npm" ? parseNpmExecArgs(args) : null;
 
-  if (!parsed) return null;
+  if (!parsed) {
+    return null;
+  }
 
   const packageSpec = parsePackageSpec(parsed.packageSpec);
-  if (!packageSpec) return null;
+  if (!packageSpec) {
+    return null;
+  }
   const cacheKey = JSON.stringify([command, ...args]);
   const cache = loadCache();
   const cached = cache?.entries?.[cacheKey];
 
   if (
-    cached
-    && Date.now() - cached.resolvedAt < CACHE_TTL_MS
-    && existsSync(cached.resolvedBin)
-    && (!packageSpec.exactVersion || cached.packageVersion === packageSpec.exactVersion)
+    cached &&
+    Date.now() - cached.resolvedAt < CACHE_TTL_MS &&
+    existsSync(cached.resolvedBin) &&
+    (!packageSpec.exactVersion || cached.packageVersion === packageSpec.exactVersion)
   ) {
     return { binPath: cached.resolvedBin, extraArgs: parsed.extraArgs, isJs: cached.isJs };
   }
@@ -78,7 +92,11 @@ export async function resolveNpxBinary(
   const resolvedAfterInstall = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
   if (resolvedAfterInstall) {
     saveCacheEntry(cacheKey, resolvedAfterInstall);
-    return { binPath: resolvedAfterInstall.resolvedBin, extraArgs: parsed.extraArgs, isJs: resolvedAfterInstall.isJs };
+    return {
+      binPath: resolvedAfterInstall.resolvedBin,
+      extraArgs: parsed.extraArgs,
+      isJs: resolvedAfterInstall.isJs,
+    };
   }
 
   return null;
@@ -96,24 +114,36 @@ function parseNpxArgs(args: string[]): ParsedInvocation | null {
 
   for (let i = 0; i < before.length; i++) {
     const arg = before[i];
-    if (arg === undefined) return null;
+    if (arg === undefined) {
+      return null;
+    }
     if (foundFirstPositional) {
       positionals.push(arg);
       continue;
     }
-    if (arg === "-y" || arg === "--yes") continue;
+    if (arg === "-y" || arg === "--yes") {
+      continue;
+    }
     if (arg === "-p" || arg === "--package") {
       const value = before[i + 1];
-      if (!value || value.startsWith("-")) return null;
-      if (!packageSpec) packageSpec = value;
+      if (!value || value.startsWith("-")) {
+        return null;
+      }
+      if (!packageSpec) {
+        packageSpec = value;
+      }
       sawPackageFlag = true;
       i++;
       continue;
     }
     if (arg.startsWith("--package=")) {
       const value = arg.slice("--package=".length);
-      if (!value) return null;
-      if (!packageSpec) packageSpec = value;
+      if (!value) {
+        return null;
+      }
+      if (!packageSpec) {
+        packageSpec = value;
+      }
       sawPackageFlag = true;
       continue;
     }
@@ -128,22 +158,30 @@ function parseNpxArgs(args: string[]): ParsedInvocation | null {
 
   if (sawPackageFlag) {
     const binName = positionals[0];
-    if (!packageSpec || !binName) return null;
+    if (!packageSpec || !binName) {
+      return null;
+    }
     const extraArgs = positionals.slice(1).concat(separatedAfter);
     return { packageSpec, binName, extraArgs };
   }
 
   const packagePositional = positionals[0];
-  if (!packagePositional) return null;
+  if (!packagePositional) {
+    return null;
+  }
   const extraArgs = positionals.slice(1).concat(separatedAfter);
   return { packageSpec: packagePositional, extraArgs };
 }
 
 function parseNpmExecArgs(args: string[]): ParsedInvocation | null {
-  if (args[0] !== "exec") return null;
+  if (args[0] !== "exec") {
+    return null;
+  }
   const execArgs = args.slice(1);
   const separatorIndex = execArgs.indexOf("--");
-  if (separatorIndex < 0) return null;
+  if (separatorIndex < 0) {
+    return null;
+  }
 
   const before = execArgs.slice(0, separatorIndex);
   const after = execArgs.slice(separatorIndex + 1);
@@ -151,19 +189,31 @@ function parseNpmExecArgs(args: string[]): ParsedInvocation | null {
   let packageSpec: string | undefined;
   for (let i = 0; i < before.length; i++) {
     const arg = before[i];
-    if (arg === undefined) return null;
-    if (arg === "-y" || arg === "--yes") continue;
+    if (arg === undefined) {
+      return null;
+    }
+    if (arg === "-y" || arg === "--yes") {
+      continue;
+    }
     if (arg === "--package") {
       const value = before[i + 1];
-      if (!value || value.startsWith("-")) return null;
-      if (!packageSpec) packageSpec = value;
+      if (!value || value.startsWith("-")) {
+        return null;
+      }
+      if (!packageSpec) {
+        packageSpec = value;
+      }
       i++;
       continue;
     }
     if (arg.startsWith("--package=")) {
       const value = arg.slice("--package=".length);
-      if (!value) return null;
-      if (!packageSpec) packageSpec = value;
+      if (!value) {
+        return null;
+      }
+      if (!packageSpec) {
+        packageSpec = value;
+      }
       continue;
     }
     if (arg.startsWith("-")) {
@@ -172,24 +222,34 @@ function parseNpmExecArgs(args: string[]): ParsedInvocation | null {
   }
 
   const binName = after[0];
-  if (!packageSpec || !binName) return null;
+  if (!packageSpec || !binName) {
+    return null;
+  }
   const extraArgs = after.slice(1);
   return { packageSpec, binName, extraArgs };
 }
 
 function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEntry | null {
   const cacheDir = getNpmCacheDir();
-  if (!cacheDir) return null;
+  if (!cacheDir) {
+    return null;
+  }
 
   const parsedSpec = parsePackageSpec(packageSpec);
-  if (!parsedSpec) return null;
+  if (!parsedSpec) {
+    return null;
+  }
 
   const { packageName, exactVersion } = parsedSpec;
   const packageDir = findCachedPackageDir(cacheDir, packageName, exactVersion);
-  if (!packageDir) return null;
+  if (!packageDir) {
+    return null;
+  }
 
   const packageJsonPath = join(packageDir, "package.json");
-  if (!existsSync(packageJsonPath)) return null;
+  if (!existsSync(packageJsonPath)) {
+    return null;
+  }
 
   let pkg: { bin?: string | Record<string, string>; version?: string } | null = null;
   try {
@@ -202,7 +262,9 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
   }
 
   const binField = pkg?.bin;
-  if (!binField) return null;
+  if (!binField) {
+    return null;
+  }
 
   const candidates = buildBinCandidates(packageName, binName);
   let chosenBinName: string | undefined;
@@ -228,14 +290,18 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
     }
   }
 
-  if (!binRel) return null;
+  if (!binRel) {
+    return null;
+  }
 
   const nodeModulesDir = findNodeModulesDir(packageDir);
   const binLink = chosenBinName ? join(nodeModulesDir, ".bin", chosenBinName) : null;
   let resolvedBin = binLink && existsSync(binLink) ? safeRealpath(binLink) : "";
   if (!resolvedBin) {
     resolvedBin = resolve(packageDir, binRel);
-    if (!existsSync(resolvedBin)) return null;
+    if (!existsSync(resolvedBin)) {
+      return null;
+    }
   }
 
   const isJs = detectJsBinary(resolvedBin);
@@ -256,7 +322,7 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
       const proc = crossSpawn(
         "npm",
         ["exec", "--yes", "--package", packageSpec, "--", "node", "-e", "1"],
-        { stdio: "ignore" }
+        { stdio: "ignore" },
       );
       const timer = setTimeout(() => {
         proc.kill();
@@ -280,7 +346,9 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
       });
     });
   } catch (error) {
-    if (signal?.aborted) throwIfAborted(signal);
+    if (signal?.aborted) {
+      throwIfAborted(signal);
+    }
     // Ignore failures, resolution will fall back to original command
   }
   throwIfAborted(signal);
@@ -288,13 +356,19 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
 
 function buildBinCandidates(packageName: string, explicitBin?: string): string[] {
   const candidates: string[] = [];
-  if (explicitBin) candidates.push(explicitBin);
+  if (explicitBin) {
+    candidates.push(explicitBin);
+  }
 
   if (packageName.startsWith("@")) {
     const namePart = packageName.split("/")[1] ?? "";
     const scopePart = packageName.split("/")[0]?.replace("@", "") ?? "";
-    if (namePart) candidates.push(namePart);
-    if (scopePart && namePart) candidates.push(`${scopePart}-${namePart}`);
+    if (namePart) {
+      candidates.push(namePart);
+    }
+    if (scopePart && namePart) {
+      candidates.push(`${scopePart}-${namePart}`);
+    }
   } else {
     candidates.push(packageName);
   }
@@ -304,13 +378,17 @@ function buildBinCandidates(packageName: string, explicitBin?: string): string[]
 
 function parsePackageSpec(spec: string): ParsedPackageSpec | null {
   const trimmed = spec.trim();
-  if (!trimmed) return null;
+  if (!trimmed) {
+    return null;
+  }
 
   let packageName: string;
   let requestedVersion: string | undefined;
   if (trimmed.startsWith("@")) {
     const slashIndex = trimmed.indexOf("/");
-    if (slashIndex < 0) return null;
+    if (slashIndex < 0) {
+      return null;
+    }
     const atIndex = trimmed.lastIndexOf("@");
     if (atIndex > slashIndex) {
       packageName = trimmed.slice(0, atIndex);
@@ -328,10 +406,15 @@ function parsePackageSpec(spec: string): ParsedPackageSpec | null {
     }
   }
 
-  if (!packageName) return null;
+  if (!packageName) {
+    return null;
+  }
   const normalizedVersion = requestedVersion?.replace(/^=/, "").replace(/^v/i, "");
   // Let npm resolve ranges and tags rather than choosing an arbitrary cached version.
-  if (requestedVersion !== undefined && (!normalizedVersion || !EXACT_PACKAGE_VERSION_RE.test(normalizedVersion))) {
+  if (
+    requestedVersion !== undefined &&
+    (!normalizedVersion || !EXACT_PACKAGE_VERSION_RE.test(normalizedVersion))
+  ) {
     return null;
   }
   return {
@@ -348,17 +431,21 @@ function defaultBinName(packageName: string): string {
   return packageName;
 }
 
-function findCachedPackageDir(cacheDir: string, packageName: string, exactVersion?: string): string | null {
+function findCachedPackageDir(
+  cacheDir: string,
+  packageName: string,
+  exactVersion?: string,
+): string | null {
   const npxDir = join(cacheDir, "_npx");
-  if (!existsSync(npxDir)) return null;
+  if (!existsSync(npxDir)) {
+    return null;
+  }
 
-  const packagePathParts = packageName.startsWith("@")
-    ? packageName.split("/")
-    : [packageName];
+  const packagePathParts = packageName.startsWith("@") ? packageName.split("/") : [packageName];
 
   const candidates = readdirSync(npxDir, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => {
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
       const full = join(npxDir, entry.name);
       const mtime = safeStatMtime(full);
       return { name: entry.name, mtime };
@@ -368,11 +455,15 @@ function findCachedPackageDir(cacheDir: string, packageName: string, exactVersio
   for (const entry of candidates) {
     const pkgDir = join(npxDir, entry.name, "node_modules", ...packagePathParts);
     const packageJsonPath = join(pkgDir, "package.json");
-    if (!existsSync(packageJsonPath)) continue;
+    if (!existsSync(packageJsonPath)) {
+      continue;
+    }
     if (exactVersion) {
       try {
         const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version?: unknown };
-        if (pkg.version !== exactVersion) continue;
+        if (pkg.version !== exactVersion) {
+          continue;
+        }
       } catch {
         continue;
       }
@@ -394,7 +485,9 @@ function findNodeModulesDir(packageDir: string): string {
 
 function detectJsBinary(binPath: string): boolean {
   const ext = extname(binPath).toLowerCase();
-  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") return true;
+  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") {
+    return true;
+  }
   try {
     const fd = openSync(binPath, "r");
     try {
@@ -413,7 +506,9 @@ function detectJsBinary(binPath: string): boolean {
 let npmCacheDirCached: string | null | undefined;
 
 function getNpmCacheDir(): string | null {
-  if (npmCacheDirCached !== undefined) return npmCacheDirCached;
+  if (npmCacheDirCached !== undefined) {
+    return npmCacheDirCached;
+  }
   if (process.env.NPM_CONFIG_CACHE) {
     npmCacheDirCached = process.env.NPM_CONFIG_CACHE;
     return npmCacheDirCached;
@@ -439,12 +534,20 @@ function getNpxCachePath(): string {
 
 function loadCache(): NpxCache | null {
   const cachePath = getNpxCachePath();
-  if (!existsSync(cachePath)) return null;
+  if (!existsSync(cachePath)) {
+    return null;
+  }
   try {
     const raw = JSON.parse(readFileSync(cachePath, "utf-8"));
-    if (!raw || typeof raw !== "object") return null;
-    if (raw.version !== CACHE_VERSION) return null;
-    if (!raw.entries || typeof raw.entries !== "object") return null;
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    if (raw.version !== CACHE_VERSION) {
+      return null;
+    }
+    if (!raw.entries || typeof raw.entries !== "object") {
+      return null;
+    }
     return raw as NpxCache;
   } catch {
     return null;
@@ -456,7 +559,7 @@ function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
   const dir = dirname(cachePath);
   mkdirSync(dir, { recursive: true });
 
-  let merged: NpxCache = { version: CACHE_VERSION, entries: {} };
+  const merged: NpxCache = { version: CACHE_VERSION, entries: {} };
   try {
     if (existsSync(cachePath)) {
       const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as NpxCache;

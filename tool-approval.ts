@@ -20,12 +20,17 @@ export function isToolCallApprovalRequired(
   toolMeta: Pick<ToolMetadata, "originalName">,
 ): boolean {
   const definition = config.mcpServers[serverName];
-  const approval = definition?.approveTools !== undefined
-    ? definition.approveTools
-    : config.settings?.approveTools;
+  const approval =
+    definition?.approveTools !== undefined
+      ? definition.approveTools
+      : config.settings?.approveTools;
 
-  if (approval === true) return true;
-  if (!Array.isArray(approval) || approval.length === 0) return false;
+  if (approval === true) {
+    return true;
+  }
+  if (!Array.isArray(approval) || approval.length === 0) {
+    return false;
+  }
 
   const prefix = resolveToolPrefix(definition, config.settings?.toolPrefix);
   return matchesToolPattern(
@@ -60,10 +65,11 @@ export async function ensureToolCallApproved(
   const title = `MCP: ${sanitizeTerminalText(serverName)} wants to run ${sanitizeTerminalText(toolMeta.originalName)}`;
   const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
   const decision = await abortable(
-    state.ui.select(
-      `${title}\n\nArguments:\n${preview}`,
-      ["Allow once", "Allow for session", "Deny"],
-    ),
+    state.ui.select(`${title}\n\nArguments:\n${preview}`, [
+      "Allow once",
+      "Allow for session",
+      "Deny",
+    ]),
     ownedSignal,
   );
 

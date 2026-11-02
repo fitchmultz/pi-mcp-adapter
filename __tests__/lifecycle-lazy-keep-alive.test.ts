@@ -34,7 +34,9 @@ class FakeManager {
 
   async connect(name: string): Promise<FakeConnection> {
     this.connectCalls.push(name);
-    if (this.connectError) throw this.connectError;
+    if (this.connectError) {
+      throw this.connectError;
+    }
     const connection: FakeConnection = { status: "connected" };
     this.connections.set(name, connection);
     return connection;
@@ -91,7 +93,9 @@ describe("lazy-keep-alive lifecycle", () => {
     lifecycle.registerServer("srv", def, { idleTimeout: 1 });
     fake.setConnection("srv", "connected");
     fake.idleResponses.set("srv", true);
-    fake.close = vi.fn(async () => { throw new Error("idle close failed \u001b]52;c;secret\u0007"); });
+    fake.close = vi.fn(async () => {
+      throw new Error("idle close failed \u001b]52;c;secret\u0007");
+    });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const unhandled = vi.fn();
     process.on("unhandledRejection", unhandled);
@@ -139,7 +143,9 @@ describe("lazy-keep-alive lifecycle", () => {
 
     expect(onFailure).toHaveBeenCalledWith("srv", fake.connectError);
     expect(onSuccess).not.toHaveBeenCalled();
-    expect(consoleError).toHaveBeenCalledWith("MCP: Failed to reconnect to srv: server exited safely");
+    expect(consoleError).toHaveBeenCalledWith(
+      "MCP: Failed to reconnect to srv: server exited safely",
+    );
     expect(consoleError.mock.calls[0]![0]).not.toContain("clipboard-secret");
 
     fake.connectError = undefined;
@@ -150,7 +156,7 @@ describe("lazy-keep-alive lifecycle", () => {
 
   it("does not reconnect keep-alive servers while OAuth authorization is pending", async () => {
     const def = makeDefinition("keep-alive");
-    lifecycle = new McpLifecycleManager(fake as never, name => name === "srv");
+    lifecycle = new McpLifecycleManager(fake as never, (name) => name === "srv");
     lifecycle.registerServer("srv", def, { idleTimeout: 0 });
     lifecycle.markKeepAlive("srv", def);
     fake.setConnection("srv", "needs-auth");
@@ -191,7 +197,7 @@ describe("lazy-keep-alive lifecycle", () => {
     let current: typeof connection | undefined;
     const manager = {
       getConnection: vi.fn(() => current),
-      getAllConnections: vi.fn(() => current ? new Map([["srv", current]]) : new Map()),
+      getAllConnections: vi.fn(() => (current ? new Map([["srv", current]]) : new Map())),
       connect: vi.fn(async () => {
         current = connection;
         return connection;
@@ -200,7 +206,10 @@ describe("lazy-keep-alive lifecycle", () => {
     };
     const setStatus = vi.fn();
     const state = {
-      config: { settings: { showStatusIcon: false }, mcpServers: { srv: makeDefinition("lazy-keep-alive") } },
+      config: {
+        settings: { showStatusIcon: false },
+        mcpServers: { srv: makeDefinition("lazy-keep-alive") },
+      },
       manager,
       lifecycle: new McpLifecycleManager(manager as never),
       ui: { setStatus },
@@ -235,13 +244,18 @@ describe("lazy-keep-alive lifecycle", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     };
     const state = {
-      config: { settings: { toolPrefix: "server" }, mcpServers: { srv: makeDefinition("lazy-keep-alive") } },
+      config: {
+        settings: { toolPrefix: "server" },
+        mcpServers: { srv: makeDefinition("lazy-keep-alive") },
+      },
       manager,
       lifecycle: new McpLifecycleManager(manager as never),
-      toolMetadata: new Map([["srv", [{ name: "srv_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["srv", [{ name: "srv_search", originalName: "search", description: "Search" }]],
+      ]),
       serverInstructions: new Map(),
       failureTracker: new Map(),
       completedUiSessions: [],

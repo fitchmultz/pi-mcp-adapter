@@ -40,7 +40,11 @@ function createState(overrides: Record<string, unknown> = {}) {
         bearer: { url: "https://api.example.com/mcp", auth: "bearer" },
       },
     },
-    manager: { getConnection: vi.fn(() => ({ status: "connected" })), retire: vi.fn(), close: vi.fn(async () => {}) },
+    manager: {
+      getConnection: vi.fn(() => ({ status: "connected" })),
+      retire: vi.fn(),
+      close: vi.fn(async () => {}),
+    },
     oauthRuntime: { signal: new AbortController().signal },
     toolMetadata: new Map(),
     failureTracker: new Map([["demo", Date.now()]]),
@@ -54,7 +58,8 @@ describe("manual OAuth proxy actions", () => {
     vi.resetModules();
     mocks.completeAuthFromInput.mockReset().mockResolvedValue("authenticated");
     mocks.startAuth.mockReset().mockResolvedValue({
-      authorizationUrl: "https://auth.example.com/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A19876%2Fcallback",
+      authorizationUrl:
+        "https://auth.example.com/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A19876%2Fcallback",
     });
     mocks.supportsOAuth.mockReset().mockImplementation((definition) => definition.auth === "oauth");
     mocks.updateStatusBar.mockReset();
@@ -76,10 +81,16 @@ describe("manual OAuth proxy actions", () => {
       state.config.mcpServers.demo,
       { runtime: state.oauthRuntime },
     );
-    expect((result.content[0] as TextContent).text).toContain("Open this URL in your local browser");
+    expect((result.content[0] as TextContent).text).toContain(
+      "Open this URL in your local browser",
+    );
     expect((result.content[0] as TextContent).text).toContain("https://auth.example.com/authorize");
-    expect((result.content[0] as TextContent).text).toContain('mcp({ action: "auth-complete", server: "demo" })');
-    expect((result.content[0] as TextContent).text).toContain('args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" }');
+    expect((result.content[0] as TextContent).text).toContain(
+      'mcp({ action: "auth-complete", server: "demo" })',
+    );
+    expect((result.content[0] as TextContent).text).toContain(
+      'args: { redirectUrl: "PASTE_REDIRECT_URL_HERE" }',
+    );
     expect((result.content[0] as TextContent).text).toContain('args: { code: "PASTE_CODE_HERE" }');
     expect(result.details).toMatchObject({ mode: "auth-start", server: "demo" });
   });
@@ -98,14 +109,21 @@ describe("manual OAuth proxy actions", () => {
     const { executeAuthComplete } = await import("../proxy-modes.ts");
     const state = createState();
 
-    const result = await executeAuthComplete(state, "demo", "http://localhost:19876/callback?code=abc&state=state");
+    const result = await executeAuthComplete(
+      state,
+      "demo",
+      "http://localhost:19876/callback?code=abc&state=state",
+    );
 
     expect(mocks.completeAuthFromInput).toHaveBeenCalledWith(
       "demo",
       "http://localhost:19876/callback?code=abc&state=state",
       { runtime: state.oauthRuntime },
     );
-    expect(state.manager.retire).toHaveBeenCalledWith("demo", state.manager.getConnection.mock.results[0].value);
+    expect(state.manager.retire).toHaveBeenCalledWith(
+      "demo",
+      state.manager.getConnection.mock.results[0].value,
+    );
     expect(state.manager.close).not.toHaveBeenCalled();
     expect(state.failureTracker.has("demo")).toBe(false);
     expect(mocks.updateStatusBar).toHaveBeenCalledWith(state);

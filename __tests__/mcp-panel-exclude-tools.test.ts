@@ -36,13 +36,23 @@ describe("mcp-panel include/exclude tools", () => {
       ],
     };
     const done = vi.fn<(result: McpPanelResult) => void>();
-    const panel = createMcpPanel(config, { version: 2, servers: { docs: entry } }, new Map(), {
-      reconnect: async () => true,
-      canAuthenticate: () => false,
-      authenticate: async () => ({ ok: false }),
-      getConnectionStatus: () => "connected",
-      refreshCacheAfterReconnect: () => ({ ...entry, tools: [...entry.tools, { name: "details" }] }),
-    }, { requestRender: () => {} }, done);
+    const panel = createMcpPanel(
+      config,
+      { version: 2, servers: { docs: entry } },
+      new Map(),
+      {
+        reconnect: async () => true,
+        canAuthenticate: () => false,
+        authenticate: async () => ({ ok: false }),
+        getConnectionStatus: () => "connected",
+        refreshCacheAfterReconnect: () => ({
+          ...entry,
+          tools: [...entry.tools, { name: "details" }],
+        }),
+      },
+      { requestRender: () => {} },
+      done,
+    );
     panel.handleInput("\r");
     let output = stripAnsi(panel.render(100).join("\n"));
     expect(output).not.toMatch(/app_only|excluded|read_guide|read_secret/);
@@ -65,15 +75,30 @@ describe("mcp-panel include/exclude tools", () => {
 
   it("omits resources disabled by policy and preserves legacy cache visibility", () => {
     const config: McpConfig = { mcpServers: { docs: { command: "node", exposeResources: false } } };
-    const panel = createMcpPanel(config, { version: 1, servers: { docs: {
-      configHash: computeServerHash(config.mcpServers.docs!), cachedAt: Date.now(),
-      tools: [{ name: "search" }, { name: "app_only", uiVisibility: ["app"] }],
-      resources: [{ name: "guide", uri: "docs://guide" }],
-    } } }, new Map(), {
-      reconnect: async () => true, canAuthenticate: () => false,
-      authenticate: async () => ({ ok: false }), getConnectionStatus: () => "idle",
-      refreshCacheAfterReconnect: () => null,
-    }, { requestRender: () => {} }, () => {});
+    const panel = createMcpPanel(
+      config,
+      {
+        version: 1,
+        servers: {
+          docs: {
+            configHash: computeServerHash(config.mcpServers.docs!),
+            cachedAt: Date.now(),
+            tools: [{ name: "search" }, { name: "app_only", uiVisibility: ["app"] }],
+            resources: [{ name: "guide", uri: "docs://guide" }],
+          },
+        },
+      },
+      new Map(),
+      {
+        reconnect: async () => true,
+        canAuthenticate: () => false,
+        authenticate: async () => ({ ok: false }),
+        getConnectionStatus: () => "idle",
+        refreshCacheAfterReconnect: () => null,
+      },
+      { requestRender: () => {} },
+      () => {},
+    );
     panel.handleInput("\r");
     const output = stripAnsi(panel.render(100).join("\n"));
     expect(output).not.toMatch(/app_only|read_guide|resources \/ read-resource/);
@@ -103,9 +128,7 @@ describe("mcp-panel include/exclude tools", () => {
             { name: "get_screenshot", description: "Screenshot" },
             { name: "get_nodes", description: "Nodes" },
           ],
-          resources: [
-            { name: "figjam", uri: "ui://figjam", description: "FigJam" },
-          ],
+          resources: [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }],
         },
       },
     };

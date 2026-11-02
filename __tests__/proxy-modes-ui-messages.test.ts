@@ -28,7 +28,10 @@ function createState(prompts: string[]): McpExtensionState {
 
 describe("executeUiMessages", () => {
   it.each([
-    ["inline", "empty"], ["inline", "valid-prefix"], ["paged", "empty"], ["paged", "valid-prefix"],
+    ["inline", "empty"],
+    ["inline", "valid-prefix"],
+    ["paged", "empty"],
+    ["paged", "valid-prefix"],
   ])("retains %s sessions when accepted history is truncated to %s", async (mode, truncation) => {
     const root = await mkdtemp(join(tmpdir(), "mcp-ui-truncated-"));
     try {
@@ -38,23 +41,36 @@ describe("executeUiMessages", () => {
       const original = await readFile(history.messages.historyRef!, "utf8");
       const state = createState([]);
       state.outputDirectory = root;
-      state.config = { mcpServers: {}, settings: { outputGuard: mode === "paged"
-        ? { maxBytes: 1000, detailsMaxBytes: 1 } : {} } };
+      state.config = {
+        mcpServers: {},
+        settings: { outputGuard: mode === "paged" ? { maxBytes: 1000, detailsMaxBytes: 1 } : {} },
+      };
       state.completedUiSessions[0]!.messages = history.messages;
-      await writeFile(history.messages.historyRef!, truncation === "empty" ? "" : original.split("\n")[0] + "\n");
+      await writeFile(
+        history.messages.historyRef!,
+        truncation === "empty" ? "" : original.split("\n")[0] + "\n",
+      );
       const failed = await executeUiMessages(state);
-      expect(failed).toMatchObject({ isError: true, details: { error: "ui_history_delivery_failed", cleared: false } });
+      expect(failed).toMatchObject({
+        isError: true,
+        details: { error: "ui_history_delivery_failed", cleared: false },
+      });
       expect(state.completedUiSessions).toHaveLength(1);
       await writeFile(history.messages.historyRef!, original);
       const recovered = await executeUiMessages(state);
       expect(recovered.details.cleared).toBe(true);
       const delivered = recovered.details.resultRef
         ? await readFile(recovered.details.resultRef as string, "utf8")
-        : recovered.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+        : recovered.content
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("\n");
       expect(delivered).toContain("accepted first");
       expect(delivered).toContain("accepted second");
       expect(state.completedUiSessions).toEqual([]);
-    } finally { await rm(root, { recursive: true, force: true }); }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("keeps small disk-backed histories inline with category order and private permissions", async () => {
@@ -69,7 +85,11 @@ describe("executeUiMessages", () => {
       state.outputDirectory = root;
       state.completedUiSessions[0]!.messages = history.messages;
       const result = await executeUiMessages(state);
-      expect(result.details).toMatchObject({ prompts: ["first", "second"], intents: [{ intent: "navigate", params: { to: "/home" } }], cleared: true });
+      expect(result.details).toMatchObject({
+        prompts: ["first", "second"],
+        intents: [{ intent: "navigate", params: { to: "/home" } }],
+        cleared: true,
+      });
       const block = result.content[0]!;
       const text = block.type === "text" ? block.text : "";
       expect(text.indexOf("### Prompts")).toBeLessThan(text.indexOf("### Intents"));
@@ -77,45 +97,56 @@ describe("executeUiMessages", () => {
       expect((await stat(history.messages.historyRef!)).mode & 0o777).toBe(0o600);
       expect(history.messages.prompts).toEqual([]);
       expect(state.completedUiSessions).toEqual([]);
-    } finally { await rm(root, { recursive: true, force: true }); }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
-  it("streams 10,000 retained events and pages the complete receipt without draining on failed delivery", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mcp-ui-large-"));
-    try {
-      const history = createUiMessageHistory(root);
-      for (let i = 0; i < 10_000; i++) history.append("prompts", `event-${i} ${"x".repeat(100)}`);
-      expect(history.messages.historyCount).toBe(10_000);
-      expect(history.messages.prompts).toHaveLength(0);
-      expect(history.messages.historyBytes).toBeGreaterThan(1_000_000);
-      const state = createState([]);
-      state.completedUiSessions[0]!.messages = history.messages;
-      const blocked = join(root, "not-a-directory");
-      await writeFile(blocked, "blocked");
-      state.outputDirectory = blocked;
-      const failed = await executeUiMessages(state);
-      expect(failed).toMatchObject({ isError: true, details: { cleared: false } });
-      expect(state.completedUiSessions).toHaveLength(1);
-      state.outputDirectory = root;
-      const delivered = await executeUiMessages(state);
-      expect(delivered.details.cleared).toBe(true);
-      expect(state.completedUiSessions).toEqual([]);
-      const ref = delivered.details.resultRef as string;
-      const full = await readFile(ref, "utf8");
-      expect(full.match(/\n- event-/g)).toHaveLength(10_000);
-      expect(full).toContain("event-9999 ");
-      const page = await readMcpResult({ ref, limit: 500 }, { outputDirectory: root });
-      expect(page.details).toMatchObject({ nextOffset: 500 });
-      expect(page.content[0]).toEqual({ type: "text", text: full.slice(0, 500) });
-      expect(delivered.details.historyRefs).toEqual([history.messages.historyRef]);
-    } finally { await rm(root, { recursive: true, force: true }); }
-  // The same 10,000 real flushes take over 90s on APFS; do not skip durability work.
-  }, process.platform === "darwin" ? 180_000 : 60_000);
+  it(
+    "streams 10,000 retained events and pages the complete receipt without draining on failed delivery",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "mcp-ui-large-"));
+      try {
+        const history = createUiMessageHistory(root);
+        for (let i = 0; i < 10_000; i++) {
+          history.append("prompts", `event-${i} ${"x".repeat(100)}`);
+        }
+        expect(history.messages.historyCount).toBe(10_000);
+        expect(history.messages.prompts).toHaveLength(0);
+        expect(history.messages.historyBytes).toBeGreaterThan(1_000_000);
+        const state = createState([]);
+        state.completedUiSessions[0]!.messages = history.messages;
+        const blocked = join(root, "not-a-directory");
+        await writeFile(blocked, "blocked");
+        state.outputDirectory = blocked;
+        const failed = await executeUiMessages(state);
+        expect(failed).toMatchObject({ isError: true, details: { cleared: false } });
+        expect(state.completedUiSessions).toHaveLength(1);
+        state.outputDirectory = root;
+        const delivered = await executeUiMessages(state);
+        expect(delivered.details.cleared).toBe(true);
+        expect(state.completedUiSessions).toEqual([]);
+        const ref = delivered.details.resultRef as string;
+        const full = await readFile(ref, "utf8");
+        expect(full.match(/\n- event-/g)).toHaveLength(10_000);
+        expect(full).toContain("event-9999 ");
+        const page = await readMcpResult({ ref, limit: 500 }, { outputDirectory: root });
+        expect(page.details).toMatchObject({ nextOffset: 500 });
+        expect(page.content[0]).toEqual({ type: "text", text: full.slice(0, 500) });
+        expect(delivered.details.historyRefs).toEqual([history.messages.historyRef]);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+      // The same 10,000 real flushes take over 90s on APFS; do not skip durability work.
+    },
+    process.platform === "darwin" ? 180_000 : 60_000,
+  );
 
   it("retains failed history writes in memory and truthfully reports recovery", async () => {
     const root = await mkdtemp(join(tmpdir(), "mcp-ui-failure-"));
     try {
-      const blocked = join(root, "blocked"); await writeFile(blocked, "file");
+      const blocked = join(root, "blocked");
+      await writeFile(blocked, "file");
       const history = createUiMessageHistory(blocked);
       expect(history.append("prompts", "recover me")).toContain("remain in memory");
       expect(history.append("notifications", "also recover")).toContain("remain in memory");
@@ -123,9 +154,13 @@ describe("executeUiMessages", () => {
       state.completedUiSessions[0]!.messages = history.messages;
       const recovered = await executeUiMessages(state);
       expect(recovered.details.prompts).toEqual(["recover me"]);
-      expect(recovered.content[0]).toMatchObject({ text: expect.stringContaining("History persistence warning") });
+      expect(recovered.content[0]).toMatchObject({
+        text: expect.stringContaining("History persistence warning"),
+      });
       expect(state.completedUiSessions).toEqual([]);
-    } finally { await rm(root, { recursive: true, force: true }); }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("normalizes canonical handoff prompts into structured intents", async () => {
@@ -188,13 +223,17 @@ describe("executeUiMessages", () => {
     const result = await executeUiMessages(state);
 
     expect(result.content[0]).toMatchObject({
-      text: expect.stringContaining("### Context updates:\n- {\"content\":[{\"type\":\"text\",\"text\":\"Selected node A\"}]}"),
+      text: expect.stringContaining(
+        '### Context updates:\n- {"content":[{"type":"text","text":"Selected node A"}]}',
+      ),
     });
     expect(result.details).toMatchObject({
-      contexts: [{
-        payload: { content: [{ type: "text", text: "Selected node A" }] },
-        truncated: false,
-      }],
+      contexts: [
+        {
+          payload: { content: [{ type: "text", text: "Selected node A" }] },
+          truncated: false,
+        },
+      ],
       cleared: true,
     });
   });

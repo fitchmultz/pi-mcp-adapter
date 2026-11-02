@@ -43,7 +43,7 @@ function directSpec(originalName: string): DirectToolSpec {
 
 describe("MCP output schema validation", () => {
   afterEach(async () => {
-    await Promise.all(managers.splice(0).map(manager => manager.closeAll()));
+    await Promise.all(managers.splice(0).map((manager) => manager.closeAll()));
   });
 
   it.each([
@@ -57,14 +57,24 @@ describe("MCP output schema validation", () => {
     managers.push(manager);
     const state = createState(manager, [name]);
 
-    const result = path === "proxy"
-      ? await executeCall(state, `real_${name}`, {})
-      : await createDirectToolExecutor(() => state, () => null, directSpec(name))("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
+    const result =
+      path === "proxy"
+        ? await executeCall(state, `real_${name}`, {})
+        : await createDirectToolExecutor(
+            () => state,
+            () => null,
+            directSpec(name),
+          )("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
 
     expect(result.details).not.toMatchObject({ error: "call_failed" });
     expect(result.content[0]).toEqual({ type: "text", text: name });
-    expect(result.content[1]).toEqual({ type: "text", text: JSON.stringify({ values: ["ok", 1] }, null, 2) });
-    expect(result.content[2]).toMatchObject({ text: expect.stringContaining(result.details.resultRef as string) });
+    expect(result.content[1]).toEqual({
+      type: "text",
+      text: JSON.stringify({ values: ["ok", 1] }, null, 2),
+    });
+    expect(result.content[2]).toMatchObject({
+      text: expect.stringContaining(result.details.resultRef as string),
+    });
   });
 
   it.each([
@@ -78,9 +88,14 @@ describe("MCP output schema validation", () => {
     managers.push(manager);
     const state = createState(manager, [name]);
 
-    const result = path === "proxy"
-      ? await executeCall(state, `real_${name}`, {})
-      : await createDirectToolExecutor(() => state, () => null, directSpec(name))("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
+    const result =
+      path === "proxy"
+        ? await executeCall(state, `real_${name}`, {})
+        : await createDirectToolExecutor(
+            () => state,
+            () => null,
+            directSpec(name),
+          )("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
 
     expect(result.details).toMatchObject({ error: "call_failed" });
     expect(result.content[0]).toMatchObject({

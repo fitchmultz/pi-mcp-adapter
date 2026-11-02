@@ -9,11 +9,11 @@ import { getOAuthCallbackPath, getOAuthCallbackPort } from "../mcp-oauth-provide
 
 describe("manual OAuth callback reservations", () => {
   beforeEach(async () => {
-    await stopCallbackServer().catch(() => undefined);
+    await stopCallbackServer().catch(() => {});
   });
 
   afterEach(async () => {
-    await stopCallbackServer().catch(() => undefined);
+    await stopCallbackServer().catch(() => {});
   });
 
   it("accepts successful callbacks for reserved manual auth states", async () => {
@@ -33,8 +33,15 @@ describe("manual OAuth callback reservations", () => {
   });
 
   it("keeps reserved manual auth states after provider error callbacks", async () => {
-    await ensureCallbackServer({ oauthState: "manual-error-retry", reserveState: true,
-      validate: ({ iss }) => validateAuthorizationResponseIssuer({ iss, expectedIssuer: "https://auth.example.com", issParameterSupported: false }),
+    await ensureCallbackServer({
+      oauthState: "manual-error-retry",
+      reserveState: true,
+      validate: ({ iss }) =>
+        validateAuthorizationResponseIssuer({
+          iss,
+          expectedIssuer: "https://auth.example.com",
+          issParameterSupported: false,
+        }),
     });
 
     const errorResponse = await fetch(

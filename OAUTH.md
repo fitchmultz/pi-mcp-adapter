@@ -42,6 +42,7 @@ For most MCP servers, you only need the URL:
 ```
 
 OAuth is automatically enabled for HTTP servers. The SDK will:
+
 - Auto-detect if the server requires OAuth
 - Discover OAuth endpoints from the server
 - Reuse a configured/stored client, use CIMD when supported, or register dynamically
@@ -68,8 +69,6 @@ You can optionally provide a pre-registered client:
   }
 }
 ```
-
-
 
 ### Configuration Options
 
@@ -145,13 +144,13 @@ Set `oauth.privateKeyJwt` to authenticate native token requests with `private_ke
 }
 ```
 
-| Option | Meaning |
-| --- | --- |
-| `privateKey` | PKCS#8 PEM string, JWK object or JWK JSON string. Strings support `${VAR}`, `$env:VAR`, `{env:VAR}` and existing `!command` / `!!` conventions, resolved only when authenticating. |
-| `algorithm` | Required asymmetric JOSE algorithm. Native PEM import supports RS, PS and ES families; EdDSA / Ed25519 require a JWK. The SDK validates supported key/algorithm combinations. HMAC (`HS*`) and `none` are not private-key authentication. |
-| `audience` | Optional nonempty JWT audience string; defaults to the discovered authorization-server issuer, then token URL. It does not change the request destination. |
-| `lifetimeSeconds` | Optional positive integer; native default is 300 seconds. |
-| `claims` | Optional object of additional JWT claims. Native `iss`, `sub`, `aud`, `iat`, `exp` and `jti` take precedence over overlapping entries. |
+| Option            | Meaning                                                                                                                                                                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `privateKey`      | PKCS#8 PEM string, JWK object or JWK JSON string. Strings support `${VAR}`, `$env:VAR`, `{env:VAR}` and existing `!command` / `!!` conventions, resolved only when authenticating.                                                        |
+| `algorithm`       | Required asymmetric JOSE algorithm. Native PEM import supports RS, PS and ES families; EdDSA / Ed25519 require a JWK. The SDK validates supported key/algorithm combinations. HMAC (`HS*`) and `none` are not private-key authentication. |
+| `audience`        | Optional nonempty JWT audience string; defaults to the discovered authorization-server issuer, then token URL. It does not change the request destination.                                                                                |
+| `lifetimeSeconds` | Optional positive integer; native default is 300 seconds.                                                                                                                                                                                 |
+| `claims`          | Optional object of additional JWT claims. Native `iss`, `sub`, `aud`, `iat`, `exp` and `jti` take precedence over overlapping entries.                                                                                                    |
 
 Keys must belong to an externally registered `clientId`, or a custom `clientMetadataUrl` whose document describes `private_key_jwt` and provides the matching public verification key. The SDK signs issuer and subject as the actual selected client ID. Configured and usable stored clients retain their existing priority. If a previous login uses the shared method-`none` browser identity or a shared secret, private-key authentication fails before key resolution instead of silently migrating or erasing that login. `clientSecret` and `privateKeyJwt` cannot be configured together. The shared Fitch document cannot identify a private-key client. Explicit pre-registration and opaque DCR client IDs are not classified as shared CIMD merely because their strings resemble a document URL.
 
@@ -197,6 +196,7 @@ Run the `/mcp-auth` command with the server name:
 Manual `/mcp-auth` is the default flow. With `settings.autoAuth: true`, proxy/direct/script tool execution may authenticate when a server needs auth or rejects a call for insufficient scope. Browser authorization still requires an interactive host, and each invocation gets at most one automatic auth attempt and one post-auth retry. Initial sign-in does not grant a second automatic consent attempt in the same invocation.
 
 For browser authorization, this will:
+
 1. Start the callback server lazily on an OS-assigned local port, or on the exact `oauth.redirectUri` port for pre-registered callbacks
 2. Discover OAuth endpoints automatically
 3. Select a configured/stored client, CIMD, or dynamic registration
@@ -253,6 +253,7 @@ mcp({ action: "call", server: "my-oauth-server", tool: "my-tool", args: { key: "
 ```
 
 The SDK automatically:
+
 - Adds the access token to requests
 - Refreshes expired tokens automatically
 - Re-authenticates if tokens are invalid
@@ -434,12 +435,8 @@ The default remains strict, including when `protocolVersion` is `"legacy"`. The 
 The implementation uses the official split MCP SDK v2 client and OAuth APIs. MCP Apps also uses this split SDK graph; SDK v1 is not a runtime dependency:
 
 ```typescript
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
-import {
-  auth,
-  UnauthorizedError,
-  type OAuthClientProvider,
-} from "@modelcontextprotocol/client"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { auth, UnauthorizedError, type OAuthClientProvider } from "@modelcontextprotocol/client";
 ```
 
 The `McpOAuthProvider` class implements `OAuthClientProvider` and is passed to `StreamableHTTPClientTransport`:
@@ -447,7 +444,7 @@ The `McpOAuthProvider` class implements `OAuthClientProvider` and is passed to `
 ```typescript
 const transport = new StreamableHTTPClientTransport(url, {
   authProvider: new McpOAuthProvider(serverName, serverUrl, config, callbacks),
-})
+});
 ```
 
 ## References

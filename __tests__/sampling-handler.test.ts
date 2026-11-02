@@ -53,7 +53,10 @@ const geminiFlash = {
 
 type SamplingTestOptions = Omit<SamplingHandlerOptions, "modelRegistry" | "ui"> & {
   ui?: Pick<ExtensionUIContext, "confirm"> | undefined;
-  modelRegistry: Pick<SamplingHandlerOptions["modelRegistry"], "getAvailable" | "getApiKeyAndHeaders">;
+  modelRegistry: Pick<
+    SamplingHandlerOptions["modelRegistry"],
+    "getAvailable" | "getApiKeyAndHeaders"
+  >;
 };
 
 function createOptions(overrides: Partial<SamplingTestOptions> = {}): SamplingHandlerOptions {
@@ -71,8 +74,8 @@ function createOptions(overrides: Partial<SamplingTestOptions> = {}): SamplingHa
       ...modelRegistryOverride,
       complete: mocks.complete,
     },
-    getCurrentModel: vi.fn(() => undefined),
-    getSignal: vi.fn(() => undefined),
+    getCurrentModel: vi.fn(() => {}),
+    getSignal: vi.fn(() => {}),
     ...rest,
   };
   return options as unknown as SamplingHandlerOptions;
@@ -83,11 +86,14 @@ async function runBasicSampling(
   modelPreferences?: ModelPreferences,
 ): Promise<void> {
   const { handleSamplingRequest } = await import("../sampling-handler.ts");
-  await handleSamplingRequest(createOptions(overrides), createSamplingRequest({
-    ...(modelPreferences ? { modelPreferences } : {}),
-    messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
-    maxTokens: 50,
-  }));
+  await handleSamplingRequest(
+    createOptions(overrides),
+    createSamplingRequest({
+      ...(modelPreferences ? { modelPreferences } : {}),
+      messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+      maxTokens: 50,
+    }),
+  );
 }
 
 function createSamplingRequest(params: CreateMessageRequest["params"]): CreateMessageRequest {
@@ -110,13 +116,16 @@ describe("sampling handler", () => {
 
   it("converts approved MCP sampling requests through Pi's model runtime", async () => {
     const { handleSamplingRequest } = await import("../sampling-handler.ts");
-    const result = await handleSamplingRequest(createOptions(), createSamplingRequest({
-      systemPrompt: "Translate tersely.",
-      messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
-      maxTokens: 50,
-      temperature: 0.2,
-      metadata: { locale: "fr" },
-    }));
+    const result = await handleSamplingRequest(
+      createOptions(),
+      createSamplingRequest({
+        systemPrompt: "Translate tersely.",
+        messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+        maxTokens: 50,
+        temperature: 0.2,
+        metadata: { locale: "fr" },
+      }),
+    );
 
     expect(mocks.complete).toHaveBeenCalledWith(
       model,
@@ -145,23 +154,33 @@ describe("sampling handler", () => {
     });
   });
 
-  it.each(["openai-responses", "openai-codex-responses"] as const)("omits Astra's rejected temperature in nested %s sampling", async api => {
-    const { handleSamplingRequest } = await import("../sampling-handler.ts");
-    const astra = { ...model, provider: "openai", id: "gpt-6-astra", api };
-    await handleSamplingRequest(createOptions({ getCurrentModel: () => astra }), createSamplingRequest({
-      messages: [{ role: "user", content: { type: "text", text: "Hello" } }], maxTokens: 50, temperature: 0.2,
-    }));
-    expect(mocks.complete.mock.calls[0]![2]).not.toHaveProperty("temperature");
-    expect(mocks.complete.mock.calls[0]![2]).toHaveProperty("maxTokens", 50);
-  });
+  it.each(["openai-responses", "openai-codex-responses"] as const)(
+    "omits Astra's rejected temperature in nested %s sampling",
+    async (api) => {
+      const { handleSamplingRequest } = await import("../sampling-handler.ts");
+      const astra = { ...model, provider: "openai", id: "gpt-6-astra", api };
+      await handleSamplingRequest(
+        createOptions({ getCurrentModel: () => astra }),
+        createSamplingRequest({
+          messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+          maxTokens: 50,
+          temperature: 0.2,
+        }),
+      );
+      expect(mocks.complete.mock.calls[0]![2]).not.toHaveProperty("temperature");
+      expect(mocks.complete.mock.calls[0]![2]).toHaveProperty("maxTokens", 50);
+    },
+  );
 
   it("requires UI approval unless auto-approve is enabled", async () => {
     const { handleSamplingRequest } = await import("../sampling-handler.ts");
 
-    await expect(handleSamplingRequest(
-      createOptions({ autoApprove: false, ui: undefined }),
-      createSamplingRequest({ messages: [], maxTokens: 50 }),
-    )).rejects.toThrow("MCP sampling requires interactive approval");
+    await expect(
+      handleSamplingRequest(
+        createOptions({ autoApprove: false, ui: undefined }),
+        createSamplingRequest({ messages: [], maxTokens: 50 }),
+      ),
+    ).rejects.toThrow("MCP sampling requires interactive approval");
     expect(mocks.complete).not.toHaveBeenCalled();
   });
 
@@ -169,11 +188,14 @@ describe("sampling handler", () => {
     const { handleSamplingRequest } = await import("../sampling-handler.ts");
     const ui = { confirm: vi.fn(async (_title: string, _message: string) => true) };
 
-    await handleSamplingRequest(createOptions({ autoApprove: false, ui }), createSamplingRequest({
-      systemPrompt: "Translate tersely.",
-      messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
-      maxTokens: 50,
-    }));
+    await handleSamplingRequest(
+      createOptions({ autoApprove: false, ui }),
+      createSamplingRequest({
+        systemPrompt: "Translate tersely.",
+        messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+        maxTokens: 50,
+      }),
+    );
 
     expect(ui.confirm).toHaveBeenCalledTimes(2);
     expect(ui.confirm.mock.calls[0]![0]).toBe("Approve MCP sampling request");
@@ -184,78 +206,98 @@ describe("sampling handler", () => {
   });
 
   it("uses model preference hints before the current conversation model", async () => {
-    await runBasicSampling({
-      modelRegistry: {
-        getAvailable: vi.fn(() => [haiku, opus]),
-        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+    await runBasicSampling(
+      {
+        modelRegistry: {
+          getAvailable: vi.fn(() => [haiku, opus]),
+          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+        },
+        getCurrentModel: vi.fn(() => opus),
       },
-      getCurrentModel: vi.fn(() => opus),
-    }, { hints: [{ name: "haiku" }] });
+      { hints: [{ name: "haiku" }] },
+    );
 
     expect(mocks.complete.mock.calls[0]![0]).toBe(haiku);
   });
 
   it("matches model preference hints case-insensitively after trimming", async () => {
-    await runBasicSampling({
-      modelRegistry: {
-        getAvailable: vi.fn(() => [haiku, opus]),
-        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+    await runBasicSampling(
+      {
+        modelRegistry: {
+          getAvailable: vi.fn(() => [haiku, opus]),
+          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+        },
+        getCurrentModel: vi.fn(() => opus),
       },
-      getCurrentModel: vi.fn(() => opus),
-    }, { hints: [{ name: " HAIKU " }] });
+      { hints: [{ name: " HAIKU " }] },
+    );
 
     expect(mocks.complete.mock.calls[0]![0]).toBe(haiku);
   });
 
   it("matches model preference hints against display names", async () => {
-    await runBasicSampling({
-      modelRegistry: {
-        getAvailable: vi.fn(() => [geminiFlash, opus]),
-        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+    await runBasicSampling(
+      {
+        modelRegistry: {
+          getAvailable: vi.fn(() => [geminiFlash, opus]),
+          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+        },
+        getCurrentModel: vi.fn(() => opus),
       },
-      getCurrentModel: vi.fn(() => opus),
-    }, { hints: [{ name: "2.5 Flash" }] });
+      { hints: [{ name: "2.5 Flash" }] },
+    );
 
     expect(mocks.complete.mock.calls[0]![0]).toBe(geminiFlash);
   });
 
   it("matches model preference hints against provider/id", async () => {
-    await runBasicSampling({
-      modelRegistry: {
-        getAvailable: vi.fn(() => [geminiFlash, opus]),
-        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+    await runBasicSampling(
+      {
+        modelRegistry: {
+          getAvailable: vi.fn(() => [geminiFlash, opus]),
+          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+        },
+        getCurrentModel: vi.fn(() => opus),
       },
-      getCurrentModel: vi.fn(() => opus),
-    }, { hints: [{ name: "google/gemini" }] });
+      { hints: [{ name: "google/gemini" }] },
+    );
 
     expect(mocks.complete.mock.calls[0]![0]).toBe(geminiFlash);
   });
 
   it("preserves preference order across multiple model hints", async () => {
-    await runBasicSampling({
-      modelRegistry: {
-        getAvailable: vi.fn(() => [haiku, geminiFlash, opus]),
-        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+    await runBasicSampling(
+      {
+        modelRegistry: {
+          getAvailable: vi.fn(() => [haiku, geminiFlash, opus]),
+          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+        },
+        getCurrentModel: vi.fn(() => opus),
       },
-      getCurrentModel: vi.fn(() => opus),
-    }, { hints: [{ name: "gemini" }, { name: "haiku" }] });
+      { hints: [{ name: "gemini" }, { name: "haiku" }] },
+    );
 
     expect(mocks.complete.mock.calls[0]![0]).toBe(geminiFlash);
   });
 
   it("falls back when hinted models do not have configured auth", async () => {
     const getApiKeyAndHeaders = vi.fn(async (candidate: Model<Api>) => {
-      if (candidate.id === "claude-haiku") return { ok: false as const, error: "missing key" };
+      if (candidate.id === "claude-haiku") {
+        return { ok: false as const, error: "missing key" };
+      }
       return { ok: true as const, apiKey: "key" };
     });
 
-    await runBasicSampling({
-      modelRegistry: {
-        getAvailable: vi.fn(() => [haiku, opus]),
-        getApiKeyAndHeaders,
+    await runBasicSampling(
+      {
+        modelRegistry: {
+          getAvailable: vi.fn(() => [haiku, opus]),
+          getApiKeyAndHeaders,
+        },
+        getCurrentModel: vi.fn(() => opus),
       },
-      getCurrentModel: vi.fn(() => opus),
-    }, { hints: [{ name: "haiku" }] });
+      { hints: [{ name: "haiku" }] },
+    );
 
     expect(getApiKeyAndHeaders).toHaveBeenNthCalledWith(1, haiku);
     expect(getApiKeyAndHeaders).toHaveBeenNthCalledWith(2, opus);
@@ -277,21 +319,40 @@ describe("sampling handler", () => {
   it("rejects unsupported sampling features loudly", async () => {
     const { handleSamplingRequest } = await import("../sampling-handler.ts");
 
-    await expect(handleSamplingRequest(createOptions(), createSamplingRequest({
-      messages: [{ role: "user", content: { type: "image", data: "abc", mimeType: "image/png" } }],
-      maxTokens: 50,
-    }))).rejects.toThrow("MCP sampling image content is not supported");
+    await expect(
+      handleSamplingRequest(
+        createOptions(),
+        createSamplingRequest({
+          messages: [
+            { role: "user", content: { type: "image", data: "abc", mimeType: "image/png" } },
+          ],
+          maxTokens: 50,
+        }),
+      ),
+    ).rejects.toThrow("MCP sampling image content is not supported");
 
-    await expect(handleSamplingRequest(createOptions(), createSamplingRequest({
-      messages: [{ role: "user", content: { type: "audio", data: "abc", mimeType: "audio/wav" } }],
-      maxTokens: 50,
-    }))).rejects.toThrow("MCP sampling audio content is not supported");
+    await expect(
+      handleSamplingRequest(
+        createOptions(),
+        createSamplingRequest({
+          messages: [
+            { role: "user", content: { type: "audio", data: "abc", mimeType: "audio/wav" } },
+          ],
+          maxTokens: 50,
+        }),
+      ),
+    ).rejects.toThrow("MCP sampling audio content is not supported");
 
-    await expect(handleSamplingRequest(createOptions(), createSamplingRequest({
-      messages: [],
-      maxTokens: 50,
-      includeContext: "thisServer",
-    }))).rejects.toThrow("MCP sampling context inclusion is not supported");
+    await expect(
+      handleSamplingRequest(
+        createOptions(),
+        createSamplingRequest({
+          messages: [],
+          maxTokens: 50,
+          includeContext: "thisServer",
+        }),
+      ),
+    ).rejects.toThrow("MCP sampling context inclusion is not supported");
 
     expect(mocks.complete).not.toHaveBeenCalled();
   });

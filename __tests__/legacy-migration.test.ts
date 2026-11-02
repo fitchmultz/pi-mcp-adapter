@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +17,8 @@ function write(path: string, contents: string): void {
   writeFileSync(path, contents);
 }
 
-const globalConfig = '{\n // Keep the existing JSONC and formatting.\n "mcpServers": { "global": { "command": "unused-global-server" } }\n}\n';
+const globalConfig =
+  '{\n // Keep the existing JSONC and formatting.\n "mcpServers": { "global": { "command": "unused-global-server" } }\n}\n';
 const projectConfig = '{"mcpServers":{"project":{"command":"unused-project-server"}}}\n';
 
 describe("explicit pre-v5 state migration", () => {
@@ -39,8 +48,14 @@ describe("explicit pre-v5 state migration", () => {
     write(join(agent, "mcp.json"), globalConfig);
     write(join(project, ".pi", "mcp.json"), projectConfig);
     write(join(agent, "mcp-cache.json"), '{"version":1,"servers":{}}');
-    write(join(agent, "mcp-onboarding.json"), '{"version":1,"setupCompleted":true,"sharedConfigHintShown":true}');
-    write(join(project, ".mcp.json"), '{"mcpServers":{"shared":{"command":"unused-shared-server"}}}');
+    write(
+      join(agent, "mcp-onboarding.json"),
+      '{"version":1,"setupCompleted":true,"sharedConfigHintShown":true}',
+    );
+    write(
+      join(project, ".mcp.json"),
+      '{"mcpServers":{"shared":{"command":"unused-shared-server"}}}',
+    );
 
     const { loadMcpConfig } = await import("../config.ts");
     const { loadMetadataCache } = await import("../metadata-cache.ts");
@@ -55,11 +70,16 @@ describe("explicit pre-v5 state migration", () => {
     const sourceFiles = new Map([
       [join(agent, "mcp.json"), globalConfig],
       [join(agent, "mcp-cache.json"), '{"version":1,"servers":{}}'],
-      [join(agent, "mcp-onboarding.json"), '{"version":1,"setupCompleted":true,"sharedConfigHintShown":true}'],
+      [
+        join(agent, "mcp-onboarding.json"),
+        '{"version":1,"setupCompleted":true,"sharedConfigHintShown":true}',
+      ],
       [join(agent, "mcp-npx-cache.json"), '{"version":1,"entries":{}}'],
       [join(project, ".pi", "mcp.json"), projectConfig],
     ]);
-    for (const [path, contents] of sourceFiles) write(path, contents);
+    for (const [path, contents] of sourceFiles) {
+      write(path, contents);
+    }
     const { migrateLegacyState } = await import("../legacy-migration.ts");
     const result = migrateLegacyState({ cwd: project });
     expect(result.files).toHaveLength(5);
@@ -67,16 +87,23 @@ describe("explicit pre-v5 state migration", () => {
     expect(result.credentials).toEqual([]);
     for (const file of result.files) {
       expect(readFileSync(file.destination, "utf8")).toBe(sourceFiles.get(file.source));
-      if (process.platform !== "win32") expect(statSync(file.destination).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect(statSync(file.destination).mode & 0o777).toBe(0o600);
+      }
     }
 
     const { loadMcpConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
     const { saveMetadataCache } = await import("../metadata-cache.ts");
-    expect(Object.keys(loadMcpConfig(undefined, project).mcpServers).sort()).toEqual(["global", "project"]);
+    expect(Object.keys(loadMcpConfig(undefined, project).mcpServers).sort()).toEqual([
+      "global",
+      "project",
+    ]);
     writeProjectServerDisabledOverride(undefined, project, "global", true);
     saveMetadataCache({ version: 1, servers: {} });
     expect(loadMcpConfig(undefined, project).mcpServers.global!.disabled).toBe(true);
-    for (const [path, contents] of sourceFiles) expect(readFileSync(path, "utf8")).toBe(contents);
+    for (const [path, contents] of sourceFiles) {
+      expect(readFileSync(path, "utf8")).toBe(contents);
+    }
   });
 
   it("does not overwrite destinations on first or repeated migration", async () => {
@@ -106,26 +133,37 @@ describe("explicit pre-v5 state migration", () => {
   });
 
   it("keeps a custom legacy directory intact through runtime reads, refresh and logout", async () => {
-    write(join(agent, "mcp.json"), JSON.stringify({
-      mcpServers: { oauth: { url: "https://example.com/mcp" } },
-      settings: { oauthDir: ".pi/mcp-oauth" },
-    }));
+    write(
+      join(agent, "mcp.json"),
+      JSON.stringify({
+        mcpServers: { oauth: { url: "https://example.com/mcp" } },
+        settings: { oauthDir: ".pi/mcp-oauth" },
+      }),
+    );
     const account = `sha256-${createHash("sha256").update("oauth").digest("hex")}`;
     const source = join(project, ".pi", "mcp-oauth", account, "tokens.json");
-    const entry = { serverUrl: "https://example.com/mcp", tokens: { accessToken: "original-token" } };
+    const entry = {
+      serverUrl: "https://example.com/mcp",
+      tokens: { accessToken: "original-token" },
+    };
     const original = JSON.stringify(entry);
     write(source, original);
 
     const { migrateLegacyState } = await import("../legacy-migration.ts");
     const { loadMcpConfig } = await import("../config.ts");
-    const { getAuthStorageOptions, getAuthForUrl, updateTokens, clearAllCredentials } = await import("../mcp-auth.ts");
-    expect(migrateLegacyState({ cwd: project }).credentials).toEqual([{ server: "oauth", status: "copied" }]);
+    const { getAuthStorageOptions, getAuthForUrl, updateTokens, clearAllCredentials } =
+      await import("../mcp-auth.ts");
+    expect(migrateLegacyState({ cwd: project }).credentials).toEqual([
+      { server: "oauth", status: "copied" },
+    ]);
     const config = loadMcpConfig(undefined, project);
     const options = getAuthStorageOptions(config.settings?.oauthDir, project);
     expect(getAuthForUrl("oauth", entry.serverUrl, options)).toEqual(entry);
     expect(readFileSync(source, "utf8")).toBe(original);
     updateTokens("oauth", { accessToken: "refreshed-token" }, entry.serverUrl, options);
-    expect(getAuthForUrl("oauth", entry.serverUrl, options)?.tokens?.accessToken).toBe("refreshed-token");
+    expect(getAuthForUrl("oauth", entry.serverUrl, options)?.tokens?.accessToken).toBe(
+      "refreshed-token",
+    );
     expect(readFileSync(source, "utf8")).toBe(original);
     clearAllCredentials("oauth", options);
     expect(getAuthForUrl("oauth", entry.serverUrl, options)).toBeUndefined();
@@ -136,14 +174,21 @@ describe("explicit pre-v5 state migration", () => {
     write(join(agent, "mcp.json"), '{"mcpServers":{"oauth":{"url":"https://example.com/mcp"}}}');
     const account = `sha256-${createHash("sha256").update("oauth").digest("hex")}`;
     const source = join(agent, "mcp-oauth", account, "tokens.json");
-    const entry = { serverUrl: "https://example.com/mcp", tokens: { accessToken: "legacy-token", refreshToken: "legacy-refresh" } };
+    const entry = {
+      serverUrl: "https://example.com/mcp",
+      tokens: { accessToken: "legacy-token", refreshToken: "legacy-refresh" },
+    };
     write(source, JSON.stringify(entry));
 
     const { migrateLegacyState } = await import("../legacy-migration.ts");
     const { getAuthEntry, clearAllCredentials } = await import("../mcp-auth.ts");
-    expect(migrateLegacyState({ cwd: project }).credentials).toEqual([{ server: "oauth", status: "copied" }]);
+    expect(migrateLegacyState({ cwd: project }).credentials).toEqual([
+      { server: "oauth", status: "copied" },
+    ]);
     expect(getAuthEntry("oauth")).toEqual(entry);
-    expect(migrateLegacyState({ cwd: project }).credentials).toEqual([{ server: "oauth", status: "existing" }]);
+    expect(migrateLegacyState({ cwd: project }).credentials).toEqual([
+      { server: "oauth", status: "existing" },
+    ]);
     clearAllCredentials("oauth");
     expect(getAuthEntry("oauth")).toBeUndefined();
     expect(JSON.parse(readFileSync(source, "utf8"))).toEqual(entry);
