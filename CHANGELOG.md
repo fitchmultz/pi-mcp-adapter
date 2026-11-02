@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforce strict lint on callback lifecycle tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/145
 - Enforce strict lint on credential storage tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/146
 - Qualify startup cancellation through native HTTP transports by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/147
+- Enforce operation-bound exceptions for protocol tracing by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/148
 
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.6...v8.0.7
 
