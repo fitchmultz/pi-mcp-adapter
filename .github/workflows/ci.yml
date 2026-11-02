@@ -152,6 +152,7 @@ jobs:
       - run: npm run lint:prompts
       - run: npm run lint:runtime-tests
       - run: npm run lint:tracing
+      - run: npm run lint:sdk-http
       - run: npm run lint:auth-tests
       - run: npm run lint:discovery-tests
       - run: npm run lint:state-tests

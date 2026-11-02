@@ -18,5 +18,38 @@
     "nodeType": "ThrowStatement",
     "operation": "throw this.persistenceError;",
     "guards": ["consequent: strict && this.persistenceError !== undefined"]
+  },
+  {
+    "id": "QX-010",
+    "file": "__tests__/sdk-v2-http.test.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": { "type": "FunctionExpression", "name": "observesLateSseError" },
+    "path": ["body", "body", 5, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "connection.client.onerror",
+    "guards": []
+  },
+  {
+    "id": "QX-011",
+    "file": "__tests__/sdk-v2-http.test.ts",
+    "rule": "typescript/no-unsafe-type-assertion",
+    "scope": { "type": "FunctionExpression", "name": "rejectsInvalidProtocolOptions" },
+    "path": [
+      "body",
+      "body",
+      1,
+      "expression",
+      "argument",
+      "callee",
+      "object",
+      "object",
+      "arguments",
+      0,
+      "arguments",
+      0
+    ],
+    "nodeType": "TSAsExpression",
+    "operation": "invalid as unknown as ServerEntry",
+    "guards": []
   }
 ]

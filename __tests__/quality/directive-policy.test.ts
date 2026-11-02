@@ -23,13 +23,14 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-009: Forward captured failures\n",
+    "## QX-001: Native transport observation\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
 
 function nativeLint(cwd: string) {
   symlinkSync(modules, join(cwd, "node_modules"), "junction");
+  symlinkSync(fileURLToPath(new URL("../..", import.meta.url)), join(cwd, "adapter"), "junction");
   writeFileSync(
     join(cwd, "tsconfig.json"),
     JSON.stringify({
@@ -171,6 +172,40 @@ const forward = `export function forward(error: unknown): never {\n${directive}\
 const sendDirective =
   "// oxlint-disable-next-line eslint/no-param-reassign -- QX-001: observe native sends.";
 const transportSource = `export function forward(transport: { send: (value: number) => number; close: (value: number) => number }): typeof transport {\n${sendDirective}\ntransport.send = (value) => value + 1;\nreturn transport;\n}\n`;
+const clientDirective =
+  "// oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: the SDK exposes a callback.";
+const clientSource = [
+  'import { Client } from "@modelcontextprotocol/client";',
+  "export const observe = function observeClientError(): { client: Client; errors: Error[] } {",
+  'const client = new Client({ name: "fixture", version: "1" });',
+  "const errors: Error[] = [];",
+  clientDirective,
+  "client.onerror = (error) => errors.push(error);",
+  "return { client, errors };",
+  "};",
+  "",
+].join("\n");
+const clientSite = {
+  ...site,
+  id: "QX-010",
+  rule: "unicorn/prefer-add-event-listener",
+  scope: { type: "FunctionExpression", name: "observeClientError" },
+  path: ["body", "body", 2, "expression", "left"],
+  nodeType: "MemberExpression",
+  operation: "client.onerror",
+};
+const invalidDirective =
+  "// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-011: exercise runtime validation.";
+const invalidSource = [
+  'import type { ServerEntry } from "./adapter/types.ts";',
+  "export const invalid = function invalidProtocolOptions(value: unknown): ServerEntry {",
+  "return (",
+  invalidDirective,
+  "value as ServerEntry",
+  ");",
+  "};",
+  "",
+].join("\n");
 
 describe("operation-bound exceptions", () => {
   it.each([
@@ -199,6 +234,30 @@ describe("operation-bound exceptions", () => {
       ),
       diagnostic:
         "forward.ts:4:1: Assignment to property of function parameter 'transport'. [Error/eslint(no-param-reassign)]",
+    },
+    {
+      name: "native client error callback",
+      source: clientSource,
+      authorized: clientSite,
+      neighbor: `${clientSource}export function unrelated(): AbortSignal {\nconst signal = new AbortController().signal;\nsignal.onabort = () => console.log("aborted");\nreturn signal;\n}\n`,
+      diagnostic:
+        "forward.ts:11:8: Prefer `addEventListener()` over their `on`-function counterparts. [Error/unicorn(prefer-add-event-listener)]",
+    },
+    {
+      name: "invalid runtime option assertion",
+      source: invalidSource,
+      authorized: {
+        ...site,
+        id: "QX-011",
+        rule: "typescript/no-unsafe-type-assertion",
+        scope: { type: "FunctionExpression", name: "invalidProtocolOptions" },
+        path: ["body", "body", 0, "argument", "expression"],
+        nodeType: "TSAsExpression",
+        operation: "value as ServerEntry",
+      },
+      neighbor: `${invalidSource}export function unrelated(value: unknown): ServerEntry {\nreturn value as ServerEntry;\n}\n`,
+      diagnostic:
+        "forward.ts:9:8: Unsafe type assertion: type 'ServerEntry' is more narrow than the original type. [Error/typescript(no-unsafe-type-assertion)]",
     },
   ])(
     "qualifies $name attachment and neighboring native protection",
@@ -254,6 +313,35 @@ describe("operation-bound exceptions", () => {
     const result = checkSource("forward.ts", forward.replace(`${directive}\n`, ""), [site]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unused exception site QX-009");
+  });
+
+  it("rejects wrong-origin, replaced and duplicate named callback operations", () => {
+    const wrongOrigin = clientSource
+      .replace('import { Client } from "@modelcontextprotocol/client";\n', "")
+      .replace("client: Client", "client: AbortSignal")
+      .replace('new Client({ name: "fixture", version: "1" })', "new AbortController().signal")
+      .replace(
+        "client.onerror = (error) => errors.push(error);",
+        'client.onabort = () => errors.push(new Error("aborted"));',
+      );
+    const copied = checkSource("copied.ts", clientSource, [clientSite]);
+    const replaced = checkSource("forward.ts", wrongOrigin, [clientSite]);
+    const duplicate = checkSource(
+      "forward.ts",
+      clientSource +
+        clientSource
+          .slice(clientSource.indexOf("export const"))
+          .replace("export const observe", "export const another"),
+      [clientSite],
+    );
+    expect(copied.status).toBe(1);
+    expect(copied.stderr).toContain("lint directive is not authorized for this operation");
+    expect(replaced.status).toBe(1);
+    expect(replaced.stderr).toContain("Authorized operation changed");
+    const nativeWrongOrigin = nativeLint(replaced.cwd);
+    expect(nativeWrongOrigin.status, nativeWrongOrigin.stdout + nativeWrongOrigin.stderr).toBe(0);
+    expect(duplicate.status).toBe(1);
+    expect(duplicate.stderr).toContain("Exception scope is missing or ambiguous");
   });
 
   it("rejects a changed enclosing condition even when operation and path are unchanged", () => {
