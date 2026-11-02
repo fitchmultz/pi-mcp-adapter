@@ -15,7 +15,7 @@ import open from "open";
 export type ElicitationValue = string | number | boolean | string[] | undefined;
 type FormProperty = ElicitRequestFormParams["requestedSchema"]["properties"][string];
 
-export type ElicitationUIContext = ExtensionUIContext;
+export type ElicitationUIContext = Pick<ExtensionUIContext, "select" | "input" | "notify">;
 
 export interface ElicitationHandlerOptions {
   serverName: string;

@@ -23,7 +23,8 @@
 
 import { rmSync } from "node:fs";
 import { UnauthorizedError, InsufficientScopeError } from "@modelcontextprotocol/client";
-import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { z } from "zod";
+import type { ElicitationUIContext } from "../elicitation-handler.ts";
 import { McpServerManager } from "../server-manager.ts";
 import {
   completeAuthFromInput,
@@ -37,28 +38,26 @@ const scenario = process.env.MCP_CONFORMANCE_SCENARIO ?? "";
 const serverUrl = process.argv[2] ?? "";
 const authDir = process.env.FITCH_MCP_OAUTH_DIR ?? "";
 
-if (!scenario || !serverUrl || !authDir) {
+if (scenario === "" || serverUrl === "" || authDir === "") {
   console.error(
     "Usage: FITCH_MCP_OAUTH_DIR=<tmpdir> MCP_CONFORMANCE_SCENARIO=<scenario> driver.ts <server-url>",
   );
   process.exit(1);
 }
 
-interface ScenarioContext {
-  name?: string;
-  client_id?: string;
-  client_secret?: string;
-  private_key_pem?: string;
-  signing_algorithm?: string;
-  idp_client_id?: string;
-  idp_id_token?: string;
-  idp_issuer?: string;
-  [key: string]: unknown;
-}
-
-const context: ScenarioContext = process.env.MCP_CONFORMANCE_CONTEXT
-  ? JSON.parse(process.env.MCP_CONFORMANCE_CONTEXT)
-  : {};
+const scenarioContextSchema = z.looseObject({
+  client_id: z.string().optional(),
+  client_secret: z.string().optional(),
+  private_key_pem: z.string().optional(),
+  signing_algorithm: z.string().optional(),
+  idp_client_id: z.string().optional(),
+  idp_id_token: z.string().optional(),
+  idp_issuer: z.string().optional(),
+});
+const contextJson = process.env.MCP_CONFORMANCE_CONTEXT;
+const context = scenarioContextSchema.parse(
+  contextJson !== undefined && contextJson !== "" ? JSON.parse(contextJson) : {},
+);
 
 // Keep this list explicit. If a later conformance release adds a scenario,
 // the driver must learn its required action rather than passing from incidental
@@ -105,38 +104,51 @@ const scriptedUi = {
   select: async (_title: string, options: string[]) => {
     for (const preferred of ["Use default", "Submit", "Continue"]) {
       const match = options.find((option) => option === preferred);
-      if (match) {
+      if (match !== undefined && match !== "") {
         return match;
       }
     }
     return options[0];
   },
-  input: async () => {},
-  confirm: async () => true,
-  notify: () => {},
-} as unknown as ExtensionUIContext;
+  input: async () => {
+    // The headless conformance client does not provide free-form input.
+  },
+  notify: () => {
+    // The headless conformance client has no interactive notification surface.
+  },
+} satisfies ElicitationUIContext;
 
 const SERVER_NAME = "conformance";
 const MAX_AUTH_ROUND_TRIPS = 3;
 const debugLog = (message: string): void => {
-  if (process.env.CONFORMANCE_DRIVER_DEBUG) {
+  if (
+    process.env.CONFORMANCE_DRIVER_DEBUG !== undefined &&
+    process.env.CONFORMANCE_DRIVER_DEBUG !== ""
+  ) {
     console.error(`[driver] ${message}`);
   }
 };
 
 // Conformance 0.1.16 exercises only the legacy protocol profile.
 const definition: ServerEntry = { url: serverUrl, protocolVersion: "legacy" };
-if (context.client_id) {
+if (context.client_id !== undefined && context.client_id !== "") {
   definition.oauth = {
     clientId: context.client_id,
-    ...(context.client_secret ? { clientSecret: context.client_secret } : {}),
+    ...(context.client_secret !== undefined && context.client_secret !== ""
+      ? { clientSecret: context.client_secret }
+      : {}),
   };
 }
 if (scenario.startsWith("auth/client-credentials")) {
   definition.oauth = { ...definition.oauth, grantType: "client_credentials" };
 }
 if (scenario === "auth/client-credentials-jwt") {
-  if (!context.private_key_pem || !context.signing_algorithm) {
+  if (
+    context.private_key_pem === undefined ||
+    context.private_key_pem === "" ||
+    context.signing_algorithm === undefined ||
+    context.signing_algorithm === ""
+  ) {
     throw new Error("JWT fixture credentials are missing");
   }
   definition.oauth = {
@@ -145,7 +157,14 @@ if (scenario === "auth/client-credentials-jwt") {
   };
 }
 if (scenario === "auth/cross-app-access-complete-flow") {
-  if (!context.idp_issuer || !context.idp_client_id || !context.idp_id_token) {
+  if (
+    context.idp_issuer === undefined ||
+    context.idp_issuer === "" ||
+    context.idp_client_id === undefined ||
+    context.idp_client_id === "" ||
+    context.idp_id_token === undefined ||
+    context.idp_id_token === ""
+  ) {
     throw new Error("CAA fixture credentials are missing");
   }
   definition.oauth = {
@@ -184,14 +203,14 @@ async function runAuthRoundTrip(): Promise<void> {
   const { authorizationUrl } = await startAuth(SERVER_NAME, serverUrl, definition, {
     runtime: oauthRuntime,
   });
-  debugLog(`authorizationUrl=${authorizationUrl || "(none)"}`);
-  if (!authorizationUrl) {
+  debugLog(`authorizationUrl=${authorizationUrl === "" ? "(none)" : authorizationUrl}`);
+  if (authorizationUrl === "") {
     return;
   } // e.g. client_credentials — already authorized
 
   const authResponse = await fetch(authorizationUrl, { redirect: "manual" });
   const location = authResponse.headers.get("location");
-  if (!location) {
+  if (location === null || location === "") {
     throw new Error(
       `Authorization endpoint did not redirect (status ${authResponse.status}): ${await authResponse.text()}`,
     );
@@ -215,7 +234,6 @@ async function runAuthRoundTrip(): Promise<void> {
 
 async function connectWithAuth() {
   for (let attempt = 0; attempt <= MAX_AUTH_ROUND_TRIPS; attempt++) {
-    let needsAuth = false;
     try {
       const connection = await manager.connect(SERVER_NAME, definition);
       debugLog(`connect attempt ${attempt}: status=${connection.status}`);
@@ -225,12 +243,11 @@ async function connectWithAuth() {
       if (connection.status !== "needs-auth") {
         throw new Error(`Unexpected connection status: ${connection.status}`);
       }
-      needsAuth = true;
     } catch (error) {
       // The HTTP transport probe throws UnauthorizedError out of connect()
       // when the server requires OAuth; the host treats this as needs-auth.
       debugLog(
-        `connect attempt ${attempt}: threw ${(error as Error)?.constructor?.name}: ${(error as Error)?.message}`,
+        `connect attempt ${attempt}: threw ${error instanceof Error ? error.constructor.name : typeof error}: ${error instanceof Error ? error.message : String(error)}`,
       );
       // For auth scenarios, any other connect failure (e.g. the SSE-fallback
       // error seen on 2025-03-26 backcompat servers) is handled the way the
@@ -239,9 +256,8 @@ async function connectWithAuth() {
       if (!(error instanceof UnauthorizedError) && !scenario.startsWith("auth/")) {
         throw error;
       }
-      needsAuth = true;
     }
-    if (!needsAuth || attempt === MAX_AUTH_ROUND_TRIPS) {
+    if (attempt === MAX_AUTH_ROUND_TRIPS) {
       break;
     }
     await manager.close(SERVER_NAME);
@@ -268,7 +284,7 @@ async function callTool(toolName: string, args: Record<string, unknown>) {
         { name: toolName, arguments: args },
         manager.getRequestOptions(SERVER_NAME),
       );
-      if (result.isError) {
+      if (result.isError === true) {
         throw new Error(
           `Tool ${toolName} returned an error result: ${JSON.stringify(result.content)}`,
         );
@@ -319,12 +335,18 @@ try {
 } finally {
   try {
     await manager.closeAll();
-  } catch {}
+  } catch {
+    // Best-effort cleanup preserves the scenario result.
+  }
   try {
     await shutdownOAuth(oauthRuntime);
-  } catch {}
+  } catch {
+    // Best-effort cleanup preserves the scenario result.
+  }
   try {
     rmSync(authDir, { recursive: true, force: true });
-  } catch {}
+  } catch {
+    // Best-effort cleanup preserves the scenario result.
+  }
 }
 process.exit(exitCode);
