@@ -42,6 +42,7 @@
     "lint:conformance": "oxlint --deny-warnings conformance",
     "lint:prompts": "oxlint --deny-warnings __tests__/prompts.test.ts __tests__/prompts-sdk-integration.test.ts __tests__/test-state.ts __tests__/test-extension-context.ts",
     "lint:runtime-tests": "oxlint --deny-warnings __tests__/runtime",
+    "lint:auth-tests": "oxlint --deny-warnings __tests__/auth",
     "lint:agent": "oxlint --deny-warnings --format=agent .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
