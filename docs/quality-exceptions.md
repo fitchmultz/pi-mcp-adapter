@@ -89,3 +89,22 @@ The native transport reaches classic initialization and `tools/list`, using two 
 - **Adjustment:** One next-line directive at the assertion inside the named negative test. The fixture and production signatures stay typed. No general unsafe-assertion allowance is added.
 - **Evidence:** Removing only `validateServerProtocolConfig(definition)` makes all three existing cases fail at the expected rejection: the native connection proceeds instead. Restoring that call makes the cases pass with zero HTTP requests. The directive-policy suite checks this rule's accepted site and a neighboring unchecked assertion, including native diagnostic identity, file, location and exit status.
 - **Remaining protection and review:** All production configuration and other test assertions retain the rule. The unchecked values are confined to this negative boundary, and the runtime rejection plus no-network assertion guards the essential assumption. The inventory binds the directive to the exact argument expression; compiler and review checks protect its surrounding flow. Revisit when the public connection boundary or validation ownership changes.
+
+## QX-012: Exercise mutation of the supplied configuration snapshot
+
+- **Finding:** Oxlint 1.90.0 reports `eslint/no-param-reassign`, with `props: true`, at `config.mcpServers.docs.env.ORIGINAL` in the named `transformsSuppliedConfig` test callback.
+- **Contract:** `createMcpAdapter` supplies `transformConfig` with a cloned configuration and clones its returned value. A host may mutate that supplied object and return shared host-owned settings without changing the caller's configuration or sharing subsequent runtime edits. The lifecycle test exercises that host callback through the native Pi SDK, checks registration before initialization, and verifies isolation across startup, reload and new-session contexts.
+- **Comparison:** The straightforward compliant hook copies its input before changing it:
+
+  ```ts
+  const transformed = structuredClone(config);
+  assert(transformed.mcpServers.docs?.env !== undefined);
+  transformed.mcpServers.docs.env.ORIGINAL = "transformed";
+  return { ...transformed, settings: sharedSettings };
+  ```
+
+  That hook protects itself from a missing adapter-side input clone. It cannot prove that another host can safely mutate the object the adapter supplies. Removing mutation or mutating a separate fixture has the same loss. Aliasing the parameter would conceal the operation instead of preserving the check.
+
+- **Adjustment:** One next-line directive at the exact member assignment in the named callback. The preceding assertion establishes that the configured server and environment exist. No production mutation, other callback, or other configuration member is authorized.
+- **Evidence:** The existing parameterized lifecycle test owns input and returned-value isolation. Removing only the input `cloneMcpConfig(runtimeConfig)` at the `transformConfig` call in `index.ts` makes `vitest run __tests__/index-lifecycle.test.ts -t 'snapshot=false'` fail. The second and third captured inputs incorrectly contain `ORIGINAL: "transformed"`. The return-value clone remains intact. With that same broken adapter, the compliant local-copy callback above passes the focused test, typecheck and native lint. It therefore loses the input-isolation regression. Restoring the production and test files restores their exact original bytes. The directive-policy suite qualifies the named callback against the canonical `McpConfig` type and verifies that an adjacent unapproved settings assignment still produces the native parameter-mutation diagnostic.
+- **Remaining protection and review:** Compiler checks retain the canonical callback and configuration contracts. All other parameter writes retain native lint. The operation inventory rejects copied, replaced, duplicated and stale directives. Revisit if the hook's mutation/ownership contract changes or the native rule gains an equally precise declaration-qualified allowance.
