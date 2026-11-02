@@ -12,7 +12,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 /** Create a real, isolated Pi extension context without loading user resources. */
-export async function createTestExtensionContext(): Promise<{
+export async function createTestExtensionContext(noTools: "all" | "builtin" = "all"): Promise<{
   api: ExtensionAPI;
   commandContext: ExtensionCommandContext;
   context: ExtensionContext;
@@ -47,7 +47,7 @@ export async function createTestExtensionContext(): Promise<{
       settingsManager,
       resourceLoader,
       sessionManager: SessionManager.inMemory(directory),
-      noTools: "all",
+      noTools,
     });
     try {
       await session.bindExtensions({});

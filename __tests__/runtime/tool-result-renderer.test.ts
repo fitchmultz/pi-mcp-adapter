@@ -9,7 +9,7 @@ import {
   formatMcpToolResultLines,
   renderMcpProxyToolCall,
   renderMcpToolResult,
-} from "../tool-result-renderer.ts";
+} from "../../tool-result-renderer.ts";
 
 type TestDetails = Record<string, unknown> & { error?: unknown };
 type TestResult = AgentToolResult<TestDetails>;
@@ -18,9 +18,10 @@ type TestResult = AgentToolResult<TestDetails>;
 const keyHint = (_keybinding: string, description: string) => `ctrl+o ${description}`;
 
 const collapsedOptions: ToolRenderResultOptions = { expanded: false, isPartial: false };
-const plainTheme = { fg: (_name: string, text: string) => text } as NonNullable<
-  Parameters<typeof renderMcpToolResult>[2]
->;
+const plainTheme: NonNullable<Parameters<typeof renderMcpToolResult>[2]> = {
+  fg: (_name, text) => text,
+  bold: (text) => text,
+};
 
 function result(content: TestResult["content"], details: TestDetails = {}): TestResult {
   return { content, details };

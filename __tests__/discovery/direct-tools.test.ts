@@ -1,18 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { buildProxyDescription } from "../direct-tools.ts";
-import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
+import { buildProxyDescription } from "../../direct-tools.ts";
+import { resolvePinnedTools } from "../fixtures/pinned-tools.ts";
 import {
   computeServerHash,
   getMissingConfiguredDirectToolServers,
   isServerCacheValid,
   type MetadataCache,
   reconstructToolMetadata,
-} from "../metadata-cache.ts";
-import { buildToolMetadata } from "../tool-metadata.ts";
-import { formatToolName } from "../types.ts";
-import type { McpConfig, ServerEntry } from "../types.ts";
+} from "../../metadata-cache.ts";
+import { buildToolMetadata } from "../../tool-metadata.ts";
+import { formatToolName, type McpConfig, type ServerEntry } from "../../types.ts";
 
 const originalHashEnv = {
   MCP_HASH_CWD: process.env.MCP_HASH_CWD,
@@ -138,7 +137,7 @@ describe("metadata cache hashing", () => {
     ).toBe(false);
   });
 
-  it("skips cached direct tools when URL placeholders are missing", () => {
+  it("skips cached direct tools when URL placeholders are missing", async () => {
     delete process.env.MCP_HASH_URL;
 
     const config: McpConfig = {
@@ -159,7 +158,7 @@ describe("metadata cache hashing", () => {
       },
     };
 
-    expect(resolvePinnedTools(config, cache, "server")).toEqual([]);
+    expect(await resolvePinnedTools(config, cache, "server")).toEqual([]);
   });
 
   it("hashes interpolated cwd", () => {
@@ -305,19 +304,19 @@ describe("metadata cache hashing", () => {
 
 describe("direct tool metadata bootstrap", () => {
   it("includes env-selected servers without config-level direct tool settings", () => {
-    const config: McpConfig = {
+    const config = {
       mcpServers: {
         selected: { command: "selected-server" },
         cached: { command: "cached-server" },
         other: { command: "other-server" },
         disabled: { command: "disabled-server", disabled: true },
       },
-    };
+    } satisfies McpConfig;
     const cache: MetadataCache = {
       version: 1,
       servers: {
         cached: {
-          configHash: computeServerHash(config.mcpServers.cached!),
+          configHash: computeServerHash(config.mcpServers.cached),
           cachedAt: Date.now(),
           tools: [],
           resources: [],
@@ -462,6 +461,7 @@ describe("excludeTools filtering", () => {
   });
 
   it("retains distinct raw identities when cached metadata aliases collide", () => {
+    const definition: ServerEntry = { command: "npx", args: ["-y", "demo"] };
     const reconstructed = reconstructToolMetadata(
       "demo",
       {
@@ -477,7 +477,7 @@ describe("excludeTools filtering", () => {
         ],
       },
       "server",
-      { command: "npx", args: ["-y", "demo"] } as ServerEntry,
+      definition,
     );
 
     expect(reconstructed.map((tool) => [tool.name, tool.originalName, tool.description])).toEqual([
@@ -488,8 +488,8 @@ describe("excludeTools filtering", () => {
     ]);
   });
 
-  it("filters excluded tools during direct tool registration from cache", () => {
-    const config: McpConfig = {
+  it("filters excluded tools during direct tool registration from cache", async () => {
+    const config = {
       settings: { toolPrefix: "server" },
       mcpServers: {
         figma: {
@@ -499,13 +499,13 @@ describe("excludeTools filtering", () => {
           excludeTools: ["figma_get_screenshot", "read_figjam"],
         },
       },
-    };
+    } satisfies McpConfig;
 
     const cache: MetadataCache = {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma!),
+          configHash: computeServerHash(config.mcpServers.figma),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },
@@ -516,13 +516,13 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolvePinnedTools(config, cache, "server");
+    const specs = await resolvePinnedTools(config, cache, "server");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes"]);
   });
 
-  it("honors per-server toolPrefix during direct tool registration from cache", () => {
-    const config: McpConfig = {
+  it("honors per-server toolPrefix during direct tool registration from cache", async () => {
+    const config = {
       settings: { toolPrefix: "none" },
       mcpServers: {
         github: {
@@ -532,13 +532,13 @@ describe("excludeTools filtering", () => {
           toolPrefix: "server",
         },
       },
-    };
+    } satisfies McpConfig;
 
     const cache: MetadataCache = {
       version: 1,
       servers: {
         github: {
-          configHash: computeServerHash(config.mcpServers.github!),
+          configHash: computeServerHash(config.mcpServers.github),
           cachedAt: Date.now(),
           tools: [{ name: "search", description: "Search" }],
           resources: [],
@@ -546,13 +546,13 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolvePinnedTools(config, cache, "none");
+    const specs = await resolvePinnedTools(config, cache, "none");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["github_search"]);
   });
 
-  it("filters included tools during direct tool registration from cache", () => {
-    const config: McpConfig = {
+  it("filters included tools during direct tool registration from cache", async () => {
+    const config = {
       settings: { toolPrefix: "server" },
       mcpServers: {
         figma: {
@@ -563,13 +563,13 @@ describe("excludeTools filtering", () => {
           excludeTools: ["get_nodes_secret"],
         },
       },
-    };
+    } satisfies McpConfig;
 
     const cache: MetadataCache = {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma!),
+          configHash: computeServerHash(config.mcpServers.figma),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },
@@ -581,13 +581,13 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolvePinnedTools(config, cache, "server");
+    const specs = await resolvePinnedTools(config, cache, "server");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["figma_get_nodes"]);
   });
 
-  it("matches mcp-prefixed exclusions when toolPrefix is mcp", () => {
-    const config: McpConfig = {
+  it("matches mcp-prefixed exclusions when toolPrefix is mcp", async () => {
+    const config = {
       settings: { toolPrefix: "mcp" },
       mcpServers: {
         "my-server": {
@@ -597,13 +597,13 @@ describe("excludeTools filtering", () => {
           excludeTools: ["mcp__my_server_do_thing"],
         },
       },
-    };
+    } satisfies McpConfig;
 
     const cache: MetadataCache = {
       version: 1,
       servers: {
         "my-server": {
-          configHash: computeServerHash(config.mcpServers["my-server"]!),
+          configHash: computeServerHash(config.mcpServers["my-server"]),
           cachedAt: Date.now(),
           tools: [
             { name: "do_thing", description: "Does a thing" },
@@ -614,13 +614,13 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolvePinnedTools(config, cache, "mcp");
+    const specs = await resolvePinnedTools(config, cache, "mcp");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["mcp__my_server_other_tool"]);
   });
 
-  it("matches prefixed exclusions even when toolPrefix is none", () => {
-    const config: McpConfig = {
+  it("matches prefixed exclusions even when toolPrefix is none", async () => {
+    const config = {
       settings: { toolPrefix: "none" },
       mcpServers: {
         figma: {
@@ -630,13 +630,13 @@ describe("excludeTools filtering", () => {
           excludeTools: ["figma_get_screenshot"],
         },
       },
-    };
+    } satisfies McpConfig;
 
     const cache: MetadataCache = {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma!),
+          configHash: computeServerHash(config.mcpServers.figma),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },
@@ -647,7 +647,7 @@ describe("excludeTools filtering", () => {
       },
     };
 
-    const specs = resolvePinnedTools(config, cache, "none");
+    const specs = await resolvePinnedTools(config, cache, "none");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["get_nodes"]);
   });

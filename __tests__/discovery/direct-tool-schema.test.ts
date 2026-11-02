@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { normalizeDirectToolInputSchema } from "../utils.ts";
-import { computeServerHash, type MetadataCache } from "../metadata-cache.ts";
-import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
+import { normalizeDirectToolInputSchema } from "../../utils.ts";
+import { computeServerHash, type MetadataCache } from "../../metadata-cache.ts";
+import type { McpTool } from "../../types.ts";
+import { resolvePinnedTools } from "../fixtures/pinned-tools.ts";
 
 describe("normalizeDirectToolInputSchema", () => {
   it("preserves the original schema constraints without mutating the descriptor", () => {
@@ -35,10 +36,14 @@ describe("normalizeDirectToolInputSchema", () => {
   });
 
   it("uses an empty object schema when the MCP tool omits inputSchema", () => {
-    expect(normalizeDirectToolInputSchema(undefined)).toEqual({ type: "object", properties: {} });
+    const tool: McpTool = { name: "search" };
+    expect(normalizeDirectToolInputSchema(tool.inputSchema)).toEqual({
+      type: "object",
+      properties: {},
+    });
   });
 
-  it("does not reuse ambient cache metadata for a different programmatic server identity", () => {
+  it("does not reuse ambient cache metadata for a different programmatic server identity", async () => {
     const ambientDefinition = { url: "https://ambient.example.com/mcp" };
     const programmaticDefinition = {
       url: "https://programmatic.example.com/mcp",
@@ -57,7 +62,7 @@ describe("normalizeDirectToolInputSchema", () => {
     };
 
     expect(
-      resolvePinnedTools({ mcpServers: { shared: programmaticDefinition } }, cache, "server"),
+      await resolvePinnedTools({ mcpServers: { shared: programmaticDefinition } }, cache, "server"),
     ).toEqual([]);
   });
 });

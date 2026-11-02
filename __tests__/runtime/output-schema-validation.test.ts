@@ -1,14 +1,15 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { afterEach, describe, expect, it } from "vitest";
+import { createTestExtensionContext } from "../test-extension-context.ts";
+import { createTestState } from "../test-state.ts";
+import assert from "node:assert/strict";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
-import { createDirectToolExecutor } from "../direct-tools.ts";
-import { executeCall } from "../proxy-modes.ts";
-import { McpServerManager } from "../server-manager.ts";
-import type { McpExtensionState } from "../state.ts";
-import type { DirectToolSpec, ToolMetadata } from "../types.ts";
-import { UiResourceHandler } from "../ui-resource-handler.ts";
+import { createDirectToolExecutor } from "../../direct-tools.ts";
+import { executeCall } from "../../proxy-modes.ts";
+import { McpServerManager } from "../../server-manager.ts";
+import type { McpExtensionState } from "../../state.ts";
+import type { DirectToolSpec, ToolMetadata } from "../../types.ts";
 
-const fixture = fileURLToPath(new URL("./fixtures/output-schema-server.mjs", import.meta.url));
+const fixture = fileURLToPath(new URL("../fixtures/output-schema-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
 const managers: McpServerManager[] = [];
 
@@ -19,16 +20,11 @@ function createState(manager: McpServerManager, names: string[]): McpExtensionSt
     description: "integration test",
     inputSchema: { type: "object" },
   }));
-  return {
+  return createTestState({
     manager,
     config: { settings: {}, mcpServers: { real: definition } },
     toolMetadata: new Map([["real", metadata]]),
-    serverInstructions: new Map(),
-    failureTracker: new Map(),
-    uiResourceHandler: new UiResourceHandler(manager),
-    completedUiSessions: [],
-    uiServer: null,
-  } as unknown as McpExtensionState;
+  });
 }
 
 function directSpec(originalName: string): DirectToolSpec {
@@ -42,6 +38,13 @@ function directSpec(originalName: string): DirectToolSpec {
 }
 
 describe("MCP output schema validation", () => {
+  let host: Awaited<ReturnType<typeof createTestExtensionContext>>;
+  beforeAll(async () => {
+    host = await createTestExtensionContext();
+  });
+  afterAll(async () => {
+    await host.dispose();
+  });
   afterEach(async () => {
     await Promise.all(managers.splice(0).map((manager) => manager.closeAll()));
   });
@@ -64,7 +67,7 @@ describe("MCP output schema validation", () => {
             () => state,
             () => null,
             directSpec(name),
-          )("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
+          )("id", {}, undefined, undefined, host.context);
 
     expect(result.details).not.toMatchObject({ error: "call_failed" });
     expect(result.content[0]).toEqual({ type: "text", text: name });
@@ -72,9 +75,11 @@ describe("MCP output schema validation", () => {
       type: "text",
       text: JSON.stringify({ values: ["ok", 1] }, null, 2),
     });
-    expect(result.content[2]).toMatchObject({
-      text: expect.stringContaining(result.details.resultRef as string),
-    });
+    const ref = result.details.resultRef;
+    const block = result.content[2];
+    assert.ok(typeof ref === "string");
+    assert.ok(block?.type === "text");
+    expect(block.text).toContain(ref);
   });
 
   it.each([
@@ -95,12 +100,11 @@ describe("MCP output schema validation", () => {
             () => state,
             () => null,
             directSpec(name),
-          )("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
+          )("id", {}, undefined, undefined, host.context);
 
     expect(result.details).toMatchObject({ error: "call_failed" });
-    expect(result.content[0]).toMatchObject({
-      type: "text",
-      text: expect.stringContaining("Structured content does not match the tool's output schema"),
-    });
+    const block = result.content[0];
+    assert.ok(block?.type === "text");
+    expect(block.text).toContain("Structured content does not match the tool's output schema");
   });
 });
