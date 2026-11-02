@@ -16,5 +16,5 @@
     "noCheck": false,
     "types": ["node"]
   },
-  "include": ["cli.d.ts"]
+  "include": ["cli.d.ts", "__tests__/fixtures/android-keyring-binding.d.cts"]
 }

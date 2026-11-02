@@ -13,6 +13,7 @@ npm run --prefix examples/interactive-visualizer build
 npm run build
 npm run format:check
 npm run check:directives
+npm run check:policy
 npm run lint:conformance
 npm run lint:prompts
 npm run lint:runtime-tests
@@ -35,6 +36,8 @@ For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs
 Strict lint is enforced for `conformance/`, the prompt tests and their shared fixtures, `__tests__/runtime/`, `__tests__/auth/`, `__tests__/discovery/`, `__tests__/state/`, `__tests__/output/`, `__tests__/packaging/`, `__tests__/ui-host/`, `__tests__/panel/`, and the pinning test fixture. Repository-wide strict lint remains a migration target.
 
 `check:directives` rejects lint suppressions and TypeScript error suppressions in maintained source. The packed-consumer type fixture is the only approved negative type test; its `@ts-expect-error` comments require a description. A future lint exception requires an operation-bound inventory and its verification before the directive can be accepted.
+
+`check:policy` compares the root lint and formatter configurations with the adopted standard and declared profiles, rejects nested quality configs, and checks resolved compiler settings and membership for maintained source and handwritten declarations. It does not yet verify all source classifications or acceptance wiring.
 
 ## Automatic npm releases (maintainers)
 
