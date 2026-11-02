@@ -22,6 +22,7 @@ npm run lint:state-tests
 npm run lint:output-tests
 npm run lint:packaging-tests
 npm run lint:quality
+npm run lint:ui-host-tests
 npm run typecheck
 npm run typecheck:all
 npm test
@@ -30,7 +31,7 @@ npm run test:conformance
 
 For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$PWD" --host official --target latest --output /tmp/pi-mcp-adapter-official`, then qualify the packed latest maintained fork with `--host fork --target /path/to/fork-package`. Plain `npm ci` checks only the locked development snapshot, not latest qualification. Preserve the separate extras checks in `.github/workflows/ci.yml`.
 
-Strict lint is enforced for `conformance/`, the prompt tests and their shared fixtures, `__tests__/runtime/`, `__tests__/auth/`, `__tests__/discovery/`, `__tests__/state/`, `__tests__/output/`, `__tests__/packaging/`, and the pinning test fixture. Repository-wide strict lint remains a migration target.
+Strict lint is enforced for `conformance/`, the prompt tests and their shared fixtures, `__tests__/runtime/`, `__tests__/auth/`, `__tests__/discovery/`, `__tests__/state/`, `__tests__/output/`, `__tests__/packaging/`, `__tests__/ui-host/`, and the pinning test fixture. Repository-wide strict lint remains a migration target.
 
 `check:directives` rejects lint suppressions and TypeScript error suppressions in maintained source. The packed-consumer type fixture is the only approved negative type test; its `@ts-expect-error` comments require a description. A future lint exception requires an operation-bound inventory and its verification before the directive can be accepted.
 

@@ -403,7 +403,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
 </html>`;
 }
 
-export function buildCspMetaContent(csp: UiResourceCsp | undefined): string {
+export function buildCspMetaContent(csp?: { [K in keyof UiResourceCsp]?: unknown }): string {
   const resourceDomains = sanitizeCspDomains(csp?.resourceDomains);
   const connectDomains = sanitizeCspDomains(csp?.connectDomains);
   const frameDomains = sanitizeCspDomains(csp?.frameDomains);
