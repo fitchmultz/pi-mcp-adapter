@@ -1,9 +1,13 @@
 import { Server } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
+const instructions = process.env.MCP_TEST_INSTRUCTIONS;
 const server = new Server(
   { name: "mcp-code-server", version: "1.0.0" },
-  { capabilities: { tools: {} } },
+  {
+    capabilities: { tools: {} },
+    ...(instructions !== undefined && instructions !== "" ? { instructions } : {}),
+  },
 );
 
 server.setRequestHandler("tools/list", async () => ({
