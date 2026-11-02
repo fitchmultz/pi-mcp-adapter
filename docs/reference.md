@@ -12,7 +12,7 @@ For installation and a first task, start with the [README](../README.md). This g
 
 ## Requirements
 
-Use Pi 1.0.0 or later and Node.js 24 or later.
+Use Pi 1.5.0 or later and Node.js 24 or later.
 
 ## What happens on first run
 
@@ -177,7 +177,7 @@ The two callbacks serve different boundaries: `beforeExecute` saves completed wo
 
 ### Runtime shutdown and replacement
 
-Pi 1.0 owns session replacement and emits `session_shutdown`. The adapter aborts outgoing activity before awaiting cleanup, closes owned connections, health watchers, OAuth callbacks and UI servers, and reports persistence/cleanup failures. Actual sampling/elicitation and native send/auth tails remain owned through settlement, even when a public request has already been cancelled. Unfinished callbacks prevent idle connection closure; final shutdown joins transport work. Pending `beforeExecute`/`onToolCall` promises prevent a clean-shutdown success claim. No detached work is declared finished merely because the agent settled.
+Pi owns session replacement and emits `session_shutdown`. The adapter aborts outgoing activity before awaiting cleanup, closes owned connections, health watchers, OAuth callbacks and UI servers, and reports persistence/cleanup failures. Actual sampling/elicitation and native send/auth tails remain owned through settlement, even when a public request has already been cancelled. Unfinished callbacks prevent idle connection closure; final shutdown joins transport work. Pending `beforeExecute`/`onToolCall` promises prevent a clean-shutdown success claim. No detached work is declared finished merely because the agent settled.
 
 The retired fork `session_checkpoint`/`acquireCheckpoint` APIs are no longer used. Host-supplied `beforeExecute` and raw `onToolCall` capture remain supported; the host still owns durable effect receipts and coherent workspace/session capture. No callback/process-memory recovery or automatic operation replay is promised.
 

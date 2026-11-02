@@ -1,5 +1,5 @@
-import type { AgentToolResult, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { type Component, getKeybindings, Text } from "@earendil-works/pi-tui";
+import type { AgentToolResult, KeybindingHints, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { type Component, Text } from "@earendil-works/pi-tui";
 
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -25,7 +25,7 @@ export interface McpProxyToolCallInput {
   action?: string;
 }
 
-interface McpToolRenderContext {
+interface McpToolRenderContext extends Pick<KeybindingHints, "keyHint"> {
   isError: boolean;
 }
 
@@ -48,10 +48,10 @@ class CollapsibleText implements Component {
   private readonly expanded: boolean;
   private readonly maxCollapsedLines: number;
   private readonly ellipsis: string;
-  private readonly expandHint: string;
+  private readonly expandHint: string | undefined;
   private readonly preTruncated: boolean;
 
-  constructor(text: string, expanded: boolean, maxCollapsedLines: number, ellipsis: string, expandHint: string, preTruncated = false) {
+  constructor(text: string, expanded: boolean, maxCollapsedLines: number, ellipsis: string, expandHint: string | undefined, preTruncated = false) {
     this.text = text;
     this.expanded = expanded;
     this.maxCollapsedLines = maxCollapsedLines;
@@ -59,7 +59,7 @@ class CollapsibleText implements Component {
     this.expandHint = expandHint;
     this.preTruncated = preTruncated;
     this.fullText = new Text(text, 0, 0);
-    this.footerText = new Text(`${ellipsis}\n${expandHint}`, 0, 0);
+    this.footerText = new Text(expandHint === undefined ? ellipsis : `${ellipsis}\n${expandHint}`, 0, 0);
   }
 
   render(width: number): string[] {
@@ -90,15 +90,6 @@ class CollapsibleText implements Component {
   }
 
   invalidate(): void {}
-}
-
-// Read the shared TUI keybinding registry without importing the entire host SDK.
-function expandHint(theme: RenderTheme): string {
-  const keys = getKeybindings().getKeys("app.tools.expand").join("/")
-    .split("/").map(key => key.split("+")
-      .map(part => process.platform === "darwin" && part.toLowerCase() === "alt" ? "option" : part)
-      .join("+")).join("/");
-  return theme.fg("dim", keys) + theme.fg("muted", " to expand");
 }
 
 function truncateText(value: string, maxChars: number): string {
@@ -297,13 +288,17 @@ export function renderMcpToolResult(
     ...(identity ? [activeTheme.fg("muted", identity)] : []),
     ...display.lines.map((line) => activeTheme.fg("toolOutput", line)),
   ].join("\n");
+  // Pi injects keyHint so the hint shows the user's configured keys.
+  const expandHint = context
+    ? `${activeTheme.fg("muted", "(")}${context.keyHint("app.tools.expand", "to expand")}${activeTheme.fg("muted", ")")}`
+    : undefined;
 
   return new CollapsibleText(
     output,
     expanded,
     DEFAULT_MAX_COLLAPSED_LINES + (identity ? 1 : 0),
     activeTheme.fg("muted", "…"),
-    activeTheme.fg("muted", `(${expandHint(activeTheme)})`),
+    expandHint,
     display.truncated,
   );
 }
