@@ -38,6 +38,8 @@ import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
+/** Most servers one multi-server pass connects at once. */
+export const MAX_CONCURRENT_SERVER_CONNECTS = 10;
 const failureExpiryTimers = new WeakMap<McpExtensionState, Map<string, ReturnType<typeof setTimeout>>>();
 
 function getFailureExpiryTimers(state: McpExtensionState): Map<string, ReturnType<typeof setTimeout>> {
@@ -256,7 +258,7 @@ export async function initializeMcp(
     ui.setStatus("mcp", status);
   }
 
-  const results = await parallelLimit(startupServers, 10, async ([name, definition]) => {
+  const results = await parallelLimit(startupServers, MAX_CONCURRENT_SERVER_CONNECTS, async ([name, definition]) => {
     try {
       const connection = await manager.connect(name, definition, runtimeSignal);
       if (connection.status === "needs-auth") {
@@ -339,7 +341,7 @@ export async function initializeMcp(
     if (missingCacheServers.length > 0) {
       const bootstrapResults = await parallelLimit(
         missingCacheServers.filter(name => !results.some(r => r.name === name && r.connection)),
-        10,
+        MAX_CONCURRENT_SERVER_CONNECTS,
         async (name) => {
           try {
             const definition = config.mcpServers[name];
