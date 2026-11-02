@@ -1,17 +1,40 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type OutgoingHttpHeaders,
+  type ServerResponse,
+} from "node:http";
+import { text as readStreamText } from "node:stream/consumers";
+import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import {
+  CallToolRequestParamsSchema,
+  JSONObjectSchema,
+  JSONRPCRequestSchema,
+  TextContentSchema,
+  ToolAnnotationsSchema,
+} from "@modelcontextprotocol/core";
+import { z } from "zod";
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+  type AgentSession,
+} from "@earendil-works/pi-coding-agent";
+import {
+  createAssistantMessageEventStream,
   getCurrentSystemPrompt,
   getCurrentTools,
-  type TextContent,
+  type AssistantMessage,
+  type Model,
   type ToolCall,
-  type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { createMcpAdapter } from "../index.ts";
 import { McpServerManager } from "../server-manager.ts";
@@ -23,10 +46,63 @@ import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { formatMcpResultReference } from "../mcp-output-guard.ts";
 import type { McpExtensionState } from "../state.ts";
-import type { McpOperationContext, ServerEntry } from "../types.ts";
+import type { McpOperationContext, McpToolCallEvent, ServerEntry } from "../types.ts";
 import { SERVER_STREAM_RESULT_PATCH_METHOD } from "../ui-stream-types.ts";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
+
+function requireValue<T>(value: T | undefined | null): T {
+  assert.ok(value !== undefined && value !== null, "Expected the fixture to produce this value");
+  return value;
+}
+
+function textBlock(block: unknown) {
+  return TextContentSchema.parse(block).text;
+}
+
+function toolResults(messages: readonly AgentSession["messages"][number][]) {
+  return messages.filter((message) => message.role === "toolResult");
+}
+
+function entryCall(
+  entry: string,
+  name: string,
+  args: ToolCall["arguments"],
+): Pick<ToolCall, "name" | "arguments"> {
+  switch (entry) {
+    case "direct":
+      return { name: `local_${name}`, arguments: args };
+    case "proxy":
+      return { name: "mcp", arguments: { tool: `local_${name}`, args } };
+    case "script":
+      return {
+        name: "mcp_script",
+        arguments: { code: `return await tools.local_${name}(${JSON.stringify(args)});` },
+      };
+    default:
+      throw new Error(`Unknown fixture entry: ${entry}`);
+  }
+}
+
+function streamMessage(message: AssistantMessage, toolCall?: ToolCall) {
+  const stream = createAssistantMessageEventStream();
+  queueMicrotask(() => {
+    if (toolCall !== undefined) {
+      stream.push({ type: "start", partial: message });
+      stream.push({ type: "toolcall_end", partial: message, toolCall, contentIndex: 0 });
+    }
+    if (message.stopReason === "error" || message.stopReason === "aborted") {
+      stream.push({ type: "error", reason: message.stopReason, error: message });
+    } else {
+      assert.ok(message.stopReason !== "pending");
+      stream.push({ type: "done", reason: message.stopReason, message });
+    }
+    stream.end();
+  });
+  return stream;
+}
 afterEach(async () => {
   for (const cleanup of cleanups.reverse()) {
     await cleanup();
@@ -34,8 +110,41 @@ afterEach(async () => {
   cleanups.length = 0;
 });
 
-type WireRequest = { id?: string | number | null; method?: string; params?: any };
+const wireRequestSchema = JSONRPCRequestSchema.partial().extend({
+  params: CallToolRequestParamsSchema.partial()
+    .extend({
+      arguments: JSONObjectSchema.default({}),
+      requestState: z.string().optional(),
+      cursor: z.string().optional(),
+    })
+    .default({ arguments: {} }),
+});
+type WireRequest = z.infer<typeof wireRequestSchema>;
 type Exchange = { req: IncomingMessage; res: ServerResponse; body: WireRequest };
+type HttpExchange = { req: IncomingMessage; res: ServerResponse; body: unknown };
+const operationSchema = z.object({
+  toolCallId: z.string().exactOptional(),
+  innerCallId: z.number().exactOptional(),
+  server: z.string(),
+  tool: z.string(),
+  args: z.record(z.string(), z.unknown()),
+  annotations: ToolAnnotationsSchema.optional(),
+  resourceUri: z.string().exactOptional(),
+  annotationsTrusted: z.boolean(),
+}) satisfies z.ZodType<McpOperationContext>;
+const captureEventSchema = operationSchema.omit({ annotationsTrusted: true }).extend({
+  phase: z.enum(["before", "after"]),
+  result: z.unknown().optional(),
+  error: z.unknown().optional(),
+}) satisfies z.ZodType<Omit<McpToolCallEvent, "signal">>;
+const captureSchema = z.object({ event: captureEventSchema, bytes: z.string() });
+const checkpointSchema = z.object({
+  toolCallId: z.string(),
+  operation: operationSchema.optional(),
+  bytes: z.string(),
+  workspace: z.string().nullable(),
+  artifacts: z.array(z.string()),
+});
 const tool = {
   name: "echo",
   annotations: { readOnlyHint: true },
@@ -48,36 +157,53 @@ const modern = {
   instructions: "Local fixture instructions",
   _meta: { "io.modelcontextprotocol/serverInfo": { name: "local-wire", version: "1" } },
 };
-function result({ res, body }: Exchange, payload: unknown, headers = {}) {
-  if (body.method?.endsWith("/list")) {
-    payload = { ttlMs: 60_000, cacheScope: "private", ...(payload as object) };
-  }
+function result({ res, body }: Exchange, payload: unknown, headers: OutgoingHttpHeaders = {}) {
+  const response =
+    body.method?.endsWith("/list") === true
+      ? {
+          ttlMs: 60_000,
+          cacheScope: "private",
+          ...z.record(z.string(), z.unknown()).parse(payload),
+        }
+      : payload;
   res
     .writeHead(200, { "content-type": "application/json", ...headers })
-    .end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: payload }));
+    .end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: response }));
 }
-function rpcError({ res, body }: Exchange, code: number, status = 200, id = body.id) {
+function rpcError(
+  { res, body }: Exchange,
+  code: number,
+  status = 200,
+  id: WireRequest["id"] | null = body.id,
+) {
   res
     .writeHead(status, { "content-type": "application/json" })
     .end(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message: "fixture rejection" } }));
 }
 async function fixture(
-  handler: (exchange: Exchange) => boolean | void | Promise<boolean | void> = () => {},
+  handler: (exchange: Exchange) => boolean | undefined | Promise<boolean | undefined> = () => false,
+  routes: Record<string, (exchange: HttpExchange) => void> = {},
 ) {
   const requests: Exchange[] = [];
+  const failures: unknown[] = [];
   let sessions = 0;
-  const server = createServer(async (req, res) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) {
-      chunks.push(chunk);
-    }
-    const data = Buffer.concat(chunks).toString("utf8");
-    const exchange = { req, res, body: data ? JSON.parse(data) : {} };
-    requests.push(exchange);
-    if (await handler(exchange)) {
+  const receive = async (req: IncomingMessage, res: ServerResponse) => {
+    const data = await readStreamText(req);
+    const body: unknown = data === "" ? {} : JSON.parse(data);
+    const route = routes[req.url ?? ""];
+    if (route !== undefined) {
+      route({ req, res, body });
       return;
     }
-    const { body } = exchange;
+    const exchange = { req, res, body: wireRequestSchema.parse(body) };
+    requests.push(exchange);
+    if ((await handler(exchange)) === true) {
+      return;
+    }
+    serveDefault(exchange);
+  };
+  const serveDefault = (exchange: Exchange) => {
+    const { req, res, body } = exchange;
     if (req.method === "GET") {
       res.writeHead(405).end();
       return;
@@ -114,22 +240,37 @@ async function fixture(
       result(exchange, {
         resultType: "complete",
         content: [{ type: "text", text: "ok" }],
-        structuredContent: body.params?.arguments ?? {},
+        structuredContent: body.params.arguments,
       });
       return;
     }
     rpcError(exchange, -32601);
+  };
+  const server = createServer((req, res) => {
+    receive(req, res).catch((error: unknown) => {
+      failures.push(error);
+      res.destroy(error instanceof Error ? error : new Error(String(error)));
+    });
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
   const address = server.address();
-  if (!address || typeof address === "string") {
+  if (address === null || typeof address === "string") {
     throw new Error("Fixture did not bind");
   }
   cleanups.push(async () => {
     server.closeAllConnections();
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error === undefined) {
+          resolve();
+        } else {
+          reject(error);
+        }
+      });
+    });
+    expect(failures).toEqual([]);
   });
   const manager = new McpServerManager();
   cleanups.push(() => manager.closeAll());
@@ -138,7 +279,7 @@ async function fixture(
   const connect = async (options: ServerEntry = {}) => {
     const definition = { url, auth: false as const, requestTimeoutMs: 500, ...options };
     const connection = await manager.connect("local", definition);
-    const state = {
+    const state = createTestState({
       manager,
       config: { mcpServers: { local: definition }, settings: {} },
       toolMetadata: new Map([
@@ -147,7 +288,7 @@ async function fixture(
       failureTracker: new Map(),
       serverInstructions: new Map(),
       completedUiSessions: [],
-    } as unknown as McpExtensionState;
+    });
     return { connection, state };
   };
   return { manager, url, requests, calls, connect };
@@ -162,10 +303,25 @@ async function call(state: McpExtensionState, entry: string, signal?: AbortSigna
       undefined,
       signal,
     );
-    const text = output.content
-      .filter((c) => c.type === "text" && !c.text.startsWith("[MCP result saved:"))
-      .at(-1);
-    return text?.type === "text" ? JSON.parse(text.text) : undefined;
+    const text = output.content.findLast(
+      (c) => c.type === "text" && !c.text.startsWith("[MCP result saved:"),
+    );
+    assert.ok(text?.type === "text");
+    const decoded = z
+      .object({
+        ok: z.boolean(),
+        error: z
+          .object({ code: z.string(), message: z.string(), recovery: z.unknown().optional() })
+          .optional(),
+        data: z.unknown().optional(),
+      })
+      .parse(JSON.parse(text.text));
+    const details: Record<string, unknown> = output.details;
+    return { ...decoded, content: output.content, details };
+  }
+  const context = entry === "direct" ? await createTestExtensionContext() : undefined;
+  if (context !== undefined) {
+    cleanups.push(context.dispose);
   }
   const output =
     entry === "direct"
@@ -178,9 +334,14 @@ async function call(state: McpExtensionState, entry: string, signal?: AbortSigna
             prefixedName: "local_echo",
             description: "Echo",
           },
-        )("call-id", { value: "test" }, signal, undefined, {} as any)
+        )("call-id", { value: "test" }, signal, undefined, requireValue(context).context)
       : await executeCall(state, "local_echo", { value: "test" }, undefined, undefined, signal);
-  return { ok: output.details.error === undefined, ...output };
+  return {
+    ok: output.details.error === undefined,
+    error: undefined,
+    data: undefined,
+    ...output,
+  };
 }
 
 describe("published SDK v2 over real local HTTP", () => {
@@ -188,11 +349,19 @@ describe("published SDK v2 over real local HTTP", () => {
     { protocolVersion: "future" },
     { retryOnTransportFailure: "true" },
     { oauth: { skipIssuerMetadataValidation: "true" } },
-  ])("rejects invalid in-memory protocol options before connecting: %j", async (invalid) => {
-    const f = await fixture();
-    await expect(f.connect(invalid as unknown as ServerEntry)).rejects.toThrow(/must be/);
-    expect(f.requests).toHaveLength(0);
-  });
+  ])(
+    "rejects invalid in-memory protocol options before connecting: %j",
+    async function rejectsInvalidProtocolOptions(invalid) {
+      const f = await fixture();
+      await expect(
+        f.connect(
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-011: negative runtime inputs must reach the manager's own validation.
+          invalid as unknown as ServerEntry,
+        ),
+      ).rejects.toThrow(/must be/);
+      expect(f.requests).toHaveLength(0);
+    },
+  );
 
   it("uses native discovery, wire metadata and nested dynamic parameter headers without legacy traffic", async () => {
     const f = await fixture((e) => {
@@ -237,10 +406,14 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(req.headers["mcp-protocol-version"]).toBe("2026-07-28");
       expect(req.headers["mcp-method"]).toBe(body.method);
       expect(req.headers["mcp-session-id"]).toBeUndefined();
-      expect(body.params._meta["io.modelcontextprotocol/protocolVersion"]).toBe("2026-07-28");
+      expect(requireValue(body.params._meta)["io.modelcontextprotocol/protocolVersion"]).toBe(
+        "2026-07-28",
+      );
     }
-    expect(f.calls()[0]!.req.headers["mcp-name"]).toBe("echo");
-    expect(f.calls()[0]!.req.headers["mcp-param-region"]).toBe("=?base64?SGVsbG8sIOS4lueVjA==?=");
+    expect(requireValue(f.calls()[0]).req.headers["mcp-name"]).toBe("echo");
+    expect(requireValue(f.calls()[0]).req.headers["mcp-param-region"]).toBe(
+      "=?base64?SGVsbG8sIOS4lueVjA==?=",
+    );
   });
 
   it("leaves HEADER_MISMATCH refresh and fresh request IDs to the SDK", async () => {
@@ -263,18 +436,18 @@ describe("published SDK v2 over real local HTTP", () => {
         });
         return true;
       }
-      if (e.body.method === "tools/call" && !e.req.headers["mcp-param-region"]) {
+      if (e.body.method === "tools/call" && e.req.headers["mcp-param-region"] === undefined) {
         rpcError(e, -32020, 400);
         return true;
       }
-      return undefined;
+      return;
     });
     const { connection } = await f.connect({ retryOnTransportFailure: true });
     await connection.client.callTool({ name: "echo", arguments: { region: "west" } });
     expect(lists).toBe(2);
     expect(f.calls()).toHaveLength(2);
-    expect(f.calls()[0]!.body.id).not.toBe(f.calls()[1]!.body.id);
-    expect(f.calls()[1]!.req.headers["mcp-param-region"]).toBe("west");
+    expect(requireValue(f.calls()[0]).body.id).not.toBe(requireValue(f.calls()[1]).body.id);
+    expect(requireValue(f.calls()[1]).req.headers["mcp-param-region"]).toBe("west");
   });
 
   it.each([307, 308])(
@@ -302,7 +475,7 @@ describe("published SDK v2 over real local HTTP", () => {
             e.req.headers.authorization === "Bearer redirect-fixture-token",
         ),
       ).toBe(true);
-      expect(final.at(-1)!.body.params.arguments).toEqual({ value: "test" });
+      expect(requireValue(final.at(-1)).body.params.arguments).toEqual({ value: "test" });
     },
   );
 
@@ -359,8 +532,8 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(connection.client.getProtocolEra()).toBe("legacy");
       const initializations = f.requests.filter((r) => r.body.method === "initialize");
       expect(initializations).toHaveLength(1);
-      expect(initializations[0]!.req.headers["mcp-method"]).toBeUndefined();
-      expect(initializations[0]!.body.params._meta).toBeUndefined();
+      expect(requireValue(initializations[0]).req.headers["mcp-method"]).toBeUndefined();
+      expect(requireValue(initializations[0]).body.params._meta).toBeUndefined();
     },
   );
 
@@ -407,12 +580,11 @@ describe("published SDK v2 over real local HTTP", () => {
         }
         return true;
       });
-      const code =
-        failure === 401
-          ? SdkErrorCode.ClientHttpAuthentication
-          : failure === 403
-            ? SdkErrorCode.ClientHttpForbidden
-            : SdkErrorCode.EraNegotiationFailed;
+      const codes = new Map([
+        [401, SdkErrorCode.ClientHttpAuthentication],
+        [403, SdkErrorCode.ClientHttpForbidden],
+      ]);
+      const code = codes.get(Number(failure)) ?? SdkErrorCode.EraNegotiationFailed;
       await expect(f.connect()).rejects.toMatchObject({ code });
       expect(f.manager.getConnection("local")).toBeUndefined();
       expect(f.requests.map((r) => r.body.method)).toEqual(["server/discover"]);
@@ -420,7 +592,7 @@ describe("published SDK v2 over real local HTTP", () => {
   );
 
   it("never chooses SSE or legacy for discovery timeout", async () => {
-    let received!: () => void;
+    let received: () => void;
     const arrived = new Promise<void>((resolve) => {
       received = resolve;
     });
@@ -433,12 +605,12 @@ describe("published SDK v2 over real local HTTP", () => {
     });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      const outcome = expect(f.connect({ requestTimeoutMs: 35 })).rejects.toMatchObject({
-        code: SdkErrorCode.RequestTimeout,
-      });
+      const outcome = Promise.allSettled([f.connect({ requestTimeoutMs: 35 })]);
       await arrived;
       await vi.advanceTimersByTimeAsync(35);
-      await outcome;
+      expect(await outcome).toMatchObject([
+        { status: "rejected", reason: { code: SdkErrorCode.RequestTimeout } },
+      ]);
       expect(f.manager.getConnection("local")).toBeUndefined();
       expect(f.requests.map((r) => r.body.method)).toEqual(["server/discover"]);
     } finally {
@@ -454,14 +626,14 @@ describe("published SDK v2 over real local HTTP", () => {
           e.req.socket.destroy();
           return true;
         }
-        return undefined;
+        return;
       });
       const { state, connection } = await f.connect({ retryOnTransportFailure: true });
       const output = await call(state, entry);
       expect(output.ok).toBe(true);
       expect(f.manager.getConnection("local")?.client).toBe(connection.client);
       expect(f.calls()).toHaveLength(2);
-      expect(f.calls()[0]!.body.id).not.toBe(f.calls()[1]!.body.id);
+      expect(requireValue(f.calls()[0]).body.id).not.toBe(requireValue(f.calls()[1]).body.id);
       expect(f.requests.filter((r) => r.body.method === "server/discover")).toHaveLength(1);
       expect(connection.inFlight).toBe(0);
     },
@@ -491,7 +663,7 @@ describe("published SDK v2 over real local HTTP", () => {
         }),
       ).toBe(true);
       expect(f.calls()).toHaveLength(2);
-      expect(f.calls()[0]!.body.id).not.toBe(f.calls()[1]!.body.id);
+      expect(requireValue(f.calls()[0]).body.id).not.toBe(requireValue(f.calls()[1]).body.id);
       expect(f.manager.getConnection("local")?.client).toBe(connection.client);
       expect(f.requests.filter((r) => r.body.method === "server/discover")).toHaveLength(1);
       expect(connection.inFlight).toBe(0);
@@ -532,11 +704,11 @@ describe("published SDK v2 over real local HTTP", () => {
           result(e, {
             resultType: "complete",
             content: [],
-            structuredContent: receipts.get(e.body.params.arguments.value),
+            structuredContent: receipts.get(z.string().parse(e.body.params.arguments.value)),
           });
         } else {
           mutations++;
-          receipts.set(e.body.params.arguments.value, {
+          receipts.set(z.string().parse(e.body.params.arguments.value), {
             id: "original-resource",
             version: mutations,
           });
@@ -553,7 +725,7 @@ describe("published SDK v2 over real local HTTP", () => {
             });
             e.res.write(
               failure === "json"
-                ? `{"jsonrpc":"2.0","id":${e.body.id},"result":`
+                ? `{"jsonrpc":"2.0","id":${requireValue(e.body.id)},"result":`
                 : ": committed\n\n",
             );
             setTimeout(() => e.res.destroy(), 20);
@@ -566,7 +738,7 @@ describe("published SDK v2 over real local HTTP", () => {
         requestTimeoutMs: 80,
         ...(failure === "legacy-timeout" ? { protocolVersion: "legacy" as const } : {}),
       });
-      const captured: any[] = [];
+      const captured: McpToolCallEvent[] = [];
       if (!failure.endsWith("timeout")) {
         state.onToolCall = async (event) => {
           captured.push(event);
@@ -574,23 +746,42 @@ describe("published SDK v2 over real local HTTP", () => {
       }
       const output = await call(state, entry);
       expect(mutations).toBe(1);
-      expect(entry === "script" ? output.error.code : output.details.error).toBe(
+      expect(entry === "script" ? requireValue(output.error).code : output.details.error).toBe(
         "ambiguous_outcome",
       );
-      expect(entry === "script" ? output.error.message : output.details.message).toContain(
-        "Read back the original operation",
-      );
-      expect(entry === "script" ? output.error.recovery : output.details.recovery).toMatchObject({
+      expect(
+        entry === "script" ? requireValue(output.error).message : output.details.message,
+      ).toContain("Read back the original operation");
+      expect(
+        entry === "script" ? requireValue(output.error).recovery : output.details.recovery,
+      ).toMatchObject({
         action: "readback",
       });
-      if (!failure.endsWith("timeout")) {
-        expect(captured.map((e) => e.phase)).toEqual(["before", "after"]);
-        expect(captured[0].args).toEqual({ value: "test" });
-        expect(captured[1].error).toBeInstanceOf(Error);
-        if (entry === "script") {
-          expect(captured[0].innerCallId).toBe(1);
-        }
-      }
+      expect(
+        captured.map((event) => ({
+          phase: event.phase,
+          args: event.args,
+          innerCallId: event.innerCallId,
+          hasError: "error" in event && event.error instanceof Error,
+        })),
+      ).toEqual(
+        failure.endsWith("timeout")
+          ? []
+          : [
+              {
+                phase: "before",
+                args: { value: "test" },
+                innerCallId: entry === "script" ? 1 : undefined,
+                hasError: false,
+              },
+              {
+                phase: "after",
+                args: { value: "test" },
+                innerCallId: entry === "script" ? 1 : undefined,
+                hasError: true,
+              },
+            ],
+      );
       const readback = await executeCall(state, "local_readback", { value: "test" });
       expect(readback.details.mcpResult).toMatchObject({
         structuredContent: { id: "original-resource", version: 1 },
@@ -605,7 +796,7 @@ describe("published SDK v2 over real local HTTP", () => {
         return;
       }
       e.res.writeHead(200, { "content-type": "application/json" });
-      e.res.write(`{"jsonrpc":"2.0","id":${e.body.id},"result":`);
+      e.res.write(`{"jsonrpc":"2.0","id":${requireValue(e.body.id)},"result":`);
       setTimeout(() => e.res.destroy(), 20);
       return true;
     });
@@ -620,7 +811,7 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("does not report an unknown outcome when a rejected call times out refreshing its catalog", async () => {
     let lists = 0;
-    let received!: () => void;
+    let received: () => void;
     const arrived = new Promise<void>((resolve) => {
       received = resolve;
     });
@@ -643,10 +834,8 @@ describe("published SDK v2 over real local HTTP", () => {
     const pending = call(state, "proxy");
     expect(await Promise.race([arrived.then(() => true), pending.then(() => false)])).toBe(true);
     const output = await pending;
-    expect(output.details).toMatchObject({
-      error: "call_failed",
-      message: expect.stringMatching(/timeout|timed out/i),
-    });
+    expect(output.details.error).toBe("call_failed");
+    expect(output.details.message).toMatch(/timeout|timed out/i);
     expect(lists).toBe(2);
     expect(f.calls()).toHaveLength(1);
   }, 15_000);
@@ -670,10 +859,12 @@ describe("published SDK v2 over real local HTTP", () => {
         e.req.socket.destroy();
         return true;
       }
-      return undefined;
+      return;
     });
     const { state } = await f.connect({ retryOnTransportFailure: true });
     // A frozen direct tool can still have old read-only hints; live hints win.
+    const context = await createTestExtensionContext();
+    cleanups.push(context.dispose);
     const output = await createDirectToolExecutor(
       () => state,
       () => null,
@@ -684,19 +875,18 @@ describe("published SDK v2 over real local HTTP", () => {
         description: "Echo",
         annotations: { readOnlyHint: true },
       },
-    )("outer-id", { secret: "not-in-error-text" }, undefined, undefined, {} as any);
+    )("outer-id", { secret: "not-in-error-text" }, undefined, undefined, context.context);
     const safe = annotations?.readOnlyHint === true || annotations?.idempotentHint === true;
     expect(f.calls()).toHaveLength(safe ? 2 : 1);
     expect(output.details.error).toBe(safe ? undefined : "ambiguous_outcome");
-    if (!safe) {
-      expect(output.details.recovery).toMatchObject({
-        server: "local",
-        tool: "echo",
-        toolCallId: "outer-id",
-        action: "readback",
-      });
-      expect(JSON.stringify(output)).not.toContain("not-in-error-text");
-    }
+    const recovery: unknown = expect.objectContaining({
+      server: "local",
+      tool: "echo",
+      toolCallId: "outer-id",
+      action: "readback",
+    });
+    expect(output.details.recovery).toEqual(safe ? undefined : recovery);
+    expect(safe || !JSON.stringify(output).includes("not-in-error-text")).toBe(true);
   });
 
   it("describes complete native input schemas without a lossy TypeScript projection", async () => {
@@ -740,7 +930,13 @@ describe("published SDK v2 over real local HTTP", () => {
     `,
     );
     expect(script.details).not.toHaveProperty("error");
-    const described = JSON.parse((script.content[0] as TextContent).text);
+    const described = z
+      .object({
+        native: z.object({ inputSchema: z.unknown() }).loose(),
+        compact: z.object({ inputSchema: z.unknown() }).loose(),
+        called: z.unknown(),
+      })
+      .parse(JSON.parse(textBlock(script.content[0])));
     expect(described.native.inputSchema).toEqual(inputSchema);
     expect(described.native).not.toHaveProperty("inputTypeScript");
     expect(described.compact.inputSchema).toEqual({
@@ -753,7 +949,7 @@ describe("published SDK v2 over real local HTTP", () => {
       ok: true,
       data: { structuredContent: { value: "test" } },
     });
-    expect(f.calls()[0]!.body.params.arguments).toEqual({ value: "test" });
+    expect(requireValue(f.calls()[0]).body.params.arguments).toEqual({ value: "test" });
   });
 
   it("applies public proxy connect pagination to the discovered server list", async () => {
@@ -767,51 +963,27 @@ describe("published SDK v2 over real local HTTP", () => {
       });
       return true;
     });
-    const root = await mkdtemp(join(tmpdir(), "mcp-connect-page-"));
-    vi.stubEnv("PI_CODING_AGENT_DIR", join(root, "agent"));
-    vi.stubEnv("MCP_DIRECT_TOOLS", "__none__");
+    const context = await createTestExtensionContext(
+      "all",
+      createMcpAdapter({
+        config: {
+          mcpServers: { local: { url: f.url, auth: false, lifecycle: "lazy" } },
+          settings: { sampling: false, elicitation: false },
+        },
+      }),
+    );
     cleanups.push(async () => {
-      vi.unstubAllEnvs();
-      await rm(root, { recursive: true, force: true });
+      await context.runner.emit({ type: "session_shutdown", reason: "quit" });
+      await context.dispose();
     });
-    const tools = new Map<string, any>();
-    const handlers = new Map<string, any>();
-    const api = {
-      registerTool: (tool: any) => tools.set(tool.name, tool),
-      registerCommand: () => {},
-      registerFlag: () => {},
-      getFlag: () => {},
-      registerEntryRenderer: () => {},
-      appendEntry: () => {},
-      on: (name: string, handler: any) => handlers.set(name, handler),
-      getAllTools: () => [...tools.values()],
-      getActiveTools: () => [...tools.keys()],
-      setActiveTools: () => {},
-    } as any;
-    const ctx = {
-      cwd: root,
-      hasUI: false,
-      mode: "print",
-      isProjectTrusted: () => true,
-      sessionManager: { getLeafId: () => null, getEntry: () => {} },
-    } as any;
-    createMcpAdapter({
-      config: {
-        mcpServers: { local: { url: f.url, auth: false, lifecycle: "lazy" } },
-        settings: { sampling: false, elicitation: false },
-      },
-    })(api);
-    cleanups.push(() => handlers.get("session_shutdown")({}, ctx));
-    await handlers.get("session_start")({}, ctx);
-    const page = await tools
-      .get("mcp")
-      .execute(
-        "connect-page",
-        { connect: "local", limit: 1, offset: 1 },
-        undefined,
-        undefined,
-        ctx,
-      );
+    const gateway = requireValue(context.runner.getToolDefinition("mcp"));
+    const page = await gateway.execute(
+      "connect-page",
+      { connect: "local", limit: 1, offset: 1 },
+      undefined,
+      undefined,
+      context.runner.createToolContext("connect-page", context.context.signal),
+    );
     expect(page.details).toMatchObject({
       mode: "list",
       server: "local",
@@ -820,7 +992,7 @@ describe("published SDK v2 over real local HTTP", () => {
       hasMore: true,
       nextOffset: 2,
     });
-    expect(page.content[0].text).toContain(
+    expect(textBlock(page.content[0])).toContain(
       '2-2 of 3 — mcp({ action: "list", server: "local", limit: 1, offset: 2 }) for more',
     );
   });
@@ -828,7 +1000,7 @@ describe("published SDK v2 over real local HTTP", () => {
   it("preserves native annotations through cached metadata, direct tools and both describe paths", async () => {
     const f = await fixture();
     const { state, connection } = await f.connect({ directTools: true });
-    const definition = state.config.mcpServers.local!;
+    const definition = requireValue(state.config.mcpServers.local);
     const entry = {
       configHash: computeServerHash(definition),
       tools: serializeTools(connection.tools),
@@ -842,14 +1014,15 @@ describe("published SDK v2 over real local HTTP", () => {
       { version: 1, servers: { local: entry } },
       "server",
     );
-    expect(specs[0]!.annotations).toEqual({ readOnlyHint: true });
-    expect(
-      JSON.parse((executeDescribe(state, "local_echo").content[0] as TextContent).text),
-    ).toMatchObject({ annotations: { readOnlyHint: true } });
-    const script = await runMcpScript(state, 'return tools.describe({ path: "local_echo" });');
-    expect(JSON.parse((script.content[0] as TextContent).text).annotations).toEqual({
-      readOnlyHint: true,
+    expect(requireValue(specs[0]).annotations).toEqual({ readOnlyHint: true });
+    expect(JSON.parse(textBlock(executeDescribe(state, "local_echo").content[0]))).toMatchObject({
+      annotations: { readOnlyHint: true },
     });
+    const script = await runMcpScript(state, 'return tools.describe({ path: "local_echo" });');
+    const described = z
+      .object({ annotations: z.unknown() })
+      .parse(JSON.parse(textBlock(script.content[0])));
+    expect(described.annotations).toEqual({ readOnlyHint: true });
     expect(f.calls()).toHaveLength(0);
   });
 
@@ -881,18 +1054,8 @@ describe("published SDK v2 over real local HTTP", () => {
         });
         return true;
       }
-      return undefined;
+      return;
     });
-    const piPath = process.env.PI_PACKAGE_DIR;
-    const {
-      createAgentSession,
-      DefaultResourceLoader,
-      ModelRuntime,
-      SessionManager,
-      SettingsManager,
-    } = piPath
-      ? await import(/* @vite-ignore */ pathToFileURL(join(piPath, "dist/index.js")).href)
-      : await import("@earendil-works/pi-coding-agent");
     const root = await mkdtemp(
       join(process.env.PI_MCP_NATIVE_TEST_ROOT ?? tmpdir(), "mcp-stable-prompt-"),
     );
@@ -921,7 +1084,7 @@ describe("published SDK v2 over real local HTTP", () => {
     await writeFile(
       wrapper,
       `
-      import { createMcpAdapter } from ${JSON.stringify(resolve("dist/index.js"))};
+      import { createMcpAdapter } from ${JSON.stringify(resolvePath("dist/index.js"))};
       export default createMcpAdapter({ outputDirectory: ${JSON.stringify(join(root, "output"))}, config: {
         mcpServers: { local: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "lazy" } },
         settings: { sampling: false, elicitation: false },
@@ -945,11 +1108,12 @@ describe("published SDK v2 over real local HTTP", () => {
       authPath: join(agentDir, "auth.json"),
       modelsPath: null,
     });
-    const model = {
+    const model: Model<"openai-completions"> = {
       id: "fixture",
       name: "fixture",
       api: "openai-completions",
       provider: "fixture",
+      baseUrl: f.url,
       reasoning: false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -977,7 +1141,7 @@ describe("published SDK v2 over real local HTTP", () => {
     });
     await session.bindExtensions({
       mode: "print",
-      onError: (error: any) => {
+      onError: (error) => {
         throw new Error(error.error);
       },
     });
@@ -992,7 +1156,7 @@ describe("published SDK v2 over real local HTTP", () => {
       { tool: "local_second", args: {} },
     ];
     const prefixes: string[] = [];
-    session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
+    session.agent.streamFunction = async (_model, context) => {
       prefixes.push(
         JSON.stringify({
           systemPrompt: getCurrentSystemPrompt(context.messages),
@@ -1001,7 +1165,7 @@ describe("published SDK v2 over real local HTTP", () => {
       );
       const loading = prefixes.length === 1;
       const step = loading ? { enable: ["gateway", "script"] } : steps[prefixes.length - 2];
-      const message = {
+      const message: AssistantMessage = {
         role: "assistant",
         api: "openai-completions",
         provider: "fixture",
@@ -1027,30 +1191,35 @@ describe("published SDK v2 over real local HTTP", () => {
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
       };
-      return {
-        async *[Symbol.asyncIterator]() {
-          yield { type: "done", reason: message.stopReason, message };
-        },
-        result: async () => message,
-      };
+      return streamMessage(message);
     };
     await session.prompt("Read the server guidance and discover the newly available tool.");
-    const outputs = session.messages
-      .filter((message: any) => message.role === "toolResult")
-      .slice(1);
+    const outputs = toolResults(session.messages).slice(1);
     expect(outputs).toHaveLength(steps.length);
-    expect(outputs.every((message: any) => !message.isError && !message.details?.error)).toBe(true);
-    expect(JSON.stringify(outputs[1].content)).toContain("Read the original data");
-    expect(outputs[3].content[0].text).toBe(`local instructions:\n\n${instructions}`);
-    expect(JSON.stringify(outputs[4].content)).toContain("Read newly available data");
+    expect(
+      outputs.every(
+        (message) =>
+          !message.isError &&
+          z.record(z.string(), z.unknown()).parse(message.details ?? {}).error === undefined,
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(requireValue(outputs[1]).content)).toContain("Read the original data");
+    expect(textBlock(requireValue(outputs[3]).content[0])).toBe(
+      `local instructions:\n\n${instructions}`,
+    );
+    expect(JSON.stringify(requireValue(outputs[4]).content)).toContain("Read newly available data");
     expect(f.calls().map((e) => e.body.params.name)).toEqual(["second"]);
     expect(prefixes).toHaveLength(steps.length + 2);
-    expect(JSON.parse(prefixes[0]!).tools.map((tool: { name: string }) => tool.name)).not.toEqual(
-      expect.arrayContaining(["mcp", "mcp_script"]),
-    );
-    const prefix = JSON.parse(prefixes[1]!);
+    const prefixSchema = z.object({
+      systemPrompt: z.string(),
+      tools: z.array(z.object({ name: z.string() })),
+    });
+    expect(
+      prefixSchema.parse(JSON.parse(requireValue(prefixes[0]))).tools.map((item) => item.name),
+    ).not.toEqual(expect.arrayContaining(["mcp", "mcp_script"]));
+    const prefix = prefixSchema.parse(JSON.parse(requireValue(prefixes[1])));
     expect(prefix.systemPrompt).toContain("MCP server operations");
-    expect(prefix.tools.map((tool: { name: string }) => tool.name)).toEqual(
+    expect(prefix.tools.map((item) => item.name)).toEqual(
       expect.arrayContaining(["mcp", "mcp_script"]),
     );
     expect(new Set(prefixes.slice(1)).size).toBe(1);
@@ -1062,49 +1231,56 @@ describe("published SDK v2 over real local HTTP", () => {
     );
     let stage = 0;
     let savedRef: string | undefined;
-    session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
+    let savedText: string | undefined;
+    const loadingStages: Array<{
+      hasGateway: boolean;
+      selected: ReturnType<typeof getCurrentTools>[number] | undefined;
+      callable: string[];
+    }> = [];
+    session.agent.streamFunction = async (_model, context) => {
       const active = getCurrentTools(context.messages);
-      if (stage < 3) {
-        expect(active.some((tool) => tool.name === "mcp" || tool.name === "mcp_script")).toBe(
-          false,
-        );
-      }
       const selected = active.find(
         (candidate) => candidate.description === "Read newly available data",
-      ) as { name: string; parameters: unknown } | undefined;
-      let next: { name: string; arguments: Record<string, unknown> } | undefined;
+      );
+      loadingStages.push({
+        hasGateway: active.some(
+          (candidate) => candidate.name === "mcp" || candidate.name === "mcp_script",
+        ),
+        selected,
+        callable: session.getCallableToolNames(),
+      });
+      let next: Pick<ToolCall, "name" | "arguments"> | undefined;
       if (stage === 0) {
-        expect(selected).toBeUndefined();
-        expect(session.getCallableToolNames()).not.toContain("local_second");
         next = {
           name: "mcp_search",
           arguments: { query: "newly available", server: "local", limit: 1 },
         };
       } else if (stage === 1) {
-        expect(selected?.parameters).toEqual(tool.inputSchema);
-        expect(session.getCallableToolNames()).toContain("local_second");
-        next = { name: selected!.name, arguments: { value: "typed" } };
+        next = { name: requireValue(selected).name, arguments: { value: "typed" } };
       } else if (stage === 2) {
-        const response = context.messages
-          .filter((message) => message.role === "toolResult")
-          .at(-1)!;
+        const response = requireValue(
+          context.messages.findLast((message) => message.role === "toolResult"),
+        );
         const text = response.content
           .filter((block) => block.type === "text")
           .map((block) => block.text)
           .join("\n");
         const reference = /\[MCP result saved: (".*?")\./.exec(text)?.[1];
-        expect(reference).toBeDefined();
-        savedRef = JSON.parse(reference!);
-        expect(text).toContain('mcp_search({ enable: ["gateway"] })');
+        savedRef = z.string().parse(JSON.parse(requireValue(reference)));
+        savedText = text;
         next = { name: "mcp_search", arguments: { enable: ["gateway"] } };
       } else if (stage === 3) {
         next = {
           name: "mcp",
-          arguments: { action: "read-result", ref: savedRef, path: "/structuredContent" },
+          arguments: {
+            action: "read-result",
+            ref: requireValue(savedRef),
+            path: "/structuredContent",
+          },
         };
       }
       stage++;
-      const message = {
+      const message: AssistantMessage = {
         role: "assistant",
         api: "openai-completions",
         provider: "fixture",
@@ -1123,60 +1299,68 @@ describe("published SDK v2 over real local HTTP", () => {
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
       };
-      return {
-        async *[Symbol.asyncIterator]() {
-          yield { type: "done", reason: message.stopReason, message };
-        },
-        result: async () => message,
-      };
+      return streamMessage(message);
     };
     await session.prompt(
       "Load the matching typed tool, call it, then inspect its saved structured data without another remote call.",
     );
     expect(stage).toBe(5);
-    const readback = session.messages
-      .filter((message: any) => message.role === "toolResult")
-      .at(-1)!;
+    expect(loadingStages.slice(0, 3).map((snapshot) => snapshot.hasGateway)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(requireValue(loadingStages[0]).selected).toBeUndefined();
+    expect(requireValue(loadingStages[0]).callable).not.toContain("local_second");
+    expect(requireValue(requireValue(loadingStages[1]).selected).parameters).toEqual(
+      tool.inputSchema,
+    );
+    expect(requireValue(loadingStages[1]).callable).toContain("local_second");
+    expect(savedRef).toBeDefined();
+    expect(savedText).toContain('mcp_search({ enable: ["gateway"] })');
+    const readback = requireValue(toolResults(session.messages).at(-1));
     expect(readback.isError).toBe(false);
-    expect(JSON.parse(readback.content[0].text)).toEqual({ value: "typed" });
+    expect(JSON.parse(textBlock(readback.content[0]))).toEqual({ value: "typed" });
     expect(f.calls().map((e) => e.body.params.name)).toEqual(["second", "second"]);
-    expect(
+    const selection = requireValue(
       session.sessionManager
         .getBranch()
-        .filter(
-          (entry: any) => entry.type === "custom" && entry.customType === "mcp-tool-selection",
-        )
-        .at(-1).data.selected,
-    ).toEqual([{ server: "local", tool: "second" }]);
+        .filter((entry) => entry.type === "custom")
+        .findLast((entry) => entry.customType === "mcp-tool-selection"),
+    );
+    expect(z.object({ selected: z.unknown() }).parse(selection.data).selected).toEqual([
+      { server: "local", tool: "second" },
+    ]);
 
     {
       session.setActiveToolsByName(
         session.getActiveToolNames().filter((name: string) => name !== "mcp_script"),
       );
       let requests = 0;
-      session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
+      const scriptVisibility: boolean[] = [];
+      session.agent.streamFunction = async (_model, context) => {
         const first = requests++ === 0;
-        const typed = getCurrentTools(context.messages).find(
-          (candidate) => candidate.description === "Read newly available data",
-        )!;
-        const call = {
+        const typed = requireValue(
+          getCurrentTools(context.messages).find(
+            (candidate) => candidate.description === "Read newly available data",
+          ),
+        );
+        const pendingCall: ToolCall = {
           type: "toolCall",
           id: "pending-typed",
           name: typed.name,
           arguments: { value: "pending" },
         };
-        if (!first) {
-          expect(getCurrentTools(context.messages).some((tool) => tool.name === "mcp_script")).toBe(
-            true,
-          );
-        }
-        const message = {
+        scriptVisibility.push(
+          getCurrentTools(context.messages).some((candidate) => candidate.name === "mcp_script"),
+        );
+        const message: AssistantMessage = {
           role: "assistant",
           api: model.api,
           provider: "fixture",
           model: "fixture",
           timestamp: Date.now(),
-          content: first ? [call] : [{ type: "text", text: "done" }],
+          content: first ? [pendingCall] : [{ type: "text", text: "done" }],
           stopReason: first ? "toolUse" : "stop",
           usage: {
             input: 0,
@@ -1187,24 +1371,13 @@ describe("published SDK v2 over real local HTTP", () => {
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
           },
         };
-        return {
-          async *[Symbol.asyncIterator]() {
-            if (first) {
-              yield { type: "start", partial: message };
-              yield { type: "toolcall_end", partial: message, toolCall: call, contentIndex: 0 };
-            }
-            yield { type: "done", reason: message.stopReason, message };
-          },
-          result: async () => message,
-        };
+        return streamMessage(message, first ? pendingCall : undefined);
       };
       const pending = session.prompt("Keep the accepted typed call while loading script.");
       try {
         await expect.poll(() => heldCall !== undefined).toBe(true);
-        const search = session.agent.state.tools.find(
-          (tool: { name: string }) => tool.name === "mcp_search",
-        );
-        await search.execute("load-with-pending", { enable: ["script"] });
+        const search = session.agent.state.tools.find((item) => item.name === "mcp_search");
+        await requireValue(search).execute("load-with-pending", { enable: ["script"] });
         expect(session.getActiveToolNames()).toContain("mcp_script");
         expect(session.getActiveToolNames()).toContain("local_second");
       } finally {
@@ -1217,29 +1390,20 @@ describe("published SDK v2 over real local HTTP", () => {
         await pending;
       }
       await session.waitForIdle();
+      expect(scriptVisibility).toEqual([false, true]);
       expect(
-        f.calls().filter((call) => call.body.params.arguments.value === "pending"),
+        f.calls().filter((request) => request.body.params.arguments.value === "pending"),
         JSON.stringify(session.messages.slice(-4)),
       ).toHaveLength(1);
       expect(
         session.messages.filter(
-          (message: any) => message.role === "toolResult" && message.toolCallId === "pending-typed",
+          (message) => message.role === "toolResult" && message.toolCallId === "pending-typed",
         ),
       ).toMatchObject([{ isError: false, content: [{ type: "text", text: "settled once" }] }]);
     }
   }, 20_000);
 
   it("awaits native Pi factory checkpoints and capture across Jiti without replaying completed effects", async () => {
-    const piPath = process.env.PI_PACKAGE_DIR;
-    const {
-      createAgentSession,
-      DefaultResourceLoader,
-      ModelRuntime,
-      SessionManager,
-      SettingsManager,
-    } = piPath
-      ? await import(/* @vite-ignore */ pathToFileURL(join(piPath, "dist/index.js")).href)
-      : await import("@earendil-works/pi-coding-agent");
     const root = await mkdtemp(
       join(process.env.PI_MCP_NATIVE_TEST_ROOT ?? tmpdir(), "mcp-native-capture-"),
     );
@@ -1263,15 +1427,8 @@ describe("published SDK v2 over real local HTTP", () => {
       }
       // Preserve native fixture histories for inspection; never delete Pi sessions.
     });
-    const captures: Array<{ event: any; bytes: string; res: ServerResponse }> = [];
-    const checkpoints: Array<{
-      toolCallId: string;
-      operation?: McpOperationContext;
-      bytes: string;
-      workspace: string | null;
-      artifacts: string[];
-      res: ServerResponse;
-    }> = [];
+    const captures: Array<z.infer<typeof captureSchema> & { res: ServerResponse }> = [];
+    const checkpoints: Array<z.infer<typeof checkpointSchema> & { res: ServerResponse }> = [];
     const outputDirectory = join(root, "output");
     const largeOutput = "saved detail: π\n".repeat(10_000);
     let checkpointMode = "hold";
@@ -1281,131 +1438,94 @@ describe("published SDK v2 over real local HTTP", () => {
     const receipts = new Map<string, unknown>();
     let readbackAnnotations: { readOnlyHint: boolean } | undefined = { readOnlyHint: true };
     const resourceUri = "fixture://saved-data";
-    const f = await fixture((e) => {
-      if (e.req.url === "/writer") {
-        writer = e.res;
-        return true;
-      }
-      if (e.req.url === "/checkpoint") {
-        checkpoints.push({ ...(e.body as any), res: e.res });
-        if (checkpointMode === "hold") {
+    const f = await fixture(
+      (e) => {
+        if (e.body.method === "server/discover") {
+          result(e, { ...modern, capabilities: { tools: {}, resources: {} } });
           return true;
         }
-        e.res.writeHead(checkpointMode === "reject" ? 503 : 200).end();
-        return true;
-      }
-      if (e.req.url === "/capture") {
-        const { event, bytes } = e.body as any;
-        captures.push({ event, bytes, res: e.res });
-        if (mode === "hold" && event.innerCallId === 1) {
-          return true;
-        }
-        e.res.writeHead(mode === `reject-${event.phase}` ? 503 : 200).end();
-        return true;
-      }
-      if (e.body.method === "server/discover") {
-        result(e, { ...modern, capabilities: { tools: {}, resources: {} } });
-        return true;
-      }
-      if (e.body.method === "resources/list") {
-        result(e, {
-          resultType: "complete",
-          resources: [{ name: "saved_data", uri: resourceUri }],
-        });
-        return true;
-      }
-      if (e.body.method === "resources/read") {
-        result(e, {
-          resultType: "complete",
-          ttlMs: 0,
-          cacheScope: "private",
-          contents: [{ uri: resourceUri, text: "saved resource" }],
-        });
-        return true;
-      }
-      if (e.body.method === "tools/list") {
-        result(e, {
-          resultType: "complete",
-          tools: [
-            { name: "echo", inputSchema: tool.inputSchema },
-            { ...tool, name: "readback", annotations: readbackAnnotations },
-            {
-              name: "upsert",
-              inputSchema: tool.inputSchema,
-              annotations: { readOnlyHint: false, idempotentHint: true },
-            },
-          ],
-        });
-        return true;
-      }
-      if (e.body.method === "tools/call") {
-        const value = e.body.params.arguments.value;
-        if (e.body.params.name !== "readback") {
-          receipts.set(value, { id: `resource-${++effects}`, value });
-        }
-        if (value === "lose-response" && e.body.params.name === "echo") {
-          e.res.writeHead(200, { "content-type": "text/event-stream" });
-          e.res.write(": committed\n\n");
-          setTimeout(() => e.res.destroy(), 20);
-        } else {
+        if (e.body.method === "resources/list") {
           result(e, {
             resultType: "complete",
-            content: value === "first" ? [{ type: "text", text: largeOutput }] : [],
-            structuredContent: receipts.get(value),
+            resources: [{ name: "saved_data", uri: resourceUri }],
           });
+          return true;
         }
-        return true;
-      }
-      return undefined;
-    });
+        if (e.body.method === "resources/read") {
+          result(e, {
+            resultType: "complete",
+            ttlMs: 0,
+            cacheScope: "private",
+            contents: [{ uri: resourceUri, text: "saved resource" }],
+          });
+          return true;
+        }
+        if (e.body.method === "tools/list") {
+          result(e, {
+            resultType: "complete",
+            tools: [
+              { name: "echo", inputSchema: tool.inputSchema },
+              { ...tool, name: "readback", annotations: readbackAnnotations },
+              {
+                name: "upsert",
+                inputSchema: tool.inputSchema,
+                annotations: { readOnlyHint: false, idempotentHint: true },
+              },
+            ],
+          });
+          return true;
+        }
+        if (e.body.method === "tools/call") {
+          const value = z.string().parse(e.body.params.arguments.value);
+          if (e.body.params.name !== "readback") {
+            receipts.set(value, { id: `resource-${++effects}`, value });
+          }
+          if (value === "lose-response" && e.body.params.name === "echo") {
+            e.res.writeHead(200, { "content-type": "text/event-stream" });
+            e.res.write(": committed\n\n");
+            setTimeout(() => e.res.destroy(), 20);
+          } else {
+            result(e, {
+              resultType: "complete",
+              content: value === "first" ? [{ type: "text", text: largeOutput }] : [],
+              structuredContent: receipts.get(value),
+            });
+          }
+          return true;
+        }
+        return;
+      },
+      {
+        "/writer": ({ res }) => {
+          writer = res;
+        },
+        "/checkpoint": ({ body, res }) => {
+          checkpoints.push({ ...checkpointSchema.parse(body), res });
+          if (checkpointMode !== "hold") {
+            res.writeHead(checkpointMode === "reject" ? 503 : 200).end();
+          }
+        },
+        "/capture": ({ body, res }) => {
+          const capture = captureSchema.parse(body);
+          captures.push({ ...capture, res });
+          if (mode !== "hold" || capture.event.innerCallId !== 1) {
+            res.writeHead(mode === `reject-${capture.event.phase}` ? 503 : 200).end();
+          }
+        },
+      },
+    );
     const wrapper = join(root, "capture-extension.ts");
     await writeFile(
       wrapper,
       `
-      import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-      import { join } from "node:path";
-      import { Type } from "typebox";
-      import { createMcpAdapter } from ${JSON.stringify(resolve("dist/index.js"))};
-      export default function (pi) {
-        let sessionManager;
-        pi.on("session_start", (_event, ctx) => { sessionManager = ctx.sessionManager; });
-        const outputDirectory = ${JSON.stringify(outputDirectory)};
-        const workspaceFile = ${JSON.stringify(join(root, "work.txt"))};
-        pi.registerTool({
-          name: "fixture_writer", label: "Writer", description: "Finish a workspace write", parameters: Type.Object({}),
-          async execute(_id, _args, signal) {
-            await fetch(${JSON.stringify(new URL("/writer", f.url).href)}, { method: "POST", signal });
-            writeFileSync(workspaceFile, "writer finished");
-            return { content: [{ type: "text", text: "writer finished" }], details: {} };
-          },
-        });
-        createMcpAdapter({
-          outputDirectory,
-          beforeExecute: async (toolCallId, ctx, operation) => {
-            const artifacts = existsSync(outputDirectory)
-              ? readdirSync(outputDirectory, { recursive: true }).filter(name => name.endsWith(".txt"))
-                .map(name => readFileSync(join(outputDirectory, name), "utf8")) : [];
-            const response = await fetch(${JSON.stringify(new URL("/checkpoint", f.url).href)}, {
-              method: "POST", signal: ctx.signal,
-              body: JSON.stringify({ toolCallId, operation, bytes: readFileSync(ctx.sessionManager.getSessionFile(), "utf8"),
-                workspace: existsSync(workspaceFile) ? readFileSync(workspaceFile, "utf8") : null, artifacts }),
-            });
-            if (!response.ok) throw new Error("checkpoint unavailable");
-          },
-          config: { mcpServers: {
-            local: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "eager", directTools: true, retryOnTransportFailure: true, requestTimeoutMs: 1000 },
-            untrusted: { url: ${JSON.stringify(f.url)}, auth: false, lifecycle: "eager", directTools: true, requestTimeoutMs: 1000 },
-          }, settings: { sampling: false, elicitation: false, freezeDirectTools: true } },
-          onToolCall: async ({ signal, ...event }) => {
-            pi.appendEntry("fixture-mcp-call", event);
-            const bytes = readFileSync(sessionManager.getSessionFile(), "utf8");
-            const response = await fetch(${JSON.stringify(new URL("/capture", f.url).href)}, {
-              method: "POST", body: JSON.stringify({ event, bytes }), signal,
-            });
-            if (!response.ok) throw new Error("capture unavailable: synthetic-secret-must-not-leak");
-          },
-        })(pi);
-      }
+      import { createMcpAdapter } from ${JSON.stringify(resolvePath("dist/index.js"))};
+      import { createNativeCaptureExtension } from ${JSON.stringify(resolvePath("__tests__/fixtures/native-capture-extension.ts"))};
+      export default createNativeCaptureExtension({
+        createAdapter: createMcpAdapter,
+        outputDirectory: ${JSON.stringify(outputDirectory)},
+        workspaceFile: ${JSON.stringify(join(root, "work.txt"))},
+        url: ${JSON.stringify(f.url)},
+      });
     `,
     );
     const settingsManager = SettingsManager.inMemory();
@@ -1426,11 +1546,12 @@ describe("published SDK v2 over real local HTTP", () => {
       modelsPath: null,
     });
     const sessionManager = SessionManager.create(root, join(root, "sessions"));
-    const model = {
+    const model: Model<"openai-completions"> = {
       id: "fixture",
       name: "fixture",
       api: "openai-completions",
       provider: "fixture",
+      baseUrl: f.url,
       reasoning: false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -1458,7 +1579,7 @@ describe("published SDK v2 over real local HTTP", () => {
     });
     await session.bindExtensions({
       mode: "print",
-      onError: (error: any) => {
+      onError: (error) => {
         throw new Error(error.error);
       },
     });
@@ -1470,20 +1591,28 @@ describe("published SDK v2 over real local HTTP", () => {
       { type: "toolCall", id: "native-outer", name: "mcp_script", arguments: { code: script } },
     ];
     let modelCalls = 0;
-    session.agent.streamFunction = async (
-      _model: unknown,
-      _context: unknown,
-      options: { signal?: AbortSignal },
-    ) => {
-      const aborted = options.signal?.aborted;
-      const message = {
+    session.agent.streamFunction = async (_model, _context, options) => {
+      const aborted = options?.signal?.aborted === true;
+      let content: AssistantMessage["content"] = [];
+      let stopReason: AssistantMessage["stopReason"] = "aborted";
+      if (!aborted) {
+        modelCalls++;
+        if (modelCalls === 1) {
+          content = nativeCalls;
+          stopReason = "toolUse";
+        } else {
+          content = [{ type: "text", text: "done" }];
+          stopReason = "stop";
+        }
+      }
+      const message: AssistantMessage = {
         role: "assistant",
         api: "openai-completions",
         provider: "fixture",
         model: "fixture",
         timestamp: Date.now(),
-        content: aborted ? [] : ++modelCalls === 1 ? nativeCalls : [{ type: "text", text: "done" }],
-        stopReason: aborted ? "aborted" : modelCalls === 1 ? "toolUse" : "stop",
+        content,
+        stopReason,
         usage: {
           input: 0,
           output: 0,
@@ -1493,20 +1622,13 @@ describe("published SDK v2 over real local HTTP", () => {
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
       };
-      return {
-        async *[Symbol.asyncIterator]() {
-          yield aborted
-            ? { type: "error", reason: "aborted", error: message }
-            : { type: "done", reason: message.stopReason, message };
-        },
-        result: async () => message,
-      };
+      return streamMessage(message);
     };
     const pending = session.prompt("fixture: finish the workspace write and both effects");
     await expect.poll(() => writer !== undefined).toBe(true);
     expect(checkpoints).toHaveLength(0);
     expect(effects).toBe(0);
-    writer!.writeHead(200).end();
+    requireValue(writer).writeHead(200).end();
     await expect.poll(() => checkpoints.length).toBe(1);
     expect(checkpoints[0]).toMatchObject({
       toolCallId: "native-outer",
@@ -1521,31 +1643,36 @@ describe("published SDK v2 over real local HTTP", () => {
         annotationsTrusted: true,
       },
     });
-    expect(checkpoints[0]!.operation!.annotations).toBeUndefined();
+    expect(requireValue(requireValue(checkpoints[0]).operation).annotations).toBeUndefined();
     // A real wait longer than the 1s service deadline must not consume that deadline.
     await delay(1200);
-    expect(checkpoints[0]!.bytes).toContain('"role":"toolResult","toolCallId":"native-writer"');
+    expect(requireValue(checkpoints[0]).bytes).toContain(
+      '"role":"toolResult","toolCallId":"native-writer"',
+    );
     expect(captures).toHaveLength(0);
     expect(effects).toBe(0);
-    checkpoints[0]!.res.writeHead(200).end();
+    requireValue(checkpoints[0]).res.writeHead(200).end();
     await expect.poll(() => captures.length).toBe(1);
     expect(effects).toBe(0);
-    expect(captures[0]!.event).toMatchObject({
+    expect(requireValue(captures[0]).event).toMatchObject({
       phase: "before",
       toolCallId: "native-outer",
       innerCallId: 1,
       args: { value: "first" },
     });
-    expect(captures[0]!.bytes).toContain('"name":"mcp_script"');
-    captures[0]!.res.writeHead(200).end();
+    expect(requireValue(captures[0]).bytes).toContain('"name":"mcp_script"');
+    requireValue(captures[0]).res.writeHead(200).end();
     await expect.poll(() => captures.length).toBe(2);
     expect(effects).toBe(1);
-    const checkpoint = captures[1]!.bytes;
-    expect(captures[1]!.event.result.structuredContent).toEqual({
+    const checkpoint = requireValue(captures[1]).bytes;
+    expect(
+      z.object({ structuredContent: z.unknown() }).parse(requireValue(captures[1]).event.result)
+        .structuredContent,
+    ).toEqual({
       id: "resource-1",
       value: "first",
     });
-    captures[1]!.res.writeHead(200).end();
+    requireValue(captures[1]).res.writeHead(200).end();
     await expect.poll(() => checkpoints.length).toBe(2);
     expect(checkpoints[1]).toMatchObject({
       toolCallId: "native-outer",
@@ -1555,9 +1682,11 @@ describe("published SDK v2 over real local HTTP", () => {
         args: { value: "resource-1" },
       },
     });
-    expect(checkpoints[1]!.artifacts).not.toContain(largeOutput); // Scripts retain raw JSON, without unused rendered-text work.
+    expect(requireValue(checkpoints[1]).artifacts).not.toContain(largeOutput); // Scripts retain raw JSON, without unused rendered-text work.
     expect(
-      checkpoints[1]!.artifacts.map((bytes) => (bytes.startsWith("{") ? JSON.parse(bytes) : null)),
+      requireValue(checkpoints[1]).artifacts.map((bytes): unknown =>
+        bytes.startsWith("{") ? JSON.parse(bytes) : null,
+      ),
     ).toContainEqual(
       expect.objectContaining({
         content: [{ type: "text", text: largeOutput }],
@@ -1567,53 +1696,67 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(captures).toHaveLength(2);
     expect(effects).toBe(1);
     checkpointMode = "pass";
-    checkpoints[1]!.res.writeHead(200).end();
+    requireValue(checkpoints[1]).res.writeHead(200).end();
     await pending;
     await session.waitForIdle();
     expect(effects).toBe(2);
-    expect(captures[2]!.event).toMatchObject({
+    expect(requireValue(captures[2]).event).toMatchObject({
       toolCallId: "native-outer",
       innerCallId: 2,
       args: { value: "resource-1" },
     });
-    const scriptResult = sessionManager
-      .getEntries()
-      .find(
-        (e: any) =>
-          e.type === "message" &&
-          e.message.role === "toolResult" &&
-          e.message.toolCallId === "native-outer",
-      );
-    const finalPath = scriptResult.message.details.outputGuard.fullOutputPath;
+    const scriptResult = requireValue(
+      toolResults(
+        sessionManager
+          .getEntries()
+          .filter((entry) => entry.type === "message")
+          .map((entry) => entry.message),
+      ).find((message) => message.toolCallId === "native-outer"),
+    );
+    const scriptDetails = z
+      .object({
+        outputGuard: z.object({ fullOutputPath: z.string() }),
+        resultRefs: z.array(z.string()),
+      })
+      .parse(scriptResult.details);
+    const finalPath = scriptDetails.outputGuard.fullOutputPath;
     expect(dirname(dirname(finalPath))).toBe(outputDirectory);
     expect(await readFile(finalPath, "utf8")).toBe(
-      [largeOutput, ...scriptResult.message.details.resultRefs.map(formatMcpResultReference)].join(
-        "\n",
-      ),
+      [largeOutput, ...scriptDetails.resultRefs.map(formatMcpResultReference)].join("\n"),
     );
     const restoredPath = join(root, "restored.jsonl");
     await writeFile(restoredPath, checkpoint);
     const restored = SessionManager.open(restoredPath);
     const entries = restored
       .getEntries()
-      .filter((e: any) => e.type === "custom" && e.customType === "fixture-mcp-call");
-    expect(entries.map((e: any) => e.data.phase)).toEqual(["before", "after"]);
-    expect(entries[1].data.result.structuredContent.id).toBe("resource-1");
+      .filter((entry) => entry.type === "custom")
+      .filter((entry) => entry.customType === "fixture-mcp-call")
+      .map((entry) => captureEventSchema.parse(entry.data));
+    expect(entries.map((entry) => entry.phase)).toEqual(["before", "after"]);
+    expect(requireValue(entries[1]).result).toMatchObject({
+      structuredContent: { id: "resource-1" },
+    });
     expect(effects).toBe(2); // Opening native history does not replay its script.
 
     const registered = session.extensionRunner.getAllRegisteredTools();
     for (const name of ["local_echo", "mcp", "mcp_script"]) {
-      expect(registered.find((t: any) => t.definition.name === name).definition.executionMode).toBe(
-        "sequential",
-      );
+      expect(
+        requireValue(registered.find((t) => t.definition.name === name)).definition.executionMode,
+      ).toBe("sequential");
     }
-    const execute = (name: string, id: string, params: unknown, signal?: AbortSignal) =>
-      registered
-        .find((t: any) => t.definition.name === name)!
-        .definition.execute(id, params, signal, undefined, {
-          ...session.extensionRunner.createContext(),
-          signal,
-        });
+    const execute = async (name: string, id: string, params: unknown, signal?: AbortSignal) => {
+      const definition = requireValue(
+        registered.find((t) => t.definition.name === name),
+      ).definition;
+      const output = await definition.execute(
+        id,
+        params,
+        signal,
+        undefined,
+        session.extensionRunner.createToolContext(id, signal),
+      );
+      return { ...output, details: z.record(z.string(), z.unknown()).parse(output.details) };
+    };
     mode = "reject-before";
     const blocked = await execute("local_echo", "blocked-outer", { value: "never" });
     expect(blocked.details).toMatchObject({
@@ -1638,9 +1781,9 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(JSON.stringify(interrupted)).not.toContain("synthetic-secret-must-not-leak");
     mode = "hold";
     const controller = new AbortController();
-    const captureCount = captures.length;
+    const stoppedCaptureCount = captures.length;
     const stopped = execute("mcp_script", "stopped-outer", { code: script }, controller.signal);
-    await expect.poll(() => captures.length).toBe(captureCount + 1);
+    await expect.poll(() => captures.length).toBe(stoppedCaptureCount + 1);
     controller.abort(new Error("Stop"));
     expect((await stopped).details.error).toBe("aborted");
     expect(effects).toBe(3);
@@ -1650,28 +1793,32 @@ describe("published SDK v2 over real local HTTP", () => {
       args: { value: "proxy" },
     });
     expect(proxy.details.error).toBeUndefined();
-    expect(captures.at(-1)!.event).toMatchObject({
+    expect(requireValue(captures.at(-1)).event).toMatchObject({
       phase: "after",
       toolCallId: "proxy-outer",
       args: { value: "proxy" },
     });
-    expect(captures.at(-1)!.event.innerCallId).toBeUndefined();
+    expect(requireValue(captures.at(-1)).event.innerCallId).toBeUndefined();
     expect(effects).toBe(4);
     const lost = await execute("mcp_script", "lost-outer", {
       code: 'await tools.local_echo({ value: ["lose", "response"].join("-") });',
     });
-    expect(lost.details.calls[0]).toMatchObject({
-      error: "ambiguous_outcome",
-      recovery: { toolCallId: "lost-outer", innerCallId: 1, action: "readback" },
-    });
-    expect(lost.content[0].text).toContain("Read back the original operation");
+    expect(lost.details.calls).toMatchObject([
+      {
+        error: "ambiguous_outcome",
+        recovery: { toolCallId: "lost-outer", innerCallId: 1, action: "readback" },
+      },
+    ]);
+    expect(textBlock(lost.content[0])).toContain("Read back the original operation");
     expect(effects).toBe(5);
     const lostPath = join(root, "lost-response.jsonl");
-    await writeFile(lostPath, captures.at(-1)!.bytes);
+    await writeFile(lostPath, requireValue(captures.at(-1)).bytes);
     const lostHistory = SessionManager.open(lostPath)
       .getEntries()
-      .filter((e: any) => e.type === "custom" && e.customType === "fixture-mcp-call");
-    const intent = lostHistory.at(-2).data;
+      .filter((entry) => entry.type === "custom")
+      .filter((entry) => entry.customType === "fixture-mcp-call")
+      .map((entry) => captureEventSchema.parse(entry.data));
+    const intent = requireValue(lostHistory.at(-2));
     expect(intent).toMatchObject({
       phase: "before",
       toolCallId: "lost-outer",
@@ -1682,11 +1829,16 @@ describe("published SDK v2 over real local HTTP", () => {
       tool: "local_readback",
       args: intent.args,
     });
-    expect(readback.details.mcpResult.structuredContent).toEqual({
+    expect(
+      z.object({ structuredContent: z.unknown() }).parse(readback.details.mcpResult)
+        .structuredContent,
+    ).toEqual({
       id: "resource-5",
       value: "lose-response",
     });
-    expect(captures.at(-1)!.event.result.structuredContent.id).toBe("resource-5");
+    expect(requireValue(captures.at(-1)).event.result).toMatchObject({
+      structuredContent: { id: "resource-5" },
+    });
     expect(effects).toBe(5);
     expect(checkpoints.map((c) => c.toolCallId)).toEqual([
       "native-outer",
@@ -1712,39 +1864,35 @@ describe("published SDK v2 over real local HTTP", () => {
     `,
     });
     expect(rejectedScript.details.error).toBeUndefined();
-    expect(JSON.parse(rejectedScript.content[0].text)).toMatchObject({
+    expect(JSON.parse(textBlock(rejectedScript.content[0]))).toMatchObject({
       failed: { ok: false, error: { code: "call_failed" } },
       name: "echo",
     });
     expect(captures).toHaveLength(beforeRejectedScript);
     expect(effects).toBe(5);
 
-    for (const name of ["local_echo", "mcp", "mcp_script"]) {
+    for (const entry of ["direct", "proxy", "script"]) {
       checkpointMode = "hold";
       const beforeCount = checkpoints.length;
       const captureCount = captures.length;
+      const { name, arguments: args } = entryCall(entry, "echo", { value: "never" });
       const id = `native-stop-${name}`;
       nativeCalls = [
         {
           type: "toolCall",
           id,
           name,
-          arguments:
-            name === "mcp_script"
-              ? { code: script }
-              : name === "mcp"
-                ? { tool: "local_echo", args: { value: "never" } }
-                : { value: "never" },
+          arguments: entry === "script" ? { code: script } : args,
         },
       ];
       modelCalls = 0;
       const stopping = session.prompt(`fixture: stop ${name} during its checkpoint`);
       await expect.poll(() => checkpoints.length).toBe(beforeCount + 1);
-      expect(checkpoints.at(-1)!.toolCallId).toBe(id);
+      expect(requireValue(checkpoints.at(-1)).toolCallId).toBe(id);
       await session.abort();
       await stopping;
       await session.waitForIdle();
-      checkpoints.at(-1)!.res.end();
+      requireValue(checkpoints.at(-1)).res.end();
       expect(modelCalls).toBe(1);
       expect(captures).toHaveLength(captureCount);
       expect(effects).toBe(5);
@@ -1752,30 +1900,33 @@ describe("published SDK v2 over real local HTTP", () => {
 
     checkpointMode = "pass";
     mode = "pass";
-    expect(registered.some((t: any) => t.definition.name === "local_read_saved_data")).toBe(false);
-    for (const entry of ["direct", "proxy", "script"]) {
-      for (const name of entry === "direct"
-        ? ["readback", "upsert"]
-        : ["readback", "upsert", "read_saved_data"]) {
+    expect(registered.some((t) => t.definition.name === "local_read_saved_data")).toBe(false);
+    const operationMetadata = new Map<
+      string,
+      Pick<McpOperationContext, "annotations" | "resourceUri">
+    >([
+      ["readback", { annotations: { readOnlyHint: true } }],
+      ["upsert", { annotations: { readOnlyHint: false, idempotentHint: true } }],
+      ["read_saved_data", { resourceUri }],
+    ]);
+    for (const { entry, names } of [
+      { entry: "direct", names: ["readback", "upsert"] },
+      { entry: "proxy", names: ["readback", "upsert", "read_saved_data"] },
+      { entry: "script", names: ["readback", "upsert", "read_saved_data"] },
+    ]) {
+      for (const name of names) {
         const id = `${entry}-${name}`;
         const beforeCount = checkpoints.length;
         const captureCount = captures.length;
         const args = { value: id };
-        const output = await execute(
-          entry === "direct" ? `local_${name}` : entry === "proxy" ? "mcp" : "mcp_script",
-          id,
-          entry === "direct"
-            ? args
-            : entry === "proxy"
-              ? { tool: `local_${name}`, args }
-              : { code: `return await tools.local_${name}(${JSON.stringify(args)});` },
-        );
+        const invocation = entryCall(entry, name, args);
+        const output = await execute(invocation.name, id, invocation.arguments);
         expect(
           output.details.error,
           JSON.stringify({ id, details: output.details }),
         ).toBeUndefined();
         expect(checkpoints).toHaveLength(beforeCount + 1);
-        const operation = checkpoints.at(-1)!.operation;
+        const operation = requireValue(checkpoints.at(-1)).operation;
         expect(operation).toEqual({
           toolCallId: id,
           ...(entry === "script" ? { innerCallId: 1 } : {}),
@@ -1783,21 +1934,23 @@ describe("published SDK v2 over real local HTTP", () => {
           tool: name,
           args,
           annotationsTrusted: true,
-          ...(name === "readback"
-            ? { annotations: { readOnlyHint: true } }
-            : name === "upsert"
-              ? { annotations: { readOnlyHint: false, idempotentHint: true } }
-              : { resourceUri }),
+          ...requireValue(operationMetadata.get(name)),
         });
-        const { annotationsTrusted: _trust, ...nativeFields } = operation!;
+        const { annotationsTrusted: _trust, ...nativeFields } = requireValue(operation);
         expect(captures.slice(captureCount).map((c) => c.event.phase)).toEqual(["before", "after"]);
-        expect(captures[captureCount]!.event).toEqual({ ...nativeFields, phase: "before" });
-        expect(captures.at(-1)!.event).toMatchObject({ ...nativeFields, phase: "after" });
-        expect(captures.at(-1)!.event).not.toHaveProperty("annotationsTrusted");
+        expect(requireValue(captures[captureCount]).event).toEqual({
+          ...nativeFields,
+          phase: "before",
+        });
+        expect(requireValue(captures.at(-1)).event).toMatchObject({
+          ...nativeFields,
+          phase: "after",
+        });
+        expect(requireValue(captures.at(-1)).event).not.toHaveProperty("annotationsTrusted");
       }
     }
     await execute("untrusted_readback", "untrusted-read", { value: "untrusted" });
-    expect(checkpoints.at(-1)!.operation).toEqual({
+    expect(requireValue(checkpoints.at(-1)).operation).toEqual({
       toolCallId: "untrusted-read",
       server: "untrusted",
       tool: "readback",
@@ -1810,15 +1963,17 @@ describe("published SDK v2 over real local HTTP", () => {
     for (const annotations of [undefined, { readOnlyHint: false }]) {
       readbackAnnotations = annotations;
       await execute("mcp", "refresh", { connect: "local" });
-      expect(checkpoints.at(-1)!.operation).toBeUndefined();
+      expect(requireValue(checkpoints.at(-1)).operation).toBeUndefined();
       await execute("local_readback", "stale-direct", { value: "stale" });
-      expect(checkpoints.at(-1)!.operation!.annotations).toEqual(annotations);
-      expect(captures.at(-1)!.event.annotations).toEqual(annotations);
+      expect(requireValue(requireValue(checkpoints.at(-1)).operation).annotations).toEqual(
+        annotations,
+      );
+      expect(requireValue(captures.at(-1)).event.annotations).toEqual(annotations);
     }
     for (const params of [{}, { search: "echo" }, { action: "ui-messages" }]) {
       const count = captures.length;
       await execute("mcp", "unresolved-mode", params);
-      expect(checkpoints.at(-1)!.operation).toBeUndefined();
+      expect(requireValue(checkpoints.at(-1)).operation).toBeUndefined();
       expect(captures).toHaveLength(count);
     }
 
@@ -1835,17 +1990,25 @@ describe("published SDK v2 over real local HTTP", () => {
     // Parallel HTTP arrivals need not match the script's native call order.
     const pair = checkpoints
       .slice(checkpointCount)
-      .sort((a, b) => a.operation!.innerCallId! - b.operation!.innerCallId!);
+      .sort(
+        (a, b) =>
+          requireValue(requireValue(a.operation).innerCallId) -
+          requireValue(requireValue(b.operation).innerCallId),
+      );
     expect(
-      pair.map((c) => [c.operation!.toolCallId, c.operation!.innerCallId, c.operation!.args.value]),
+      pair.map((c) => [
+        requireValue(c.operation).toolCallId,
+        requireValue(c.operation).innerCallId,
+        requireValue(c.operation).args.value,
+      ]),
     ).toEqual([
       ["parallel-outer", 1, "parallel-first"],
       ["parallel-outer", 2, "parallel-second"],
     ]);
-    pair[1]!.res.writeHead(200).end();
+    requireValue(pair[1]).res.writeHead(200).end();
     await expect.poll(() => captures.length).toBe(parallelCaptureCount + 2);
     expect(captures.slice(parallelCaptureCount).map((c) => c.event.innerCallId)).toEqual([2, 2]);
-    pair[0]!.res.writeHead(200).end();
+    requireValue(pair[0]).res.writeHead(200).end();
     expect((await parallel).details.calls).toMatchObject([{ ok: true }, { ok: true }]);
     expect(captures.slice(parallelCaptureCount).map((c) => c.event.innerCallId)).toEqual([
       2, 2, 1, 1,
@@ -1923,7 +2086,7 @@ describe("published SDK v2 over real local HTTP", () => {
           .end(body === "plain" ? "service unavailable" : JSON.stringify({ error: "unavailable" }));
         return true;
       }
-      return undefined;
+      return;
     });
     const { state } = await f.connect({ retryOnTransportFailure: true });
     expect((await call(state, "proxy")).ok).toBe(true);
@@ -2051,10 +2214,15 @@ describe("published SDK v2 over real local HTTP", () => {
     const events = (await readFile(traceFile, "utf8"))
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line));
+      .map((line) =>
+        z
+          .object({ direction: z.string(), method: z.string().optional() })
+          .loose()
+          .parse(JSON.parse(line)),
+      );
     expect(
       events.filter((e) => e.direction === "outbound" && e.method === "tools/call"),
-    ).toMatchObject([{ id: f.calls()[0]!.body.id, status: "sent" }]);
+    ).toMatchObject([{ id: requireValue(f.calls()[0]).body.id, status: "sent" }]);
   });
 
   it.each(["network", "sse"])(
@@ -2069,7 +2237,7 @@ describe("published SDK v2 over real local HTTP", () => {
             e.res.writeHead(200, { "content-type": "text/event-stream" });
             e.res.write(": started\n\n");
           }
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await delay(100);
           e.req.socket.destroy();
         }
         return true;
@@ -2181,8 +2349,8 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.calls()).toHaveLength(1);
   });
 
-  it("returns a complete result before EOF and keeps late stream notifications without replay", async () => {
-    let stream: ServerResponse;
+  it("returns a complete result before EOF and keeps late stream notifications without replay", async function observesLateSseError() {
+    let stream: ServerResponse | undefined;
     const f = await fixture((e) => {
       if (e.body.method !== "tools/call") {
         return;
@@ -2201,10 +2369,11 @@ describe("published SDK v2 over real local HTTP", () => {
     const { state, connection } = await f.connect({ retryOnTransportFailure: true });
     const patches: unknown[] = [];
     const errors: Error[] = [];
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: the native MCP Client exposes only this error callback.
     connection.client.onerror = (error) => errors.push(error);
     f.manager.registerUiStreamListener("late", (_name, patch) => patches.push(patch));
     expect((await call(state, "proxy")).content).toEqual([{ type: "text", text: "complete" }]);
-    stream!.write(
+    requireValue(stream).write(
       `event: message\ndata: ${JSON.stringify({
         jsonrpc: "2.0",
         method: SERVER_STREAM_RESULT_PATCH_METHOD,
@@ -2215,7 +2384,7 @@ describe("published SDK v2 over real local HTTP", () => {
       })}\n\n`,
     );
     await expect.poll(() => patches.length).toBe(1);
-    stream!.destroy();
+    requireValue(stream).destroy();
     await expect.poll(() => errors.length).toBe(1);
     expect(f.calls()).toHaveLength(1);
     expect(connection.inFlight).toBe(0);
@@ -2228,7 +2397,7 @@ describe("published SDK v2 over real local HTTP", () => {
       if (e.body.method !== "tools/call") {
         return;
       }
-      if (e.body.params.arguments.sibling) {
+      if (e.body.params.arguments.sibling === true) {
         accepted = e;
         e.res.writeHead(200, { "content-type": "text/event-stream" });
         e.res.write(": accepted\n\n");
@@ -2246,16 +2415,16 @@ describe("published SDK v2 over real local HTTP", () => {
     const sibling = executeCall(state, "local_echo", { sibling: true });
     await expect.poll(() => accepted !== undefined).toBe(true);
     expect((await call(state, "proxy")).ok).toBe(true);
-    expect(accepted!.res.destroyed).toBe(false);
-    accepted!.res.end(
+    expect(requireValue(accepted).res.destroyed).toBe(false);
+    requireValue(accepted).res.end(
       `event: message\ndata: ${JSON.stringify({
         jsonrpc: "2.0",
-        id: accepted!.body.id,
+        id: requireValue(accepted).body.id,
         result: { resultType: "complete", content: [{ type: "text", text: "sibling result" }] },
       })}\n\n`,
     );
     expect((await sibling).content).toEqual([{ type: "text", text: "sibling result" }]);
-    expect(f.calls().filter((c) => c.body.params.arguments.sibling)).toHaveLength(1);
+    expect(f.calls().filter((c) => c.body.params.arguments.sibling === true)).toHaveLength(1);
     expect(attempts).toBe(2);
     expect(f.manager.getConnection("local")?.client).toBe(connection.client);
     expect(connection.inFlight).toBe(0);
@@ -2292,7 +2461,7 @@ describe("published SDK v2 over real local HTTP", () => {
     f.manager.registerUiStreamListener("catalog", () => {
       catalog = connection.client
         .listTools(undefined, { cacheMode: "refresh", timeout: 100 })
-        .catch((error) => error);
+        .catch((error: unknown) => error);
     });
     expect((await call(state, "proxy")).ok).toBe(false);
     await catalog;
@@ -2304,7 +2473,6 @@ describe("published SDK v2 over real local HTTP", () => {
     let id: WireRequest["id"];
     const f = await fixture((e) => {
       if (e.req.method === "GET") {
-        expect(e.req.headers["last-event-id"]).toBe("resume-token");
         e.res.writeHead(200, { "content-type": "text/event-stream" }).end(
           `event: message\ndata: ${JSON.stringify({
             jsonrpc: "2.0",
@@ -2327,6 +2495,11 @@ describe("published SDK v2 over real local HTTP", () => {
     expect((await call(state, "proxy")).content).toEqual([{ type: "text", text: "resumed" }]);
     expect(f.calls()).toHaveLength(1);
     expect(f.requests.filter((r) => r.req.method === "GET")).toHaveLength(1);
+    expect(
+      requireValue(f.requests.find((request) => request.req.method === "GET")).req.headers[
+        "last-event-id"
+      ],
+    ).toBe("resume-token");
   });
 
   it.each([401, 403])(
@@ -2353,7 +2526,7 @@ describe("published SDK v2 over real local HTTP", () => {
   );
 
   it("refreshes modern catalogs through the native POST subscription and closes it on shutdown", async () => {
-    let stream: ServerResponse;
+    let stream: ServerResponse | undefined;
     let subscriptionId: WireRequest["id"];
     let lists = 0;
     let closed = false;
@@ -2388,21 +2561,21 @@ describe("published SDK v2 over real local HTTP", () => {
         });
         return true;
       }
-      return undefined;
+      return;
     });
     const directory = await mkdtemp(join(tmpdir(), "mcp-v2-subscription-"));
     cleanups.unshift(() => rm(directory, { recursive: true, force: true }));
     f.manager.setTraceConfig({ enabled: true, file: join(directory, "trace.jsonl") });
     const { connection } = await f.connect();
-    expect(connection.tools[0]!.name).toBe("before");
-    stream!.write(
+    expect(requireValue(connection.tools[0]).name).toBe("before");
+    requireValue(stream).write(
       `event: message\ndata: ${JSON.stringify({
         jsonrpc: "2.0",
         method: "notifications/tools/list_changed",
         params: { _meta: { "io.modelcontextprotocol/subscriptionId": subscriptionId } },
       })}\n\n`,
     );
-    await expect.poll(() => connection.tools[0]!.name).toBe("after");
+    await expect.poll(() => requireValue(connection.tools[0]).name).toBe("after");
     expect(f.requests.filter((r) => r.body.method === "subscriptions/listen")).toHaveLength(1);
     expect(f.requests.some((r) => r.req.method === "GET")).toBe(false);
     await f.manager.closeAll();
@@ -2444,24 +2617,25 @@ describe("published SDK v2 over real local HTTP", () => {
         output.ok,
         JSON.stringify({ output, timeline, calls: f.calls().map(({ body }) => body) }),
       ).toBe(requestTimeoutMs === 2000);
-      if (requestTimeoutMs === 150) {
-        expect(output.details).toMatchObject({
-          error: "call_failed",
-          message: expect.stringMatching(/timeout|timed out/i),
-        });
-        expect(f.calls()).toHaveLength(1);
-      } else {
-        expect(f.calls()).toHaveLength(2);
-        expect(f.calls()[1]!.body.params.requestState).toBe("opaque-state");
-        expect(f.calls()[0]!.body.id).not.toBe(f.calls()[1]!.body.id);
-      }
+      const timeoutMessage: unknown = expect.stringMatching(/timeout|timed out/i);
+      expect({ error: output.details.error, message: output.details.message }).toEqual(
+        requestTimeoutMs === 150
+          ? { error: "call_failed", message: timeoutMessage }
+          : { error: undefined, message: undefined },
+      );
+      const count = requestTimeoutMs === 150 ? 1 : 2;
+      expect(f.calls()).toHaveLength(count);
+      expect(new Set(f.calls().map((request) => request.body.id)).size).toBe(count);
+      expect(f.calls().map((request) => request.body.params.requestState)).toEqual(
+        requestTimeoutMs === 150 ? [undefined] : [undefined, "opaque-state"],
+      );
     },
   );
 
   it.each([404, 405, 406, 415])(
     "connects deprecated SSE only after HTTP%s endpoint rejection",
     async (status) => {
-      let stream: ServerResponse;
+      let stream: ServerResponse | undefined;
       let stall = false;
       const f = await fixture((e) => {
         if (e.req.url === "/mcp" && e.req.method === "POST") {
@@ -2478,17 +2652,17 @@ describe("published SDK v2 over real local HTTP", () => {
           return;
         }
         if (e.body.id !== undefined && !(stall && e.body.method === "tools/call")) {
-          const payload =
-            e.body.method === "initialize"
-              ? {
-                  protocolVersion: "2025-11-25",
-                  capabilities: { tools: {} },
-                  serverInfo: { name: "sse", version: "1" },
-                }
-              : e.body.method === "tools/list"
-                ? { tools: [tool] }
-                : { content: [{ type: "text", text: "ok" }] };
-          stream.write(
+          let payload: unknown = { content: [{ type: "text", text: "ok" }] };
+          if (e.body.method === "initialize") {
+            payload = {
+              protocolVersion: "2025-11-25",
+              capabilities: { tools: {} },
+              serverInfo: { name: "sse", version: "1" },
+            };
+          } else if (e.body.method === "tools/list") {
+            payload = { tools: [tool] };
+          }
+          requireValue(stream).write(
             `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: e.body.id, result: payload })}\n\n`,
           );
         }
@@ -2525,10 +2699,14 @@ describe("published SDK v2 over real local HTTP", () => {
     });
     const controller = new AbortController();
     const pending = f.manager.connect("local", { url: f.url, auth: false }, controller.signal);
-    const rejection = expect(pending).rejects.toThrow("cancel discovery");
+    const rejection = Promise.allSettled([pending]);
     await expect.poll(() => f.requests.length).toBe(1);
     controller.abort(new Error("cancel discovery"));
-    await rejection;
+    const [settled] = await rejection;
+    assert.ok(settled.status === "rejected");
+    const reason: unknown = settled.reason;
+    assert.ok(reason instanceof Error);
+    expect(reason.message).toContain("cancel discovery");
     await expect.poll(() => closed).toBe(true);
     expect(f.requests).toHaveLength(1);
   });
@@ -2546,12 +2724,14 @@ describe("published SDK v2 over real local HTTP", () => {
       const { state } = await f.connect({ requestTimeoutMs: 500.5 });
       const output = await call(state, entry);
       expect(output.ok, JSON.stringify(output)).toBe(true);
-      if (entry === "script") {
-        expect(output.data.structuredContent).toBeNull();
-      } else {
-        expect(output.content[0]).toEqual({ type: "text", text: "null" });
-        expect(output.content[1].text).toContain(output.details.resultRef);
-      }
+      const scriptData: unknown = expect.objectContaining({ structuredContent: null });
+      expect(entry === "script" ? output.data : output.content[0]).toEqual(
+        entry === "script" ? scriptData : { type: "text", text: "null" },
+      );
+      expect(
+        entry === "script" ||
+          textBlock(output.content[1]).includes(z.string().parse(output.details.resultRef)),
+      ).toBe(true);
     },
   );
 
@@ -2582,7 +2762,7 @@ describe("published SDK v2 over real local HTTP", () => {
       if (e.body.method !== "tools/list") {
         return;
       }
-      const page = Number(e.body.params?.cursor ?? 0);
+      const page = Number(e.body.params.cursor ?? 0);
       result(e, {
         resultType: "complete",
         tools: [{ ...tool, name: `tool-${page}` }],

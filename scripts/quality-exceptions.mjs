@@ -4,6 +4,7 @@ import { z } from "zod";
 
 const scopeSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("FunctionDeclaration"), name: z.string().min(1) }),
+  z.strictObject({ type: z.literal("FunctionExpression"), name: z.string().min(1) }),
   z.strictObject({
     type: z.literal("MethodDefinition"),
     class: z.string().min(1),
@@ -52,6 +53,11 @@ function selectScope(program, selector) {
   const matches = [];
   new Visitor({
     FunctionDeclaration(node) {
+      if (selector.type === node.type && node.id?.name === selector.name) {
+        matches.push(node);
+      }
+    },
+    FunctionExpression(node) {
       if (selector.type === node.type && node.id?.name === selector.name) {
         matches.push(node);
       }
