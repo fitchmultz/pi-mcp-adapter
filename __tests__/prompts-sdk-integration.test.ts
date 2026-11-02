@@ -1,11 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
+import assert from "node:assert/strict";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { McpServerManager } from "../server-manager.ts";
 import { createPromptCommand } from "../prompts.ts";
 import { reconstructPromptMetadata } from "../metadata-cache.ts";
 import type { McpExtensionState } from "../state.ts";
-import { type PromptMetadata, formatPromptCommandName } from "../types.ts";
+import { formatPromptCommandName, type PromptMetadata } from "../types.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/prompts-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
@@ -22,37 +24,49 @@ function buildPromptMetadata(
   manager: McpServerManager,
   prefix: "server" | "none" | "short" = "server",
 ): PromptMetadata[] {
-  const conn = manager.getConnection("real")!;
+  const conn = manager.getConnection("real");
+  assert.ok(conn, "expected connected prompt server");
   return reconstructPromptMetadata("real", conn.prompts, prefix);
 }
 
-function commandCtx(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
-  return {
-    hasUI: true,
-    ui: { notify: vi.fn() },
-    signal: undefined,
-    ...overrides,
-  } as unknown as ExtensionCommandContext;
+function findPrompt(metadata: PromptMetadata[], name: string): PromptMetadata {
+  const prompt = metadata.find((entry) => entry.originalName === name);
+  assert.ok(prompt, `expected prompt ${name}`);
+  return prompt;
 }
 
 function buildState(
   manager: McpServerManager,
   promptMetadata: PromptMetadata[],
 ): McpExtensionState {
-  return {
+  return createTestState({
     manager,
     config: { mcpServers: { real: definition } },
-    toolMetadata: new Map(),
     promptMetadata: new Map([["real", promptMetadata]]),
-    failureTracker: new Map(),
-    completedUiSessions: [],
-  } as unknown as McpExtensionState;
+  });
 }
 
 describe("prompts with the real MCP SDK", () => {
+  let host: Awaited<ReturnType<typeof createTestExtensionContext>>;
+  beforeAll(async () => {
+    host = await createTestExtensionContext();
+  });
   afterEach(async () => {
     await Promise.all(managers.splice(0).map((m) => m.closeAll()));
+    vi.restoreAllMocks();
   });
+  afterAll(async () => {
+    await host.dispose();
+  });
+
+  function commandHost() {
+    const ui = { ...host.commandContext.ui };
+    const notify = vi.spyOn(ui, "notify");
+    const sendUserMessage = vi.spyOn(host.api, "sendUserMessage").mockImplementation(() => {
+      // Avoid starting an agent turn in this command test.
+    });
+    return { context: { ...host.commandContext, hasUI: true, ui }, notify, sendUserMessage };
+  }
 
   it("discovers prompts advertised by the server", async () => {
     const manager = await createConnectedManager();
@@ -65,7 +79,7 @@ describe("prompts with the real MCP SDK", () => {
       ].sort(),
     );
 
-    const brief = metadata.find((p) => p.originalName === "brief")!;
+    const brief = findPrompt(metadata, "brief");
     expect(brief.arguments).toHaveLength(2);
     expect(brief.arguments[0]).toMatchObject({ name: "topic", required: true });
   });
@@ -73,27 +87,27 @@ describe("prompts with the real MCP SDK", () => {
   it("dispatches a positional argument and forwards the prompt text to pi", async () => {
     const manager = await createConnectedManager();
     const metadata = buildPromptMetadata(manager);
-    const brief = metadata.find((p) => p.originalName === "brief")!;
+    const brief = findPrompt(metadata, "brief");
     const state = buildState(manager, metadata);
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+    const { context, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(pi, () => state, brief);
-    await command.handler("mcp", commandCtx());
+    const command = createPromptCommand(host.api, () => state, brief);
+    await command.handler("mcp", context);
 
-    expect(pi.sendUserMessage).toHaveBeenCalledWith("Give me the brief on mcp for today.");
+    expect(sendUserMessage).toHaveBeenCalledWith("Give me the brief on mcp for today.");
   });
 
   it("passes named arguments through to prompts/get", async () => {
     const manager = await createConnectedManager();
     const metadata = buildPromptMetadata(manager);
-    const brief = metadata.find((p) => p.originalName === "brief")!;
+    const brief = findPrompt(metadata, "brief");
     const state = buildState(manager, metadata);
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+    const { context, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(pi, () => state, brief);
-    await command.handler('topic="model context protocol" date=2026-01-01', commandCtx());
+    const command = createPromptCommand(host.api, () => state, brief);
+    await command.handler('topic="model context protocol" date=2026-01-01', context);
 
-    expect(pi.sendUserMessage).toHaveBeenCalledWith(
+    expect(sendUserMessage).toHaveBeenCalledWith(
       "Give me the brief on model context protocol for 2026-01-01.",
     );
   });
@@ -101,14 +115,15 @@ describe("prompts with the real MCP SDK", () => {
   it("preserves multi-turn role attribution", async () => {
     const manager = await createConnectedManager();
     const metadata = buildPromptMetadata(manager);
-    const haiku = metadata.find((p) => p.originalName === "haiku")!;
+    const haiku = findPrompt(metadata, "haiku");
     const state = buildState(manager, metadata);
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+    const { context, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(pi, () => state, haiku);
-    await command.handler("", commandCtx());
+    const command = createPromptCommand(host.api, () => state, haiku);
+    await command.handler("", context);
 
-    const [[sent]] = (pi.sendUserMessage as ReturnType<typeof vi.fn>).mock.calls as [[unknown]];
+    const sent = sendUserMessage.mock.calls[0]?.[0];
+    assert.equal(typeof sent, "string");
     expect(sent).toContain("[user] Write a haiku about MCP.");
     expect(sent).toContain("[assistant] Bridges of context…");
   });
@@ -116,18 +131,17 @@ describe("prompts with the real MCP SDK", () => {
   it("surfaces server errors for unknown prompts as a notify, not a user message", async () => {
     const manager = await createConnectedManager();
     const metadata = buildPromptMetadata(manager);
-    const brief = metadata.find((p) => p.originalName === "brief")!;
+    const brief = findPrompt(metadata, "brief");
     const state = buildState(manager, metadata);
     // Point the command at a prompt name the server doesn't know.
     const bogus: PromptMetadata = { ...brief, originalName: "does-not-exist" };
     state.promptMetadata.set("real", [bogus]);
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
-    const notify = vi.fn();
+    const { context, notify, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(pi, () => state, bogus);
-    await command.handler("ai", commandCtx({ ui: { notify } as any }));
+    const command = createPromptCommand(host.api, () => state, bogus);
+    await command.handler("ai", context);
 
-    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("does-not-exist"), "error");
   });
 });
@@ -147,7 +161,8 @@ describe("prompts capability negotiation", () => {
     managers.push(manager);
     await manager.connect("elicit", { command: process.execPath, args: [elicitationFixture] });
 
-    const connection = manager.getConnection("elicit")!;
+    const connection = manager.getConnection("elicit");
+    assert.ok(connection, "expected connected server");
     expect(connection.prompts).toEqual([]);
   });
 });

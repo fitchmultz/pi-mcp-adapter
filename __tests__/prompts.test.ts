@@ -1,6 +1,16 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
-import type { GetPromptResult } from "@modelcontextprotocol/client";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
+import { Client, InMemoryTransport, type GetPromptResult } from "@modelcontextprotocol/client";
 import {
   createPromptCommand,
   formatPromptResult,
@@ -8,7 +18,8 @@ import {
   resolvePromptArgs,
 } from "../prompts.ts";
 import type { McpExtensionState } from "../state.ts";
-import { type PromptMetadata, formatPromptCommandName, sanitizePromptName } from "../types.ts";
+import { formatPromptCommandName, sanitizePromptName, type PromptMetadata } from "../types.ts";
+import type { McpServerManager, ServerConnection } from "../server-manager.ts";
 
 function meta(overrides: Partial<PromptMetadata> = {}): PromptMetadata {
   return {
@@ -24,32 +35,38 @@ function meta(overrides: Partial<PromptMetadata> = {}): PromptMetadata {
   };
 }
 
-function baseState(promptMetadata: Map<string, PromptMetadata[]>): McpExtensionState {
-  return {
+function baseState(promptMetadata: Map<string, PromptMetadata[]>): {
+  state: McpExtensionState;
+  connection: ServerConnection;
+  getConnection: MockInstance<McpServerManager["getConnection"]>;
+  getPrompt: MockInstance<McpServerManager["getPrompt"]>;
+} {
+  const state = createTestState({
     config: { mcpServers: { demo: { command: "demo" } } },
-    manager: {
-      getConnection: vi.fn(() => ({
-        status: "connected" as const,
-        tools: [],
-        resources: [],
-        prompts: [],
-      })),
-      getPrompt: vi.fn(),
-    },
-    toolMetadata: new Map(),
     promptMetadata,
-    failureTracker: new Map(),
-    completedUiSessions: [],
-  } as unknown as McpExtensionState;
-}
-
-function commandCtx(overrides: Partial<ExtensionCommandContext> = {}): ExtensionCommandContext {
-  return {
-    hasUI: true,
-    ui: { notify: vi.fn() },
-    signal: undefined,
-    ...overrides,
-  } as unknown as ExtensionCommandContext;
+  });
+  const connection: ServerConnection = {
+    client: new Client({ name: "prompt-test", version: "1" }),
+    transport: new InMemoryTransport(),
+    definition: { command: "demo" },
+    status: "connected",
+    tools: [],
+    resources: [],
+    prompts: [
+      {
+        name: "brief",
+        arguments: [
+          { name: "topic", required: true },
+          { name: "date", required: false },
+        ],
+      },
+    ],
+    lastUsedAt: Date.now(),
+    inFlight: 0,
+  };
+  const getConnection = vi.spyOn(state.manager, "getConnection").mockReturnValue(connection);
+  const getPrompt = vi.spyOn(state.manager, "getPrompt");
+  return { state, connection, getConnection, getPrompt };
 }
 
 describe("prompt command naming", () => {
@@ -171,7 +188,7 @@ describe("formatPromptResult", () => {
           content: {
             type: "resource",
             resource: { uri: "file:///readme.md", text: "# Title" },
-          } as unknown as GetPromptResult["messages"][number]["content"],
+          },
         },
       ],
     };
@@ -188,7 +205,7 @@ describe("formatPromptResult", () => {
             type: "image",
             data: "b64",
             mimeType: "image/png",
-          } as unknown as GetPromptResult["messages"][number]["content"],
+          },
         },
       ],
     };
@@ -198,36 +215,50 @@ describe("formatPromptResult", () => {
 });
 
 describe("createPromptCommand handler", () => {
+  let host: Awaited<ReturnType<typeof createTestExtensionContext>>;
+  beforeAll(async () => {
+    host = await createTestExtensionContext();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  afterAll(async () => {
+    await host.dispose();
+  });
+
+  function commandHost() {
+    const ui = { ...host.commandContext.ui };
+    const notify = vi.spyOn(ui, "notify");
+    const sendUserMessage = vi.spyOn(host.api, "sendUserMessage").mockImplementation(() => {
+      // Avoid starting an agent turn in this command test.
+    });
+    return { context: { ...host.commandContext, hasUI: true, ui }, notify, sendUserMessage };
+  }
+
   it("sends the resolved prompt text as a user message", async () => {
     const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
-    const state = baseState(promptMetadata);
-    (state.manager.getPrompt as ReturnType<typeof vi.fn>).mockResolvedValue({
+    const { state, getPrompt } = baseState(promptMetadata);
+    getPrompt.mockResolvedValue({
       messages: [{ role: "user", content: { type: "text", text: "Brief for ai" } }],
     });
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+    const { context, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(pi, () => state, meta());
-    await command.handler("ai", commandCtx());
+    const command = createPromptCommand(host.api, () => state, meta());
+    await command.handler("ai", context);
 
-    expect(state.manager.getPrompt).toHaveBeenCalledWith(
-      "demo",
-      "brief",
-      { topic: "ai" },
-      undefined,
-    );
-    expect(pi.sendUserMessage).toHaveBeenCalledWith("Brief for ai");
+    expect(getPrompt).toHaveBeenCalledWith("demo", "brief", { topic: "ai" }, undefined);
+    expect(sendUserMessage).toHaveBeenCalledWith("Brief for ai");
   });
 
   it("shows a usage error when required args are missing", async () => {
     const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
-    const state = baseState(promptMetadata);
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
-    const notify = vi.fn();
+    const { state } = baseState(promptMetadata);
+    const { context, notify, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(pi, () => state, meta());
-    await command.handler("", commandCtx({ hasUI: true, ui: { notify } as any }));
+    const command = createPromptCommand(host.api, () => state, meta());
+    await command.handler("", context);
 
-    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(
       expect.stringContaining("Missing required argument"),
       "error",
@@ -236,49 +267,40 @@ describe("createPromptCommand handler", () => {
 
   it("surfaces MCP server errors without sending a user message", async () => {
     const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
-    const state = baseState(promptMetadata);
-    (state.manager.getPrompt as ReturnType<typeof vi.fn>).mockRejectedValue(
-      new Error("Prompt not found"),
-    );
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
-    const notify = vi.fn();
+    const { state, getPrompt } = baseState(promptMetadata);
+    getPrompt.mockRejectedValue(new Error("Prompt not found"));
+    const { context, notify, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(pi, () => state, meta());
-    await command.handler("ai", commandCtx({ ui: { notify } as any }));
+    const command = createPromptCommand(host.api, () => state, meta());
+    await command.handler("ai", context);
 
-    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("Prompt not found"), "error");
   });
 
   it("prompts users to authenticate when the server needs auth", async () => {
     const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
-    const state = baseState(promptMetadata);
-    (state.manager.getConnection as ReturnType<typeof vi.fn>).mockReturnValue({
-      status: "needs-auth",
-    });
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
-    const notify = vi.fn();
+    const { state, connection, getConnection } = baseState(promptMetadata);
+    getConnection.mockReturnValue({ ...connection, status: "needs-auth" });
+    const { context, notify, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(pi, () => state, meta());
-    await command.handler("ai", commandCtx({ ui: { notify } as any }));
+    const command = createPromptCommand(host.api, () => state, meta());
+    await command.handler("ai", context);
 
-    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("needs authentication"), "error");
   });
 
   it("warns when the prompt returns no textual content", async () => {
     const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
-    const state = baseState(promptMetadata);
-    (state.manager.getPrompt as ReturnType<typeof vi.fn>).mockResolvedValue({
-      messages: [],
-    });
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
-    const notify = vi.fn();
+    const { state, getPrompt } = baseState(promptMetadata);
+    getPrompt.mockResolvedValue({ messages: [] });
+    const { context, notify, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(pi, () => state, meta());
-    await command.handler("ai", commandCtx({ ui: { notify } as any }));
+    const command = createPromptCommand(host.api, () => state, meta());
+    await command.handler("ai", context);
 
-    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("no text content"), "warning");
   });
 });
