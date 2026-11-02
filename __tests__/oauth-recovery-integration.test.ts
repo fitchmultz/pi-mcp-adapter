@@ -1,23 +1,19 @@
-import { createServer, type ServerResponse } from "node:http";
-import { createHash } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import {
   InsufficientScopeError,
   validateAuthorizationResponseIssuer,
 } from "@modelcontextprotocol/client";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { ensureCallbackServer, waitForCallback } from "../mcp-callback-server.ts";
-import { createDirectToolExecutor } from "../direct-tools.ts";
 import { openMcpAuthPanel } from "../commands.ts";
 import { createMcpAdapter } from "../index.ts";
-import { EventEmitter } from "node:events";
-import type { createMcpPanel } from "../mcp-panel.ts";
 import { runMcpScript } from "../mcp-code.ts";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createOAuthRuntime,
   startAuth,
   completeAuthFromInput,
   authenticate,
@@ -26,455 +22,148 @@ import {
   getOAuthRequest,
   removeAuth,
 } from "../mcp-auth-flow.ts";
-import { clearAllCredentials, getAuthForUrl, getAuthBaseDir, updateTokens } from "../mcp-auth.ts";
+import { getAuthBaseDir, updateTokens } from "../mcp-auth.ts";
 import { McpServerManager } from "../server-manager.ts";
 import { McpOAuthProvider, getOAuthCallbackPort } from "../mcp-oauth-provider.ts";
-import { executeAuthStart, executeAuthComplete, executeCall } from "../proxy-modes.ts";
-import type { McpExtensionState } from "../state.ts";
-import { formatToolName, type ServerEntry } from "../types.ts";
+import { executeAuthStart, executeAuthComplete } from "../proxy-modes.ts";
+import type { ServerEntry } from "../types.ts";
+import { createLifecycleHost, requireValue } from "./fixtures/extension-lifecycle.ts";
+import { createPanelHost } from "./fixtures/panel-host.ts";
+import {
+  createOAuthRecoveryFixture,
+  content,
+  scopes,
+  settled,
+  resultText,
+  denialCallback,
+  type RecoveryEra,
+} from "./fixtures/oauth-recovery.ts";
 
-const browser = vi.hoisted(() => ({ open: vi.fn(async (_url: string) => {}) }));
+const browser = vi.hoisted(() => ({ open: vi.fn<(_url: string) => Promise<void>>() }));
 vi.mock("open", () => ({ default: browser.open }));
 const cleanups: Array<() => Promise<void>> = [];
+beforeAll(() => {
+  initTheme();
+});
 afterEach(async () => {
-  for (const cleanup of cleanups.reverse()) {
+  for (const cleanup of cleanups.toReversed()) {
     await cleanup();
   }
   cleanups.length = 0;
   vi.restoreAllMocks();
-  browser.open.mockReset().mockResolvedValue(undefined);
+  browser.open.mockReset().mockResolvedValue();
 });
+browser.open.mockResolvedValue();
 
-const tools = ["write", "effect"].map((name) => ({ name, inputSchema: { type: "object" } }));
-const content = (text: string) => ({ content: [{ type: "text", text }] });
-const scopes = (scope: string | null | undefined) =>
-  (scope ?? "").split(" ").filter(Boolean).sort();
-const settled = <T>(promise: Promise<T>) =>
-  Promise.allSettled([promise]).then(([result]) => result);
-
-type WireRequest = { method: string; token?: string | undefined; name?: string };
-async function fixture(
-  era: "legacy" | "modern" = "legacy",
-  name = `recovery-${crypto.randomUUID()}`,
-) {
-  let origin = "";
-  let sessions = 0;
-  let codeNumber = 0;
-  const requests: WireRequest[] = [];
-  const http: Array<{ method?: string | undefined; path: string }> = [];
-  const authorizations: URL[] = [];
-  const exchanges: URLSearchParams[] = [];
-  const codes = new Map<string, URL>();
-  const tokens = new Map<string, string>([
-    ["basic-token", "basic"],
-    ["wide-token", "basic write"],
-  ]);
-  const controls = {
-    protectedMethod: "",
-    challengeStatus: 401,
-    refresh: false,
-    issuedScope: undefined as string | null | undefined,
-    holdEffect: false,
-    releaseEffect: () => {},
-    effectCount: 0,
-    requiredScope: "write" as string | undefined,
-    toolStatuses: [] as number[],
-    tokenFailure: false,
-    genericForbidden: false,
-    metadataAbsent: false,
-    issuerRequired: true,
-    protectScope: false,
-    notifications: false,
-    stream: undefined as ServerResponse | undefined,
-    holdDiscovery: false,
-    discoveryHeld: false,
-    holdToken: false,
-    releaseToken: () => {},
-    holdCatalog: false,
-    releaseCatalog: () => {},
-    catalogHeld: false,
-    issuerPath: "",
-    offlineAccess: false,
-    accessScope: "write",
-    advertisedScopes: ["basic"],
-    catalogFailure: undefined as { method: string; status: number } | undefined,
-    holdResource: false,
-    resourceHeld: false,
-    rejectResource: () => {},
-    holdAnonymous: false,
-    anonymousHeld: false,
-    releaseAnonymous: () => {},
-  };
-  const toolName = (tool: string) => formatToolName(tool, name, "server");
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url!, origin);
-    http.push({ method: req.method, path: url.pathname });
-    const json = (value: unknown, status = 200) =>
-      res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value));
-    if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
-      return void json({
-        resource: `${origin}/mcp`,
-        authorization_servers: [`${origin}${controls.issuerPath}`],
-        scopes_supported: controls.advertisedScopes,
-      });
-    }
-    if (
-      controls.metadataAbsent &&
-      (url.pathname.startsWith("/.well-known/oauth-authorization-server") ||
-        url.pathname.includes("openid-configuration"))
-    ) {
-      res.writeHead(404).end();
-      return;
-    }
-    if (url.pathname.startsWith("/.well-known/oauth-authorization-server")) {
-      return void json({
-        issuer: `${origin}${controls.issuerPath}`,
-        authorization_endpoint: `${origin}/authorize`,
-        token_endpoint: `${origin}/token`,
-        registration_endpoint: `${origin}/register`,
-        response_types_supported: ["code"],
-        grant_types_supported: ["authorization_code", "refresh_token", "client_credentials"],
-        code_challenge_methods_supported: ["S256"],
-        token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
-        authorization_response_iss_parameter_supported: controls.issuerRequired,
-        ...(controls.offlineAccess
-          ? { scopes_supported: ["basic", "write", "offline_access"] }
-          : {}),
-      });
-    }
-    if (url.pathname === "/authorize") {
-      authorizations.push(url);
-      const code = `code-${++codeNumber}`;
-      codes.set(code, url);
-      const callback = new URL(url.searchParams.get("redirect_uri")!);
-      callback.search = new URLSearchParams({
-        code,
-        state: url.searchParams.get("state")!,
-        iss: origin,
-      }).toString();
-      res.writeHead(302, { location: callback.href }).end();
-      return;
-    }
-    let data = "";
-    for await (const chunk of req) {
-      data += chunk;
-    }
-    if (url.pathname === "/register") {
-      return void json({ client_id: "fixture", ...JSON.parse(data) }, 201);
-    }
-    if (url.pathname === "/token") {
-      const params = new URLSearchParams(data);
-      exchanges.push(params);
-      if (controls.tokenFailure) {
-        req.socket.destroy();
-        return;
-      }
-      const authorization = codes.get(params.get("code")!);
-      if (params.get("grant_type") === "authorization_code") {
-        const challenge = createHash("sha256")
-          .update(params.get("code_verifier") ?? "")
-          .digest("base64url");
-        if (
-          !authorization ||
-          challenge !== authorization.searchParams.get("code_challenge") ||
-          params.get("redirect_uri") !== authorization.searchParams.get("redirect_uri")
-        ) {
-          return void json({ error: "invalid_grant" }, 400);
-        }
-        codes.delete(params.get("code")!);
-      }
-      const requested = authorization?.searchParams.get("scope") ?? params.get("scope") ?? "basic";
-      const scope = controls.issuedScope === undefined ? requested : controls.issuedScope;
-      const token = `issued-${exchanges.length}`;
-      tokens.set(token, scope ?? "basic");
-      const sendToken = () =>
-        json({
-          access_token: token,
-          token_type: "Bearer",
-          expires_in: 3600,
-          ...(scope !== null ? { scope } : {}),
-          ...(controls.refresh ? { refresh_token: "refresh-basic" } : {}),
-        });
-      if (controls.holdToken) {
-        controls.releaseToken = sendToken;
-        return;
-      }
-      return void sendToken();
-    }
-    if (req.method === "GET" && controls.notifications) {
-      controls.stream = res;
-      res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(": ready\n\n");
-      return;
-    }
-    if (req.method !== "POST") {
-      res.writeHead(req.method === "DELETE" ? 202 : 405).end();
-      return;
-    }
-    const body = JSON.parse(data);
-    const method = body.method as string;
-    if (method.startsWith("notifications/")) {
-      res.writeHead(202).end();
-      return;
-    }
-    const token = req.headers.authorization?.replace(/^Bearer /, "");
-    requests.push({ method, token, name: body.params?.name });
-    const challenge = (status: number) =>
-      res
-        .writeHead(status, {
-          "www-authenticate": `Bearer ${status === 403 ? `error="insufficient_scope", ${controls.requiredScope !== undefined ? `scope="${controls.requiredScope}", ` : ""}` : 'scope="basic", '}resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
-        })
-        .end();
-    if (method === controls.catalogFailure?.method) {
-      res.writeHead(controls.catalogFailure.status).end("catalog unavailable");
-      return;
-    }
-    if (method === "resources/read" && controls.holdResource) {
-      controls.resourceHeld = true;
-      controls.rejectResource = () => challenge(403);
-      return;
-    }
-    if (method === "tools/call" && body.params.name === "write") {
-      if (!token && controls.holdAnonymous) {
-        controls.holdAnonymous = false;
-        controls.anonymousHeld = true;
-        controls.releaseAnonymous = () => challenge(controls.challengeStatus);
-        return;
-      }
-      if (controls.genericForbidden) {
-        res.writeHead(403).end("Forbidden");
-        return;
-      }
-      const status = controls.toolStatuses.shift();
-      if (status === 0) {
-        req.socket.destroy();
-        return;
-      }
-      if (status === 401 || status === 403) {
-        challenge(status);
-        return;
-      }
-      if (status) {
-        res.writeHead(status).end("fixture failure");
-        return;
-      }
-    }
-    if (
-      method === controls.protectedMethod &&
-      (!tokens.has(token ?? "") ||
-        (controls.protectScope && !scopes(tokens.get(token ?? "")).includes("write")))
-    ) {
-      challenge(token && controls.protectScope ? 403 : controls.challengeStatus);
-      return;
-    }
-    if (
-      method === "tools/call" &&
-      body.params.name === "write" &&
-      !scopes(tokens.get(token ?? "")).includes(controls.accessScope)
-    ) {
-      challenge(token ? 403 : controls.challengeStatus);
-      return;
-    }
-    const result = (value: object, headers = {}) =>
-      res.writeHead(200, { "content-type": "application/json", ...headers }).end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: body.id,
-          result: { ...(era === "modern" ? { resultType: "complete" } : {}), ...value },
-        }),
-      );
-    const capabilities = {
-      tools: { listChanged: true },
-      prompts: { listChanged: true },
-      resources: { listChanged: true },
-    };
-    if (controls.holdDiscovery && ["server/discover", "initialize"].includes(method)) {
-      controls.discoveryHeld = true;
-      return;
-    }
-    if (controls.holdCatalog && method === "tools/list") {
-      controls.catalogHeld = true;
-      controls.releaseCatalog = () =>
-        result({ tools, ...(era === "modern" ? { ttlMs: 10000, cacheScope: "private" } : {}) });
-      return;
-    }
-    if (method === "server/discover") {
-      return void result({ supportedVersions: ["2026-07-28"], capabilities });
-    }
-    if (method === "initialize") {
-      return void result(
-        {
-          protocolVersion: "2025-06-18",
-          serverInfo: { name: "recovery", version: "1" },
-          capabilities,
-        },
-        { "mcp-session-id": `session-${++sessions}` },
-      );
-    }
-    if (method === "tools/list") {
-      return void result({
-        tools,
-        ...(era === "modern" ? { ttlMs: 10000, cacheScope: "private" } : {}),
-      });
-    }
-    if (method === "resources/list") {
-      return void result({
-        resources: [{ name: "document", uri: "test://document" }],
-        ...(era === "modern" ? { ttlMs: 10000, cacheScope: "private" } : {}),
-      });
-    }
-    if (method === "prompts/list") {
-      return void result({
-        prompts: [{ name: "prompt" }],
-        ...(era === "modern" ? { ttlMs: 10000, cacheScope: "private" } : {}),
-      });
-    }
-    if (method === "tools/call") {
-      if (body.params.name === "effect") {
-        controls.effectCount++;
-        if (controls.holdEffect) {
-          res.writeHead(200, { "content-type": "application/json", "x-accepted-effect": "yes" });
-          res.write(`{"jsonrpc":"2.0","id":${body.id},"result":`);
-          controls.releaseEffect = () =>
-            res.end(
-              `${JSON.stringify({ ...(era === "modern" ? { resultType: "complete" } : {}), ...content("effect") })}}`,
-            );
-          return;
-        }
-      }
-      return void result(content(body.params.name));
-    }
-    if (method === "prompts/get") {
-      return void result({
-        messages: [{ role: "user", content: { type: "text", text: "prompt" } }],
-      });
-    }
-    if (method === "resources/read") {
-      return void result({ contents: [{ uri: "test://document", text: "document" }] });
-    }
-    json({ error: "unexpected request" }, 500);
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Fixture did not bind");
-  }
-  origin = `http://127.0.0.1:${address.port}`;
-  const runtime = createOAuthRuntime();
-  const manager = new McpServerManager();
-  manager.setOAuthRuntime(runtime);
-  const definition: ServerEntry = {
-    url: `${origin}/mcp`,
-    protocolVersion: era === "legacy" ? "legacy" : "auto",
-    requestTimeoutMs: 3000,
-  };
-  const state = {
-    manager,
-    oauthRuntime: runtime,
-    config: { mcpServers: { [name]: definition }, settings: {} },
-    toolMetadata: new Map([
-      [
-        name,
-        tools.map((t) => ({ name: toolName(t.name), originalName: t.name, description: t.name })),
-      ],
-    ]),
-    serverInstructions: new Map(),
-    failureTracker: new Map(),
-    completedUiSessions: [],
-    metadataCacheEnabled: false,
-  } as unknown as McpExtensionState;
-  const authorize = async (url: string) => {
-    const response = await fetch(url, { redirect: "manual" });
-    expect(response.status).toBe(302);
-    return response.headers.get("location")!;
-  };
-  const start = () => startAuth(name, definition.url!, definition, { runtime });
-  const manual = async () => {
-    const { authorizationUrl } = await start();
-    expect(authorizationUrl).toBeTruthy();
-    const callback = await authorize(authorizationUrl);
-    expect(await completeAuthFromInput(name, callback, { runtime })).toBe("authenticated");
-    return authorizationUrl;
-  };
-  cleanups.push(async () => {
-    if (process.env.OAUTH_PROOF_FILE) {
-      appendFileSync(
-        process.env.OAUTH_PROOF_FILE,
-        `${JSON.stringify({ test: expect.getState().currentTestName, node: process.version, execPath: process.execPath, era, http, requests, authorizations: authorizations.map((url) => Object.fromEntries(url.searchParams)), exchanges: exchanges.map((params) => Object.fromEntries(params)), effects: controls.effectCount })}\n`,
-      );
-    }
-    controls.releaseEffect();
-    await manager.closeAll();
-    await shutdownOAuth(runtime);
-    clearAllCredentials(name);
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  });
+async function fixture(era: RecoveryEra = "legacy", name = `recovery-${crypto.randomUUID()}`) {
+  const f = await createOAuthRecoveryFixture(era, name);
+  cleanups.push(f.dispose);
   return {
-    name,
-    toolName,
-    origin,
-    definition,
-    runtime,
-    manager,
-    state,
-    controls,
-    http,
-    requests,
-    exchanges,
-    authorizations,
-    start,
-    manual,
-    authorize,
-    connect: () => manager.connect(name, definition),
-    call: (tool = "write", signal?: AbortSignal) =>
-      executeCall(state, toolName(tool), {}, name, undefined, signal),
+    ...f,
     signIn: () =>
       browser.open.mockImplementation(async (url: string) => {
-        const callback = await authorize(url);
-        const response = await fetch(callback);
+        const response = await fetch(await f.authorize(url));
         expect(response.status).toBe(200);
       }),
-    callHost: async (host: "proxy" | "direct" | "script") => {
-      if (host === "script") {
-        const result = await runMcpScript(
-          state,
-          `emit(await tools.call(${JSON.stringify(toolName("write"))}, {}));`,
-        );
-        expect(result.details.error).toBeUndefined();
-        return JSON.parse((result.content[0] as { text: string }).text);
-      }
-      const result =
-        host === "proxy"
-          ? await executeCall(state, toolName("write"), {}, name)
-          : await createDirectToolExecutor(
-              () => state,
-              () => null,
-              {
-                serverName: name,
-                originalName: "write",
-                prefixedName: toolName("write"),
-                description: "write",
-              },
-            )("call", {}, undefined, undefined, {} as any);
-      return result.details.error
-        ? { ok: false, error: { code: result.details.error } }
-        : { ok: true, data: { content: result.content } };
-    },
-    request: () => getOAuthRequest(name, definition.url!, getAuthBaseDir(), runtime),
-    seed: (scope: string | undefined, refresh = false) =>
-      updateTokens(
-        name,
-        {
-          accessToken: scope?.includes("write") ? "wide-token" : "basic-token",
-          ...(scope !== undefined ? { scope } : {}),
-          ...(refresh ? { refreshToken: "refresh-basic" } : {}),
-          issuer: origin,
-        },
-        definition.url,
-      ),
-    stored: () => getAuthForUrl(name, definition.url!),
   };
+}
+
+const invalidCallbacks = [
+  "wrong-state",
+  "missing-state",
+  "wrong-issuer",
+  "missing-issuer",
+  "trailing-slash",
+  "unexpected-issuer",
+] as const;
+
+function invalidErrorCallback(
+  authorizationUrl: string,
+  origin: string,
+  invalid: (typeof invalidCallbacks)[number],
+): URL {
+  const callback = denialCallback(authorizationUrl, origin, "UNTRUSTED_ERROR_MARKER");
+  switch (invalid) {
+    case "wrong-state":
+      callback.searchParams.set("state", "wrong");
+      break;
+    case "missing-state":
+      callback.searchParams.delete("state");
+      break;
+    case "missing-issuer":
+      callback.searchParams.delete("iss");
+      break;
+    case "wrong-issuer":
+    case "unexpected-issuer":
+      callback.searchParams.set("iss", "http://wrong.invalid/UNTRUSTED_ISSUER");
+      break;
+    case "trailing-slash":
+      callback.searchParams.set("iss", `${origin}/`);
+      break;
+  }
+  return callback;
+}
+
+async function startAcceptedEffect() {
+  const f = await fixture();
+  f.definition.auth = "oauth";
+  f.seed("basic");
+  f.controls.holdEffect = true;
+  f.signIn();
+  f.settings.autoAuth = true;
+  f.state.ui = f.ui;
+  const nativeFetch = globalThis.fetch;
+  const accepted = new Promise<void>((resolve) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (...args) => {
+      const response = await nativeFetch(...args);
+      if (response.headers.has("x-accepted-effect")) {
+        resolve();
+      }
+      return response;
+    });
+  });
+  const old = await f.connect();
+  const close = vi.spyOn(old.client, "close");
+  const effect = f.call("effect");
+  await accepted;
+  return { f, old, close, effect };
+}
+
+async function openAuthPanel(f: Awaited<ReturnType<typeof fixture>>, input: string) {
+  const old = f.manager.getConnection(f.name);
+  const host = await createPanelHost();
+  cleanups.push(host.dispose);
+  const flow = openMcpAuthPanel(f.state, host.context);
+  await expect.poll(host.component).toBeDefined();
+  host.input(input);
+  await expect.poll(() => f.manager.getConnection(f.name)).not.toBe(old);
+  await expect.poll(() => f.manager.getConnection(f.name)?.status).toBe("connected");
+  return { host, flow };
+}
+
+async function collidingAuthBindings(kind: "pending" | "single-flight") {
+  const a = await fixture("legacy", "a");
+  const b = await fixture("legacy", kind === "pending" ? "a|/b" : `a|${a.definition.url}|/b`);
+  const storageA = { baseDir: kind === "pending" ? "/b|/c" : `/b|${a.definition.url}|/c` };
+  const storageB = { baseDir: "/c" };
+  a.manager.setAuthStorageOptions(storageA);
+  b.manager.setAuthStorageOptions(storageB);
+  b.manager.setOAuthRuntime(a.runtime);
+  b.definition.url = a.definition.url;
+  for (const f of [a, b]) {
+    f.definition.auth = "oauth";
+    updateTokens(
+      f.name,
+      { accessToken: "basic-token", scope: "basic", issuer: a.origin },
+      a.definition.url,
+    );
+    const connection = await f.connect();
+    await expect(connection.client.callTool({ name: "write" })).rejects.toBeInstanceOf(
+      InsufficientScopeError,
+    );
+    a.controls.requiredScope = "admin";
+  }
+  return { a, b, storageA, storageB };
 }
 
 describe("OAuth permission recovery through native HTTP and production hosts", () => {
@@ -511,55 +200,55 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       expect((await f.call()).details.error).toBe("auth_required");
       const url = await f.manual();
       expect(scopes(new URL(url).searchParams.get("scope"))).toEqual(["basic", "write"]);
-      expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "write"]);
-      expect(f.exchanges[0]!.get("grant_type")).toBe("authorization_code");
-      expect((await f.stored())?.tokens?.scope).toBe("basic write");
+      expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual(["basic", "write"]);
+      expect(requireValue(f.exchanges[0]).get("grant_type")).toBe("authorization_code");
+      expect(f.stored()?.tokens?.scope).toBe("basic write");
       expect((await f.call()).details.error).toBeUndefined();
     },
   );
 
-  it.each(["manual", "http", "authenticate"])(
-    "validates issuer before provider error on the %s callback path",
-    async (path) => {
-      const f = await fixture();
-      const marker = "UNTRUSTED_CALLBACK_MARKER";
-      const callback = (url: string) => {
-        const authorization = new URL(url);
-        return `${authorization.searchParams.get("redirect_uri")}?${new URLSearchParams({ state: authorization.searchParams.get("state")!, iss: "http://wrong.invalid", error: "access_denied", error_description: marker })}`;
-      };
-      if (path === "authenticate") {
-        browser.open.mockImplementation(async (url: string) => {
-          const response = await fetch(callback(url));
-          expect(response.status).toBe(400);
-          expect(await response.text()).not.toContain(marker);
-        });
-        const outcome = await settled(
-          authenticate(f.name, f.definition.url!, f.definition, { runtime: f.runtime }),
-        );
-        expect(outcome).toMatchObject({
-          status: "rejected",
-          reason: { message: expect.not.stringContaining(marker) },
-        });
-        expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
-      } else {
-        const { authorizationUrl } = await f.start();
-        if (path === "manual") {
-          const outcome = await settled(
-            completeAuthFromInput(f.name, callback(authorizationUrl), { runtime: f.runtime }),
-          );
-          expect(outcome).toMatchObject({
-            status: "rejected",
-            reason: { message: expect.not.stringContaining(marker) },
-          });
-        } else {
-          const response = await fetch(callback(authorizationUrl));
-          expect(response.status).toBe(400);
-          expect(await response.text()).not.toContain(marker);
-        }
-      }
-      expect(f.exchanges).toHaveLength(0);
-    },
-  );
+  it("validates issuer before provider error on the authenticate callback path", async () => {
+    const f = await fixture();
+    const marker = "UNTRUSTED_CALLBACK_MARKER";
+    browser.open.mockImplementation(async (url: string) => {
+      const response = await fetch(denialCallback(url, "http://wrong.invalid", marker));
+      expect(response.status).toBe(400);
+      expect(await response.text()).not.toContain(marker);
+    });
+    const outcome = await settled(
+      authenticate(f.name, f.definition.url, f.definition, { runtime: f.runtime }),
+    );
+    expect(outcome).toHaveProperty("status", "rejected");
+    expect(outcome).toHaveProperty("reason.message", expect.not.stringContaining(marker));
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(f.exchanges).toHaveLength(0);
+  });
+
+  it("validates issuer before provider error on the manual callback path", async () => {
+    const f = await fixture();
+    const marker = "UNTRUSTED_CALLBACK_MARKER";
+    const { authorizationUrl } = await f.start();
+    const outcome = await settled(
+      completeAuthFromInput(
+        f.name,
+        denialCallback(authorizationUrl, "http://wrong.invalid", marker).href,
+        { runtime: f.runtime },
+      ),
+    );
+    expect(outcome).toHaveProperty("status", "rejected");
+    expect(outcome).toHaveProperty("reason.message", expect.not.stringContaining(marker));
+    expect(f.exchanges).toHaveLength(0);
+  });
+
+  it("validates issuer before provider error on the HTTP callback path", async () => {
+    const f = await fixture();
+    const marker = "UNTRUSTED_CALLBACK_MARKER";
+    const { authorizationUrl } = await f.start();
+    const response = await fetch(denialCallback(authorizationUrl, "http://wrong.invalid", marker));
+    expect(response.status).toBe(400);
+    expect(await response.text()).not.toContain(marker);
+    expect(f.exchanges).toHaveLength(0);
+  });
 
   for (const era of ["legacy", "modern"] as const) {
     for (const host of ["proxy", "direct", "script"] as const) {
@@ -573,9 +262,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         f.definition.auth = "oauth";
         f.seed("basic");
         f.signIn();
-        f.state.config.settings!.autoAuth = autoAuth;
+        f.settings.autoAuth = autoAuth;
         if (ui) {
-          f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+          f.state.ui = f.ui;
         }
         await f.connect();
         const result = await f.callHost(host);
@@ -589,12 +278,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         expect(f.authorizations).toHaveLength(eligible ? 1 : 0);
         expect(f.exchanges).toHaveLength(eligible ? 1 : 0);
         expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(eligible ? 2 : 1);
-        if (eligible) {
-          expect(scopes(f.authorizations[0]!.searchParams.get("scope"))).toEqual([
-            "basic",
-            "write",
-          ]);
-        }
+        expect(f.authorizations.map((url) => scopes(url.searchParams.get("scope")))).toEqual(
+          eligible ? [["basic", "write"]] : [],
+        );
       });
     }
     it.each([401, 403])(
@@ -606,7 +292,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         await f.connect();
         expect((await f.call()).details.error).toBeUndefined();
         expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(2);
-        const old = f.manager.getConnection(f.name)!;
+        const old = requireValue(f.manager.getConnection(f.name));
         await f.manager.reconnect(f.name, f.definition, old);
         expect((await f.call()).details.error).toBeUndefined();
         expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(3);
@@ -614,28 +300,34 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         expect(f.exchanges).toHaveLength(0);
       },
     );
-    it.each([401, 403])(
-      `${era} first protected tool %s activates then permits only one auth flow`,
-      async (status) => {
-        const f = await fixture(era);
-        f.controls.challengeStatus = status;
-        f.signIn();
-        f.state.config.settings!.autoAuth = true;
-        f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
-        await f.connect();
-        const result = await f.call();
-        // A first 401 only asks for basic, so its one consent cannot also escalate to write.
-        expect(result.details.error).toBe(status === 403 ? undefined : "auth_required");
-        expect(browser.open).toHaveBeenCalledTimes(1);
-        expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(3);
-        expect(f.exchanges).toHaveLength(1);
-        if (status === 401) {
-          expect(f.request()?.challenge?.requiredScope).toBe("write");
-          expect((await f.call()).details.error).toBeUndefined();
-          expect(browser.open).toHaveBeenCalledTimes(2);
-        }
-      },
-    );
+    it(`${era} first protected tool 403 activates then permits only one auth flow`, async () => {
+      const f = await fixture(era);
+      f.controls.challengeStatus = 403;
+      f.signIn();
+      f.settings.autoAuth = true;
+      f.state.ui = f.ui;
+      await f.connect();
+      expect((await f.call()).details.error).toBeUndefined();
+      expect(browser.open).toHaveBeenCalledTimes(1);
+      expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(3);
+      expect(f.exchanges).toHaveLength(1);
+    });
+
+    it(`${era} first protected tool 401 requires a later invocation for write consent`, async () => {
+      const f = await fixture(era);
+      f.controls.challengeStatus = 401;
+      f.signIn();
+      f.settings.autoAuth = true;
+      f.state.ui = f.ui;
+      await f.connect();
+      expect((await f.call()).details.error).toBe("auth_required");
+      expect(browser.open).toHaveBeenCalledTimes(1);
+      expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(3);
+      expect(f.exchanges).toHaveLength(1);
+      expect(f.request()?.challenge?.requiredScope).toBe("write");
+      expect((await f.call()).details.error).toBeUndefined();
+      expect(browser.open).toHaveBeenCalledTimes(2);
+    });
   }
 
   it("does not turn a warm refresh fetch failure into automatic consent or tool replay", async () => {
@@ -646,8 +338,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.controls.tokenFailure = true;
     f.controls.toolStatuses = [401];
     f.signIn();
-    f.state.config.settings!.autoAuth = true;
-    f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+    f.settings.autoAuth = true;
+    f.state.ui = f.ui;
     await f.connect();
     expect((await f.call()).details.error).toBe("call_failed");
     expect(browser.open).not.toHaveBeenCalled();
@@ -656,35 +348,28 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);
   });
 
-  it.each(["manual", "http"])(
-    "rejects an unverifiable error without metadata on %s but keeps code fallback",
-    async (path) => {
-      const f = await fixture();
-      f.controls.metadataAbsent = true;
-      const { authorizationUrl } = await f.start();
-      const auth = new URL(authorizationUrl);
-      const callback = new URL(auth.searchParams.get("redirect_uri")!);
-      callback.search = new URLSearchParams({
-        state: auth.searchParams.get("state")!,
-        iss: f.origin,
-        error: "access_denied",
-        error_description: "UNVERIFIABLE_MARKER",
-      }).toString();
-      if (path === "manual") {
-        await expect(
-          completeAuthFromInput(f.name, callback.href, { runtime: f.runtime }),
-        ).rejects.toThrow("Cannot verify");
-      } else {
-        const response = await fetch(callback);
-        expect(response.status).toBe(400);
-        expect(await response.text()).not.toContain("UNVERIFIABLE_MARKER");
-        const codeCallback = await f.authorize(authorizationUrl);
-        expect(await completeAuthFromInput(f.name, codeCallback, { runtime: f.runtime })).toBe(
-          "authenticated",
-        );
-      }
-    },
-  );
+  it("rejects an unverifiable manual error without metadata", async () => {
+    const f = await fixture();
+    f.controls.metadataAbsent = true;
+    const { authorizationUrl } = await f.start();
+    const callback = denialCallback(authorizationUrl, f.origin, "UNVERIFIABLE_MARKER");
+    await expect(
+      completeAuthFromInput(f.name, callback.href, { runtime: f.runtime }),
+    ).rejects.toThrow("Cannot verify");
+  });
+
+  it("rejects an unverifiable HTTP error without metadata but keeps code fallback", async () => {
+    const f = await fixture();
+    f.controls.metadataAbsent = true;
+    const { authorizationUrl } = await f.start();
+    const response = await fetch(denialCallback(authorizationUrl, f.origin, "UNVERIFIABLE_MARKER"));
+    expect(response.status).toBe(400);
+    expect(await response.text()).not.toContain("UNVERIFIABLE_MARKER");
+    const codeCallback = await f.authorize(authorizationUrl);
+    expect(await completeAuthFromInput(f.name, codeCallback, { runtime: f.runtime })).toBe(
+      "authenticated",
+    );
+  });
 
   it.each([
     "tools/call",
@@ -701,24 +386,20 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     cleanups.unshift(() => rm(dir, { recursive: true, force: true }));
     f.manager.setTraceConfig({ enabled: true, file: join(dir, "trace.jsonl") });
     const connection = await f.connect();
-    const before = await f.stored();
+    const before = f.stored();
     f.controls.protectedMethod = method;
     f.controls.protectScope = true;
-    const operation =
-      method === "prompts/get"
-        ? f.manager.getPrompt(f.name, "prompt")
-        : method === "resources/read"
-          ? f.manager.readResource(f.name, "test://document")
-          : method === "tools/list"
-            ? connection.client.listTools(undefined, { cacheMode: "refresh" })
-            : method === "prompts/list"
-              ? connection.client.listPrompts(undefined, { cacheMode: "refresh" })
-              : method === "resources/list"
-                ? connection.client.listResources(undefined, { cacheMode: "refresh" })
-                : connection.client.callTool({ name: "write" });
-    await expect(operation).rejects.toBeInstanceOf(InsufficientScopeError);
+    const operations: Record<string, () => Promise<unknown>> = {
+      "prompts/get": () => f.manager.getPrompt(f.name, "prompt"),
+      "resources/read": () => f.manager.readResource(f.name, "test://document"),
+      "tools/list": () => connection.client.listTools(undefined, { cacheMode: "refresh" }),
+      "prompts/list": () => connection.client.listPrompts(undefined, { cacheMode: "refresh" }),
+      "resources/list": () => connection.client.listResources(undefined, { cacheMode: "refresh" }),
+      "tools/call": () => connection.client.callTool({ name: "write" }),
+    };
+    await expect(requireValue(operations[method])()).rejects.toBeInstanceOf(InsufficientScopeError);
     expect(f.request()?.challenge?.requiredScope).toBe("write");
-    expect(await f.stored()).toEqual(before);
+    expect(f.stored()).toEqual(before);
     expect(browser.open).not.toHaveBeenCalled();
     const { authorizationUrl } = await f.start();
     expect(scopes(new URL(authorizationUrl).searchParams.get("scope"))).toEqual(["basic", "write"]);
@@ -735,7 +416,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       await expect.poll(() => f.controls.stream).toBeDefined();
       f.controls.protectedMethod = `${catalog}/list`;
       f.controls.protectScope = true;
-      f.controls.stream!.write(
+      requireValue(f.controls.stream).write(
         `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: `notifications/${catalog}/list_changed` })}\n\n`,
       );
       await expect.poll(() => f.request()?.challenge?.requiredScope).toBe("write");
@@ -768,12 +449,12 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     { auth: "bearer", bearerToken: "header-token" },
     { headers: { Authorization: "Bearer header-token" } },
     { disabled: true },
-  ] as ServerEntry[])("does not recover OAuth for excluded mode %j", async (options) => {
+  ] satisfies ServerEntry[])("does not recover OAuth for excluded mode %j", async (options) => {
     const f = await fixture();
     Object.assign(f.definition, options);
     f.controls.challengeStatus = 403;
-    f.state.config.settings!.autoAuth = true;
-    f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+    f.settings.autoAuth = true;
+    f.state.ui = f.ui;
     if (!options.disabled) {
       await f.connect();
     }
@@ -791,8 +472,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.definition.headers = { "X-Test": "yes" };
     f.seed("basic");
     f.signIn();
-    f.state.config.settings!.autoAuth = true;
-    f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+    f.settings.autoAuth = true;
+    f.state.ui = f.ui;
     await f.connect();
     f.controls.genericForbidden = true;
     expect((await f.call()).details.error).toBe("call_failed");
@@ -815,12 +496,12 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         clientSecret: "secret",
       };
       f.seed("basic");
-      f.state.config.settings!.autoAuth = true;
+      f.settings.autoAuth = true;
       await f.connect();
       expect((await f.call()).details.error).toBeUndefined();
       expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(implicit ? 3 : 2);
       expect(f.exchanges.map((p) => p.get("grant_type"))).toEqual(["client_credentials"]);
-      expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "write"]);
+      expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual(["basic", "write"]);
       f.controls.toolStatuses = [403, 403, 403];
       expect((await f.call()).details.error).toBe("call_failed");
       expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(implicit ? 5 : 4);
@@ -835,13 +516,13 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.seed("basic", true);
     f.controls.toolStatuses = [401, 401];
     f.signIn();
-    f.state.config.settings!.autoAuth = true;
-    f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+    f.settings.autoAuth = true;
+    f.state.ui = f.ui;
     await f.connect();
     expect((await f.call()).details.error).toBe("call_failed");
     expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(2);
     expect(f.exchanges).toHaveLength(1);
-    expect(f.exchanges[0]!.get("grant_type")).toBe("refresh_token");
+    expect(requireValue(f.exchanges[0]).get("grant_type")).toBe("refresh_token");
     expect(browser.open).not.toHaveBeenCalled();
   });
 
@@ -854,15 +535,15 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       f.seed("basic");
       f.controls.issuedScope = grant;
       f.signIn();
-      f.state.config.settings!.autoAuth = true;
-      f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+      f.settings.autoAuth = true;
+      f.state.ui = f.ui;
       await f.connect();
       for (let invocation = 1; invocation <= 2; invocation++) {
         expect((await f.call()).details.error).toBe("auth_required");
         expect(browser.open).toHaveBeenCalledTimes(invocation);
         expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(invocation * 2);
         expect(f.exchanges).toHaveLength(invocation);
-        expect((await f.stored())?.tokens?.scope).toBe(grant ?? undefined);
+        expect(f.stored()?.tokens?.scope).toBe(grant ?? undefined);
         expect(f.request()?.challenge?.requiredScope).toBe("write");
       }
     },
@@ -878,15 +559,15 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       f.controls.requiredScope = required;
       f.controls.toolStatuses = [403, 403];
       f.signIn();
-      f.state.config.settings!.autoAuth = true;
-      f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+      f.settings.autoAuth = true;
+      f.state.ui = f.ui;
       await f.connect();
       expect((await f.call()).details.error).toBe("auth_required");
       expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(2);
       expect(f.exchanges).toHaveLength(1);
-      expect(f.exchanges[0]!.get("grant_type")).toBe("refresh_token");
+      expect(requireValue(f.exchanges[0]).get("grant_type")).toBe("refresh_token");
       expect(browser.open).not.toHaveBeenCalled();
-      expect((await f.stored())?.tokens?.scope).toBe("basic");
+      expect(f.stored()?.tokens?.scope).toBe("basic");
     },
   );
 
@@ -900,16 +581,17 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         f.seed("basic");
         f.controls.toolStatuses = [403, second];
         f.signIn();
-        f.state.config.settings!.autoAuth = true;
-        f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+        f.settings.autoAuth = true;
+        f.state.ui = f.ui;
         await f.connect();
-        expect((await f.call()).details.error).toBe(
-          second === 403
-            ? "auth_required"
-            : second === 503 || (era === "modern" && second === 0)
-              ? "ambiguous_outcome"
-              : "call_failed",
-        );
+        const errors: Record<number, string> = {
+          403: "auth_required",
+          401: "call_failed",
+          404: "call_failed",
+          503: "ambiguous_outcome",
+          0: era === "modern" ? "ambiguous_outcome" : "call_failed",
+        };
+        expect((await f.call()).details.error).toBe(errors[second]);
         expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(2);
         expect(browser.open).toHaveBeenCalledTimes(1);
         expect(f.exchanges).toHaveLength(1);
@@ -922,8 +604,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       f.seed("basic");
       f.controls.toolStatuses = [era === "legacy" ? 404 : 503, 403];
       f.signIn();
-      f.state.config.settings!.autoAuth = true;
-      f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+      f.settings.autoAuth = true;
+      f.state.ui = f.ui;
       await f.connect();
       expect((await f.call()).details.error).toBe(
         era === "legacy" ? "auth_required" : "ambiguous_outcome",
@@ -932,11 +614,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         era === "legacy" ? 2 : 1,
       );
       expect(browser.open).not.toHaveBeenCalled();
-      if (era === "legacy") {
-        expect(f.request()?.challenge?.requiredScope).toBe("write");
-      } else {
-        expect(f.request()).toBeUndefined();
-      }
+      const request = f.request();
+      expect(request === undefined).toBe(era === "modern");
+      expect(request?.challenge?.requiredScope).toBe(era === "legacy" ? "write" : undefined);
     });
   }
 
@@ -946,12 +626,12 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.definition.oauth = { scope: "basic" };
     f.seed(undefined, true);
     await f.connect();
-    const before = await f.stored();
+    const before = f.stored();
     expect((await f.call()).details.error).toBe("auth_required");
-    expect(await f.stored()).toEqual(before);
+    expect(f.stored()).toEqual(before);
     const url = await f.manual();
     expect(scopes(new URL(url).searchParams.get("scope"))).toEqual(["basic", "write"]);
-    expect(f.exchanges[0]!.get("grant_type")).toBe("authorization_code");
+    expect(requireValue(f.exchanges[0]).get("grant_type")).toBe("authorization_code");
     expect((await f.call()).details.error).toBeUndefined();
   });
 
@@ -966,7 +646,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       await f.call();
       const other = await fixture();
       const runtime = binding === "runtime" ? other.runtime : f.runtime;
-      const url = binding === "url" ? other.definition.url! : f.definition.url!;
+      const url = binding === "url" ? other.definition.url : f.definition.url;
       const authStorageOptions =
         binding === "storage" ? { baseDir: join(tmpdir(), crypto.randomUUID()) } : {};
       expect(
@@ -983,40 +663,23 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     },
   );
 
-  it.each(["pending", "single-flight"])(
+  it.each(["pending", "single-flight"] as const)(
     "isolates authorization ownership when delimiter-joined %s keys collide",
     async (kind) => {
-      const a = await fixture("legacy", "a");
-      const b = await fixture("legacy", kind === "pending" ? "a|/b" : `a|${a.definition.url}|/b`);
-      const storageA = { baseDir: kind === "pending" ? "/b|/c" : `/b|${a.definition.url}|/c` };
-      const storageB = { baseDir: "/c" };
-      a.manager.setAuthStorageOptions(storageA);
-      b.manager.setAuthStorageOptions(storageB);
-      b.manager.setOAuthRuntime(a.runtime);
-      b.definition.url = a.definition.url!;
-      for (const f of [a, b]) {
-        f.definition.auth = "oauth";
-        updateTokens(
-          f.name,
-          { accessToken: "basic-token", scope: "basic", issuer: a.origin },
-          a.definition.url,
-        );
-        const connection = await f.connect();
-        await expect(connection.client.callTool({ name: "write" })).rejects.toBeInstanceOf(
-          InsufficientScopeError,
-        );
-        a.controls.requiredScope = "admin";
-      }
+      const { a, b, storageA, storageB } = await collidingAuthBindings(kind);
       const optionsA = { runtime: a.runtime, authStorageOptions: storageA };
       const optionsB = { runtime: a.runtime, authStorageOptions: storageB };
       const urls = new Map<string, string>();
       const controller = new AbortController();
       const outcomes: Array<ReturnType<typeof settled>> = [];
+      const manualCompletions: string[] = [];
+      const callbackStatuses: number[] = [];
+      let secondPending: boolean | undefined;
       try {
         if (kind === "pending") {
           urls.set(
             a.name,
-            (await startAuth(a.name, a.definition.url!, a.definition, optionsA)).authorizationUrl,
+            (await startAuth(a.name, a.definition.url, a.definition, optionsA)).authorizationUrl,
           );
           urls.set(
             b.name,
@@ -1025,7 +688,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         } else {
           outcomes.push(
             settled(
-              authenticate(a.name, a.definition.url!, a.definition, {
+              authenticate(a.name, a.definition.url, a.definition, {
                 ...optionsA,
                 signal: controller.signal,
                 onAuthorizationUrl: (url) => {
@@ -1045,10 +708,10 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
               }),
             ),
           );
-          await expect.poll(() => urls.size).toBe(2);
         }
-        const first = new URL(urls.get(a.name)!);
-        const second = new URL(urls.get(b.name)!);
+        await expect.poll(() => urls.size).toBe(2);
+        const first = new URL(requireValue(urls.get(a.name)));
+        const second = new URL(requireValue(urls.get(b.name)));
         expect(second.href).not.toBe(first.href);
         expect(scopes(first.searchParams.get("scope"))).toEqual(["basic", "write"]);
         expect(scopes(second.searchParams.get("scope"))).toEqual(["admin", "basic"]);
@@ -1059,23 +722,33 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         const callbackA = await a.authorize(first.href);
         const callbackB = await a.authorize(second.href);
         if (kind === "pending") {
-          expect(await completeAuthFromInput(a.name, callbackA, optionsA)).toBe("authenticated");
-          expect(hasPendingAuth(b.name, storageB, a.runtime)).toBe(true);
-          expect(await completeAuthFromInput(b.name, callbackB, optionsB)).toBe("authenticated");
+          manualCompletions.push(await completeAuthFromInput(a.name, callbackA, optionsA));
+          secondPending = hasPendingAuth(b.name, storageB, a.runtime);
+          manualCompletions.push(await completeAuthFromInput(b.name, callbackB, optionsB));
         } else {
-          expect((await fetch(callbackA)).status).toBe(200);
-          expect((await fetch(callbackB)).status).toBe(200);
-          for (const outcome of outcomes) {
-            expect(await outcome).toMatchObject({ status: "fulfilled", value: "authenticated" });
-          }
+          callbackStatuses.push((await fetch(callbackA)).status);
+          callbackStatuses.push((await fetch(callbackB)).status);
         }
-        expect((await a.stored())?.tokens?.scope).toBe("basic write");
-        expect((await b.stored())?.tokens?.scope).toBe("basic admin");
-        expect((await b.stored())?.tokens?.accessToken).not.toBe(
-          (await a.stored())?.tokens?.accessToken,
+        expect(manualCompletions).toEqual(
+          kind === "pending" ? ["authenticated", "authenticated"] : [],
         );
+        expect(secondPending).toBe(kind === "pending" ? true : undefined);
+        expect(callbackStatuses).toEqual(kind === "pending" ? [] : [200, 200]);
+        expect(await Promise.all(outcomes)).toEqual(
+          kind === "pending"
+            ? []
+            : [
+                { status: "fulfilled", value: "authenticated" },
+                { status: "fulfilled", value: "authenticated" },
+              ],
+        );
+        expect(a.stored()?.tokens?.scope).toBe("basic write");
+        expect(b.stored()?.tokens?.scope).toBe("basic admin");
+        expect(b.stored()?.tokens?.accessToken).not.toBe(a.stored()?.tokens?.accessToken);
         expect(a.exchanges).toHaveLength(2);
-        expect(a.exchanges[0]!.get("code_verifier")).not.toBe(a.exchanges[1]!.get("code_verifier"));
+        expect(requireValue(a.exchanges[0]).get("code_verifier")).not.toBe(
+          requireValue(a.exchanges[1]).get("code_verifier"),
+        );
         expect(hasPendingAuth(a.name, storageA, a.runtime)).toBe(false);
         expect(hasPendingAuth(b.name, storageB, a.runtime)).toBe(false);
       } finally {
@@ -1093,7 +766,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     await f.call();
     const controller = new AbortController();
     await expect(
-      authenticate(f.name, f.definition.url!, f.definition, {
+      authenticate(f.name, f.definition.url, f.definition, {
         runtime: f.runtime,
         signal: controller.signal,
         onAuthorizationUrl: () => controller.abort(new Error("cancel consent")),
@@ -1120,22 +793,22 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.seed("basic");
     await f.connect();
     expect(f.request()).toBeUndefined();
-    const before = await f.stored();
+    const before = f.stored();
     f.controls.issuerPath = "/changed";
     expect((await f.call()).details.error).toBe("call_failed");
     expect(f.authorizations).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
-    expect(await f.stored()).toEqual(before);
+    expect(f.stored()).toEqual(before);
     expect(f.requests.filter((request) => request.method === "tools/call")).toHaveLength(2);
     f.controls.issuerPath = "";
-    await f.manager.reconnect(f.name, f.definition, f.manager.getConnection(f.name)!);
+    await f.manager.reconnect(f.name, f.definition, requireValue(f.manager.getConnection(f.name)));
     expect((await f.call()).details.error).toBeUndefined();
     expect(f.request()?.issuer).toBe(f.origin);
     expect(f.authorizations).toHaveLength(0);
     expect(browser.open).not.toHaveBeenCalled();
     expect(f.exchanges).toHaveLength(1);
-    expect(f.exchanges[0]!.get("grant_type")).toBe("client_credentials");
-    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "write"]);
+    expect(requireValue(f.exchanges[0]).get("grant_type")).toBe("client_credentials");
+    expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual(["basic", "write"]);
     expect(f.requests.filter((request) => request.method === "tools/call")).toHaveLength(4);
   });
 
@@ -1146,26 +819,26 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     await f.connect();
     expect((await f.call()).details.error).toBe("auth_required");
     expect(f.request()?.issuer).toBeUndefined();
-    const before = await f.stored();
+    const before = f.stored();
     f.controls.issuerPath = "/changed";
     await expect(f.start()).rejects.toThrow("issuer changed");
     expect(f.authorizations).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
-    expect(await f.stored()).toEqual(before);
+    expect(f.stored()).toEqual(before);
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
     f.controls.issuerPath = "";
     const restarting = f.start();
-    await expect(restarting).resolves.toMatchObject({ authorizationUrl: expect.any(String) });
+    await expect(restarting).resolves.toHaveProperty("authorizationUrl", expect.any(String));
     const { authorizationUrl } = await restarting;
     expect(scopes(new URL(authorizationUrl).searchParams.get("scope"))).toEqual(["basic", "write"]);
     expect(f.request()?.issuer).toBe(f.origin);
-    expect((await f.stored())?.tokens).toEqual(before?.tokens);
+    expect(f.stored()?.tokens).toEqual(before?.tokens);
     expect(f.authorizations).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
     await f.manual();
     expect(f.authorizations).toHaveLength(1);
     expect(f.exchanges).toHaveLength(1);
-    expect((await f.stored())?.tokens?.scope).toBe("basic write");
+    expect(f.stored()?.tokens?.scope).toBe("basic write");
     expect((await f.call()).details.error).toBeUndefined();
   });
 
@@ -1184,8 +857,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(await completeAuthFromInput(f.name, callback, { runtime: f.runtime })).toBe(
       "authenticated",
     );
-    expect((await f.stored())?.tokens?.scope).toBe("basic write");
-    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "write"]);
+    expect(f.stored()?.tokens?.scope).toBe("basic write");
+    expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual(["basic", "write"]);
     expect(scopes(f.request()?.challenge?.requiredScope)).toEqual(["admin", "write"]);
     expect((await f.call()).details.error).toBeUndefined();
     const next = await f.start();
@@ -1207,8 +880,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.definition.auth = "oauth";
     f.seed("basic");
     f.signIn();
-    f.state.config.settings!.autoAuth = true;
-    f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+    f.settings.autoAuth = true;
+    f.state.ui = f.ui;
     await f.connect();
     const results = await Promise.all([f.call(), f.call()]);
     for (const result of results) {
@@ -1224,8 +897,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const f = await fixture();
     f.controls.protectedMethod = "initialize";
     f.signIn();
-    f.state.config.settings!.autoAuth = true;
-    f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+    f.settings.autoAuth = true;
+    f.state.ui = f.ui;
     expect((await f.connect()).status).toBe("needs-auth");
     expect((await f.call()).details.error).toBe("auth_required");
     expect(browser.open).toHaveBeenCalledTimes(1);
@@ -1234,16 +907,16 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(f.request()?.challenge?.requiredScope).toBe("write");
   });
 
-  it.each(["discovery", "callback", "token"])(
+  it.each(["discovery", "callback", "token"] as const)(
     "aborts scope authorization during %s without late token saves or dispatch",
     async (phase) => {
       const f = await fixture("modern");
       f.definition.auth = "oauth";
       f.seed("basic");
-      f.state.config.settings!.autoAuth = true;
-      f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+      f.settings.autoAuth = true;
+      f.state.ui = f.ui;
       await f.connect();
-      const before = await f.stored();
+      const before = f.stored();
       const saveTokens = vi.spyOn(McpOAuthProvider.prototype, "saveTokens");
       const controller = new AbortController();
       if (phase === "discovery") {
@@ -1255,25 +928,32 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       }
       const call = f.call("write", controller.signal);
       await expect
-        .poll(() =>
-          phase === "discovery"
-            ? f.controls.discoveryHeld
-            : phase === "callback"
-              ? browser.open.mock.calls.length > 0
-              : f.exchanges.length > 0,
+        .poll(
+          () =>
+            ({
+              discovery: f.controls.discoveryHeld,
+              callback: browser.open.mock.calls.length > 0,
+              token: f.exchanges.length > 0,
+            })[phase],
         )
         .toBe(true);
       controller.abort(new Error("caller cancelled"));
       expect((await call).details.error).toBe("aborted");
       expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
       f.controls.releaseToken();
-      if (phase === "token") {
-        await expect.poll(() => saveTokens.mock.calls.length).toBe(1);
-        await expect(saveTokens.mock.results[0]!.value).rejects.toThrow("no longer active");
-      } else {
-        expect(saveTokens).not.toHaveBeenCalled();
+      await expect.poll(() => saveTokens.mock.calls.length).toBe(phase === "token" ? 1 : 0);
+      const saves = await Promise.allSettled(
+        saveTokens.mock.results.map((result) => {
+          assert(result.type === "return");
+          return result.value;
+        }),
+      );
+      for (const save of saves) {
+        expect(save).toHaveProperty("status", "rejected");
+        expect(save).toHaveProperty("reason", expect.any(Error));
+        expect(save).toHaveProperty("reason.message", expect.stringContaining("no longer active"));
       }
-      expect((await f.stored())?.tokens).toEqual(before?.tokens);
+      expect(f.stored()?.tokens).toEqual(before?.tokens);
       expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);
       expect(f.request()?.challenge?.requiredScope).toBe("write");
     },
@@ -1285,8 +965,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const f = await fixture();
       f.definition.auth = "oauth";
       f.seed("basic");
-      f.state.config.settings!.autoAuth = true;
-      f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+      f.settings.autoAuth = true;
+      f.state.ui = f.ui;
       await f.connect();
       browser.open.mockImplementation(async (url: string) => {
         f.controls.holdCatalog = true;
@@ -1318,8 +998,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const f = await fixture();
     f.definition.auth = "oauth";
     f.seed("basic");
-    f.state.config.settings!.autoAuth = true;
-    f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+    f.settings.autoAuth = true;
+    f.state.ui = f.ui;
     await f.connect();
     const result = await runMcpScript(
       f.state,
@@ -1338,7 +1018,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const result = await executeAuthStart(f.state, f.name, controller.signal);
     controller.abort(new Error("tool finished"));
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
-    const callback = await f.authorize(result.details.authorizationUrl as string);
+    const url = result.details.authorizationUrl;
+    assert(typeof url === "string");
+    const callback = await f.authorize(url);
     expect((await executeAuthComplete(f.state, f.name, callback)).details.authenticated).toBe(true);
     expect(f.exchanges).toHaveLength(1);
   });
@@ -1346,11 +1028,12 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   it("completes a captured manual callback only on explicit auth-complete without exposing callback secrets", async () => {
     const f = await fixture();
     const started = await executeAuthStart(f.state, f.name);
-    const authorizationUrl = started.details.authorizationUrl as string;
+    const authorizationUrl = started.details.authorizationUrl;
+    assert(typeof authorizationUrl === "string");
     const early = await executeAuthComplete(f.state, f.name);
     expect(early.details.error).toBe("auth_complete_failed");
-    expect((early.content[0] as { text: string }).text).toContain("No OAuth callback received yet");
-    expect((early.content[0] as { text: string }).text).toContain("redirectUrl");
+    expect(resultText(early)).toContain("No OAuth callback received yet");
+    expect(resultText(early)).toContain("redirectUrl");
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
     expect((await f.start()).authorizationUrl).toBe(authorizationUrl);
 
@@ -1359,9 +1042,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("auth-complete");
-    expect(html).not.toContain(callback.searchParams.get("code")!);
+    expect(html).not.toContain(requireValue(callback.searchParams.get("code")));
     expect(f.exchanges).toHaveLength(0);
-    expect((await f.stored())?.tokens).toBeUndefined();
+    expect(f.stored()?.tokens).toBeUndefined();
 
     const cancelled = new AbortController();
     cancelled.abort(new Error("completion cancelled"));
@@ -1371,12 +1054,12 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const completed = await executeAuthComplete(f.state, f.name);
     expect(completed.details.authenticated).toBe(true);
     expect(f.exchanges).toHaveLength(1);
-    expect(f.exchanges[0]!.get("code")).toBe(callback.searchParams.get("code"));
-    expect((await f.stored())?.tokens?.issuer).toBe(f.origin);
+    expect(requireValue(f.exchanges[0]).get("code")).toBe(callback.searchParams.get("code"));
+    expect(f.stored()?.tokens?.issuer).toBe(f.origin);
     for (const secret of [
       callback.href,
-      callback.searchParams.get("code")!,
-      callback.searchParams.get("state")!,
+      requireValue(callback.searchParams.get("code")),
+      requireValue(callback.searchParams.get("state")),
     ]) {
       expect(JSON.stringify(completed)).not.toContain(secret);
     }
@@ -1434,9 +1117,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const result = await executeAuthComplete(f.state, f.name);
     expect(result.details.error).toBe("auth_complete_failed");
     expect(result.details.authenticated).toBeUndefined();
-    expect((result.content[0] as { text: string }).text).toContain("denied or failed");
+    expect(resultText(result)).toContain("denied or failed");
     expect(JSON.stringify(result)).not.toContain(callback.href);
-    expect(JSON.stringify(result)).not.toContain(callback.searchParams.get("code")!);
+    expect(JSON.stringify(result)).not.toContain(requireValue(callback.searchParams.get("code")));
     expect(f.exchanges).toHaveLength(0);
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
     expect((await fetch(callback)).status).toBe(200);
@@ -1451,7 +1134,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     a.controls.holdToken = true;
     const older = settled(completeAuthFromInput(a.name, undefined, { runtime: a.runtime }));
     await expect.poll(() => a.exchanges.length).toBe(1);
-    const newer = await startAuth(a.name, b.definition.url!, b.definition, { runtime: a.runtime });
+    const newer = await startAuth(a.name, b.definition.url, b.definition, { runtime: a.runtime });
     expect((await fetch(await b.authorize(newer.authorizationUrl))).status).toBe(200);
     a.controls.releaseToken();
     expect((await older).status).toBe("rejected");
@@ -1500,157 +1183,130 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     },
   );
 
-  for (const path of ["url", "query", "fragment", "http", "automatic"] as const) {
-    it.each([
-      "wrong-state",
-      "missing-state",
-      "wrong-issuer",
-      "missing-issuer",
-      "trailing-slash",
-      "unexpected-issuer",
-    ])(`${path} validates callback errors before presentation: %s`, async (invalid) => {
-      const f = await fixture();
-      if (invalid === "unexpected-issuer") {
-        f.controls.issuerRequired = false;
-      }
-      const controller = new AbortController();
-      const marker = "UNTRUSTED_ERROR_MARKER";
-      const makeCallback = (authorizationUrl: string) => {
-        const authorization = new URL(authorizationUrl);
-        const callback = new URL(authorization.searchParams.get("redirect_uri")!);
-        callback.search = new URLSearchParams({
-          state: authorization.searchParams.get("state")!,
-          iss: f.origin,
-          error: "access_denied",
-          error_description: marker,
-        }).toString();
-        if (invalid === "wrong-state") {
-          callback.searchParams.set("state", "wrong");
-        }
-        if (invalid === "missing-state") {
-          callback.searchParams.delete("state");
-        }
-        if (invalid === "missing-issuer") {
-          callback.searchParams.delete("iss");
-        }
-        if (invalid === "wrong-issuer" || invalid === "unexpected-issuer") {
-          callback.searchParams.set("iss", "http://wrong.invalid/UNTRUSTED_ISSUER");
-        }
-        if (invalid === "trailing-slash") {
-          callback.searchParams.set("iss", `${f.origin}/`);
-        }
-        return callback;
-      };
-      if (path === "automatic") {
-        browser.open.mockImplementation(async (url: string) => {
-          const response = await fetch(makeCallback(url));
-          expect(response.status).toBe(400);
-          const html = await response.text();
-          expect(html).not.toContain(marker);
-          expect(html).not.toContain("UNTRUSTED_ISSUER");
-          if (invalid.includes("state")) {
-            controller.abort(new Error("wrong state did not settle the waiter"));
-          }
-        });
-        const result = await settled(
-          authenticate(f.name, f.definition.url!, f.definition, {
-            runtime: f.runtime,
-            signal: controller.signal,
-          }),
+  for (const path of ["url", "query", "fragment"] as const) {
+    it.each(invalidCallbacks)(
+      `${path} validates callback errors before presentation: %s`,
+      async (invalid) => {
+        const f = await fixture();
+        f.controls.issuerRequired = invalid !== "unexpected-issuer";
+        const callback = invalidErrorCallback(
+          (await f.start()).authorizationUrl,
+          f.origin,
+          invalid,
         );
-        expect(result).toMatchObject({
-          status: "rejected",
-          reason: { message: expect.not.stringContaining(marker) },
-        });
-        expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
-      } else {
-        const callback = makeCallback((await f.start()).authorizationUrl);
-        if (path === "http") {
-          const response = await fetch(callback);
-          expect(response.status).toBe(400);
-          const html = await response.text();
-          expect(html).not.toContain(marker);
-          expect(html).not.toContain("UNTRUSTED_ISSUER");
-          expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
-        } else {
-          const input =
-            path === "query"
-              ? callback.search
-              : path === "fragment"
-                ? `${callback.origin}${callback.pathname}#${callback.search.slice(1)}`
-                : callback.href;
-          const result = await settled(
-            completeAuthFromInput(f.name, input, { runtime: f.runtime }),
-          );
-          expect(result).toMatchObject({
-            status: "rejected",
-            reason: { message: expect.not.stringContaining(marker) },
-          });
-          expect(String(result.status === "rejected" ? result.reason : "")).not.toContain(
-            "UNTRUSTED_ISSUER",
-          );
-          expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(
-            invalid.includes("state") || invalid === "missing-issuer",
-          );
-        }
-      }
-      expect(f.exchanges).toHaveLength(0);
-    });
+        const input = {
+          url: callback.href,
+          query: callback.search,
+          fragment: `${callback.origin}${callback.pathname}#${callback.search.slice(1)}`,
+        }[path];
+        const result = await settled(completeAuthFromInput(f.name, input, { runtime: f.runtime }));
+        expect(result).toHaveProperty("status", "rejected");
+        expect(result).toHaveProperty(
+          "reason.message",
+          expect.not.stringContaining("UNTRUSTED_ERROR_MARKER"),
+        );
+        assert(result.status === "rejected");
+        const reason: unknown = result.reason;
+        expect(String(reason)).not.toContain("UNTRUSTED_ISSUER");
+        expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(
+          invalid.includes("state") || invalid === "missing-issuer",
+        );
+        expect(f.exchanges).toHaveLength(0);
+      },
+    );
   }
 
-  it.each(["manual", "automatic"])(
-    "presents only a verified provider denial on %s and preserves the existing retry policy",
-    async (mode) => {
+  it.each(invalidCallbacks)(
+    "http validates callback errors before presentation: %s",
+    async (invalid) => {
       const f = await fixture();
-      const description = "<script>legitimate denial</script>";
-      const errorCallback = (url: string) => {
-        const auth = new URL(url);
-        const callback = new URL(auth.searchParams.get("redirect_uri")!);
-        callback.search = new URLSearchParams({
-          state: auth.searchParams.get("state")!,
-          iss: f.origin,
-          error: "access_denied",
-          error_description: description,
-        }).toString();
-        return callback;
-      };
-      if (mode === "manual") {
-        const { authorizationUrl } = await f.start();
-        const callback = errorCallback(authorizationUrl);
-        const response = await fetch(callback);
-        expect(response.status).toBe(200);
-        const html = await response.text();
-        expect(html).toContain("&lt;script&gt;legitimate denial&lt;/script&gt;");
-        expect(html).not.toContain(description);
-        await expect(
-          completeAuthFromInput(f.name, callback.href, { runtime: f.runtime }),
-        ).rejects.toThrow(description);
-        expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
-        expect(
-          await completeAuthFromInput(f.name, await f.authorize(authorizationUrl), {
-            runtime: f.runtime,
-          }),
-        ).toBe("authenticated");
-        expect(f.exchanges).toHaveLength(1);
-      } else {
-        f.definition.auth = "oauth";
-        f.seed("basic");
-        await f.connect();
-        await f.call();
-        browser.open.mockImplementation(async (url: string) => {
-          const response = await fetch(errorCallback(url));
-          expect(response.status).toBe(200);
-          expect(await response.text()).toContain("&lt;script&gt;legitimate denial&lt;/script&gt;");
-        });
-        await expect(
-          authenticate(f.name, f.definition.url!, f.definition, { runtime: f.runtime }),
-        ).rejects.toThrow(description);
-        expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
-        expect(f.request()?.challenge?.requiredScope).toBe("write");
-        expect(f.exchanges).toHaveLength(0);
-      }
+      f.controls.issuerRequired = invalid !== "unexpected-issuer";
+      const callback = invalidErrorCallback((await f.start()).authorizationUrl, f.origin, invalid);
+      const response = await fetch(callback);
+      expect(response.status).toBe(400);
+      const html = await response.text();
+      expect(html).not.toContain("UNTRUSTED_ERROR_MARKER");
+      expect(html).not.toContain("UNTRUSTED_ISSUER");
+      expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+      expect(f.exchanges).toHaveLength(0);
     },
   );
+
+  it.each(invalidCallbacks)(
+    "automatic validates callback errors before presentation: %s",
+    async (invalid) => {
+      const f = await fixture();
+      f.controls.issuerRequired = invalid !== "unexpected-issuer";
+      const controller = new AbortController();
+      browser.open.mockImplementation(async (url: string) => {
+        const response = await fetch(invalidErrorCallback(url, f.origin, invalid));
+        expect(response.status).toBe(400);
+        const html = await response.text();
+        expect(html).not.toContain("UNTRUSTED_ERROR_MARKER");
+        expect(html).not.toContain("UNTRUSTED_ISSUER");
+        if (invalid.includes("state")) {
+          controller.abort(new Error("wrong state did not settle the waiter"));
+        }
+      });
+      const result = await settled(
+        authenticate(f.name, f.definition.url, f.definition, {
+          runtime: f.runtime,
+          signal: controller.signal,
+        }),
+      );
+      expect(result).toHaveProperty("status", "rejected");
+      expect(result).toHaveProperty(
+        "reason.message",
+        expect.not.stringContaining("UNTRUSTED_ERROR_MARKER"),
+      );
+      expect(browser.open).toHaveBeenCalledTimes(1);
+      expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+      expect(f.exchanges).toHaveLength(0);
+    },
+  );
+
+  it("presents only a verified manual provider denial and preserves the existing retry policy", async () => {
+    const f = await fixture();
+    const description = "<script>legitimate denial</script>";
+    const { authorizationUrl } = await f.start();
+    const callback = denialCallback(authorizationUrl, f.origin, description);
+    const response = await fetch(callback);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("&lt;script&gt;legitimate denial&lt;/script&gt;");
+    expect(html).not.toContain(description);
+    await expect(
+      completeAuthFromInput(f.name, callback.href, { runtime: f.runtime }),
+    ).rejects.toThrow(description);
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+    expect(
+      await completeAuthFromInput(f.name, await f.authorize(authorizationUrl), {
+        runtime: f.runtime,
+      }),
+    ).toBe("authenticated");
+    expect(f.exchanges).toHaveLength(1);
+  });
+
+  it("presents only a verified automatic provider denial and preserves the existing retry policy", async () => {
+    const f = await fixture();
+    const description = "<script>legitimate denial</script>";
+    f.definition.auth = "oauth";
+    f.seed("basic");
+    await f.connect();
+    await f.call();
+    browser.open.mockImplementation(async (url: string) => {
+      const response = await fetch(denialCallback(url, f.origin, description));
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("&lt;script&gt;legitimate denial&lt;/script&gt;");
+    });
+    await expect(
+      authenticate(f.name, f.definition.url, f.definition, { runtime: f.runtime }),
+    ).rejects.toThrow(description);
+    expect(browser.open).toHaveBeenCalledTimes(1);
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(f.request()?.challenge?.requiredScope).toBe("write");
+    expect(f.exchanges).toHaveLength(0);
+  });
 
   it("isolates concurrent callback states and issuers and rejects wrong endpoints and late callbacks", async () => {
     const a = await fixture();
@@ -1678,88 +1334,56 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(await completeAuthFromInput(a.name, callbackA.href, { runtime: a.runtime })).toBe(
       "authenticated",
     );
-    expect((await a.stored())?.tokens?.issuer).toBe(a.origin);
-    expect((await b.stored())?.tokens?.issuer).toBe(b.origin);
+    expect(a.stored()?.tokens?.issuer).toBe(a.origin);
+    expect(b.stored()?.tokens?.issuer).toBe(b.origin);
     expect((await fetch(callbackA)).status).toBe(400);
     expect((await fetch(callbackB)).status).toBe(400);
     expect(a.exchanges).toHaveLength(1);
     expect(b.exchanges).toHaveLength(1);
   });
 
-  it.each(["automatic", "panel-auth", "panel-reset"])(
-    "preserves accepted work only for the %s auth handoff",
-    async (mode) => {
-      const f = await fixture();
-      f.definition.auth = "oauth";
-      f.seed("basic");
-      f.controls.holdEffect = true;
-      f.signIn();
-      f.state.config.settings!.autoAuth = true;
-      f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
-      let received!: () => void;
-      const headers = new Promise<void>((resolve) => {
-        received = resolve;
-      });
-      const nativeFetch = globalThis.fetch;
-      vi.spyOn(globalThis, "fetch").mockImplementation(async (...args) => {
-        const response = await nativeFetch(...args);
-        if (response.headers.has("x-accepted-effect")) {
-          received();
-        }
-        return response;
-      });
-      const old = await f.connect();
-      const close = vi.spyOn(old.client, "close");
-      const effect = f.call("effect");
-      await headers;
-      let panel: ReturnType<typeof createMcpPanel> | undefined;
-      let panelFlow: Promise<unknown> | undefined;
-      if (mode === "automatic") {
-        expect((await f.call()).details.error).toBeUndefined();
-      } else {
-        const ctx = {
-          hasUI: true,
-          mode: "tui",
-          cwd: process.env.HOME!,
-          isProjectTrusted: () => true,
-          ui: {
-            notify: vi.fn(),
-            setStatus: vi.fn(),
-            custom: (build: any) => {
-              panel = build({ requestRender: vi.fn() }, {}, undefined, () => {});
-            },
-          },
-        } as any;
-        panelFlow = openMcpAuthPanel(f.state, ctx);
-        expect(panel).toBeDefined();
-        panel!.handleInput(mode === "panel-auth" ? "\x01" : "\x12");
-        await expect.poll(() => f.manager.getConnection(f.name)).not.toBe(old);
-        await expect.poll(() => f.manager.getConnection(f.name)?.status).toBe("connected");
-      }
-      if (mode === "panel-reset") {
-        expect((await effect).details).toMatchObject({
-          error: "ambiguous_outcome",
-          recovery: { action: "readback" },
-        });
-        expect(close).toHaveBeenCalledTimes(1);
-        expect(browser.open).not.toHaveBeenCalled();
-      } else {
-        expect(close).not.toHaveBeenCalled();
-        expect(f.manager.getConnection(f.name)?.inFlight).toBe(1);
-        f.controls.releaseEffect();
-        expect((await effect).details.error).toBeUndefined();
-        await expect.poll(() => close.mock.calls.length).toBe(1);
-        expect(f.manager.getConnection(f.name)?.inFlight).toBe(0);
-      }
-      expect(f.controls.effectCount).toBe(1);
-      expect(f.requests.filter((r) => r.name === "effect")).toHaveLength(1);
-      if (panel) {
-        panel.handleInput("\x1b");
-        await panelFlow;
-        panel.dispose();
-      }
-    },
-  );
+  it("preserves accepted work for automatic auth handoff", async () => {
+    const { f, close, effect } = await startAcceptedEffect();
+    expect((await f.call()).details.error).toBeUndefined();
+    expect(close).not.toHaveBeenCalled();
+    expect(f.manager.getConnection(f.name)?.inFlight).toBe(1);
+    f.controls.releaseEffect();
+    expect((await effect).details.error).toBeUndefined();
+    await expect.poll(() => close.mock.calls.length).toBe(1);
+    expect(f.manager.getConnection(f.name)?.inFlight).toBe(0);
+    expect(f.controls.effectCount).toBe(1);
+    expect(f.requests.filter((r) => r.name === "effect")).toHaveLength(1);
+  });
+
+  it("preserves accepted work for panel auth handoff", async () => {
+    const { f, close, effect } = await startAcceptedEffect();
+    const { host, flow } = await openAuthPanel(f, "\u0001");
+    expect(close).not.toHaveBeenCalled();
+    expect(f.manager.getConnection(f.name)?.inFlight).toBe(1);
+    f.controls.releaseEffect();
+    expect((await effect).details.error).toBeUndefined();
+    await expect.poll(() => close.mock.calls.length).toBe(1);
+    expect(f.manager.getConnection(f.name)?.inFlight).toBe(0);
+    expect(f.controls.effectCount).toBe(1);
+    expect(f.requests.filter((r) => r.name === "effect")).toHaveLength(1);
+    host.input("\u001b");
+    await flow;
+  });
+
+  it("cancels accepted work for explicit panel reset rather than replaying it", async () => {
+    const { f, close, effect } = await startAcceptedEffect();
+    const { host, flow } = await openAuthPanel(f, "\u0012");
+    expect((await effect).details).toMatchObject({
+      error: "ambiguous_outcome",
+      recovery: { action: "readback" },
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(browser.open).not.toHaveBeenCalled();
+    expect(f.controls.effectCount).toBe(1);
+    expect(f.requests.filter((r) => r.name === "effect")).toHaveLength(1);
+    host.input("\u001b");
+    await flow;
+  });
 
   it.each([true, false])(
     "registered /mcp command preserves accepted work only after auth (afterAuth=%s)",
@@ -1769,45 +1393,24 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       f.seed("basic");
       f.controls.holdEffect = true;
       f.signIn();
-      const tools = new Map<string, any>();
-      const commands = new Map<string, any>();
-      const handlers = new Map<string, any>();
-      const api = {
-        events: new EventEmitter(),
-        registerTool: (tool: any) => tools.set(tool.name, tool),
-        registerCommand: (name: string, command: any) => commands.set(name, command),
-        registerFlag: () => {},
-        on: (name: string, handler: any) => handlers.set(name, handler),
-        getFlag: () => {},
-        registerEntryRenderer: () => {},
-        appendEntry: () => {},
-        getActiveTools: () => [...tools.keys()],
-        setActiveTools: () => {},
-        getAllTools: () => [],
-        sendMessage: () => {},
-      } as any;
-      const ctx = {
-        hasUI: true,
-        mode: "tui",
-        cwd: process.env.HOME!,
-        isProjectTrusted: () => true,
-        ui: { setStatus: vi.fn(), notify: vi.fn() },
-        sessionManager: { getLeafId: () => null, getEntry: () => {} },
-      } as any;
+      const host = await createLifecycleHost();
+      cleanups.push(async () => {
+        await host.dispose();
+        expect(host.errors).toEqual([]);
+      });
+      const context = { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui: f.ui } as const;
       const connecting = vi.spyOn(McpServerManager.prototype, "connect");
       createMcpAdapter({
         config: {
           mcpServers: { [f.name]: f.definition },
           settings: { sampling: false, elicitation: false },
         },
-      })(api);
-      await handlers.get("session_start")({}, ctx);
-      cleanups.push(() => handlers.get("session_shutdown")({}, ctx));
-      await tools.get("mcp").execute("connect", { connect: f.name }, undefined, undefined, ctx);
-      const manager = connecting.mock.contexts.find(
-        (candidate) => candidate !== f.manager,
-      ) as McpServerManager;
-      const old = manager.getConnection(f.name)!;
+      })(host.api);
+      await host.handlers.get("session_start")({}, context);
+      await host.tool("mcp").execute("connect", { connect: f.name });
+      const manager = connecting.mock.contexts.find((candidate) => candidate !== f.manager);
+      assert(manager instanceof McpServerManager);
+      const old = requireValue(manager.getConnection(f.name));
       const close = vi.spyOn(old.client, "close");
       let received!: () => void;
       const headers = new Promise<void>((resolve) => {
@@ -1821,26 +1424,25 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         }
         return response;
       });
-      const effect = tools
-        .get("mcp")
-        .execute("effect", { tool: f.toolName("effect"), args: {} }, undefined, undefined, ctx);
+      const effect = host.tool("mcp").execute("effect", { tool: f.toolName("effect"), args: {} });
       await headers;
-      await commands
-        .get(afterAuth ? "mcp-auth" : "mcp")
-        .handler(afterAuth ? f.name : `reconnect ${f.name}`, ctx);
+      await host
+        .command(afterAuth ? "mcp-auth" : "mcp")
+        .handler(afterAuth ? f.name : `reconnect ${f.name}`, context);
+      const closedBeforeRelease = close.mock.calls.length;
       if (afterAuth) {
-        expect(close).not.toHaveBeenCalled();
         f.controls.releaseEffect();
-        expect((await effect).details.error).toBeUndefined();
-        await expect.poll(() => close.mock.calls.length).toBe(1);
-      } else {
-        expect((await effect).details).toMatchObject({
-          error: "ambiguous_outcome",
-          recovery: { action: "readback" },
-        });
-        expect(close).toHaveBeenCalledTimes(1);
-        expect(browser.open).not.toHaveBeenCalled();
       }
+      const details = z.record(z.string(), z.unknown()).parse((await effect).details);
+      expect(closedBeforeRelease).toBe(afterAuth ? 0 : 1);
+      expect(details.error).toBe(afterAuth ? undefined : "ambiguous_outcome");
+      const recovery =
+        details.recovery === undefined
+          ? undefined
+          : z.record(z.string(), z.unknown()).parse(details.recovery);
+      expect(recovery?.action).toBe(afterAuth ? undefined : "readback");
+      await expect.poll(() => close.mock.calls.length).toBe(1);
+      expect(browser.open).toHaveBeenCalledTimes(afterAuth ? 1 : 0);
       expect(f.controls.effectCount).toBe(1);
       expect(f.requests.filter((r) => r.name === "effect")).toHaveLength(1);
       expect(manager.getConnection(f.name)).not.toBe(old);
@@ -1858,7 +1460,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const authorizationUrl = await f.manual();
     const requested = scopes(new URL(authorizationUrl).searchParams.get("scope"));
     expect(requested).toEqual(["basic", "offline_access", "write"]);
-    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(requested);
+    expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual(requested);
     expect(scopes(f.request()?.requestedScope)).toEqual(requested);
     expect((await f.call()).details.error).toBeUndefined();
   });
@@ -1869,15 +1471,19 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       async (phase) => {
         const f = await fixture(era);
         f.seed("basic write");
-        const method =
-          phase === "handshake" ? (era === "legacy" ? "initialize" : "server/discover") : phase;
+        const handshake = era === "legacy" ? "initialize" : "server/discover";
+        const method = phase === "handshake" ? handshake : phase;
         f.controls.protectedMethod = method;
         expect((await f.connect()).status).toBe("connected");
         expect(f.requests.filter((r) => r.method === method)).toHaveLength(2);
         expect(f.exchanges).toHaveLength(0);
         expect(browser.open).not.toHaveBeenCalled();
         f.controls.protectedMethod = "";
-        await f.manager.reconnect(f.name, f.definition, f.manager.getConnection(f.name)!);
+        await f.manager.reconnect(
+          f.name,
+          f.definition,
+          requireValue(f.manager.getConnection(f.name)),
+        );
         expect((await f.call()).details.error).toBeUndefined();
         expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);
       },
@@ -1902,7 +1508,11 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         expect(f.authorizations).toHaveLength(1);
         expect(f.exchanges).toHaveLength(1);
         expect(browser.open).not.toHaveBeenCalled();
-        await f.manager.reconnect(f.name, f.definition, f.manager.getConnection(f.name)!);
+        await f.manager.reconnect(
+          f.name,
+          f.definition,
+          requireValue(f.manager.getConnection(f.name)),
+        );
         expect((await f.call()).details.error).toBeUndefined();
         expect(f.authorizations).toHaveLength(1);
         expect(f.exchanges).toHaveLength(1);
@@ -1924,16 +1534,22 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   );
 
   for (const status of [404, 405]) {
-    it.each(["tools/list", "prompts/list", "resources/list"])(
-      `does not use SSE fallback for %s catalog HTTP${status}`,
+    it(`does not use SSE fallback for mandatory tools/list catalog HTTP${status}`, async () => {
+      const f = await fixture("modern");
+      f.controls.catalogFailure = { method: "tools/list", status };
+      await expect(f.connect()).rejects.toMatchObject({ status });
+      expect(
+        f.http.filter((request) => request.method === "GET" && request.path === "/mcp"),
+      ).toHaveLength(0);
+      expect(f.requests.filter((request) => request.method === "server/discover")).toHaveLength(1);
+      expect(f.request()).toBeUndefined();
+    });
+    it.each(["prompts/list", "resources/list"])(
+      `does not use SSE fallback for optional %s catalog HTTP${status}`,
       async (method) => {
         const f = await fixture("modern");
         f.controls.catalogFailure = { method, status };
-        if (method === "tools/list") {
-          await expect(f.connect()).rejects.toThrow();
-        } else {
-          expect((await f.connect()).status).toBe("connected");
-        }
+        expect((await f.connect()).status).toBe("connected");
         expect(
           f.http.filter((request) => request.method === "GET" && request.path === "/mcp"),
         ).toHaveLength(0);
@@ -1957,10 +1573,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const fresh = await f.manager.reconnect(f.name, f.definition, old);
     expect(close).not.toHaveBeenCalled();
     f.controls.rejectResource();
-    expect(await resource).toMatchObject({
-      status: "rejected",
-      reason: expect.any(InsufficientScopeError),
-    });
+    const outcome = await resource;
+    expect(outcome).toHaveProperty("status", "rejected");
+    expect(outcome).toHaveProperty("reason", expect.any(InsufficientScopeError));
     expect(f.request()?.challenge?.requiredScope).toBe("write");
     expect(f.manager.getConnection(f.name)).toBe(fresh);
     expect(fresh.inFlight).toBe(0);
@@ -1982,13 +1597,13 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       );
     }
     expect(
-      getOAuthRequest(b.name, b.definition.url!, getAuthBaseDir(), a.runtime)?.challenge
+      getOAuthRequest(b.name, b.definition.url, getAuthBaseDir(), a.runtime)?.challenge
         ?.requiredScope,
     ).toBe("write");
     await removeAuth(a.name, { runtime: a.runtime });
     expect(a.request()).toBeUndefined();
     expect(
-      getOAuthRequest(b.name, b.definition.url!, getAuthBaseDir(), a.runtime)?.challenge
+      getOAuthRequest(b.name, b.definition.url, getAuthBaseDir(), a.runtime)?.challenge
         ?.requiredScope,
     ).toBe("write");
   });
@@ -1999,7 +1614,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     a.manager.setAuthStorageOptions({ baseDir: "/b|/c" });
     b.manager.setAuthStorageOptions({ baseDir: "/c" });
     b.manager.setOAuthRuntime(a.runtime);
-    b.definition.url = a.definition.url!;
+    b.definition.url = a.definition.url;
     for (const f of [a, b]) {
       f.definition.auth = "oauth";
       updateTokens(
@@ -2014,14 +1629,14 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       a.controls.requiredScope = "admin";
     }
     expect(
-      getOAuthRequest(a.name, a.definition.url!, "/b|/c", a.runtime)?.challenge?.requiredScope,
+      getOAuthRequest(a.name, a.definition.url, "/b|/c", a.runtime)?.challenge?.requiredScope,
     ).toBe("write");
     expect(
-      getOAuthRequest(b.name, a.definition.url!, "/c", a.runtime)?.challenge?.requiredScope,
+      getOAuthRequest(b.name, a.definition.url, "/c", a.runtime)?.challenge?.requiredScope,
     ).toBe("admin");
     await removeAuth(a.name, { runtime: a.runtime });
     expect(
-      getOAuthRequest(b.name, a.definition.url!, "/c", a.runtime)?.challenge?.requiredScope,
+      getOAuthRequest(b.name, a.definition.url, "/c", a.runtime)?.challenge?.requiredScope,
     ).toBe("admin");
   });
 
@@ -2040,8 +1655,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const f = await fixture();
     f.controls.accessScope = "basic";
     f.controls.holdAnonymous = true;
-    f.state.config.settings!.autoAuth = true;
-    f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+    f.settings.autoAuth = true;
+    f.state.ui = f.ui;
     let releaseBrowser!: () => void;
     const browserGate = new Promise<void>((resolve) => {
       releaseBrowser = resolve;
@@ -2067,7 +1682,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(f.requests.filter((request) => request.method === "tools/call")).toHaveLength(6);
   });
 
-  it.each([{ oauth: false }, { auth: false }, { disabled: true }] as ServerEntry[])(
+  it.each([{ oauth: false }, { auth: false }, { disabled: true }] satisfies ServerEntry[])(
     "does not retain a live challenge after OAuth is disabled: %j",
     async (options) => {
       const f = await fixture();
@@ -2097,7 +1712,11 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       "configured",
       "write",
     ]);
-    expect(scopes(f.exchanges[0]!.get("scope"))).toEqual(["basic", "configured", "write"]);
+    expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual([
+      "basic",
+      "configured",
+      "write",
+    ]);
     expect(f.definition.oauth.scope).toBe("configured");
     expect((await f.call()).details.error).toBeUndefined();
   });
@@ -2108,13 +1727,13 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const f = await fixture("modern");
       f.definition.auth = "oauth";
       f.seed("basic");
-      f.state.config.settings!.autoAuth = true;
-      f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+      f.settings.autoAuth = true;
+      f.state.ui = f.ui;
       browser.open.mockImplementation(async (authorizationUrl: string) => {
         const authorization = new URL(authorizationUrl);
-        const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+        const callback = new URL(requireValue(authorization.searchParams.get("redirect_uri")));
         callback.search = new URLSearchParams({
-          state: authorization.searchParams.get("state")!,
+          state: requireValue(authorization.searchParams.get("state")),
           iss: f.origin,
           error: "access_denied",
           error_description: "user declined",
@@ -2128,7 +1747,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       expect(f.requests.filter((request) => request.method === "tools/call")).toHaveLength(1);
       expect(f.request()?.challenge?.requiredScope).toBe("write");
       expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
-      expect((await f.stored())?.tokens?.scope).toBe("basic");
+      expect(f.stored()?.tokens?.scope).toBe("basic");
     },
   );
 
@@ -2148,10 +1767,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     try {
       const outcome = settled(waitForCallback("timeout-state"));
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
-      expect(await outcome).toMatchObject({
-        status: "rejected",
-        reason: { message: expect.stringContaining("callback timeout") },
-      });
+      const result = await outcome;
+      expect(result).toHaveProperty("status", "rejected");
+      expect(result).toHaveProperty("reason.message", expect.stringContaining("callback timeout"));
     } finally {
       vi.useRealTimers();
     }
