@@ -42,6 +42,9 @@ server.setRequestHandler("prompts/get", async (request) => {
   const { name, arguments: args = {} } = request.params;
   if (name === "brief") {
     const topic = typeof args.topic === "string" ? args.topic : "(missing)";
+    if (topic === "server-error") {
+      throw new Error("Prompt backend unavailable");
+    }
     const date = typeof args.date === "string" ? args.date : "today";
     return {
       description: "Daily brief",

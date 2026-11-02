@@ -128,21 +128,27 @@ describe("prompts with the real MCP SDK", () => {
     expect(sent).toContain("[assistant] Bridges of context…");
   });
 
-  it("surfaces server errors for unknown prompts as a notify, not a user message", async () => {
+  it("surfaces prompt server errors as a notify, not a user message", async () => {
     const manager = await createConnectedManager();
     const metadata = buildPromptMetadata(manager);
     const brief = findPrompt(metadata, "brief");
     const state = buildState(manager, metadata);
-    // Point the command at a prompt name the server doesn't know.
-    const bogus: PromptMetadata = { ...brief, originalName: "does-not-exist" };
-    state.promptMetadata.set("real", [bogus]);
+    const getPrompt = vi.spyOn(manager, "getPrompt");
     const { context, notify, sendUserMessage } = commandHost();
 
-    const command = createPromptCommand(host.api, () => state, bogus);
-    await command.handler("ai", context);
+    const command = createPromptCommand(host.api, () => state, brief);
+    await command.handler("server-error", context);
 
+    expect(getPrompt).toHaveBeenCalledWith("real", "brief", { topic: "server-error" }, undefined);
     expect(sendUserMessage).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("does-not-exist"), "error");
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining('MCP prompt "brief" failed:'),
+      "error",
+    );
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining("Prompt backend unavailable"),
+      "error",
+    );
   });
 });
 
