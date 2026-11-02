@@ -4,8 +4,29 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { computeServerHash } from "../metadata-cache.ts";
-import type { McpConfig, McpStatusSnapshot, ServerCacheEntry } from "../types.ts";
+import { z } from "zod";
+import { computeServerHash } from "../../metadata-cache.ts";
+import type { McpConfig, ServerCacheEntry } from "../../types.ts";
+
+const reportSchema = z.object({
+  sourceLoaded: z.boolean(),
+  activeTools: z.array(z.string()),
+  errors: z.array(z.unknown()),
+  tools: z.array(z.object({ name: z.string(), description: z.string(), parameters: z.unknown() })),
+  commands: z.array(z.object({ name: z.string(), description: z.string() })),
+  startupStatus: z.unknown(),
+  startupSdkModules: z.array(z.string()),
+  afterCallSdkModules: z.array(z.string()),
+  startupZodModules: z.array(z.string()),
+  afterCallZodModules: z.array(z.string()),
+  eventsBeforeCall: z.array(z.unknown()),
+  eventsAfterCall: z.array(z.unknown()),
+  call: z.object({
+    isError: z.boolean().optional(),
+    content: z.array(z.unknown()),
+    details: z.object({ error: z.string().optional() }),
+  }),
+});
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
@@ -105,22 +126,10 @@ describe("cached lazy MCP startup through native Pi", () => {
     );
     expect(stderr).not.toContain("MCP initialization failed");
     const line = stdout.split("\n").find((value) => value.startsWith("LAZY_MCP_STARTUP="));
-    expect(line, stdout).toBeDefined();
-    const report = JSON.parse(line!.slice("LAZY_MCP_STARTUP=".length)) as {
-      sourceLoaded: boolean;
-      activeTools: string[];
-      errors: unknown[];
-      tools: Array<{ name: string; description: string; parameters: unknown }>;
-      commands: Array<{ name: string; description: string }>;
-      startupStatus: McpStatusSnapshot;
-      startupSdkModules: string[];
-      afterCallSdkModules: string[];
-      startupZodModules: string[];
-      afterCallZodModules: string[];
-      eventsBeforeCall: unknown[];
-      eventsAfterCall: Array<{ event: string; server: string; text?: string }>;
-      call: { isError?: boolean; content: unknown[]; details: { error?: string } };
-    };
+    if (line === undefined) {
+      throw new Error(`Missing startup report:\n${stdout}`);
+    }
+    const report = reportSchema.parse(JSON.parse(line.slice("LAZY_MCP_STARTUP=".length)));
     expect(report.sourceLoaded).toBe(true);
     expect(report.errors).toEqual([]);
     expect(report.tools.map((tool) => tool.name)).toEqual(
@@ -132,16 +141,12 @@ describe("cached lazy MCP startup through native Pi", () => {
         .map((tool) => tool.name)
         .sort(),
     ).toEqual(serverNames.flatMap((name) => [`${name}_dashboard`, `${name}_echo`]));
-    expect(report.tools).toContainEqual(
-      expect.objectContaining({
-        name: "lazy00_echo",
-        description: expect.stringContaining("Cached echo from lazy00"),
-        parameters: expect.objectContaining({
-          required: ["text"],
-          properties: { text: { type: "string" } },
-        }),
-      }),
-    );
+    const cachedEcho = report.tools.find((tool) => tool.name === "lazy00_echo");
+    expect(cachedEcho?.description).toContain("Cached echo from lazy00");
+    expect(cachedEcho?.parameters).toMatchObject({
+      required: ["text"],
+      properties: { text: { type: "string" } },
+    });
     expect(report.activeTools).toEqual(["lazy00_echo", "mcp_search"]);
     expect(report.commands.filter((command) => command.name.startsWith("mcp__"))).toEqual(
       serverNames.map((name) => ({
