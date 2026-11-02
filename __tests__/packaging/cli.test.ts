@@ -10,6 +10,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
+import { z } from "zod";
 
 type CliMain = (
   argv: string[],
@@ -18,7 +19,7 @@ type CliMain = (
 ) => Promise<number>;
 
 async function loadMain(): Promise<CliMain> {
-  return (await import("../cli.js")).main;
+  return (await import("../../cli.js")).main;
 }
 
 function writeJson(path: string, value: unknown): void {
@@ -73,7 +74,9 @@ describe("cli init helper", () => {
 
     const piConfigPath = join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json");
     expect(existsSync(piConfigPath)).toBe(true);
-    const config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
+    const config = z
+      .object({ imports: z.array(z.string()) })
+      .parse(JSON.parse(readFileSync(piConfigPath, "utf-8")));
     expect(config.imports).toContain("claude-code");
     expect(logs.join("\n")).toContain("Updated");
   });
@@ -167,7 +170,10 @@ describe("cli init helper", () => {
     expect(exitCode).toBe(0);
     expect(errors).toEqual([]);
     const piConfigPath = join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json");
-    expect(JSON.parse(readFileSync(piConfigPath, "utf-8")).settings).toEqual({
+    const config = z
+      .object({ settings: z.unknown() })
+      .parse(JSON.parse(readFileSync(piConfigPath, "utf-8")));
+    expect(config.settings).toEqual({
       hostConfigDiscovery: "on",
     });
     expect(readFileSync(hostPath, "utf-8")).toContain("cursorServer");
@@ -203,7 +209,9 @@ describe("cli init helper", () => {
     const piConfigPath = join(agentDir, "fitch-mcp-adapter", "mcp.json");
     expect(existsSync(piConfigPath)).toBe(true);
     expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"))).toBe(false);
-    const config = JSON.parse(readFileSync(piConfigPath, "utf-8"));
+    const config = z
+      .object({ imports: z.array(z.string()) })
+      .parse(JSON.parse(readFileSync(piConfigPath, "utf-8")));
     expect(config.imports).toContain("claude-code");
     expect(logs.join("\n")).toContain(piConfigPath);
   });

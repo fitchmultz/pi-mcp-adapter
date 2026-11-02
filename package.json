@@ -46,6 +46,7 @@
     "lint:discovery-tests": "oxlint --deny-warnings __tests__/discovery __tests__/fixtures/pinned-tools.ts",
     "lint:state-tests": "oxlint --deny-warnings __tests__/state",
     "lint:output-tests": "oxlint --deny-warnings __tests__/output",
+    "lint:packaging-tests": "oxlint --deny-warnings __tests__/packaging",
     "lint:agent": "oxlint --deny-warnings --format=agent .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
