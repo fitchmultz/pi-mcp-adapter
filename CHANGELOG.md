@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.8 - 2026-11-02
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce strict lint on real SDK HTTP tests (#150) ([293994b](https://github.com/fitchmultz/pi-mcp-adapter/commit/293994b1860a9621d06a3da64b1f02a34bf92998))
+
+### What's Changed
+
+- Enforce strict lint on real SDK HTTP tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/150
+- Enforce strict lint on native lifecycle tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/151
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.7...v8.0.8
+
 ## 8.0.7 - 2026-11-02
 
 <!-- npm-release:unreleased:start -->
