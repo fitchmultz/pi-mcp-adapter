@@ -1,18 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMcpPanel } from "../mcp-panel.ts";
-import { computeServerHash, type MetadataCache } from "../metadata-cache.ts";
-import type { McpConfig, McpPanelCallbacks } from "../types.ts";
+import { noop } from "./helpers.ts";
+import { createMcpPanel } from "../../mcp-panel.ts";
+import { computeServerHash, type MetadataCache } from "../../metadata-cache.ts";
+import type { McpConfig, McpPanelCallbacks } from "../../types.ts";
 
 function stripAnsi(input: string): string {
   return input.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 function createCache(config: McpConfig): MetadataCache {
+  const github = config.mcpServers.github;
+  if (github === undefined) {
+    throw new Error("Expected github server in panel test config");
+  }
   return {
     version: 1,
     servers: {
       github: {
-        configHash: computeServerHash(config.mcpServers.github!),
+        configHash: computeServerHash(github),
         cachedAt: Date.now(),
         tools: [{ name: "search", description: "Search" }],
         resources: [],
@@ -26,12 +31,12 @@ function createCallbacks(
 ) {
   let currentStatus = status;
   const callbacks: McpPanelCallbacks = {
-    reconnect: vi.fn(async () => {
+    reconnect: vi.fn<McpPanelCallbacks["reconnect"]>(async () => {
       currentStatus = "connected";
       return true;
     }),
     canAuthenticate: (serverName) => serverName === "github",
-    authenticate: vi.fn(async () => {
+    authenticate: vi.fn<McpPanelCallbacks["authenticate"]>(async () => {
       currentStatus = "idle";
       return { ok: true };
     }),
@@ -57,8 +62,8 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("needs-auth");
-    const tui = { requestRender: vi.fn() };
-    const panel = createMcpPanel(config, createCache(config), new Map(), callbacks, tui, () => {});
+    const tui = { requestRender: vi.fn<() => void>() };
+    const panel = createMcpPanel(config, createCache(config), new Map(), callbacks, tui, noop);
 
     panel.handleInput("\r");
     await Promise.resolve();
@@ -81,8 +86,8 @@ describe("mcp-panel auth actions", () => {
       createCache(config),
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("\x01");
@@ -104,8 +109,8 @@ describe("mcp-panel auth actions", () => {
       createCache(config),
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("\x01");
@@ -122,14 +127,7 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("needs-auth");
-    const panel = createMcpPanel(
-      config,
-      null,
-      new Map(),
-      callbacks,
-      { requestRender: () => {} },
-      () => {},
-    );
+    const panel = createMcpPanel(config, null, new Map(), callbacks, { requestRender: noop }, noop);
 
     panel.handleInput("\r");
     await Promise.resolve();
@@ -150,16 +148,9 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("needs-auth");
-    callbacks.reconnect = vi.fn(async () => false);
+    callbacks.reconnect = vi.fn<McpPanelCallbacks["reconnect"]>(async () => false);
     callbacks.getConnectionStatus = () => "needs-auth";
-    const panel = createMcpPanel(
-      config,
-      null,
-      new Map(),
-      callbacks,
-      { requestRender: () => {} },
-      () => {},
-    );
+    const panel = createMcpPanel(config, null, new Map(), callbacks, { requestRender: noop }, noop);
 
     panel.handleInput("\r");
     await Promise.resolve();
@@ -186,8 +177,8 @@ describe("mcp-panel auth actions", () => {
       createCache(config),
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("\x12");
@@ -205,14 +196,17 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("needs-auth");
-    callbacks.authenticate = vi.fn(async () => ({ ok: false, message: "browser launch failed" }));
+    callbacks.authenticate = vi.fn<McpPanelCallbacks["authenticate"]>(async () => ({
+      ok: false,
+      message: "browser launch failed",
+    }));
     const panel = createMcpPanel(
       config,
       createCache(config),
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("\r");
@@ -233,19 +227,12 @@ describe("mcp-panel auth actions", () => {
     };
     const callbacks = createCallbacks("needs-auth");
     callbacks.canAuthenticate = () => true;
-    callbacks.authenticate = vi.fn(async () => ({
+    callbacks.authenticate = vi.fn<McpPanelCallbacks["authenticate"]>(async () => ({
       ok: false,
       message: "browser \x9d8;;https://example.invalid/error\x1b\\launch\x9d8;;\x1b\\ failed",
     }));
     callbacks.getConnectionStatus = () => "needs-auth";
-    const panel = createMcpPanel(
-      config,
-      null,
-      new Map(),
-      callbacks,
-      { requestRender: () => {} },
-      () => {},
-    );
+    const panel = createMcpPanel(config, null, new Map(), callbacks, { requestRender: noop }, noop);
 
     panel.handleInput("\r");
     await Promise.resolve();
@@ -267,14 +254,14 @@ describe("mcp-panel auth actions", () => {
     };
     const callbacks = createCallbacks("needs-auth");
     const auth = deferred<{ ok: boolean }>();
-    callbacks.authenticate = vi.fn(() => auth.promise);
+    callbacks.authenticate = vi.fn<McpPanelCallbacks["authenticate"]>(() => auth.promise);
     const panel = createMcpPanel(
       config,
       createCache(config),
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("\r");
@@ -300,8 +287,8 @@ describe("mcp-panel auth actions", () => {
       null,
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
       {
         authOnly: true,
         noticeLines: ["Select an OAuth MCP server"],
@@ -327,8 +314,8 @@ describe("mcp-panel auth actions", () => {
       null,
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
       {
         authOnly: true,
       },
@@ -354,8 +341,8 @@ describe("mcp-panel auth actions", () => {
       null,
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
       {
         authOnly: true,
       },
@@ -385,8 +372,8 @@ describe("mcp-panel auth actions", () => {
       null,
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
       {
         authOnly: true,
       },

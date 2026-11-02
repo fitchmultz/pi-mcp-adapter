@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { noop } from "./helpers.ts";
 
 const mocks = vi.hoisted(() => ({
-  copyToClipboard: vi.fn(async (_text: string) => {}),
+  copyToClipboard: vi.fn<(text: string) => Promise<void>>().mockResolvedValue(),
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({ copyToClipboard: mocks.copyToClipboard }));
@@ -11,15 +12,17 @@ function stripAnsi(input: string): string {
 }
 
 async function flush(): Promise<void> {
-  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 describe("mcp-panel failure copy", () => {
   afterEach(() => vi.clearAllMocks());
 
   it("copies a sanitized selected failure reason and shows a notice", async () => {
-    const { createMcpPanel } = await import("../mcp-panel.ts");
-    const { computeServerHash } = await import("../metadata-cache.ts");
+    const { createMcpPanel } = await import("../../mcp-panel.ts");
+    const { computeServerHash } = await import("../../metadata-cache.ts");
     const config = { mcpServers: { demo: { command: "node", args: ["server.js"] } } };
     const cache = {
       version: 1 as const,
@@ -45,8 +48,8 @@ describe("mcp-panel failure copy", () => {
           "connection failed\n\x1b]8;;https://secret.invalid\x07details\x1b]8;;\x07",
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("\x19");
@@ -60,7 +63,7 @@ describe("mcp-panel failure copy", () => {
   });
 
   it("does nothing when the selected server has no failure reason", async () => {
-    const { createMcpPanel } = await import("../mcp-panel.ts");
+    const { createMcpPanel } = await import("../../mcp-panel.ts");
     const config = { mcpServers: { demo: { command: "node" } } };
     const panel = createMcpPanel(
       config,
@@ -74,8 +77,8 @@ describe("mcp-panel failure copy", () => {
         getFailureMessage: () => null,
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("\x19");

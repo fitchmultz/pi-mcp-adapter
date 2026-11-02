@@ -1,10 +1,11 @@
 import { KeybindingsManager, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
-import { createMcpPanel } from "../mcp-panel.ts";
-import { createMcpSetupPanel, type SetupPanelCallbacks } from "../mcp-setup-panel.ts";
-import { createPanelKeys } from "../panel-keys.ts";
-import type { McpDiscoverySummary } from "../config.ts";
-import type { McpConfig, McpPanelCallbacks } from "../types.ts";
+import { noop } from "./helpers.ts";
+import { createMcpPanel } from "../../mcp-panel.ts";
+import { createMcpSetupPanel, type SetupPanelCallbacks } from "../../mcp-setup-panel.ts";
+import { createPanelKeys } from "../../panel-keys.ts";
+import type { McpDiscoverySummary } from "../../config.ts";
+import type { McpConfig, McpPanelCallbacks } from "../../types.ts";
 
 const CTRL_P = "\x10";
 const CTRL_N = "\x0e";
@@ -32,7 +33,7 @@ function createAuthCallbacks(): McpPanelCallbacks {
   return {
     reconnect: async () => true,
     canAuthenticate: () => true,
-    authenticate: vi.fn(async () => ({ ok: true })),
+    authenticate: vi.fn<McpPanelCallbacks["authenticate"]>(async () => ({ ok: true })),
     getConnectionStatus: () => "needs-auth",
     refreshCacheAfterReconnect: () => null,
   };
@@ -69,11 +70,13 @@ function createSetupCallbacks(): SetupPanelCallbacks {
     previewRepoPrompt: () => null,
     previewKnownServer: () => preview,
     adoptImports: async () => ({ added: [], path: "/tmp/x" }),
-    scaffoldProjectConfig: vi.fn(async () => ({ path: "/tmp/x" })),
+    scaffoldProjectConfig: vi.fn<SetupPanelCallbacks["scaffoldProjectConfig"]>(async () => ({
+      path: "/tmp/x",
+    })),
     addRepoPrompt: async () => ({ path: "/tmp/x", serverName: "repoprompt" }),
     addKnownServer: async (preset) => ({ path: "/tmp/x", serverName: preset.name }),
-    openPath: async () => {},
-    markSetupCompleted: () => {},
+    openPath: () => Promise.resolve(),
+    markSetupCompleted: noop,
   };
 }
 
@@ -114,8 +117,8 @@ describe("mcp-panel custom keybindings", () => {
       null,
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
       { authOnly: true, keybindings: createEmacsKeybindings() },
     );
 
@@ -138,8 +141,8 @@ describe("mcp-panel custom keybindings", () => {
       null,
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
       { authOnly: true, keybindings: createEmacsKeybindings() },
     );
 
@@ -157,8 +160,8 @@ describe("mcp-panel custom keybindings", () => {
       null,
       new Map(),
       callbacks,
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
       { authOnly: true },
     );
 
@@ -182,8 +185,8 @@ describe("mcp-setup-panel custom keybindings", () => {
         onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
         keybindings: createEmacsKeybindings(),
       },
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     // Actions for this discovery: view-example, scaffold-project, show-precedence, close.
@@ -203,8 +206,8 @@ describe("mcp-setup-panel custom keybindings", () => {
         mode: "setup",
         onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
       },
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     // Actions for this discovery: view-example, scaffold-project, show-precedence, known presets, close.
@@ -233,8 +236,8 @@ describe("mcp-setup-panel custom keybindings", () => {
         mode: "setup",
         onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
       },
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     for (let i = 0; i < 3; i++) {
@@ -255,8 +258,8 @@ describe("mcp-setup-panel custom keybindings", () => {
         mode: "setup",
         onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
       },
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     // Actions for this discovery: view-example, scaffold-project, show-precedence, close.

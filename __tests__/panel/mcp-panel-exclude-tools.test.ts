@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMcpPanel } from "../mcp-panel.ts";
-import { computeServerHash, type MetadataCache } from "../metadata-cache.ts";
-import type { McpConfig, McpPanelResult } from "../types.ts";
+import { noop } from "./helpers.ts";
+import { createMcpPanel } from "../../mcp-panel.ts";
+import { computeServerHash, type MetadataCache } from "../../metadata-cache.ts";
+import type { McpConfig, McpPanelResult } from "../../types.ts";
 
 function stripAnsi(input: string): string {
   return input.replace(/\x1b\[[0-9;]*m/g, "");
@@ -9,7 +10,7 @@ function stripAnsi(input: string): string {
 
 describe("mcp-panel include/exclude tools", () => {
   it("projects canonical tools and resources on initial display and reconnect", async () => {
-    const config: McpConfig = {
+    const config = {
       settings: { toolPrefix: "server" },
       mcpServers: {
         docs: {
@@ -21,9 +22,9 @@ describe("mcp-panel include/exclude tools", () => {
         },
         cold: { command: "node" },
       },
-    };
+    } satisfies McpConfig;
     const entry = {
-      configHash: computeServerHash(config.mcpServers.docs!),
+      configHash: computeServerHash(config.mcpServers.docs),
       cachedAt: Date.now(),
       tools: [
         { name: "search", description: "Search docs" },
@@ -50,7 +51,7 @@ describe("mcp-panel include/exclude tools", () => {
           tools: [...entry.tools, { name: "details" }],
         }),
       },
-      { requestRender: () => {} },
+      { requestRender: noop },
       done,
     );
     panel.handleInput("\r");
@@ -69,19 +70,21 @@ describe("mcp-panel include/exclude tools", () => {
     expect(output).not.toMatch(/app_only|excluded|read_guide|read_secret/);
     panel.handleInput(" "); // pin all actual tools
     panel.handleInput("\x13");
-    expect(done.mock.calls[0]![0].changes.get("docs")).toBe(true);
+    expect(done.mock.calls.at(0)?.[0].changes.get("docs")).toBe(true);
     panel.dispose();
   });
 
   it("omits resources disabled by policy and preserves legacy cache visibility", () => {
-    const config: McpConfig = { mcpServers: { docs: { command: "node", exposeResources: false } } };
+    const config = {
+      mcpServers: { docs: { command: "node", exposeResources: false } },
+    } satisfies McpConfig;
     const panel = createMcpPanel(
       config,
       {
         version: 1,
         servers: {
           docs: {
-            configHash: computeServerHash(config.mcpServers.docs!),
+            configHash: computeServerHash(config.mcpServers.docs),
             cachedAt: Date.now(),
             tools: [{ name: "search" }, { name: "app_only", uiVisibility: ["app"] }],
             resources: [{ name: "guide", uri: "docs://guide" }],
@@ -96,8 +99,8 @@ describe("mcp-panel include/exclude tools", () => {
         getConnectionStatus: () => "idle",
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
     panel.handleInput("\r");
     const output = stripAnsi(panel.render(100).join("\n"));
@@ -106,7 +109,7 @@ describe("mcp-panel include/exclude tools", () => {
     panel.dispose();
   });
   it("hides excluded tools from the panel view", () => {
-    const config: McpConfig = {
+    const config = {
       settings: { toolPrefix: "server" },
       mcpServers: {
         figma: {
@@ -116,13 +119,13 @@ describe("mcp-panel include/exclude tools", () => {
           excludeTools: ["figma_get_screenshot", "read_figjam"],
         },
       },
-    };
+    } satisfies McpConfig;
 
     const cache: MetadataCache = {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma!),
+          configHash: computeServerHash(config.mcpServers.figma),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },
@@ -144,8 +147,8 @@ describe("mcp-panel include/exclude tools", () => {
         getConnectionStatus: () => "idle",
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("g");
@@ -163,7 +166,7 @@ describe("mcp-panel include/exclude tools", () => {
   });
 
   it("hides non-included tools from the panel view", () => {
-    const config: McpConfig = {
+    const config = {
       settings: { toolPrefix: "server" },
       mcpServers: {
         figma: {
@@ -173,13 +176,13 @@ describe("mcp-panel include/exclude tools", () => {
           includeTools: ["get_node*"],
         },
       },
-    };
+    } satisfies McpConfig;
 
     const cache: MetadataCache = {
       version: 1,
       servers: {
         figma: {
-          configHash: computeServerHash(config.mcpServers.figma!),
+          configHash: computeServerHash(config.mcpServers.figma),
           cachedAt: Date.now(),
           tools: [
             { name: "get_screenshot", description: "Screenshot" },
@@ -201,8 +204,8 @@ describe("mcp-panel include/exclude tools", () => {
         getConnectionStatus: () => "idle",
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: () => {} },
-      () => {},
+      { requestRender: noop },
+      noop,
     );
 
     panel.handleInput("g");
