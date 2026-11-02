@@ -143,14 +143,14 @@ jobs:
           for lock in package-lock.json examples/interactive-visualizer/package-lock.json; do
             npx -y lockfile-lint@5.0.1 --type npm --allowed-hosts npm --validate-https --path "$lock"
           done
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run format:check
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: fitchmultz/.github
           ref: ${{ env.PI_AUTOMATION_REF }}
           path: automation
           persist-credentials: false
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run format:check
       - name: Select the same latest official graph for extras
         env:
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
