@@ -1,6 +1,5 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getKeybindings, KeybindingsManager, setKeybindings } from "@earendil-works/pi-tui";
+import { describe, expect, it } from "vitest";
 
 import {
   createMcpDirectToolCallRenderer,
@@ -15,12 +14,8 @@ import {
 type TestDetails = Record<string, unknown> & { error?: unknown };
 type TestResult = AgentToolResult<TestDetails>;
 
-let previousKeybindings: ReturnType<typeof getKeybindings>;
-beforeEach(() => {
-  previousKeybindings = getKeybindings();
-  setKeybindings(new KeybindingsManager({ "app.tools.expand": { defaultKeys: "ctrl+o" } }));
-});
-afterEach(() => setKeybindings(previousKeybindings));
+// Pi injects keyHint into every render context; this one formats the default expand key.
+const keyHint = (_keybinding: string, description: string) => `ctrl+o ${description}`;
 
 const collapsedOptions: ToolRenderResultOptions = { expanded: false, isPartial: false };
 const plainTheme = { fg: (_name: string, text: string) => text } as NonNullable<Parameters<typeof renderMcpToolResult>[2]>;
@@ -159,7 +154,7 @@ describe("MCP tool result renderer", () => {
       }]),
       collapsedOptions,
       plainTheme,
-      { isError: false },
+      { isError: false, keyHint },
     ).render(20).join("\n");
 
     expect(output).toContain("segment-1");
@@ -174,7 +169,7 @@ describe("MCP tool result renderer", () => {
       result([{ type: "text", text: huge }]),
       collapsedOptions,
       plainTheme,
-      { isError: false },
+      { isError: false, keyHint },
     ).render(80).join("\n");
 
     expect(output).toContain("head");
@@ -187,7 +182,7 @@ describe("MCP tool result renderer", () => {
       result([{ type: "text", text: "one\ntwo\nthree\nfour" }], { mode: "call", server: "figma", tool: "get_nodes" }),
       collapsedOptions,
       plainTheme,
-      { isError: false },
+      { isError: false, keyHint },
     ).render(80).join("\n");
 
     expect(output).toContain("MCP figma/get_nodes");
@@ -206,7 +201,7 @@ describe("MCP tool result renderer", () => {
       }]),
       { expanded: true, isPartial: false },
       plainTheme,
-      { isError: false },
+      { isError: false, keyHint },
     ).render(20).join("\n");
 
     expect(output).toContain("segment-8");
@@ -218,7 +213,7 @@ describe("MCP tool result renderer", () => {
       result([{ type: "text", text: "Error: failed\nline 2\nline 3\nline 4" }]),
       collapsedOptions,
       plainTheme,
-      { isError: true },
+      { isError: true, keyHint },
     ).render(80).join("\n");
 
     expect(output).toContain("line 4");
@@ -234,7 +229,7 @@ describe("MCP tool result renderer", () => {
       }]),
       collapsedOptions,
       plainTheme,
-      { isError: true },
+      { isError: true, keyHint },
     ).render(20).join("\n");
 
     expect(output).toContain("segment-8");
@@ -246,7 +241,7 @@ describe("MCP tool result renderer", () => {
       result([{ type: "text", text: "Error: failed\nline 2\nline 3\nline 4" }], { error: "tool_error" }),
       collapsedOptions,
       plainTheme,
-      { isError: false },
+      { isError: false, keyHint },
     ).render(80).join("\n");
 
     expect(output).toContain("line 4");
@@ -285,21 +280,15 @@ describe("MCP tool call renderers without a theme", () => {
   });
 });
 
-describe("MCP expand hints use the live TUI keybinding registry", () => {
-  it.each(["darwin", "linux", "win32"])("matches native key hints on %s with rebound, multiple, and disabled keys", async platform => {
-    const { initTheme, keyHint } = await import("@earendil-works/pi-coding-agent");
-    initTheme("dark", false);
-    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
-    try {
-      Object.defineProperty(process, "platform", { value: platform });
-      for (const keys of [["ctrl+o"], ["alt+o", "ctrl+shift+e"], []] as const) {
-        setKeybindings(new KeybindingsManager({ "app.tools.expand": { defaultKeys: [...keys] } }));
-        const output = renderMcpToolResult(result([{ type: "text", text: "one\ntwo\nthree\nfour" }]), collapsedOptions, plainTheme).render(100).join("\n");
-        const native = keyHint("app.tools.expand", "to expand").replace(/\x1b\[[0-9;]*m/g, "");
-        expect(output).toContain(`(${native})`);
-      }
-    } finally {
-      Object.defineProperty(process, "platform", originalPlatform);
-    }
+describe("MCP expand hints", () => {
+  it("format the expand binding with the keyHint Pi injects", () => {
+    const output = renderMcpToolResult(
+      result([{ type: "text", text: "one\ntwo\nthree\nfour" }]),
+      collapsedOptions,
+      plainTheme,
+      { isError: false, keyHint: (keybinding, description) => `<${keybinding}> ${description}` },
+    ).render(100).join("\n");
+
+    expect(output).toContain("(<app.tools.expand> to expand)");
   });
 });
