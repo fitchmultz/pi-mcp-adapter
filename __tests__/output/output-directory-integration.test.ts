@@ -1,16 +1,18 @@
+import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type {
-  ExtensionAPI,
-  ExtensionToolContext,
-  ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createMcpAdapter } from "../index.ts";
-import { formatMcpResultReference } from "../mcp-output-guard.ts";
-import type { McpAdapterOptions } from "../types.ts";
+import { z } from "zod";
+import { createMcpAdapter } from "../../index.ts";
+import { formatMcpResultReference } from "../../mcp-output-guard.ts";
+import type { McpAdapterOptions } from "../../types.ts";
+import { createTestExtensionContext } from "../test-extension-context.ts";
+
+const spillDetails = z.object({
+  outputGuard: z.object({ fullOutputPath: z.string() }),
+});
 
 let root: string;
 beforeEach(async () => {
@@ -28,40 +30,12 @@ afterEach(async () => {
 });
 
 async function startAdapter(outputDirectory?: string) {
-  const tools = new Map<string, ToolDefinition>();
-  const handlers = new Map<string, Function>();
-  let activeTools: string[] = [];
-  const pi = {
-    registerTool: (tool: ToolDefinition) => {
-      tools.set(tool.name, tool);
-    },
-    registerCommand: () => {},
-    registerEntryRenderer: () => {},
-    appendEntry: () => {},
-    registerFlag: () => {},
-    getFlag: () => {},
-    on: (name: string, handler: Function) => {
-      handlers.set(name, handler);
-    },
-    getAllTools: () => [...tools.values()],
-    getActiveTools: () => activeTools,
-    setActiveTools: (names: string[]) => {
-      activeTools = names;
-    },
-  } as unknown as ExtensionAPI;
-  const ctx = {
-    cwd: root,
-    hasUI: false,
-    mode: "print",
-    isProjectTrusted: () => true,
-    sessionManager: { getLeafId: () => null, getEntry: () => {} },
-  } as unknown as ExtensionToolContext;
   const options: McpAdapterOptions = {
     config: {
       mcpServers: {
         output: {
           command: process.execPath,
-          args: [fileURLToPath(new URL("./fixtures/output-server.mjs", import.meta.url))],
+          args: [fileURLToPath(new URL("../fixtures/output-server.mjs", import.meta.url))],
           lifecycle: "eager",
           directTools: true,
         },
@@ -70,13 +44,34 @@ async function startAdapter(outputDirectory?: string) {
     },
     ...(outputDirectory === undefined ? {} : { outputDirectory }),
   };
-  createMcpAdapter(options)(pi);
-  await handlers.get("session_start")!({}, ctx);
-  return {
-    call: (name: string, args: Record<string, unknown>) =>
-      tools.get(name)!.execute("test", args, undefined, undefined, ctx),
-    stop: () => handlers.get("session_shutdown")!(),
-  };
+  const host = await createTestExtensionContext("builtin", createMcpAdapter(options));
+  try {
+    await host.runner.emit({ type: "session_start", reason: "startup" });
+    return {
+      call: (name: string, args: Record<string, unknown>) => {
+        const tool = host.runner.getToolDefinition(name);
+        assert.ok(tool !== undefined);
+        const signal = new AbortController().signal;
+        return tool.execute(
+          "test",
+          args,
+          signal,
+          undefined,
+          host.runner.createToolContext("test", signal),
+        );
+      },
+      stop: async () => {
+        try {
+          await host.runner.emit({ type: "session_shutdown", reason: "quit" });
+        } finally {
+          await host.dispose();
+        }
+      },
+    };
+  } catch (error) {
+    await host.dispose();
+    throw error;
+  }
 }
 
 describe("factory output directory", () => {
@@ -89,7 +84,7 @@ describe("factory output directory", () => {
           const result = await adapter.call("mcp_script", {
             code: 'emit("unique".repeat(20_000))',
           });
-          const path = (result.details as any).outputGuard.fullOutputPath;
+          const path = spillDetails.parse(result.details).outputGuard.fullOutputPath;
           expect(dirname(dirname(path))).toBe(directories[index]);
           expect(await readFile(path, "utf8")).toBe("unique".repeat(20_000));
         }),
@@ -112,9 +107,10 @@ describe("factory output directory", () => {
         expect(typeof path).toBe("string");
         expect(dirname(dirname(path))).toBe(expectedParent);
         expect(await readFile(path, "utf8")).toBe(expected);
-        if (process.platform !== "win32") {
-          expect((await stat(path)).mode & 0o777).toBe(0o600);
-        }
+        expect(
+          process.platform === "win32" || ((await stat(path)).mode & 0o777) === 0o600,
+          "POSIX output must be private",
+        ).toBe(true);
         paths.push(path);
       }
       try {
@@ -124,7 +120,9 @@ describe("factory output directory", () => {
             mode === "direct" ? "output_echo" : "mcp",
             mode === "direct" ? { text } : { tool: "output_echo", args: { text } },
           );
-          const details = result.details as any;
+          const details = spillDetails
+            .extend({ mcpResult: z.object({ fullResultPath: z.string() }) })
+            .parse(result.details);
           await check(
             details.outputGuard.fullOutputPath,
             `${text}\n${JSON.stringify({ echo: text }, null, 2)}`,
@@ -138,22 +136,29 @@ describe("factory output directory", () => {
           );
         }
         const resource = await adapter.call("mcp", { tool: "output_read_large" });
-        await check(
-          (resource.details as any).outputGuard.fullOutputPath,
-          "resource\n".repeat(10_000),
-        );
-        const resourceRaw = JSON.parse(await readFile((resource.details as any).resultRef, "utf8"));
-        expect(resourceRaw.contents[0].text).toBe("resource\n".repeat(10_000));
-        paths.push((resource.details as any).resultRef);
+        const resourceDetails = spillDetails
+          .extend({ resultRef: z.string() })
+          .parse(resource.details);
+        await check(resourceDetails.outputGuard.fullOutputPath, "resource\n".repeat(10_000));
+        const resourceRaw = z
+          .object({ contents: z.array(z.object({ text: z.string() })) })
+          .parse(JSON.parse(await readFile(resourceDetails.resultRef, "utf8")));
+        expect(resourceRaw.contents[0]?.text).toBe("resource\n".repeat(10_000));
+        paths.push(resourceDetails.resultRef);
         const text = "script-inner: π\n".repeat(10_000);
         const final = `script-final:${text}`;
         const script = await adapter.call("mcp_script", {
           code: `const r = await tools.output_echo({ text: ${JSON.stringify(text)} }); if (!r.ok || r.data.structuredContent.echo !== ${JSON.stringify(text)}) throw new Error("raw result changed"); emit("script-final:" + r.data.content[0].text);`,
         });
-        expect((script.details as any).error).toBeUndefined();
+        const scriptDetails = spillDetails
+          .extend({ error: z.unknown().optional(), resultRefs: z.array(z.string()) })
+          .parse(script.details);
+        expect(scriptDetails.error).toBeUndefined();
+        const firstRef = scriptDetails.resultRefs[0];
+        assert.ok(typeof firstRef === "string");
         await check(
-          (script.details as any).outputGuard.fullOutputPath,
-          `${final}\n${formatMcpResultReference((script.details as any).resultRefs[0])}`,
+          scriptDetails.outputGuard.fullOutputPath,
+          `${final}\n${formatMcpResultReference(firstRef)}`,
         );
         const files = (await readdir(expectedParent, { recursive: true }))
           .filter((name) => name.endsWith(".txt"))

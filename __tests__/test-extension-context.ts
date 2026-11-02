@@ -9,13 +9,19 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
+  type ExtensionFactory,
+  type ExtensionRunner,
 } from "@earendil-works/pi-coding-agent";
 
 /** Create a real, isolated Pi extension context without loading user resources. */
-export async function createTestExtensionContext(noTools: "all" | "builtin" = "all"): Promise<{
+export async function createTestExtensionContext(
+  noTools: "all" | "builtin" = "all",
+  factory?: ExtensionFactory,
+): Promise<{
   api: ExtensionAPI;
   commandContext: ExtensionCommandContext;
   context: ExtensionContext;
+  runner: ExtensionRunner;
   dispose: () => Promise<void>;
 }> {
   const directory = await mkdtemp(join(tmpdir(), "pi-mcp-test-context-"));
@@ -32,8 +38,9 @@ export async function createTestExtensionContext(noTools: "all" | "builtin" = "a
       noThemes: true,
       noContextFiles: true,
       extensionFactories: [
-        (extension) => {
+        async (extension) => {
           api = extension;
+          await factory?.(extension);
         },
       ],
     });
@@ -55,6 +62,7 @@ export async function createTestExtensionContext(noTools: "all" | "builtin" = "a
         api,
         commandContext: session.extensionRunner.createCommandContext(),
         context: session.extensionRunner.createContext(),
+        runner: session.extensionRunner,
         dispose: async () => {
           session.dispose();
           await rm(directory, { recursive: true, force: true });

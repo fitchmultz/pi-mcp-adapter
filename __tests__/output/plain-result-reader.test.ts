@@ -7,16 +7,19 @@ import {
   rm,
   writeFile,
   type FileHandle,
+  type FileReadResult,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import assert from "node:assert/strict";
+import type * as fsTypes from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readMcpResult, saveMcpOutputStream } from "../mcp-output-guard.ts";
-import { createUiMessageHistory } from "../ui-message-history.ts";
+import { readMcpResult, saveMcpOutputStream } from "../../mcp-output-guard.ts";
+import { createUiMessageHistory } from "../../ui-message-history.ts";
 
 const io = vi.hoisted(() => ({ bytes: 0 }));
 vi.mock("node:fs", async (importOriginal) => {
-  const fs = await importOriginal<typeof import("node:fs")>();
+  const fs = await importOriginal<typeof fsTypes>();
   return {
     ...fs,
     createReadStream: (...args: Parameters<typeof fs.createReadStream>) => {
@@ -32,25 +35,54 @@ vi.mock("node:fs", async (importOriginal) => {
 const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const root of roots.splice(0)) {
-    await rm(root, { recursive: true, force: true });
+  for (const directory of roots.splice(0)) {
+    await rm(directory, { recursive: true, force: true });
   }
 });
-async function readPrototype(ref: string) {
+function hasSameRead(prototype: unknown, file: FileHandle): prototype is Pick<FileHandle, "read"> {
+  return (
+    typeof prototype === "object" &&
+    prototype !== null &&
+    "read" in prototype &&
+    prototype.read === file.read
+  );
+}
+
+async function readPrototype(ref: string): Promise<Pick<FileHandle, "read">> {
   const file = await open(ref);
-  const prototype = Object.getPrototypeOf(file);
-  await file.close();
-  return prototype;
+  try {
+    const prototype: unknown = Object.getPrototypeOf(file);
+    if (!hasSameRead(prototype, file)) {
+      throw new Error("FileHandle prototype does not expose its read method");
+    }
+    return prototype;
+  } finally {
+    await file.close();
+  }
 }
 async function measureReads(ref: string) {
   const reads = vi.spyOn(await readPrototype(ref), "read").mockClear();
   io.bytes = 0;
-  return async () =>
-    io.bytes +
-    (await Promise.all(reads.mock.results.map((result) => result.value))).reduce(
-      (total, result) => total + result.bytesRead,
-      0,
+  return async () => {
+    const results: unknown[] = await Promise.all(
+      reads.mock.results.map((result): unknown => result.value),
     );
+    return io.bytes + sumReadBytes(results);
+  };
+}
+
+function sumReadBytes(results: unknown[]): number {
+  return results.reduce<number>((total, result) => {
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      !("bytesRead" in result) ||
+      typeof result.bytesRead !== "number"
+    ) {
+      throw new Error("FileHandle read did not return a byte count");
+    }
+    return total + result.bytesRead;
+  }, 0);
 }
 async function root() {
   const path = await mkdtemp(join(tmpdir(), "mcp-index-"));
@@ -65,7 +97,8 @@ async function save(text: string, outputDirectory: string) {
     outputDirectory,
   );
   expect(saved.error).toBeUndefined();
-  return saved.path!;
+  assert.ok(saved.path !== undefined);
+  return saved.path;
 }
 
 describe("incremental plain-result paging", () => {
@@ -83,7 +116,7 @@ describe("incremental plain-result paging", () => {
     for (const offset of [399, text.length - 700, 0]) {
       const bytesRead = await measureReads(ref);
       const page = await read(offset);
-      expect(page.content[0]!.text).toBe(text.slice(offset, offset + 399));
+      expect(page.content[0]?.text).toBe(text.slice(offset, offset + 399));
       expect(page.details).toMatchObject({
         totalCharacters: text.length,
         nextOffset: offset + 399,
@@ -102,13 +135,13 @@ describe("incremental plain-result paging", () => {
     const second = "abcd".repeat(5);
     expect(Buffer.byteLength(second)).toBe(Buffer.byteLength(first));
     const ref = await save(first, outputDirectory);
-    expect((await readMcpResult({ ref, limit: 4 }, { outputDirectory })).content[0]!.text).toBe(
+    expect((await readMcpResult({ ref, limit: 4 }, { outputDirectory })).content[0]?.text).toBe(
       "x😀x",
     );
     // Rewrite in place immediately so the stat grain has not advanced past the original write.
     await writeFile(ref, second);
     const page = await readMcpResult({ ref, limit: 4 }, { outputDirectory });
-    expect(page.content[0]!.text).toBe("abcd");
+    expect(page.content[0]?.text).toBe("abcd");
     expect(page.details).toMatchObject({ totalCharacters: second.length, nextOffset: 4 });
   });
 
@@ -116,14 +149,15 @@ describe("incremental plain-result paging", () => {
     const outputDirectory = await root();
     const history = createUiMessageHistory(outputDirectory);
     expect(history.append("prompts", "é😀".repeat(400_000))).toBeUndefined();
-    const ref = history.messages.historyRef!;
+    const ref = history.messages.historyRef;
+    assert.ok(ref !== undefined);
     await readMcpResult({ ref, limit: 40 }, { outputDirectory });
     expect(history.append("notifications", "new 😀 event")).toBeUndefined();
     const text = await readFile(ref, "utf8");
     const bytesRead = await measureReads(ref);
     const offset = text.length - 100;
     const page = await readMcpResult({ ref, offset, limit: 200 }, { outputDirectory });
-    expect(page.content[0]!.text).toBe(text.slice(offset));
+    expect(page.content[0]?.text).toBe(text.slice(offset));
     expect(page.details).toMatchObject({ totalCharacters: text.length, nextOffset: null });
     const warmAfterAppend = Buffer.byteLength(text);
     expect(await bytesRead()).toBeGreaterThanOrEqual(warmAfterAppend);
@@ -134,12 +168,12 @@ describe("incremental plain-result paging", () => {
     const late = grown.lastIndexOf("é");
     const firstDeltaBytes = await measureReads(ref);
     const tail = await readMcpResult({ ref, offset: late }, { outputDirectory });
-    expect(tail.content[0]!.text).toBe(grown.slice(late));
+    expect(tail.content[0]?.text).toBe(grown.slice(late));
     expect(tail.details).toMatchObject({ totalCharacters: grown.length, nextOffset: null });
     expect(await firstDeltaBytes()).toBeGreaterThanOrEqual(Buffer.byteLength(grown));
     expect(await firstDeltaBytes()).toBeLessThan(Buffer.byteLength(grown) + 256 * 1024);
     const warmBytes = await measureReads(ref);
-    expect((await readMcpResult({ ref, offset: late }, { outputDirectory })).content[0]!.text).toBe(
+    expect((await readMcpResult({ ref, offset: late }, { outputDirectory })).content[0]?.text).toBe(
       grown.slice(late),
     );
     expect(await warmBytes()).toBeGreaterThanOrEqual(Buffer.byteLength(grown));
@@ -150,21 +184,37 @@ describe("incremental plain-result paging", () => {
     const outputDirectory = await root();
     const history = createUiMessageHistory(outputDirectory);
     history.append("prompts", "original ".repeat(20_000));
-    const ref = history.messages.historyRef!;
+    const ref = history.messages.historyRef;
+    assert.ok(ref !== undefined);
     const check = async (text: string) => {
       const page = await readMcpResult({ ref, limit: 50 }, { outputDirectory });
-      expect(page.content[0]!.text).toBe(text.slice(0, 50));
+      expect(page.content[0]?.text).toBe(text.slice(0, 50));
       expect(page.details).toMatchObject({ totalCharacters: text.length });
     };
     await check(await readFile(ref, "utf8"));
     const prototype = await readPrototype(ref);
-    const originalRead = prototype.read;
+    const originalRead: (
+      this: FileHandle,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => Promise<FileReadResult<Buffer>> = prototype.read;
     const redacted = "redacted😀 ".repeat(30_000);
     const reads = vi.spyOn(prototype, "read").mockImplementationOnce(async function (
       this: FileHandle,
       ...args: unknown[]
     ) {
-      const result = await originalRead.apply(this, args);
+      const [buffer, offset, length, position] = args;
+      if (
+        !Buffer.isBuffer(buffer) ||
+        typeof offset !== "number" ||
+        typeof length !== "number" ||
+        typeof position !== "number"
+      ) {
+        throw new Error("Expected positional FileHandle.read arguments");
+      }
+      const result = await originalRead.call(this, buffer, offset, length, position);
       await writeFile(ref, redacted);
       expect(history.append("notifications", "after edit")).toBeUndefined();
       return result;
@@ -193,40 +243,54 @@ describe("incremental plain-result paging", () => {
     const outputDirectory = await root();
     const history = createUiMessageHistory(outputDirectory);
     expect(history.append("prompts", "x".repeat(1_000_000) + "😀")).toBeUndefined();
-    const ref = history.messages.historyRef!;
+    const ref = history.messages.historyRef;
+    assert.ok(ref !== undefined);
     const prefix = await readFile(ref, "utf8");
     const prototype = await readPrototype(ref);
-    const originalRead = prototype.read;
+    const originalRead: (
+      this: FileHandle,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => Promise<FileReadResult<Buffer>> = prototype.read;
     let appends = 0;
     const reads = vi.spyOn(prototype, "read").mockImplementation(async function (
       this: FileHandle,
       ...args: unknown[]
     ) {
-      const result = await originalRead.apply(this, args);
+      const [buffer, offset, length, position] = args;
+      if (
+        !Buffer.isBuffer(buffer) ||
+        typeof offset !== "number" ||
+        typeof length !== "number" ||
+        typeof position !== "number"
+      ) {
+        throw new Error("Expected positional FileHandle.read arguments");
+      }
+      const result = await originalRead.call(this, buffer, offset, length, position);
       expect(history.append("notifications", `live😀-${++appends}`)).toBeUndefined();
       return result;
     });
     const cold = await readMcpResult({ ref, limit: 12_000 }, { outputDirectory });
-    expect(cold.content[0]!.text).toBe(prefix.slice(0, 12_000));
+    expect(cold.content[0]?.text).toBe(prefix.slice(0, 12_000));
     expect(cold.details).toMatchObject({ totalCharacters: prefix.length, nextOffset: 12_000 });
     expect(appends).toBeGreaterThan(0);
     const beforeWarm = await readFile(ref, "utf8");
     reads.mockClear();
     const warm = await readMcpResult({ ref, limit: 12_000 }, { outputDirectory });
-    expect(warm.content[0]!.text).toBe(beforeWarm.slice(0, 12_000));
+    expect(warm.content[0]?.text).toBe(beforeWarm.slice(0, 12_000));
     expect(warm.details).toMatchObject({ totalCharacters: beforeWarm.length, nextOffset: 12_000 });
-    expect(
-      (await Promise.all(reads.mock.results.map((result) => result.value))).reduce(
-        (total, result) => total + result.bytesRead,
-        0,
-      ),
-    ).toBeLessThan(2 * Buffer.byteLength(beforeWarm) + 128 * 1024);
+    const results: unknown[] = await Promise.all(
+      reads.mock.results.map((result): unknown => result.value),
+    );
+    expect(sumReadBytes(results)).toBeLessThan(2 * Buffer.byteLength(beforeWarm) + 128 * 1024);
     reads.mockRestore();
     const complete = await readFile(ref, "utf8");
     const bytesRead = await measureReads(ref);
     const offset = complete.lastIndexOf('{"category":');
     const tail = await readMcpResult({ ref, offset }, { outputDirectory });
-    expect(tail.content[0]!.text).toBe(complete.slice(offset));
+    expect(tail.content[0]?.text).toBe(complete.slice(offset));
     expect(tail.details).toMatchObject({ totalCharacters: complete.length, nextOffset: null });
     expect(await bytesRead()).toBeLessThan(2 * Buffer.byteLength(complete) + 128 * 1024);
   });
@@ -240,7 +304,7 @@ describe("incremental plain-result paging", () => {
       await appendFile(ref, part);
       const text = await readFile(ref, "utf8");
       const page = await readMcpResult({ ref }, { outputDirectory });
-      expect(page.content[0]!.text).toBe(text);
+      expect(page.content[0]?.text).toBe(text);
       expect(page.details).toMatchObject({ totalCharacters: text.length, nextOffset: null });
     }
     const otherRoot = await root();
