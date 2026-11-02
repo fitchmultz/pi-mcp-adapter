@@ -12,7 +12,9 @@ export async function drainClientCallbacks(client: Client): Promise<void> {
     const pending = [...(clientOperations.get(client) ?? [])]
       .filter(([, kind]) => kind === "sampling callback" || kind === "elicitation callback")
       .map(([operation]) => operation);
-    if (!pending.length) return;
+    if (!pending.length) {
+      return;
+    }
     await Promise.allSettled(pending);
   }
 }
@@ -20,7 +22,9 @@ export async function drainClientCallbacks(client: Client): Promise<void> {
 export async function drainClientOperations(client: Client): Promise<void> {
   for (;;) {
     const pending = [...(clientOperations.get(client)?.keys() ?? [])];
-    if (!pending.length) return;
+    if (!pending.length) {
+      return;
+    }
     await Promise.allSettled(pending);
   }
 }

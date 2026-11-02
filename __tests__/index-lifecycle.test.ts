@@ -172,8 +172,9 @@ function createPi() {
           tool.defaultActive !== false &&
           !tools.has(tool.name) &&
           !activeTools.includes(tool.name)
-        )
+        ) {
           activeTools.push(tool.name);
+        }
         tools.set(tool.name, tool);
       }),
       registerEntryRenderer: vi.fn(),
@@ -184,7 +185,9 @@ function createPi() {
           _name: string,
           definition: { handler?: (args: string, ctx: Record<string, unknown>) => unknown },
         ) => {
-          if (!definition.handler) return;
+          if (!definition.handler) {
+            return;
+          }
           const handler = definition.handler;
           definition.handler = (args, context = {}) =>
             handler(args, {
@@ -211,7 +214,7 @@ function createPi() {
         );
       }),
       getAllTools: vi.fn(() => [...tools.values()]),
-      getFlag: vi.fn(() => undefined),
+      getFlag: vi.fn(() => {}),
       getActiveTools: vi.fn(() => activeTools),
       setActiveTools: vi.fn((nextActiveTools: string[]) => {
         activeTools = nextActiveTools;
@@ -341,8 +344,9 @@ describe("mcpAdapter session lifecycle", () => {
       await Promise.resolve();
       expect(api.getActiveTools()).toContain("demo_search");
       expect(api.getActiveTools()).not.toContain("mcp");
-      if (manuallyDisabled)
+      if (manuallyDisabled) {
         api.setActiveTools(api.getActiveTools().filter((name: string) => name !== "demo_search"));
+      }
       state.toolMetadata.set("demo", []);
       mocks.buildProxyDescription.mockReturnValue("MCP gateway refreshed");
       state.onToolMetadataUpdated("demo", "tools-list-changed");
@@ -854,7 +858,7 @@ describe("mcpAdapter session lifecycle", () => {
           getSessionId: () => `session-${index}`,
           getBranch: () => [],
           getLeafId: () => null,
-          getEntry: () => undefined,
+          getEntry: () => {},
         };
         await handlers.get("session_start")?.({ reason }, { sessionManager });
         await Promise.resolve();
@@ -901,7 +905,9 @@ describe("mcpAdapter session lifecycle", () => {
       expect(inputs).toEqual([original, original, original]);
       expect(source).toEqual(original);
       expect(sharedSettings).toEqual({ autoAuth: false, scriptMode: false });
-      if (snapshot) expect(mocks.loadMcpConfig).not.toHaveBeenCalled();
+      if (snapshot) {
+        expect(mocks.loadMcpConfig).not.toHaveBeenCalled();
+      }
       await handlers.get("session_shutdown")?.();
     },
   );
@@ -993,10 +999,11 @@ describe("mcpAdapter session lifecycle", () => {
     state.config = config;
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.initializeMcp.mockResolvedValue(state);
-    for (const server of ["demo", "other"])
+    for (const server of ["demo", "other"]) {
       state.toolMetadata.set(server, [
         { name: `${server}_search`, originalName: "search", description: "Search" },
       ]);
+    }
     mocks.executeConnect.mockImplementation(async (currentState, server) => {
       currentState.onToolMetadataUpdated(server, "lazy-connect");
       return { content: [{ type: "text", text: `Connected ${server}` }], details: {} };

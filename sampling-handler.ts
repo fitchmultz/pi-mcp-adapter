@@ -2,8 +2,8 @@ import type { Api, AssistantMessage, Message, Model, TextContent } from "@earend
 import { truncateAtWord } from "./utils.ts";
 import { throwIfAborted } from "./abort.ts";
 import type { ExtensionUIContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { Client } from "@modelcontextprotocol/client";
 import {
+  type Client,
   type CreateMessageRequest,
   type CreateMessageResult,
   type ModelPreferences,
@@ -74,7 +74,7 @@ export async function handleSamplingRequest(
 
   const supportsTemperature =
     model.compat && "supportsTemperature" in model.compat
-      ? model.compat.supportsTemperature !== false
+      ? model.compat.supportsTemperature
       : !(
           model.id === "gpt-6-astra" &&
           (model.api === "openai-responses" || model.api === "openai-codex-responses")
@@ -90,9 +90,7 @@ export async function handleSamplingRequest(
       ...(supportsTemperature && params.temperature !== undefined
         ? { temperature: params.temperature }
         : {}),
-      ...(params.metadata !== undefined
-        ? { metadata: params.metadata as Record<string, unknown> }
-        : {}),
+      ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
       ...(signal ? { signal } : {}),
     },
   );
@@ -132,13 +130,23 @@ function formatResponseApproval(serverName: string, response: CreateMessageResul
 }
 
 function messageText(message: Message): string {
-  if (typeof message.content === "string") return message.content;
+  if (typeof message.content === "string") {
+    return message.content;
+  }
   return message.content
     .map((block) => {
-      if (block.type === "text") return block.text;
-      if (block.type === "image") return `[image: ${block.mimeType}]`;
-      if (block.type === "thinking") return "[thinking]";
-      if (block.type === "toolCall") return `[tool call: ${block.name}]`;
+      if (block.type === "text") {
+        return block.text;
+      }
+      if (block.type === "image") {
+        return `[image: ${block.mimeType}]`;
+      }
+      if (block.type === "thinking") {
+        return "[thinking]";
+      }
+      if (block.type === "toolCall") {
+        return `[tool call: ${block.name}]`;
+      }
       return "[content]";
     })
     .join("\n");
@@ -153,7 +161,9 @@ async function resolveSamplingModel(
 
   for (const hint of modelPreferences?.hints ?? []) {
     const normalizedHint = hint.name?.trim().toLowerCase();
-    if (!normalizedHint) continue;
+    if (!normalizedHint) {
+      continue;
+    }
     for (const model of availableModels) {
       const searchableNames = [`${model.provider}/${model.id}`, model.id, model.name];
       if (searchableNames.some((name) => name.toLowerCase().includes(normalizedHint))) {
@@ -163,7 +173,9 @@ async function resolveSamplingModel(
   }
 
   const currentModel = options.getCurrentModel();
-  if (currentModel) addSamplingCandidate(candidates, currentModel);
+  if (currentModel) {
+    addSamplingCandidate(candidates, currentModel);
+  }
 
   for (const model of availableModels) {
     addSamplingCandidate(candidates, model);
@@ -175,7 +187,7 @@ async function resolveSamplingModel(
     throwIfAborted(signal);
     const auth = await options.modelRegistry.getApiKeyAndHeaders(model);
     throwIfAborted(signal);
-    if (auth.ok === false) {
+    if (!auth.ok) {
       errors.push(`${model.provider}/${model.id}: ${auth.error}`);
       continue;
     }
@@ -203,7 +215,9 @@ async function confirmSampling(
   title: string,
   message: string,
 ): Promise<void> {
-  if (options.autoApprove) return;
+  if (options.autoApprove) {
+    return;
+  }
   if (!options.ui) {
     throw new Error(
       "MCP sampling requires interactive approval. Set settings.samplingAutoApprove to true to allow it without UI.",
@@ -261,8 +275,12 @@ function convertAssistantResult(message: AssistantMessage): CreateMessageResult 
 
   const text = message.content
     .map((block) => {
-      if (block.type === "text") return block.text;
-      if (block.type === "thinking") return undefined;
+      if (block.type === "text") {
+        return block.text;
+      }
+      if (block.type === "thinking") {
+        return undefined;
+      }
       throw new Error(`MCP sampling result ${block.type} content is not supported`);
     })
     .filter((value): value is string => value !== undefined)
@@ -282,9 +300,15 @@ function convertAssistantResult(message: AssistantMessage): CreateMessageResult 
 }
 
 function mapStopReason(reason: AssistantMessage["stopReason"]): CreateMessageResult["stopReason"] {
-  if (reason === "stop") return "endTurn";
-  if (reason === "length") return "maxTokens";
-  if (reason === "toolUse") return "toolUse";
+  if (reason === "stop") {
+    return "endTurn";
+  }
+  if (reason === "length") {
+    return "maxTokens";
+  }
+  if (reason === "toolUse") {
+    return "toolUse";
+  }
   return reason;
 }
 

@@ -168,8 +168,11 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 
   try {
     const validate = pending?.validate ?? reserved?.validate;
-    if (validate) validate({ ...(iss !== null ? { iss } : {}), ...(error ? { error } : {}) });
-    else if (error) throw new Error("Cannot verify the OAuth error callback issuer");
+    if (validate) {
+      validate({ ...(iss !== null ? { iss } : {}), ...(error ? { error } : {}) });
+    } else if (error) {
+      throw new Error("Cannot verify the OAuth error callback issuer");
+    }
   } catch (failure) {
     const message = failure instanceof Error ? failure.message : "Invalid OAuth callback";
     res.writeHead(400, { "Content-Type": "text/html" });
@@ -214,7 +217,9 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   }
 
   if (!pending) {
-    if (reserved) reserved.result = { code, ...(iss !== null ? { iss } : {}) };
+    if (reserved) {
+      reserved.result = { code, ...(iss !== null ? { iss } : {}) };
+    }
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(HTML_MANUAL_SUCCESS);
     return;
@@ -374,7 +379,9 @@ export function releaseCallbackServer(oauthState: string): void {
 export function takeCallbackResult(oauthState: string): ReservedAuth["result"] {
   const reserved = reservedAuthStates.get(oauthState);
   const result = reserved?.result;
-  if (reserved) delete reserved.result;
+  if (reserved) {
+    delete reserved.result;
+  }
   return result;
 }
 
@@ -421,7 +428,9 @@ export function cancelPendingCallback(oauthState: string): void {
  * Stop the callback server and reject all pending authorizations.
  */
 export function stopCallbackServer(): Promise<void> {
-  if (stoppingPromise) return stoppingPromise;
+  if (stoppingPromise) {
+    return stoppingPromise;
+  }
 
   callbackGeneration += 1;
   const cleanup = (async () => {
@@ -455,7 +464,9 @@ export function stopCallbackServer(): Promise<void> {
   })();
 
   const operation = cleanup.finally(() => {
-    if (stoppingPromise === operation) stoppingPromise = undefined;
+    if (stoppingPromise === operation) {
+      stoppingPromise = undefined;
+    }
   });
   stoppingPromise = operation;
   return operation;

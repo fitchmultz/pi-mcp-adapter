@@ -25,7 +25,9 @@ const browser = vi.hoisted(() => ({ open: vi.fn(async (_url: string) => {}) }));
 vi.mock("open", () => ({ default: browser.open }));
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.reverse()) await cleanup();
+  for (const cleanup of cleanups.reverse()) {
+    await cleanup();
+  }
   cleanups.length = 0;
   browser.open.mockReset();
 });
@@ -39,7 +41,9 @@ const listen = async (server: Server, port = 0, host = "127.0.0.1") => {
     server.listen(port, host, resolve);
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Fixture did not bind");
+  if (!address || typeof address === "string") {
+    throw new Error("Fixture did not bind");
+  }
   return address.port;
 };
 
@@ -81,9 +85,13 @@ async function fixture(oauth: OAuthConfig = {}) {
   const metadata: Record<string, unknown> = { client_id_metadata_document_supported: true };
   // Only the AS resolves this local mapping. Native client_id remains the real HTTPS URL.
   const client = async (id: string) => {
-    if (registered.has(id)) return registered.get(id);
+    if (registered.has(id)) {
+      return registered.get(id);
+    }
     const response = await fetch(`${origin}/document?id=${encodeURIComponent(id)}`);
-    if (!response.ok) return undefined;
+    if (!response.ok) {
+      return undefined;
+    }
     const doc = await response.json();
     return doc.client_id === id && doc.token_endpoint_auth_method === "none" ? doc : undefined;
   };
@@ -91,13 +99,14 @@ async function fixture(oauth: OAuthConfig = {}) {
     const url = new URL(req.url!, origin);
     const json = (body: unknown, status = 200) =>
       res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
-    if (url.pathname.startsWith("/.well-known/oauth-protected-resource"))
+    if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
       return void json({
         resource: `${origin}/mcp`,
         authorization_servers: [origin],
         scopes_supported: ["tools"],
       });
-    if (url.pathname.startsWith("/.well-known/oauth-authorization-server"))
+    }
+    if (url.pathname.startsWith("/.well-known/oauth-authorization-server")) {
       return void json({
         issuer: origin,
         authorization_endpoint: `${origin}/authorize`,
@@ -110,6 +119,7 @@ async function fixture(oauth: OAuthConfig = {}) {
         authorization_response_iss_parameter_supported: true,
         ...metadata,
       });
+    }
     if (url.pathname === "/document") {
       const id = url.searchParams.get("id")!;
       documentFetches.push(id);
@@ -137,8 +147,9 @@ async function fixture(oauth: OAuthConfig = {}) {
       });
       callback.searchParams.set("state", url.searchParams.get("state")!);
       callback.searchParams.set("iss", origin);
-      if (!allowed) callback.searchParams.set("error", "invalid_client_metadata");
-      else {
+      if (!allowed) {
+        callback.searchParams.set("error", "invalid_client_metadata");
+      } else {
         const code = `code-${authorizations.length}`;
         codes.set(code, url);
         callback.searchParams.set("code", code);
@@ -147,7 +158,9 @@ async function fixture(oauth: OAuthConfig = {}) {
       return;
     }
     let data = "";
-    for await (const chunk of req) data += chunk;
+    for await (const chunk of req) {
+      data += chunk;
+    }
     if (url.pathname === "/register") {
       const doc = JSON.parse(data);
       registrations.push(doc);
@@ -160,10 +173,13 @@ async function fixture(oauth: OAuthConfig = {}) {
       exchanges.push(params);
       const id = params.get("client_id")!;
       const doc = await client(id);
-      if (!doc) return void json({ error: "invalid_client" }, 400);
+      if (!doc) {
+        return void json({ error: "invalid_client" }, 400);
+      }
       const grant = params.get("grant_type");
-      if (!doc.grant_types.includes(grant) || params.get("resource") !== `${origin}/mcp`)
+      if (!doc.grant_types.includes(grant) || params.get("resource") !== `${origin}/mcp`) {
         return void json({ error: "invalid_request" }, 400);
+      }
       if (grant === "authorization_code") {
         const authorization = codes.get(params.get("code")!);
         const challenge = createHash("sha256")
@@ -174,12 +190,14 @@ async function fixture(oauth: OAuthConfig = {}) {
           authorization.searchParams.get("client_id") !== id ||
           authorization.searchParams.get("code_challenge") !== challenge ||
           authorization.searchParams.get("redirect_uri") !== params.get("redirect_uri")
-        )
+        ) {
           return void json({ error: "invalid_grant" }, 400);
+        }
         codes.delete(params.get("code")!);
       }
-      if (grant === "refresh_token" && refreshes.get(params.get("refresh_token")!) !== id)
+      if (grant === "refresh_token" && refreshes.get(params.get("refresh_token")!) !== id) {
         return void json({ error: "invalid_grant" }, 400);
+      }
       const token = `access-${exchanges.length}`;
       const refresh = `refresh-${exchanges.length}`;
       tokens.add(token);
@@ -249,11 +267,12 @@ async function fixture(oauth: OAuthConfig = {}) {
     expect((await fetch(callback)).status).toBe(200);
   });
   cleanups.push(async () => {
-    if (process.env.CIMD_PROOF_FILE)
+    if (process.env.CIMD_PROOF_FILE) {
       appendFileSync(
         process.env.CIMD_PROOF_FILE,
         `${JSON.stringify({ test: expect.getState().currentTestName, node: process.version, execPath: process.execPath, authorizations: authorizations.map((u) => Object.fromEntries(u.searchParams)), exchanges: exchanges.map((p) => Object.fromEntries(p)), documentFetches, blockedPorts, callbackPort: getOAuthCallbackPort(), registrations, requests, stored: getAuthForUrl(name, definition.url!) })}\n`,
       );
+    }
     await manager.closeAll();
     await shutdownOAuth(runtime);
     clearAllCredentials(name);
@@ -365,8 +384,11 @@ it.each([undefined, false])(
   "uses native DCR when capability is %s, even with a URL-shaped client ID",
   async (capability) => {
     const f = await fixture({ clientMetadataUrl: "https://opaque.example/registration/1" });
-    if (capability === undefined) delete f.metadata.client_id_metadata_document_supported;
-    else f.metadata.client_id_metadata_document_supported = capability;
+    if (capability === undefined) {
+      delete f.metadata.client_id_metadata_document_supported;
+    } else {
+      f.metadata.client_id_metadata_document_supported = capability;
+    }
     expect(await f.login()).toBe("authenticated");
     expect(f.stored()?.clientInfo?.registrationType).toBeUndefined();
     expect(f.registrations).toHaveLength(1);
@@ -556,7 +578,7 @@ it.each([
   await f.login();
   const before = f.stored()!;
   const clientInfo = { ...before.clientInfo!, redirectUris: redirects as unknown as string[] };
-  saveAuthEntry(f.name, { ...before, clientInfo }, f.definition.url!);
+  saveAuthEntry(f.name, { ...before, clientInfo }, f.definition.url);
   await f.restart();
   expect((await f.start()).authorizationUrl).toBeTruthy();
   expect(f.stored()?.tokens).toBeUndefined();
@@ -591,7 +613,7 @@ it("rejects legacy and explicit config stubs instead of sending an orphaned clie
     { clientId: "legacy", issuer: f.origin },
     { clientId: "explicit", issuer: f.origin, configPreRegistered: true, redirectUris: [] },
   ]) {
-    saveAuthEntry(f.name, { clientInfo }, f.definition.url!);
+    saveAuthEntry(f.name, { clientInfo }, f.definition.url);
     const provider = new McpOAuthProvider(
       f.name,
       f.definition.url!,
@@ -605,7 +627,7 @@ it("rejects legacy and explicit config stubs instead of sending an orphaned clie
     saveAuthEntry(
       f.name,
       { clientInfo, tokens: { accessToken: "old", refreshToken: "old", issuer: f.origin } },
-      f.definition.url!,
+      f.definition.url,
     );
     expect(await f.start()).toEqual({ authorizationUrl: "" });
     expect(f.exchanges.at(-1)?.get("client_id")).toBe(

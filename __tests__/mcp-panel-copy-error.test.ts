@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  copyToClipboard: vi.fn(async (_text: string) => undefined),
+  copyToClipboard: vi.fn(async (_text: string) => {}),
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({ copyToClipboard: mocks.copyToClipboard }));
@@ -33,8 +33,8 @@ describe("mcp-panel failure copy", () => {
       },
     };
     const panel = createMcpPanel(
-      config as any,
-      cache as any,
+      config,
+      cache,
       new Map(),
       {
         reconnect: async () => true,
@@ -63,7 +63,7 @@ describe("mcp-panel failure copy", () => {
     const { createMcpPanel } = await import("../mcp-panel.ts");
     const config = { mcpServers: { demo: { command: "node" } } };
     const panel = createMcpPanel(
-      config as any,
+      config,
       null,
       new Map(),
       {

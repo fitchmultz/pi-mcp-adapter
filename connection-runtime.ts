@@ -11,7 +11,9 @@ export class ManagedClient extends Client {
 
   private own<T>(operation: Promise<T>, kind: ClientOperation): Promise<T> {
     let pending = clientOperations.get(this);
-    if (!pending) clientOperations.set(this, (pending = new Map()));
+    if (!pending) {
+      clientOperations.set(this, (pending = new Map()));
+    }
     pending.set(operation, kind);
     const settled = () => {
       pending.delete(operation);
@@ -47,8 +49,11 @@ export class ManagedClient extends Client {
       ? this.oauthProvider.runWithSignal(controller!.signal, () => {
           // Native legacy cancellation notifications must retain their operation's auth context.
           const abort = AsyncLocalStorage.bind(() => controller!.abort(signal?.reason));
-          if (signal?.aborted) abort();
-          else signal?.addEventListener("abort", abort, { once: true });
+          if (signal?.aborted) {
+            abort();
+          } else {
+            signal?.addEventListener("abort", abort, { once: true });
+          }
           removeAbortListener = () => signal?.removeEventListener("abort", abort);
           return start(controller!.signal);
         })

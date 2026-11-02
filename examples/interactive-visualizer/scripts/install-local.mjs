@@ -17,12 +17,12 @@ const agentDir = !configuredAgentDir
 const configPath = path.join(agentDir, "fitch-mcp-adapter", "mcp.json");
 const serverName = "interactive-visualizer";
 
-function isInstalledExample(entry) {
+function isInstalledExample(/** @type {Record<string, unknown> | null | undefined} */ entry) {
+  if (entry === null || entry === undefined) {
+    return false;
+  }
   return (
-    !!entry &&
-    entry.command === process.execPath &&
-    Array.isArray(entry.args) &&
-    entry.args[0] === distServer
+    entry.command === process.execPath && Array.isArray(entry.args) && entry.args[0] === distServer
   );
 }
 

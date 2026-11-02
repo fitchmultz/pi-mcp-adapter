@@ -8,9 +8,14 @@ import stripJsonComments from "strip-json-comments";
 
 const HOME = os.homedir();
 
+/** @param {string} input @returns {string} */
 function expandHome(input) {
-  if (input === "~") return HOME;
-  if (input.startsWith("~/")) return path.resolve(HOME, input.slice(2));
+  if (input === "~") {
+    return HOME;
+  }
+  if (input.startsWith("~/")) {
+    return path.resolve(HOME, input.slice(2));
+  }
   return path.resolve(input);
 }
 
@@ -54,6 +59,7 @@ function printHelp(log = console.log) {
   log("  fitch-mcp-adapter migrate [--dry-run]  Copy pre-v5 state without changing its sources");
 }
 
+/** @param {string} filePath */
 function readJsonFile(filePath) {
   return JSON.parse(
     stripJsonComments(fs.readFileSync(filePath, "utf-8"), { trailingCommas: true }),
@@ -69,7 +75,7 @@ function loadPiConfig() {
   const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
   if (!mcpServers || typeof mcpServers !== "object" || Array.isArray(mcpServers)) {
     throw new Error(
-      `Invalid MCP config at ${PI_CONFIG_PATH}: expected \"mcpServers\" to be an object`,
+      `Invalid MCP config at ${PI_CONFIG_PATH}: expected "mcpServers" to be an object`,
     );
   }
 
@@ -77,7 +83,7 @@ function loadPiConfig() {
   delete normalized["mcp-servers"];
 
   const imports = Array.isArray(raw.imports)
-    ? raw.imports.filter((value) => typeof value === "string")
+    ? raw.imports.filter((/** @type {unknown} */ value) => typeof value === "string")
     : undefined;
   return {
     ...normalized,
@@ -99,6 +105,7 @@ function findAvailableImports() {
   return found;
 }
 
+/** @param {(line: string) => void} log @param {{ kind: string; path: string }[]} imports */
 function printDiscovery(log, imports) {
   log("Config discovery:\n");
 
@@ -112,6 +119,9 @@ function printDiscovery(log, imports) {
   ];
 
   for (const [label, filePath] of paths) {
+    if (filePath === undefined) {
+      continue;
+    }
     const prefix = fs.existsSync(filePath) ? "✓" : "-";
     log(`${prefix} ${label}: ${filePath}`);
   }
@@ -127,11 +137,13 @@ function printDiscovery(log, imports) {
   }
 }
 
+/** @param {{ imports?: unknown }} config */
 function writePiConfig(config) {
   fs.mkdirSync(path.dirname(PI_CONFIG_PATH), { recursive: true });
   fs.writeFileSync(PI_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
 }
 
+/** @param {string[]} argv @param {(line: string) => void} [log] */
 async function runInit(argv, log = console.log) {
   const dryRun = argv.includes("--dry-run");
   const discoverHostConfigs = argv.includes("--discover-host-configs");
@@ -214,9 +226,12 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
     const { migrateLegacyState } = await import("./dist/legacy-migration.js");
     const dryRun = rest.includes("--dry-run");
     const result = migrateLegacyState({ dryRun });
-    for (const file of result.files) log(`${file.status}: ${file.source} -> ${file.destination}`);
-    for (const credential of result.credentials)
+    for (const file of result.files) {
+      log(`${file.status}: ${file.source} -> ${file.destination}`);
+    }
+    for (const credential of result.credentials) {
       log(`OAuth ${credential.server}: ${credential.status}`);
+    }
     log(
       dryRun
         ? "Dry run: no files changed and no credential store accessed."

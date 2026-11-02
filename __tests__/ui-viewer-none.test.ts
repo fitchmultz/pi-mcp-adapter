@@ -49,7 +49,7 @@ function makeState() {
     manager: {
       getConnection: vi.fn(() => connection),
       getAllConnections: vi.fn(() => new Map([["demo", connection]])),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -76,7 +76,7 @@ function makeState() {
     consentManager,
     uiServer: null,
     completedUiSessions: [],
-    openBrowser: vi.fn(async () => undefined),
+    openBrowser: vi.fn(async () => {}),
     sendMessage: vi.fn(),
     ui: {
       notify: vi.fn(),
@@ -92,8 +92,8 @@ afterEach(() => {
   delete process.env.MCP_UI_VIEWER;
   delete process.env.SSH_CONNECTION;
   delete process.env.SSH_TTY;
-  vi.mocked(execFile).mockImplementation(
-    (_command: any, _options: any, callback: any) => callback(null, "") as any,
+  vi.mocked(execFile).mockImplementation((_command: any, _options: any, callback: any) =>
+    callback(null, ""),
   );
   glimpseMocks.isGlimpseAvailable.mockClear();
   glimpseMocks.openGlimpseWindow.mockClear();
@@ -126,7 +126,9 @@ describe("remote MCP UI viewers", () => {
       });
       try {
         await expect.poll(() => state.openBrowser.mock.calls.length).toBe(1);
-        if (ending === "abort") controller.abort(new Error("caller cancelled"));
+        if (ending === "abort") {
+          controller.abort(new Error("caller cancelled"));
+        }
         await expect.poll(() => output, { timeout: 1000 }).toBeDefined();
         expect(output!.details).toMatchObject({
           error: ending === "timeout" ? "timeout" : "aborted",
@@ -170,9 +172,8 @@ describe("remote MCP UI viewers", () => {
   });
 
   it("uses local-window wording when a remote login is active but Glimpse opened", async () => {
-    vi.mocked(execFile).mockImplementation(
-      (_command: any, _options: any, callback: any) =>
-        callback(null, "user ttys001 2026-08-02 08:00 (192.0.2.10)\n") as any,
+    vi.mocked(execFile).mockImplementation((_command: any, _options: any, callback: any) =>
+      callback(null, "user ttys001 2026-08-02 08:00 (192.0.2.10)\n"),
     );
     const { state } = makeState();
     glimpseMocks.openGlimpseWindow.mockResolvedValueOnce({ close: vi.fn() });
@@ -210,7 +211,9 @@ describe("MCP UI context submissions", () => {
       toolArgs: {},
       uiResourceUri: "ui://app",
     });
-    if (!runtime) throw new Error("expected UI runtime");
+    if (!runtime) {
+      throw new Error("expected UI runtime");
+    }
     const handle = state.uiServer;
     let upload: http.ClientRequest | undefined;
     try {
@@ -286,7 +289,9 @@ describe("MCP UI context submissions", () => {
       toolArgs: {},
       uiResourceUri: "ui://app",
     });
-    if (!runtime) throw new Error("expected UI runtime");
+    if (!runtime) {
+      throw new Error("expected UI runtime");
+    }
 
     await fetch(`${runtime.url.replace(/\/?\?.*$/, "")}/proxy/ui/context`, {
       method: "POST",
@@ -370,7 +375,7 @@ describe("MCP_UI_VIEWER=none", () => {
       },
     );
 
-    const result = await execute("call-1", {}, undefined as any, () => {}, undefined as any);
+    const result = await execute("call-1", {}, undefined, () => {}, undefined as any);
 
     expect(textOf(result)).toContain("tool output");
     expect(textOf(result)).toContain("MCP UI window was suppressed");

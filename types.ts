@@ -16,7 +16,7 @@ export type Transport = McpTransport;
 /** Versioned shared-event-bus channel for read-only MCP runtime snapshots. */
 export const MCP_STATUS_EVENT = "fitch-mcp-adapter/status/v1";
 
-export const MCP_STATUS_SNAPSHOT_VERSION = 1 as const;
+export const MCP_STATUS_SNAPSHOT_VERSION = 1;
 
 export type McpServerRuntimeStatus =
   | "connected"
@@ -274,7 +274,9 @@ export function createUiModelContextUpdate(
   const payload = Object.fromEntries(
     Object.entries(params).filter(([, value]) => value !== undefined),
   );
-  if (Object.keys(payload).length === 0) return undefined;
+  if (Object.keys(payload).length === 0) {
+    return undefined;
+  }
 
   const serialized = JSON.stringify(payload);
   if (serialized.length <= maxChars) {
@@ -348,7 +350,9 @@ export interface OAuthCrossAppAccessConfig {
 
 export function isNonInteractiveOAuth(config: OAuthConfig | false | undefined): boolean {
   return (
-    !!config && (config.grantType === "client_credentials" || config.crossAppAccess !== undefined)
+    config !== false &&
+    config !== undefined &&
+    (config.grantType === "client_credentials" || config.crossAppAccess !== undefined)
   );
 }
 
@@ -687,13 +691,19 @@ export interface McpPanelResult {
  * Get server prefix based on tool prefix mode.
  */
 export function getServerPrefix(serverName: string, mode: ToolPrefix): string {
-  if (mode === "none") return "";
+  if (mode === "none") {
+    return "";
+  }
   if (mode === "short") {
     let short = serverName.replace(/-?mcp$/i, "").replace(/-/g, "_");
-    if (!short) short = "mcp";
+    if (!short) {
+      short = "mcp";
+    }
     return short;
   }
-  if (mode === "mcp") return `mcp__${serverName.replace(/-/g, "_")}`;
+  if (mode === "mcp") {
+    return `mcp__${serverName.replace(/-/g, "_")}`;
+  }
   return serverName.replace(/-/g, "_");
 }
 
@@ -715,7 +725,9 @@ export function resolveToolPrefix(
 
 export function sanitizePromptName(name: string): string {
   const cleaned = name.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^[_-]+|[_-]+$/g, "");
-  if (!cleaned) return "prompt";
+  if (!cleaned) {
+    return "prompt";
+  }
   return /^[0-9]/.test(cleaned) ? `_${cleaned}` : cleaned;
 }
 
@@ -756,10 +768,14 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 export function matchesToolPattern(candidates: Set<string>, patterns?: unknown): boolean {
-  if (!Array.isArray(patterns) || patterns.length === 0) return false;
+  if (!Array.isArray(patterns) || patterns.length === 0) {
+    return false;
+  }
 
   for (const pattern of patterns) {
-    if (typeof pattern !== "string") continue;
+    if (typeof pattern !== "string") {
+      continue;
+    }
     const normalized = normalizeToolName(pattern);
     if (!normalized.includes("*") && !normalized.includes("?") && candidates.has(normalized)) {
       return true;
@@ -781,7 +797,9 @@ export function isToolIncluded(
   prefix: ToolPrefix,
   includeTools?: unknown,
 ): boolean {
-  if (!Array.isArray(includeTools) || includeTools.length === 0) return true;
+  if (!Array.isArray(includeTools) || includeTools.length === 0) {
+    return true;
+  }
   return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), includeTools);
 }
 

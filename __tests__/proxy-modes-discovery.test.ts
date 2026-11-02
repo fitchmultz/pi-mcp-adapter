@@ -35,7 +35,7 @@ function createState(): McpExtensionState {
       ],
     ]),
     manager: {
-      getConnection: () => undefined,
+      getConnection: () => {},
     },
     serverInstructions: new Map(),
     failureTracker: new Map(),
@@ -84,14 +84,12 @@ describe("proxy discovery", () => {
   it("reports partial catalog coverage and keeps resources out of the tool inventory", () => {
     const state = createState();
     state.config.mcpServers.unknown = { command: "not-started" };
-    state.toolMetadata
-      .get("demo")!
-      .push({
-        name: "demo_read_guide",
-        originalName: "read_guide",
-        description: "Guide",
-        resourceUri: "docs://guide",
-      });
+    state.toolMetadata.get("demo")!.push({
+      name: "demo_read_guide",
+      originalName: "read_guide",
+      description: "Guide",
+      resourceUri: "docs://guide",
+    });
     const search = executeSearch(state, "guide");
     expect(search.details).toMatchObject({
       count: 0,
@@ -225,7 +223,7 @@ describe("proxy discovery", () => {
   it("keeps cached prefixed call typos bounded without connecting", async () => {
     const state = createState();
     const connect = vi.fn();
-    state.manager = { getConnection: () => undefined, connect } as never;
+    state.manager = { getConnection: () => {}, connect } as never;
 
     const result = await executeCall(state, "demo_sear");
 
@@ -353,7 +351,7 @@ describe("proxy discovery", () => {
       throw new Error("stop after routing");
     });
     state.manager = {
-      getConnection: () => undefined,
+      getConnection: () => {},
       getAllConnections: () => [],
       connect,
     } as never;
@@ -373,7 +371,7 @@ describe("proxy discovery", () => {
       throw new Error("stop after routing");
     });
     state.manager = {
-      getConnection: () => undefined,
+      getConnection: () => {},
       getAllConnections: () => [],
       connect,
     } as never;
@@ -403,7 +401,7 @@ describe("proxy discovery", () => {
       ],
     ]);
     const connect = vi.fn();
-    state.manager = { getConnection: () => undefined, connect } as never;
+    state.manager = { getConnection: () => {}, connect } as never;
 
     const result = await executeCall(state, "github_enterprise_sear");
 

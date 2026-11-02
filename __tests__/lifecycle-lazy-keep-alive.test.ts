@@ -34,7 +34,9 @@ class FakeManager {
 
   async connect(name: string): Promise<FakeConnection> {
     this.connectCalls.push(name);
-    if (this.connectError) throw this.connectError;
+    if (this.connectError) {
+      throw this.connectError;
+    }
     const connection: FakeConnection = { status: "connected" };
     this.connections.set(name, connection);
     return connection;
@@ -242,7 +244,7 @@ describe("lazy-keep-alive lifecycle", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     };
     const state = {
       config: {

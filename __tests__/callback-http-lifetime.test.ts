@@ -21,7 +21,9 @@ beforeEach(async () => {
   vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "memory");
 });
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  for (const cleanup of cleanups.splice(0).reverse()) {
+    await cleanup();
+  }
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await rm(directory, { recursive: true, force: true });
@@ -44,11 +46,13 @@ function host() {
     },
     registerTool: (tool: any) => {
       tools.set(tool.name, tool);
-      if (!active.includes(tool.name)) active.push(tool.name);
+      if (!active.includes(tool.name)) {
+        active.push(tool.name);
+      }
     },
     registerFlag: () => {},
     registerCommand: () => {},
-    getFlag: () => undefined,
+    getFlag: () => {},
     registerEntryRenderer: () => {},
     appendEntry: () => {},
     getAllTools: () => [...tools.values()],
@@ -87,7 +91,7 @@ function host() {
     modelRegistry,
     model,
     ui,
-    sessionManager: { getLeafId: () => null, getEntry: () => undefined },
+    sessionManager: { getLeafId: () => null, getEntry: () => {} },
   };
   return { pi: pi as any, ctx: ctx as any, handlers, tools, ui, modelRegistry };
 }
@@ -128,17 +132,15 @@ async function wire(
       return;
     }
     if (req.url?.startsWith("/.well-known/oauth-authorization-server")) {
-      res
-        .writeHead(200, { "content-type": "application/json" })
-        .end(
-          JSON.stringify({
-            issuer: origin,
-            authorization_endpoint: origin + "/authorize",
-            token_endpoint: origin + "/token",
-            response_types_supported: ["code"],
-            code_challenge_methods_supported: ["S256"],
-          }),
-        );
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          issuer: origin,
+          authorization_endpoint: origin + "/authorize",
+          token_endpoint: origin + "/token",
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+        }),
+      );
       return;
     }
     if (req.method === "GET") {
@@ -168,7 +170,9 @@ async function wire(
       return;
     }
     let text = "";
-    for await (const chunk of req) text += chunk;
+    for await (const chunk of req) {
+      text += chunk;
+    }
     if (req.url !== "/token") {
       const response = JSON.parse(text);
       if (response.method === undefined && response.id) {
@@ -190,16 +194,14 @@ async function wire(
     }
     if (method === "token") {
       refreshCount++;
-      res
-        .writeHead(200, { "content-type": "application/json" })
-        .end(
-          JSON.stringify({
-            access_token: token,
-            refresh_token: "SYNTHETIC-REFRESH-UPDATED",
-            token_type: "Bearer",
-            expires_in: 3600,
-          }),
-        );
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          access_token: token,
+          refresh_token: "SYNTHETIC-REFRESH-UPDATED",
+          token_type: "Bearer",
+          expires_in: 3600,
+        }),
+      );
       return;
     }
     if (options.oauth && req.headers.authorization !== `Bearer ${token}`) {
@@ -225,8 +227,12 @@ async function wire(
       );
       return;
     }
-    if (method === "initialize") advertisedClientCapabilities = body.params.capabilities;
-    if (method === "tools/call") callCount++;
+    if (method === "initialize") {
+      advertisedClientCapabilities = body.params.capabilities;
+    }
+    if (method === "tools/call") {
+      callCount++;
+    }
     const result =
       method === "initialize"
         ? {
@@ -279,7 +285,9 @@ async function wire(
   });
   await new Promise<void>((yes) => server.listen(0, "127.0.0.1", yes));
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("No fixture port");
+  if (!address || typeof address === "string") {
+    throw new Error("No fixture port");
+  }
   origin = `http://127.0.0.1:${address.port}`;
   cleanups.push(async () => {
     blocked?.resolve();
@@ -306,7 +314,7 @@ async function wire(
       trace: { enabled: true, file: join(directory, "trace.jsonl") },
     },
   };
-  if (options.oauth)
+  if (options.oauth) {
     saveAuthEntry(
       name,
       {
@@ -319,8 +327,11 @@ async function wire(
       },
       url,
     );
+  }
   const notify = (method: string, params: object) => {
-    if (!stream) throw new Error("No native GET stream");
+    if (!stream) {
+      throw new Error("No native GET stream");
+    }
     notifications.push(method);
     stream.write(
       `event: message\ndata: ${JSON.stringify({
@@ -360,7 +371,9 @@ async function wire(
       input = undefined;
     },
     callback: (method: string, params: object) => {
-      if (!stream) throw new Error("No native GET stream");
+      if (!stream) {
+        throw new Error("No native GET stream");
+      }
       const id = `callback-${++callbackId}`;
       const response = new Promise<any>((resolve) => replies.set(id, resolve));
       stream.write(
@@ -401,8 +414,9 @@ async function runtime(config: McpConfig, h = host()) {
   const owner = createMcpRuntimeOwner();
   const state = await initializeMcp(h.pi, h.ctx, owner, { config });
   cleanups.push(() => owner.stop());
-  for (const [name, definition] of Object.entries(config.mcpServers))
+  for (const [name, definition] of Object.entries(config.mcpServers)) {
     await state.manager.connect(name, definition);
+  }
   return state;
 }
 
@@ -445,18 +459,19 @@ it.each(["sampling", "elicitation"] as const)(
     const h = host();
     const gate = deferred();
     const entered = deferred();
-    if (kind === "sampling")
+    if (kind === "sampling") {
       h.ui.confirm.mockImplementationOnce(async () => {
         entered.resolve();
         await gate.promise;
         return true;
       });
-    else
+    } else {
       h.ui.select.mockImplementationOnce(async () => {
         entered.resolve();
         await gate.promise;
         return "Continue";
       });
+    }
     const state = await runtime(f.config, h);
     cleanups.push(async () => gate.resolve());
     await expect.poll(f.streamReady).toBe(true);
@@ -512,7 +527,7 @@ it.each(["sampling", "elicitation"] as const)(
     const state = await runtime(f.config, h);
     // Cleanup releases the real handler before owner.stop tries to drain it.
     cleanups.push(async () => gate.resolve());
-    if (kind === "sampling")
+    if (kind === "sampling") {
       h.modelRegistry.complete.mockImplementationOnce(async () => {
         entered.resolve();
         await gate.promise;
@@ -524,12 +539,13 @@ it.each(["sampling", "elicitation"] as const)(
           stopReason: "stop",
         };
       });
-    else
+    } else {
       h.ui.select.mockImplementationOnce(async () => {
         entered.resolve();
         await gate.promise;
         return "Decline";
       });
+    }
     await expect.poll(f.streamReady).toBe(true);
     const request = f.callback(
       kind === "sampling" ? "sampling/createMessage" : "elicitation/create",
@@ -541,8 +557,9 @@ it.each(["sampling", "elicitation"] as const)(
     let cancellationDispatched = false;
     transport.onmessage = (message, extra) => {
       receive?.(message, extra);
-      if ("method" in message && message.method === "notifications/cancelled")
+      if ("method" in message && message.method === "notifications/cancelled") {
         cancellationDispatched = true;
+      }
     };
     request.cancel();
     await expect.poll(() => cancellationDispatched).toBe(true);
@@ -566,18 +583,19 @@ it.each(["sampling", "elicitation"] as const)(
     const entered = deferred();
     const state = await runtime(f.config, h);
     cleanups.push(async () => gate.resolve());
-    if (kind === "sampling")
+    if (kind === "sampling") {
       h.ui.confirm.mockImplementationOnce(async () => {
         entered.resolve();
         await gate.promise;
         return true;
       });
-    else
+    } else {
       h.ui.select.mockImplementationOnce(async () => {
         entered.resolve();
         await gate.promise;
         return "Decline";
       });
+    }
     const controller = new AbortController();
     const call = executeCall(state, "echo", {}, f.name, undefined, controller.signal);
     await entered.promise;
@@ -601,7 +619,9 @@ it.each(["beforeExecute", "onToolCall"] as const)(
     const entered = deferred();
     let armed = false;
     const callback = async () => {
-      if (!armed) return;
+      if (!armed) {
+        return;
+      }
       entered.resolve();
       await gate.promise;
       await writeFile(join(directory, kind + ".persisted"), "SYNTHETIC-CALLBACK-COMPLETED");
@@ -612,7 +632,9 @@ it.each(["beforeExecute", "onToolCall"] as const)(
         ? { beforeExecute: callback }
         : {
             onToolCall: async (event: { phase: string }) => {
-              if (event.phase === "after") await callback();
+              if (event.phase === "after") {
+                await callback();
+              }
             },
           }),
     })(h.pi);
@@ -698,7 +720,9 @@ it.each([false, true])(
   "joins reconnect auth and post-401 persistence (client_credentials=%s)",
   async (noninteractive) => {
     const f = await wire({ oauth: true, inbound: true });
-    if (noninteractive) Object.assign(f.definition.oauth!, { grantType: "client_credentials" });
+    if (noninteractive) {
+      Object.assign(f.definition.oauth!, { grantType: "client_credentials" });
+    }
     const state = await runtime(f.config);
     await expect.poll(f.streamReady).toBe(true);
     const gate = deferred();

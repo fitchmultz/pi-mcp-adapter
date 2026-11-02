@@ -68,8 +68,11 @@ describe("authenticateServer", () => {
         { onAuthorizationUrl: expect.any(Function) },
       );
     } finally {
-      if (originalUrl === undefined) delete process.env.MCP_AUTH_URL;
-      else process.env.MCP_AUTH_URL = originalUrl;
+      if (originalUrl === undefined) {
+        delete process.env.MCP_AUTH_URL;
+      } else {
+        process.env.MCP_AUTH_URL = originalUrl;
+      }
     }
   });
 
@@ -96,8 +99,11 @@ describe("authenticateServer", () => {
         "error",
       );
     } finally {
-      if (originalUrl === undefined) delete process.env.MCP_AUTH_URL;
-      else process.env.MCP_AUTH_URL = originalUrl;
+      if (originalUrl === undefined) {
+        delete process.env.MCP_AUTH_URL;
+      } else {
+        process.env.MCP_AUTH_URL = originalUrl;
+      }
     }
   });
 

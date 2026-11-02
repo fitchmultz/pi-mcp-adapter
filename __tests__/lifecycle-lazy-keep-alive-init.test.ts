@@ -15,8 +15,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../config.ts", () => ({
   loadMcpConfig: vi.fn(() => mocks.config),
   resolveConfiguredOAuthDir: vi.fn((raw, cwd = process.cwd()) => {
-    if (raw === undefined || raw === null) return undefined;
-    if (typeof raw !== "string") throw new Error("settings.oauthDir must be a string");
+    if (raw === undefined || raw === null) {
+      return undefined;
+    }
+    if (typeof raw !== "string") {
+      throw new Error("settings.oauthDir must be a string");
+    }
     const trimmed = raw.trim();
     return trimmed ? join(cwd, trimmed) : undefined;
   }),
@@ -124,7 +128,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const { initializeMcp } = await import("../init.ts");
 
     const state = await initializeMcp(
-      { getFlag: vi.fn(() => undefined) } as any,
+      { getFlag: vi.fn(() => {}) } as any,
       {
         cwd: tempDir,
         hasUI: false,
@@ -152,7 +156,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const { initializeMcp } = await import("../init.ts");
 
     const state = await initializeMcp(
-      { getFlag: vi.fn(() => undefined) } as any,
+      { getFlag: vi.fn(() => {}) } as any,
       {
         cwd: tempDir,
         hasUI: false,
@@ -177,7 +181,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const { initializeMcp } = await import("../init.ts");
 
     const state = await initializeMcp(
-      { getFlag: vi.fn(() => undefined) } as any,
+      { getFlag: vi.fn(() => {}) } as any,
       {
         cwd: tempDir,
         hasUI: false,
@@ -206,7 +210,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const ui = { setStatus: vi.fn(), notify: vi.fn() };
 
     const state = await initializeMcp(
-      { getFlag: vi.fn(() => undefined) } as any,
+      { getFlag: vi.fn(() => {}) } as any,
       {
         cwd: tempDir,
         hasUI: true,
@@ -237,7 +241,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const ui = { setStatus: vi.fn(), notify: vi.fn() };
 
     await initializeMcp(
-      { getFlag: vi.fn(() => undefined) } as any,
+      { getFlag: vi.fn(() => {}) } as any,
       {
         cwd: tempDir,
         hasUI: true,
@@ -265,7 +269,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const ui = { setStatus: vi.fn(), notify: vi.fn() };
 
     const state = await initializeMcp(
-      { getFlag: vi.fn(() => undefined) } as any,
+      { getFlag: vi.fn(() => {}) } as any,
       {
         cwd: tempDir,
         hasUI: true,
@@ -288,7 +292,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const { initializeMcp, updateMetadataCache } = await import("../init.ts");
 
     const state = await initializeMcp(
-      { getFlag: vi.fn(() => undefined) } as any,
+      { getFlag: vi.fn(() => {}) } as any,
       {
         cwd: tempDir,
         hasUI: false,
@@ -325,7 +329,7 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const { initializeMcp } = await import("../init.ts");
 
     const state = await initializeMcp(
-      { getFlag: vi.fn(() => undefined) } as any,
+      { getFlag: vi.fn(() => {}) } as any,
       {
         cwd: tempDir,
         hasUI: false,

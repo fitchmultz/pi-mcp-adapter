@@ -12,19 +12,21 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     this.setRequestHandler = vi.fn();
     this.setNotificationHandler = vi.fn();
     this.connect = vi.fn(async (transport: any) => {
-      if (mocks.connectImpl) return mocks.connectImpl(transport);
+      if (mocks.connectImpl) {
+        return mocks.connectImpl(transport);
+      }
     });
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
-    this.close = vi.fn(async () => undefined);
+    this.close = vi.fn(async () => {});
   }),
   StreamableHTTPClientTransport: vi.fn().mockImplementation(function (this: any) {
-    this.send = vi.fn(async () => undefined);
-    this.close = vi.fn(async () => undefined);
+    this.send = vi.fn(async () => {});
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
   }),
   SSEClientTransport: vi.fn().mockImplementation(function (this: any) {
-    this.close = vi.fn(async () => undefined);
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
   }),
 }));
@@ -33,8 +35,8 @@ vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: any) {
     this.options = options;
     this.stderr = options?.stderr === "pipe" ? new PassThrough() : null;
-    this.send = vi.fn(async () => undefined);
-    this.close = vi.fn(async () => undefined);
+    this.send = vi.fn(async () => {});
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
   }),
 }));

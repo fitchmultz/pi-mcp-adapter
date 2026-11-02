@@ -45,7 +45,7 @@ function createState(
     approvedToolCalls: new Map<string, true>(),
     manager: {
       getConnection: () => connection,
-      getRequestOptions: () => undefined,
+      getRequestOptions: () => {},
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -127,14 +127,14 @@ describe("tool approval", () => {
 
   it("caches only Allow for session decisions", async () => {
     const session = createState({ approveTools: true, decision: "Allow for session" });
-    await ensureToolCallApproved(session.state, "demo", tool, {}, undefined);
-    await ensureToolCallApproved(session.state, "demo", tool, {}, undefined);
+    await ensureToolCallApproved(session.state, "demo", tool, {});
+    await ensureToolCallApproved(session.state, "demo", tool, {});
     expect(session.select).toHaveBeenCalledTimes(1);
     expect(session.state.approvedToolCalls.has("demo\u0000search-records")).toBe(true);
 
     const once = createState({ approveTools: true, decision: "Allow once" });
-    await ensureToolCallApproved(once.state, "demo", tool, {}, undefined);
-    await ensureToolCallApproved(once.state, "demo", tool, {}, undefined);
+    await ensureToolCallApproved(once.state, "demo", tool, {});
+    await ensureToolCallApproved(once.state, "demo", tool, {});
     expect(once.select).toHaveBeenCalledTimes(2);
     expect(once.state.approvedToolCalls.size).toBe(0);
   });

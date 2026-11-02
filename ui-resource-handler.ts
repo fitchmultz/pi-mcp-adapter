@@ -29,10 +29,10 @@ interface ReadUiResourceOptions {
 }
 
 export class UiResourceHandler {
-  private log = logger.child({ component: "UiResourceHandler" });
+  private readonly log = logger.child({ component: "UiResourceHandler" });
 
-  private manager: McpServerManager;
-  private config: McpConfig | undefined;
+  private readonly manager: McpServerManager;
+  private readonly config: McpConfig | undefined;
 
   constructor(manager: McpServerManager, config?: McpConfig) {
     this.manager = manager;
@@ -90,8 +90,9 @@ export class UiResourceHandler {
       if (
         error instanceof UrlElicitationRequiredError ||
         error instanceof SessionRecoveryAuthRequiredError
-      )
+      ) {
         throw error;
+      }
       const message = error instanceof Error ? error.message : String(error);
       log.error("Failed to read resource", error instanceof Error ? error : undefined);
       throw new Error(
@@ -121,7 +122,7 @@ export class UiResourceHandler {
 
     log.debug("Resource loaded successfully", {
       contentLength: html.length,
-      hasCsp: !!contentMeta.csp || !!listMeta.csp,
+      hasCsp: Boolean(contentMeta.csp) || Boolean(listMeta.csp),
     });
 
     return {
@@ -150,9 +151,13 @@ export class UiResourceHandler {
     uri: string,
   ): Record<string, unknown> | undefined {
     const connection = this.manager.getConnection(serverName);
-    if (!connection?.resources?.length) return undefined;
+    if (!connection?.resources?.length) {
+      return undefined;
+    }
     const resource = connection.resources.find((entry) => entry.uri === uri);
-    if (!resource || !resource._meta || typeof resource._meta !== "object") return undefined;
+    if (!resource || !resource._meta || typeof resource._meta !== "object") {
+      return undefined;
+    }
     return resource._meta;
   }
 }
@@ -164,12 +169,16 @@ function selectContent(result: ReadResourceResult, preferredUri: string): Resour
   }
 
   const byUri = contents.find((content) => content.uri === preferredUri);
-  if (byUri) return byUri;
+  if (byUri) {
+    return byUri;
+  }
 
   const byHtmlMime = contents.find(
     (content) => content.mimeType && isHtmlMimeType(content.mimeType),
   );
-  if (byHtmlMime) return byHtmlMime;
+  if (byHtmlMime) {
+    return byHtmlMime;
+  }
 
   const firstContent = contents[0];
   if (!firstContent) {
@@ -209,14 +218,16 @@ const UI_CSP_DOMAIN_FIELDS: readonly (keyof UiResourceCsp)[] = [
 ];
 
 function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMeta {
-  if (!meta || typeof meta !== "object") return {};
+  if (!meta || typeof meta !== "object") {
+    return {};
+  }
 
   const ui = isRecord(meta.ui) ? meta.ui : undefined;
   const out: UiResourceMeta = {};
   const openAiCsp = hasOwnProperty(meta, "openai/widgetCSP")
     ? normalizeOpenAiWidgetCsp(meta["openai/widgetCSP"])
     : undefined;
-  const hasStandardCsp = !!ui && hasOwnProperty(ui, "csp");
+  const hasStandardCsp = ui !== undefined && hasOwnProperty(ui, "csp");
   const standardCspValue = hasStandardCsp ? ui.csp : undefined;
 
   if (hasStandardCsp && !isRecord(standardCspValue)) {
@@ -240,7 +251,7 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
   }
 
   if (ui && isRecord(ui.permissions)) {
-    out.permissions = ui.permissions as UiResourcePermissions;
+    out.permissions = ui.permissions;
   }
   if (ui && typeof ui.domain === "string") {
     out.domain = ui.domain;
@@ -253,23 +264,31 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
 }
 
 function normalizeUiResourceCsp(value: unknown): UiResourceCsp {
-  if (!isRecord(value)) return {};
+  if (!isRecord(value)) {
+    return {};
+  }
 
   const csp: UiResourceCsp = {};
   for (const field of UI_CSP_DOMAIN_FIELDS) {
     const domains = copyStringArray(value[field]);
-    if (domains) csp[field] = domains;
+    if (domains) {
+      csp[field] = domains;
+    }
   }
   return csp;
 }
 
 function normalizeOpenAiWidgetCsp(value: unknown): UiResourceCsp {
-  if (!isRecord(value)) return {};
+  if (!isRecord(value)) {
+    return {};
+  }
 
   const csp: UiResourceCsp = {};
   for (const [sourceField, targetField] of OPENAI_CSP_FIELD_MAPPINGS) {
     const domains = copyStringArray(value[sourceField]);
-    if (domains) csp[targetField] = domains;
+    if (domains) {
+      csp[targetField] = domains;
+    }
   }
   return csp;
 }

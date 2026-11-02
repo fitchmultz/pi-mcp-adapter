@@ -105,11 +105,13 @@ const scriptedUi = {
   select: async (_title: string, options: string[]) => {
     for (const preferred of ["Use default", "Submit", "Continue"]) {
       const match = options.find((option) => option === preferred);
-      if (match) return match;
+      if (match) {
+        return match;
+      }
     }
     return options[0];
   },
-  input: async () => undefined,
+  input: async () => {},
   confirm: async () => true,
   notify: () => {},
 } as unknown as ExtensionUIContext;
@@ -117,7 +119,9 @@ const scriptedUi = {
 const SERVER_NAME = "conformance";
 const MAX_AUTH_ROUND_TRIPS = 3;
 const debugLog = (message: string): void => {
-  if (process.env.CONFORMANCE_DRIVER_DEBUG) console.error(`[driver] ${message}`);
+  if (process.env.CONFORMANCE_DRIVER_DEBUG) {
+    console.error(`[driver] ${message}`);
+  }
 };
 
 // Conformance 0.1.16 exercises only the legacy protocol profile.
@@ -129,21 +133,23 @@ if (context.client_id) {
   };
 }
 if (scenario.startsWith("auth/client-credentials")) {
-  definition.oauth = { ...(definition.oauth ?? {}), grantType: "client_credentials" };
+  definition.oauth = { ...definition.oauth, grantType: "client_credentials" };
 }
 if (scenario === "auth/client-credentials-jwt") {
-  if (!context.private_key_pem || !context.signing_algorithm)
+  if (!context.private_key_pem || !context.signing_algorithm) {
     throw new Error("JWT fixture credentials are missing");
+  }
   definition.oauth = {
-    ...(definition.oauth || {}),
+    ...definition.oauth,
     privateKeyJwt: { privateKey: context.private_key_pem, algorithm: context.signing_algorithm },
   };
 }
 if (scenario === "auth/cross-app-access-complete-flow") {
-  if (!context.idp_issuer || !context.idp_client_id || !context.idp_id_token)
+  if (!context.idp_issuer || !context.idp_client_id || !context.idp_id_token) {
     throw new Error("CAA fixture credentials are missing");
+  }
   definition.oauth = {
-    ...(definition.oauth || {}),
+    ...definition.oauth,
     crossAppAccess: {
       idpUrl: context.idp_issuer,
       clientId: context.idp_client_id,
@@ -159,7 +165,7 @@ if (scenario === "auth/basic-cimd") {
 // This legacy fixture advertises an origin AS but returns a path-scoped issuer.
 // Exercise the explicit compatibility option, not a relaxed runtime default.
 if (scenario === "auth/2025-03-26-oauth-metadata-backcompat") {
-  definition.oauth = { ...(definition.oauth || {}), skipIssuerMetadataValidation: true };
+  definition.oauth = { ...definition.oauth, skipIssuerMetadataValidation: true };
 }
 
 const oauthRuntime = await initializeOAuth();
@@ -179,7 +185,9 @@ async function runAuthRoundTrip(): Promise<void> {
     runtime: oauthRuntime,
   });
   debugLog(`authorizationUrl=${authorizationUrl || "(none)"}`);
-  if (!authorizationUrl) return; // e.g. client_credentials — already authorized
+  if (!authorizationUrl) {
+    return;
+  } // e.g. client_credentials — already authorized
 
   const authResponse = await fetch(authorizationUrl, { redirect: "manual" });
   const location = authResponse.headers.get("location");
@@ -211,7 +219,9 @@ async function connectWithAuth() {
     try {
       const connection = await manager.connect(SERVER_NAME, definition);
       debugLog(`connect attempt ${attempt}: status=${connection.status}`);
-      if (connection.status === "connected") return connection;
+      if (connection.status === "connected") {
+        return connection;
+      }
       if (connection.status !== "needs-auth") {
         throw new Error(`Unexpected connection status: ${connection.status}`);
       }
@@ -226,10 +236,14 @@ async function connectWithAuth() {
       // error seen on 2025-03-26 backcompat servers) is handled the way the
       // Pi host would: by offering manual authentication. If the auth flow
       // itself cannot proceed either, surface the original connect error.
-      if (!(error instanceof UnauthorizedError) && !scenario.startsWith("auth/")) throw error;
+      if (!(error instanceof UnauthorizedError) && !scenario.startsWith("auth/")) {
+        throw error;
+      }
       needsAuth = true;
     }
-    if (!needsAuth || attempt === MAX_AUTH_ROUND_TRIPS) break;
+    if (!needsAuth || attempt === MAX_AUTH_ROUND_TRIPS) {
+      break;
+    }
     await manager.close(SERVER_NAME);
     await runAuthRoundTrip();
   }
@@ -237,7 +251,9 @@ async function connectWithAuth() {
 }
 
 function isAuthFailure(error: unknown): boolean {
-  if (error instanceof UnauthorizedError || error instanceof InsufficientScopeError) return true;
+  if (error instanceof UnauthorizedError || error instanceof InsufficientScopeError) {
+    return true;
+  }
   const message = error instanceof Error ? error.message : String(error);
   return /unauthorized|re-authentication required|insufficient_scope|invalid_token|\b40[13]\b/i.test(
     message,
@@ -261,7 +277,9 @@ async function callTool(toolName: string, args: Record<string, unknown>) {
     } catch (error) {
       // Mid-session auth failure (e.g. scope step-up): re-run the OAuth
       // flow through the adapter and retry, capped like a real host would.
-      if (attempt >= MAX_AUTH_ROUND_TRIPS - 1 || !isAuthFailure(error)) throw error;
+      if (attempt >= MAX_AUTH_ROUND_TRIPS - 1 || !isAuthFailure(error)) {
+        throw error;
+      }
       await manager.close(SERVER_NAME);
       await runAuthRoundTrip();
     }

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SdkError, SdkHttpError, SdkErrorCode } from "@modelcontextprotocol/client";
-import { ProtocolError } from "@modelcontextprotocol/client";
+import { SdkError, SdkHttpError, SdkErrorCode, ProtocolError } from "@modelcontextprotocol/client";
 import {
   SessionRecoveryAuthRequiredError,
   isTerminatedSession,

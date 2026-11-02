@@ -5,7 +5,7 @@ import { join } from "node:path";
 const mocks = vi.hoisted(() => ({
   clients: [] as any[],
   transports: [] as any[],
-  open: vi.fn(async () => undefined),
+  open: vi.fn(async () => {}),
 }));
 
 vi.mock("open", () => ({ default: mocks.open }));
@@ -17,11 +17,11 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     this.options = options;
     this.setRequestHandler = vi.fn();
     this.setNotificationHandler = vi.fn();
-    this.connect = vi.fn(async () => undefined);
+    this.connect = vi.fn(async () => {});
     this.getServerCapabilities = vi.fn(() => ({ tools: {}, resources: {} }));
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
-    this.close = vi.fn(async () => undefined);
+    this.close = vi.fn(async () => {});
     mocks.clients.push(this);
   }),
   StreamableHTTPClientTransport: vi.fn(),
@@ -31,8 +31,8 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
 vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
-    this.send = vi.fn(async () => undefined);
-    this.close = vi.fn(async () => undefined);
+    this.send = vi.fn(async () => {});
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
   }),
 }));
@@ -64,8 +64,8 @@ describe("McpServerManager sampling", () => {
     manager.setSamplingConfig({
       autoApprove: true,
       modelRegistry: {} as any,
-      getCurrentModel: () => undefined,
-      getSignal: () => undefined,
+      getCurrentModel: () => {},
+      getSignal: () => {},
     });
 
     await manager.connect("demo", { command: "node", args: ["server.js"] });
@@ -181,8 +181,8 @@ describe("McpServerManager sampling", () => {
     manager.setSamplingConfig({
       autoApprove: true,
       modelRegistry: {} as any,
-      getCurrentModel: () => undefined,
-      getSignal: () => undefined,
+      getCurrentModel: () => {},
+      getSignal: () => {},
     });
     manager.setElicitationConfig({
       allowUrl: true,

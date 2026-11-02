@@ -25,8 +25,12 @@ export function isToolCallApprovalRequired(
       ? definition.approveTools
       : config.settings?.approveTools;
 
-  if (approval === true) return true;
-  if (!Array.isArray(approval) || approval.length === 0) return false;
+  if (approval === true) {
+    return true;
+  }
+  if (!Array.isArray(approval) || approval.length === 0) {
+    return false;
+  }
 
   const prefix = resolveToolPrefix(definition, config.settings?.toolPrefix);
   return matchesToolPattern(

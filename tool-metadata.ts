@@ -1,6 +1,15 @@
 import type { McpExtensionState } from "./state.ts";
-import type { ToolMetadata, McpTool, McpResource, ServerEntry, ToolPrefix } from "./types.ts";
-import { formatToolName, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
+import {
+  type ToolMetadata,
+  type McpTool,
+  type McpResource,
+  type ServerEntry,
+  type ToolPrefix,
+  formatToolName,
+  isServerDisabled,
+  isToolAllowed,
+  resolveToolPrefix,
+} from "./types.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 
@@ -13,7 +22,9 @@ export function buildToolMetadata(
 ): { metadata: ToolMetadata[]; failedTools: string[] } {
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
-  if (isServerDisabled(definition)) return { metadata, failedTools };
+  if (isServerDisabled(definition)) {
+    return { metadata, failedTools };
+  }
   const effectivePrefix = resolveToolPrefix(definition, prefix);
 
   for (const tool of tools) {
@@ -44,9 +55,11 @@ export function buildToolMetadata(
       // MCP Apps metadata must also be readable from the cache before loading the SDK.
       const uri = (tool._meta?.ui as { resourceUri?: unknown } | undefined)?.resourceUri;
       const resourceUri = uri === undefined ? tool._meta?.["ui/resourceUri"] : uri;
-      if (typeof resourceUri === "string" && resourceUri.startsWith("ui://"))
+      if (typeof resourceUri === "string" && resourceUri.startsWith("ui://")) {
         uiResourceUri = resourceUri;
-      else if (resourceUri !== undefined) failedTools.push(tool.name);
+      } else if (resourceUri !== undefined) {
+        failedTools.push(tool.name);
+      }
     } catch {
       failedTools.push(tool.name);
     }
@@ -64,7 +77,9 @@ export function buildToolMetadata(
 
   if (definition.exposeResources !== false) {
     for (const resource of resources) {
-      if (!resource?.name || !resource?.uri) continue;
+      if (!resource?.name || !resource?.uri) {
+        continue;
+      }
       const baseName = `read_${resourceNameToToolName(resource.name)}`;
       if (
         !isToolAllowed(
@@ -128,9 +143,13 @@ export function findToolByName(
   metadata: ToolMetadata[] | undefined,
   toolName: string,
 ): ToolMetadata | undefined {
-  if (!metadata) return undefined;
+  if (!metadata) {
+    return undefined;
+  }
   const exact = metadata.filter((m) => m.name === toolName);
-  if (exact.length > 0) return exact.length === 1 ? exact[0] : undefined;
+  if (exact.length > 0) {
+    return exact.length === 1 ? exact[0] : undefined;
+  }
   const normalized = toolName.replace(/-/g, "_");
   const matches = metadata.filter((m) => m.name.replace(/-/g, "_") === normalized);
   return matches.length === 1 ? matches[0] : undefined;
@@ -191,8 +210,12 @@ function formatProperty(
   const s = schema as Record<string, unknown>;
   const parts = [`${indent}${name}`];
   const typeStr = formatType(s);
-  if (typeStr) parts.push(`(${typeStr})`);
-  if (required) parts.push("*required*");
+  if (typeStr) {
+    parts.push(`(${typeStr})`);
+  }
+  if (required) {
+    parts.push("*required*");
+  }
   appendSchemaAnnotations(parts, s);
 
   return [parts.join(" "), ...formatNestedSchema(s, `${indent}  `)];

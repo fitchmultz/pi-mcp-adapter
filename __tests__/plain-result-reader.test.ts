@@ -32,7 +32,9 @@ vi.mock("node:fs", async (importOriginal) => {
 const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 async function readPrototype(ref: string) {
   const file = await open(ref);

@@ -31,6 +31,12 @@ const env = {
   PI_TELEMETRY: "0",
   PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory",
 };
+/**
+ * @param {string} command
+ * @param {string[]} args
+ * @param {string} cwd
+ * @returns {string}
+ */
 function run(command, args, cwd) {
   const result = spawnSync(command, args, {
     cwd,
@@ -76,12 +82,13 @@ try {
     ]) {
       const target = join(consumer, "node_modules", name);
       mkdirSync(dirname(target), { recursive: true });
-      if (!existsSync(target))
-        symlinkSync(
-          dirname(findPackageJSON(name, pathToFileURL(hostIndex).href)),
-          target,
-          "junction",
-        );
+      if (!existsSync(target)) {
+        const packageDir = findPackageJSON(name, pathToFileURL(hostIndex).href);
+        if (packageDir === undefined) {
+          throw new Error(`compat-package-smoke: ${name} is not installed in the host graph`);
+        }
+        symlinkSync(dirname(packageDir), target, "junction");
+      }
     }
   }
   for (const file of [
@@ -90,8 +97,9 @@ try {
     "dist/mcp-script-worker.mjs",
     "dist/mcp-keyring-helper.cjs",
     "dist/app-bridge.bundle.js",
-  ])
+  ]) {
     assert.ok(readFileSync(join(packageRoot, file)).length, file);
+  }
   assert.ok(readFileSync(join(packageRoot, "skills/mcp-scripting/SKILL.md")).length);
   Object.assign(process.env, env);
   const sdk = await import(pathToFileURL(hostIndex).href);
@@ -129,19 +137,26 @@ try {
     sessionManager: sdk.SessionManager.create(root, join(root, "sessions")),
     noTools: "builtin",
   }));
+  /** @type {unknown[]} */
   const errors = [];
-  await session.bindExtensions({ mode: "print", onError: (error) => errors.push(error) });
-  for (const name of ["mcp", "mcp_script"])
+  await session.bindExtensions({
+    mode: "print",
+    onError: (/** @type {unknown} */ error) => errors.push(error),
+  });
+  for (const name of ["mcp", "mcp_script"]) {
     assert.ok(
-      session.getAllTools().some((tool) => tool.name === name),
+      session.getAllTools().some((/** @type {{ name: string }} */ tool) => tool.name === name),
       name,
     );
+  }
   assert.deepEqual(
     session.getActiveToolNames(),
     ["mcp_search"],
     "registered gateways must not be active by default",
   );
-  const search = session.agent.state.tools.find((tool) => tool.name === "mcp_search");
+  const search = session.agent.state.tools.find(
+    (/** @type {{ name: string }} */ tool) => tool.name === "mcp_search",
+  );
   const loaded = await search.execute("load-gateways", { enable: ["gateway", "script"] });
   assert.deepEqual(loaded.details.loaded, [{ name: "mcp" }, { name: "mcp_script" }]);
   assert.deepEqual(session.getActiveToolNames().sort(), ["mcp", "mcp_script", "mcp_search"]);
@@ -156,11 +171,12 @@ try {
     resourceLoader.getExtensions().extensions[0]?.resolvedPath,
     join(packageRoot, "dist/index.js"),
   );
-  for (const name of ["mcp", "mcp_script"])
+  for (const name of ["mcp", "mcp_script"]) {
     assert.ok(
-      session.getAllTools().some((tool) => tool.name === name),
+      session.getAllTools().some((/** @type {{ name: string }} */ tool) => tool.name === name),
       `after reload: ${name}`,
     );
+  }
   const marker = join(root, "cli.json");
   const observer = join(root, "observer.ts");
   writeFileSync(
@@ -203,8 +219,9 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
     assert.ok(!observed.activeTools.includes(name), `CLI tool ${name} must start inactive`);
   }
   assert.ok(observed.activeTools.includes("mcp_search"));
-  for (const name of ["mcp", "mcp-auth"])
+  for (const name of ["mcp", "mcp-auth"]) {
     assert.ok(observed.commands.includes(name), `CLI command ${name}`);
+  }
   await verifyNativeTools(packageRoot);
   console.log(
     `[compat-package] ${process.argv[2] ? "supplied consumer" : "npm install"}, native SDK reload, and bundled CLI passed`,

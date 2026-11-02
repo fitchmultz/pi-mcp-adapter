@@ -9,7 +9,9 @@ import { gatewayParameters } from "../gateway-arguments.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  for (const cleanup of cleanups.splice(0).reverse()) {
+    await cleanup();
+  }
 });
 
 async function harness(
@@ -33,8 +35,11 @@ async function harness(
   delete process.env.MCP_DIRECT_TOOLS;
   cleanups.push(async () => {
     for (const [key, value] of Object.entries(env)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
     await rm(root, { recursive: true, force: true });
   });
@@ -163,7 +168,9 @@ describe("lazy MCP gateways through real Pi SDK", () => {
         { name: "mcp_search", arguments: {} },
       ],
       (tools, stage) => {
-        if (stage === 0) search = tools.find((tool) => tool.name === "mcp_search");
+        if (stage === 0) {
+          search = tools.find((tool) => tool.name === "mcp_search");
+        }
       },
     );
     // Providers such as xAI require an explicit object type on each root alternative.
@@ -200,13 +207,15 @@ describe("lazy MCP gateways through real Pi SDK", () => {
       (tools, stage) => {
         expect(tools.some((tool) => tool.name === "mcp_script")).toBe(stage >= 1);
         expect(tools.some((tool) => tool.name === "mcp")).toBe(stage >= 3);
-        if (stage >= 1)
+        if (stage >= 1) {
           expect(tools.find((tool) => tool.name === "mcp_script")?.parameters).toMatchObject({
             required: ["code"],
             properties: { code: { type: "string" }, timeoutMs: { minimum: 1 } },
           });
-        if (stage >= 3)
+        }
+        if (stage >= 3) {
           expect(tools.find((tool) => tool.name === "mcp")?.parameters).toEqual(gatewayParameters);
+        }
       },
     );
     expect(

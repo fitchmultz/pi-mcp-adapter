@@ -4,11 +4,15 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import type { DirectToolSpec, McpAdapterOptions, McpConfig } from "./types.ts";
+import {
+  type DirectToolSpec,
+  type McpAdapterOptions,
+  type McpConfig,
+  isServerDisabled,
+} from "./types.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { parseDirectToolSelectors } from "./metadata-cache.ts";
 export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
-import { isServerDisabled } from "./types.ts";
 import { nativeMcpResult } from "./tool-registrar.ts";
 
 export function directToolSelection(
@@ -18,7 +22,9 @@ export function directToolSelection(
 ): true | string[] | false {
   if (envOverride) {
     const selection = parseDirectToolSelectors(envOverride);
-    if (selection.servers.has(serverName)) return true;
+    if (selection.servers.has(serverName)) {
+      return true;
+    }
     return selection.tools.has(serverName) ? [...selection.tools.get(serverName)!] : false;
   }
   return config.mcpServers[serverName]?.directTools ?? config.settings?.directTools ?? false;
@@ -67,7 +73,7 @@ export function createDirectToolExecutor(
             content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
             details: { error: "init_failed", message },
           },
-          !!spec.outputSchema,
+          Boolean(spec.outputSchema),
         );
       }
     }
@@ -77,7 +83,7 @@ export function createDirectToolExecutor(
           content: [{ type: "text" as const, text: "MCP not initialized" }],
           details: { error: "not_initialized" },
         },
-        !!spec.outputSchema,
+        Boolean(spec.outputSchema),
       );
     }
 
@@ -97,6 +103,6 @@ export function createDirectToolExecutor(
       { exactOriginalName: true, ...(spec.resourceUri ? { resourceUri: spec.resourceUri } : {}) },
     );
     const { mode: _mode, ...details } = result.details;
-    return nativeMcpResult({ ...result, details }, !!spec.outputSchema);
+    return nativeMcpResult({ ...result, details }, Boolean(spec.outputSchema));
   };
 }

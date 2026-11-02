@@ -159,7 +159,9 @@ describe("MCP execution redesign", () => {
       )) as ReadSuccess;
       expect(page.details.error).toBeUndefined();
       joined += page.content[0]!.text;
-      if (page.details.nextOffset === null) break;
+      if (page.details.nextOffset === null) {
+        break;
+      }
       expect(page.details.nextOffset).toBeGreaterThan(offset);
       offset = page.details.nextOffset!;
     }

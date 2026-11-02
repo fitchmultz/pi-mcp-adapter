@@ -22,8 +22,11 @@ import {
   type McpOAuthConfig,
 } from "./mcp-oauth-provider.ts";
 import { getAuthForUrl, saveAuthEntry } from "./mcp-auth.ts";
-import { UnauthorizedError } from "@modelcontextprotocol/client";
-import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/client";
+import {
+  UnauthorizedError,
+  type OAuthClientInformationFull,
+  type OAuthTokens,
+} from "@modelcontextprotocol/client";
 
 describe("McpOAuthProvider", () => {
   const serverName = "test-server";
@@ -327,7 +330,7 @@ describe("McpOAuthProvider", () => {
       await provider.saveClientInformation({
         client_id: "fallback-client",
         client_secret: "fallback-secret",
-      } as OAuthClientInformationFull);
+      });
 
       assert.deepStrictEqual(
         getAuthForUrl("redirect-fallback", serverUrl)?.clientInfo?.redirectUris,
@@ -394,8 +397,8 @@ describe("McpOAuthProvider", () => {
 
       const stored = await provider.tokens();
       assert.ok(stored?.expires_in !== undefined);
-      assert.ok(stored!.expires_in! > 0);
-      assert.ok(stored!.expires_in! <= 3600);
+      assert.ok(stored.expires_in > 0);
+      assert.ok(stored.expires_in <= 3600);
     });
 
     it("should return undefined when URL doesn't match", async () => {
@@ -453,8 +456,7 @@ describe("McpOAuthProvider", () => {
       await assert.rejects(
         async () => provider.redirectToAuthorization(new URL("https://example.com/auth")),
         (err: unknown) =>
-          err instanceof UnauthorizedError &&
-          /Re-authentication required/.test((err as Error).message),
+          err instanceof UnauthorizedError && /Re-authentication required/.test(err.message),
       );
     });
 
@@ -482,8 +484,7 @@ describe("McpOAuthProvider", () => {
       await assert.rejects(
         async () => provider.redirectToAuthorization(new URL("https://example.com/auth")),
         (err: unknown) =>
-          err instanceof UnauthorizedError &&
-          /Re-authentication required/.test((err as Error).message),
+          err instanceof UnauthorizedError && /Re-authentication required/.test(err.message),
       );
       assert.strictEqual(redirected, false);
     });
@@ -573,8 +574,7 @@ describe("McpOAuthProvider", () => {
       await assert.rejects(
         async () => provider.state(),
         (err: unknown) =>
-          err instanceof UnauthorizedError &&
-          /Re-authentication required/.test((err as Error).message),
+          err instanceof UnauthorizedError && /Re-authentication required/.test(err.message),
       );
     });
 
@@ -599,8 +599,7 @@ describe("McpOAuthProvider", () => {
       await assert.rejects(
         async () => provider.state(),
         (err: unknown) =>
-          err instanceof UnauthorizedError &&
-          /Re-authentication required/.test((err as Error).message),
+          err instanceof UnauthorizedError && /Re-authentication required/.test(err.message),
       );
     });
   });

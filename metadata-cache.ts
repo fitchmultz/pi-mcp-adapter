@@ -3,22 +3,20 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSyn
 import { dirname } from "node:path";
 import { getAdapterPath } from "./agent-dir.ts";
 import { createHash } from "node:crypto";
-import type {
-  CachedPrompt,
-  CachedResource,
-  CachedTool,
-  McpConfig,
-  McpTool,
-  McpResource,
-  McpPrompt,
-  McpPromptArgument,
-  MetadataCache,
-  ServerCacheEntry,
-  ServerEntry,
-  ToolMetadata,
-  PromptMetadata,
-} from "./types.ts";
 import {
+  type CachedPrompt,
+  type CachedResource,
+  type CachedTool,
+  type McpConfig,
+  type McpTool,
+  type McpResource,
+  type McpPrompt,
+  type McpPromptArgument,
+  type MetadataCache,
+  type ServerCacheEntry,
+  type ServerEntry,
+  type ToolMetadata,
+  type PromptMetadata,
   formatPromptCommandName,
   isServerDisabled,
   resolveToolPrefix,
@@ -45,7 +43,9 @@ function cacheRevision(path: string): string {
 
 function freezeMetadata<T>(value: T): T {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const child of Object.values(value)) freezeMetadata(child);
+    for (const child of Object.values(value)) {
+      freezeMetadata(child);
+    }
     Object.freeze(value);
   }
   return value;
@@ -64,11 +64,15 @@ export function getMetadataCachePath(): string {
 }
 
 export function loadMetadataCache(enabled = true): MetadataCache | null {
-  if (!enabled) return null;
+  if (!enabled) {
+    return null;
+  }
   const cachePath = getMetadataCachePath();
   try {
     const revision = cacheRevision(cachePath);
-    if (snapshot?.path === cachePath && snapshot.revision === revision) return snapshot.cache;
+    if (snapshot?.path === cachePath && snapshot.revision === revision) {
+      return snapshot.cache;
+    }
     const raw = JSON.parse(readFileSync(cachePath, "utf-8"));
     const cache =
       raw &&
@@ -95,12 +99,14 @@ export function saveMetadataCache(
   enabled = true,
   selectedServers: Iterable<string> = [],
 ): void {
-  if (!enabled) return;
+  if (!enabled) {
+    return;
+  }
   const cachePath = getMetadataCachePath();
   const dir = dirname(cachePath);
   mkdirSync(dir, { recursive: true });
 
-  let merged: MetadataCache = { version: CACHE_VERSION, servers: {} };
+  const merged: MetadataCache = { version: CACHE_VERSION, servers: {} };
   try {
     if (existsSync(cachePath)) {
       const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as MetadataCache;
@@ -169,14 +175,22 @@ export function isServerCacheValid(
   } catch {
     return false;
   }
-  if (!isCacheEntry(entry) || entry.configHash !== configHash) return false;
-  if (entry.cachedAt > Date.now()) return false;
-  if (maxAgeMs > 0 && Date.now() - entry.cachedAt > maxAgeMs) return false;
+  if (!isCacheEntry(entry) || entry.configHash !== configHash) {
+    return false;
+  }
+  if (entry.cachedAt > Date.now()) {
+    return false;
+  }
+  if (maxAgeMs > 0 && Date.now() - entry.cachedAt > maxAgeMs) {
+    return false;
+  }
   return true;
 }
 
 function isCacheEntry(entry: unknown): entry is ServerCacheEntry {
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return false;
+  }
   const value = entry as Partial<ServerCacheEntry>;
   return (
     typeof value.configHash === "string" &&
@@ -226,14 +240,18 @@ export function getMissingConfiguredDirectToolServers(
   const envSelection = envOverride ? parseDirectToolSelectors(envOverride) : null;
 
   for (const [serverName, definition] of Object.entries(config.mcpServers)) {
-    if (isServerDisabled(definition)) continue;
+    if (isServerDisabled(definition)) {
+      continue;
+    }
     const hasDirectTools = envSelection
       ? envSelection.servers.has(serverName) || envSelection.tools.has(serverName)
       : definition.directTools !== undefined
-        ? !!definition.directTools
-        : !!globalDirect;
+        ? Boolean(definition.directTools)
+        : Boolean(globalDirect);
 
-    if (!hasDirectTools) continue;
+    if (!hasDirectTools) {
+      continue;
+    }
 
     const serverCache = cache?.servers?.[serverName];
     if (!serverCache || !isServerCacheValid(serverCache, definition)) {
@@ -263,7 +281,9 @@ export function reconstructToolMetadata(
     definition.disabled,
   ]);
   const previous = toolProjections.get(entry);
-  if (Object.isFrozen(entry) && previous?.key === key) return previous.metadata;
+  if (Object.isFrozen(entry) && previous?.key === key) {
+    return previous.metadata;
+  }
   const metadata = buildToolMetadata(
     (entry.tools ?? []).filter((tool) => tool?.name).map(restoreCachedTool),
     entry.resources ?? [],
@@ -271,8 +291,9 @@ export function reconstructToolMetadata(
     serverName,
     prefix,
   ).metadata;
-  if (Object.isFrozen(entry))
+  if (Object.isFrozen(entry)) {
     toolProjections.set(entry, { key, metadata: freezeMetadata(metadata) });
+  }
   return metadata;
 }
 

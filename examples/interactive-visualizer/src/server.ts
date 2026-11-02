@@ -153,7 +153,7 @@ function buildAdventureFrame(tiers: number): string {
 
   const allNodes: StoryNode[] = [];
   for (let t = 0; t < tiers && t < STORY.length; t++) {
-    allNodes.push(...STORY[t]);
+    allNodes.push(...(STORY[t] ?? []));
   }
   const byId = new Map(allNodes.map((n) => [n.id, n]));
 
@@ -164,9 +164,13 @@ function buildAdventureFrame(tiers: number): string {
   let svg = "";
 
   for (const node of allNodes) {
-    if (!node.parentId) continue;
+    if (!node.parentId) {
+      continue;
+    }
     const parent = byId.get(node.parentId);
-    if (!parent) continue;
+    if (!parent) {
+      continue;
+    }
     const x1 = nodeX(parent),
       y1 = nodeY(parent) + nodeH;
     const x2 = nodeX(node),

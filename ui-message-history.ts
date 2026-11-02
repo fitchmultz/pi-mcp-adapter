@@ -17,10 +17,14 @@ export function createUiMessageHistory(outputDirectory?: string) {
     messages,
     append(category: Category, value: Message): string | undefined {
       try {
-        if (failed) throw new Error(messages.historyError);
+        if (failed) {
+          throw new Error(messages.historyError);
+        }
         if (!messages.historyRef) {
           const root = outputDirectory === undefined ? tmpdir() : resolve(outputDirectory);
-          if (outputDirectory !== undefined) mkdirSync(root, { recursive: true, mode: 0o700 });
+          if (outputDirectory !== undefined) {
+            mkdirSync(root, { recursive: true, mode: 0o700 });
+          }
           const dir = mkdtempSync(join(root, "pi-mcp-output-"));
           const ref = join(dir, `output-${randomBytes(4).toString("hex")}.txt`);
           writeFileSync(ref, "", { mode: 0o600 });
@@ -37,9 +41,11 @@ export function createUiMessageHistory(outputDirectory?: string) {
       } catch (error) {
         failed = true;
         messages.historyError = error instanceof Error ? error.message : String(error);
-        if (category === "intents")
+        if (category === "intents") {
           messages.intents.push(value as UiSessionMessages["intents"][number]);
-        else messages[category].push(value as string);
+        } else {
+          messages[category].push(value as string);
+        }
         return `UI history could not be saved; messages remain in memory for recovery: ${messages.historyError}. Unsaved messages will be lost on reload or process exit.`;
       }
     },
@@ -66,7 +72,9 @@ export async function* uiMessages(
       for await (const line of lines) {
         const record = JSON.parse(line);
         count++;
-        if (record.category === category) yield record.value;
+        if (record.category === category) {
+          yield record.value;
+        }
       }
       if (
         bytes !== messages.historyBytes ||
@@ -79,7 +87,9 @@ export async function* uiMessages(
       input.destroy();
     }
   }
-  for (const value of messages[category]) yield value;
+  for (const value of messages[category]) {
+    yield value;
+  }
 }
 
 export async function materializeUiMessages(
@@ -91,10 +101,14 @@ export async function materializeUiMessages(
     notifications: [],
     contexts: messages.contexts,
   };
-  for await (const value of uiMessages(messages, "prompts")) result.prompts.push(value as string);
-  for await (const value of uiMessages(messages, "intents"))
+  for await (const value of uiMessages(messages, "prompts")) {
+    result.prompts.push(value as string);
+  }
+  for await (const value of uiMessages(messages, "intents")) {
     result.intents.push(value as UiSessionMessages["intents"][number]);
-  for await (const value of uiMessages(messages, "notifications"))
+  }
+  for await (const value of uiMessages(messages, "notifications")) {
     result.notifications.push(value as string);
+  }
   return result;
 }

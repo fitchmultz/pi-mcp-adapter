@@ -28,7 +28,9 @@ import { SERVER_STREAM_RESULT_PATCH_METHOD } from "../ui-stream-types.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.reverse()) await cleanup();
+  for (const cleanup of cleanups.reverse()) {
+    await cleanup();
+  }
   cleanups.length = 0;
 });
 
@@ -47,8 +49,9 @@ const modern = {
   _meta: { "io.modelcontextprotocol/serverInfo": { name: "local-wire", version: "1" } },
 };
 function result({ res, body }: Exchange, payload: unknown, headers = {}) {
-  if (body.method?.endsWith("/list"))
+  if (body.method?.endsWith("/list")) {
     payload = { ttlMs: 60_000, cacheScope: "private", ...(payload as object) };
+  }
   res
     .writeHead(200, { "content-type": "application/json", ...headers })
     .end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: payload }));
@@ -65,11 +68,15 @@ async function fixture(
   let sessions = 0;
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk);
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
     const data = Buffer.concat(chunks).toString("utf8");
     const exchange = { req, res, body: data ? JSON.parse(data) : {} };
     requests.push(exchange);
-    if (await handler(exchange)) return;
+    if (await handler(exchange)) {
+      return;
+    }
     const { body } = exchange;
     if (req.method === "GET") {
       res.writeHead(405).end();
@@ -79,9 +86,12 @@ async function fixture(
       res.writeHead(200).end();
       return;
     }
-    if (body.method === "server/discover") return result(exchange, modern);
-    if (body.method === "initialize")
-      return result(
+    if (body.method === "server/discover") {
+      result(exchange, modern);
+      return;
+    }
+    if (body.method === "initialize") {
+      result(
         exchange,
         {
           protocolVersion: "2025-11-25",
@@ -90,23 +100,31 @@ async function fixture(
         },
         { "mcp-session-id": `session-${++sessions}` },
       );
+      return;
+    }
     if (body.method === "notifications/initialized") {
       res.writeHead(202).end();
       return;
     }
-    if (body.method === "tools/list")
-      return result(exchange, { resultType: "complete", tools: [tool] });
-    if (body.method === "tools/call")
-      return result(exchange, {
+    if (body.method === "tools/list") {
+      result(exchange, { resultType: "complete", tools: [tool] });
+      return;
+    }
+    if (body.method === "tools/call") {
+      result(exchange, {
         resultType: "complete",
         content: [{ type: "text", text: "ok" }],
         structuredContent: body.params?.arguments ?? {},
       });
+      return;
+    }
     rpcError(exchange, -32601);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Fixture did not bind");
+  if (!address || typeof address === "string") {
+    throw new Error("Fixture did not bind");
+  }
   cleanups.push(async () => {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) =>
@@ -178,7 +196,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("uses native discovery, wire metadata and nested dynamic parameter headers without legacy traffic", async () => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/list") return;
+      if (e.body.method !== "tools/list") {
+        return;
+      }
       result(e, {
         resultType: "complete",
         tools: [
@@ -247,6 +267,7 @@ describe("published SDK v2 over real local HTTP", () => {
         rpcError(e, -32020, 400);
         return true;
       }
+      return undefined;
     });
     const { connection } = await f.connect({ retryOnTransportFailure: true });
     await connection.client.callTool({ name: "echo", arguments: { region: "west" } });
@@ -260,7 +281,9 @@ describe("published SDK v2 over real local HTTP", () => {
     "preserves authenticated POST bodies across same-origin HTTP%s redirects",
     async (status) => {
       const f = await fixture((e) => {
-        if (e.req.url !== "/mcp") return;
+        if (e.req.url !== "/mcp") {
+          return;
+        }
         e.res.writeHead(status, { location: "/final" }).end();
         return true;
       });
@@ -326,7 +349,9 @@ describe("published SDK v2 over real local HTTP", () => {
     "keeps native matched error %s fallback",
     async (code) => {
       const f = await fixture((e) => {
-        if (e.body.method !== "server/discover") return;
+        if (e.body.method !== "server/discover") {
+          return;
+        }
         rpcError(e, code);
         return true;
       });
@@ -341,9 +366,14 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it.each(["malformed", "http400"])("keeps native %s discovery fallback", async (mode) => {
     const f = await fixture((e) => {
-      if (e.body.method !== "server/discover") return;
-      if (mode === "malformed") result(e, {});
-      else e.res.writeHead(400).end("legacy endpoint");
+      if (e.body.method !== "server/discover") {
+        return;
+      }
+      if (mode === "malformed") {
+        result(e, {});
+      } else {
+        e.res.writeHead(400).end("legacy endpoint");
+      }
       return true;
     });
     expect((await f.connect()).connection.client.getProtocolEra()).toBe("legacy");
@@ -351,7 +381,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("reports the native HTTP200 null-ID limitation honestly; explicit legacy works", async () => {
     const f = await fixture((e) => {
-      if (e.body.method !== "server/discover") return;
+      if (e.body.method !== "server/discover") {
+        return;
+      }
       rpcError(e, -32700, 200, null);
       return true;
     });
@@ -365,9 +397,14 @@ describe("published SDK v2 over real local HTTP", () => {
     "never chooses SSE or legacy for discovery %s",
     async (failure) => {
       const f = await fixture((e) => {
-        if (e.body.method !== "server/discover") return;
-        if (failure === "network") e.req.socket.destroy();
-        else e.res.writeHead(failure).end("unavailable");
+        if (e.body.method !== "server/discover") {
+          return;
+        }
+        if (failure === "network") {
+          e.req.socket.destroy();
+        } else {
+          e.res.writeHead(failure).end("unavailable");
+        }
         return true;
       });
       const code =
@@ -388,7 +425,9 @@ describe("published SDK v2 over real local HTTP", () => {
       received = resolve;
     });
     const f = await fixture((e) => {
-      if (e.body.method !== "server/discover") return;
+      if (e.body.method !== "server/discover") {
+        return;
+      }
       received();
       return true;
     });
@@ -415,6 +454,7 @@ describe("published SDK v2 over real local HTTP", () => {
           e.req.socket.destroy();
           return true;
         }
+        return undefined;
       });
       const { state, connection } = await f.connect({ retryOnTransportFailure: true });
       const output = await call(state, entry);
@@ -431,7 +471,9 @@ describe("published SDK v2 over real local HTTP", () => {
     "retries partial SSE body loss once through %s",
     async (entry) => {
       const f = await fixture((e) => {
-        if (e.body.method !== "tools/call" || f.calls().length > 1) return;
+        if (e.body.method !== "tools/call" || f.calls().length > 1) {
+          return;
+        }
         e.res.writeHead(200, { "content-type": "text/event-stream" });
         e.res.write(": started\n\n");
         setTimeout(() => e.res.destroy(), 20);
@@ -483,7 +525,9 @@ describe("published SDK v2 over real local HTTP", () => {
           });
           return true;
         }
-        if (e.body.method !== "tools/call") return;
+        if (e.body.method !== "tools/call") {
+          return;
+        }
         if (e.body.params.name === "readback") {
           result(e, {
             resultType: "complete",
@@ -500,7 +544,9 @@ describe("published SDK v2 over real local HTTP", () => {
             if (failure === "http500-timeout") {
               e.res.writeHead(500, { "content-type": "text/plain" });
               e.res.write("Internal error after committing");
-            } else setTimeout(() => result(e, { resultType: "complete", content: [] }), 160);
+            } else {
+              setTimeout(() => result(e, { resultType: "complete", content: [] }), 160);
+            }
           } else {
             e.res.writeHead(200, {
               "content-type": failure === "json" ? "application/json" : "text/event-stream",
@@ -521,10 +567,11 @@ describe("published SDK v2 over real local HTTP", () => {
         ...(failure === "legacy-timeout" ? { protocolVersion: "legacy" as const } : {}),
       });
       const captured: any[] = [];
-      if (!failure.endsWith("timeout"))
+      if (!failure.endsWith("timeout")) {
         state.onToolCall = async (event) => {
           captured.push(event);
         };
+      }
       const output = await call(state, entry);
       expect(mutations).toBe(1);
       expect(entry === "script" ? output.error.code : output.details.error).toBe(
@@ -540,7 +587,9 @@ describe("published SDK v2 over real local HTTP", () => {
         expect(captured.map((e) => e.phase)).toEqual(["before", "after"]);
         expect(captured[0].args).toEqual({ value: "test" });
         expect(captured[1].error).toBeInstanceOf(Error);
-        if (entry === "script") expect(captured[0].innerCallId).toBe(1);
+        if (entry === "script") {
+          expect(captured[0].innerCallId).toBe(1);
+        }
       }
       const readback = await executeCall(state, "local_readback", { value: "test" });
       expect(readback.details.mcpResult).toMatchObject({
@@ -552,7 +601,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("does not replay a lost JSON body even for a replay-safe tool", async () => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       e.res.writeHead(200, { "content-type": "application/json" });
       e.res.write(`{"jsonrpc":"2.0","id":${e.body.id},"result":`);
       setTimeout(() => e.res.destroy(), 20);
@@ -578,7 +629,9 @@ describe("published SDK v2 over real local HTTP", () => {
         received();
         return true;
       }
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       rpcError(e, -32020, 400);
       return true;
     });
@@ -617,6 +670,7 @@ describe("published SDK v2 over real local HTTP", () => {
         e.req.socket.destroy();
         return true;
       }
+      return undefined;
     });
     const { state } = await f.connect({ retryOnTransportFailure: true });
     // A frozen direct tool can still have old read-only hints; live hints win.
@@ -656,7 +710,9 @@ describe("published SDK v2 over real local HTTP", () => {
       additionalProperties: false,
     };
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/list") return;
+      if (e.body.method !== "tools/list") {
+        return;
+      }
       result(e, {
         resultType: "complete",
         tools: [
@@ -702,7 +758,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("applies public proxy connect pagination to the discovered server list", async () => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/list") return;
+      if (e.body.method !== "tools/list") {
+        return;
+      }
       result(e, {
         resultType: "complete",
         tools: [tool, { ...tool, name: "second" }, { ...tool, name: "third" }],
@@ -722,7 +780,7 @@ describe("published SDK v2 over real local HTTP", () => {
       registerTool: (tool: any) => tools.set(tool.name, tool),
       registerCommand: () => {},
       registerFlag: () => {},
-      getFlag: () => undefined,
+      getFlag: () => {},
       registerEntryRenderer: () => {},
       appendEntry: () => {},
       on: (name: string, handler: any) => handlers.set(name, handler),
@@ -735,7 +793,7 @@ describe("published SDK v2 over real local HTTP", () => {
       hasUI: false,
       mode: "print",
       isProjectTrusted: () => true,
-      sessionManager: { getLeafId: () => null, getEntry: () => undefined },
+      sessionManager: { getLeafId: () => null, getEntry: () => {} },
     } as any;
     createMcpAdapter({
       config: {
@@ -823,6 +881,7 @@ describe("published SDK v2 over real local HTTP", () => {
         });
         return true;
       }
+      return undefined;
     });
     const piPath = process.env.PI_PACKAGE_DIR;
     const {
@@ -849,8 +908,11 @@ describe("published SDK v2 over real local HTTP", () => {
     delete process.env.MCP_DIRECT_TOOLS;
     cleanups.unshift(async () => {
       for (const [key, value] of Object.entries(previousEnv)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
       }
       // The Pi session is in memory; no native session files are removed.
       await rm(root, { recursive: true, force: true });
@@ -1002,10 +1064,11 @@ describe("published SDK v2 over real local HTTP", () => {
     let savedRef: string | undefined;
     session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
       const active = getCurrentTools(context.messages);
-      if (stage < 3)
+      if (stage < 3) {
         expect(active.some((tool) => tool.name === "mcp" || tool.name === "mcp_script")).toBe(
           false,
         );
+      }
       const selected = active.find(
         (candidate) => candidate.description === "Read newly available data",
       ) as { name: string; parameters: unknown } | undefined;
@@ -1102,10 +1165,11 @@ describe("published SDK v2 over real local HTTP", () => {
           name: typed.name,
           arguments: { value: "pending" },
         };
-        if (!first)
+        if (!first) {
           expect(getCurrentTools(context.messages).some((tool) => tool.name === "mcp_script")).toBe(
             true,
           );
+        }
         const message = {
           role: "assistant",
           api: model.api,
@@ -1144,11 +1208,12 @@ describe("published SDK v2 over real local HTTP", () => {
         expect(session.getActiveToolNames()).toContain("mcp_script");
         expect(session.getActiveToolNames()).toContain("local_second");
       } finally {
-        if (heldCall)
+        if (heldCall) {
           result(heldCall, {
             resultType: "complete",
             content: [{ type: "text", text: "settled once" }],
           });
+        }
         await pending;
       }
       await session.waitForIdle();
@@ -1190,8 +1255,11 @@ describe("published SDK v2 over real local HTTP", () => {
     delete process.env.MCP_DIRECT_TOOLS;
     cleanups.unshift(async () => {
       for (const [key, value] of Object.entries(previousEnv)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
       }
       // Preserve native fixture histories for inspection; never delete Pi sessions.
     });
@@ -1220,14 +1288,18 @@ describe("published SDK v2 over real local HTTP", () => {
       }
       if (e.req.url === "/checkpoint") {
         checkpoints.push({ ...(e.body as any), res: e.res });
-        if (checkpointMode === "hold") return true;
+        if (checkpointMode === "hold") {
+          return true;
+        }
         e.res.writeHead(checkpointMode === "reject" ? 503 : 200).end();
         return true;
       }
       if (e.req.url === "/capture") {
         const { event, bytes } = e.body as any;
         captures.push({ event, bytes, res: e.res });
-        if (mode === "hold" && event.innerCallId === 1) return true;
+        if (mode === "hold" && event.innerCallId === 1) {
+          return true;
+        }
         e.res.writeHead(mode === `reject-${event.phase}` ? 503 : 200).end();
         return true;
       }
@@ -1268,20 +1340,23 @@ describe("published SDK v2 over real local HTTP", () => {
       }
       if (e.body.method === "tools/call") {
         const value = e.body.params.arguments.value;
-        if (e.body.params.name !== "readback")
+        if (e.body.params.name !== "readback") {
           receipts.set(value, { id: `resource-${++effects}`, value });
+        }
         if (value === "lose-response" && e.body.params.name === "echo") {
           e.res.writeHead(200, { "content-type": "text/event-stream" });
           e.res.write(": committed\n\n");
           setTimeout(() => e.res.destroy(), 20);
-        } else
+        } else {
           result(e, {
             resultType: "complete",
             content: value === "first" ? [{ type: "text", text: largeOutput }] : [],
             structuredContent: receipts.get(value),
           });
+        }
         return true;
       }
+      return undefined;
     });
     const wrapper = join(root, "capture-extension.ts");
     await writeFile(
@@ -1781,13 +1856,15 @@ describe("published SDK v2 over real local HTTP", () => {
     "does not retry unless opted in (%s)",
     async (retryOnTransportFailure) => {
       const f = await fixture((e) => {
-        if (e.body.method !== "tools/call") return;
+        if (e.body.method !== "tools/call") {
+          return;
+        }
         e.req.socket.destroy();
         return true;
       });
-      const { state } = await f.connect({
-        ...(retryOnTransportFailure !== undefined ? { retryOnTransportFailure } : {}),
-      });
+      const { state } = await f.connect(
+        retryOnTransportFailure !== undefined ? { retryOnTransportFailure } : {},
+      );
       expect((await call(state, "proxy")).ok).toBe(false);
       expect(f.calls()).toHaveLength(1);
     },
@@ -1797,15 +1874,17 @@ describe("published SDK v2 over real local HTTP", () => {
     "settles partial SSE loss without retry when disabled (%s)",
     async (retryOnTransportFailure) => {
       const f = await fixture((e) => {
-        if (e.body.method !== "tools/call") return;
+        if (e.body.method !== "tools/call") {
+          return;
+        }
         e.res.writeHead(200, { "content-type": "text/event-stream" });
         e.res.write(": started\n\n");
         setTimeout(() => e.res.destroy(), 20);
         return true;
       });
-      const { state } = await f.connect({
-        ...(retryOnTransportFailure !== undefined ? { retryOnTransportFailure } : {}),
-      });
+      const { state } = await f.connect(
+        retryOnTransportFailure !== undefined ? { retryOnTransportFailure } : {},
+      );
       const output = await call(state, "proxy");
       expect(output.ok).toBe(false);
       expect(output.details.message).not.toMatch(/timeout|timed out/i);
@@ -1815,13 +1894,18 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it.each(["network", "http503", "sse"])("stops after the second %s failure", async (failure) => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       if (failure === "sse") {
         e.res.writeHead(200, { "content-type": "text/event-stream" });
         e.res.write(": started\n\n");
         setTimeout(() => e.res.destroy(), 20);
-      } else if (failure === "network") e.req.socket.destroy();
-      else e.res.writeHead(503).end("service unavailable");
+      } else if (failure === "network") {
+        e.req.socket.destroy();
+      } else {
+        e.res.writeHead(503).end("service unavailable");
+      }
       return true;
     });
     const { state } = await f.connect({ retryOnTransportFailure: true });
@@ -1839,6 +1923,7 @@ describe("published SDK v2 over real local HTTP", () => {
           .end(body === "plain" ? "service unavailable" : JSON.stringify({ error: "unavailable" }));
         return true;
       }
+      return undefined;
     });
     const { state } = await f.connect({ retryOnTransportFailure: true });
     expect((await call(state, "proxy")).ok).toBe(true);
@@ -1858,7 +1943,9 @@ describe("published SDK v2 over real local HTTP", () => {
     "sse-tool",
   ])("does not retry %s errors", async (failure) => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       if (failure.startsWith("sse-")) {
         e.res.writeHead(200, { "content-type": "text/event-stream" }).end(
           `event: message\ndata: ${JSON.stringify({
@@ -1869,19 +1956,20 @@ describe("published SDK v2 over real local HTTP", () => {
               : { error: { code: -32602, message: "fixture rejection" } }),
           })}\n\n`,
         );
-      } else if (failure === "http401" || failure === "http403")
+      } else if (failure === "http401" || failure === "http403") {
         e.res.writeHead(Number(failure.slice(4))).end("denied");
-      else if (failure === "tool")
+      } else if (failure === "tool") {
         result(e, { resultType: "complete", isError: true, content: [] });
-      else if (failure === "invalid-json")
+      } else if (failure === "invalid-json") {
         e.res.writeHead(200, { "content-type": "application/json" }).end("not json");
-      else
+      } else {
         rpcError(
           e,
           -32602,
           failure === "protocol" ? 200 : 503,
           failure === "http503-null-id" ? null : e.body.id,
         );
+      }
       return true;
     });
     const { state } = await f.connect({ retryOnTransportFailure: true });
@@ -1892,7 +1980,9 @@ describe("published SDK v2 over real local HTTP", () => {
   it("preserves streaming cancellation and trace identity without a cancellation POST", async () => {
     let closed = false;
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       e.res.writeHead(200, { "content-type": "text/event-stream" });
       e.res.write(": waiting\n\n");
       e.res.on("close", () => {
@@ -1926,7 +2016,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("settles and traces a pending SSE send on intentional manager shutdown without retry", async () => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       e.res.writeHead(200, { "content-type": "text/event-stream" });
       e.res.write(": started\n\n");
       return true;
@@ -1969,7 +2061,9 @@ describe("published SDK v2 over real local HTTP", () => {
     "keeps an absolute deadline across %s retry without reporting caller cancellation",
     async (failure) => {
       const f = await fixture(async (e) => {
-        if (e.body.method !== "tools/call") return;
+        if (e.body.method !== "tools/call") {
+          return;
+        }
         if (f.calls().length === 1) {
           if (failure === "sse") {
             e.res.writeHead(200, { "content-type": "text/event-stream" });
@@ -1996,10 +2090,14 @@ describe("published SDK v2 over real local HTTP", () => {
     "does not infer transport failure from a clean %s SSE stream",
     async (ending) => {
       const f = await fixture((e) => {
-        if (e.body.method !== "tools/call") return;
+        if (e.body.method !== "tools/call") {
+          return;
+        }
         e.res.writeHead(200, { "content-type": "text/event-stream" });
         e.res.write(": waiting\n\n");
-        if (ending === "closed") setTimeout(() => e.res.end(), 10);
+        if (ending === "closed") {
+          setTimeout(() => e.res.end(), 10);
+        }
         return true;
       });
       const { state } = await f.connect({ requestTimeoutMs: 40, retryOnTransportFailure: true });
@@ -2010,7 +2108,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("does not stack modern retries after legacy session recovery", async () => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       e.res.writeHead(f.calls().length === 1 ? 404 : 503).end("session unavailable");
       return true;
     });
@@ -2022,7 +2122,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("delivers a chunked modern POST SSE result and adapter stream notifications", async () => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       e.res.writeHead(200, { "content-type": "text/event-stream" });
       e.res.write(
         `event: message\ndata: ${JSON.stringify({
@@ -2062,7 +2164,9 @@ describe("published SDK v2 over real local HTTP", () => {
     ["envelope", "destroy"],
   ])("does not retry malformed SSE %s followed by %s", async (invalid, ending) => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       e.res.writeHead(200, { "content-type": "text/event-stream" });
       e.res.write(
         `event: message\ndata: ${invalid === "json" ? "not json" : '{"unexpected":true}'}\n\n`,
@@ -2080,7 +2184,9 @@ describe("published SDK v2 over real local HTTP", () => {
   it("returns a complete result before EOF and keeps late stream notifications without replay", async () => {
     let stream: ServerResponse;
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       stream = e.res;
       e.res.writeHead(200, { "content-type": "text/event-stream" });
       e.res.write(
@@ -2119,14 +2225,18 @@ describe("published SDK v2 over real local HTTP", () => {
     let accepted: Exchange | undefined;
     let attempts = 0;
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       if (e.body.params.arguments.sibling) {
         accepted = e;
         e.res.writeHead(200, { "content-type": "text/event-stream" });
         e.res.write(": accepted\n\n");
         return true;
       }
-      if (++attempts > 1) return;
+      if (++attempts > 1) {
+        return;
+      }
       e.res.writeHead(200, { "content-type": "text/event-stream" });
       e.res.write(": started\n\n");
       setTimeout(() => e.res.destroy(), 20);
@@ -2160,7 +2270,9 @@ describe("published SDK v2 over real local HTTP", () => {
         setTimeout(() => e.res.destroy(), 20);
         return true;
       }
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       e.res.writeHead(200, { "content-type": "text/event-stream" });
       e.res.write(
         `event: message\ndata: ${JSON.stringify({
@@ -2202,7 +2314,9 @@ describe("published SDK v2 over real local HTTP", () => {
         );
         return true;
       }
-      if (e.body.method !== "tools/call") return;
+      if (e.body.method !== "tools/call") {
+        return;
+      }
       id = e.body.id;
       e.res.writeHead(200, { "content-type": "text/event-stream" });
       e.res.write("id: resume-token\nretry: 1\ndata:\n\n");
@@ -2223,7 +2337,9 @@ describe("published SDK v2 over real local HTTP", () => {
           e.res.writeHead(status).end("denied");
           return true;
         }
-        if (e.body.method !== "tools/call") return;
+        if (e.body.method !== "tools/call") {
+          return;
+        }
         e.res.writeHead(200, { "content-type": "text/event-stream" });
         e.res.write("id: resume-token\nretry: 1\ndata:\n\n");
         setTimeout(() => e.res.destroy(), 20);
@@ -2272,6 +2388,7 @@ describe("published SDK v2 over real local HTTP", () => {
         });
         return true;
       }
+      return undefined;
     });
     const directory = await mkdtemp(join(tmpdir(), "mcp-v2-subscription-"));
     cleanups.unshift(() => rm(directory, { recursive: true, force: true }));
@@ -2301,9 +2418,13 @@ describe("published SDK v2 over real local HTTP", () => {
         timeline.push({ phase, elapsedMs: performance.now() - started });
       };
       const f = await fixture((e) => {
-        if (e.body.method !== "tools/call") return;
+        if (e.body.method !== "tools/call") {
+          return;
+        }
         mark("tools/call");
-        if (f.calls().length > 1) return;
+        if (f.calls().length > 1) {
+          return;
+        }
         result(e, {
           resultType: "input_required",
           requestState: "opaque-state",
@@ -2353,7 +2474,9 @@ describe("published SDK v2 over real local HTTP", () => {
           e.res.write("event: endpoint\ndata: /messages\n\n");
           return true;
         }
-        if (e.req.url !== "/messages") return;
+        if (e.req.url !== "/messages") {
+          return;
+        }
         if (e.body.id !== undefined && !(stall && e.body.method === "tools/call")) {
           const payload =
             e.body.method === "initialize"
@@ -2392,7 +2515,9 @@ describe("published SDK v2 over real local HTTP", () => {
   it("closes an in-flight native discover request when connect is cancelled", async () => {
     let closed = false;
     const f = await fixture((e) => {
-      if (e.body.method !== "server/discover") return;
+      if (e.body.method !== "server/discover") {
+        return;
+      }
       e.res.on("close", () => {
         closed = true;
       });
@@ -2412,15 +2537,18 @@ describe("published SDK v2 over real local HTTP", () => {
     "preserves null structured content through %s",
     async (entry) => {
       const f = await fixture((e) => {
-        if (e.body.method !== "tools/call") return;
+        if (e.body.method !== "tools/call") {
+          return;
+        }
         result(e, { resultType: "complete", content: [], structuredContent: null });
         return true;
       });
       const { state } = await f.connect({ requestTimeoutMs: 500.5 });
       const output = await call(state, entry);
       expect(output.ok, JSON.stringify(output)).toBe(true);
-      if (entry === "script") expect(output.data.structuredContent).toBeNull();
-      else {
+      if (entry === "script") {
+        expect(output.data.structuredContent).toBeNull();
+      } else {
         expect(output.content[0]).toEqual({ type: "text", text: "null" });
         expect(output.content[1].text).toContain(output.details.resultRef);
       }
@@ -2430,7 +2558,9 @@ describe("published SDK v2 over real local HTTP", () => {
   it("discovers every tool when changing catalog pages reuse the same cursor", async () => {
     let page = 0;
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/list") return;
+      if (e.body.method !== "tools/list") {
+        return;
+      }
       result(e, {
         resultType: "complete",
         tools: [{ ...tool, name: `tool-${page}` }],
@@ -2449,7 +2579,9 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("preserves catalogs longer than the native default 64-page cap", async () => {
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/list") return;
+      if (e.body.method !== "tools/list") {
+        return;
+      }
       const page = Number(e.body.params?.cursor ?? 0);
       result(e, {
         resultType: "complete",
@@ -2464,7 +2596,9 @@ describe("published SDK v2 over real local HTTP", () => {
   it("rejects a never-ending changing catalog instead of publishing a partial list", async () => {
     let pages = 0;
     const f = await fixture((e) => {
-      if (e.body.method !== "tools/list") return;
+      if (e.body.method !== "tools/list") {
+        return;
+      }
       pages++;
       if (pages > 1024) {
         rpcError(e, -32603);

@@ -145,9 +145,13 @@ async function openInBrowser(
     throwIfAborted(signal);
     return null;
   } catch (error) {
-    if (isAbortError(error, signal)) throw error;
+    if (isAbortError(error, signal)) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
-    if (state.owner?.isActive() === false) return null;
+    if (state.owner?.isActive() === false) {
+      return null;
+    }
     state.ui?.notify(`MCP UI browser open failed: ${message}`, "warning");
     return message;
   }
@@ -249,8 +253,12 @@ export async function maybeStartUiSession(
 
       if (streamToken) {
         state.manager.registerUiStreamListener(streamToken, (serverName, notification) => {
-          if (!active || state.uiServer !== existingHandle) return;
-          if (serverName !== request.serverName) return;
+          if (!active || state.uiServer !== existingHandle) {
+            return;
+          }
+          if (serverName !== request.serverName) {
+            return;
+          }
           nextStreamSequence += 1;
           existingHandle.sendResultPatch(
             withStreamEnvelope(notification.result as CallToolResult, streamId, nextStreamSequence),
@@ -271,17 +279,23 @@ export async function maybeStartUiSession(
         windowOpen: existingHandle.windowOpen ?? true,
         isActive: () => active && state.uiServer === existingHandle,
         sendToolResult: (result: CallToolResult) => {
-          if (!active || state.uiServer !== existingHandle) return;
+          if (!active || state.uiServer !== existingHandle) {
+            return;
+          }
           nextStreamSequence += 1;
           existingHandle.sendToolResult(withStreamEnvelope(result, streamId, nextStreamSequence));
         },
         sendResultPatch: (result: CallToolResult) => {
-          if (!active || state.uiServer !== existingHandle) return;
+          if (!active || state.uiServer !== existingHandle) {
+            return;
+          }
           nextStreamSequence += 1;
           existingHandle.sendResultPatch(withStreamEnvelope(result, streamId, nextStreamSequence));
         },
         sendToolCancelled: (reason: string) => {
-          if (!active || state.uiServer !== existingHandle) return;
+          if (!active || state.uiServer !== existingHandle) {
+            return;
+          }
           nextStreamSequence += 1;
           existingHandle.sendToolResult(
             withStreamEnvelope(
@@ -415,9 +429,9 @@ export async function maybeStartUiSession(
       onContextUpdate: (params: UiModelContextParams) => {
         const update = createUiModelContextUpdate(params);
         log.debug("Model context update from UI", {
-          hasContent: !!params.content,
-          hasStructured: !!params.structuredContent,
-          hasUpdate: !!update,
+          hasContent: Boolean(params.content),
+          hasStructured: Boolean(params.structuredContent),
+          hasUpdate: Boolean(update),
         });
         if (update && state.sendMessage) {
           state.sendMessage(
@@ -445,12 +459,12 @@ export async function maybeStartUiSession(
           const messages = handle.getSessionMessages();
           const stream = handle.getStreamSummary();
           const hasContent =
-            !!messages.historyCount ||
+            Boolean(messages.historyCount) ||
             messages.prompts.length > 0 ||
             messages.intents.length > 0 ||
             messages.notifications.length > 0 ||
             messages.contexts.length > 0 ||
-            !!stream;
+            Boolean(stream);
 
           if (hasContent) {
             state.completedUiSessions.push({
@@ -493,8 +507,12 @@ export async function maybeStartUiSession(
 
     if (streamToken) {
       state.manager.registerUiStreamListener(streamToken, (serverName, notification) => {
-        if (!active || state.uiServer !== handle) return;
-        if (serverName !== request.serverName) return;
+        if (!active || state.uiServer !== handle) {
+          return;
+        }
+        if (serverName !== request.serverName) {
+          return;
+        }
         nextStreamSequence += 1;
         handle.sendResultPatch(
           withStreamEnvelope(notification.result as CallToolResult, streamId, nextStreamSequence),
@@ -545,7 +563,9 @@ export async function maybeStartUiSession(
             width: 1000,
             height: 800,
             onClosed: () => {
-              if (active) handle.close("glimpse-closed");
+              if (active) {
+                handle.close("glimpse-closed");
+              }
             },
           });
           if (state.owner?.isActive() === false || runtimeSignal.aborted) {
@@ -593,17 +613,23 @@ export async function maybeStartUiSession(
       windowOpen,
       isActive: () => active && state.uiServer === handle,
       sendToolResult: (result: CallToolResult) => {
-        if (!active || state.uiServer !== handle) return;
+        if (!active || state.uiServer !== handle) {
+          return;
+        }
         nextStreamSequence += 1;
         handle.sendToolResult(withStreamEnvelope(result, streamId, nextStreamSequence));
       },
       sendResultPatch: (result: CallToolResult) => {
-        if (!active || state.uiServer !== handle) return;
+        if (!active || state.uiServer !== handle) {
+          return;
+        }
         nextStreamSequence += 1;
         handle.sendResultPatch(withStreamEnvelope(result, streamId, nextStreamSequence));
       },
       sendToolCancelled: (reason: string) => {
-        if (!active || state.uiServer !== handle) return;
+        if (!active || state.uiServer !== handle) {
+          return;
+        }
         handle.sendToolCancelled(reason);
       },
       close: (reason?: string) => {
@@ -613,8 +639,9 @@ export async function maybeStartUiSession(
       },
     };
   } catch (error) {
-    if (error instanceof UrlElicitationRequiredError || isAbortError(error, runtimeSignal))
+    if (error instanceof UrlElicitationRequiredError || isAbortError(error, runtimeSignal)) {
       throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     log.error("Failed to start UI session", error instanceof Error ? error : undefined);
     state.ui?.notify(

@@ -102,7 +102,9 @@ function causeChainContains(error: unknown, pattern: RegExp): boolean {
   const seen = new Set<unknown>();
   let current = error;
   while ((typeof current === "object" && current !== null) || typeof current === "function") {
-    if (seen.has(current)) break;
+    if (seen.has(current)) {
+      break;
+    }
     seen.add(current);
     const candidate = current as {
       name?: unknown;
@@ -130,7 +132,9 @@ function isAndroidKeyringLoadFailure(error: unknown): boolean {
 }
 
 export function formatOAuthCredentialStoreUnavailable(error: OAuthCredentialStoreError): string {
-  if (isAndroidKeyringLoadFailure(error)) return error.message;
+  if (isAndroidKeyringLoadFailure(error)) {
+    return error.message;
+  }
   if (
     process.platform === "linux" &&
     causeChainContains(error, /key\s*(?:has been\s*)?revoked|keyrevoked/i)
@@ -224,9 +228,15 @@ const keyRevokedAuthSecretStore: AuthSecretStore = {
 };
 
 function getAuthSecretStore(service = AUTH_SECRET_SERVICE): AuthSecretStore {
-  if (process.env[TEST_AUTH_STORE_ENV] === "memory") return memoryAuthSecretStore(service);
-  if (process.env[TEST_AUTH_STORE_ENV] === "unavailable") return unavailableAuthSecretStore;
-  if (process.env[TEST_AUTH_STORE_ENV] === "keyrevoked") return keyRevokedAuthSecretStore;
+  if (process.env[TEST_AUTH_STORE_ENV] === "memory") {
+    return memoryAuthSecretStore(service);
+  }
+  if (process.env[TEST_AUTH_STORE_ENV] === "unavailable") {
+    return unavailableAuthSecretStore;
+  }
+  if (process.env[TEST_AUTH_STORE_ENV] === "keyrevoked") {
+    return keyRevokedAuthSecretStore;
+  }
   return keyringAuthSecretStore(service);
 }
 
@@ -301,21 +311,41 @@ function getKeyringNativeBindingSuffixes(
   arch: NodeJS.Architecture,
 ): string[] {
   if (platform === "darwin") {
-    if (arch === "arm64") return ["darwin-arm64"];
-    if (arch === "x64") return ["darwin-x64"];
+    if (arch === "arm64") {
+      return ["darwin-arm64"];
+    }
+    if (arch === "x64") {
+      return ["darwin-x64"];
+    }
   }
   if (platform === "win32") {
-    if (arch === "arm64") return ["win32-arm64-msvc"];
-    if (arch === "x64") return ["win32-x64-msvc"];
-    if (arch === "ia32") return ["win32-ia32-msvc"];
+    if (arch === "arm64") {
+      return ["win32-arm64-msvc"];
+    }
+    if (arch === "x64") {
+      return ["win32-x64-msvc"];
+    }
+    if (arch === "ia32") {
+      return ["win32-ia32-msvc"];
+    }
   }
   if (platform === "linux") {
-    if (arch === "arm64") return ["linux-arm64-gnu", "linux-arm64-musl"];
-    if (arch === "arm") return ["linux-arm-gnueabihf"];
-    if (arch === "riscv64") return ["linux-riscv64-gnu"];
-    if (arch === "x64") return ["linux-x64-gnu", "linux-x64-musl"];
+    if (arch === "arm64") {
+      return ["linux-arm64-gnu", "linux-arm64-musl"];
+    }
+    if (arch === "arm") {
+      return ["linux-arm-gnueabihf"];
+    }
+    if (arch === "riscv64") {
+      return ["linux-riscv64-gnu"];
+    }
+    if (arch === "x64") {
+      return ["linux-x64-gnu", "linux-x64-musl"];
+    }
   }
-  if (platform === "freebsd" && arch === "x64") return ["freebsd-x64"];
+  if (platform === "freebsd" && arch === "x64") {
+    return ["freebsd-x64"];
+  }
   return [];
 }
 
@@ -330,7 +360,9 @@ type KeyringRecoveryResponse =
   | { ok: false; error?: string };
 
 function isLinuxKeyringRecoveryEnabled(): boolean {
-  if (process.env[KEYRING_RECOVERY_DISABLED_ENV] === "1") return false;
+  if (process.env[KEYRING_RECOVERY_DISABLED_ENV] === "1") {
+    return false;
+  }
   return process.platform === "linux" || process.env[TEST_LINUX_KEYRING_RECOVERY_ENV] === "1";
 }
 
@@ -386,7 +418,7 @@ function runLinuxKeyringRecoveryOperation(
     throw new Error("Linux keyring recovery helper returned an invalid response");
   }
   const typedResponse = response as KeyringRecoveryResponse;
-  if (typedResponse.ok === false) {
+  if (!typedResponse.ok) {
     throw new Error(typedResponse.error || "Linux keyring recovery helper failed");
   }
   if (
@@ -421,7 +453,9 @@ export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): A
 
 export function getAuthBaseDir(options: AuthStorageOptions = {}): string {
   const override = process.env.FITCH_MCP_OAUTH_DIR?.trim();
-  if (override) return override;
+  if (override) {
+    return override;
+  }
   return options.baseDir ?? getAdapterPath("mcp-oauth");
 }
 
@@ -465,7 +499,9 @@ function parseAuthEntryPayload(serverName: string, payload: string, source: stri
 }
 
 function isAuthEntryChunkManifest(value: unknown): value is AuthEntryChunkManifest {
-  if (typeof value !== "object" || value === null) return false;
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
   const manifest = value as Partial<AuthEntryChunkManifest>;
   return (
     manifest[AUTH_CHUNK_MANIFEST_KEY] === 1 &&
@@ -530,7 +566,9 @@ function tryRemoveChunkPayloads(
   account: string,
   manifest: AuthEntryChunkManifest | undefined,
 ): void {
-  if (!manifest) return;
+  if (!manifest) {
+    return;
+  }
   try {
     removeChunkPayloads(store, account, manifest);
   } catch {
@@ -575,14 +613,18 @@ function readLegacyAuthEntry(
   options?: AuthStorageOptions,
 ): AuthEntry | undefined {
   const filePath = getAuthEntryFilePath(serverName, options);
-  if (!existsSync(filePath)) return undefined;
+  if (!existsSync(filePath)) {
+    return undefined;
+  }
   const data = readFileSync(filePath, "utf-8");
   return parseAuthEntryPayload(serverName, data, filePath);
 }
 
 function removeLegacyAuthEntry(serverName: string, options?: AuthStorageOptions): void {
   const filePath = getAuthEntryFilePath(serverName, options);
-  if (!existsSync(filePath)) return;
+  if (!existsSync(filePath)) {
+    return;
+  }
   try {
     rmSync(filePath, { force: true });
   } catch (error) {
@@ -642,7 +684,9 @@ function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
   try {
     writeSecureAuthEntryToStore(getAuthSecretStore(), serverName, entry);
   } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
+    if (!shouldAttemptLinuxKeyringRecovery(error)) {
+      throw error;
+    }
     writeSecureAuthEntryToStore(linuxKeyringRecoveryAuthSecretStore(), serverName, entry);
   }
 }
@@ -663,7 +707,9 @@ function readSecureAuthEntryFromStore(
     );
   }
 
-  if (payload === undefined) return undefined;
+  if (payload === undefined) {
+    return undefined;
+  }
   const manifest = readChunkManifestFromPayload(serverName, payload, "OS secure credential store");
   return manifest
     ? readChunkedAuthEntry(store, serverName, account, manifest)
@@ -677,7 +723,9 @@ function readSecureAuthEntry(
   try {
     return readSecureAuthEntryFromStore(getAuthSecretStore(service), serverName);
   } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
+    if (!shouldAttemptLinuxKeyringRecovery(error)) {
+      throw error;
+    }
     return readSecureAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore(service), serverName);
   }
 }
@@ -689,11 +737,15 @@ function readAuthEntry(
 ): AuthEntry | undefined {
   const entry = readSecureAuthEntry(serverName);
   if (entry !== undefined) {
-    if (behavior.migrateLegacy !== false) removeLegacyAuthEntry(serverName, options);
+    if (behavior.migrateLegacy !== false) {
+      removeLegacyAuthEntry(serverName, options);
+    }
     return entry;
   }
   const legacyEntry = readLegacyAuthEntry(serverName, options);
-  if (!legacyEntry || behavior.migrateLegacy === false) return legacyEntry;
+  if (!legacyEntry || behavior.migrateLegacy === false) {
+    return legacyEntry;
+  }
   writeSecureAuthEntry(serverName, legacyEntry);
   removeLegacyAuthEntry(serverName, options);
   return legacyEntry;
@@ -704,11 +756,15 @@ export function migrateLegacyAuthEntry(
   serverName: string,
   legacyDirectory = process.env.MCP_OAUTH_DIR?.trim() || getAgentPath("mcp-oauth"),
 ): "copied" | "existing" | "absent" {
-  if (readSecureAuthEntry(serverName) !== undefined) return "existing";
+  if (readSecureAuthEntry(serverName) !== undefined) {
+    return "existing";
+  }
   let entry = readSecureAuthEntry(serverName, LEGACY_AUTH_SECRET_SERVICE);
   if (entry === undefined) {
     const path = join(legacyDirectory, getAuthEntryAccount(serverName), "tokens.json");
-    if (!existsSync(path)) return "absent";
+    if (!existsSync(path)) {
+      return "absent";
+    }
     entry = parseAuthEntryPayload(serverName, readFileSync(path, "utf8"), path);
   }
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
@@ -741,13 +797,19 @@ export function getAuthForUrl(
   options?: AuthStorageOptions,
 ): AuthEntry | undefined {
   const entry = getAuthEntry(serverName, options);
-  if (!entry) return undefined;
+  if (!entry) {
+    return undefined;
+  }
 
   // If no serverUrl is stored, this is from an old version - consider it invalid
-  if (!entry.serverUrl) return undefined;
+  if (!entry.serverUrl) {
+    return undefined;
+  }
 
   // If URL has changed, credentials are invalid
-  if (entry.serverUrl !== serverUrl) return undefined;
+  if (entry.serverUrl !== serverUrl) {
+    return undefined;
+  }
 
   return entry;
 }
@@ -764,10 +826,14 @@ export function inspectAuthForUrl(
 ): OAuthCredentialStatus {
   try {
     const entry = readAuthEntry(serverName, options, { migrateLegacy: false });
-    if (!entry?.serverUrl || entry.serverUrl !== serverUrl) return { status: "absent" };
+    if (!entry?.serverUrl || entry.serverUrl !== serverUrl) {
+      return { status: "absent" };
+    }
     return { status: "present", entry };
   } catch (error) {
-    if (!(error instanceof OAuthCredentialStoreError)) throw error;
+    if (!(error instanceof OAuthCredentialStoreError)) {
+      throw error;
+    }
     return { status: "unavailable", message: formatOAuthCredentialStoreUnavailable(error) };
   }
 }
@@ -800,7 +866,9 @@ function removeAuthEntryFromStore(store: AuthSecretStore, serverName: string): v
       payload === undefined
         ? undefined
         : readChunkManifestFromPayload(serverName, payload, "OS secure credential store");
-    if (manifest) removeChunkPayloads(store, account, manifest);
+    if (manifest) {
+      removeChunkPayloads(store, account, manifest);
+    }
     store.remove(account);
   } catch (error) {
     throw new OAuthCredentialStoreError(
@@ -815,7 +883,9 @@ export function removeAuthEntry(serverName: string, options?: AuthStorageOptions
   try {
     removeAuthEntryFromStore(getAuthSecretStore(), serverName);
   } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) throw error;
+    if (!shouldAttemptLinuxKeyringRecovery(error)) {
+      throw error;
+    }
     removeAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore(), serverName);
   }
   removeLegacyAuthEntry(serverName, options);

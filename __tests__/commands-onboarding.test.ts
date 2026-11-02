@@ -46,8 +46,11 @@ describe("commands onboarding", () => {
 
   afterEach(() => {
     process.env.HOME = originalHome;
-    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    if (originalAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    }
     if (originalOAuthDir === undefined) {
       delete process.env.FITCH_MCP_OAUTH_DIR;
     } else {
@@ -76,7 +79,7 @@ describe("commands onboarding", () => {
         toolMetadata: new Map(),
         failureTracker: new Map(),
       } as any,
-      { getFlag: () => undefined } as any,
+      { getFlag: () => {} } as any,
       { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any,
     );
 
@@ -96,7 +99,7 @@ describe("commands onboarding", () => {
     const ctx = { hasUI: true, mode: "rpc", isProjectTrusted: () => true, ui } as any;
 
     await openMcpSetup(state, {} as any, ctx);
-    await openMcpPanel(state, { getFlag: () => undefined } as any, ctx);
+    await openMcpPanel(state, { getFlag: () => {} } as any, ctx);
     await openMcpAuthPanel(state, ctx);
 
     expect(ui.custom).not.toHaveBeenCalled();
@@ -156,7 +159,7 @@ describe("commands onboarding", () => {
         toolMetadata: new Map(),
         failureTracker: new Map(),
       } as any,
-      { getFlag: () => undefined } as any,
+      { getFlag: () => {} } as any,
       { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any,
     );
 
@@ -358,7 +361,7 @@ describe("commands onboarding", () => {
         toolMetadata: new Map(),
         failureTracker: new Map(),
       } as any,
-      { getFlag: () => undefined } as any,
+      { getFlag: () => {} } as any,
       { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any,
     );
 
@@ -406,7 +409,7 @@ describe("commands onboarding", () => {
 
     await openMcpPanel(
       state,
-      { getFlag: () => undefined } as any,
+      { getFlag: () => {} } as any,
       { hasUI: true, mode: "tui", isProjectTrusted: () => true, ui } as any,
     );
 

@@ -237,7 +237,9 @@ describe("mcp-setup-panel custom keybindings", () => {
       () => {},
     );
 
-    for (let i = 0; i < 3; i++) panel.handleInput(DOWN);
+    for (let i = 0; i < 3; i++) {
+      panel.handleInput(DOWN);
+    }
     const output = panel.render(90).join("\n");
     expect(output).toContain(
       "Cannot preview write: Cannot read MCP config at /tmp/project/.mcp.json",

@@ -6,5 +6,8 @@ if (process.env.TSC_STUB_FAIL === "1") {
 const fs = require("node:fs");
 const path = require("node:path");
 const outDir = process.argv[process.argv.indexOf("--outDir") + 1];
+if (outDir === undefined) {
+  throw new Error("build-tsc-stub requires --outDir");
+}
 fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(path.join(outDir, "index.js"), "export const built = true;\n");

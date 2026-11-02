@@ -114,7 +114,9 @@ describe("mcp-panel rendering", () => {
       () => {},
     );
 
-    for (const key of keys) panel.handleInput(key);
+    for (const key of keys) {
+      panel.handleInput(key);
+    }
     const output = stripAnsi(panel.render(82).join("\n"));
     expect(output).toContain("Only tool selections save to Pi config.");
     panel.dispose();
@@ -165,7 +167,9 @@ describe("mcp-panel rendering", () => {
     const output = createFailedPanel("failed", reason, 60);
 
     expect(output).toContain("failed");
-    for (const word of reason.split(/\s+/)) expect(output).toContain(word);
+    for (const word of reason.split(/\s+/)) {
+      expect(output).toContain(word);
+    }
     expect(output.split("\n").filter((line) => /docker/i.test(line)).length).toBeGreaterThan(1);
     expect(output).not.toContain("…");
   });

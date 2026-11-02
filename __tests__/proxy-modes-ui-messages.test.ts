@@ -108,7 +108,9 @@ describe("executeUiMessages", () => {
       const root = await mkdtemp(join(tmpdir(), "mcp-ui-large-"));
       try {
         const history = createUiMessageHistory(root);
-        for (let i = 0; i < 10_000; i++) history.append("prompts", `event-${i} ${"x".repeat(100)}`);
+        for (let i = 0; i < 10_000; i++) {
+          history.append("prompts", `event-${i} ${"x".repeat(100)}`);
+        }
         expect(history.messages.historyCount).toBe(10_000);
         expect(history.messages.prompts).toHaveLength(0);
         expect(history.messages.historyBytes).toBeGreaterThan(1_000_000);

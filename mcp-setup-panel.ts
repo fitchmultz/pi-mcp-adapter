@@ -39,7 +39,9 @@ function fg(code: string, text: string): string {
 }
 
 function wrapText(text: string, width: number): string[] {
-  if (width <= 8) return [text];
+  if (width <= 8) {
+    return [text];
+  }
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";
@@ -49,10 +51,14 @@ function wrapText(text: string, width: number): string[] {
       current = candidate;
       continue;
     }
-    if (current) lines.push(current);
+    if (current) {
+      lines.push(current);
+    }
     current = word;
   }
-  if (current) lines.push(current);
+  if (current) {
+    lines.push(current);
+  }
   return lines.length > 0 ? lines : [""];
 }
 
@@ -100,19 +106,19 @@ export class McpSetupPanel {
   private actionCursor = 0;
   private importCursor = 0;
   private pathCursor = 0;
-  private selectedImports = new Set<ImportKind>();
+  private readonly selectedImports = new Set<ImportKind>();
   private busy = false;
   private notice: { text: string; tone: "success" | "warning" | "muted" } | null = null;
-  private tui: { requestRender(): void };
-  private t = DEFAULT_THEME;
-  private keys: PanelKeys;
+  private readonly tui: { requestRender(): void };
+  private readonly t = DEFAULT_THEME;
+  private readonly keys: PanelKeys;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly INACTIVITY_MS = 60_000;
 
-  private discovery: McpDiscoverySummary;
-  private callbacks: SetupPanelCallbacks;
-  private options: SetupPanelOptions;
-  private done: () => void;
+  private readonly discovery: McpDiscoverySummary;
+  private readonly callbacks: SetupPanelCallbacks;
+  private readonly options: SetupPanelOptions;
+  private readonly done: () => void;
 
   constructor(
     discovery: McpDiscoverySummary,
@@ -135,7 +141,9 @@ export class McpSetupPanel {
   }
 
   private resetInactivityTimeout(): void {
-    if (this.inactivityTimeout) clearTimeout(this.inactivityTimeout);
+    if (this.inactivityTimeout) {
+      clearTimeout(this.inactivityTimeout);
+    }
     this.inactivityTimeout = setTimeout(() => {
       this.cleanup();
       this.done();
@@ -231,7 +239,9 @@ export class McpSetupPanel {
 
   handleInput(data: string): void {
     this.resetInactivityTimeout();
-    if (!this.busy) this.notice = null;
+    if (!this.busy) {
+      this.notice = null;
+    }
 
     if (matchesKey(data, "ctrl+c")) {
       this.cleanup();
@@ -250,7 +260,9 @@ export class McpSetupPanel {
       return;
     }
 
-    if (this.busy) return;
+    if (this.busy) {
+      return;
+    }
 
     if (this.screen === "imports") {
       this.handleImportsInput(data);
@@ -274,7 +286,9 @@ export class McpSetupPanel {
     }
     if (this.keys.selectConfirm(data)) {
       const selected = this.getSelectedAction();
-      if (selected) void this.runAction(selected);
+      if (selected) {
+        void this.runAction(selected);
+      }
     }
   }
 
@@ -292,7 +306,9 @@ export class McpSetupPanel {
     }
     if (matchesKey(data, "space")) {
       const current = imports[this.importCursor];
-      if (!current) return;
+      if (!current) {
+        return;
+      }
       if (this.selectedImports.has(current.kind)) {
         this.selectedImports.delete(current.kind);
       } else {
@@ -320,7 +336,9 @@ export class McpSetupPanel {
     }
     if (this.keys.selectConfirm(data)) {
       const selected = paths[this.pathCursor];
-      if (!selected) return;
+      if (!selected) {
+        return;
+      }
       void this.runBusy(async () => {
         await this.callbacks.openPath(selected);
         this.notice = { text: `Opened ${selected}`, tone: "success" };
@@ -492,7 +510,9 @@ export class McpSetupPanel {
     }
     for (let index = start; index < end; index++) {
       const action = actions[index];
-      if (!action) continue;
+      if (!action) {
+        continue;
+      }
       if (
         action.id === "add-known-server" &&
         (index === start || actions[index - 1]?.id !== "add-known-server")
@@ -539,7 +559,9 @@ export class McpSetupPanel {
     lines.push(this.padLine("", innerW));
     for (let index = 0; index < this.discovery.imports.length; index++) {
       const entry = this.discovery.imports[index];
-      if (!entry) continue;
+      if (!entry) {
+        continue;
+      }
       const selected = this.selectedImports.has(entry.kind) ? "[x]" : "[ ]";
       const cursor = index === this.importCursor ? fg(this.t.selected, "›") : " ";
       lines.push(this.padLine(`${cursor} ${selected} ${entry.kind}  ${entry.path}`, innerW));
@@ -573,7 +595,9 @@ export class McpSetupPanel {
     for (let index = 0; index < paths.length; index++) {
       const cursor = index === this.pathCursor ? fg(this.t.selected, "›") : " ";
       const path = paths[index];
-      if (path !== undefined) lines.push(this.padLine(`${cursor} ${path}`, innerW));
+      if (path !== undefined) {
+        lines.push(this.padLine(`${cursor} ${path}`, innerW));
+      }
     }
     return lines;
   }
@@ -590,7 +614,7 @@ export class McpSetupPanel {
 
     if (
       this.discovery.totalServerCount === 0 &&
-      (this.discovery.imports.length > 0 || !!this.discovery.repoPrompt.executablePath)
+      (this.discovery.imports.length > 0 || Boolean(this.discovery.repoPrompt.executablePath))
     ) {
       return fg(
         this.t.warning,
@@ -629,7 +653,9 @@ export class McpSetupPanel {
   }
 
   private visibleActionRange(total: number): { start: number; end: number } {
-    if (total <= COMPACT_ACTION_ROWS) return { start: 0, end: total };
+    if (total <= COMPACT_ACTION_ROWS) {
+      return { start: 0, end: total };
+    }
     const half = Math.floor(COMPACT_ACTION_ROWS / 2);
     const start = Math.min(
       Math.max(0, this.actionCursor - half),
@@ -737,7 +763,9 @@ export class McpSetupPanel {
       }
       case "add-known-server": {
         const preset = action.preset;
-        if (!preset) return this.formatPreview(["Known server preset is unavailable."], previewW);
+        if (!preset) {
+          return this.formatPreview(["Known server preset is unavailable."], previewW);
+        }
         return this.formatWritePreview(
           `${preset.name} write preview`,
           this.callbacks.previewKnownServer(preset),
@@ -791,7 +819,9 @@ export class McpSetupPanel {
     for (const line of intro) {
       lines.push(...wrapText(line, width));
     }
-    if (intro.length > 0) lines.push("");
+    if (intro.length > 0) {
+      lines.push("");
+    }
     lines.push(...wrapText(`${title}: ${preview.path}`, width));
     lines.push(
       ...wrapText(

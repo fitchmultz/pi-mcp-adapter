@@ -18,9 +18,13 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
   // promises through settlement, without cancelling, serializing, or replaying callback work.
   const callbacks = { beforeExecute: 0, onToolCall: 0 };
   const pendingCallback = () => {
-    if (callbacks.beforeExecute) return "MCP beforeExecute callback is pending";
-    if (callbacks.onToolCall) return "MCP onToolCall callback is pending";
-    return undefined;
+    if (callbacks.beforeExecute) {
+      return "MCP beforeExecute callback is pending";
+    }
+    if (callbacks.onToolCall) {
+      return "MCP onToolCall callback is pending";
+    }
+    return;
   };
 
   const reportCleanupFailure = (error: unknown, late: boolean) => {
@@ -52,7 +56,9 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
       cleanups.push(cleanup);
     },
     stop: (reason = "MCP extension runtime stopped") => {
-      if (stopPromise) return stopPromise;
+      if (stopPromise) {
+        return stopPromise;
+      }
       controller.abort(new Error(reason));
       const pendingCleanups = cleanups
         .splice(0)
@@ -63,7 +69,9 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
           result.status === "rejected" ? [result.reason] : [],
         );
         const callback = pendingCallback();
-        if (callback) failures.push(new Error(callback));
+        if (callback) {
+          failures.push(new Error(callback));
+        }
         if (failures.length > 0) {
           const aggregate = new AggregateError(failures, "MCP runtime cleanup failed");
           console.error(`MCP: runtime cleanup failed: ${formatTerminalError(aggregate)}`);
@@ -82,8 +90,12 @@ export function combineAbortSignals(
   ...signals: Array<AbortSignal | undefined>
 ): AbortSignal | undefined {
   const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
-  if (active.length === 0) return undefined;
-  if (active.length === 1) return active[0];
+  if (active.length === 0) {
+    return undefined;
+  }
+  if (active.length === 1) {
+    return active[0];
+  }
   return AbortSignal.any(active);
 }
 
@@ -94,17 +106,23 @@ export function createOwnedUi(ui: ExtensionUIContext, owner: McpRuntimeOwner): E
     if ((typeof value !== "object" || value === null) && typeof value !== "function") {
       return value;
     }
-    const object = value as object;
+    const object = value;
     const existing = proxies.get(object);
-    if (existing) return existing;
+    if (existing) {
+      return existing;
+    }
 
     const proxy = new Proxy(object, {
       get(target, property, receiver) {
-        if (!owner.isActive()) return undefined;
+        if (!owner.isActive()) {
+          return undefined;
+        }
         const member = Reflect.get(target, property, receiver);
         if (typeof member === "function") {
           return (...args: unknown[]) => {
-            if (!owner.isActive()) return undefined;
+            if (!owner.isActive()) {
+              return undefined;
+            }
             return Reflect.apply(member, target, args);
           };
         }
@@ -118,7 +136,9 @@ export function createOwnedUi(ui: ExtensionUIContext, owner: McpRuntimeOwner): E
 }
 
 export function isAbortError(error: unknown, signal?: AbortSignal): boolean {
-  if (signal?.aborted) return true;
+  if (signal?.aborted) {
+    return true;
+  }
   return (
     error instanceof Error &&
     (error.name === "AbortError" || error.message === "MCP extension runtime stopped")

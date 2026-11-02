@@ -49,7 +49,7 @@ export function createToolLoader(
   getInitPromise: () => Promise<McpExtensionState> | null,
   beforeExecute?: McpAdapterOptions["beforeExecute"],
 ) {
-  pi.registerEntryRenderer(ENTRY, () => undefined);
+  pi.registerEntryRenderer(ENTRY, () => {});
   const registered = new Map<
     string,
     { selection: Selection; name: string; fingerprint: string; pinned: boolean }
@@ -69,7 +69,9 @@ export function createToolLoader(
   const active = () => pi.getActiveTools();
   const setActive = (names: string[]) => {
     const unique = [...new Set(names)];
-    if (JSON.stringify(active()) === JSON.stringify(unique)) return;
+    if (JSON.stringify(active()) === JSON.stringify(unique)) {
+      return;
+    }
     pi.setActiveTools(unique);
   };
   function registerFeature<TParams extends TSchema, TDetails>(
@@ -90,21 +92,31 @@ export function createToolLoader(
     const current = new Set(active());
     for (const feature of Object.keys(features) as Feature[]) {
       if (current.has(featureNames[feature])) {
-        if (!features[feature]?.eager) selectedFeatures.add(feature);
+        if (!features[feature]?.eager) {
+          selectedFeatures.add(feature);
+        }
         inactiveFeatures.delete(feature);
       } else {
         selectedFeatures.delete(feature);
-        if (features[feature]?.eager) inactiveFeatures.add(feature);
+        if (features[feature]?.eager) {
+          inactiveFeatures.add(feature);
+        }
       }
     }
     for (const [id, { selection, name, pinned }] of registered) {
-      if (!available.has(id)) continue;
+      if (!available.has(id)) {
+        continue;
+      }
       if (current.has(name)) {
-        if (!pinned) selected.set(id, selection);
+        if (!pinned) {
+          selected.set(id, selection);
+        }
         inactive.delete(id);
       } else {
         selected.delete(id);
-        if (pinned) inactive.set(id, selection);
+        if (pinned) {
+          inactive.set(id, selection);
+        }
       }
     }
   }
@@ -127,7 +139,9 @@ export function createToolLoader(
       let id = manager.getLeafId();
       while (id) {
         const entry = manager.getEntry(id);
-        if (!entry) break;
+        if (!entry) {
+          break;
+        }
         yield entry;
         id = entry.parentId;
       }
@@ -138,8 +152,9 @@ export function createToolLoader(
         entry.customType !== ENTRY ||
         !entry.data ||
         typeof entry.data !== "object"
-      )
+      ) {
         continue;
+      }
       const data = entry.data as {
         selected?: Selection[];
         inactive?: Selection[];
@@ -151,14 +166,16 @@ export function createToolLoader(
         [data.inactive, data.features, data.inactiveFeatures].some(
           (value) => value !== undefined && !Array.isArray(value),
         )
-      )
+      ) {
         continue;
+      }
       if (
         [...data.selected, ...(data.inactive ?? [])].some(
           (value) => !value || typeof value.server !== "string" || typeof value.tool !== "string",
         )
-      )
+      ) {
         continue;
+      }
       selectedFeatures = new Set(
         Array.isArray(data.features)
           ? data.features.filter((value) => value === "gateway" || value === "script")
@@ -175,8 +192,9 @@ export function createToolLoader(
       ] as const) {
         target.clear();
         for (const selection of Array.isArray(field) ? field : []) {
-          if (typeof selection?.server === "string" && typeof selection.tool === "string")
+          if (typeof selection?.server === "string" && typeof selection.tool === "string") {
             target.set(key(selection), selection);
+          }
         }
       }
       break;
@@ -189,7 +207,9 @@ export function createToolLoader(
     env?: string[] | null,
     registerGateways?: (pins: DirectToolSpec[]) => FeaturePolicy,
   ) {
-    if (!restoring) capture();
+    if (!restoring) {
+      capture();
+    }
     const previousNames = new Set([...registered.values()].map((item) => item.name));
     const existing = new Set(pi.getAllTools().map((tool) => tool.name));
     const specs: Array<{
@@ -200,7 +220,9 @@ export function createToolLoader(
       pinned: boolean;
     }> = [];
     for (const [server, definition] of Object.entries(env === null ? {} : config.mcpServers)) {
-      if (isServerDisabled(definition)) continue;
+      if (isServerDisabled(definition)) {
+        continue;
+      }
       const entry = cache?.servers[server];
       const metadata =
         getState()?.toolMetadata.get(server) ??
@@ -215,7 +237,9 @@ export function createToolLoader(
       const selection = directToolSelection(config, server, env ?? undefined);
       for (const source of metadata) {
         const { name: prefixedName, ...tool } = source;
-        if (tool.resourceUri) continue;
+        if (tool.resourceUri) {
+          continue;
+        }
         const pinned =
           selection === true || (Array.isArray(selection) && selection.includes(tool.originalName));
         specs.push({
@@ -228,7 +252,9 @@ export function createToolLoader(
       }
     }
     const counts = new Map<string, number>();
-    for (const { name } of specs) counts.set(name, (counts.get(name) ?? 0) + 1);
+    for (const { name } of specs) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
     available = new Set();
     const enabled: string[] = [];
     for (const { spec, source, selection, name, pinned } of specs) {
@@ -237,8 +263,9 @@ export function createToolLoader(
         reserved.has(name) ||
         counts.get(name)! > 1 ||
         (existing.has(name) && !previousNames.has(name))
-      )
+      ) {
         continue;
+      }
       available.add(id);
       const instructions =
         getState()?.serverInstructions.get(spec.serverName) ??
@@ -248,8 +275,9 @@ export function createToolLoader(
         previous?.server === spec.serverName && previous.instructions === instructions
           ? previous.value
           : JSON.stringify({ spec, name, instructions });
-      if (Object.isFrozen(source))
+      if (Object.isFrozen(source)) {
         fingerprints.set(source, { server: spec.serverName, instructions, value: fingerprint });
+      }
       if (registered.get(id)?.fingerprint !== fingerprint) {
         pi.registerTool({
           name,
@@ -290,7 +318,9 @@ export function createToolLoader(
         });
       }
       registered.set(id, { selection, name, fingerprint, pinned });
-      if (selected.has(id) || (pinned && !inactive.has(id))) enabled.push(name);
+      if (selected.has(id) || (pinned && !inactive.has(id))) {
+        enabled.push(name);
+      }
     }
     const permitted = new Set(pi.getAllTools().map((tool) => tool.name));
     const pins = specs
@@ -309,8 +339,9 @@ export function createToolLoader(
           if (
             selectedFeatures.has(feature) ||
             (features[feature]?.eager && !inactiveFeatures.has(feature))
-          )
+          ) {
             enabled.push(featureNames[feature]);
+          }
         } else {
           selectedFeatures.delete(feature);
           inactiveFeatures.delete(feature);
@@ -322,7 +353,9 @@ export function createToolLoader(
       ...previousNames,
       ...[...registered.values()].map((item) => item.name),
     ]);
-    for (const feature of registeredFeatures) ownedNames.add(featureNames[feature]);
+    for (const feature of registeredFeatures) {
+      ownedNames.add(featureNames[feature]);
+    }
     setActive([...active().filter((name) => !ownedNames.has(name)), ...enabled]);
     restoring = false;
     return pins;
@@ -354,7 +387,9 @@ export function createToolLoader(
         return { name };
       });
     for (const feature of requestedFeatures) {
-      if (!current.has(featureNames[feature])) continue;
+      if (!current.has(featureNames[feature])) {
+        continue;
+      }
       selectedFeatures.add(feature);
       tools.push({ name: featureNames[feature] });
     }

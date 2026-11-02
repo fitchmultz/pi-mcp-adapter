@@ -208,7 +208,9 @@ export function getMcpDiscoverySummary(
         cwd,
         `Failed to inspect imported MCP config from ${kind}:`,
       );
-      if (!imported) return null;
+      if (!imported) {
+        return null;
+      }
       return {
         kind,
         path: imported.path,
@@ -276,7 +278,9 @@ export function loadMcpConfig(
 
   for (const source of sourceSpecs) {
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-    if (!loaded) continue;
+    if (!loaded) {
+      continue;
+    }
     config = mergeConfigs(config, expandImports(loaded, cwd, includeProject));
   }
 
@@ -290,10 +294,14 @@ function getConfiguredHostConfigDiscovery(
 ): HostConfigDiscovery {
   let configured: HostConfigDiscovery = "off";
   for (const source of getConfigSources(overridePath, cwd)) {
-    if (!includeProject && isProjectConfigSource(source, cwd)) continue;
+    if (!includeProject && isProjectConfigSource(source, cwd)) {
+      continue;
+    }
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
     const value = loaded?.settings?.hostConfigDiscovery;
-    if (value === "off" || value === "on") configured = value;
+    if (value === "off" || value === "on") {
+      configured = value;
+    }
   }
   return configured;
 }
@@ -307,7 +315,9 @@ function loadDiscoveredHostConfigs(cwd: string, includeProject: boolean): McpCon
       `Failed to discover imported MCP config from ${importKind}:`,
       includeProject,
     );
-    if (!imported) continue;
+    if (!imported) {
+      continue;
+    }
     config = mergeConfigs(config, {
       mcpServers: extractServers(imported.value, importKind),
     });
@@ -323,8 +333,9 @@ function getConfigConflicts(
   const seen = new Map<string, Array<{ kind: "shared" | "pi" | "host"; path: string }>>();
   const record = (name: string, source: { kind: "shared" | "pi" | "host"; path: string }): void => {
     const entries = seen.get(name) ?? [];
-    if (!entries.some((entry) => entry.kind === source.kind && entry.path === source.path))
+    if (!entries.some((entry) => entry.kind === source.kind && entry.path === source.path)) {
       entries.push(source);
+    }
     seen.set(name, entries);
   };
 
@@ -336,14 +347,18 @@ function getConfigConflicts(
       cwd,
       `Failed to inspect imported MCP config from ${entry.kind}:`,
     );
-    if (!imported) continue;
+    if (!imported) {
+      continue;
+    }
     for (const name of Object.keys(extractServers(imported.value, entry.kind))) {
       record(name, { kind: "host", path: imported.path });
     }
   }
   for (const source of sourceSpecs) {
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-    if (!loaded) continue;
+    if (!loaded) {
+      continue;
+    }
     if (loaded.imports?.length) {
       for (const importKind of loaded.imports) {
         const imported = loadImportedConfig(
@@ -351,7 +366,9 @@ function getConfigConflicts(
           cwd,
           `Failed to inspect imported MCP config from ${importKind}:`,
         );
-        if (!imported) continue;
+        if (!imported) {
+          continue;
+        }
         for (const name of Object.keys(extractServers(imported.value, importKind))) {
           record(name, { kind: "host", path: imported.path });
         }
@@ -376,7 +393,9 @@ function canonicalPath(path: string): string {
   let existingPath = resolvedPath;
   while (!existsSync(existingPath)) {
     const parent = dirname(existingPath);
-    if (parent === existingPath) return resolvedPath;
+    if (parent === existingPath) {
+      return resolvedPath;
+    }
     existingPath = parent;
   }
 
@@ -427,7 +446,9 @@ function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSou
   }
 
   for (const [index, agentsPath] of AGENTS_GLOBAL_CONFIG_PATHS.entries()) {
-    if (agentsPath === userPath || agentsPath === GENERIC_GLOBAL_CONFIG_PATH) continue;
+    if (agentsPath === userPath || agentsPath === GENERIC_GLOBAL_CONFIG_PATH) {
+      continue;
+    }
     sources.push({
       id: index === 0 ? "agents-global" : "agents-nested-global",
       label: index === 0 ? "user-global .agents MCP" : "user-global .agents nested MCP",
@@ -536,7 +557,9 @@ function mergeServerMaps(
       delete baseEntry.socket;
     }
     if (existing && typeof definition.url === "string" && definition.url !== existing.url) {
-      if (baseEntry === existing) baseEntry = { ...existing };
+      if (baseEntry === existing) {
+        baseEntry = { ...existing };
+      }
       for (const field of URL_BOUND_AUTH_FIELDS) {
         delete baseEntry[field];
       }
@@ -552,7 +575,9 @@ function mergeServerMaps(
           !isDeepStrictEqual(definition.args, existing.args ?? [])) ||
         (definition.cwd !== undefined && definition.cwd !== existing.cwd))
     ) {
-      if (baseEntry === existing) baseEntry = { ...existing };
+      if (baseEntry === existing) {
+        baseEntry = { ...existing };
+      }
       delete baseEntry.env;
     }
     merged[name] = { ...baseEntry, ...definition };
@@ -565,12 +590,16 @@ function mergeImports(
   right: ImportKind[] | undefined,
 ): ImportKind[] | undefined {
   const merged = [...(left ?? []), ...(right ?? [])];
-  if (merged.length === 0) return undefined;
+  if (merged.length === 0) {
+    return undefined;
+  }
   return [...new Set(merged)];
 }
 
 function expandImports(config: McpConfig, cwd: string, includeProject: boolean): McpConfig {
-  if (!config.imports?.length) return config;
+  if (!config.imports?.length) {
+    return config;
+  }
 
   const importedServers: Record<string, ServerEntry> = {};
   for (const importKind of config.imports) {
@@ -580,7 +609,9 @@ function expandImports(config: McpConfig, cwd: string, includeProject: boolean):
       `Failed to import MCP config from ${importKind}:`,
       includeProject,
     );
-    if (!imported) continue;
+    if (!imported) {
+      continue;
+    }
 
     const servers = extractServers(imported.value, importKind);
     for (const [name, definition] of Object.entries(servers)) {
@@ -614,15 +645,21 @@ function resolveImportCandidates(
             break;
           }
           const parent = dirname(current);
-          if (parent === current) break;
+          if (parent === current) {
+            break;
+          }
           current = parent;
         }
 
-        if (!gitRoot) return join(start, "opencode.json");
+        if (!gitRoot) {
+          return join(start, "opencode.json");
+        }
         current = start;
         while (true) {
           const projectConfig = join(current, "opencode.json");
-          if (existsSync(projectConfig) || current === gitRoot) return projectConfig;
+          if (existsSync(projectConfig) || current === gitRoot) {
+            return projectConfig;
+          }
           current = dirname(current);
         }
       }
@@ -651,7 +688,9 @@ function loadImportedConfig(
     let highestPrecedencePath: string | undefined;
 
     for (const path of resolveImportCandidates(importKind, cwd, includeProject)) {
-      if (!existsSync(path)) continue;
+      if (!existsSync(path)) {
+        continue;
+      }
 
       try {
         const value = readImportedConfig(path);
@@ -668,7 +707,9 @@ function loadImportedConfig(
   }
 
   for (const path of resolveImportCandidates(importKind, cwd, includeProject)) {
-    if (!existsSync(path)) continue;
+    if (!existsSync(path)) {
+      continue;
+    }
 
     try {
       return { path, value: readImportedConfig(path) };
@@ -681,7 +722,9 @@ function loadImportedConfig(
 }
 
 function readValidatedConfig(path: string, label: string): McpConfig | null {
-  if (!existsSync(path)) return null;
+  if (!existsSync(path)) {
+    return null;
+  }
 
   try {
     return validateConfig(parseJsonConfig(readFileSync(path, "utf-8")));
@@ -709,12 +752,14 @@ function validateConfig(raw: unknown): McpConfig {
   }
 
   for (const entry of Object.values(servers)) {
-    if (entry && typeof entry === "object") validateServerProtocolConfig(entry);
+    if (entry && typeof entry === "object") {
+      validateServerProtocolConfig(entry);
+    }
   }
   return {
     mcpServers: servers as Record<string, ServerEntry>,
     ...(Array.isArray(obj.imports) ? { imports: obj.imports as ImportKind[] } : {}),
-    ...(settings !== undefined ? { settings: settings as McpSettings } : {}),
+    ...(settings !== undefined ? { settings: settings } : {}),
   };
 }
 
@@ -742,8 +787,9 @@ function mergeOpenCodeConfigs(
         const safeBase = { ...(baseEntry as Record<string, unknown>) };
         const override = nextEntry as Record<string, unknown>;
         if (typeof override.type === "string" && override.type !== safeBase.type) {
-          for (const field of ["command", "environment", "cwd", "url", "headers", "oauth"])
+          for (const field of ["command", "environment", "cwd", "url", "headers", "oauth"]) {
             delete safeBase[field];
+          }
         }
         if (typeof override.url === "string" && override.url !== safeBase.url) {
           delete safeBase.headers;
@@ -760,8 +806,9 @@ function mergeOpenCodeConfigs(
             delete safeBase.cwd;
           }
         }
-        if (Object.hasOwn(override, "cwd") && override.cwd !== safeBase.cwd)
+        if (Object.hasOwn(override, "cwd") && override.cwd !== safeBase.cwd) {
           delete safeBase.environment;
+        }
 
         const mergedEntry = { ...safeBase, ...override };
         for (const field of ["headers", "oauth"]) {
@@ -792,7 +839,9 @@ function mergeOpenCodeConfigs(
 }
 
 function extractServers(config: unknown, kind: ImportKind): Record<string, ServerEntry> {
-  if (!config || typeof config !== "object") return {};
+  if (!config || typeof config !== "object") {
+    return {};
+  }
 
   const obj = config as Record<string, unknown>;
 
@@ -824,9 +873,13 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
   const mappedServers: Record<string, ServerEntry> = {};
   for (const [name, entry] of Object.entries(servers)) {
     if (kind === "opencode") {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        continue;
+      }
       const raw = entry as Record<string, unknown>;
-      if (raw.enabled === false) continue;
+      if (raw.enabled === false) {
+        continue;
+      }
 
       if (
         raw.type === "local" &&
@@ -836,7 +889,9 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
       ) {
         const env = toStringRecord(raw.environment);
         const command = raw.command[0];
-        if (command === undefined) continue;
+        if (command === undefined) {
+          continue;
+        }
         const mapped: ServerEntry = {
           command,
           args: raw.command.slice(1),
@@ -881,7 +936,9 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
 
     if (typeof bearerTokenEnv === "string") {
       mapped.bearerTokenEnv = bearerTokenEnv;
-      if (mapped.auth === undefined) mapped.auth = "bearer";
+      if (mapped.auth === undefined) {
+        mapped.auth = "bearer";
+      }
     }
     if (httpHeaders && typeof httpHeaders === "object" && !Array.isArray(httpHeaders)) {
       mapped.headers = {
@@ -892,8 +949,9 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
     if (envHttpHeaders && typeof envHttpHeaders === "object" && !Array.isArray(envHttpHeaders)) {
       const headers = { ...(mapped.headers as Record<string, string> | undefined) };
       for (const [header, envVar] of Object.entries(envHttpHeaders)) {
-        if (typeof envVar === "string" && headers[header] === undefined)
+        if (typeof envVar === "string" && headers[header] === undefined) {
           headers[header] = `$env:${envVar}`;
+        }
       }
       mapped.headers = headers;
     }
@@ -901,7 +959,7 @@ function extractServers(config: unknown, kind: ImportKind): Record<string, Serve
     delete mapped.bearer_token_env_var;
     delete mapped.http_headers;
     delete mapped.env_http_headers;
-    mappedServers[name] = mapped as ServerEntry;
+    mappedServers[name] = mapped;
   }
 
   return mappedServers;
@@ -912,7 +970,9 @@ function serializeRawConfig(raw: Record<string, unknown>): string {
 }
 
 function buildUnifiedDiff(beforeText: string, afterText: string): string {
-  if (beforeText === afterText) return "(no changes)";
+  if (beforeText === afterText) {
+    return "(no changes)";
+  }
 
   const before = beforeText.split("\n");
   const after = afterText.split("\n");
@@ -924,7 +984,9 @@ function buildUnifiedDiff(beforeText: string, afterText: string): string {
     for (let j = cols - 1; j >= 0; j--) {
       const row = lcs[i];
       const nextRow = lcs[i + 1];
-      if (!row || !nextRow) continue;
+      if (!row || !nextRow) {
+        continue;
+      }
       row[j] =
         before[i] === after[j]
           ? (nextRow[j + 1] ?? 0) + 1
@@ -975,7 +1037,9 @@ function buildConfigWritePreview(
 }
 
 function readRawConfigObject(filePath: string): Record<string, unknown> {
-  if (!existsSync(filePath)) return {};
+  if (!existsSync(filePath)) {
+    return {};
+  }
 
   let raw: unknown;
   try {
@@ -1001,7 +1065,9 @@ function writeRawConfigObject(filePath: string, raw: Record<string, unknown>): v
     mode: existingMode ?? 0o666,
     flag: "wx",
   });
-  if (existingMode !== undefined) chmodSync(tmpPath, existingMode);
+  if (existingMode !== undefined) {
+    chmodSync(tmpPath, existingMode);
+  }
   renameSync(tmpPath, filePath);
 }
 
@@ -1096,9 +1162,13 @@ export function writeProjectServerDisabledOverride(
     next = Object.fromEntries(Object.entries(existing ?? {}).filter(([key]) => key !== "disabled"));
     let lowerConfig: McpConfig = { mcpServers: {} };
     for (const source of getConfigSources(overridePath, cwd)) {
-      if (source.readPath === filePath) continue;
+      if (source.readPath === filePath) {
+        continue;
+      }
       const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-      if (loaded) lowerConfig = mergeConfigs(lowerConfig, expandImports(loaded, cwd, true));
+      if (loaded) {
+        lowerConfig = mergeConfigs(lowerConfig, expandImports(loaded, cwd, true));
+      }
     }
     if (raw.imports !== undefined) {
       if (
@@ -1114,7 +1184,9 @@ export function writeProjectServerDisabledOverride(
         expandImports({ mcpServers: {}, imports: raw.imports as ImportKind[] }, cwd, true),
       );
     }
-    if (isServerDisabled(lowerConfig.mcpServers[serverName])) next.disabled = false;
+    if (isServerDisabled(lowerConfig.mcpServers[serverName])) {
+      next.disabled = false;
+    }
   }
 
   if (
@@ -1123,8 +1195,11 @@ export function writeProjectServerDisabledOverride(
   ) {
     return { path: filePath, changed: false };
   }
-  if (Object.keys(next).length === 0) delete servers[serverName];
-  else servers[serverName] = next;
+  if (Object.keys(next).length === 0) {
+    delete servers[serverName];
+  } else {
+    servers[serverName] = next;
+  }
 
   raw[serverKey] = servers;
   writeRawConfigObject(filePath, raw);
@@ -1177,7 +1252,9 @@ function findProjectRoots(cwd = process.cwd()): string[] {
       }
 
       const parent = dirname(current);
-      if (parent === current) break;
+      if (parent === current) {
+        break;
+      }
       current = parent;
     }
   }
@@ -1202,9 +1279,13 @@ function detectRepoPrompt(
   cwd = process.cwd(),
 ): RepoPromptDiscovery {
   for (const source of summary.sources) {
-    if (source.kind !== "shared" || source.serverCount === 0) continue;
+    if (source.kind !== "shared" || source.serverCount === 0) {
+      continue;
+    }
     const config = readValidatedConfig(source.path, `MCP config from ${source.path}`);
-    if (!config) continue;
+    if (!config) {
+      continue;
+    }
     for (const [name, entry] of Object.entries(config.mcpServers)) {
       if (isRepoPromptServer(name, entry)) {
         return { configured: true, configuredPath: source.path };
@@ -1326,7 +1407,9 @@ export function getServerProvenance(
         cwd,
         `Failed to inspect imported MCP config from ${importKind}:`,
       );
-      if (!imported) continue;
+      if (!imported) {
+        continue;
+      }
       for (const name of Object.keys(extractServers(imported.value, importKind))) {
         // Keep writes inside Pi-owned storage even though the source is external.
         // Later import kinds win in the same deterministic order as loadDiscoveredHostConfigs.
@@ -1337,7 +1420,9 @@ export function getServerProvenance(
 
   for (const source of getConfigSources(overridePath, cwd)) {
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-    if (!loaded) continue;
+    if (!loaded) {
+      continue;
+    }
 
     if (loaded.imports?.length) {
       for (const importKind of loaded.imports) {
@@ -1346,7 +1431,9 @@ export function getServerProvenance(
           cwd,
           `Failed to inspect imported MCP config from ${importKind}:`,
         );
-        if (!imported) continue;
+        if (!imported) {
+          continue;
+        }
 
         const servers = extractServers(imported.value, importKind);
         for (const name of Object.keys(servers)) {
@@ -1377,11 +1464,15 @@ export function writeDirectToolsConfig(
 
   for (const [serverName, value] of changes) {
     const prov = provenance.get(serverName);
-    if (!prov) continue;
+    if (!prov) {
+      continue;
+    }
 
     const targetPath = prov.path;
 
-    if (!byPath.has(targetPath)) byPath.set(targetPath, []);
+    if (!byPath.has(targetPath)) {
+      byPath.set(targetPath, []);
+    }
     byPath.get(targetPath)!.push({ name: serverName, value });
   }
 
@@ -1400,12 +1491,16 @@ export function writeDirectToolsConfig(
 }
 
 export function resolveConfiguredOAuthDir(raw: unknown, cwd = process.cwd()): string | undefined {
-  if (raw === undefined || raw === null) return undefined;
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
   if (typeof raw !== "string") {
     throw new Error("settings.oauthDir must be a string");
   }
 
   const trimmed = raw.trim();
-  if (!trimmed) return undefined;
+  if (!trimmed) {
+    return undefined;
+  }
   return resolve(cwd, trimmed);
 }

@@ -2,8 +2,7 @@ import { createServer, type Server } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/client";
-import type { JSONRPCMessage } from "@modelcontextprotocol/client";
+import { ReadBuffer, serializeMessage, type JSONRPCMessage } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { McpServerManager } from "../server-manager.ts";
 
@@ -40,7 +39,9 @@ describe("McpServerManager Unix socket transport", () => {
         buffer.append(chunk);
         while (true) {
           const message = buffer.readMessage();
-          if (message === null) break;
+          if (message === null) {
+            break;
+          }
           const request = message as JSONRPCMessage & { id?: string | number; method?: string };
           const result =
             request.method === "initialize"

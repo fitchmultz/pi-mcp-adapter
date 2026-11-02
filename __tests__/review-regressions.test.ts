@@ -68,7 +68,9 @@ describe("review regressions: saved-result readback", () => {
         expect(Buffer.byteLength(visible)).toBeLessThanOrEqual(maxBytes);
         expect(visible.split("\n").length).toBeLessThanOrEqual(maxLines);
         reconstructed += page.content[0]!.text;
-        if (page.details.nextOffset === null) break;
+        if (page.details.nextOffset === null) {
+          break;
+        }
         expect(page.details.nextOffset).toBeGreaterThan(offset);
         expect(page.content[1]!.text).toContain(
           `Continue with offset: ${page.details.nextOffset}.`,
@@ -127,7 +129,9 @@ describe("review regressions: saved-result readback", () => {
         expect(Buffer.byteLength(visible)).toBeLessThanOrEqual(DEFAULT_MCP_OUTPUT_MAX_BYTES);
         expect(visible.split("\n").length).toBeLessThanOrEqual(DEFAULT_MCP_OUTPUT_MAX_LINES);
         reconstructed += page.content[0]!.text;
-        if (page.details.nextOffset === null) break;
+        if (page.details.nextOffset === null) {
+          break;
+        }
         expect(page.details.nextOffset).toBeGreaterThan(offset);
         offset = page.details.nextOffset;
       }
@@ -176,7 +180,9 @@ describe("review regressions: saved-result readback", () => {
       expect([...text]).toHaveLength(1);
       expect(Buffer.from(text).toString()).toBe(text);
       reconstructed += text;
-      if (page.details.nextOffset === null) break;
+      if (page.details.nextOffset === null) {
+        break;
+      }
       expect(page.details.nextOffset).toBeGreaterThan(offset);
       expect(page.content[1]!.text).toContain(`Continue with offset: ${page.details.nextOffset}.`);
       offset = page.details.nextOffset!;

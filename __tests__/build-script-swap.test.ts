@@ -40,7 +40,9 @@ function makeFixture(): string {
       { mode: 0o755 },
     );
   }
-  for (const asset of RUNTIME_ASSETS) writeFileSync(join(dir, asset), `// stub ${asset}\n`);
+  for (const asset of RUNTIME_ASSETS) {
+    writeFileSync(join(dir, asset), `// stub ${asset}\n`);
+  }
   return dir;
 }
 
@@ -67,7 +69,9 @@ function stagingDirs(cwd: string): string[] {
 
 const fixtures: string[] = [];
 afterAll(() => {
-  for (const dir of fixtures) rmSync(dir, { force: true, recursive: true });
+  for (const dir of fixtures) {
+    rmSync(dir, { force: true, recursive: true });
+  }
 });
 
 describe("build.mjs staging swap", () => {
@@ -90,8 +94,9 @@ describe("build.mjs staging swap", () => {
     expect((await runBuild(dir)).code).toBe(0);
     expect(existsSync(join(dir, "dist", "index.js"))).toBe(true);
     expect(existsSync(join(dir, "dist", "stale.txt"))).toBe(false);
-    for (const asset of RUNTIME_ASSETS)
+    for (const asset of RUNTIME_ASSETS) {
       expect(readFileSync(join(dir, "dist", asset), "utf8")).toBe(`// stub ${asset}\n`);
+    }
     expect(stagingDirs(dir)).toEqual([]);
   });
 
@@ -183,7 +188,9 @@ describe("build.mjs staging swap", () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toContain("dist/ was published by a concurrent build");
     expect(existsSync(join(dir, "dist", "winner.txt"))).toBe(true);
-    for (const asset of RUNTIME_ASSETS) expect(existsSync(join(dir, "dist", asset))).toBe(true);
+    for (const asset of RUNTIME_ASSETS) {
+      expect(existsSync(join(dir, "dist", asset))).toBe(true);
+    }
     expect(stagingDirs(dir)).toEqual([]);
   });
 

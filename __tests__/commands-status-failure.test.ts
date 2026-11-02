@@ -20,7 +20,7 @@ describe("MCP status failure reasons", () => {
     await showStatus(
       {
         config: { mcpServers: { demo: { command: "node" } } },
-        manager: { getConnection: () => undefined },
+        manager: { getConnection: () => {} },
         toolMetadata: new Map(),
         failureTracker: new Map([["demo", Date.now()]]),
       } as any,
@@ -41,7 +41,7 @@ describe("MCP status failure reasons", () => {
     const ui = { notify: vi.fn() };
     const state = {
       config: { mcpServers: { docs: { command: "node" }, cold: { command: "node" } } },
-      manager: { getConnection: () => undefined },
+      manager: { getConnection: () => {} },
       toolMetadata: new Map([
         [
           "docs",

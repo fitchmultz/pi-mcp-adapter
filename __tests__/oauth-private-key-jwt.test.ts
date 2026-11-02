@@ -42,14 +42,18 @@ const browser = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("open", () => ({ default: browser.open }));
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.reverse()) await cleanup();
+  for (const cleanup of cleanups.reverse()) {
+    await cleanup();
+  }
   cleanups.length = 0;
   browser.open.mockReset();
 });
 async function listen(server: Server) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Fixture did not bind");
+  if (!address || typeof address === "string") {
+    throw new Error("Fixture did not bind");
+  }
   return address.port;
 }
 async function close(server: Server) {
@@ -100,7 +104,9 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
     privateKeyJwt: { privateKey: pair.pem, algorithm: pair.algorithm },
     ...config,
   };
-  if (config.clientMetadataUrl && config.clientId === undefined) delete oauth.clientId;
+  if (config.clientMetadataUrl && config.clientId === undefined) {
+    delete oauth.clientId;
+  }
   let origin = "";
   let verificationKey = pair.publicJwk;
   let issuer: string | undefined;
@@ -122,13 +128,14 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
     const url = new URL(req.url!, origin);
     const json = (body: unknown, status = 200) =>
       res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
-    if (url.pathname.startsWith("/.well-known/oauth-protected-resource"))
+    if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
       return void json({
         resource: `${origin}/mcp`,
         authorization_servers: [origin],
         scopes_supported: ["tools"],
       });
-    if (url.pathname.startsWith("/.well-known/oauth-authorization-server"))
+    }
+    if (url.pathname.startsWith("/.well-known/oauth-authorization-server")) {
       return void json({
         issuer: issuer ?? origin,
         authorization_endpoint: `${origin}/authorize`,
@@ -142,6 +149,7 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
         authorization_response_iss_parameter_supported: true,
         client_id_metadata_document_supported: true,
       });
+    }
     // AS-only local document hosting; the adapter uses the real HTTPS client_id and never fetches it.
     if (url.pathname === "/document") {
       documentFetches.push(url.searchParams.get("id")!);
@@ -163,7 +171,9 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
       return;
     }
     let data = "";
-    for await (const chunk of req) data += chunk;
+    for await (const chunk of req) {
+      data += chunk;
+    }
     if (url.pathname === "/register") {
       registrations.push(JSON.parse(data));
       return void json({ error: "registration_not_supported" }, 400);
@@ -195,11 +205,12 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
             if (
               doc.client_id !== params.get("client_id") ||
               doc.token_endpoint_auth_method !== "private_key_jwt"
-            )
+            ) {
               throw new Error("document");
+            }
             publicJwk = doc.jwks.keys[0];
           }
-          const publicKey = createPublicKey({ key: publicJwk as JsonWebKey, format: "jwk" });
+          const publicKey = createPublicKey({ key: publicJwk, format: "jwk" });
           const valid = verify(
             pair.algorithm.startsWith("Ed") ? null : "sha256",
             Buffer.from(`${encodedHeader}.${encodedClaims}`),
@@ -227,14 +238,16 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
             req.headers.authorization ||
             params.get("client_assertion_type") !==
               "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-          )
+          ) {
             throw new Error("assertion");
+          }
         } else if (
           params.get("client_id") !== id ||
           params.has("client_assertion") ||
           params.has("client_secret")
-        )
+        ) {
           throw new Error("public client");
+        }
         const grant = params.get("grant_type");
         if (grant === "authorization_code") {
           const authorization = codes.get(params.get("code")!);
@@ -244,11 +257,16 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
             authorization.searchParams.get("code_challenge") !==
               createHash("sha256").update(params.get("code_verifier")!).digest("base64url") ||
             authorization.searchParams.get("redirect_uri") !== params.get("redirect_uri")
-          )
+          ) {
             throw new Error("code");
+          }
         } else if (grant === "refresh_token") {
-          if (!refreshes.has(params.get("refresh_token")!)) throw new Error("refresh");
-        } else if (grant !== "client_credentials") throw new Error("grant");
+          if (!refreshes.has(params.get("refresh_token")!)) {
+            throw new Error("refresh");
+          }
+        } else if (grant !== "client_credentials") {
+          throw new Error("grant");
+        }
       } catch {
         return void json(
           { error: "invalid_request", error_description: "fixture rejected client assertion" },
@@ -312,7 +330,7 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
   const start = () => startAuth(name, definition.url!, definition, { runtime });
   const stored = () => getAuthForUrl(name, definition.url!);
   cleanups.push(async () => {
-    if (process.env.JWT_PROOF_FILE)
+    if (process.env.JWT_PROOF_FILE) {
       appendFileSync(
         process.env.JWT_PROOF_FILE,
         `${JSON.stringify({
@@ -332,6 +350,7 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
           registrations: registrations.length,
         })}\n`,
       );
+    }
     await manager.closeAll();
     await shutdownOAuth(runtime);
     clearAllCredentials(name);
@@ -433,7 +452,9 @@ function holdNativeSigning(
     finish: async () => {
       release();
       // Public connect/call promises may reject before the detached native auth exchange finishes.
-      while (sends.size) await Promise.allSettled([...sends]);
+      while (sends.size) {
+        await Promise.allSettled([...sends]);
+      }
     },
     restore: () => {
       sender.mockRestore();
@@ -600,8 +621,12 @@ it.each([
     expect(error.message).toContain("privateKeyJwt");
     expect(String(error)).not.toContain("SENTINEL");
     expect(error.cause).toBeUndefined();
-    if (source.includes("exit 7")) expect(error.message).toContain("command exited with code 7");
-    if (source === "!true") expect(error.message).toContain("command returned empty output");
+    if (source.includes("exit 7")) {
+      expect(error.message).toContain("command exited with code 7");
+    }
+    if (source === "!true") {
+      expect(error.message).toContain("command returned empty output");
+    }
     expect(f.exchanges).toHaveLength(1);
     expect(f.authorizations).toHaveLength(1);
     expect(f.stored()).toEqual(before);
@@ -632,7 +657,7 @@ it.each(["client", "tokens"])(
           issuer: binding === "tokens" ? "https://old.example" : f.origin,
         },
       },
-      f.definition.url!,
+      f.definition.url,
     );
     const before = f.stored();
     await expect(f.start()).rejects.toThrow("issuer changed");
@@ -677,8 +702,11 @@ it.each(["abort", "deactivate"])(
       const pending = auth(provider, { serverUrl: f.definition.url! }).catch((error) => error);
       await started;
       const before = f.stored();
-      if (stop === "abort") controller.abort();
-      else provider.deactivate();
+      if (stop === "abort") {
+        controller.abort();
+      } else {
+        provider.deactivate();
+      }
       release();
       const error = await pending;
       expect(error).toBeInstanceOf(Error);
@@ -750,10 +778,11 @@ it("does not resolve commands during discovery or declare machine auth for brows
   expect(authorizationUrl).toBeTruthy();
   expect((await f.connect()).status).toBe("connected");
   expect(existsSync(marker)).toBe(false);
-  for (const r of f.requests)
+  for (const r of f.requests) {
     expect(
       r.params?._meta?.["io.modelcontextprotocol/clientCapabilities"]?.extensions,
     ).toBeUndefined();
+  }
 });
 
 it("keeps native ordinary-versus-explicit scope precedence without changing step-up policy", async () => {
@@ -806,11 +835,17 @@ it.each([
         .catch((error) => error);
       await signing.started;
       before = structuredClone(f.stored());
-      if (mode === "close") await f.manager.close(f.name);
-      else if (mode === "signal") controller.abort(new Error("individual connect cancelled"));
-      else await shutdownOAuth(f.runtime);
+      if (mode === "close") {
+        await f.manager.close(f.name);
+      } else if (mode === "signal") {
+        controller.abort(new Error("individual connect cancelled"));
+      } else {
+        await shutdownOAuth(f.runtime);
+      }
       signing.events.push("cancel-returned");
-      if (mode !== "shutdown") expect(await pending).toBeInstanceOf(Error);
+      if (mode !== "shutdown") {
+        expect(await pending).toBeInstanceOf(Error);
+      }
       expect(signing.pending()).toBeGreaterThan(0);
       await signing.finish();
       expect(await pending).toBeInstanceOf(Error);
@@ -831,7 +866,7 @@ it.each([
     } finally {
       await signing.finish();
       signing.restore();
-      if (process.env.JWT_PROOF_FILE)
+      if (process.env.JWT_PROOF_FILE) {
         appendFileSync(
           process.env.JWT_PROOF_FILE,
           `${JSON.stringify({
@@ -845,6 +880,7 @@ it.each([
             runtimeAborted: f.runtime.signal.aborted,
           })}\n`,
         );
+      }
     }
   },
 );
@@ -991,7 +1027,7 @@ it("validates private-key configuration and identity conflicts at both public bo
     { clientId: "id", clientSecret: "SECRET_SENTINEL", privateKeyJwt: valid },
     { clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: valid },
   );
-  for (const config of configs)
+  for (const config of configs) {
     for (const build of [
       () => extractOAuthConfig({ oauth: config as OAuthConfig }),
       () =>
@@ -1010,6 +1046,7 @@ it("validates private-key configuration and identity conflicts at both public bo
       expect(String(error)).not.toContain("SENTINEL");
       expect((error as Error).cause).toBeUndefined();
     }
+  }
 });
 
 it("does not migrate a real saved shared browser login into private-key auth after a custom URL change", async () => {
@@ -1070,7 +1107,7 @@ it.each(["configured", "opaque-dcr"])(
           clientInfo: { clientId: f.id, issuer: f.origin, redirectUris: [] },
           tokens: { accessToken: "old", issuer: f.origin },
         },
-        f.definition.url!,
+        f.definition.url,
       );
     }
     expect(await f.start()).toEqual({ authorizationUrl: "" });
@@ -1101,7 +1138,7 @@ it.each(["shared", "secret"])(
         },
         tokens: { accessToken: "old", issuer: f.origin },
       },
-      f.definition.url!,
+      f.definition.url,
     );
     const before = f.stored();
     await expect(f.start()).rejects.toThrow(/privateKeyJwt/);

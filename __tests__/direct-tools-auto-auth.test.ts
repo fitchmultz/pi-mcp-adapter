@@ -79,7 +79,7 @@ describe("direct tools auto auth", () => {
     } as any;
 
     const { metadata } = buildToolMetadata(
-      [{ name: "namespace.tool", description: "Namespaced tool" }] as any,
+      [{ name: "namespace.tool", description: "Namespaced tool" }],
       [],
       state.config.mcpServers.demo,
       "demo",
@@ -273,7 +273,7 @@ describe("direct tools auto auth", () => {
       },
     );
 
-    const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
+    const result = await executor("id", {}, undefined, () => {}, undefined as any);
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
     expect((result.content[0] as TextContent).text).toContain("auth-start");
@@ -370,7 +370,7 @@ describe("direct tools auto auth", () => {
       },
     );
 
-    const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
+    const result = await executor("id", {}, undefined, () => {}, undefined as any);
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
     expect((result.content[0] as TextContent).text).toBe("Reconnect demo from the host app.");

@@ -120,8 +120,9 @@ export const gatewayParameters = Type.Object(
 
 /** Migrate stored v5 calls before host validation; the advertised schema stays explicit. */
 export function prepareGatewayArguments(input: unknown): GatewayArguments {
-  if (!input || typeof input !== "object" || Array.isArray(input))
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("MCP arguments must be an object");
+  }
   const value = input as Record<string, unknown>;
   let action = value.action;
   const result = { ...value };
@@ -139,14 +140,25 @@ export function prepareGatewayArguments(input: unknown): GatewayArguments {
               : value.server
                 ? "list"
                 : "status";
-    if (action === "connect") result.server = value.connect;
-    if (action === "describe") result.tool = value.describe;
-    if (action === "instructions") result.server = value.instructions;
-    if (action === "search") result.query = value.search;
+    if (action === "connect") {
+      result.server = value.connect;
+    }
+    if (action === "describe") {
+      result.tool = value.describe;
+    }
+    if (action === "instructions") {
+      result.server = value.instructions;
+    }
+    if (action === "search") {
+      result.query = value.search;
+    }
   }
-  for (const key of ["connect", "describe", "instructions", "search"]) delete result[key];
-  if (!actions.includes(action as GatewayArguments["action"]))
+  for (const key of ["connect", "describe", "instructions", "search"]) {
+    delete result[key];
+  }
+  if (!actions.includes(action as GatewayArguments["action"])) {
     throw new Error(`Unknown MCP action: ${String(action)}`);
+  }
   result.action = action;
   if (typeof result.args === "string") {
     result.args = result.args === "" ? undefined : JSON.parse(result.args);
@@ -158,8 +170,9 @@ export function prepareGatewayArguments(input: unknown): GatewayArguments {
     throw new Error("Invalid args: expected a JSON object");
   }
   for (const field of requirements[action as GatewayArguments["action"]] ?? []) {
-    if (typeof result[field] !== "string" || (field !== "query" && result[field] === ""))
+    if (typeof result[field] !== "string" || (field !== "query" && result[field] === "")) {
       throw new Error(`${action} requires ${field}`);
+    }
   }
   return result as GatewayArguments;
 }

@@ -9,11 +9,11 @@ import { getOAuthCallbackPath, getOAuthCallbackPort } from "../mcp-oauth-provide
 
 describe("manual OAuth callback reservations", () => {
   beforeEach(async () => {
-    await stopCallbackServer().catch(() => undefined);
+    await stopCallbackServer().catch(() => {});
   });
 
   afterEach(async () => {
-    await stopCallbackServer().catch(() => undefined);
+    await stopCallbackServer().catch(() => {});
   });
 
   it("accepts successful callbacks for reserved manual auth states", async () => {

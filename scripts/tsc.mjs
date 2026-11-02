@@ -12,5 +12,7 @@ const result = spawnSync(
   ],
   { stdio: "inherit" },
 );
-if (result.error) console.error(result.error.message);
+if (result.error) {
+  console.error(result.error.message);
+}
 process.exitCode = result.status ?? 1;

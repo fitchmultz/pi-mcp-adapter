@@ -74,8 +74,8 @@ function createOptions(overrides: Partial<SamplingTestOptions> = {}): SamplingHa
       ...modelRegistryOverride,
       complete: mocks.complete,
     },
-    getCurrentModel: vi.fn(() => undefined),
-    getSignal: vi.fn(() => undefined),
+    getCurrentModel: vi.fn(() => {}),
+    getSignal: vi.fn(() => {}),
     ...rest,
   };
   return options as unknown as SamplingHandlerOptions;
@@ -282,7 +282,9 @@ describe("sampling handler", () => {
 
   it("falls back when hinted models do not have configured auth", async () => {
     const getApiKeyAndHeaders = vi.fn(async (candidate: Model<Api>) => {
-      if (candidate.id === "claude-haiku") return { ok: false as const, error: "missing key" };
+      if (candidate.id === "claude-haiku") {
+        return { ok: false as const, error: "missing key" };
+      }
       return { ok: true as const, apiKey: "key" };
     });
 

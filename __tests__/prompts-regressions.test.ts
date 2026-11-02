@@ -51,8 +51,11 @@ describe("MCP prompt regressions", () => {
   });
 
   afterEach(() => {
-    if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+    if (oldAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+    }
     rmSync(agentDir, { recursive: true, force: true });
   });
 
@@ -159,7 +162,7 @@ describe("MCP prompt regressions", () => {
       },
     });
 
-    await showPrompts(current, context(notify) as any);
+    await showPrompts(current, context(notify));
 
     expect(notify).toHaveBeenCalledWith(
       expect.stringContaining("Prompt discovery failed for: demo"),

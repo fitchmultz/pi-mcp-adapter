@@ -48,7 +48,9 @@ import { createMcpPanel } from "./mcp-panel.ts";
 import { createMcpSetupPanel } from "./mcp-setup-panel.ts";
 
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
-  if (!ctx.hasUI) return;
+  if (!ctx.hasUI) {
+    return;
+  }
 
   const lines: string[] = ["MCP Server Status:", ""];
 
@@ -99,7 +101,9 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
 }
 
 export async function showPrompts(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
-  if (!ctx.hasUI) return;
+  if (!ctx.hasUI) {
+    return;
+  }
   const allPrompts = [...(state.promptMetadata?.values() ?? [])].flat();
   const failedPromptServers = [...(state.manager.getAllConnections?.() ?? [])]
     .filter(
@@ -134,7 +138,9 @@ export async function showPrompts(state: McpExtensionState, ctx: ExtensionContex
         .map((argument) => (argument.required ? `<${argument.name}>` : `[${argument.name}]`))
         .join(" ");
       lines.push(`  /${prompt.commandName}${args ? ` ${args}` : ""}`);
-      if (prompt.description) lines.push(`      ${prompt.description}`);
+      if (prompt.description) {
+        lines.push(`      ${prompt.description}`);
+      }
     }
     lines.push("");
   }
@@ -148,7 +154,9 @@ export async function showPrompts(state: McpExtensionState, ctx: ExtensionContex
 }
 
 export async function showTools(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
-  if (!ctx.hasUI) return;
+  if (!ctx.hasUI) {
+    return;
+  }
 
   const allTools = [...state.toolMetadata.entries()]
     .filter(([serverName]) => !isServerDisabled(state.config.mcpServers[serverName]))
@@ -188,14 +196,17 @@ export async function reconnectServer(
     return false;
   }
   if (isServerDisabled(definition)) {
-    if (ui)
+    if (ui) {
       ui.notify(`MCP: ${name} is disabled. Run /mcp enable ${name}, then /reload.`, "warning");
+    }
     return false;
   }
 
   try {
     const previous = afterAuth ? state.manager.getConnection(name) : undefined;
-    if (!afterAuth) await state.manager.close(name);
+    if (!afterAuth) {
+      await state.manager.close(name);
+    }
     state.owner?.throwIfInactive();
     const connection = previous
       ? await state.manager.reconnect(name, definition, previous, signal)
@@ -250,7 +261,9 @@ export async function reconnectServer(
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (isAbortError(error, signal)) throw error;
+    if (isAbortError(error, signal)) {
+      throw error;
+    }
     recordFailure(state, name, message);
     if (ui) {
       ui.notify(`MCP: Failed to reconnect to ${name}: ${sanitizeTerminalText(message)}`, "error");
@@ -290,7 +303,9 @@ export async function authenticateServer(
   const ui = ctx.hasUI ? ctx.ui : undefined;
   const cwd = ctx.cwd;
   signal ??= ctx.signal;
-  if (!ui) return { ok: false, message: "OAuth authentication requires an interactive session." };
+  if (!ui) {
+    return { ok: false, message: "OAuth authentication requires an interactive session." };
+  }
 
   const definition = config.mcpServers[serverName];
   if (!definition) {
@@ -337,7 +352,9 @@ export async function authenticateServer(
       ...(signal ? { signal } : {}),
       ...(runtime ? { runtime } : {}),
     });
-    if (signal?.aborted) signal.throwIfAborted();
+    if (signal?.aborted) {
+      signal.throwIfAborted();
+    }
 
     if (status === "authenticated") {
       const message = `OAuth authentication successful for "${serverName}".`;
@@ -349,12 +366,16 @@ export async function authenticateServer(
     ui.notify(message, "error");
     return { ok: false, message };
   } catch (error) {
-    if (signal?.aborted) throw error;
+    if (signal?.aborted) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     ui.notify(`Failed to authenticate "${serverName}": ${message}`, "error");
     return { ok: false, message };
   } finally {
-    if (!signal?.aborted) ui.setStatus("mcp-auth", undefined);
+    if (!signal?.aborted) {
+      ui.setStatus("mcp-auth", undefined);
+    }
   }
 }
 
@@ -367,7 +388,9 @@ export async function logoutServer(
   const ui = ctx.hasUI ? ctx.ui : undefined;
   if (!definition) {
     const message = `Server "${serverName}" not found in config`;
-    if (ui) ui.notify(message, "error");
+    if (ui) {
+      ui.notify(message, "error");
+    }
     return { ok: false, message };
   }
 
@@ -380,7 +403,9 @@ export async function logoutServer(
       runtime: state.oauthRuntime,
     });
   } catch (error) {
-    if (isAbortError(error, signal)) throw error;
+    if (isAbortError(error, signal)) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     if (ui) {
       ui.notify(
@@ -395,7 +420,9 @@ export async function logoutServer(
   try {
     await state.manager.close(serverName);
   } catch (error) {
-    if (isAbortError(error, signal)) throw error;
+    if (isAbortError(error, signal)) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     if (ui) {
       ui.notify(
@@ -410,7 +437,9 @@ export async function logoutServer(
   updateStatusBar(state);
 
   const message = `OAuth credentials cleared for "${serverName}". Run /mcp-auth ${serverName} to authenticate again.`;
-  if (ui) ui.notify(message, "info");
+  if (ui) {
+    ui.notify(message, "info");
+  }
   return { ok: true, message };
 }
 
@@ -424,7 +453,9 @@ function buildSharedConfigNoticeLines(
 ): string[] {
   const discovery = getMcpDiscoverySummary(configOverridePath, cwd);
   const onboardingState = loadOnboardingState();
-  if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) return [];
+  if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
+    return [];
+  }
 
   const sharedSources = discovery.sources.filter(
     (source) => source.kind === "shared" && source.serverCount > 0,
@@ -443,7 +474,9 @@ export async function openMcpSetup(
   configOverridePath?: string,
   mode: "empty" | "setup" = "setup",
 ): Promise<PanelFlowResult> {
-  if (!ctx.hasUI) return { configChanged: false };
+  if (!ctx.hasUI) {
+    return { configChanged: false };
+  }
   if (!ctx.isProjectTrusted()) {
     ctx.ui.notify("Project MCP setup is unavailable until this project is trusted.", "warning");
     return { configChanged: false };
@@ -470,7 +503,9 @@ export async function openMcpSetup(
     previewStarterProject: () => previewStarterProjectConfig(ctx.cwd),
     previewRepoPrompt: () => {
       const repoPrompt = getMcpDiscoverySummary(configOverridePath, ctx.cwd).repoPrompt;
-      if (!repoPrompt.entry || !repoPrompt.targetPath || !repoPrompt.serverName) return null;
+      if (!repoPrompt.entry || !repoPrompt.targetPath || !repoPrompt.serverName) {
+        return null;
+      }
       return previewSharedServerEntry(
         repoPrompt.targetPath,
         repoPrompt.serverName,
@@ -481,7 +516,9 @@ export async function openMcpSetup(
       previewSharedServerEntry(getProjectConfigPath(ctx.cwd), preset.id, preset.entry),
     adoptImports: async (imports: ImportKind[]) => {
       const result = ensureCompatibilityImports(imports, configOverridePath);
-      if (result.added.length > 0) configChanged = true;
+      if (result.added.length > 0) {
+        configChanged = true;
+      }
       return result;
     },
     scaffoldProjectConfig: async () => {
@@ -553,7 +590,9 @@ function buildMcpPanelCallbacks(
     getConnectionStatus: (serverName: string) => {
       authStatusFailures.delete(serverName);
       const definition = config.mcpServers[serverName];
-      if (isServerDisabled(definition)) return "disabled";
+      if (isServerDisabled(definition)) {
+        return "disabled";
+      }
       const connection = state.manager.getConnection(serverName);
       let serverUrl: string | undefined;
       try {
@@ -576,9 +615,15 @@ function buildMcpPanelCallbacks(
           return "needs-auth";
         }
       }
-      if (connection?.status === "needs-auth") return "needs-auth";
-      if (connection?.status === "connected") return "connected";
-      if (getFailureAgeSeconds(state, serverName) !== null) return "failed";
+      if (connection?.status === "needs-auth") {
+        return "needs-auth";
+      }
+      if (connection?.status === "connected") {
+        return "connected";
+      }
+      if (getFailureAgeSeconds(state, serverName) !== null) {
+        return "failed";
+      }
       return "idle";
     },
     getFailureMessage: (serverName: string) =>
@@ -600,7 +645,9 @@ export async function openMcpPanel(
   ) => void | Promise<void>,
 ): Promise<PanelFlowResult> {
   if (!ctx.isProjectTrusted() || ctx.mode !== "tui") {
-    if (ctx.hasUI) await showStatus(state, ctx);
+    if (ctx.hasUI) {
+      await showStatus(state, ctx);
+    }
     return { configChanged: false };
   }
   if (state.programmaticConfig) {
@@ -660,7 +707,9 @@ export async function openMcpPanel(
     );
   });
 
-  if (noticeLines.length > 0) markSharedConfigHintShown();
+  if (noticeLines.length > 0) {
+    markSharedConfigHintShown();
+  }
 
   return { configChanged };
 }
@@ -670,7 +719,9 @@ export async function openMcpAuthPanel(
   ctx: ExtensionContext,
   configOverridePath?: string,
 ): Promise<PanelFlowResult> {
-  if (!ctx.hasUI) return { configChanged: false };
+  if (!ctx.hasUI) {
+    return { configChanged: false };
+  }
   if (!ctx.isProjectTrusted()) {
     ctx.ui.notify("Use /mcp-auth <server> while this project is untrusted.", "info");
     return { configChanged: false };

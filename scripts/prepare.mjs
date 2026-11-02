@@ -33,6 +33,7 @@ function hasBuildDependencies() {
   );
 }
 
+/** @param {string[]} args */
 async function runNpm(args) {
   const npmExecPath = process.env.npm_execpath;
   if (!npmExecPath) {
@@ -59,8 +60,12 @@ async function runBuild() {
   );
   // Forward build output on success too: install-time diagnostics such as the
   // concurrent-swap race-loss warning are otherwise swallowed.
-  if (stdout) process.stdout.write(stdout);
-  if (stderr) process.stderr.write(stderr);
+  if (stdout) {
+    process.stdout.write(stdout);
+  }
+  if (stderr) {
+    process.stderr.write(stderr);
+  }
 }
 
 async function pruneDevDependencies() {
@@ -71,13 +76,20 @@ async function pruneQuietly() {
   try {
     await pruneDevDependencies();
   } catch (error) {
-    console.warn(`npm prune failed after a failed build: ${error?.message ?? error}`);
+    console.warn(
+      `npm prune failed after a failed build: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
+/** @param {unknown} error */
 function reportError(error) {
-  if (error?.stdout) process.stdout.write(error.stdout);
-  if (error?.stderr) process.stderr.write(error.stderr);
+  if (error instanceof Error && "stdout" in error) {
+    process.stdout.write(String(error.stdout));
+  }
+  if (error instanceof Error && "stderr" in error) {
+    process.stderr.write(String(error.stderr));
+  }
   console.error(error instanceof Error ? error.message : String(error));
 }
 

@@ -31,8 +31,9 @@ beforeEach(async () => {
   vi.stubEnv("PI_OFFLINE", "1");
   vi.stubGlobal("fetch", (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const target = new URL(input instanceof Request ? input.url : input);
-    if (target.hostname !== "127.0.0.1")
+    if (target.hostname !== "127.0.0.1") {
       throw new Error(`Unexpected network request: ${target.origin}`);
+    }
     return nativeFetch(input, init);
   });
   sessions = [];
@@ -44,7 +45,9 @@ beforeEach(async () => {
       return;
     }
     let data = "";
-    for await (const chunk of req) data += chunk;
+    for await (const chunk of req) {
+      data += chunk;
+    }
     const request = JSON.parse(data);
     const respond = (result: unknown) =>
       res
@@ -85,7 +88,9 @@ beforeEach(async () => {
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Fixture did not bind");
+  if (!address || typeof address === "string") {
+    throw new Error("Fixture did not bind");
+  }
   url = `http://127.0.0.1:${address.port}/mcp`;
 });
 
@@ -150,8 +155,10 @@ async function startAdapter(options: McpAdapterOptions = {}, requestTimeoutMs = 
   await loader.execute("bootstrap", { enable: ["gateway", "script"] });
   const proxy = session.agent.state.tools.find((tool) => tool.name === "mcp");
   const script = session.agent.state.tools.find((tool) => tool.name === "mcp_script");
-  if (!proxy || !script) throw new Error("Adapter tools were not registered");
-  expect((await proxy.execute("bootstrap", {}, undefined)).details?.error).toBeUndefined();
+  if (!proxy || !script) {
+    throw new Error("Adapter tools were not registered");
+  }
+  expect((await proxy.execute("bootstrap", {})).details?.error).toBeUndefined();
   return { script, session };
 }
 
@@ -162,27 +169,24 @@ it("lets an opted-in factory cross 30 seconds once while an unconfigured factory
     const { script } = await startAdapter({
       ...options,
       beforeExecute: async (id, ctx) => {
-        if (id !== "bootstrap" && ++checkpoints === 2)
+        if (id !== "bootstrap" && ++checkpoints === 2) {
           await delay(31_000, undefined, { signal: ctx.signal });
+        }
       },
       onToolCall: async (event) => {
         captured.push(event);
       },
     });
     const started = performance.now();
-    const result = await script.execute(
-      label,
-      {
-        code: `
+    const result = await script.execute(label, {
+      code: `
       const first = await tools.local_echo({ id: "${label}-one" });
       emit(first.data.structuredContent.id);
       const second = await tools.local_echo({ id: "${label}-two" });
       emit(second.data.structuredContent.id);
       return "complete";
     `,
-      },
-      undefined,
-    );
+    });
     return {
       result,
       captured,
@@ -243,23 +247,23 @@ it("uses a numeric host default and lets an explicit shorter limit override it",
   const { script } = await startAdapter({ defaultScriptTimeoutMs: 250 });
   expect(script.parameters.properties.timeoutMs.description).toContain("default: 250");
   const code = "await new Promise(() => {});";
-  expect((await script.execute("host-default", { code }, undefined)).details).toMatchObject({
+  expect((await script.execute("host-default", { code })).details).toMatchObject({
     error: "timeout",
     timeoutMs: 250,
   });
-  expect(
-    (await script.execute("explicit", { code, timeoutMs: 50 }, undefined)).details,
-  ).toMatchObject({ error: "timeout", timeoutMs: 50 });
+  expect((await script.execute("explicit", { code, timeoutMs: 50 })).details).toMatchObject({
+    error: "timeout",
+    timeoutMs: 50,
+  });
 });
 
 it("honors an explicit deadline when the host disables the default", async () => {
   const { script } = await startAdapter({ defaultScriptTimeoutMs: null });
   const started = performance.now();
-  const result = await script.execute(
-    "explicit",
-    { code: "await new Promise(() => {});", timeoutMs: 75 },
-    undefined,
-  );
+  const result = await script.execute("explicit", {
+    code: "await new Promise(() => {});",
+    timeoutMs: 75,
+  });
   expect(result.details).toMatchObject({ error: "timeout", timeoutMs: 75 });
   expect(performance.now() - started).toBeLessThan(2_000);
 });
@@ -282,8 +286,11 @@ it.each(["Stop", "owner shutdown"])(
       await expect.poll(() => calls).toEqual([{ name: "echo", args: { id: "cpu-ready" } }]);
       await delay(200);
       const started = performance.now();
-      if (cancellation === "Stop") controller.abort(new Error("operator stopped"));
-      else await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      if (cancellation === "Stop") {
+        controller.abort(new Error("operator stopped"));
+      } else {
+        await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      }
       const result = await pending;
       const elapsedMs = performance.now() - started;
       console.info(cancellation, JSON.stringify({ elapsedMs, details: result.details }));
@@ -305,17 +312,13 @@ it.each(["Stop", "owner shutdown"])(
 it("keeps the independent provider deadline without replaying the original call", async () => {
   const { script } = await startAdapter({ defaultScriptTimeoutMs: null }, 150);
   const started = performance.now();
-  const result = await script.execute(
-    "provider-deadline",
-    {
-      code: `
+  const result = await script.execute("provider-deadline", {
+    code: `
     const failed = await tools.local_hang({ id: "original" });
     const next = await tools.local_echo({ id: "following" });
     return { failed, next };
   `,
-    },
-    undefined,
-  );
+  });
   const elapsedMs = performance.now() - started;
   console.info("provider deadline", JSON.stringify({ elapsedMs, details: result.details, calls }));
   expect(result.details).not.toHaveProperty("error");
@@ -336,17 +339,13 @@ it("keeps the independent provider deadline without replaying the original call"
 
 it("cancels an already-dispatched unfinished call on early script return", async () => {
   const { script } = await startAdapter({ defaultScriptTimeoutMs: null });
-  const result = await script.execute(
-    "early",
-    {
-      code: `
+  const result = await script.execute("early", {
+    code: `
     tools.local_hang({ id: "straggler" });
     await tools.local_echo({ id: "joined" });
     return "early";
   `,
-    },
-    undefined,
-  );
+  });
   expect(result.details).not.toHaveProperty("error");
   expect(result.details).toMatchObject({
     timeoutMs: null,

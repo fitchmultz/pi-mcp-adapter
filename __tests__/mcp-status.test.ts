@@ -53,8 +53,10 @@ describe("MCP status snapshots", () => {
           transport: { secret: true },
         };
       }
-      if (name === "auth") return { status: "needs-auth", tools: [], resources: [] };
-      return undefined;
+      if (name === "auth") {
+        return { status: "needs-auth", tools: [], resources: [] };
+      }
+      return;
     });
 
     const snapshot = createMcpStatusSnapshot(state);

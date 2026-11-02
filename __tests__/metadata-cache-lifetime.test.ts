@@ -36,8 +36,11 @@ beforeEach(() => {
   mkdirSync(dirname(getMetadataCachePath()), { recursive: true });
 });
 afterEach(() => {
-  if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+  if (oldAgentDir === undefined) {
+    delete process.env.PI_CODING_AGENT_DIR;
+  } else {
+    process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+  }
   rmSync(root, { recursive: true, force: true });
 });
 

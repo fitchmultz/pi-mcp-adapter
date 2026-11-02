@@ -22,7 +22,7 @@ function connectedState(client: Record<string, unknown>) {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      close: vi.fn(async () => undefined),
+      close: vi.fn(async () => {}),
       getRequestOptions: vi.fn((_server: string, signal?: AbortSignal) =>
         signal ? { signal } : undefined,
       ),
@@ -130,7 +130,7 @@ describe("AbortSignal propagation", () => {
     const state = {
       config: { mcpServers: { demo: { command: "node", args: ["server.js"] } } },
       manager: {
-        getConnection: vi.fn(() => undefined),
+        getConnection: vi.fn(() => {}),
         connect: vi.fn(async (_name, _definition, signal?: AbortSignal) => {
           controller.abort(new Error("user cancelled"));
           signal?.throwIfAborted();
@@ -159,7 +159,7 @@ describe("AbortSignal propagation", () => {
     const state = {
       config: { mcpServers: { demo: { command: "node", args: ["server.js"] } } },
       manager: {
-        getConnection: vi.fn(() => undefined),
+        getConnection: vi.fn(() => {}),
         connect: vi.fn(async (_name, _definition, signal?: AbortSignal) => {
           signal?.throwIfAborted();
           return { status: "connected", tools: [], resources: [] };

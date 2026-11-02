@@ -8,8 +8,7 @@ import {
   resolvePromptArgs,
 } from "../prompts.ts";
 import type { McpExtensionState } from "../state.ts";
-import type { PromptMetadata } from "../types.ts";
-import { formatPromptCommandName, sanitizePromptName } from "../types.ts";
+import { type PromptMetadata, formatPromptCommandName, sanitizePromptName } from "../types.ts";
 
 function meta(overrides: Partial<PromptMetadata> = {}): PromptMetadata {
   return {

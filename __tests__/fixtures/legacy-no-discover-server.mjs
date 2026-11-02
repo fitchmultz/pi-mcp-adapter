@@ -1,15 +1,18 @@
 import readline from "node:readline";
 import { appendFileSync } from "node:fs";
 
-if (process.env.MCP_HANDSHAKE_PIDS)
+if (process.env.MCP_HANDSHAKE_PIDS) {
   appendFileSync(process.env.MCP_HANDSHAKE_PIDS, `${process.pid}\n`);
+}
 
 const lines = readline.createInterface({ input: process.stdin });
 
+/** @param {number | string} id @param {unknown} result */
 function respond(id, result) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
 }
 
+/** @param {number | string} id @param {string} message */
 function reject(id, message) {
   process.stdout.write(
     `${JSON.stringify({
@@ -23,13 +26,16 @@ function reject(id, message) {
 lines.on("line", (line) => {
   const request = JSON.parse(line);
   if (request.method === "server/discover") {
-    if (process.env.MCP_EXIT_ON_DISCOVER === "1") process.exit(0);
+    if (process.env.MCP_EXIT_ON_DISCOVER === "1") {
+      process.exit(0);
+    }
     reject(request.id, "server/discover is not supported");
     return;
   }
   if (request.method === "initialize") {
-    if (process.env.MCP_HANDSHAKE_REQUEST)
+    if (process.env.MCP_HANDSHAKE_REQUEST) {
       appendFileSync(process.env.MCP_HANDSHAKE_REQUEST, JSON.stringify(request));
+    }
     respond(request.id, {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },

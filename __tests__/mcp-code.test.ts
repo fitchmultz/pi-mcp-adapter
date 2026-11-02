@@ -489,8 +489,11 @@ describe("runMcpScript output", () => {
         ).toEqual(
           visible(complete.content, complete.outputGuard, complete.outputGuard?.fullOutputPath),
         );
-        if (settings.outputGuard) expect(await readFile(path!, "utf8")).toBe(values.join("\n"));
-        else expect(path).toBeUndefined();
+        if (settings.outputGuard) {
+          expect(await readFile(path!, "utf8")).toBe(values.join("\n"));
+        } else {
+          expect(path).toBeUndefined();
+        }
       } finally {
         await rm(outputDirectory, { recursive: true, force: true });
       }
@@ -561,7 +564,9 @@ describe("runMcpScript output", () => {
       await new Promise((resolve, reject) => {
         worker.on("message", (message) => {
           messages.push(message);
-          if (message.type === "done" || message.type === "error") resolve(undefined);
+          if (message.type === "done" || message.type === "error") {
+            resolve(undefined);
+          }
         });
         worker.on("error", reject);
       });

@@ -5,8 +5,7 @@ import { McpServerManager } from "../server-manager.ts";
 import { createPromptCommand } from "../prompts.ts";
 import { reconstructPromptMetadata } from "../metadata-cache.ts";
 import type { McpExtensionState } from "../state.ts";
-import type { PromptMetadata } from "../types.ts";
-import { formatPromptCommandName } from "../types.ts";
+import { type PromptMetadata, formatPromptCommandName } from "../types.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/prompts-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
@@ -121,7 +120,7 @@ describe("prompts with the real MCP SDK", () => {
     const state = buildState(manager, metadata);
     // Point the command at a prompt name the server doesn't know.
     const bogus: PromptMetadata = { ...brief, originalName: "does-not-exist" };
-    state.promptMetadata!.set("real", [bogus]);
+    state.promptMetadata.set("real", [bogus]);
     const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
     const notify = vi.fn();
 

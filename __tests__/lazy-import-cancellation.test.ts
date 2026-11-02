@@ -28,8 +28,8 @@ describe("cancellation while operation-only modules load", () => {
         const nativeCall = vi.spyOn(connection.client, "callTool");
         const increment = vi.spyOn(manager, "incrementInFlight");
         const decrement = vi.spyOn(manager, "decrementInFlight");
-        const beforeDispatch = vi.fn(async () => undefined);
-        const capture = vi.fn(async () => undefined);
+        const beforeDispatch = vi.fn(async () => {});
+        const capture = vi.fn(async () => {});
         const state = {
           owner,
           manager,
@@ -48,15 +48,18 @@ describe("cancellation while operation-only modules load", () => {
             ownedSignal,
             signal: controller.signal,
             beforeDispatch,
-            recoverAuthConnection: async () => undefined,
+            recoverAuthConnection: async () => {},
             authRequiredMessage: () => "Unexpected OAuth request",
             autoAuthAttempted: () => false,
           },
         );
         // No timer or mocked loader: the function has reached its first await
         // import, which yields even when its native module is already cached.
-        if (cancel === "caller") controller.abort(new Error(reason));
-        else await owner.stop(reason);
+        if (cancel === "caller") {
+          controller.abort(new Error(reason));
+        } else {
+          await owner.stop(reason);
+        }
 
         const result = await pending;
         expect(result.isError).toBe(true);

@@ -45,13 +45,11 @@ describe("UiResourceHandler", () => {
         status: "connected" as const,
         transport: { sessionId: "session-1" },
         client: {
-          readResource: vi
-            .fn()
-            .mockRejectedValueOnce(
-              new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-                status: 404,
-              }),
-            ),
+          readResource: vi.fn().mockRejectedValueOnce(
+            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+              status: 404,
+            }),
+          ),
         },
         resources: [],
       };

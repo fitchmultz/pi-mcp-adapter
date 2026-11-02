@@ -58,7 +58,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     this.callTool = vi.fn((params: unknown, schema: unknown, requestOptions: unknown) =>
       mocks.callToolImpl(params, schema, requestOptions),
     );
-    this.close = vi.fn(async () => undefined);
+    this.close = vi.fn(async () => {});
     mocks.clients.push(this);
   }),
   StreamableHTTPClientTransport: vi.fn(),
@@ -68,8 +68,8 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
 vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: unknown) {
     this.options = options;
-    this.send = vi.fn(async () => undefined);
-    this.close = vi.fn(async () => undefined);
+    this.send = vi.fn(async () => {});
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
   }),
 }));

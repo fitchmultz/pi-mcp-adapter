@@ -55,7 +55,9 @@ server.setRequestHandler("tools/call", async (request) => {
     };
   }
 
-  if (request.params.name === "url-required") throw urlRequiredError();
+  if (request.params.name === "url-required") {
+    throw urlRequiredError();
+  }
 
   if (request.params.name === "form") {
     const result = await server.request({

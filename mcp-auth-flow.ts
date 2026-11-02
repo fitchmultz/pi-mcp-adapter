@@ -138,7 +138,9 @@ export function getOAuthRequest(
   storageBase: string,
   runtime: McpOAuthRuntime = legacyRuntime,
 ): OAuthRequest | undefined {
-  if (runtime.signal.aborted) return undefined;
+  if (runtime.signal.aborted) {
+    return undefined;
+  }
   const request = getRuntimeState(runtime).requests.get(JSON.stringify([serverName, storageBase]));
   return request?.serverUrl === serverUrl ? request : undefined;
 }
@@ -151,7 +153,9 @@ export function recordOAuthChallenge(
   error: unknown,
   runtime: McpOAuthRuntime = legacyRuntime,
 ): void {
-  if (runtime.signal.aborted || !isOAuthChallenge(error)) return;
+  if (runtime.signal.aborted || !isOAuthChallenge(error)) {
+    return;
+  }
   const previous = getOAuthRequest(serverName, serverUrl, storageBase, runtime);
   const request: OAuthRequest = { ...previous, serverName, serverUrl };
   if (error instanceof InsufficientScopeError) {
@@ -177,7 +181,9 @@ export function bindOAuthRequestIssuer(
   runtime: McpOAuthRuntime = legacyRuntime,
 ): void {
   const request = getOAuthRequest(serverName, serverUrl, storageBase, runtime);
-  if (!request) return;
+  if (!request) {
+    return;
+  }
   if (request.issuer && !issuersMatch(request.issuer, issuer)) {
     throw new Error(
       `OAuth authorization server issuer changed for ${serverName}; clear credentials before authenticating again`,
@@ -208,17 +214,22 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
   }
 
   const config: McpOAuthConfig = {};
-  if (definition.oauth?.skipIssuerMetadataValidation !== undefined)
+  if (definition.oauth?.skipIssuerMetadataValidation !== undefined) {
     config.skipIssuerMetadataValidation = definition.oauth.skipIssuerMetadataValidation;
-  if (definition.oauth?.grantType !== undefined) config.grantType = definition.oauth.grantType;
+  }
+  if (definition.oauth?.grantType !== undefined) {
+    config.grantType = definition.oauth.grantType;
+  }
   if (definition.oauth?.clientId !== undefined) {
-    if (typeof definition.oauth.clientId !== "string")
+    if (typeof definition.oauth.clientId !== "string") {
       throw new Error("OAuth clientId must be a string");
+    }
     config.clientId = interpolateEnvVars(definition.oauth.clientId);
   }
   if (definition.oauth?.clientSecret !== undefined) {
-    if (typeof definition.oauth.clientSecret !== "string")
+    if (typeof definition.oauth.clientSecret !== "string") {
       throw new Error("OAuth clientSecret must be a string");
+    }
     // Preserve command expressions for the provider; interpolation remains eager for ordinary values.
     config.clientSecret = definition.oauth.clientSecret.startsWith("!")
       ? definition.oauth.clientSecret
@@ -226,8 +237,9 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
   }
   if (definition.oauth?.clientMetadataUrl !== undefined) {
     const value = definition.oauth.clientMetadataUrl;
-    if (value !== false && typeof value !== "string")
+    if (value !== false && typeof value !== "string") {
       throw new Error("OAuth clientMetadataUrl must be a string or false");
+    }
     config.clientMetadataUrl = value === false ? false : interpolateEnvVars(value);
     validateOAuthClientMetadataUrl(config.clientMetadataUrl);
   }
@@ -235,12 +247,15 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     // Keep environment and command sources lazy; each authentication resolves its own key.
     config.privateKeyJwt = definition.oauth.privateKeyJwt;
   }
-  if (definition.oauth?.crossAppAccess !== undefined)
+  if (definition.oauth?.crossAppAccess !== undefined) {
     config.crossAppAccess = definition.oauth.crossAppAccess;
+  }
   validateOAuthPrivateKeyJwt(config);
   validateOAuthCrossAppAccess(config);
   if (definition.oauth?.scope !== undefined) {
-    if (typeof definition.oauth.scope !== "string") throw new Error("OAuth scope must be a string");
+    if (typeof definition.oauth.scope !== "string") {
+      throw new Error("OAuth scope must be a string");
+    }
     config.scope = interpolateEnvVars(definition.oauth.scope);
   }
   if (definition.oauth?.authorizationParams !== undefined) {
@@ -250,9 +265,12 @@ export function extractOAuthConfig(definition: ServerEntry): McpOAuthConfig {
     }
     config.authorizationParams = {};
     for (const [key, value] of Object.entries(params)) {
-      if (!key) throw new Error("OAuth authorizationParams keys must not be empty");
-      if (typeof value !== "string")
+      if (!key) {
+        throw new Error("OAuth authorizationParams keys must not be empty");
+      }
+      if (typeof value !== "string") {
         throw new Error(`OAuth authorizationParams.${key} must be a string`);
+      }
       config.authorizationParams[key] = interpolateEnvVars(value);
     }
   }
@@ -338,7 +356,9 @@ async function probeAuthDiscovery(
   try {
     await abortable(client.connect(transport, { timeout }), discoverySignal);
   } catch (error) {
-    if (signal?.aborted) throwIfAborted(signal);
+    if (signal?.aborted) {
+      throwIfAborted(signal);
+    }
   } finally {
     await (client.transport ? client.close() : transport.close());
   }
@@ -398,7 +418,9 @@ export async function startAuth(
   definition?: ServerEntry,
   options: AuthenticateOptions = {},
 ): Promise<{ authorizationUrl: string }> {
-  if (isServerDisabled(definition)) throw new Error(`MCP server "${serverName}" is disabled`);
+  if (isServerDisabled(definition)) {
+    throw new Error(`MCP server "${serverName}" is disabled`);
+  }
   const runtime = getRuntime(options);
   const runtimeState = getRuntimeState(runtime);
   const config = definition ? extractOAuthConfig(definition) : {};
@@ -486,7 +508,9 @@ export async function startAuth(
     try {
       await clearOAuthState(serverName, authStorageOptions);
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed");
+      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed", {
+        cause: cleanupError,
+      });
     }
     throw error;
   }
@@ -529,11 +553,15 @@ export async function startAuth(
           const requestedScope = url.searchParams.get("scope") ?? undefined;
           if (requestedScope) {
             discovery = { ...discovery, scope: requestedScope };
-            if (request?.challenge) flowConfig.scope = requestedScope;
+            if (request?.challenge) {
+              flowConfig.scope = requestedScope;
+            }
           }
           const current = getOAuthRequest(serverName, serverUrl, storageBase, runtime);
           const scope = computeScopeUnion(current?.requestedScope, requestedScope);
-          if (current && scope) current.requestedScope = scope;
+          if (current && scope) {
+            current.requestedScope = scope;
+          }
         },
         onDiscoveryState: (state) => {
           callbackIssuer.expectedIssuer = state.authorizationServerMetadata?.issuer;
@@ -626,7 +654,9 @@ export async function startAuth(
     try {
       await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed");
+      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed", {
+        cause: cleanupError,
+      });
     }
     throw error;
   }
@@ -644,7 +674,9 @@ async function setPendingAuth(
   const key = getPendingAuthKey(serverName, pendingAuth.authStorageOptions);
   await clearPendingAuth(runtime, serverName, undefined, pendingAuth.authStorageOptions);
   throwIfAborted(signal);
-  if (generation !== state.generation) throw new Error("OAuth runtime stopped");
+  if (generation !== state.generation) {
+    throw new Error("OAuth runtime stopped");
+  }
   state.pendingAuths.set(key, pendingAuth);
   state.pendingAuthStates.set(key, oauthState);
   const cleanupTimer = setTimeout(() => {
@@ -666,7 +698,9 @@ function getSearchParamsFromInput(input: string): URLSearchParams | undefined {
       const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
       const hashParams = new URLSearchParams(hash);
       for (const [key, value] of hashParams) {
-        if (!params.has(key)) params.set(key, value);
+        if (!params.has(key)) {
+          params.set(key, value);
+        }
       }
     }
     return params;
@@ -837,8 +871,9 @@ export async function completeAuth(
       if (
         issuedScope !== undefined &&
         !isStrictScopeSuperset(request.challenge.requiredScope, issuedScope)
-      )
+      ) {
         delete request.challenge;
+      }
     }
     return "authenticated";
   } catch (error) {
@@ -850,7 +885,9 @@ export async function completeAuth(
         await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
       } catch (cleanupError) {
         if (caughtError !== undefined) {
-          throw new AggregateError([caughtError, cleanupError], "OAuth completion cleanup failed");
+          throw new AggregateError([caughtError, cleanupError], "OAuth completion cleanup failed", {
+            cause: cleanupError,
+          });
         }
         throw cleanupError;
       }
@@ -872,7 +909,9 @@ export async function authenticate(
   definition?: ServerEntry,
   options: AuthenticateOptions = {},
 ): Promise<AuthStatus> {
-  if (isServerDisabled(definition)) throw new Error(`MCP server "${serverName}" is disabled`);
+  if (isServerDisabled(definition)) {
+    throw new Error(`MCP server "${serverName}" is disabled`);
+  }
   const runtime = getRuntime(options);
   const runtimeState = getRuntimeState(runtime);
   const authStorageOptions = options.authStorageOptions ?? {};
@@ -924,7 +963,9 @@ export async function authenticate(
       try {
         await abortable(open(authorizationUrl), signal);
       } catch (error) {
-        if (isAbortError(error, signal)) throw error;
+        if (isAbortError(error, signal)) {
+          throw error;
+        }
         console.warn(
           `MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`,
           { error },
@@ -944,11 +985,15 @@ export async function authenticate(
         runtime,
       });
     } catch (error) {
-      if (oauthState) cancelPendingCallback(oauthState);
+      if (oauthState) {
+        cancelPendingCallback(oauthState);
+      }
       try {
         await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
       } catch (cleanupError) {
-        throw new AggregateError([error, cleanupError], "OAuth cancellation cleanup failed");
+        throw new AggregateError([error, cleanupError], "OAuth cancellation cleanup failed", {
+          cause: cleanupError,
+        });
       }
       throw error;
     }
@@ -986,7 +1031,9 @@ export async function removeAuth(
   await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
   throwIfAborted(signal);
   for (const [key, request] of getRuntimeState(runtime).requests) {
-    if (request.serverName === serverName) getRuntimeState(runtime).requests.delete(key);
+    if (request.serverName === serverName) {
+      getRuntimeState(runtime).requests.delete(key);
+    }
   }
   clearAllCredentials(serverName, authStorageOptions);
   await clearOAuthState(serverName, authStorageOptions);

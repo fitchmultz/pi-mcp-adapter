@@ -21,19 +21,28 @@ function loadKeyringEntryClass() {
       }
     }
     const error = new Error(
-      `Failed to load @napi-rs/keyring in recovery helper: ${lastError?.message ?? loaderError.message}`,
+      `Failed to load @napi-rs/keyring in recovery helper: ${lastError instanceof Error ? lastError.message : String(lastError)}; ${loaderError instanceof Error ? loaderError.message : String(loaderError)}`,
     );
     error.cause = loaderError;
     throw error;
   }
 }
 
+/** @param {string} platform @param {string} arch */
 function getNativeBindingSuffixes(platform, arch) {
   if (platform === "linux") {
-    if (arch === "arm64") return ["linux-arm64-gnu", "linux-arm64-musl"];
-    if (arch === "arm") return ["linux-arm-gnueabihf"];
-    if (arch === "riscv64") return ["linux-riscv64-gnu"];
-    if (arch === "x64") return ["linux-x64-gnu", "linux-x64-musl"];
+    if (arch === "arm64") {
+      return ["linux-arm64-gnu", "linux-arm64-musl"];
+    }
+    if (arch === "arm") {
+      return ["linux-arm-gnueabihf"];
+    }
+    if (arch === "riscv64") {
+      return ["linux-riscv64-gnu"];
+    }
+    if (arch === "x64") {
+      return ["linux-x64-gnu", "linux-x64-musl"];
+    }
   }
   return [];
 }
@@ -54,6 +63,7 @@ function readStdin() {
   });
 }
 
+/** @param {unknown} response */
 function writeResponse(response) {
   process.stdout.write(`${JSON.stringify(response)}\n`);
 }
@@ -61,11 +71,19 @@ function writeResponse(response) {
 (async () => {
   try {
     const request = JSON.parse(await readStdin());
-    if (!request || typeof request !== "object") throw new Error("invalid request");
+    if (!request || typeof request !== "object") {
+      throw new Error("invalid request");
+    }
     const { operation, service, account, payload } = request;
-    if (!["read", "write", "remove"].includes(operation)) throw new Error("invalid operation");
-    if (typeof service !== "string" || !service) throw new Error("invalid service");
-    if (typeof account !== "string" || !account) throw new Error("invalid account");
+    if (!["read", "write", "remove"].includes(operation)) {
+      throw new Error("invalid operation");
+    }
+    if (typeof service !== "string" || !service) {
+      throw new Error("invalid service");
+    }
+    if (typeof account !== "string" || !account) {
+      throw new Error("invalid account");
+    }
 
     const Entry = loadKeyringEntryClass();
     const entry = new Entry(service, account);
@@ -76,7 +94,9 @@ function writeResponse(response) {
       return;
     }
     if (operation === "write") {
-      if (typeof payload !== "string") throw new Error("invalid payload");
+      if (typeof payload !== "string") {
+        throw new Error("invalid payload");
+      }
       entry.setPassword(payload);
       writeResponse({ ok: true });
       return;

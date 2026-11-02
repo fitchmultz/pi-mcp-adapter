@@ -36,7 +36,9 @@ async function request(
       },
     );
     req.on("error", reject);
-    if (options.body) req.write(JSON.stringify(options.body));
+    if (options.body) {
+      req.write(JSON.stringify(options.body));
+    }
     req.end();
   });
 }
@@ -75,13 +77,11 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       status: "connected",
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValueOnce(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
@@ -100,7 +100,7 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     } as unknown as McpServerManager;
 
     const config: McpConfig = {
@@ -145,13 +145,11 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       status: "connected",
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValueOnce(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
@@ -168,7 +166,7 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     } as unknown as McpServerManager;
 
     handle = await startUiServer({
@@ -200,13 +198,11 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       status: "connected",
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValueOnce(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
@@ -231,7 +227,7 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     } as unknown as McpServerManager;
     const onNeedsAuth = vi.fn(async () => fresh);
 
@@ -267,13 +263,11 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       status: "connected",
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValue(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
       tools: [{ name: "some_tool" }],
     } as unknown as ServerConnection;
@@ -284,7 +278,7 @@ describe("UiServer /proxy/tools/call session recovery", () => {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
     } as unknown as McpServerManager;
 
     const options: UiServerOptions = {

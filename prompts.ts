@@ -17,15 +17,21 @@ import { truncateAtWord } from "./utils.ts";
  */
 export function resolveCachedPrompts(config: McpConfig, cacheEnabled = true): PromptMetadata[] {
   const cache = loadMetadataCache(cacheEnabled);
-  if (!cache?.servers) return [];
+  if (!cache?.servers) {
+    return [];
+  }
 
   const prefix = config.settings?.toolPrefix ?? "server";
   const specs: PromptMetadata[] = [];
 
   for (const [serverName, entry] of Object.entries(cache.servers)) {
     const definition = config.mcpServers[serverName];
-    if (!definition || isServerDisabled(definition)) continue;
-    if (!entry?.prompts?.length || !isServerCacheValid(entry, definition)) continue;
+    if (!definition || isServerDisabled(definition)) {
+      continue;
+    }
+    if (!entry?.prompts?.length || !isServerCacheValid(entry, definition)) {
+      continue;
+    }
     specs.push(...reconstructPromptMetadata(serverName, entry.prompts, prefix, definition));
   }
 
@@ -82,7 +88,9 @@ function tokenizeArgs(input: string): string[] {
     }
     if (quote) {
       current += char;
-      if (char === quote) quote = null;
+      if (char === quote) {
+        quote = null;
+      }
       continue;
     }
     if (char === '"' || char === "'") {
@@ -100,7 +108,9 @@ function tokenizeArgs(input: string): string[] {
     current += char;
   }
 
-  if (current.length > 0) tokens.push(current);
+  if (current.length > 0) {
+    tokens.push(current);
+  }
   return tokens;
 }
 
@@ -109,11 +119,16 @@ function findUnquotedEquals(token: string): number {
   for (let i = 0; i < token.length; i++) {
     const ch = token[i];
     if (quote) {
-      if (ch === quote) quote = null;
+      if (ch === quote) {
+        quote = null;
+      }
       continue;
     }
-    if (ch === '"' || ch === "'") quote = ch;
-    else if (ch === "=") return i;
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === "=") {
+      return i;
+    }
   }
   return -1;
 }
@@ -162,7 +177,9 @@ export function resolvePromptArgs(
   // permissive schemas still receive them. The MCP spec allows arbitrary
   // string key/values in `prompts/get` params.arguments.
   for (const [key, value] of Object.entries(parsed.named)) {
-    if (!(key in args)) args[key] = value;
+    if (!(key in args)) {
+      args[key] = value;
+    }
   }
 
   const missing = declared.filter(
@@ -194,7 +211,9 @@ export function formatPromptResult(result: GetPromptResult): string {
   const lines: string[] = [];
   for (const message of result.messages) {
     const text = extractMessageText(message);
-    if (!text) continue;
+    if (!text) {
+      continue;
+    }
     if (message.role === "user" && result.messages.length === 1) {
       lines.push(text);
     } else {
@@ -206,13 +225,17 @@ export function formatPromptResult(result: GetPromptResult): string {
 
 function extractMessageText(message: PromptMessage): string {
   const content = message.content;
-  if (!content || typeof content !== "object") return "";
+  if (!content || typeof content !== "object") {
+    return "";
+  }
   switch (content.type) {
     case "text":
       return content.text ?? "";
     case "resource": {
       const resource = content.resource;
-      if (!resource) return "";
+      if (!resource) {
+        return "";
+      }
       if ("text" in resource && typeof resource.text === "string") {
         return `[resource ${resource.uri}]\n${resource.text}`;
       }
@@ -246,7 +269,9 @@ export function createPromptCommand(
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const state = getState();
       if (!state) {
-        if (ctx.hasUI) ctx.ui.notify("MCP not initialized", "error");
+        if (ctx.hasUI) {
+          ctx.ui.notify("MCP not initialized", "error");
+        }
         return;
       }
 
@@ -268,7 +293,9 @@ export function createPromptCommand(
       const parsed = parsePromptArgs(args ?? "");
       const resolved = resolvePromptArgs(live, parsed);
       if (!resolved.ok) {
-        if (ctx.hasUI) ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
+        if (ctx.hasUI) {
+          ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
+        }
         return;
       }
       const promptArgs = resolved.args ?? {};

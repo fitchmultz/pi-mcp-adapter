@@ -255,7 +255,7 @@ describe("guardMcpOutput", () => {
 
 describe("resolveMcpOutputGuardOptions", () => {
   it("defaults to enabled with standard limits", () => {
-    expect(resolveMcpOutputGuardOptions(undefined)).toEqual({
+    expect(resolveMcpOutputGuardOptions()).toEqual({
       enabled: true,
       maxBytes: 50 * 1024,
       maxLines: 2000,
@@ -284,8 +284,11 @@ describe("resolveMcpOutputGuardOptions", () => {
       process.env.MCP_OUTPUT_GUARD = "1";
       expect(resolveMcpOutputGuardOptions({ outputGuard: false }).enabled).toBe(true);
     } finally {
-      if (previous === undefined) delete process.env.MCP_OUTPUT_GUARD;
-      else process.env.MCP_OUTPUT_GUARD = previous;
+      if (previous === undefined) {
+        delete process.env.MCP_OUTPUT_GUARD;
+      } else {
+        process.env.MCP_OUTPUT_GUARD = previous;
+      }
     }
   });
 });

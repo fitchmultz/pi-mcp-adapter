@@ -172,7 +172,9 @@ describe.each(["mcp", "mcp_script", "demo_echo"])("native registered %s initiali
     async (timing) => {
       const controller = new AbortController();
       const reason = new Error("caller cancelled");
-      if (timing === "before") controller.abort(reason);
+      if (timing === "before") {
+        controller.abort(reason);
+      }
       let outcome: unknown;
       const cancelled = call(name, controller.signal).then(
         (value) => {

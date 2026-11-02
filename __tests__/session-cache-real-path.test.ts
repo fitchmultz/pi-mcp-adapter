@@ -23,8 +23,11 @@ const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
   for (const [key, value] of Object.entries(original)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
   }
   for (const root of roots.splice(0)) {
     const entries = await readdir(root);
@@ -189,7 +192,9 @@ async function liveCatalogHarness() {
   let id = 0;
   const run = async (name: string, params: Record<string, unknown>) => {
     const tool = h.session.agent.state.tools.find((candidate) => candidate.name === name);
-    if (!tool) throw new Error(`Pi tool ${name} is not active`);
+    if (!tool) {
+      throw new Error(`Pi tool ${name} is not active`);
+    }
     return tool.execute(`catalog-${++id}`, params);
   };
   return { ...h, callsPath, definition, configure, run };
@@ -323,15 +328,17 @@ describe("cached tool surface through Pi SessionManager", () => {
     let replacements = 0;
     let track = true;
     const originalRename = fs.renameSync;
-    fs.renameSync = ((from, to) => {
+    fs.renameSync = (from, to) => {
       const cachePath = join(
         process.env.PI_CODING_AGENT_DIR ?? "",
         "fitch-mcp-adapter",
         "mcp-cache.json",
       );
-      if (track && String(to) === cachePath) replacements++;
-      return originalRename(from, to);
-    }) as typeof fs.renameSync;
+      if (track && String(to) === cachePath) {
+        replacements++;
+      }
+      originalRename(from, to);
+    };
     syncBuiltinESMExports();
     let h: Awaited<ReturnType<typeof harness>> | undefined;
     try {
@@ -391,7 +398,9 @@ describe("cached tool surface through Pi SessionManager", () => {
       }
 
       const cache = JSON.parse(await readFile(h.cachePath, "utf8"));
-      for (const name of names) cache.servers[name].tools = [{ name: "stale" }];
+      for (const name of names) {
+        cache.servers[name].tools = [{ name: "stale" }];
+      }
       cache.servers.second.prompts = [{ name: "stale" }];
       cache.servers.third.resources = [{ name: "stale", uri: "test://stale" }];
       cache.servers.external = { futureFormat: true };
@@ -400,10 +409,12 @@ describe("cached tool surface through Pi SessionManager", () => {
 
       let replacements = 0;
       const originalRename = fs.renameSync;
-      fs.renameSync = ((from, to) => {
-        if (String(to) === h.cachePath) replacements++;
-        return originalRename(from, to);
-      }) as typeof fs.renameSync;
+      fs.renameSync = (from, to) => {
+        if (String(to) === h.cachePath) {
+          replacements++;
+        }
+        originalRename(from, to);
+      };
       syncBuiltinESMExports();
       try {
         shutdown = true;
@@ -430,8 +441,9 @@ describe("cached tool surface through Pi SessionManager", () => {
       expect(h.errors).toEqual([]);
       expect(replacements).toBe(1);
     } finally {
-      if (!shutdown)
+      if (!shutdown) {
         await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      }
       h.session.dispose();
     }
   }, 30_000);

@@ -167,7 +167,7 @@ describe("search ranking", () => {
     expect(rankToolMatches(state, "search", "demo").map((match) => match.server)).toEqual(["demo"]);
     expect(rankToolMatches(state, "search", "missing")).toEqual([]);
 
-    state.config.mcpServers.other!.disabled = true;
+    state.config.mcpServers.other.disabled = true;
     expect(rankToolMatches(state, "search").map((match) => match.server)).toEqual(["demo"]);
     expect(rankSuggestions(state, "other_serch", 5)).toEqual([]);
     state.config.mcpServers.demo!.includeTools = ["demo_search"];

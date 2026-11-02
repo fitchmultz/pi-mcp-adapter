@@ -37,7 +37,9 @@ describe("session recovery — Streamable HTTP wire path", () => {
       }
 
       let body = "";
-      for await (const chunk of req) body += chunk;
+      for await (const chunk of req) {
+        body += chunk;
+      }
       const message = JSON.parse(body) as { id?: string | number; method?: string };
 
       if (message.method === "initialize") {
@@ -118,8 +120,9 @@ describe("session recovery — Streamable HTTP wire path", () => {
 
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
-    if (!address || typeof address === "string")
+    if (!address || typeof address === "string") {
       throw new Error("server did not bind to a TCP port");
+    }
 
     const manager = new McpServerManager();
     const definition = {
@@ -156,13 +159,11 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValueOnce(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
     };
     const fresh = {
@@ -178,7 +179,7 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -234,7 +235,7 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -286,7 +287,7 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -318,33 +319,29 @@ describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValue(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValue(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
     };
 
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -383,13 +380,11 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValueOnce(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValueOnce(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
     };
     const fresh = {
@@ -405,7 +400,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -472,7 +467,7 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
@@ -521,33 +516,29 @@ describe("session recovery — direct-tools path (direct-tools.ts createDirectTo
       status: "connected" as const,
       transport: { sessionId: "session-1" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValue(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
     };
     const fresh = {
       status: "connected" as const,
       transport: { sessionId: "session-2" },
       client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValue(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
+        callTool: vi.fn().mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
+            status: 404,
+          }),
+        ),
       },
     };
 
     const manager = {
       getConnection: vi.fn(() => stale),
       reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => undefined),
+      getRequestOptions: vi.fn(() => {}),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),

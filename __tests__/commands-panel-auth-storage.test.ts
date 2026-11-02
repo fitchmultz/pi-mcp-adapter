@@ -4,8 +4,11 @@ import { openMcpAuthPanel, openMcpPanel } from "../commands.ts";
 const previousAuthStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
 
 afterEach(() => {
-  if (previousAuthStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
-  else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = previousAuthStore;
+  if (previousAuthStore === undefined) {
+    delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+  } else {
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = previousAuthStore;
+  }
 });
 
 function stripAnsi(input: string): string {
@@ -34,7 +37,7 @@ function createState() {
       },
     },
     authStorageOptions: {},
-    manager: { getConnection: () => undefined },
+    manager: { getConnection: () => {} },
     failureTracker: new Map(),
     failureMessages: new Map(),
   } as any;

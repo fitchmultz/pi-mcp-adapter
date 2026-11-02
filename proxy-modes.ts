@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { Client } from "@modelcontextprotocol/client";
-import type { McpExtensionState } from "./state.ts";
+import { type McpExtensionState, type CompletedUiSession } from "./state.ts";
 import type { ServerConnection } from "./server-manager.ts";
 import type {
   ToolMetadata,
@@ -58,7 +58,6 @@ import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import { paginate, rankSuggestions, rankToolMatches } from "./search-ranking.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "./tool-approval.ts";
 import { materializeUiMessages, uiMessages } from "./ui-message-history.ts";
-import type { CompletedUiSession } from "./state.ts";
 import type { UiSessionMessages } from "./types.ts";
 
 type ProxyToolResult = AgentToolResult<Record<string, unknown>>;
@@ -85,8 +84,9 @@ function getAuthRequiredMessage(
   defaultMessage = `Server "${serverName}" requires OAuth authentication. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
 ): string {
   const oauth = state.config.mcpServers[serverName]?.oauth;
-  if (oauth && oauth.crossAppAccess)
+  if (oauth && oauth.crossAppAccess) {
     defaultMessage = `Server "${serverName}" requires enterprise authorization. Check oauth.crossAppAccess IdP configuration and ID-token source, then retry.`;
+  }
   return formatAuthRequiredMessage(state.config, serverName, defaultMessage);
 }
 
@@ -106,7 +106,9 @@ function getAuthFailedMessage(
 function getRedirectPort(authorizationUrl: string): number | undefined {
   try {
     const redirectUri = new URL(authorizationUrl).searchParams.get("redirect_uri");
-    if (!redirectUri) return undefined;
+    if (!redirectUri) {
+      return undefined;
+    }
     const port = Number.parseInt(new URL(redirectUri).port, 10);
     return Number.isInteger(port) ? port : undefined;
   } catch {
@@ -199,7 +201,9 @@ async function attemptAutoAuth(
     }
     return { status: "success" };
   } catch (error) {
-    if (isAbortError(error, signal)) throw error;
+    if (isAbortError(error, signal)) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     return {
       status: "failed",
@@ -212,7 +216,9 @@ async function* uiSessionText(session: CompletedUiSession): AsyncGenerator<strin
   yield `\n## ${session.serverName} / ${session.toolName} (${session.completedAt.toLocaleTimeString()}, ${session.reason})`;
   let heading = false;
   for await (const prompt of uiMessages(session.messages, "prompts")) {
-    if (parseUiPromptHandoff(prompt as string)) continue;
+    if (parseUiPromptHandoff(prompt as string)) {
+      continue;
+    }
     if (!heading) {
       yield "\n\n### Prompts:";
       heading = true;
@@ -230,7 +236,9 @@ async function* uiSessionText(session: CompletedUiSession): AsyncGenerator<strin
   }
   for await (const prompt of uiMessages(session.messages, "prompts")) {
     const handoff = parseUiPromptHandoff(prompt as string);
-    if (!handoff) continue;
+    if (!handoff) {
+      continue;
+    }
     if (!heading) {
       yield "\n\n### Intents:";
       heading = true;
@@ -239,8 +247,9 @@ async function* uiSessionText(session: CompletedUiSession): AsyncGenerator<strin
   }
   if (session.messages.contexts.length) {
     yield "\n\n### Context updates:";
-    for (const context of session.messages.contexts)
+    for (const context of session.messages.contexts) {
       yield `\n- ${context.summary}${context.truncated ? " (truncated)" : ""}`;
+    }
   }
   heading = false;
   for await (const notification of uiMessages(session.messages, "notifications")) {
@@ -263,17 +272,19 @@ export async function executeUiMessages(state: McpExtensionState): Promise<Proxy
       Buffer.byteLength(JSON.stringify(session.messages)),
     0,
   );
-  const large = size > Math.min(options.maxBytes!, options.detailsMaxBytes!);
+  const large = size > Math.min(options.maxBytes, options.detailsMaxBytes!);
   const warnings = pending.flatMap((session) =>
     session.messages.historyError ? [session.messages.historyError] : [],
   );
   const paged = async (): Promise<ProxyToolResult> => {
     async function* output() {
       yield `UI Session Messages (${pending.length} sessions):\n`;
-      for (const session of pending) yield* uiSessionText(session);
+      for (const session of pending) {
+        yield* uiSessionText(session);
+      }
     }
     const artifact = await saveMcpOutputStream(output(), state.outputDirectory);
-    if (!artifact.path)
+    if (!artifact.path) {
       return {
         content: [
           {
@@ -284,6 +295,7 @@ export async function executeUiMessages(state: McpExtensionState): Promise<Proxy
         isError: true,
         details: { error: "ui_history_delivery_failed", cleared: false },
       };
+    }
     // Newly completed sessions during I/O are not part of this drain.
     state.completedUiSessions = state.completedUiSessions.filter(
       (session) => !pending.includes(session),
@@ -305,7 +317,9 @@ export async function executeUiMessages(state: McpExtensionState): Promise<Proxy
       },
     };
   };
-  if (large) return paged();
+  if (large) {
+    return paged();
+  }
   let sessions: CompletedUiSession[];
   try {
     sessions = await Promise.all(
@@ -373,7 +387,7 @@ export async function executeUiMessages(state: McpExtensionState): Promise<Proxy
       ...session.messages.intents,
       ...session.messages.prompts
         .map((prompt) => parseUiPromptHandoff(prompt))
-        .filter((handoff): handoff is NonNullable<typeof handoff> => !!handoff)
+        .filter((handoff): handoff is NonNullable<typeof handoff> => Boolean(handoff))
         .map((handoff) => ({ intent: handoff.intent, params: handoff.params })),
     ];
 
@@ -423,10 +437,11 @@ export async function executeUiMessages(state: McpExtensionState): Promise<Proxy
   const text = inline.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
   if (
     Buffer.byteLength(JSON.stringify(inline.details)) > options.detailsMaxBytes! ||
-    Buffer.byteLength(text) > options.maxBytes! ||
-    text.split("\n").length > options.maxLines!
-  )
+    Buffer.byteLength(text) > options.maxBytes ||
+    text.split("\n").length > options.maxLines
+  ) {
     return paged();
+  }
   state.completedUiSessions = state.completedUiSessions.filter(
     (session) => !pending.includes(session),
   );
@@ -470,7 +485,9 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
   const coverage = catalogCoverage(state);
 
   let text = `MCP: ${connectedCount}/${enabledServers.length} connected, ${totalTools} tools available (calls connect lazily)`;
-  if (disabledCount > 0) text += ` (${disabledCount} disabled)`;
+  if (disabledCount > 0) {
+    text += ` (${disabledCount} disabled)`;
+  }
   text += "\n\n";
   for (const server of servers) {
     if (server.disabled) {
@@ -498,8 +515,9 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
   if (servers.length > 0) {
     text += `\nmcp_search({ query: "...", server: "name" }) to discover tools; mcp({ action: "resources", server: "name" }) for resources.`;
-    if (!coverage.complete)
+    if (!coverage.complete) {
       text += `\nPartial catalog: ${coverage.unknownServers.length} undiscovered server(s).`;
+    }
   }
 
   return {
@@ -528,7 +546,9 @@ export async function executeAuthStart(
       details: { mode: "auth-start", error: "not_found", server: serverName },
     };
   }
-  if (isServerDisabled(definition)) return disabledResult("auth-start", serverName);
+  if (isServerDisabled(definition)) {
+    return disabledResult("auth-start", serverName);
+  }
 
   try {
     const serverUrl = resolveServerUrl(definition);
@@ -608,7 +628,9 @@ export async function executeAuthComplete(
       details: { mode: "auth-complete", error: "not_found", server: serverName },
     };
   }
-  if (isServerDisabled(definition)) return disabledResult("auth-complete", serverName);
+  if (isServerDisabled(definition)) {
+    return disabledResult("auth-complete", serverName);
+  }
 
   try {
     const previousConnection = state.manager.getConnection(serverName);
@@ -641,7 +663,9 @@ export async function executeAuthComplete(
       };
     }
 
-    if (previousConnection) state.manager.retire(serverName, previousConnection);
+    if (previousConnection) {
+      state.manager.retire(serverName, previousConnection);
+    }
     clearFailure(state, serverName);
     updateStatusBar(state);
     return {
@@ -674,8 +698,9 @@ export function executeDescribe(
   toolName: string,
   serverFilter?: string,
 ): ProxyToolResult {
-  if (serverFilter && isServerDisabled(state.config.mcpServers[serverFilter]))
+  if (serverFilter && isServerDisabled(state.config.mcpServers[serverFilter])) {
     return disabledResult("describe", serverFilter);
+  }
   const catalog = [...state.toolMetadata].flatMap(([server, tools]) =>
     (!serverFilter || serverFilter === server) &&
     state.config.mcpServers[server] &&
@@ -690,7 +715,7 @@ export function executeDescribe(
   const matches = exact.length
     ? exact
     : catalog.filter(({ tool }) => tool.name.replace(/-/g, "_") === toolName.replace(/-/g, "_"));
-  if (matches.length > 1)
+  if (matches.length > 1) {
     return {
       content: [
         {
@@ -700,13 +725,16 @@ export function executeDescribe(
       ],
       details: { mode: "describe", error: "ambiguous_tool", requestedTool: toolName },
     };
+  }
   const match = matches[0];
   if (!match) {
     const disabled = [...state.toolMetadata].find(
       ([server, tools]) =>
         isServerDisabled(state.config.mcpServers[server]) && findToolByName(tools, toolName),
     );
-    if (disabled) return disabledResult("describe", disabled[0]);
+    if (disabled) {
+      return disabledResult("describe", disabled[0]);
+    }
     const suggestions = rankSuggestions(state, toolName, 5, serverFilter);
     const hint =
       suggestions.length > 0
@@ -760,8 +788,9 @@ export function executeSearch(
   const showSchemas = includeSchemas !== false;
   const searchCall = (nextOffset: number | null) =>
     `${caller}({ ${caller === "mcp" ? 'action: "search", ' : ""}query: ${JSON.stringify(query)}${server ? `, server: ${JSON.stringify(server)}` : ""}${caller === "mcp" && !showSchemas ? ", includeSchemas: false" : ""}, limit: ${limit}, offset: ${nextOffset} })`;
-  if (server && isServerDisabled(state.config.mcpServers[server]))
+  if (server && isServerDisabled(state.config.mcpServers[server])) {
     return disabledResult("search", server);
+  }
 
   let matches: Array<{ server: string; tool: ToolMetadata; score: number }>;
   if (query.trim().length === 0) {
@@ -831,7 +860,9 @@ export function executeSearch(
       text += `${JSON.stringify({ ...toToolDescriptor(match.server, match.tool), ...(approvalMarker ? { approvalRequired: true } : {}) }, null, 2)}\n\n`;
     } else {
       text += `- ${match.tool.name}${approvalMarker}`;
-      if (match.tool.description) text += ` - ${truncateAtWord(match.tool.description, 50)}`;
+      if (match.tool.description) {
+        text += ` - ${truncateAtWord(match.tool.description, 50)}`;
+      }
       text += "\n";
     }
   }
@@ -877,7 +908,9 @@ export function executeList(
       details: { mode: "list", server, tools: [], count: 0, error: "not_found" },
     };
   }
-  if (isServerDisabled(definition)) return disabledResult("list", server);
+  if (isServerDisabled(definition)) {
+    return disabledResult("list", server);
+  }
 
   const metadata = state.toolMetadata.get(server)?.filter((tool) => !tool.resourceUri);
   const connection = state.manager.getConnection(server);
@@ -970,7 +1003,9 @@ export function executeList(
   for (const tool of page.items) {
     const description = truncateAtWord(tool.description, 50);
     text += `- ${tool.name}`;
-    if (description) text += ` - ${description}`;
+    if (description) {
+      text += ` - ${description}`;
+    }
     text += "\n";
   }
   const first = (Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0) + 1;
@@ -1006,7 +1041,9 @@ export function executeInstructions(state: McpExtensionState, server: string): P
       details: { mode: "instructions", server, error: "not_found" },
     };
   }
-  if (isServerDisabled(definition)) return disabledResult("instructions", server);
+  if (isServerDisabled(definition)) {
+    return disabledResult("instructions", server);
+  }
 
   const instructions = state.serverInstructions.get(server);
   if (instructions) {
@@ -1058,7 +1095,9 @@ export async function executeConnect(
       details: { mode: "connect", error: "not_found", server: serverName },
     };
   }
-  if (isServerDisabled(definition)) return disabledResult("connect", serverName);
+  if (isServerDisabled(definition)) {
+    return disabledResult("connect", serverName);
+  }
 
   try {
     if (state.ui) {
@@ -1124,7 +1163,9 @@ export async function executeConnect(
     return executeList(state, serverName, limit, offset);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!isAbortError(error, ownedSignal)) recordFailure(state, serverName, message);
+    if (!isAbortError(error, ownedSignal)) {
+      recordFailure(state, serverName, message);
+    }
     updateStatusBar(state);
     return {
       content: [
@@ -1207,7 +1248,9 @@ export async function runToolCall(
   let beforeDispatchPending = false;
   let captureFailure: McpToolCallEvent | undefined;
   const capture = async (event: McpToolCallEvent) => {
-    if (!state.onToolCall) return;
+    if (!state.onToolCall) {
+      return;
+    }
     try {
       const run = () => state.onToolCall!(event);
       await abortable(
@@ -1331,7 +1374,9 @@ export async function runToolCall(
             ownedSignal,
           ),
         );
-    if (!target.resourceUri) uiSession?.sendToolResult(result as ClientCallToolResult);
+    if (!target.resourceUri) {
+      uiSession?.sendToolResult(result as ClientCallToolResult);
+    }
     const record = result as Record<string, unknown>;
     const isError = record.isError === true;
     const uiSummary = target.uiResourceUri ? summarizeUiSessionResult(uiSession) : undefined;
@@ -1384,7 +1429,9 @@ export async function runToolCall(
     };
   } catch (error) {
     // Direct/proxy host errors throw; scripts retain their failed-call envelope.
-    if (beforeDispatchPending && options.innerCallId === undefined) throw error;
+    if (beforeDispatchPending && options.innerCallId === undefined) {
+      throw error;
+    }
     if (captureFailure) {
       const { signal: _signal, ...context } = captureFailure;
       const message =
@@ -1506,17 +1553,22 @@ export async function prepareMcpConnection(
   ) => {
     throwIfAborted(recoverySignal);
     const current = state.manager.getConnection(serverName);
-    if (current?.status === "connected" && current !== challenge?.connection) return current;
+    if (current?.status === "connected" && current !== challenge?.connection) {
+      return current;
+    }
     if (!autoAuthAttempted) {
       autoAuthAttempted = true;
       const auth = await attemptAutoAuth(state, serverName, recoverySignal);
       throwIfAborted(recoverySignal);
-      if (auth.status === "failed")
+      if (auth.status === "failed") {
         throw new SessionRecoveryAuthRequiredError(serverName, auth.message);
+      }
       if (auth.status === "success" && current) {
         clearFailure(state, serverName);
         const definition = state.config.mcpServers[serverName];
-        if (!definition) return undefined;
+        if (!definition) {
+          return undefined;
+        }
         state.ui?.setStatus("mcp", formatMcpStatus(state.config, `connecting to ${serverName}...`));
         await state.manager.reconnect(serverName, definition, current, recoverySignal);
         if (await lazyConnect(state, serverName, recoverySignal)) {
@@ -1532,9 +1584,12 @@ export async function prepareMcpConnection(
     details: { mode: "call", error, server: serverName, message },
   });
   const definition = state.config.mcpServers[serverName];
-  if (!definition)
+  if (!definition) {
     return { error: failure("server_not_found", `Server "${serverName}" not found.`) };
-  if (isServerDisabled(definition)) return { error: disabledResult("call", serverName) };
+  }
+  if (isServerDisabled(definition)) {
+    return { error: disabledResult("call", serverName) };
+  }
   try {
     // Connected metadata is read below, so it does not require another connection attempt.
     let connection = state.manager.getConnection(serverName);
@@ -1544,9 +1599,12 @@ export async function prepareMcpConnection(
     } else {
       markKeepAliveAfterConnect(state, serverName);
     }
-    if (connection?.status === "needs-auth")
+    if (connection?.status === "needs-auth") {
       connection = await recoverAuthConnection(serverName, ownedSignal);
-    if (connection?.status === "needs-auth") throw new SessionRecoveryAuthRequiredError(serverName);
+    }
+    if (connection?.status === "needs-auth") {
+      throw new SessionRecoveryAuthRequiredError(serverName);
+    }
     if (connection?.status !== "connected") {
       const failedAgo = getFailureAgeSeconds(state, serverName);
       return {
@@ -1566,12 +1624,15 @@ export async function prepareMcpConnection(
         state.config.settings?.toolPrefix ?? "server",
       );
       // Search indexes by metadata-array identity, so retain it for unchanged projections.
-      if (!isDeepStrictEqual(state.toolMetadata.get(serverName), metadata))
+      if (!isDeepStrictEqual(state.toolMetadata.get(serverName), metadata)) {
         state.toolMetadata.set(serverName, metadata);
+      }
     }
     return { connection, recoverAuthConnection, autoAuthAttempted: () => autoAuthAttempted };
   } catch (error) {
-    if (isAbortError(error, ownedSignal)) throw error;
+    if (isAbortError(error, ownedSignal)) {
+      throw error;
+    }
     const message =
       error instanceof SessionRecoveryAuthRequiredError
         ? (error.authMessage ?? getAuthRequiredMessage(state, serverName))
@@ -1611,30 +1672,38 @@ export async function executeCall(
     typeof toolName !== "string" ||
     !toolName.trim() ||
     (serverOverride !== undefined && (typeof serverOverride !== "string" || !serverOverride))
-  )
+  ) {
     return {
       content: [
         { type: "text", text: "Specify a non-empty tool name and, when supplied, server." },
       ],
       details: { mode: "call", error: "invalid_arguments" },
     };
-  if (args !== undefined && (args === null || typeof args !== "object" || Array.isArray(args)))
+  }
+  if (args !== undefined && (args === null || typeof args !== "object" || Array.isArray(args))) {
     return {
       content: [{ type: "text", text: "Tool arguments must be an object." }],
       details: { mode: "call", error: "invalid_arguments", requestedTool: toolName },
     };
+  }
   let serverName = serverOverride;
   const matches = (metadata: ToolMetadata[] = []) => {
-    if (options.resourceUri !== undefined)
+    if (options.resourceUri !== undefined) {
       return metadata.filter((tool) => tool.resourceUri === options.resourceUri);
-    if (options.exactOriginalName)
+    }
+    if (options.exactOriginalName) {
       return metadata.filter((tool) => tool.originalName === toolName && !tool.resourceUri);
+    }
     if (serverOverride) {
       const originals = metadata.filter((tool) => tool.originalName === toolName);
-      if (originals.length) return originals;
+      if (originals.length) {
+        return originals;
+      }
     }
     const exact = metadata.filter((tool) => tool.name === toolName);
-    if (exact.length) return exact;
+    if (exact.length) {
+      return exact;
+    }
     return metadata.filter((tool) => tool.name.replace(/-/g, "_") === toolName.replace(/-/g, "_"));
   };
   const ambiguous = (): ProxyToolResult => ({
@@ -1657,14 +1726,18 @@ export async function executeCall(
         ? []
         : matches(metadata).map((tool) => ({ server, tool })),
     );
-    if (candidates.length > 1) return ambiguous();
+    if (candidates.length > 1) {
+      return ambiguous();
+    }
     serverName = candidates[0]?.server;
     if (!serverName) {
       const disabled = [...state.toolMetadata].find(
         ([server, metadata]) =>
           isServerDisabled(state.config.mcpServers[server]) && matches(metadata).length > 0,
       );
-      if (disabled) return disabledResult("call", disabled[0]);
+      if (disabled) {
+        return disabledResult("call", disabled[0]);
+      }
       const prefixes = Object.entries(state.config.mcpServers)
         .filter(([, definition]) => !isServerDisabled(definition))
         .map(([server, definition]) => ({
@@ -1676,7 +1749,9 @@ export async function executeCall(
         }))
         .filter(({ prefix }) => prefix && toolName.startsWith(`${prefix}_`))
         .sort((a, b) => b.prefix.length - a.prefix.length);
-      if (prefixes.length > 1 && prefixes[0]?.prefix === prefixes[1]?.prefix) return ambiguous();
+      if (prefixes.length > 1 && prefixes[0]?.prefix === prefixes[1]?.prefix) {
+        return ambiguous();
+      }
       serverName = prefixes[0]?.server;
     }
   }
@@ -1684,7 +1759,7 @@ export async function executeCall(
     const nativeTool =
       !serverOverride &&
       getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp");
-    if (nativeTool)
+    if (nativeTool) {
       return {
         content: [
           {
@@ -1694,6 +1769,7 @@ export async function executeCall(
         ],
         details: { mode: "call", error: "native_tool", requestedTool: toolName },
       };
+    }
     const normalizedName = toolName.replace(/-/g, "_");
     const localOriginal =
       serverOverride &&
@@ -1710,7 +1786,7 @@ export async function executeCall(
           )
         : [];
     const suggestedOwner = owners.length === 1 ? owners[0] : undefined;
-    if (suggestedOwner)
+    if (suggestedOwner) {
       return {
         content: [
           {
@@ -1727,6 +1803,7 @@ export async function executeCall(
           suggestions: matches(suggestedOwner[1]).map((tool) => tool.name),
         },
       };
+    }
     const suggestions = rankSuggestions(state, toolName, 5, serverName);
     let hint = suggestions.length
       ? ` Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ action: "describe", tool: ${JSON.stringify(suggestions[0])} }).`
@@ -1738,8 +1815,9 @@ export async function executeCall(
       serverName &&
       state.toolMetadata.has(serverName) &&
       state.manager.getConnection(serverName)?.status !== "connected"
-    )
+    ) {
       hint += ` Refresh a stale catalog with mcp({ action: "connect", server: ${JSON.stringify(serverName)} }).`;
+    }
     return {
       content: [{ type: "text", text: `Tool "${toolName}" not found.${hint}` }],
       details: {
@@ -1751,9 +1829,11 @@ export async function executeCall(
       },
     };
   };
-  if (!serverName) return missing();
+  if (!serverName) {
+    return missing();
+  }
   const definition = state.config.mcpServers[serverName];
-  if (!definition)
+  if (!definition) {
     return {
       content: [
         {
@@ -1768,17 +1848,23 @@ export async function executeCall(
         requestedTool: toolName,
       },
     };
-  if (isServerDisabled(definition)) return disabledResult("call", serverName);
+  }
+  if (isServerDisabled(definition)) {
+    return disabledResult("call", serverName);
+  }
   const cached = state.toolMetadata.get(serverName);
-  if (matches(cached).length > 1) return ambiguous();
+  if (matches(cached).length > 1) {
+    return ambiguous();
+  }
   // Misspellings in a known catalog do not cause connection churn or guessed execution.
   if (
     cached &&
     !matches(cached).length &&
     !options.exactOriginalName &&
     options.resourceUri === undefined
-  )
+  ) {
     return missing();
+  }
 
   const prepared = await prepareMcpConnection(state, serverName, ownedSignal);
   if (prepared.error) {
@@ -1796,11 +1882,16 @@ export async function executeCall(
     };
   }
   const targets = matches(state.toolMetadata.get(serverName));
-  if (targets.length > 1) return ambiguous();
+  if (targets.length > 1) {
+    return ambiguous();
+  }
   const toolMeta = targets[0];
-  if (!toolMeta) return missing();
-  if (isServerDisabled(state.config.mcpServers[serverName]))
+  if (!toolMeta) {
+    return missing();
+  }
+  if (isServerDisabled(state.config.mcpServers[serverName])) {
     return disabledResult("call", serverName);
+  }
   const approval = await ensureToolCallApproved(state, serverName, toolMeta, args, ownedSignal);
   if (!approval.ok) {
     const denied = approval.reason === "denied";
@@ -1834,8 +1925,8 @@ export async function executeCall(
     },
     ownedSignal,
     signal,
-    recoverAuthConnection: prepared.recoverAuthConnection!,
+    recoverAuthConnection: prepared.recoverAuthConnection,
     authRequiredMessage: () => getAuthRequiredMessage(state, serverName),
-    autoAuthAttempted: prepared.autoAuthAttempted!,
+    autoAuthAttempted: prepared.autoAuthAttempted,
   });
 }

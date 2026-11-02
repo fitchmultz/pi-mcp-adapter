@@ -70,7 +70,7 @@ describe("structuredContent fallback — direct tool executor", () => {
       },
     );
 
-    const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
+    const result = await executor("id", {}, undefined, () => {}, undefined as any);
 
     expect((result.content[0] as TextContent).text).toBe(JSON.stringify(structured, null, 2));
     expect(textOf(result)).toContain(result.details.resultRef);
@@ -103,12 +103,10 @@ describe("structuredContent fallback — direct tool executor", () => {
     expect(textOf(failed)).toContain("human failure");
     expect(JSON.stringify(failed.structuredContent)).not.toContain("secret");
     state.config.settings.outputGuard = { maxBytes: 1000, detailsMaxBytes: 100 };
-    state.manager
-      .getConnection()
-      .client.callTool.mockResolvedValue({
-        content: [],
-        structuredContent: { large: "x".repeat(5000) },
-      });
+    state.manager.getConnection().client.callTool.mockResolvedValue({
+      content: [],
+      structuredContent: { large: "x".repeat(5000) },
+    });
     const large = await executor("large", {}, undefined, undefined, undefined as any);
     expect(large.structuredContent).toEqual({
       mcpAdapter: { omitted: true, resultRef: large.details.resultRef },
@@ -126,7 +124,7 @@ describe("structuredContent fallback — direct tool executor", () => {
       { serverName: "demo", originalName: "noop", prefixedName: "demo_noop", description: "Noop" },
     );
 
-    const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
+    const result = await executor("id", {}, undefined, () => {}, undefined as any);
 
     expect(textOf(result)).toBe("(empty result)");
   });

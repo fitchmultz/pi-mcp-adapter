@@ -3,10 +3,10 @@ import { logger } from "../logger.ts";
 
 describe("Logger", () => {
   beforeEach(() => {
-    vi.spyOn(console, "debug").mockImplementation(() => undefined);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
     logger.setLevel("debug");
   });
 

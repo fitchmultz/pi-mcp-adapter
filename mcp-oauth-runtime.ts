@@ -92,14 +92,18 @@ export function getRuntime(options?: AuthenticateOptions): McpOAuthRuntime {
     activeRuntimes.add(options.runtime);
     return options.runtime;
   }
-  if (legacyRuntime.signal.aborted) legacyRuntime = createOAuthRuntime();
+  if (legacyRuntime.signal.aborted) {
+    legacyRuntime = createOAuthRuntime();
+  }
   activeRuntimes.add(legacyRuntime);
   return legacyRuntime;
 }
 
 export function getRuntimeState(runtime: McpOAuthRuntime): RuntimeState {
   const state = runtimeStates.get(runtime);
-  if (!state) throw new Error("Unknown OAuth runtime");
+  if (!state) {
+    throw new Error("Unknown OAuth runtime");
+  }
   return state;
 }
 
@@ -140,7 +144,9 @@ export async function clearPendingAuth(
   const pendingAuth = state.pendingAuths.get(key);
   const authStorageOptions = pendingAuth?.authStorageOptions ?? fallbackStorageOptions;
   const pendingState = state.pendingAuthStates.get(key);
-  if (oauthState && pendingState && pendingState !== oauthState) return;
+  if (oauthState && pendingState && pendingState !== oauthState) {
+    return;
+  }
 
   const timer = state.pendingAuthCleanupTimers.get(key);
   if (timer) {
@@ -170,15 +176,25 @@ export async function clearPendingAuth(
  */
 export function supportsOAuth(definition: ServerEntry): boolean {
   // OAuth requires a URL
-  if (!definition.url) return false;
+  if (!definition.url) {
+    return false;
+  }
 
   // Explicitly disabled via auth: false or oauth: false
-  if (definition.auth === false) return false;
-  if (definition.oauth === false) return false;
-  if (definition.auth === "oauth") return true;
+  if (definition.auth === false) {
+    return false;
+  }
+  if (definition.oauth === false) {
+    return false;
+  }
+  if (definition.auth === "oauth") {
+    return true;
+  }
 
   // Configured custom headers take precedence over implicit OAuth auto-detection.
-  if (definition.headers && Object.keys(definition.headers).length > 0) return false;
+  if (definition.headers && Object.keys(definition.headers).length > 0) {
+    return false;
+  }
 
   // OAuth is enabled when auth is not specified (auto-detect)
   return definition.auth === undefined;
@@ -198,7 +214,7 @@ export async function initializeOAuth(
   }
 
   await shutdownOAuth(legacyRuntime);
-  legacyRuntime = createOAuthRuntime(runtimeOrSignal as AbortSignal | undefined);
+  legacyRuntime = createOAuthRuntime(runtimeOrSignal);
   return legacyRuntime;
 }
 
@@ -208,11 +224,14 @@ export async function initializeOAuth(
  */
 export async function shutdownOAuth(runtime: McpOAuthRuntime = legacyRuntime): Promise<void> {
   const state = getRuntimeState(runtime);
-  if (state.controller.signal.aborted) return;
+  if (state.controller.signal.aborted) {
+    return;
+  }
   state.generation += 1;
   state.controller.abort(new Error("OAuth runtime stopped"));
-  for (const callbackState of Array.from(state.pendingAuthStates.values()))
+  for (const callbackState of Array.from(state.pendingAuthStates.values())) {
     cancelPendingCallback(callbackState);
+  }
   const results = await Promise.allSettled(
     Array.from(state.pendingAuths.values(), (pendingAuth) =>
       clearPendingAuth(runtime, pendingAuth.serverName, undefined, pendingAuth.authStorageOptions),
@@ -232,5 +251,7 @@ export async function shutdownOAuth(runtime: McpOAuthRuntime = legacyRuntime): P
       failures.push(error);
     }
   }
-  if (failures.length) throw new AggregateError(failures, "MCP OAuth cleanup failed");
+  if (failures.length) {
+    throw new AggregateError(failures, "MCP OAuth cleanup failed");
+  }
 }

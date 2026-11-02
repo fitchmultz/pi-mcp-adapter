@@ -19,7 +19,9 @@ const faults = {
   "late-winner"() {
     let firstRename = true;
     fsPromises.rename = async (...args) => {
-      if (!firstRename) return originalRename(...args);
+      if (!firstRename) {
+        return originalRename(...args);
+      }
       firstRename = false;
       // The ref'd timer keeps the child alive so its marker proves publication
       // happened after the old two-second poll window.
@@ -73,7 +75,10 @@ const faults = {
 };
 
 const faultName = process.env.BUILD_SWAP_FAULT;
-if (faultName && !Object.hasOwn(faults, faultName))
+if (faultName && !Object.hasOwn(faults, faultName)) {
   throw new Error(`unknown build-swap fault: ${faultName}`);
-faults[faultName]?.();
+}
+if (faultName !== undefined) {
+  /** @type {Record<string, () => void>} */ (faults)[faultName]?.();
+}
 syncBuiltinESMExports();

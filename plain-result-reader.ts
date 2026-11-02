@@ -41,7 +41,9 @@ async function digestOf(file: FileHandle, size: number): Promise<string> {
       Math.min(buffer.length, size - position),
       position,
     );
-    if (!bytesRead) return "";
+    if (!bytesRead) {
+      return "";
+    }
     hash.update(buffer.subarray(0, bytesRead));
     position += bytesRead;
   }
@@ -49,7 +51,9 @@ async function digestOf(file: FileHandle, size: number): Promise<string> {
 }
 
 function checkpoint(index: Index, point: Point) {
-  if (point.bytes - index.points.at(-1)!.bytes < index.stride) return;
+  if (point.bytes - index.points.at(-1)!.bytes < index.stride) {
+    return;
+  }
   index.points.push(point);
   if (index.points.length > MAX_POINTS) {
     index.points = index.points.filter((_, i) => i % 2 === 0);
@@ -60,7 +64,9 @@ function checkpoint(index: Index, point: Point) {
 function remember(ref: string, index: Index) {
   indexes.delete(ref);
   indexes.set(ref, index);
-  if (indexes.size > MAX_INDEXES) indexes.delete(indexes.keys().next().value!);
+  if (indexes.size > MAX_INDEXES) {
+    indexes.delete(indexes.keys().next().value!);
+  }
 }
 
 function extend(index: Index, after: BigIntStats, text: string) {
@@ -72,7 +78,9 @@ function extend(index: Index, after: BigIntStats, text: string) {
   // Index only the accepted delta, keeping checkpoints on complete UTF-8 code points.
   for (let start = 0; start < text.length;) {
     let end = Math.min(text.length, start + 16 * 1024);
-    if (end < text.length && text.codePointAt(end - 1)! > 0xffff) end++;
+    if (end < text.length && text.codePointAt(end - 1)! > 0xffff) {
+      end++;
+    }
     position += byteLength(text.slice(start, end));
     checkpoint(index, { bytes: position, characters: index.total + end });
     start = end;
@@ -91,29 +99,38 @@ export function appendPlainOutput(ref: string, text: string) {
     key = indexes.size || readers.size ? realpathSync(ref) : ref;
     cached = indexes.get(key);
     indexes.delete(key);
-    if (cached || readers.has(key)) before = statSync(ref, { bigint: true });
+    if (cached || readers.has(key)) {
+      before = statSync(ref, { bigint: true });
+    }
   } catch {
     /* Cache bookkeeping must not change write acceptance. */
   }
   appendFileSync(ref, text, { flush: true });
-  if (!before) return;
+  if (!before) {
+    return;
+  }
   try {
     const after = statSync(ref, { bigint: true });
     if (
       after.dev !== before.dev ||
       after.ino !== before.ino ||
       after.size !== before.size + BigInt(byteLength(text))
-    )
+    ) {
       return;
+    }
     if (cached && sameRevision(cached.revision, before) && !text.includes("\ufffd")) {
       const next = { ...cached, points: [...cached.points] };
       extend(next, after, text);
       remember(key, next);
     }
     for (const progress of readers.get(key) ?? []) {
-      if (!sameRevision(progress.revision, before)) continue;
+      if (!sameRevision(progress.revision, before)) {
+        continue;
+      }
       extend(progress, after, text);
-      if (text.includes("\ufffd")) progress.cacheable = false;
+      if (text.includes("\ufffd")) {
+        progress.cacheable = false;
+      }
     }
   } catch {
     /* The durable append already succeeded; leave its index invalidated. */
@@ -144,7 +161,7 @@ export async function readPlainResult(
         digest: "",
         hasher: createHash("sha256"),
       };
-      let index: Index = matched ? cached! : fresh;
+      let index: Index = matched ? cached : fresh;
       // Append characters stay relative until the cold scan knows the opened prefix's total.
       progress = {
         revision,
@@ -171,7 +188,9 @@ export async function readPlainResult(
       let point = index.points[0]!;
       if (valid) {
         for (const candidate of index.points) {
-          if (candidate.characters > offset) break;
+          if (candidate.characters > offset) {
+            break;
+          }
           point = candidate;
         }
       }
@@ -194,7 +213,9 @@ export async function readPlainResult(
             Math.min(buffer.length, Number(revision.size) - readPosition),
             readPosition,
           );
-          if (!bytesRead) break;
+          if (!bytesRead) {
+            break;
+          }
           readPosition += bytesRead;
           const chunk =
             decoder.write(buffer.subarray(0, bytesRead)) +
@@ -203,13 +224,16 @@ export async function readPlainResult(
             progress.hasher.update(buffer.subarray(0, bytesRead));
             checkpoint(index, { bytes: position, characters: total });
             // Invalid/incomplete UTF8 can re-decode differently after append. Keep the full-scan fallback.
-            if (chunk.includes("\ufffd")) cacheable = false;
+            if (chunk.includes("\ufffd")) {
+              cacheable = false;
+            }
             position += byteLength(chunk);
           }
           const start = Math.max(0, offset - total);
           if (!finished && start < chunk.length) {
-            if (start > 0 && chunk.codePointAt(start - 1)! > 0xffff)
+            if (start > 0 && chunk.codePointAt(start - 1)! > 0xffff) {
               throw new Error("offset must not split a Unicode surrogate pair");
+            }
             for (const char of chunk.slice(start)) {
               const nextBytes = bytes + byteLength(char);
               const nextLines = lines + (char === "\n" ? 1 : 0);
@@ -226,12 +250,18 @@ export async function readPlainResult(
             }
           }
           total += chunk.length;
-          if (valid && finished) break;
+          if (valid && finished) {
+            break;
+          }
         }
       }
       // Only verified native appends may advance this snapshot. External edits still invalidate.
-      if (!sameRevision(progress.revision, statSync(ref, { bigint: true }))) continue;
-      if (!valid) index.total = total;
+      if (!sameRevision(progress.revision, statSync(ref, { bigint: true }))) {
+        continue;
+      }
+      if (!valid) {
+        index.total = total;
+      }
       // Serve the opened prefix; retain verified append checkpoints for the next read.
       if (cacheable && progress.cacheable) {
         const next: Index = {
@@ -242,8 +272,9 @@ export async function readPlainResult(
           digest: progress.hasher.copy().digest("hex"),
           hasher: progress.hasher,
         };
-        for (const point of progress.points)
+        for (const point of progress.points) {
           checkpoint(next, { bytes: point.bytes, characters: index.total + point.characters });
+        }
         remember(ref, next);
       }
       return { page, total: index.total };
@@ -251,7 +282,9 @@ export async function readPlainResult(
       if (progress) {
         const active = readers.get(ref)!;
         active.delete(progress);
-        if (!active.size) readers.delete(ref);
+        if (!active.size) {
+          readers.delete(ref);
+        }
       }
       await file.close();
     }

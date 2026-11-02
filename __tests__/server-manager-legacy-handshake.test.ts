@@ -39,11 +39,14 @@ describe("McpServerManager legacy handshake", () => {
           .map(Number);
         expect(pids).toHaveLength(2);
         await manager.closeAll();
-        for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow();
-        if (trace)
+        for (const pid of pids) {
+          expect(() => process.kill(pid, 0)).toThrow();
+        }
+        if (trace) {
           expect(await readFile(join(directory, "trace.jsonl"), "utf8")).toContain(
             '"method":"initialize"',
           );
+        }
       } finally {
         await manager.closeAll();
         await rm(directory, { recursive: true, force: true });

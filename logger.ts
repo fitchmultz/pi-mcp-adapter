@@ -39,7 +39,9 @@ class Logger {
   }
 
   private emit(level: LogLevel, message: string, context?: LogContext, error?: Error): void {
-    if (!this.shouldLog(level)) return;
+    if (!this.shouldLog(level)) {
+      return;
+    }
 
     const prefix = LEVEL_PREFIX[level];
     const contextStr = formatContext(context);
@@ -81,8 +83,8 @@ class Logger {
 }
 
 class ChildLogger {
-  private parent: Logger;
-  private context: LogContext;
+  private readonly parent: Logger;
+  private readonly context: LogContext;
 
   constructor(parent: Logger, context: LogContext) {
     this.parent = parent;
@@ -111,7 +113,9 @@ class ChildLogger {
 }
 
 function formatContext(context?: LogContext): string {
-  if (!context || Object.keys(context).length === 0) return "";
+  if (!context || Object.keys(context).length === 0) {
+    return "";
+  }
   const parts: string[] = [];
   for (const [key, value] of Object.entries(context)) {
     if (value !== undefined && value !== null) {

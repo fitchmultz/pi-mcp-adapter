@@ -23,12 +23,21 @@ beforeEach(() => {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-  if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
-  if (originalDirectTools === undefined) delete process.env.MCP_DIRECT_TOOLS;
-  else process.env.MCP_DIRECT_TOOLS = originalDirectTools;
+  if (originalAgentDir === undefined) {
+    delete process.env.PI_CODING_AGENT_DIR;
+  } else {
+    process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+  }
+  if (originalHome === undefined) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = originalHome;
+  }
+  if (originalDirectTools === undefined) {
+    delete process.env.MCP_DIRECT_TOOLS;
+  } else {
+    process.env.MCP_DIRECT_TOOLS = originalDirectTools;
+  }
 });
 
 async function waitFor(
@@ -37,7 +46,9 @@ async function waitFor(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await predicate())) {
-    if (Date.now() >= deadline) throw new Error("Timed out waiting for reload harness condition");
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for reload harness condition");
+    }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
@@ -145,7 +156,7 @@ async function createReloadHarness() {
   const errors: Array<{ error: string; stack?: string }> = [];
   const statusCalls: string[] = [];
   const ui = {
-    notify: () => undefined,
+    notify: () => {},
     setStatus: (_key: string, value: unknown) => statusCalls.push(String(value)),
     theme: { fg: (_color: string, value: string) => value },
   } as any;
@@ -349,7 +360,9 @@ describe("Pi registered extension reload real path", () => {
       } catch {
         // Preserve the original assertion while still attempting extension cleanup.
       }
-      if (pid !== undefined && isAlive(pid)) process.kill(pid, "SIGTERM");
+      if (pid !== undefined && isAlive(pid)) {
+        process.kill(pid, "SIGTERM");
+      }
       session.dispose();
     }
   }, 20_000);

@@ -91,7 +91,9 @@ describe("npx-resolver", () => {
     const proc = {
       kill: vi.fn(),
       on: vi.fn((event: string, callback: () => void) => {
-        if (event === "close") queueMicrotask(callback);
+        if (event === "close") {
+          queueMicrotask(callback);
+        }
         return proc;
       }),
     };

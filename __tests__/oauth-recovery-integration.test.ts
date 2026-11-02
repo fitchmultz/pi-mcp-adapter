@@ -37,7 +37,9 @@ const browser = vi.hoisted(() => ({ open: vi.fn(async (_url: string) => {}) }));
 vi.mock("open", () => ({ default: browser.open }));
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.reverse()) await cleanup();
+  for (const cleanup of cleanups.reverse()) {
+    await cleanup();
+  }
   cleanups.length = 0;
   vi.restoreAllMocks();
   browser.open.mockReset().mockResolvedValue(undefined);
@@ -109,12 +111,13 @@ async function fixture(
     http.push({ method: req.method, path: url.pathname });
     const json = (value: unknown, status = 200) =>
       res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value));
-    if (url.pathname.startsWith("/.well-known/oauth-protected-resource"))
+    if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
       return void json({
         resource: `${origin}/mcp`,
         authorization_servers: [`${origin}${controls.issuerPath}`],
         scopes_supported: controls.advertisedScopes,
       });
+    }
     if (
       controls.metadataAbsent &&
       (url.pathname.startsWith("/.well-known/oauth-authorization-server") ||
@@ -123,7 +126,7 @@ async function fixture(
       res.writeHead(404).end();
       return;
     }
-    if (url.pathname.startsWith("/.well-known/oauth-authorization-server"))
+    if (url.pathname.startsWith("/.well-known/oauth-authorization-server")) {
       return void json({
         issuer: `${origin}${controls.issuerPath}`,
         authorization_endpoint: `${origin}/authorize`,
@@ -138,6 +141,7 @@ async function fixture(
           ? { scopes_supported: ["basic", "write", "offline_access"] }
           : {}),
       });
+    }
     if (url.pathname === "/authorize") {
       authorizations.push(url);
       const code = `code-${++codeNumber}`;
@@ -152,9 +156,12 @@ async function fixture(
       return;
     }
     let data = "";
-    for await (const chunk of req) data += chunk;
-    if (url.pathname === "/register")
+    for await (const chunk of req) {
+      data += chunk;
+    }
+    if (url.pathname === "/register") {
       return void json({ client_id: "fixture", ...JSON.parse(data) }, 201);
+    }
     if (url.pathname === "/token") {
       const params = new URLSearchParams(data);
       exchanges.push(params);
@@ -291,9 +298,10 @@ async function fixture(
         result({ tools, ...(era === "modern" ? { ttlMs: 10000, cacheScope: "private" } : {}) });
       return;
     }
-    if (method === "server/discover")
+    if (method === "server/discover") {
       return void result({ supportedVersions: ["2026-07-28"], capabilities });
-    if (method === "initialize")
+    }
+    if (method === "initialize") {
       return void result(
         {
           protocolVersion: "2025-06-18",
@@ -302,21 +310,25 @@ async function fixture(
         },
         { "mcp-session-id": `session-${++sessions}` },
       );
-    if (method === "tools/list")
+    }
+    if (method === "tools/list") {
       return void result({
         tools,
         ...(era === "modern" ? { ttlMs: 10000, cacheScope: "private" } : {}),
       });
-    if (method === "resources/list")
+    }
+    if (method === "resources/list") {
       return void result({
         resources: [{ name: "document", uri: "test://document" }],
         ...(era === "modern" ? { ttlMs: 10000, cacheScope: "private" } : {}),
       });
-    if (method === "prompts/list")
+    }
+    if (method === "prompts/list") {
       return void result({
         prompts: [{ name: "prompt" }],
         ...(era === "modern" ? { ttlMs: 10000, cacheScope: "private" } : {}),
       });
+    }
     if (method === "tools/call") {
       if (body.params.name === "effect") {
         controls.effectCount++;
@@ -332,17 +344,21 @@ async function fixture(
       }
       return void result(content(body.params.name));
     }
-    if (method === "prompts/get")
+    if (method === "prompts/get") {
       return void result({
         messages: [{ role: "user", content: { type: "text", text: "prompt" } }],
       });
-    if (method === "resources/read")
+    }
+    if (method === "resources/read") {
       return void result({ contents: [{ uri: "test://document", text: "document" }] });
+    }
     json({ error: "unexpected request" }, 500);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Fixture did not bind");
+  if (!address || typeof address === "string") {
+    throw new Error("Fixture did not bind");
+  }
   origin = `http://127.0.0.1:${address.port}`;
   const runtime = createOAuthRuntime();
   const manager = new McpServerManager();
@@ -381,11 +397,12 @@ async function fixture(
     return authorizationUrl;
   };
   cleanups.push(async () => {
-    if (process.env.OAUTH_PROOF_FILE)
+    if (process.env.OAUTH_PROOF_FILE) {
       appendFileSync(
         process.env.OAUTH_PROOF_FILE,
         `${JSON.stringify({ test: expect.getState().currentTestName, node: process.version, execPath: process.execPath, era, http, requests, authorizations: authorizations.map((url) => Object.fromEntries(url.searchParams)), exchanges: exchanges.map((params) => Object.fromEntries(params)), effects: controls.effectCount })}\n`,
       );
+    }
     controls.releaseEffect();
     await manager.closeAll();
     await shutdownOAuth(runtime);
@@ -454,7 +471,7 @@ async function fixture(
           ...(refresh ? { refreshToken: "refresh-basic" } : {}),
           issuer: origin,
         },
-        definition.url!,
+        definition.url,
       ),
     stored: () => getAuthForUrl(name, definition.url!),
   };
@@ -557,7 +574,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         f.seed("basic");
         f.signIn();
         f.state.config.settings!.autoAuth = autoAuth;
-        if (ui) f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+        if (ui) {
+          f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
+        }
         await f.connect();
         const result = await f.callHost(host);
         const eligible = autoAuth && ui;
@@ -570,11 +589,12 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         expect(f.authorizations).toHaveLength(eligible ? 1 : 0);
         expect(f.exchanges).toHaveLength(eligible ? 1 : 0);
         expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(eligible ? 2 : 1);
-        if (eligible)
+        if (eligible) {
           expect(scopes(f.authorizations[0]!.searchParams.get("scope"))).toEqual([
             "basic",
             "write",
           ]);
+        }
       });
     }
     it.each([401, 403])(
@@ -754,7 +774,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.controls.challengeStatus = 403;
     f.state.config.settings!.autoAuth = true;
     f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
-    if (!options.disabled) await f.connect();
+    if (!options.disabled) {
+      await f.connect();
+    }
     expect((await f.call()).details.error).toBe(
       options.disabled ? "server_disabled" : "call_failed",
     );
@@ -784,7 +806,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     "keeps native M2M step-up and retry exhaustion (implicit=%s)",
     async (implicit) => {
       const f = await fixture("modern");
-      if (!implicit) f.definition.auth = "oauth";
+      if (!implicit) {
+        f.definition.auth = "oauth";
+      }
       f.definition.oauth = {
         grantType: "client_credentials",
         clientId: "machine",
@@ -908,8 +932,11 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         era === "legacy" ? 2 : 1,
       );
       expect(browser.open).not.toHaveBeenCalled();
-      if (era === "legacy") expect(f.request()?.challenge?.requiredScope).toBe("write");
-      else expect(f.request()).toBeUndefined();
+      if (era === "legacy") {
+        expect(f.request()?.challenge?.requiredScope).toBe("write");
+      } else {
+        expect(f.request()).toBeUndefined();
+      }
     });
   }
 
@@ -972,7 +999,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         updateTokens(
           f.name,
           { accessToken: "basic-token", scope: "basic", issuer: a.origin },
-          a.definition.url!,
+          a.definition.url,
         );
         const connection = await f.connect();
         await expect(connection.client.callTool({ name: "write" })).rejects.toBeInstanceOf(
@@ -993,7 +1020,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
           );
           urls.set(
             b.name,
-            (await startAuth(b.name, b.definition.url!, b.definition, optionsB)).authorizationUrl,
+            (await startAuth(b.name, b.definition.url, b.definition, optionsB)).authorizationUrl,
           );
         } else {
           outcomes.push(
@@ -1009,7 +1036,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
           );
           outcomes.push(
             settled(
-              authenticate(b.name, b.definition.url!, b.definition, {
+              authenticate(b.name, b.definition.url, b.definition, {
                 ...optionsB,
                 signal: controller.signal,
                 onAuthorizationUrl: (url) => {
@@ -1038,8 +1065,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         } else {
           expect((await fetch(callbackA)).status).toBe(200);
           expect((await fetch(callbackB)).status).toBe(200);
-          for (const outcome of outcomes)
+          for (const outcome of outcomes) {
             expect(await outcome).toMatchObject({ status: "fulfilled", value: "authenticated" });
+          }
         }
         expect((await a.stored())?.tokens?.scope).toBe("basic write");
         expect((await b.stored())?.tokens?.scope).toBe("basic admin");
@@ -1183,7 +1211,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.state.ui = { setStatus: vi.fn(), notify: vi.fn() } as any;
     await f.connect();
     const results = await Promise.all([f.call(), f.call()]);
-    for (const result of results) expect(result.details.error).toBeUndefined();
+    for (const result of results) {
+      expect(result.details.error).toBeUndefined();
+    }
     expect(browser.open).toHaveBeenCalledTimes(1);
     expect(f.exchanges).toHaveLength(1);
     expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(4);
@@ -1216,7 +1246,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const before = await f.stored();
       const saveTokens = vi.spyOn(McpOAuthProvider.prototype, "saveTokens");
       const controller = new AbortController();
-      if (phase === "discovery") f.controls.holdDiscovery = true;
+      if (phase === "discovery") {
+        f.controls.holdDiscovery = true;
+      }
       if (phase === "token") {
         f.controls.holdToken = true;
         f.signIn();
@@ -1238,7 +1270,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       if (phase === "token") {
         await expect.poll(() => saveTokens.mock.calls.length).toBe(1);
         await expect(saveTokens.mock.results[0]!.value).rejects.toThrow("no longer active");
-      } else expect(saveTokens).not.toHaveBeenCalled();
+      } else {
+        expect(saveTokens).not.toHaveBeenCalled();
+      }
       expect((await f.stored())?.tokens).toEqual(before?.tokens);
       expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);
       expect(f.request()?.challenge?.requiredScope).toBe("write");
@@ -1258,13 +1292,17 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         f.controls.holdCatalog = true;
         await fetch(await f.authorize(url));
       });
-      if (cancellation === "deadline") f.definition.requestTimeoutMs = 300;
+      if (cancellation === "deadline") {
+        f.definition.requestTimeoutMs = 300;
+      }
       const controller = new AbortController();
       const first = f.call("write", controller.signal);
       await expect.poll(() => f.controls.catalogHeld).toBe(true);
       f.definition.requestTimeoutMs = 3000;
       const second = f.call("effect");
-      if (cancellation === "abort") controller.abort(new Error("caller cancelled"));
+      if (cancellation === "abort") {
+        controller.abort(new Error("caller cancelled"));
+      }
       expect((await first).details.error).toBe(
         cancellation === "abort" ? "aborted" : "call_failed",
       );
@@ -1356,11 +1394,21 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const { authorizationUrl } = await f.start();
       const callback = new URL(await f.authorize(authorizationUrl));
       const bad = new URL(callback);
-      if (invalid === "state") bad.searchParams.set("state", "wrong-state");
-      if (invalid === "issuer") bad.searchParams.set("iss", "https://wrong.invalid");
-      if (invalid === "missing-issuer") bad.searchParams.delete("iss");
-      if (invalid === "code") bad.searchParams.delete("code");
-      if (invalid === "path") bad.pathname = "/wrong";
+      if (invalid === "state") {
+        bad.searchParams.set("state", "wrong-state");
+      }
+      if (invalid === "issuer") {
+        bad.searchParams.set("iss", "https://wrong.invalid");
+      }
+      if (invalid === "missing-issuer") {
+        bad.searchParams.delete("iss");
+      }
+      if (invalid === "code") {
+        bad.searchParams.delete("code");
+      }
+      if (invalid === "path") {
+        bad.pathname = "/wrong";
+      }
       expect((await fetch(bad)).status).toBe(invalid === "path" ? 404 : 400);
       await expect(
         completeAuthFromInput(f.name, undefined, { runtime: f.runtime }),
@@ -1425,14 +1473,21 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       // Keep native HTTP progressing while installing the real auth expiry timer.
       // Node 24.20's fetch uses setTimeout for idle-socket validation; freezing it
       // deadlocks startAuth before this test can advance the five-minute clock.
-      if (cleanup === "timeout")
+      if (cleanup === "timeout") {
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+      }
       try {
         callbackA = await a.authorize((await a.start()).authorizationUrl);
         expect((await fetch(callbackA)).status).toBe(200);
-        if (cleanup === "logout") await removeAuth(a.name, { runtime: a.runtime });
-        if (cleanup === "shutdown") await shutdownOAuth(a.runtime);
-        if (cleanup === "timeout") await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+        if (cleanup === "logout") {
+          await removeAuth(a.name, { runtime: a.runtime });
+        }
+        if (cleanup === "shutdown") {
+          await shutdownOAuth(a.runtime);
+        }
+        if (cleanup === "timeout") {
+          await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+        }
       } finally {
         vi.useRealTimers();
       }
@@ -1455,7 +1510,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       "unexpected-issuer",
     ])(`${path} validates callback errors before presentation: %s`, async (invalid) => {
       const f = await fixture();
-      if (invalid === "unexpected-issuer") f.controls.issuerRequired = false;
+      if (invalid === "unexpected-issuer") {
+        f.controls.issuerRequired = false;
+      }
       const controller = new AbortController();
       const marker = "UNTRUSTED_ERROR_MARKER";
       const makeCallback = (authorizationUrl: string) => {
@@ -1467,12 +1524,21 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
           error: "access_denied",
           error_description: marker,
         }).toString();
-        if (invalid === "wrong-state") callback.searchParams.set("state", "wrong");
-        if (invalid === "missing-state") callback.searchParams.delete("state");
-        if (invalid === "missing-issuer") callback.searchParams.delete("iss");
-        if (invalid === "wrong-issuer" || invalid === "unexpected-issuer")
+        if (invalid === "wrong-state") {
+          callback.searchParams.set("state", "wrong");
+        }
+        if (invalid === "missing-state") {
+          callback.searchParams.delete("state");
+        }
+        if (invalid === "missing-issuer") {
+          callback.searchParams.delete("iss");
+        }
+        if (invalid === "wrong-issuer" || invalid === "unexpected-issuer") {
           callback.searchParams.set("iss", "http://wrong.invalid/UNTRUSTED_ISSUER");
-        if (invalid === "trailing-slash") callback.searchParams.set("iss", `${f.origin}/`);
+        }
+        if (invalid === "trailing-slash") {
+          callback.searchParams.set("iss", `${f.origin}/`);
+        }
         return callback;
       };
       if (path === "automatic") {
@@ -1482,8 +1548,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
           const html = await response.text();
           expect(html).not.toContain(marker);
           expect(html).not.toContain("UNTRUSTED_ISSUER");
-          if (invalid.includes("state"))
+          if (invalid.includes("state")) {
             controller.abort(new Error("wrong state did not settle the waiter"));
+          }
         });
         const result = await settled(
           authenticate(f.name, f.definition.url!, f.definition, {
@@ -1636,7 +1703,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const nativeFetch = globalThis.fetch;
       vi.spyOn(globalThis, "fetch").mockImplementation(async (...args) => {
         const response = await nativeFetch(...args);
-        if (response.headers.has("x-accepted-effect")) received();
+        if (response.headers.has("x-accepted-effect")) {
+          received();
+        }
         return response;
       });
       const old = await f.connect();
@@ -1709,7 +1778,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         registerCommand: (name: string, command: any) => commands.set(name, command),
         registerFlag: () => {},
         on: (name: string, handler: any) => handlers.set(name, handler),
-        getFlag: () => undefined,
+        getFlag: () => {},
         registerEntryRenderer: () => {},
         appendEntry: () => {},
         getActiveTools: () => [...tools.keys()],
@@ -1723,7 +1792,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         cwd: process.env.HOME!,
         isProjectTrusted: () => true,
         ui: { setStatus: vi.fn(), notify: vi.fn() },
-        sessionManager: { getLeafId: () => null, getEntry: () => undefined },
+        sessionManager: { getLeafId: () => null, getEntry: () => {} },
       } as any;
       const connecting = vi.spyOn(McpServerManager.prototype, "connect");
       createMcpAdapter({
@@ -1747,7 +1816,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const nativeFetch = globalThis.fetch;
       vi.spyOn(globalThis, "fetch").mockImplementation(async (...args) => {
         const response = await nativeFetch(...args);
-        if (response.headers.has("x-accepted-effect")) received();
+        if (response.headers.has("x-accepted-effect")) {
+          received();
+        }
         return response;
       });
       const effect = tools
@@ -1816,7 +1887,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       async (status) => {
         const f = await fixture(era);
         f.controls.challengeStatus = status;
-        if (status === 401) f.controls.accessScope = "basic";
+        if (status === 401) {
+          f.controls.accessScope = "basic";
+        }
         await f.connect();
         expect((await f.call()).details.error).toBe("auth_required");
         const { authorizationUrl } = await f.start();
@@ -1856,8 +1929,11 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       async (method) => {
         const f = await fixture("modern");
         f.controls.catalogFailure = { method, status };
-        if (method === "tools/list") await expect(f.connect()).rejects.toThrow();
-        else expect((await f.connect()).status).toBe("connected");
+        if (method === "tools/list") {
+          await expect(f.connect()).rejects.toThrow();
+        } else {
+          expect((await f.connect()).status).toBe("connected");
+        }
         expect(
           f.http.filter((request) => request.method === "GET" && request.path === "/mcp"),
         ).toHaveLength(0);
@@ -1929,7 +2005,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       updateTokens(
         f.name,
         { accessToken: "basic-token", scope: "basic", issuer: a.origin },
-        a.definition.url!,
+        a.definition.url,
       );
       const connection = await f.connect();
       await expect(connection.client.callTool({ name: "write" })).rejects.toBeInstanceOf(
@@ -2096,7 +2172,9 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const nativeFetch = globalThis.fetch;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (...args) => {
       const response = await nativeFetch(...args);
-      if (response.headers.has("x-accepted-effect")) accepted();
+      if (response.headers.has("x-accepted-effect")) {
+        accepted();
+      }
       return response;
     });
     const old = await f.connect();

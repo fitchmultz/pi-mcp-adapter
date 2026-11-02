@@ -52,7 +52,9 @@ describe("McpServerManager StreamableHTTP transport", () => {
         }
 
         let body = "";
-        for await (const chunk of req) body += chunk;
+        for await (const chunk of req) {
+          body += chunk;
+        }
         const message = JSON.parse(body) as { id?: string | number; method?: string };
         if (message.method === "server/discover") {
           res.writeHead(200, { "content-type": "application/json" }).end(
@@ -97,8 +99,9 @@ describe("McpServerManager StreamableHTTP transport", () => {
 
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const address = server.address();
-      if (!address || typeof address === "string")
+      if (!address || typeof address === "string") {
         throw new Error("server did not bind to a TCP port");
+      }
 
       const manager = new McpServerManager();
       const connection = await manager.connect("unauthenticated", {
@@ -124,8 +127,9 @@ describe("McpServerManager StreamableHTTP transport", () => {
 
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const address = server.address();
-      if (!address || typeof address === "string")
+      if (!address || typeof address === "string") {
         throw new Error("server did not bind to a TCP port");
+      }
 
       const manager = new McpServerManager();
       await expect(
@@ -161,7 +165,9 @@ describe("McpServerManager StreamableHTTP transport", () => {
       }
 
       let body = "";
-      for await (const chunk of req) body += chunk;
+      for await (const chunk of req) {
+        body += chunk;
+      }
       const message = JSON.parse(body) as { id?: string | number; method?: string };
       if (message.method === "server/discover") {
         res.writeHead(200, { "content-type": "application/json" }).end(
@@ -222,8 +228,9 @@ describe("McpServerManager StreamableHTTP transport", () => {
 
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
-    if (!address || typeof address === "string")
+    if (!address || typeof address === "string") {
       throw new Error("server did not bind to a TCP port");
+    }
 
     const manager = new McpServerManager();
     const traceDirectory = await mkdtemp(join(tmpdir(), "pi-mcp-trace-"));

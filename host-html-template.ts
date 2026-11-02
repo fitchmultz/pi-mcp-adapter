@@ -430,7 +430,9 @@ function toDirective(name: string, trustedSources: string[], domains: string[]):
 }
 
 function sanitizeCspDomains(domains: unknown): string[] {
-  if (!Array.isArray(domains)) return [];
+  if (!Array.isArray(domains)) {
+    return [];
+  }
 
   return [
     ...new Set(

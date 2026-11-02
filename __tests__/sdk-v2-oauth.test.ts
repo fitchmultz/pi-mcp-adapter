@@ -16,7 +16,9 @@ import type { ServerEntry } from "../types.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.reverse()) await cleanup();
+  for (const cleanup of cleanups.reverse()) {
+    await cleanup();
+  }
   cleanups.length = 0;
 });
 
@@ -57,7 +59,9 @@ async function oauthFixture() {
       return;
     }
     let data = "";
-    for await (const chunk of req) data += chunk;
+    for await (const chunk of req) {
+      data += chunk;
+    }
     if (req.url === "/token") {
       tokenRequests.push(new URLSearchParams(data));
       if (tokenFailure) {
@@ -86,7 +90,9 @@ async function oauthFixture() {
       });
       return;
     }
-    if (body.method === "tools/call") toolCalls++;
+    if (body.method === "tools/call") {
+      toolCalls++;
+    }
     if (req.headers.authorization !== `Bearer ${currentToken}`) {
       res
         .writeHead(401, {
@@ -112,7 +118,9 @@ async function oauthFixture() {
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Fixture did not bind");
+  if (!address || typeof address === "string") {
+    throw new Error("Fixture did not bind");
+  }
   origin = `http://127.0.0.1:${address.port}`;
   issuer = origin; // Intentionally differs from the advertised /tenant AS.
   const runtime = createOAuthRuntime();
@@ -153,7 +161,9 @@ async function oauthFixture() {
   const complete = (authorizationUrl: string, iss: string | undefined = origin) => {
     const state = new URL(authorizationUrl).searchParams.get("state")!;
     const params = new URLSearchParams({ code: "fixture-code", state });
-    if (iss !== undefined) params.set("iss", iss);
+    if (iss !== undefined) {
+      params.set("iss", iss);
+    }
     return completeAuthFromInput(name, `http://127.0.0.1:19878/callback?${params}`, { runtime });
   };
   const connect = async (implicit = false) => {

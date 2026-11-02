@@ -42,12 +42,13 @@ export function createMcpOutputSpool(
 
   const fail = (error: unknown) => {
     artifact = { error: error instanceof Error ? error.message : String(error) };
-    if (fd !== undefined)
+    if (fd !== undefined) {
       try {
         closeSync(fd);
       } catch {
         /* the write error is the reported failure */
       }
+    }
     fd = undefined;
   };
   const flush = () => {
@@ -66,26 +67,35 @@ export function createMcpOutputSpool(
       // Each UTF-16 unit is at least one UTF-8 byte, so the head exceeds every preview budget.
       let end = Math.min(piece.length, maxBytes + 1 - headBytes);
       const last = piece.charCodeAt(end - 1);
-      if (end < piece.length && last >= 0xd800 && last <= 0xdbff) end++;
+      if (end < piece.length && last >= 0xd800 && last <= 0xdbff) {
+        end++;
+      }
       const part = piece.slice(0, end);
       head += part;
       headBytes += byteLength(part);
     }
-    if (fd === undefined) return;
-    if (pendingLength + piece.length > SPOOL_WRITE_CHUNK) flush();
+    if (fd === undefined) {
+      return;
+    }
+    if (pendingLength + piece.length > SPOOL_WRITE_CHUNK) {
+      flush();
+    }
     pending.push(piece);
     pendingLength += piece.length;
   };
   const appendText = (text: string) => {
-    if (written++ > 0) append("\n");
+    if (written++ > 0) {
+      append("\n");
+    }
     append(text);
   };
   const spill = (blocks: ContentBlock[]) => {
     try {
       const parent =
         options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory);
-      if (options.outputDirectory !== undefined)
+      if (options.outputDirectory !== undefined) {
         mkdirSync(parent, { recursive: true, mode: 0o700 });
+      }
       const path = join(
         mkdtempSync(join(parent, "pi-mcp-output-")),
         `output-${randomBytes(4).toString("hex")}.txt`,
@@ -96,8 +106,11 @@ export function createMcpOutputSpool(
       fail(error);
     }
     for (const block of blocks) {
-      if (block.type === "image") images.push(block);
-      else appendText(block.text);
+      if (block.type === "image") {
+        images.push(block);
+      } else {
+        appendText(block.text);
+      }
     }
   };
 
@@ -114,8 +127,9 @@ export function createMcpOutputSpool(
       const separator = textBlocks++ > 0 ? 1 : 0;
       bytes += separator + byteLength(block.text);
       newlines += separator + countNewlines(block.text);
-      if (!retained) appendText(block.text);
-      else {
+      if (!retained) {
+        appendText(block.text);
+      } else {
         retained.push(block);
         if (options.enabled !== false && (bytes > maxBytes || lines() > maxLines)) {
           const blocks = retained;
@@ -125,7 +139,9 @@ export function createMcpOutputSpool(
       }
     },
     finish(): GuardedMcpOutput {
-      if (retained) return { content: retained };
+      if (retained) {
+        return { content: retained };
+      }
       flush();
       if (fd !== undefined) {
         try {
@@ -171,13 +187,17 @@ export function truncatedOutput(
 
 function countNewlines(text: string): number {
   let count = 0;
-  for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) count++;
+  for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) {
+    count++;
+  }
   return count;
 }
 
 export function sanitizeContent(content: ContentBlock[]): ContentBlock[] {
   return content.map((block) => {
-    if (block.type !== "image") return block;
+    if (block.type !== "image") {
+      return block;
+    }
     const mimeType =
       typeof block.mimeType === "string" && block.mimeType.trim()
         ? block.mimeType.trim().slice(0, 100)
@@ -208,7 +228,9 @@ function truncateHead(
   let bytes = 0;
 
   for (const line of lines) {
-    if (output.length >= maxLines) break;
+    if (output.length >= maxLines) {
+      break;
+    }
     const separatorBytes = output.length > 0 ? 1 : 0;
     const lineBytes = byteLength(line);
     if (bytes + separatorBytes + lineBytes > maxBytes) {
@@ -228,10 +250,14 @@ function truncateHead(
 }
 
 function truncateStringToBytes(value: string, maxBytes: number): string {
-  if (byteLength(value) <= maxBytes) return value;
+  if (byteLength(value) <= maxBytes) {
+    return value;
+  }
   const buffer = Buffer.from(value, "utf8");
   let end = Number.isFinite(maxBytes) ? Math.max(0, Math.floor(maxBytes)) : 0;
-  while (end > 0 && (buffer.readUInt8(end) & 0xc0) === 0x80) end--;
+  while (end > 0 && (buffer.readUInt8(end) & 0xc0) === 0x80) {
+    end--;
+  }
   return buffer.subarray(0, end).toString("utf8");
 }
 
@@ -256,7 +282,11 @@ export function byteLength(text: string): number {
 }
 
 function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KiB`;
+  }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }

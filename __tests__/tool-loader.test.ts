@@ -17,8 +17,9 @@ function host(allow: (ref: Ref) => boolean = () => true) {
         tool.defaultActive !== false &&
         allow(tool) &&
         !active.some((ref) => refKey(ref) === refKey(tool))
-      )
+      ) {
         active.push({ name: tool.name });
+      }
     }),
     registerEntryRenderer: vi.fn(),
     getAllTools: () => [...definitions.values()].filter(allow),
@@ -307,11 +308,15 @@ describe("MCP typed loader", () => {
       { name: "mcp" },
       { name: "mcp_script" },
     ];
-    for (const ref of expected) expect(h.active()).toContainEqual(ref);
+    for (const ref of expected) {
+      expect(h.active()).toContainEqual(ref);
+    }
     const updated = cache();
     updated.servers.other!.tools.push(tool("late"));
     loader.sync(config, updated, undefined, gateways);
-    for (const ref of expected) expect(h.active()).toContainEqual(ref);
+    for (const ref of expected) {
+      expect(h.active()).toContainEqual(ref);
+    }
     expect(h.active()).not.toContainEqual({ name: "other_late" });
     // A config restriction removes only the adapter's own gateway.
     loader.sync(config, updated, undefined, () => ({ script: {} }));

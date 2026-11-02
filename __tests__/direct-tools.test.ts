@@ -8,11 +8,11 @@ import {
   getMissingConfiguredDirectToolServers,
   isServerCacheValid,
   type MetadataCache,
+  reconstructToolMetadata,
 } from "../metadata-cache.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { formatToolName } from "../types.ts";
 import type { McpConfig, ServerEntry } from "../types.ts";
-import { reconstructToolMetadata } from "../metadata-cache.ts";
 
 const originalHashEnv = {
   MCP_HASH_CWD: process.env.MCP_HASH_CWD,
@@ -347,8 +347,8 @@ describe("excludeTools filtering", () => {
       [
         { name: "get_screenshot", description: "Screenshot" },
         { name: "get_nodes", description: "Nodes" },
-      ] as any,
-      [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }] as any,
+      ],
+      [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }],
       definition,
       "figma",
       "server",
@@ -389,13 +389,7 @@ describe("excludeTools filtering", () => {
     ];
     const resources = [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }];
 
-    const { metadata } = buildToolMetadata(
-      tools as any,
-      resources as any,
-      definition,
-      "figma",
-      "server",
-    );
+    const { metadata } = buildToolMetadata(tools, resources, definition, "figma", "server");
 
     expect(metadata.map((tool) => tool.name)).toEqual(["figma_get_nodes", "figma_read_figjam"]);
 
@@ -419,7 +413,7 @@ describe("excludeTools filtering", () => {
 
   it("honors per-server toolPrefix while building live metadata", () => {
     const { metadata } = buildToolMetadata(
-      [{ name: "search", description: "Search" }] as any,
+      [{ name: "search", description: "Search" }],
       [],
       { command: "npx", args: ["-y", "github"], toolPrefix: "none" },
       "github",
@@ -431,7 +425,7 @@ describe("excludeTools filtering", () => {
 
   it("sanitizes registered names while preserving raw MCP names", () => {
     const { metadata } = buildToolMetadata(
-      [{ name: "namespace.tool", description: "Namespaced tool" }] as any,
+      [{ name: "namespace.tool", description: "Namespaced tool" }],
       [],
       { command: "npx", args: ["-y", "demo"] },
       "demo",
@@ -452,8 +446,8 @@ describe("excludeTools filtering", () => {
         { name: "namespace.tool", description: "Dotted" },
         { name: "namespace_tool", description: "Underscored" },
         { name: "read_namespace.tool", description: "Tool before colliding resource" },
-      ] as any,
-      [{ name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" }] as any,
+      ],
+      [{ name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" }],
       { command: "npx", args: ["-y", "demo"] },
       "demo",
       "server",

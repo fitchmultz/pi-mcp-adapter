@@ -9,20 +9,20 @@ import {
 
 function fakeTransport(overrides: Partial<Transport> = {}): Transport {
   return {
-    start: vi.fn(async () => undefined),
-    send: vi.fn(async () => undefined),
-    close: vi.fn(async () => undefined),
+    start: vi.fn(async () => {}),
+    send: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
     ...overrides,
-  } as Transport;
+  };
 }
 
 describe("MCP protocol tracing", () => {
   it("is disabled unless global or per-server tracing is explicitly enabled", () => {
-    expect(isMcpTraceEnabled({}, undefined)).toBe(false);
-    expect(isMcpTraceEnabled({ debug: true } as { trace?: boolean }, undefined)).toBe(false);
+    expect(isMcpTraceEnabled({})).toBe(false);
+    expect(isMcpTraceEnabled({ debug: true } as { trace?: boolean })).toBe(false);
     expect(isMcpTraceEnabled({ trace: false }, { enabled: true })).toBe(false);
     expect(isMcpTraceEnabled({}, { enabled: true })).toBe(true);
-    expect(isMcpTraceEnabled({ trace: true }, undefined)).toBe(true);
+    expect(isMcpTraceEnabled({ trace: true })).toBe(true);
   });
 
   it("writes a metadata-only event with redacted identifiers and no payload", () => {
@@ -96,7 +96,7 @@ describe("MCP protocol tracing", () => {
   });
 
   it("bounds metadata strings and rejects events over the file limit", async () => {
-    const append = vi.fn(async () => undefined);
+    const append = vi.fn(async () => {});
     const writer = new McpTraceWriter({
       filePath: "/tmp/mcp-trace.jsonl",
       maxBytes: 20,
@@ -133,7 +133,7 @@ describe("MCP protocol tracing", () => {
       mkdir: vi.fn(async () => undefined),
     });
     const incoming = vi.fn();
-    const sent = vi.fn(async () => undefined);
+    const sent = vi.fn(async () => {});
     const underlying = fakeTransport({ send: sent });
     const wrapped = wrapTransportWithMcpTrace(underlying, "demo", "stdio", {
       record: (event) => writer.write(event),

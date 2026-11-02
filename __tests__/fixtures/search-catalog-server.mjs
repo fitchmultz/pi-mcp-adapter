@@ -3,6 +3,9 @@ import { Server } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
 const [phasePath, callsPath] = process.argv.slice(2);
+if (phasePath === undefined || callsPath === undefined) {
+  throw new Error("search-catalog-server requires <phasePath> <callsPath>");
+}
 let phase = existsSync(phasePath) ? 1 : 0;
 const server = new Server(
   { name: "search-catalog-server", version: "1.0.0" },
@@ -46,7 +49,9 @@ server.setRequestHandler("resources/list", async () => ({
 
 server.setRequestHandler("resources/read", async (request) => {
   const uri = phase ? "fixture://new" : "fixture://old";
-  if (request.params.uri !== uri) throw new Error("Resource not found");
+  if (request.params.uri !== uri) {
+    throw new Error("Resource not found");
+  }
   return { contents: [{ uri, mimeType: "text/plain", text: `resource ${phase}` }] };
 });
 
@@ -60,7 +65,9 @@ server.setRequestHandler("tools/call", async (request) => {
     await server.sendResourceListChanged();
     return { content: [{ type: "text", text: "catalog updated" }] };
   }
-  if (name !== "probe" && !(name === "hidden" && phase)) throw new Error("Tool not found");
+  if (name !== "probe" && !(name === "hidden" && phase)) {
+    throw new Error("Tool not found");
+  }
   return { content: [{ type: "text", text: `${name} ${phase}` }] };
 });
 

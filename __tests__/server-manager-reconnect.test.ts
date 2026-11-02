@@ -32,7 +32,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
       }),
       listTools: vi.fn(async () => ({ tools: [] })),
       listResources: vi.fn(async () => ({ resources: [] })),
-      close: vi.fn(async () => undefined),
+      close: vi.fn(async () => {}),
     };
     mocks.clients.push(client);
     return client;
@@ -41,12 +41,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     url: URL,
     options: TransportOptions,
   ) {
-    const transport = {
-      url,
-      options,
-      send: vi.fn(async () => undefined),
-      close: vi.fn(async () => undefined),
-    };
+    const transport = { url, options, send: vi.fn(async () => {}), close: vi.fn(async () => {}) };
     mocks.httpTransports.push(transport);
     return transport;
   }),

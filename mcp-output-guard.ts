@@ -143,8 +143,9 @@ export async function guardMcpOutput(
       : undefined;
   const withReference = (blocks: ContentBlock[]) =>
     reference ? [...blocks, { type: "text" as const, text: reference }] : blocks;
-  if (options.enabled === false)
+  if (options.enabled === false) {
     return { content: withReference(addAffixes(normalizedContent, prefix, suffix)), ...retained };
+  }
 
   const imageBlocks = normalizedContent.filter((block) => block.type === "image");
   const textOutput = normalizedContent
@@ -185,17 +186,23 @@ function withEmptyTextFallback(
   content: ContentBlock[],
   fallback: string | undefined,
 ): ContentBlock[] {
-  if (!fallback) return content;
+  if (!fallback) {
+    return content;
+  }
   const textOutput = content
     .filter((block) => block.type === "text")
     .map((block) => (block as { text: string }).text)
     .join("\n");
-  if (textOutput) return content;
+  if (textOutput) {
+    return content;
+  }
   return [{ type: "text", text: fallback }, ...content.filter((block) => block.type === "image")];
 }
 
 function addAffixes(content: ContentBlock[], prefix: string, suffix: string): ContentBlock[] {
-  if (!prefix && !suffix) return content;
+  if (!prefix && !suffix) {
+    return content;
+  }
   const next: ContentBlock[] = [...content];
 
   if (prefix) {
@@ -256,7 +263,9 @@ export async function retainMcpResult(
             : item?.type === "resource"
               ? resource?.blob
               : undefined;
-        if (typeof data !== "string") return undefined;
+        if (typeof data !== "string") {
+          return undefined;
+        }
         const mimeType = item?.mimeType ?? resource?.mimeType;
         return {
           index,
@@ -281,7 +290,9 @@ export async function retainMcpResult(
         item?.type !== "text" || Object.keys(item).some((key) => key !== "type" && key !== "text")
       );
     });
-  if (!shouldSave) return { mcpResult: result };
+  if (!shouldSave) {
+    return { mcpResult: result };
+  }
   const artifact = await saveArtifact("mcp-result", raw, options.outputDirectory);
   return {
     mcpResult: oversized && !rawResult ? summarizeMcpResult(result, rawBytes, artifact) : result,
@@ -336,7 +347,9 @@ function summarizeMcpResult(
         estimatedBytes: estimateValueBytes(record[key]),
         omitted: true,
       }));
-    if (extraFields.length > 0) summary.extraFields = extraFields;
+    if (extraFields.length > 0) {
+      summary.extraFields = extraFields;
+    }
   }
 
   return summary;
@@ -347,7 +360,9 @@ function summarizeContent(content: unknown[]): Array<Record<string, unknown>> {
     .slice(0, CONTENT_SUMMARY_LIMIT)
     .map((block) => {
       const record = asRecord(block);
-      if (!record) return { type: typeof block, omitted: true };
+      if (!record) {
+        return { type: typeof block, omitted: true };
+      }
       if (record.type === "text") {
         const text = typeof record.text === "string" ? record.text : "";
         return {
@@ -398,12 +413,19 @@ function summarizeValue(value: unknown): Record<string, unknown> {
 }
 
 function estimateValueBytes(value: unknown, depth = 0): number {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === "string") return byteLength(value);
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint")
+  if (value === null || value === undefined) {
+    return 0;
+  }
+  if (typeof value === "string") {
+    return byteLength(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
     return byteLength(String(value));
+  }
   const record = asRecord(value);
-  if (!record || depth >= 2) return 0;
+  if (!record || depth >= 2) {
+    return 0;
+  }
   const values = Array.isArray(value)
     ? value.slice(0, KEY_PREVIEW_LIMIT)
     : Object.values(record).slice(0, KEY_PREVIEW_LIMIT);
@@ -421,7 +443,9 @@ async function saveArtifact(
 ): Promise<{ path?: string; error?: string }> {
   try {
     const parent = outputDirectory === undefined ? tmpdir() : resolve(outputDirectory);
-    if (outputDirectory !== undefined) await mkdir(parent, { recursive: true, mode: 0o700 });
+    if (outputDirectory !== undefined) {
+      await mkdir(parent, { recursive: true, mode: 0o700 });
+    }
     const dir = await mkdtemp(join(parent, "pi-mcp-output-"));
     const path = join(
       dir,
@@ -437,11 +461,15 @@ async function saveArtifact(
 /** Stream histories through the same private output-artifact and paged-reader boundary. */
 export async function saveMcpOutputStream(chunks: AsyncIterable<string>, outputDirectory?: string) {
   const artifact = await saveArtifact("output", "", outputDirectory);
-  if (!artifact.path) return artifact;
+  if (!artifact.path) {
+    return artifact;
+  }
   try {
     const file = await open(artifact.path, "a");
     try {
-      for await (const chunk of chunks) await file.writeFile(chunk);
+      for await (const chunk of chunks) {
+        await file.writeFile(chunk);
+      }
     } finally {
       await file.close();
     }
@@ -467,8 +495,9 @@ export async function readMcpResult(
   options: McpOutputGuardOptions = {},
 ) {
   try {
-    if (!input || typeof input.ref !== "string")
+    if (!input || typeof input.ref !== "string") {
       throw new Error("ref must be a retained MCP result path");
+    }
     // Script-only hosts deliberately have no general filesystem capability.
     const root = await realpath(
       options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory),
@@ -476,10 +505,11 @@ export async function readMcpResult(
     const ref = await realpath(resolve(input.ref));
     if (
       dirname(dirname(ref)) !== root ||
-      !/^pi-mcp-output-/.test(basename(dirname(ref))) ||
+      !basename(dirname(ref)).startsWith("pi-mcp-output-") ||
       !/^(mcp-result|output)-[a-f0-9]+\.txt$/.test(basename(ref))
-    )
+    ) {
       throw new Error("ref is not an MCP output artifact in this host's output directory");
+    }
     // Plain output pages without flattening a complete UI history into memory.
     if (
       basename(ref).startsWith("output-") &&
@@ -488,8 +518,14 @@ export async function readMcpResult(
     ) {
       const offset = input.offset ?? 0;
       const limit = input.limit ?? 12_000;
-      if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1)
+      if (
+        !Number.isSafeInteger(offset) ||
+        offset < 0 ||
+        !Number.isSafeInteger(limit) ||
+        limit < 1
+      ) {
         throw new Error("offset must be a non-negative integer and limit a positive integer");
+      }
       const maxBytes = Math.max(1, (options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES) - 256);
       const maxLines = Math.max(1, (options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES) - 1);
       const { page, total } = await readPlainResult(ref, offset, limit, maxBytes, maxLines);
@@ -522,8 +558,9 @@ export async function readMcpResult(
           typeof input.path !== "string" ||
           !input.path.startsWith("/") ||
           /~(?:[^01]|$)/.test(input.path)
-        )
+        ) {
           throw new Error("path must be an RFC 6901 JSON Pointer");
+        }
         for (const token of input.path.slice(1).split("/")) {
           const key = token.replace(/~1/g, "/").replace(/~0/g, "~");
           if (
@@ -531,17 +568,23 @@ export async function readMcpResult(
             typeof value !== "object" ||
             (Array.isArray(value) && !/^(0|[1-9]\d*)$/.test(key)) ||
             !Object.hasOwn(value, key)
-          )
+          ) {
             throw new Error(`JSON Pointer does not exist: ${input.path}`);
+          }
           value = (value as Record<string, unknown>)[key];
         }
       }
       if (input.fields !== undefined) {
-        if (!Array.isArray(input.fields) || input.fields.some((field) => typeof field !== "string"))
+        if (
+          !Array.isArray(input.fields) ||
+          input.fields.some((field) => typeof field !== "string")
+        ) {
           throw new Error("fields must be an array of keys");
+        }
         const select = (item: unknown) => {
-          if (!item || typeof item !== "object" || Array.isArray(item))
+          if (!item || typeof item !== "object" || Array.isArray(item)) {
             throw new Error("fields requires an object or array of objects");
+          }
           return Object.fromEntries(
             input
               .fields!.filter((key) => Object.hasOwn(item, key))
@@ -554,10 +597,12 @@ export async function readMcpResult(
     }
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 12_000;
-    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1)
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) {
       throw new Error("offset must be a non-negative integer and limit a positive integer");
-    if (offset > 0 && rendered.codePointAt(offset - 1)! > 0xffff)
+    }
+    if (offset > 0 && rendered.codePointAt(offset - 1)! > 0xffff) {
       throw new Error("offset must not split a Unicode surrogate pair");
+    }
     const maxBytes = options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES;
     const maxLines = options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES;
     const notice = (end: number) =>
@@ -570,10 +615,13 @@ export async function readMcpResult(
         const width = rendered.codePointAt(end)! > 0xffff ? 2 : 1;
         const char = rendered.slice(end, end + width);
         bytes += byteLength(char);
-        if (char === "\n") lines++;
+        if (char === "\n") {
+          lines++;
+        }
         // Tiny caps still return one complete character plus recovery guidance.
-        if (end > offset && (bytes > byteCap || lines > lineCap || end + width - offset > limit))
+        if (end > offset && (bytes > byteCap || lines > lineCap || end + width - offset > limit)) {
           break;
+        }
         end += width;
       }
       return end;
@@ -620,15 +668,23 @@ function safeStringify(value: unknown): string {
 }
 
 function positiveInt(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
   const integer = Math.floor(value);
   return integer > 0 ? integer : undefined;
 }
 
 function envKillSwitch(name: string): boolean | undefined {
   const value = process.env[name]?.trim().toLowerCase();
-  if (!value) return undefined;
-  if (["0", "false", "no", "off"].includes(value)) return false;
-  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (!value) {
+    return undefined;
+  }
+  if (["0", "false", "no", "off"].includes(value)) {
+    return false;
+  }
+  if (["1", "true", "yes", "on"].includes(value)) {
+    return true;
+  }
   return undefined;
 }

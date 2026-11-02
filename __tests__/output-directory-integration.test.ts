@@ -39,7 +39,7 @@ async function startAdapter(outputDirectory?: string) {
     registerEntryRenderer: () => {},
     appendEntry: () => {},
     registerFlag: () => {},
-    getFlag: () => undefined,
+    getFlag: () => {},
     on: (name: string, handler: Function) => {
       handlers.set(name, handler);
     },
@@ -54,7 +54,7 @@ async function startAdapter(outputDirectory?: string) {
     hasUI: false,
     mode: "print",
     isProjectTrusted: () => true,
-    sessionManager: { getLeafId: () => null, getEntry: () => undefined },
+    sessionManager: { getLeafId: () => null, getEntry: () => {} },
   } as unknown as ExtensionToolContext;
   const options: McpAdapterOptions = {
     config: {
@@ -112,7 +112,9 @@ describe("factory output directory", () => {
         expect(typeof path).toBe("string");
         expect(dirname(dirname(path))).toBe(expectedParent);
         expect(await readFile(path, "utf8")).toBe(expected);
-        if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
+        if (process.platform !== "win32") {
+          expect((await stat(path)).mode & 0o777).toBe(0o600);
+        }
         paths.push(path);
       }
       try {

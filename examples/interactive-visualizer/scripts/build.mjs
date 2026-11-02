@@ -8,11 +8,11 @@ const root = path.resolve(__dirname, "..");
 const srcDir = path.join(root, "src");
 const distDir = path.join(root, "dist");
 
-function escapeInlineCss(css) {
+function escapeInlineCss(/** @type {string} */ css) {
   return css.replace(/<\/style/gi, "<\\/style");
 }
 
-function escapeInlineJs(js) {
+function escapeInlineJs(/** @type {string} */ js) {
   // Escape both closing and opening script tags to prevent HTML parser issues
   return js.replace(/<\/script/gi, "<\\/script").replace(/<script/gi, "\\x3cscript");
 }
@@ -30,7 +30,7 @@ async function bundleUi() {
 
   const css = await readFile(path.join(srcDir, "ui", "app.css"), "utf-8");
   const template = await readFile(path.join(srcDir, "ui", "index.html"), "utf-8");
-  const js = escapeInlineJs(appResult.outputFiles[0].text);
+  const js = escapeInlineJs(appResult.outputFiles[0]?.text ?? "");
   // Use function replacers to avoid $& $` $' special replacement patterns in the content
   const html = template
     .replace("/*__INLINE_CSS__*/", () => escapeInlineCss(css))

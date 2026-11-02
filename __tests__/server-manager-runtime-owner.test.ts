@@ -28,11 +28,13 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     this.connect = vi.fn(async () => {
       mocks.connectStarted?.resolve();
       await mocks.connectGate?.promise;
-      if (mocks.connectError) throw mocks.connectError;
+      if (mocks.connectError) {
+        throw mocks.connectError;
+      }
     });
     this.listTools = vi.fn(async () => ({ tools: [] }));
     this.listResources = vi.fn(async () => ({ resources: [] }));
-    this.close = vi.fn(async () => undefined);
+    this.close = vi.fn(async () => {});
     mocks.clients.push(this);
     mocks.clientCreated?.resolve();
   }),
@@ -41,8 +43,8 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
 }));
 vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function (this: any) {
-    this.send = vi.fn(async () => undefined);
-    this.close = vi.fn(async () => undefined);
+    this.send = vi.fn(async () => {});
+    this.close = vi.fn(async () => {});
     mocks.transports.push(this);
     mocks.transportCreated?.resolve();
   }),
@@ -218,8 +220,11 @@ describe("MCP manager owner races", () => {
         );
         // Even a cached dynamic import yields. Change ownership before it resumes,
         // rather than relying on a timer or a guessed number of microtasks.
-        if (change === "abort") controller.abort(new Error("owner stopped during import"));
-        else manager.setElicitationConfig(undefined);
+        if (change === "abort") {
+          controller.abort(new Error("owner stopped during import"));
+        } else {
+          manager.setElicitationConfig(undefined);
+        }
 
         await expect(pending).resolves.toBe("cancel");
         expect(ui.select).not.toHaveBeenCalled();

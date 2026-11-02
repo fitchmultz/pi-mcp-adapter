@@ -6,7 +6,7 @@ const draft07 = "http://json-schema.org/draft-07/schema#";
 const draft07Https = "https://json-schema.org/draft-07/schema#";
 
 function validate(schema: Record<string, unknown>, value: unknown) {
-  return new AjvJsonSchemaValidator().getValidator(schema as JsonSchemaType)(value);
+  return new AjvJsonSchemaValidator().getValidator(schema)(value);
 }
 
 describe("SDK schema dialect compatibility", () => {

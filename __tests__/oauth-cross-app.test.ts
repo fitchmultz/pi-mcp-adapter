@@ -42,7 +42,9 @@ const browser = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("open", () => ({ default: browser.open }));
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.reverse()) await cleanup();
+  for (const cleanup of cleanups.reverse()) {
+    await cleanup();
+  }
   cleanups.length = 0;
   browser.open.mockReset();
 });
@@ -54,7 +56,9 @@ function scratch() {
 async function listen(server: Server) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("fixture failed to bind");
+  if (!address || typeof address === "string") {
+    throw new Error("fixture failed to bind");
+  }
   return `http://127.0.0.1:${address.port}`;
 }
 function json(res: ServerResponse, data: unknown, status = 200) {
@@ -62,7 +66,9 @@ function json(res: ServerResponse, data: unknown, status = 200) {
 }
 async function body(req: IncomingMessage) {
   let data = "";
-  for await (const chunk of req) data += chunk;
+  for await (const chunk of req) {
+    data += chunk;
+  }
   return data;
 }
 function jwt(
@@ -133,7 +139,9 @@ function nativeSends() {
     });
   return {
     finish: async () => {
-      while (pending.size) await Promise.allSettled([...pending]);
+      while (pending.size) {
+        await Promise.allSettled([...pending]);
+      }
     },
     restore: () => spy.mockRestore(),
     count: () => pending.size,
@@ -185,10 +193,12 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     const path = req.url!;
     const row: (typeof idpRequests)[number] = { path, headers: req.headers };
     idpRequests.push(row);
-    if (path === "/.well-known/oauth-authorization-server") return void res.writeHead(404).end();
+    if (path === "/.well-known/oauth-authorization-server") {
+      return void res.writeHead(404).end();
+    }
     if (path === "/.well-known/openid-configuration") {
       await holds.get("idp-discovery")?.hold(res);
-      return void json(res, {
+      return json(res, {
         issuer: wrongIdp ? "https://wrong-idp.example" : idp,
         authorization_endpoint: `${idp}/authorize`,
         token_endpoint: `${idp}/token`,
@@ -200,7 +210,9 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     }
     row.form = new URLSearchParams(await body(req));
     await holds.get("idp-token")?.hold(res);
-    if (idpError !== undefined) return void json(res, idpError, idpStatus);
+    if (idpError !== undefined) {
+      return json(res, idpError, idpStatus);
+    }
     try {
       expect(path).toBe("/token");
       expect(Object.fromEntries(row.form)).toMatchObject({
@@ -240,8 +252,10 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
   idp = await listen(idpServer);
   const asServer = createServer(async (req, res) => {
     if (req.url!.startsWith("/.well-known/")) {
-      if (!metadata) return void res.writeHead(404).end();
-      return void json(res, {
+      if (!metadata) {
+        return void res.writeHead(404).end();
+      }
+      return json(res, {
         issuer: wrongIssuer ? "https://wrong-as.example" : as,
         authorization_endpoint: `${as}/authorize`,
         token_endpoint: `${as}/token`,
@@ -259,7 +273,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     }
     if (req.url!.startsWith("/document")) {
       documents.push(new URL(req.url!, as).searchParams.get("id")!);
-      return void json(res, {
+      return json(res, {
         client_id: id,
         redirect_uris: [],
         grant_types: ["urn:ietf:params:oauth:grant-type:jwt-bearer"],
@@ -270,9 +284,11 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     const form = new URLSearchParams(await body(req));
     if (req.url === "/register") {
       registrations.push(Object.fromEntries(form));
-      return void json(res, { error: "unsupported" }, 400);
+      return json(res, { error: "unsupported" }, 400);
     }
-    if (req.url !== "/token") return void res.writeHead(404).end();
+    if (req.url !== "/token") {
+      return void res.writeHead(404).end();
+    }
     exchanges.push({ headers: req.headers, form });
     await holds.get("mcp-token")?.hold(res);
     try {
@@ -287,11 +303,11 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
       expect(form.get("resource")).toBe(`${resource}/mcp`);
       expect(form.has("subject_token")).toBe(false);
       expect(form.has("client_secret")).toBe(false);
-      if (identity === "secret")
+      if (identity === "secret") {
         expect(req.headers.authorization).toBe(
           `Basic ${Buffer.from(`${id}:mcp-secret`).toString("base64")}`,
         );
-      else {
+      } else {
         expect(form.get("client_id")).toBe(id);
         expect(req.headers.authorization).toBeUndefined();
         let publicKey = mcpKey.publicKey;
@@ -305,15 +321,19 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
           );
           publicKey = createPublicKey({ key: document.jwks.keys[0], format: "jwk" });
         }
-        if (identity !== "public")
+        if (identity !== "public") {
           expect(claims(form.get("client_assertion")!, publicKey)).toMatchObject({
             iss: id,
             sub: id,
             aud: as,
           });
-        else expect(form.has("client_assertion")).toBe(false);
+        } else {
+          expect(form.has("client_assertion")).toBe(false);
+        }
       }
-      if (rejectTokens) return void json(res, { error: "invalid_grant" }, 400);
+      if (rejectTokens) {
+        return json(res, { error: "invalid_grant" }, 400);
+      }
       const token = `access-${exchanges.length}`;
       tokens.add(token);
       json(res, {
@@ -329,22 +349,27 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
   as = await listen(asServer);
   const resourceServer = createServer(async (req, res) => {
     if (req.url!.startsWith("/.well-known/oauth-protected-resource")) {
-      if (!prm) return void res.writeHead(404).end();
-      return void json(res, {
+      if (!prm) {
+        return void res.writeHead(404).end();
+      }
+      return json(res, {
         resource: wrongResource ? "https://wrong-resource.example/mcp" : `${resource}/mcp`,
         authorization_servers: [as],
         scopes_supported: ["tools"],
       });
     }
     // Discovery fallback must still reach the same AS, so missing PRM tests isolate the absent resource.
-    if (req.url!.startsWith("/.well-known/"))
-      return void json(res, {
+    if (req.url!.startsWith("/.well-known/")) {
+      return json(res, {
         issuer: resource,
         authorization_endpoint: `${as}/authorize`,
         token_endpoint: `${as}/token`,
         response_types_supported: ["code"],
       });
-    if (req.method !== "POST") return void res.writeHead(405).end();
+    }
+    if (req.method !== "POST") {
+      return void res.writeHead(405).end();
+    }
     const message = JSON.parse(await body(req));
     requests.push({ ...message, headers: req.headers });
     if (
@@ -364,21 +389,27 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
       heldTool?.release();
       return void res.writeHead(202).end();
     }
-    if (message.method === "notifications/initialized") return void res.writeHead(202).end();
+    if (message.method === "notifications/initialized") {
+      return void res.writeHead(202).end();
+    }
     if (message.method === "tools/call" && heldTool) {
       await heldTool.hold(res);
-      if (cancelledWork) return void res.writeHead(499).end();
+      if (cancelledWork) {
+        return void res.writeHead(499).end();
+      }
     }
-    if (message.method === "tools/call" && forbidden)
+    if (message.method === "tools/call" && forbidden) {
       return void res
         .writeHead(403, { "www-authenticate": 'Bearer error="insufficient_scope", scope="extra"' })
         .end();
+    }
     if (
       message.method === "tools/call" &&
       toolFailure++ === 0 &&
       definition.retryOnTransportFailure
-    )
+    ) {
       return void res.writeHead(503).end("unavailable");
+    }
     const result =
       message.method === "initialize"
         ? {
@@ -424,11 +455,13 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
   };
   const stored = () => getAuthForUrl(name, definition.url!);
   cleanups.push(async () => {
-    for (const hold of holds.values()) hold.release();
+    for (const hold of holds.values()) {
+      hold.release();
+    }
     heldTool?.release();
     await manager.closeAll();
     await shutdownOAuth(runtime);
-    if (process.env.CAA_PROOF_FILE)
+    if (process.env.CAA_PROOF_FILE) {
       appendFileSync(
         process.env.CAA_PROOF_FILE,
         `${JSON.stringify({
@@ -453,6 +486,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
           registrations: registrations.length,
         })}\n`,
       );
+    }
     clearAllCredentials(name);
     for (const server of [resourceServer, asServer, idpServer]) {
       server.closeAllConnections();
@@ -567,13 +601,15 @@ it.each(["secret", "public", "private", "private-cimd"] as const)(
       "idp-secret",
       "mcp-secret",
       f.exchanges[0]!.form.get("assertion")!,
-    ])
+    ]) {
       expect(saved).not.toContain(value);
+    }
     expect(f.registrations).toHaveLength(0);
     expect(browser.open).not.toHaveBeenCalled();
     expect(hasPendingAuth(f.name, {}, f.runtime)).toBe(false);
-    if (identity === "public" || identity === "private-cimd")
+    if (identity === "public" || identity === "private-cimd") {
       expect(f.stored()?.clientInfo).toMatchObject({ registrationType: "cimd", redirectUris: [] });
+    }
   },
 );
 
@@ -619,7 +655,7 @@ it.each(["client", "tokens", "metadata", "resource", "missing-resource"])(
     const f = await fixture();
     const marker = join(scratch(), "ran");
     f.oauth.crossAppAccess!.idToken = `!touch '${marker}'; printf TOKEN_SENTINEL`;
-    if (failure === "client" || failure === "tokens")
+    if (failure === "client" || failure === "tokens") {
       saveAuthEntry(
         f.name,
         {
@@ -633,17 +669,26 @@ it.each(["client", "tokens", "metadata", "resource", "missing-resource"])(
             issuer: failure === "tokens" ? "https://old.example" : f.as,
           },
         },
-        f.definition.url!,
+        f.definition.url,
       );
-    if (failure === "metadata") f.wrongIssuer();
-    if (failure === "resource") f.wrongResource();
-    if (failure === "missing-resource") f.noResource();
+    }
+    if (failure === "metadata") {
+      f.wrongIssuer();
+    }
+    if (failure === "resource") {
+      f.wrongResource();
+    }
+    if (failure === "missing-resource") {
+      f.noResource();
+    }
     const before = f.stored();
     await expect(f.start()).rejects.toThrow();
     expect(existsSync(marker)).toBe(false);
     expect(f.idpRequests).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
-    if (before) expect(f.stored()).toEqual(before);
+    if (before) {
+      expect(f.stored()).toEqual(before);
+    }
   },
 );
 
@@ -664,13 +709,18 @@ it.each(["issued", "rejected"])(
   async (outcome) => {
     const f = await fixture();
     const provider = f.provider();
-    if (outcome === "rejected") f.idpError({ error: "invalid_grant" });
+    if (outcome === "rejected") {
+      f.idpError({ error: "invalid_grant" });
+    }
     const first = await auth(provider, {
       serverUrl: f.definition.url!,
       fetchFn: provider.fetch,
     }).catch((error) => error);
-    if (outcome === "rejected") expect(first).toBeInstanceOf(OAuthError);
-    else expect(first).toBe("AUTHORIZED");
+    if (outcome === "rejected") {
+      expect(first).toBeInstanceOf(OAuthError);
+    } else {
+      expect(first).toBe("AUTHORIZED");
+    }
     f.idpError(undefined);
     await provider.saveDiscoveryState({
       authorizationServerUrl: f.as,
@@ -701,17 +751,20 @@ it.each([
   const f = await fixture();
   await f.start();
   const before = f.stored();
-  if (failure === "issuer") f.wrongIdp();
-  else if (failure === "command")
+  if (failure === "issuer") {
+    f.wrongIdp();
+  } else if (failure === "command") {
     f.oauth.crossAppAccess!.idToken = "!printf 'TOKEN_SENTINEL' >&2; exit 7";
-  else if (failure === "nul") f.oauth.crossAppAccess!.idToken = "!printf 'TOKEN_SENTINEL'\0";
-  else
+  } else if (failure === "nul") {
+    f.oauth.crossAppAccess!.idToken = "!printf 'TOKEN_SENTINEL'\0";
+  } else {
     f.idpError(
       failure.startsWith("malformed")
         ? { raw: "TOKEN_SENTINEL" }
         : { error: failure, error_description: "TOKEN_SENTINEL" },
       failure === "malformed-success" ? 200 : 400,
     );
+  }
   const error = await f.start().catch((error) => error);
   expect(error).toBeInstanceOf(OAuthError);
   expect(error.code).toBe(OAuthErrorCode.InvalidRequest);
@@ -738,13 +791,14 @@ it.each(["auto", "legacy"] as const)(
       (r) => r.method === (protocolVersion === "auto" ? "server/discover" : "initialize"),
     );
     expect(handshakes.length).toBeGreaterThanOrEqual(2);
-    for (const request of handshakes)
+    for (const request of handshakes) {
       expect(
         (protocolVersion === "auto"
           ? request.params._meta["io.modelcontextprotocol/clientCapabilities"]
           : request.params.capabilities
         ).extensions,
       ).toEqual({ "io.modelcontextprotocol/enterprise-managed-authorization": {} });
+    }
   },
 );
 
@@ -753,8 +807,11 @@ it.each([false, "bearer", "implicit-header"])(
   async (mode) => {
     const f = await fixture();
     f.publicMcp();
-    if (mode === "implicit-header") delete f.definition.auth;
-    else f.definition.auth = mode as false | "bearer";
+    if (mode === "implicit-header") {
+      delete f.definition.auth;
+    } else {
+      f.definition.auth = mode as false | "bearer";
+    }
     await f.connect();
     expect(
       f.requests.find((r) => r.method === "server/discover").params._meta[
@@ -850,11 +907,12 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
         tokenPosts: f.exchanges.length,
         pendingNativeSends: sends.count(),
       };
-      if (process.env.CAA_PROOF_FILE)
+      if (process.env.CAA_PROOF_FILE) {
         appendFileSync(
           process.env.CAA_PROOF_FILE,
           `${JSON.stringify({ test: expect.getState().currentTestName, outcome })}\n`,
         );
+      }
       expect(outcome).toEqual({
         networkAborted: true,
         storageChanged: false,
@@ -899,7 +957,9 @@ it.each([
         .catch((error) => error);
       await hold.started;
       const before = structuredClone(f.stored());
-      if (mode === "abort") controller.abort();
+      if (mode === "abort") {
+        controller.abort();
+      }
       expect(await pending).toBeInstanceOf(Error);
       await Promise.race([hold.aborted, new Promise((resolve) => setTimeout(resolve, 100))]);
       hold.release();
@@ -910,11 +970,12 @@ it.each([
         tokenPosts: f.exchanges.length,
         pendingNativeSends: sends.count(),
       };
-      if (process.env.CAA_PROOF_FILE)
+      if (process.env.CAA_PROOF_FILE) {
         appendFileSync(
           process.env.CAA_PROOF_FILE,
           `${JSON.stringify({ test: expect.getState().currentTestName, outcome })}\n`,
         );
+      }
       expect(outcome).toEqual({
         networkAborted: true,
         storageChanged: false,
@@ -974,7 +1035,9 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
         f = await fixture(),
         controller = new AbortController();
       const connection = mode === "established-close" ? await f.connect() : undefined;
-      if (connection) f.expire();
+      if (connection) {
+        f.expire();
+      }
       const hold = f.hold(stage);
       try {
         const pending = (
@@ -983,9 +1046,13 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
         await hold.started;
         const before = structuredClone(f.stored()),
           count = f.exchanges.length;
-        if (mode === "shutdown") await shutdownOAuth(f.runtime);
-        else if (mode === "established-close") await f.manager.close(f.name);
-        else controller.abort();
+        if (mode === "shutdown") {
+          await shutdownOAuth(f.runtime);
+        } else if (mode === "established-close") {
+          await f.manager.close(f.name);
+        } else {
+          controller.abort();
+        }
         await hold.aborted;
         hold.release();
         await sends.finish();
@@ -1188,7 +1255,7 @@ it("refuses positively identified stored shared CIMD without deleting it, but pr
       },
       tokens: { accessToken: "old", issuer: f.as },
     },
-    f.definition.url!,
+    f.definition.url,
   );
   const before = f.stored();
   await expect(f.start()).rejects.toThrow(/shared browser registration/);
@@ -1199,9 +1266,11 @@ it("refuses positively identified stored shared CIMD without deleting it, but pr
     saveAuthEntry(
       f.name,
       { clientInfo: { clientId: sharedDocument.client_id, issuer: f.as, redirectUris: [] } },
-      f.definition.url!,
+      f.definition.url,
     );
-    if (configured) f.oauth.clientId = sharedDocument.client_id;
+    if (configured) {
+      f.oauth.clientId = sharedDocument.client_id;
+    }
     expect(
       (await (configured ? f.provider() : provider).clientInformation({ issuer: f.as }))?.client_id,
     ).toBe(sharedDocument.client_id);
@@ -1238,9 +1307,12 @@ async function callHost(
   state: McpExtensionState,
   host: string,
 ) {
-  if (host === "proxy") return executeCall(state, `${f.name}_echo`, {}, f.name);
-  if (host === "script")
+  if (host === "proxy") {
+    return executeCall(state, `${f.name}_echo`, {}, f.name);
+  }
+  if (host === "script") {
     return runMcpScript(state, `emit(await tools.call(${JSON.stringify(`${f.name}_echo`)}, {}));`);
+  }
   const execute = createDirectToolExecutor(
     () => state,
     () => null,
@@ -1331,7 +1403,7 @@ it("rejects bad CAA shapes and contradictory grants without disclosing or resolv
     { crossAppAccess: valid, grantType: "authorization_code" },
     { crossAppAccess: valid, grantType: "client_credentials" },
   );
-  for (const config of configs)
+  for (const config of configs) {
     for (const build of [
       () => extractOAuthConfig({ oauth: config as OAuthConfig }),
       () =>
@@ -1350,4 +1422,5 @@ it("rejects bad CAA shapes and contradictory grants without disclosing or resolv
       expect(String(error)).not.toContain("TOKEN_SENTINEL");
       expect((error as Error).cause).toBeUndefined();
     }
+  }
 });

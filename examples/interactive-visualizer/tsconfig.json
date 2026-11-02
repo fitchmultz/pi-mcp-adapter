@@ -19,7 +19,8 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "noCheck": false
+    "noCheck": false,
+    "types": ["node"]
   },
   "include": ["src/**/*.ts", "scripts/**/*.mjs"]
 }

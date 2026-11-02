@@ -132,7 +132,7 @@ try {
   assert(registered, "The cached direct tool must be registered before first use");
   const call = await sdk
     .wrapRegisteredTool(registered, session.extensionRunner)
-    .execute("startup-regression", { text: "first use" }, undefined, undefined);
+    .execute("startup-regression", { text: "first use" });
   console.log(
     `LAZY_MCP_STARTUP=${JSON.stringify({
       sourceLoaded,
@@ -168,7 +168,9 @@ async function readEvents(): Promise<unknown[]> {
       .filter(Boolean)
       .map((line) => JSON.parse(line));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
     throw error;
   }
 }

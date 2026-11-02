@@ -48,17 +48,23 @@ function needsInspectableFormatting(value: unknown, stack = new WeakSet<object>(
     typeof value === "bigint" ||
     typeof value === "function" ||
     typeof value === "symbol"
-  )
+  ) {
     return true;
-  if (typeof value !== "object" || value === null) return false;
-  if (stack.has(value)) return true;
+  }
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  if (stack.has(value)) {
+    return true;
+  }
   if (
     value instanceof Map ||
     value instanceof Set ||
     value instanceof WeakMap ||
     value instanceof WeakSet
-  )
+  ) {
     return true;
+  }
   stack.add(value);
   try {
     return Object.values(value).some((entry) => needsInspectableFormatting(entry, stack));
@@ -68,11 +74,15 @@ function needsInspectableFormatting(value: unknown, stack = new WeakSet<object>(
 }
 
 function formatValue(value: unknown): string {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") {
+    return value;
+  }
   try {
     if (!needsInspectableFormatting(value)) {
       const json = JSON.stringify(value, null, 2);
-      if (json !== undefined) return json;
+      if (json !== undefined) {
+        return json;
+      }
     }
     return formatWithOptions({ colors: false, depth: 6 }, value);
   } catch {
@@ -109,15 +119,18 @@ function abortReasonError(reason: unknown): Error {
 }
 
 function parseWorkerMessage(value: unknown): WorkerMessage | null {
-  if (typeof value !== "object" || value === null) return null;
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
   const message = value as Record<string, unknown>;
   // An older worker file, such as one restored by a rollback under a running Pi, neither charges the window nor sends a size.
-  if (message.type === "emit" && "block" in message)
+  if (message.type === "emit" && "block" in message) {
     return {
       type: "emit",
       block: message.block,
       size: typeof message.size === "number" ? message.size : 0,
     };
+  }
   if (
     message.type === "call" &&
     typeof message.id === "number" &&
@@ -239,11 +252,15 @@ async function runMcpScriptOperation(
       }) - 1;
     const result = await dispatch();
     const details = result.details;
-    if (typeof details.resultRef === "string") resultRefs.add(details.resultRef);
-    if (typeof details.resultWriteError === "string")
+    if (typeof details.resultRef === "string") {
+      resultRefs.add(details.resultRef);
+    }
+    if (typeof details.resultWriteError === "string") {
       payloadNotices.add(`[MCP result could not be saved: ${details.resultWriteError}]`);
-    for (const file of (details.payloadFiles ?? []) as McpPayloadFile[])
+    }
+    for (const file of (details.payloadFiles ?? []) as McpPayloadFile[]) {
       payloadNotices.add(formatMcpPayloadFile(file));
+    }
     if (details.error !== undefined) {
       const errorCode = String(details.error);
       const suggestions = Array.isArray(details.suggestions)
@@ -266,9 +283,12 @@ async function runMcpScriptOperation(
         startedAt,
         ...(details.recovery !== undefined ? { recovery: details.recovery } : {}),
       };
-      if (errorCode === "call_capture_failed")
+      if (errorCode === "call_capture_failed") {
         throw new McpScriptCaptureError(details.recovery, message);
-      if (details.recovery !== undefined) output.push({ type: "text", text: message });
+      }
+      if (details.recovery !== undefined) {
+        output.push({ type: "text", text: message });
+      }
       return {
         ok: false as const,
         ...(details.mcpResult !== undefined ? { data: details.mcpResult } : {}),
@@ -319,10 +339,15 @@ async function runMcpScriptOperation(
     );
 
   const discoverServer = async (server?: string) => {
-    if (!server) return undefined;
-    if (isServerDisabled(state.config.mcpServers[server]))
+    if (!server) {
+      return undefined;
+    }
+    if (isServerDisabled(state.config.mcpServers[server])) {
       return { code: "server_disabled", message: `Server "${server}" is disabled.` };
-    if (state.config.mcpServers[server] && state.toolMetadata.has(server)) return undefined;
+    }
+    if (state.config.mcpServers[server] && state.toolMetadata.has(server)) {
+      return undefined;
+    }
     const result = await executeConnect(state, server, callSignal);
     return result.details.error
       ? { code: result.details.error, message: textFromContent(result.content) }
@@ -340,8 +365,9 @@ async function runMcpScriptOperation(
         error = discoveryError.code;
         return { error: discoveryError, coverage };
       }
-      if (query.trim() === "")
+      if (query.trim() === "") {
         return { items: [], total: 0, hasMore: false, nextOffset: null, coverage };
+      }
       const limit = typeof input?.limit === "number" ? input.limit : 12;
       const offset = typeof input?.offset === "number" ? input.offset : 0;
       const page = paginate(
@@ -395,15 +421,18 @@ async function runMcpScriptOperation(
           (selectedServer && server !== selectedServer) ||
           !state.config.mcpServers[server] ||
           isServerDisabled(state.config.mcpServers[server])
-        )
+        ) {
           return [];
+        }
         const tools = metadata.filter((tool) => !tool.resourceUri);
         const originals = selectedServer ? tools.filter((tool) => tool.originalName === path) : [];
         return (originals.length ? originals : tools.filter((tool) => tool.name === path)).map(
           (tool) => toToolDescriptor(server, tool),
         );
       });
-      if (matches.length === 1) return matches[0];
+      if (matches.length === 1) {
+        return matches[0];
+      }
       if (matches.length > 1) {
         error = "ambiguous_tool";
         return {
@@ -462,16 +491,22 @@ async function runMcpScriptOperation(
       let completed = false;
       activeWorker.on("message", (value: unknown) => {
         const message = parseWorkerMessage(value);
-        if (!message || completed) return;
+        if (!message || completed) {
+          return;
+        }
         if (message.type === "emit") {
           output.push(toContentBlock(message.block));
           const queued = Atomics.sub(outputFlow, 0, message.size) - message.size;
-          if (queued <= SCRIPT_OUTPUT_WINDOW / 2) Atomics.notify(outputFlow, 0);
+          if (queued <= SCRIPT_OUTPUT_WINDOW / 2) {
+            Atomics.notify(outputFlow, 0);
+          }
           return;
         }
         if (message.type === "done") {
           completed = true;
-          if ("returnBlock" in message) output.push(toContentBlock(message.returnBlock));
+          if ("returnBlock" in message) {
+            output.push(toContentBlock(message.returnBlock));
+          }
           resolve();
           return;
         }
@@ -551,12 +586,15 @@ async function runMcpScriptOperation(
       });
       activeWorker.once("error", reject);
       activeWorker.once("exit", (code) => {
-        if (!completed && code !== 0)
+        if (!completed && code !== 0) {
           reject(new Error(`mcp_script worker exited with code ${code}`));
+        }
       });
     });
     const timeout = new Promise<never>((_resolve, reject) => {
-      if (resolvedTimeoutMs === null) return;
+      if (resolvedTimeoutMs === null) {
+        return;
+      }
       const timeoutError = new McpScriptTimeoutError(resolvedTimeoutMs);
       timer = setTimeout(() => {
         timeoutController.abort(timeoutError);
@@ -605,9 +643,15 @@ async function runMcpScriptOperation(
   }
 
   const callsSnapshot = snapshotCalls();
-  if (output.empty) output.push({ type: "text", text: "(no output)" });
-  for (const text of payloadNotices) output.push({ type: "text", text });
-  for (const ref of resultRefs) output.push({ type: "text", text: formatMcpResultReference(ref) });
+  if (output.empty) {
+    output.push({ type: "text", text: "(no output)" });
+  }
+  for (const text of payloadNotices) {
+    output.push({ type: "text", text });
+  }
+  for (const ref of resultRefs) {
+    output.push({ type: "text", text: formatMcpResultReference(ref) });
+  }
   const guarded = output.finish();
   return {
     content: guarded.content,

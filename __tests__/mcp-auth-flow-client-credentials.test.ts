@@ -116,7 +116,9 @@ describe("mcp-auth-flow explicit auth", () => {
   it("keeps a pending flow when an advertised RFC 9207 issuer is missing", async () => {
     let oauthState = "";
     mocks.sdkAuth.mockImplementation(async (provider, options) => {
-      if (options.authorizationCode) return "AUTHORIZED";
+      if (options.authorizationCode) {
+        return "AUTHORIZED";
+      }
       oauthState = await provider.state();
       await provider.saveDiscoveryState({
         authorizationServerUrl: "https://auth.example.com",
@@ -157,7 +159,9 @@ describe("mcp-auth-flow explicit auth", () => {
   it("rejects a mismatched RFC 9207 issuer before token exchange", async () => {
     let oauthState = "";
     mocks.sdkAuth.mockImplementation(async (provider, options) => {
-      if (options.authorizationCode) return "AUTHORIZED";
+      if (options.authorizationCode) {
+        return "AUTHORIZED";
+      }
       oauthState = await provider.state();
       await provider.saveDiscoveryState({
         authorizationServerUrl: "https://auth.example.com",
@@ -191,7 +195,9 @@ describe("mcp-auth-flow explicit auth", () => {
   it("rejects a callback issuer mismatch when metadata is unavailable", async () => {
     let oauthState = "";
     mocks.sdkAuth.mockImplementation(async (provider, options) => {
-      if (options.authorizationCode) return "AUTHORIZED";
+      if (options.authorizationCode) {
+        return "AUTHORIZED";
+      }
       oauthState = await provider.state();
       await provider.saveDiscoveryState({
         authorizationServerUrl: "https://auth.example.com",
@@ -810,7 +816,7 @@ describe("mcp-auth-flow explicit auth", () => {
     });
     mocks.waitForCallback.mockResolvedValueOnce("manual-code");
     const onAuthorizationUrl = vi.fn();
-    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const { authenticate } = await import("../mcp-auth-flow.ts");
 
     try {
@@ -907,7 +913,9 @@ describe("mcp-auth-flow explicit auth", () => {
   it("cancels only the stopped runtime's callback while another flow remains active", async () => {
     const states: string[] = [];
     mocks.sdkAuth.mockImplementation(async (provider, options) => {
-      if (options.authorizationCode) return "AUTHORIZED";
+      if (options.authorizationCode) {
+        return "AUTHORIZED";
+      }
       const state = await provider.state();
       states.push(state);
       await provider.saveCodeVerifier(`verifier-${states.length}`);

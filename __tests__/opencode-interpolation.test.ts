@@ -18,8 +18,11 @@ describe("OpenCode environment interpolation", () => {
 
   afterEach(() => {
     for (const [name, value] of Object.entries(original)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
     }
   });
 

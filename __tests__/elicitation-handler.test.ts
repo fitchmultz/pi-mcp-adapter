@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElicitRequest } from "@modelcontextprotocol/client";
 
 const mocks = vi.hoisted(() => ({
-  open: vi.fn(async () => undefined),
+  open: vi.fn(async () => {}),
 }));
 
 vi.mock("open", () => ({ default: mocks.open }));
 
 function request(params: ElicitRequest["params"]): ElicitRequest {
-  return { method: "elicitation/create", params } as ElicitRequest;
+  return { method: "elicitation/create", params };
 }
 
 describe("MCP elicitation", () => {

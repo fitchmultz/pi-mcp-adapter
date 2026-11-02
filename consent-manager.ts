@@ -1,8 +1,8 @@
 import { logger } from "./logger.ts";
 
 export class ConsentManager {
-  private decisions = new Map<string, boolean>();
-  private log = logger.child({ component: "ConsentManager" });
+  private readonly decisions = new Map<string, boolean>();
+  private readonly log = logger.child({ component: "ConsentManager" });
 
   hasDecisions(): boolean {
     return this.decisions.size > 0;
@@ -19,7 +19,9 @@ export class ConsentManager {
 
   ensureApproved(serverName: string): void {
     const decision = this.decisions.get(serverName);
-    if (decision === true) return;
+    if (decision === true) {
+      return;
+    }
     throw new Error(
       decision === false
         ? `Tool calls for "${serverName}" were denied for this session`

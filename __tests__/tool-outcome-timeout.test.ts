@@ -14,7 +14,9 @@ import type { McpExtensionState } from "../state.ts";
 function responder(send: (message: any) => void) {
   let committed = 0;
   return async (request: any) => {
-    if (request.id === undefined) return;
+    if (request.id === undefined) {
+      return;
+    }
     let result;
     if (request.method === "initialize") {
       result = {
@@ -62,7 +64,9 @@ it.each(["stdio", "unix"])(
           })
         : undefined;
     try {
-      if (server) await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+      if (server) {
+        await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+      }
       const definition = {
         ...(server
           ? { socket: socketPath }
@@ -105,7 +109,9 @@ it.each(["stdio", "unix"])(
       expect(readback.content).toEqual([{ type: "text", text: "1" }]);
     } finally {
       await manager.closeAll();
-      if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+      if (server) {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
       await rm(directory, { recursive: true, force: true });
     }
   },
@@ -150,7 +156,9 @@ it.each([
         serverInstructions: new Map(),
         completedUiSessions: [],
       } as unknown as McpExtensionState;
-      if (capture) state.onToolCall = async () => {};
+      if (capture) {
+        state.onToolCall = async () => {};
+      }
       const pending = runMcpScript(
         state,
         `
@@ -164,7 +172,9 @@ it.each([
         controller.signal,
         "script-write",
         async (_signal, operation) => {
-          if (operation.args.blocked) await new Promise(() => {});
+          if (operation.args.blocked) {
+            await new Promise(() => {});
+          }
         },
       );
       if (ending === "abort") {
@@ -174,8 +184,11 @@ it.each([
         controller.abort(new Error("caller cancelled"));
       }
       const output = await pending;
-      if (ending === "early return") expect(output.details).not.toHaveProperty("error");
-      else expect(output.details.error).toBe(ending === "timeout" ? "timeout" : "aborted");
+      if (ending === "early return") {
+        expect(output.details).not.toHaveProperty("error");
+      } else {
+        expect(output.details.error).toBe(ending === "timeout" ? "timeout" : "aborted");
+      }
       expect(output.details.calls).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "local_readback", ok: true }),

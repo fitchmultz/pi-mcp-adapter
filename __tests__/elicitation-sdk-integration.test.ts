@@ -8,7 +8,7 @@ import type { McpExtensionState } from "../state.ts";
 import type { DirectToolSpec, ToolMetadata } from "../types.ts";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 
-const mocks = vi.hoisted(() => ({ open: vi.fn(async () => undefined) }));
+const mocks = vi.hoisted(() => ({ open: vi.fn(async () => {}) }));
 vi.mock("open", () => ({ default: mocks.open }));
 
 const fixture = fileURLToPath(new URL("./fixtures/elicitation-server.mjs", import.meta.url));
@@ -142,7 +142,7 @@ describe("elicitation with the real MCP SDK", () => {
               prefixedName: metadata.name,
               description: metadata.description,
               ...spec,
-            } as DirectToolSpec,
+            },
           )("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
 
     expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });

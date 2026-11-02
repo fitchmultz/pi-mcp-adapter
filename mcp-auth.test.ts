@@ -92,8 +92,12 @@ describe("mcp-auth", () => {
       try {
         delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
         moduleLoader._load = (request, parent, isMain) => {
-          if (request === "@napi-rs/keyring") throw loaderError;
-          if (request.endsWith(".node")) throw new Error("native binding failed");
+          if (request === "@napi-rs/keyring") {
+            throw loaderError;
+          }
+          if (request.endsWith(".node")) {
+            throw new Error("native binding failed");
+          }
           return originalLoad.call(Module, request, parent, isMain);
         };
 
@@ -104,7 +108,9 @@ describe("mcp-auth", () => {
             assert.match(error.message, /Failed to read OAuth credentials/);
             let current: unknown = error;
             while (current && typeof current === "object") {
-              if (current === loaderError) return true;
+              if (current === loaderError) {
+                return true;
+              }
               current = (current as { cause?: unknown }).cause;
             }
             assert.fail("original loader error was not preserved in the cause chain");
@@ -117,14 +123,20 @@ describe("mcp-auth", () => {
         moduleLoader._resolveFilename = (request, parent, isMain, options) => {
           if (request.startsWith("@napi-rs/keyring-linux-x64-")) {
             resolved.push(request);
-            if (request.includes("-gnu/")) throw new Error("gnu binding unavailable");
+            if (request.includes("-gnu/")) {
+              throw new Error("gnu binding unavailable");
+            }
             return "/tmp/keyring-linux-x64-musl/package.json";
           }
           return originalResolve.call(Module, request, parent, isMain, options);
         };
         moduleLoader._load = (request, parent, isMain) => {
-          if (request === "@napi-rs/keyring") throw loaderError;
-          if (request.endsWith("keyring.linux-x64-musl.node")) return { Entry: FakeEntry };
+          if (request === "@napi-rs/keyring") {
+            throw loaderError;
+          }
+          if (request.endsWith("keyring.linux-x64-musl.node")) {
+            return { Entry: FakeEntry };
+          }
           return originalLoad.call(Module, request, parent, isMain);
         };
 
@@ -138,8 +150,11 @@ describe("mcp-auth", () => {
         moduleLoader._resolveFilename = originalResolve;
         Object.defineProperty(process, "platform", platformDescriptor);
         Object.defineProperty(process, "arch", archDescriptor);
-        if (originalStore === undefined) delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
-        else process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = originalStore;
+        if (originalStore === undefined) {
+          delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+        } else {
+          process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = originalStore;
+        }
       }
     });
   });

@@ -1,7 +1,12 @@
 import MiniSearch, { type SearchOptions } from "minisearch";
 import type { McpExtensionState } from "./state.ts";
-import type { ToolMetadata } from "./types.ts";
-import { getServerPrefix, isServerDisabled, isToolAllowed, resolveToolPrefix } from "./types.ts";
+import {
+  type ToolMetadata,
+  getServerPrefix,
+  isServerDisabled,
+  isToolAllowed,
+  resolveToolPrefix,
+} from "./types.ts";
 
 export const MAX_PAGE_SIZE = 100;
 export const MAX_TOOL_NAME_LENGTH = 512;
@@ -20,19 +25,26 @@ export function normalizeSearchText(value: string): string {
 }
 
 function schemaSearchText(schema: unknown): string {
-  if (!schema || typeof schema !== "object") return "";
-  if (Array.isArray(schema)) return schema.map(schemaSearchText).join(" ");
+  if (!schema || typeof schema !== "object") {
+    return "";
+  }
+  if (Array.isArray(schema)) {
+    return schema.map(schemaSearchText).join(" ");
+  }
   return Object.entries(schema)
     .flatMap(([key, value]) => {
       if (
         (key === "description" || key === "title" || key === "const") &&
         typeof value === "string"
-      )
+      ) {
         return value;
-      if (key === "enum" && Array.isArray(value))
+      }
+      if (key === "enum" && Array.isArray(value)) {
         return value.filter((item) => typeof item === "string");
-      if (key === "properties" && value && typeof value === "object")
+      }
+      if (key === "properties" && value && typeof value === "object") {
         return [Object.keys(value).join(" "), schemaSearchText(value)];
+      }
       return schemaSearchText(value);
     })
     .join(" ");
@@ -79,7 +91,9 @@ function getIndex(state: McpExtensionState): MiniSearch<SearchDocument> {
   let id = 0;
   for (const [server, tools] of state.toolMetadata) {
     for (const tool of tools) {
-      if (tool.resourceUri !== undefined) continue;
+      if (tool.resourceUri !== undefined) {
+        continue;
+      }
       index.add({
         id: id++,
         server,
@@ -105,9 +119,13 @@ function searchCatalog(
     .search(normalizeSearchText(query), {
       ...options,
       filter: (result) => {
-        if (server && result.server !== server) return false;
+        if (server && result.server !== server) {
+          return false;
+        }
         const definition = state.config.mcpServers[result.server];
-        if (!definition || isServerDisabled(definition)) return false;
+        if (!definition || isServerDisabled(definition)) {
+          return false;
+        }
         const prefix = resolveToolPrefix(definition, state.config.settings?.toolPrefix);
         return isToolAllowed(
           result.tool.originalName,
@@ -161,7 +179,9 @@ export function rankSuggestions(
   limit: number,
   server?: string,
 ): string[] {
-  if (name.length > MAX_TOOL_NAME_LENGTH) return [];
+  if (name.length > MAX_TOOL_NAME_LENGTH) {
+    return [];
+  }
 
   const globalPrefix = state.config.settings?.toolPrefix ?? "server";
   const inferred = server
@@ -179,7 +199,9 @@ export function rankSuggestions(
         .sort((a, b) => b.prefix.length - a.prefix.length)[0];
   const matchedServer = server ?? inferred?.server;
   const definition = matchedServer ? state.config.mcpServers[matchedServer] : undefined;
-  if (matchedServer && (!definition || isServerDisabled(definition))) return [];
+  if (matchedServer && (!definition || isServerDisabled(definition))) {
+    return [];
+  }
   const prefix =
     inferred?.prefix ??
     (matchedServer

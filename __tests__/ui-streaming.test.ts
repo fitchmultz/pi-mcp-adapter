@@ -359,7 +359,9 @@ describe("UI Streaming", () => {
       const sse = await connectSSE(
         `http://localhost:${handle.port}/events?session=${handle.sessionToken}`,
         (_name, _data, id) => {
-          if (id) eventIds.push(id);
+          if (id) {
+            eventIds.push(id);
+          }
         },
       );
 

@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Raise the Pi floor to 1.5.0 (#122) ([fc9bed1](https://github.com/fitchmultz/pi-mcp-adapter/commit/fc9bed1ac87fcfaabeca626115dbe107c0e63ac9))
 
 ### What's Changed
+* Raise the Pi floor to 1.5.0 by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/122
 
-- Raise the Pi floor to 1.5.0 by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/122
 
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.5...v8.0.6
 
@@ -28,8 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reconnect all MCP servers concurrently (#120) ([50b4a32](https://github.com/fitchmultz/pi-mcp-adapter/commit/50b4a326471d724f42e2318e97c685c76f418f20))
 
 ### What's Changed
+* Reconnect all MCP servers concurrently by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/120
 
-- Reconnect all MCP servers concurrently by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/120
 
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.4...v8.0.5
 
@@ -41,15 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use direct Flash for automatic release remediation (#118) ([376688c](https://github.com/fitchmultz/pi-mcp-adapter/commit/376688cf0e8fa50aaaa9883eee08968fc30224f9))
 
 ### What's Changed
+* Use direct Flash for necessary release remediation by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/118
 
-- Use direct Flash for necessary release remediation by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/118
 
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.3...v8.0.4
 
 ## 8.0.3 - 2026-11-01
 
 <!-- npm-release:unreleased:start -->
-
 ### Changed
 
 - Automatically open reviewed patch-version PRs and publish the retained candidate after full CI and package qualification.
@@ -58,16 +57,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Keep the locked development Pi packages on one current official cohort so a clean install can run the native SDK tests. The Pi 1.0 support floor and optional runtime peers are unchanged.
-
 <!-- npm-release:unreleased:end -->
 
 - Automate qualified npm patch releases (#116) ([d2cdb1a](https://github.com/fitchmultz/pi-mcp-adapter/commit/d2cdb1a900695277281a1fae109a13727a8a1802))
 
 ### What's Changed
+* Fix clean-install Pi development dependencies by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/114
+* Qualify the retained MCP adapter release candidate by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/115
+* Automate qualified npm patch releases by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/116
 
-- Fix clean-install Pi development dependencies by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/114
-- Qualify the retained MCP adapter release candidate by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/115
-- Automate qualified npm patch releases by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/116
 
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.2...v8.0.3
 
@@ -342,13 +340,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [4.0.2] - 2026-08-09
 
 ### Fixed
-
 - Preserved compact search settings across pagination and clarified recovery when an explicit server does not own a requested tool.
 
 ## [4.0.1] - 2026-08-08
 
 ### Fixed
-
 - Paginated server tool catalogs with bounded ranges, explicit continuation calls, a 100-item page cap, and out-of-range recovery instead of dumping every tool.
 - Ranked typo suggestions by same-server edit distance, rejected oversized guessed names before ranking, avoided connecting on cached-name misses, and removed full-catalog error dumps.
 - Let `mcp_script` process full raw MCP results before model-facing output guards, and kept overflow summaries distinct from real `structuredContent`.
@@ -357,7 +353,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [4.0.0] - 2026-08-08
 
 ### Changed
-
 - **BREAKING:** Removed regex tool search and the `regex: true` input. Ranked substring and token search remains available.
 - **BREAKING:** Removed the legacy `settings.hostConfigDiscovery: "prompt"` value. Existing `"prompt"` settings are treated as `"off"`; use `"on"` to load detected host configs.
 - Proxy and direct tool calls now share one execution path, keeping output guarding, recovery, UI handling, and raw MCP result details consistent.
@@ -366,13 +361,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.0.1] - 2026-08-07
 
 ### Changed
-
 - The MCP footer status now defaults to compact `MCP connected/enabled`. Set `settings.mcpFooterStatus` to `"full"` to restore the previous detailed text.
 
 ## [3.0.0] - 2026-08-06
 
 ### Changed
-
 - **BREAKING:** Pi 0.84.0 or later and Node.js 22.19.0 or later are now required. Pi host development dependencies and TypeBox are pinned to the released 0.84.0 contract, while core runtime packages remain optional wildcard peers per Pi package conventions.
 - MCP sampling now dispatches through Pi's `ModelRegistry.complete()` so resolved endpoints, custom providers, authentication, and `null` header-deletion markers are preserved by the 0.84 request pipeline.
 - Direct-tool schemas now use Pi 0.84's bundled TypeBox APIs directly, stale tools use the supported active-tool deactivation flow instead of compatibility probes for non-contract host APIs, and renderer hints honor configured Pi keybindings.
@@ -380,29 +373,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom MCP panels now open only in TUI mode; non-TUI UI clients receive text status or command guidance.
 
 ### Fixed
-
 - Stopped tokenless discovery requests, sandboxed MCP app documents, unrelated child windows, and app-opened popups from gaining session authority; discovery now serves a non-sensitive landing page, app HTML loads with a separate resource-only token, host messages accept only the app frame as their source, and the app response enforces sandboxing even when opened as a top-level page.
 
 ## [2.19.0] - 2026-08-03
 
 ### Added
-
 - `mcp_script` now records each search, describe, and call with its input, outcome, and duration in result details; emitted, returned, and console values retain readable Maps, Sets, cycles, functions, symbols, and BigInts. Its docs now lead with the plain JavaScript agents write and position it as the primary MCP multi-call workflow surface.
 - Documented how to hide the bundled `mcp-scripting` Pi skill while keeping the adapter extension installed. Thanks @aryzing for issue #267.
 - Documented Linux revoked-keyring recovery in the OAuth guide and `_meta.ui.visibility` behavior in the MCP UI guide.
 
 ### Changed
-
 - `mcp_script` is now registered by default for trusted JavaScript MCP multi-call workflows, while `mcp` remains the right tool for status, discovery, auth, and single calls. Set `settings.scriptMode` to `false` to hide the tool.
 
 ### Fixed
-
 - `mcp_script` traces now include missing describe attempts, and shared acyclic values no longer render as circular in script output formatting.
 
 ## [2.18.0] - 2026-08-02
 
 ### Added
-
 - Added `settings.freezeDirectTools` to keep direct MCP tool registration stable after initial sync while preserving explicit reconnect refreshes. Thanks @ddfourtwo for PR #254.
 - Added best-effort Linux OAuth credential recovery when Pi inherits a revoked session keyring, allowing explicit re-authentication through a fresh `keyctl` session helper. Thanks @anthod0 for issue #248 and the validation prototype.
 - Ranked, paginated MCP tool search: best matches come first in a short page of 12 instead of an unranked dump of every match with full schemas, so the model stops guessing and each search costs a fraction of the tokens. Misses on describe/call now return top-5 "Did you mean" suggestions, letting the model self-correct a typo or missing prefix in the same turn instead of burning a round trip.
@@ -415,19 +403,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint shape probe, TypeScript-shaped schemas, and codemode design in this release are adapted from [Executor](https://github.com/UsefulSoftwareCo/executor) by Rhys Sullivan (@RhysSullivan). Thanks Rhys.
 
 ### Fixed
-
 - Brought MCP Apps UI hosting in line with the current spec: provider HTML now runs in a real sandbox, gets a restrictive default CSP even when the resource omits one, and `_meta.ui.visibility` is honored so app-only tools stay out of the model tool list while model-only tools cannot be called from the UI.
 - MCP Apps UI sessions are now easier to open from Moshi and remote terminals: the local UI server uses Moshi-discoverable low ports, answers preview discovery probes, serves a loopback-only landing shell, prints Moshi/SSH access hints for remote sessions, and fits the host shell better in narrow in-app browsers. UI-submitted model context is now captured as a bounded handoff, wakes the agent like prompts and intents, and remains available through `mcp({ action: "ui-messages" })` after the UI closes.
 
 ## [2.17.0] - 2026-07-31
 
 ### Added
-
 - Added `settings.mcpFooterStatus` to compact or hide the persistent MCP footer status. Thanks @jwintz for issue #5.
 - Added per-server OAuth `authorizationParams` for provider-specific authorization URL parameters such as Google's `access_type=offline`, while rejecting OAuth flow-owned parameter overrides. Thanks @hank-warren for issue #238.
 
 ### Fixed
-
 - Added a best-effort absolute-path fallback for loading the `@napi-rs/keyring` native binding when compiled Pi/Bun cannot resolve the package loader. Thanks @sgiath for issue #230.
 - Bound collapsed MCP tool result rendering by character count as well as line count, preventing huge single-line results from slowing long TUI sessions. Thanks @Whisperfall for issue #249.
 - Let configured `oauth.scope` override OAuth discovery scopes during authorization flows. Thanks @viggy28 for issue #225 and @adity982 for PR #226.
@@ -435,16 +420,13 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.16.0] - 2026-07-30
 
 ### Added
-
 - Added an optional per-server `toolPrefix` override for direct MCP tools, prompts, and proxy summaries, falling back to the global prefix when unset. Thanks @FurryWolfX for issue #229.
 - Added an advisory warning when resolved direct tools pass the documented 75-tool threshold, with no cap or enforcement. Thanks @JasonLandbridge for issue #240.
 
 ### Changed
-
 - Restored the MCP SDK v1 client for compatibility with deployed MCP servers and OAuth providers. This rollback temporarily removes SDK v2-only protocol negotiation while retaining OAuth issuer binding and callback issuer validation. Thanks @hyknerf for PR #237 and issue #236, @leonfox28 for issue #227, and @JorelLatraille for issue #241.
 
 ### Fixed
-
 - Avoided a double-close race when disconnecting MCP connections by letting the SDK client own transport shutdown. Thanks Szymon Wiszczuk (@golota60) for PR #235.
 - Prevented `/mcp` and `/mcp-auth` from crashing when the OS OAuth credential store is unavailable.
 - Stored oversized OAuth credential payloads as secure-store manifests plus chunks, so Windows Credential Manager value limits no longer block OAuth completion for large token records. Thanks @LysanderdeJong for issue #223.
@@ -454,30 +436,25 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.15.0] - 2026-07-25
 
 ### Added
-
 - Added native `rmcp-mux` Unix-socket connections for explicitly sharing external MCP server processes across Pi sessions. Thanks j0e1 (@pWoLiAn) for issue #76.
 - Added connection-time command resolution for HTTP bearer tokens and headers, OAuth client secrets, and stdio environment values, with `!!` escaping and fail-closed execution. Thanks @estrizhok for issue #221.
 
 ### Fixed
-
 - Treated null optional server URLs as absent and cleaned unpublished runtimes after initialization failures, preventing `not_initialized` sessions with surviving MCP children. Thanks @autopeasant for the diagnosis in issue #222.
 - Registered env-selected direct MCP tools before child `agent_start` when their metadata cache must be populated first. Thanks @peedrr for the original report in issue #219.
 
 ## [2.14.0] - 2026-07-25
 
 ### Added
-
 - Added the global `settings.showStatusIcon` opt-out for plain `MCP: ...` status and connection text while keeping the plug icon enabled by default. Thanks @vaultboy001 for issue #216.
 
 ### Fixed
-
 - Deferred implicit OAuth credential-store access until an HTTP server actually challenges for authentication, so unauthenticated remote Streamable HTTP servers work in headless environments. Thanks @vdom-1 for issue #218.
 - Accepted draft-07 tool output schemas alongside JSON Schema 2020-12 while preserving structured-content validation. Thanks Daniel Marbach (@danielmarbach) for issue #217.
 
 ## [2.13.0] - 2026-07-25
 
 ### Added
-
 - Added a versioned, sanitized MCP runtime status snapshot on Pi's shared event bus for extensions, without connecting lazy servers or exposing SDK internals. Thanks Ludev (@ludevdot) for issue #110.
 - Added opt-in host-specific MCP config discovery with source/provenance and conflict reporting. Standard shared and Pi-owned config precedence remains unchanged, and external host files are never written or silently executed. Thanks @lsmir2 for issue #169.
 - Added opt-in metadata-only JSONL MCP protocol tracing with bounded per-session files and redaction. Thanks @66-firebat for issue #45.
@@ -488,16 +465,13 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - Accepted JSONC-style comments and trailing commas in MCP JSON config files. Thanks @GoCoder7 for issue #124.
 
 ### Changed
-
 - Measured and spilled oversized raw MCP result details as compact JSON instead of pretty-printed JSON, reducing hot-path allocation and event-loop work. Thanks José Maia (@glitch-ux) for issue #214 and PR #215.
 - Renamed generated MCP resource tools from `get_<resource>` to `read_<resource>` to match the MCP `resources/read` operation. Thanks @vdom-1 for issue #185.
 
 ### Security
-
 - Moved persistent OAuth credentials from plaintext `tokens.json` files into the operating system credential store, with one-way legacy import and fail-closed behavior when secure storage is unavailable. Thanks Sam Atkins (@atkinsam) for issue #180.
 
 ### Fixed
-
 - Skipped `resources/list` for MCP servers that do not advertise the `resources` capability, matching the existing prompt discovery gate and silencing the SDK v2 debug line that tools-only servers printed on every connect. Thanks Aleksandr Davydenko (@kotuke) for PR #213.
 - Made the MCP footer show enabled configured servers as the primary count, with active connections as secondary state, so lazy servers no longer look broken before first use or after idle shutdown. Thanks blumlaut (@Blumlaut) for issue #93.
 - Show the actual proxied MCP server/tool name in `mcp` tool results. Thanks Finn (@finnvyrn) and @dillontkh for issue #68.
@@ -506,13 +480,11 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.12.1] - 2026-07-24
 
 ### Fixed
-
 - Restored the SDK v1 dependency required by the MCP Apps bridge during Pi managed installs, where peer dependencies are intentionally not auto-installed. Thanks Nikolai Ugelvik (@NikolaiUgelvik), @warmwaffles, and @max-miller1204 for issue #212.
 
 ## [2.12.0] - 2026-07-24
 
 ### Added
-
 - Added MCP prompts support as Pi slash commands under the `mcp__<server>__<prompt>` namespace, with capability-gated discovery, cache-backed startup registration, argument validation, lazy dispatch, and `/mcp prompts` listing. Thanks to Egor Egorov (@ee92) for PR #203.
 - Hot-loaded refreshed direct MCP tools after metadata reconnects, lazy connects, direct-tool panel changes, and MCP list-change notifications. Thanks Devin Bost (@devinbost) for PR #72.
 - Migrated the MCP client and interactive visualizer to the exact-pinned MCP SDK v2 beta.5 packages, with automatic protocol negotiation and client conformance coverage. Thanks Matt Carey (@mattzcarey) for PR #210.
@@ -529,13 +501,11 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - Added `createMcpAdapter({ config, configPath })` for isolated SDK configuration and file-path overrides. Thanks @Cansiny0320 for PR #86.
 
 ### Changed
-
 - Removed stale hot-loaded direct tools from Pi's registry when `pi.unregisterTool()` is available, while preserving active-tool deactivation fallback for older Pi hosts.
 - Deferred loading the regex safety checker until regex search is used, improving startup time. Thanks @kaushikgopal for PR #175.
 - Declared Pi host packages as optional peer dependencies with exact development pins, reducing extension install footprint and avoiding host version conflicts. Thanks @t0dorakis for PR #200.
 
 ### Fixed
-
 - Started MCP initialization at extension load when any server is configured with `lifecycle: "eager"` or `"keep-alive"`, so hosts that drive Pi programmatically without `session_start` still connect startup servers. Thanks Brian Gebel (@ductiletoaster) for PR #170.
 - Enforced normalized standard `_meta.ui.csp` and OpenAI-compatible `_meta["openai/widgetCSP"]` metadata with response headers while preserving provider HTML. Thanks @IdoHadar for PR #195.
 - Avoided MCP renderer crashes without a TUI theme and preserved status-bar updates with plain fallback text. Thanks @fankangsong for PR #183.
@@ -559,15 +529,12 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.11.0] - 2026-07-03
 
 ### Changed
-
 - Restored the tracked npm lockfile for reproducible installs and downstream packaging. Thanks @fmoda3 for issue #71.
 
 ### Added
-
 - Added default-on MCP output guarding with temp-file spillover for oversized text results, compact summaries for large proxy result details, and `settings.outputGuard` tuning. Thanks @tmustier for PR #160.
 
 ### Fixed
-
 - Defaulted stdio MCP servers without an explicit `cwd` to the Pi session cwd so relative server output lands in the workspace. Thanks @TimoFreiberg for PR #152.
 - Kept multiline/control MCP panel metadata from corrupting rows and made Keep & Close save dirty changes. Thanks @gpmarques for issue/PR #14, @Vahor for issue #115, and @markokocic for issue #134/PR #135.
 - Preserved `--` separators when resolving `npx` wrapper commands so subcommand flags are not consumed by tools like `dotenv-cli`. Thanks @sherif-fanous for issue #15.
@@ -584,11 +551,9 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.10.0] - 2026-06-13
 
 ### Added
-
 - Added manual remote/headless OAuth proxy actions for copying authorization URLs and completing pasted redirect URLs or codes. Thanks @Gabrielgvl for PR #120.
 
 ### Fixed
-
 - Honored user `tui.select.*` keybindings in MCP management, setup, and auth panels. Thanks @owenniles for PR #138.
 - Included configured OAuth scopes in authorization-code flows while preserving token endpoint authentication method selection. Thanks @carlosdagos for PR #140.
 - Fixed MCP elicitation on stock Pi, including form dialogs with validation and review, consent-based URL handling, URL-required errors, completion notifications, and TUI-only browser navigation. Thanks @dmmulroy for PR #139.
@@ -597,59 +562,48 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.9.0] - 2026-06-04
 
 ### Added
-
 - Added MCP elicitation support with Pi form prompts and browser-opening URL requests.
 
 ### Fixed
-
 - Rejected non-http/https MCP URL elicitations before prompting or opening a browser.
 - Preserved empty string form values for MCP string elicitations unless schema constraints reject them.
 
 ## [2.8.0] - 2026-05-25
 
 ### Added
-
 - Added per-server OAuth `redirectUri`, `clientName`, and `clientUri` overrides for pre-registered callbacks and dynamic client metadata.
 
 ### Fixed
-
 - Avoided OAuth callback port exhaustion by starting the callback server lazily and using OS-assigned ports for dynamic OAuth flows.
 - Re-register dynamic OAuth clients before browser auth when cached redirect URI metadata is missing or no longer matches the active callback URI.
 
 ## [2.7.0] - 2026-05-22
 
 ### Added
-
 - Added TUI call rendering for MCP proxy and direct tool inputs. Thanks @dmmulroy for PR #102.
 
 ### Fixed
-
 - Hardened OAuth credential storage paths against server-name path traversal without rejecting valid configured server names.
 - Rejected unsafe regex-mode MCP search patterns before executing them.
 
 ## [2.6.1] - 2026-05-13
 
 ### Added
-
 - Added `/mcp logout <server>` to clear stored OAuth credentials and disconnect the server. Thanks @mattzcarey for PR #96.
 
 ### Fixed
-
 - Cancel pending OAuth callbacks when logging out of an MCP server.
 
 ## [2.6.0] - 2026-05-10
 
 ### Added
-
 - Added a no-argument `/mcp-auth` OAuth picker and in-panel auth shortcut for OAuth-capable MCP servers.
 - Added compact collapsed rendering for MCP proxy and direct-tool result rows while keeping full tool results available when expanded.
 
 ### Changed
-
 - Migrated Pi runtime dependencies and imports from deprecated `@mariozechner/*` packages to `@earendil-works/*` packages.
 
 ### Fixed
-
 - Re-register dynamic OAuth clients during fresh auth when cached DCR client info exists without tokens, avoiding dead authorization URLs after server-side client invalidation.
 - Kept OAuth tokens, dynamic client info, PKCE verifiers, and OAuth state bound to the server URL so stale credentials cannot be reused after a server URL changes.
 - Kept the `/mcp-auth` OAuth picker search focused on OAuth server rows and prevented hidden panel shortcuts from unexpectedly launching auth.
@@ -658,42 +612,35 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.5.4] - 2026-05-04
 
 ### Changed
-
 - Ignored npm lockfiles and removed checked-in `package-lock.json` files.
 
 ### Fixed
-
 - Resolved `${VAR}` and `$env:VAR` placeholders in HTTP bearer tokens.
 - Honored MCP sampling `modelPreferences.hints` before falling back to the current/default model.
 
 ## [2.5.3] - 2026-05-01
 
 ### Added
-
 - Added environment variable and `~` expansion for stdio server `cwd` values.
 
 ## [2.5.2] - 2026-04-29
 
 ### Fixed
-
 - Respected `PI_CODING_AGENT_DIR` for Pi-owned MCP config and state files, including metadata cache, npx cache, onboarding state, OAuth credentials, and `pi-mcp-adapter init` writes.
 
 ## [2.5.1] - 2026-04-24
 
 ### Fixed
-
 - Changed OAuth browser callbacks to `http://localhost:<port>/callback` for pre-registered clients such as Slack MCP. Thanks @shenal for PR #53.
 
 ## [2.5.0] - 2026-04-24
 
 ### Added
-
 - Added MCP `sampling/createMessage` support with conservative human approval by default and opt-in `settings.samplingAutoApprove` for non-interactive flows.
 - Added configured Vitest coverage for OAuth provider authorization fallback behavior.
 - Added `test:oauth-provider` for running the root OAuth provider node test with the required TypeScript loader.
 
 ### Fixed
-
 - Applied `settings.authRequiredMessage` to proxy and direct-tool auth-required paths, including non-UI `autoAuth` failures.
 - Fixed `/mcp-auth <server>` reporting success for expired stored OAuth tokens without forcing the SDK refresh/re-auth flow.
 - Kept `mcp` search focused on MCP tools and added a direct-call hint when native Pi tools are accidentally routed through the proxy.
@@ -701,17 +648,14 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.4.2] - 2026-04-22
 
 ### Fixed
-
 - Migrated extension tool schemas from `@sinclair/typebox` to `typebox` 1.x so packaged installs follow Pi's current extension runtime contract.
 
 ### Changed
-
 - Replaced the legacy `@sinclair/typebox` runtime dependency with `typebox`.
 
 ## [2.4.1] - 2026-04-22
 
 ### Added
-
 - Added standard-MCP-first config discovery: `~/.config/mcp/mcp.json` and project `.mcp.json` now load automatically, with Pi-owned files preserved as override layers.
 - Added `pi-mcp-adapter init` as a native post-install helper that detects host-specific MCP configs and scaffolds Pi compatibility imports without using the old raw GitHub downloader flow.
 - Added first-run onboarding inside the extension: `/mcp` now shows shared-config hints or actionable empty states, and `/mcp setup` opens a guided setup flow for compatibility imports, minimal `.mcp.json` scaffolding, detected config paths, RepoPrompt quick-add, and exact before/after write previews.
@@ -719,7 +663,6 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - Added a dedicated Pi-owned onboarding state file so shared-config hints behave as one-time guidance instead of repeating every session.
 
 ### Changed
-
 - Updated config precedence to prefer shared MCP files first, then Pi overrides, with `.pi/mcp.json` acting as the final Pi-specific project override.
 - Updated Claude Code compatibility probing to prefer modern Claude MCP config locations before legacy paths.
 - Updated project scaffolding so generated `.mcp.json` files are safe minimal shells instead of fake placeholder servers that fail on first reload.
@@ -728,20 +671,17 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.4.0] - 2026-04-13
 
 ### Added
-
 - `settings.disableProxyTool` to hide the `mcp` proxy tool once configured direct tools are fully available from cache. Thanks @tanavamsikrishna for PR #41.
 - Per-server `excludeTools` to hide specific MCP tools/resources by original or prefixed name across direct tools, proxy discovery, and the `/mcp` panel. Thanks @ahmadaccino for issue #36.
 - `settings.autoAuth` to optionally trigger OAuth automatically from proxy/direct tool usage, then rerun the original blocked connect/tool operation once after authentication succeeds. Thanks @unimonkiez for issue #34.
 
 ### Fixed
-
 - Regenerated `package-lock.json` so the root lockfile metadata matches `package.json` again, including the declared `open`, `@types/bun`, `@types/open`, and `tsx` entries.
 - Kept the `mcp` proxy tool available as a first-session fallback when configured direct tools are still missing cache metadata, avoiding no-tool startup gaps.
 
 ## [2.3.5] - 2026-04-13
 
 ### Fixed
-
 - Session lifecycle now always tears down OAuth callback state on restart and shutdown, preventing callback-server leaks across session transitions.
 - OAuth callback server now calls `unref()` after successful bind so it no longer keeps sub-agent processes alive by itself.
 - Strict OAuth port mode now rebinds to the configured callback port when safe, while refusing to switch ports when authorizations are still pending.
@@ -751,24 +691,20 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.3.4] - 2026-04-12
 
 ### Fixed
-
 - OAuth callback handling now allows dynamic-registration flows to fall back to a free local port when the preferred callback port is busy, while keeping pre-registered clients on their exact configured redirect port.
 - Documented the new callback-port behavior and added focused auth-flow regression coverage.
 
 ## [2.3.3] - 2026-04-12
 
 ### Fixed
-
 - Remove the blank footer status line when no MCP servers are configured by clearing the MCP status entry instead of setting it to an empty string. Thanks @HazAT for PR #27.
 
 ## [2.3.2] - 2026-04-11
 
 ### Added
-
 - Optional `oauth.grantType: "client_credentials"` for non-interactive machine-to-machine OAuth on HTTP MCP servers.
 
 ### Fixed
-
 - `/mcp-auth <server>` now handles `client_credentials` without browser/callback flow.
 - MCP panel status no longer marks `client_credentials` servers as auth-blocked solely because no stored user tokens exist yet.
 - OAuth auth flow now closes temporary transports consistently on success, refresh, and auth removal paths.
@@ -777,17 +713,14 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.3.1] - 2026-04-11
 
 ### Fixed
-
 - Removed `/mcp-auth-callback`. OAuth auth now hard-cuts to `/mcp-auth <server>` only.
 
 ## [2.3.0] - 2026-04-11
 
 ### Added
-
 - OAuth callback server initialization on session start and a deprecated `/mcp-auth-callback` command that now points users to `/mcp-auth <server>`.
 
 ### Fixed
-
 - OAuth `needs-auth` handling across `/mcp` status/panel, `mcp({ connect })`, `mcp({ tool })`, reconnect flow, lazy/direct tool execution, and startup bootstrap.
 - OAuth callback cleanup now cancels by stored OAuth state and closes pending transports on failure/cancel paths.
 - Callback server now fails fast when the OAuth callback port is occupied by another process.
@@ -796,7 +729,6 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.2.2] - 2026-04-03
 
 ### Fixed
-
 - Session lifecycle teardown now handles repeated `session_start` transitions safely and prevents stale async init results from replacing newer state.
 - Shutdown now still runs `gracefulShutdown()` even if metadata cache flushing throws, avoiding leaked MCP processes.
 - Proxy/direct tool init error paths now preserve and surface underlying error messages instead of returning generic failures.
@@ -806,13 +738,11 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.2.1] - 2026-03-23
 
 ### Fixed
-
 - Added `promptSnippet` to MCP proxy tool and direct MCP tools so they appear in the system prompt's Available tools section (required since pi 0.59.0)
 
 ## [2.2.0] - 2026-03-16
 
 ### Added
-
 - **MCP UI Integration** - Support for the [MCP UI](https://github.com/MCP-UI-Org/mcp-ui) standard. Tools with `_meta.ui.resourceUri` open interactive UIs:
   - Bidirectional AppBridge communication (tool calls, messages, context updates)
   - Works with both stdio and HTTP MCP servers
@@ -834,12 +764,10 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - **Interactive visualizer example** (`examples/interactive-visualizer`) - Minimal MCP server demonstrating charts (bar/line/pie/doughnut via Chart.js), bidirectional messaging, and streaming.
 
 ### Fixed
-
 - Host-iframe timing: bridge now connects before loading iframe, fixing `ui/initialize` timeout on first load
 - All internal `log.info` calls demoted to `log.debug` to eliminate stdout noise during normal use
 
 ### Technical Notes
-
 - Uses local minified AppBridge bundle (408KB) to avoid CDN Zod bundling issues
 - Serves app HTML from `/ui-app` endpoint instead of blob URLs to avoid iframe issues
 - SSE for real-time tool result streaming to browser
@@ -847,13 +775,11 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.1.2] - 2026-02-03
 
 ### Changed
-
 - Added demo video and `pi.video` field to package.json for pi package browser.
 
 ## [2.1.0] - 2026-02-02
 
 ### Added
-
 - **Direct tool registration** - Promote specific MCP tools to first-class Pi tools via `directTools` config (per-server or global). Direct tools appear in the agent's tool list alongside builtins, so the LLM uses them without needing to search through the proxy first. Registers from cached metadata at startup — no server connections needed.
 - **`/mcp` interactive panel** - New TUI overlay replacing the text-based status dump. Shows server connection status, tool lists with direct/proxy toggles, token cost estimates, inline reconnect, and auth notices. Changes written to config on save.
 - **Auto-enriched proxy description** - The `mcp` proxy tool description now includes server names and tool counts from the metadata cache, so the LLM knows what's available without a search call (~30 extra tokens).
@@ -866,19 +792,16 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [2.0.1] - 2026-02-01
 
 ### Fixed
-
 - Adapt execute signature to pi v0.51.0: add signal, onUpdate, ctx parameters
 
 ## [2.0.0] - 2026-01-29
 
 ### Changed
-
 - **BREAKING: Lazy startup by default** - All servers now default to `lifecycle: "lazy"` and only connect when a tool call needs them. Previously all servers connected eagerly on session start. Set `lifecycle: "keep-alive"` or `lifecycle: "eager"` to restore the old behavior per-server.
 - **Idle timeout** - Connected servers are automatically disconnected after 10 minutes of inactivity (configurable via `settings.idleTimeout` or per-server `idleTimeout`). Cached metadata keeps search/list working after disconnect. Set `idleTimeout: 0` to disable.
 - `/mcp reconnect` accepts an optional server name to connect or reconnect a single server
 
 ### Added
-
 - **Metadata cache** - Tool and resource metadata persisted to `~/.pi/agent/mcp-cache.json`. Enables search/list/describe without live connections. Per-server config hashing with 7-day staleness. Multi-session safe via read-merge-write with per-process tmp files.
 - **npx binary resolution** - Resolves npx package binaries to direct paths, eliminating the ~143 MB npm parent process per server. Persistent cache at `~/.pi/agent/mcp-npx-cache.json` with 24h TTL.
 - **`mcp({ connect: "server-name" })` mode** - Explicitly trigger connection and metadata refresh for a named server
@@ -890,7 +813,6 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 - First-run bootstrap: connects all servers on first session to populate the cache
 
 ### Fixed
-
 - Connection close race condition: concurrent close + connect no longer orphans server processes
 - **Fuzzy tool name matching** - Hyphens and underscores are treated as equivalent during tool lookup. MCP tools like `resolve-library-id` are now found when called as `resolve_library_id`, which LLMs naturally guess since the prefix separator is `_`.
 - **Better "tool not found" errors** - When a server is identified (via prefix match or override) but the tool isn't found, the error now lists that server's available tools so the LLM can self-correct immediately instead of needing a separate list call
@@ -898,7 +820,6 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [1.6.0] - 2026-01-29
 
 ### Added
-
 - **Unified pi tool search** - `mcp({ search: "..." })` now searches both MCP tools and Pi tools (from installed extensions)
 - Pi tools appear first in results with `[pi tool]` prefix
 - Details object includes `server: "pi"` for pi tools
@@ -907,28 +828,24 @@ The ranked search scoring, did-you-mean suggestions, approval patterns, endpoint
 ## [1.5.1] - 2026-01-26
 
 ### Changed
-
 - Added `pi-package` keyword for npm discoverability (pi v0.50.0 package system)
 
 ## [1.5.0] - 2026-01-22
 
 ### Changed
-
 - **BREAKING: `args` parameter is now a JSON string** - The `args` parameter which previously accepted an object now accepts a JSON string. This change was required for compatibility with Claude's Vertex AI API (`google-antigravity` provider) which rejects `patternProperties` in JSON schemas (generated by `Type.Record()`).
 
 ### Added
-
 - **Type validation for args** - Parsed args are now validated to ensure they're a JSON object (not null, array, or primitive). Clear error messages for invalid input.
 - **`isError: true` on error responses** - JSON parse errors and type validation errors now properly set `isError: true` to indicate failure to the LLM.
 
 ### Migration
-
 ```typescript
 // Before (1.4.x)
-mcp({ tool: "my_tool", args: { key: "value" } });
+mcp({ tool: "my_tool", args: { key: "value" } })
 
 // After (1.5.0)
-mcp({ tool: "my_tool", args: '{"key": "value"}' });
+mcp({ tool: "my_tool", args: '{"key": "value"}' })
 ```
 
 ## [1.4.1] - 2026-01-19

@@ -27,25 +27,38 @@ const tscPath = fileURLToPath(new URL("./tsc.mjs", import.meta.url));
 // (mcp-auth.ts, mcp-code.ts, ui-server.ts). `npm run build:bridge` regenerates the bridge bundle.
 const RUNTIME_ASSETS = ["mcp-keyring-helper.cjs", "mcp-script-worker.mjs", "app-bridge.bundle.js"];
 
+/** @param {unknown} error */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Best-effort staging cleanup; never masks the error that matters.
+ *
+ * @param {string} path
+ * @returns {Promise<void>}
+ */
 async function discardStaging(path) {
   try {
     await rm(path, RM_OPTIONS);
   } catch (error) {
     // Cleanup is always best-effort: it must not turn a successful race loss
     // into failure or replace the compiler/publish error that matters.
-    console.warn(`could not remove staging ${path}: ${error?.message ?? error}`);
+    console.warn(`could not remove staging ${path}: ${errorMessage(error)}`);
   }
 }
 
+/** @param {number} pid */
 function isOwnerGone(pid) {
   try {
     process.kill(pid, 0);
     return false;
   } catch (error) {
-    return error?.code === "ESRCH";
+    return error instanceof Error && "code" in error && error.code === "ESRCH";
   }
 }
 
+/** @param {string} path */
 async function hasPublishedDist(path) {
   try {
     return (await readdir(path)).length > 0;
@@ -54,18 +67,28 @@ async function hasPublishedDist(path) {
   }
 }
 
+/** @param {string} cwd */
 async function reapStrandedStaging(cwd) {
   // Signal 0 proves only that the owner was gone at probe time. Pid reuse
   // between this probe and removal is inherent to pid-based reaping.
   for (const entry of await readdir(cwd, { withFileTypes: true })) {
     const match = /^dist\.staging\.(\d+)$/.exec(entry.name);
-    if (!match || !entry.isDirectory()) continue;
+    if (!match || !entry.isDirectory()) {
+      continue;
+    }
     const ownerPid = Number(match[1]);
-    if (ownerPid === process.pid || !isOwnerGone(ownerPid)) continue;
+    if (ownerPid === process.pid || !isOwnerGone(ownerPid)) {
+      continue;
+    }
     await discardStaging(join(cwd, entry.name));
   }
 }
 
+/**
+ * @param {string} cwd
+ * @param {string} stagingDir
+ * @returns {Promise<void>}
+ */
 async function compileToStaging(cwd, stagingDir) {
   try {
     const { stderr, stdout } = await execFile(
@@ -73,17 +96,32 @@ async function compileToStaging(cwd, stagingDir) {
       [tscPath, "-p", "tsconfig.build.json", "--outDir", stagingDir],
       { cwd, maxBuffer: 10 * 1024 * 1024 },
     );
-    if (stdout) process.stdout.write(stdout);
-    if (stderr) process.stderr.write(stderr);
-    for (const asset of RUNTIME_ASSETS) await copyFile(join(cwd, asset), join(stagingDir, asset));
+    if (stdout) {
+      process.stdout.write(stdout);
+    }
+    if (stderr) {
+      process.stderr.write(stderr);
+    }
+    for (const asset of RUNTIME_ASSETS) {
+      await copyFile(join(cwd, asset), join(stagingDir, asset));
+    }
   } catch (error) {
-    if (error?.stdout) process.stdout.write(error.stdout);
-    if (error?.stderr) process.stderr.write(error.stderr);
+    if (error instanceof Error && "stdout" in error) {
+      process.stdout.write(String(error.stdout));
+    }
+    if (error instanceof Error && "stderr" in error) {
+      process.stderr.write(String(error.stderr));
+    }
     await discardStaging(stagingDir);
     throw error;
   }
 }
 
+/**
+ * @param {string} stagingDir
+ * @param {string} distDir
+ * @returns {Promise<void>}
+ */
 async function publishStaging(stagingDir, distDir) {
   try {
     // A failed dist removal must fail loudly; keep it outside the retry loop.

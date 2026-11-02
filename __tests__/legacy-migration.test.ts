@@ -77,7 +77,9 @@ describe("explicit pre-v5 state migration", () => {
       [join(agent, "mcp-npx-cache.json"), '{"version":1,"entries":{}}'],
       [join(project, ".pi", "mcp.json"), projectConfig],
     ]);
-    for (const [path, contents] of sourceFiles) write(path, contents);
+    for (const [path, contents] of sourceFiles) {
+      write(path, contents);
+    }
     const { migrateLegacyState } = await import("../legacy-migration.ts");
     const result = migrateLegacyState({ cwd: project });
     expect(result.files).toHaveLength(5);
@@ -85,7 +87,9 @@ describe("explicit pre-v5 state migration", () => {
     expect(result.credentials).toEqual([]);
     for (const file of result.files) {
       expect(readFileSync(file.destination, "utf8")).toBe(sourceFiles.get(file.source));
-      if (process.platform !== "win32") expect(statSync(file.destination).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") {
+        expect(statSync(file.destination).mode & 0o777).toBe(0o600);
+      }
     }
 
     const { loadMcpConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
@@ -97,7 +101,9 @@ describe("explicit pre-v5 state migration", () => {
     writeProjectServerDisabledOverride(undefined, project, "global", true);
     saveMetadataCache({ version: 1, servers: {} });
     expect(loadMcpConfig(undefined, project).mcpServers.global!.disabled).toBe(true);
-    for (const [path, contents] of sourceFiles) expect(readFileSync(path, "utf8")).toBe(contents);
+    for (const [path, contents] of sourceFiles) {
+      expect(readFileSync(path, "utf8")).toBe(contents);
+    }
   });
 
   it("does not overwrite destinations on first or repeated migration", async () => {

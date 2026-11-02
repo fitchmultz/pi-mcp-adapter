@@ -13,10 +13,13 @@ server.setRequestHandler("tools/list", async () => ({
     },
   ],
 }));
-server.setRequestHandler("tools/call", async ({ params }) => ({
-  content: [{ type: "text", text: params.arguments.text }],
-  structuredContent: { echo: params.arguments.text },
-}));
+server.setRequestHandler("tools/call", async ({ params }) => {
+  const text = params.arguments?.text;
+  return {
+    content: [{ type: "text", text: String(text) }],
+    structuredContent: { echo: text },
+  };
+});
 server.setRequestHandler("resources/list", async () => ({
   resources: [{ name: "large", uri: "test://large", mimeType: "text/plain" }],
 }));

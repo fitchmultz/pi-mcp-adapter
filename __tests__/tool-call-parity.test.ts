@@ -36,8 +36,8 @@ function connectedState() {
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
-      close: vi.fn(async () => undefined),
-      getRequestOptions: vi.fn(() => undefined),
+      close: vi.fn(async () => {}),
+      getRequestOptions: vi.fn(() => {}),
     },
     toolMetadata: new Map([
       ["demo", [{ name: "demo_echo", originalName: "echo", description: "Echo tool" }]],

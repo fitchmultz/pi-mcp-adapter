@@ -1,15 +1,15 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import type { Client } from "@modelcontextprotocol/client";
 import {
+  type Client,
   ProtocolErrorCode,
   ProtocolError,
   type ElicitRequest,
   type ElicitRequestFormParams,
   type ElicitRequestURLParams,
   type ElicitResult,
+  type JsonSchemaType,
 } from "@modelcontextprotocol/client";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
-import type { JsonSchemaType } from "@modelcontextprotocol/client";
 import open from "open";
 
 export type ElicitationValue = string | number | boolean | string[] | undefined;
@@ -56,14 +56,20 @@ export async function handleFormElicitation(
     `MCP Input Request\nServer: ${options.serverName}\n\n${params.message}`,
     ["Continue", "Decline"],
   );
-  if (decision === undefined) return { action: "cancel" };
-  if (decision === "Decline") return { action: "decline" };
+  if (decision === undefined) {
+    return { action: "cancel" };
+  }
+  if (decision === "Decline") {
+    return { action: "decline" };
+  }
 
   const values: Record<string, ElicitationValue> = {};
   const properties = Object.entries(params.requestedSchema.properties);
   for (const [name, schema] of properties) {
     const value = await collectValidField(options.ui, params, name, schema);
-    if (!("value" in value)) return { action: "cancel" };
+    if (!("value" in value)) {
+      return { action: "cancel" };
+    }
     values[name] = value.value;
   }
 
@@ -73,20 +79,32 @@ export async function handleFormElicitation(
       formatReview(options.serverName, properties, content),
       properties.length > 0 ? ["Submit", "Edit", "Decline"] : ["Submit", "Decline"],
     );
-    if (action === undefined) return { action: "cancel" };
-    if (action === "Decline") return { action: "decline" };
-    if (action === "Submit") return { action: "accept", content };
+    if (action === undefined) {
+      return { action: "cancel" };
+    }
+    if (action === "Decline") {
+      return { action: "decline" };
+    }
+    if (action === "Submit") {
+      return { action: "accept", content };
+    }
 
     const labels = properties.map(
       ([name, schema]) => `${schema.title ?? humanizeName(name)} (${name})`,
     );
     const selected = await options.ui.select("Choose a field to edit", labels);
-    if (selected === undefined) return { action: "cancel" };
+    if (selected === undefined) {
+      return { action: "cancel" };
+    }
     const property = properties[labels.indexOf(selected)];
-    if (!property) continue;
+    if (!property) {
+      continue;
+    }
     const [name, schema] = property;
     const value = await collectValidField(options.ui, params, name, schema, values[name]);
-    if (!("value" in value)) return { action: "cancel" };
+    if (!("value" in value)) {
+      return { action: "cancel" };
+    }
     values[name] = value.value;
   }
 }
@@ -101,7 +119,9 @@ async function collectValidField(
   const required = params.requestedSchema.required?.includes(name) === true;
   while (true) {
     const result = await collectField(ui, params, name, schema, current);
-    if (!("value" in result)) return result;
+    if (!("value" in result)) {
+      return result;
+    }
     try {
       coerceAndValidateFormValues(
         {
@@ -156,35 +176,65 @@ async function collectField(
     const actions = [...displays];
     const useDefault =
       schema.default === undefined ? undefined : uniqueAction("Use default", actions);
-    if (useDefault) actions.push(useDefault);
+    if (useDefault) {
+      actions.push(useDefault);
+    }
     const omit = required ? undefined : uniqueAction("Omit", actions);
-    if (omit) actions.push(omit);
+    if (omit) {
+      actions.push(omit);
+    }
     const action = await ui.select(title, actions);
-    if (action === undefined) return { cancelled: true };
-    if (action === useDefault) return { cancelled: false, value: schema.default };
-    if (action === omit) return { cancelled: false, value: undefined };
+    if (action === undefined) {
+      return { cancelled: true };
+    }
+    if (action === useDefault) {
+      return { cancelled: false, value: schema.default };
+    }
+    if (action === omit) {
+      return { cancelled: false, value: undefined };
+    }
     return { cancelled: false, value: choices[displays.indexOf(action)]?.value };
   }
 
   if (schema.type === "boolean") {
     const actions = ["Yes", "No"];
-    if (schema.default !== undefined) actions.push("Use default");
-    if (!required) actions.push("Omit");
+    if (schema.default !== undefined) {
+      actions.push("Use default");
+    }
+    if (!required) {
+      actions.push("Omit");
+    }
     const action = await ui.select(title, actions);
-    if (action === undefined) return { cancelled: true };
-    if (action === "Use default") return { cancelled: false, value: schema.default };
-    if (action === "Omit") return { cancelled: false, value: undefined };
+    if (action === undefined) {
+      return { cancelled: true };
+    }
+    if (action === "Use default") {
+      return { cancelled: false, value: schema.default };
+    }
+    if (action === "Omit") {
+      return { cancelled: false, value: undefined };
+    }
     return { cancelled: false, value: action === "Yes" };
   }
 
   if (schema.type === "array") {
     const actions = ["Choose values"];
-    if (schema.default !== undefined) actions.push("Use default");
-    if (!required) actions.push("Omit");
+    if (schema.default !== undefined) {
+      actions.push("Use default");
+    }
+    if (!required) {
+      actions.push("Omit");
+    }
     const action = await ui.select(title, actions);
-    if (action === undefined) return { cancelled: true };
-    if (action === "Use default") return { cancelled: false, value: schema.default };
-    if (action === "Omit") return { cancelled: false, value: undefined };
+    if (action === undefined) {
+      return { cancelled: true };
+    }
+    if (action === "Use default") {
+      return { cancelled: false, value: schema.default };
+    }
+    if (action === "Omit") {
+      return { cancelled: false, value: undefined };
+    }
 
     const choices = extractMultiSelectOptions(schema);
     const selected = new Set(Array.isArray(current) ? current : []);
@@ -196,22 +246,41 @@ async function collectField(
       );
       const done = uniqueAction("Done", displays);
       const picked = await ui.select(title, [...displays, done]);
-      if (picked === undefined) return { cancelled: true };
-      if (picked === done) return { cancelled: false, value: [...selected] };
+      if (picked === undefined) {
+        return { cancelled: true };
+      }
+      if (picked === done) {
+        return { cancelled: false, value: [...selected] };
+      }
       const choice = choices[displays.indexOf(picked)];
-      if (!choice) continue;
-      if (selected.has(choice.value)) selected.delete(choice.value);
-      else selected.add(choice.value);
+      if (!choice) {
+        continue;
+      }
+      if (selected.has(choice.value)) {
+        selected.delete(choice.value);
+      } else {
+        selected.add(choice.value);
+      }
     }
   }
 
   const actions = ["Enter value"];
-  if (schema.default !== undefined) actions.push("Use default");
-  if (!required) actions.push("Omit");
+  if (schema.default !== undefined) {
+    actions.push("Use default");
+  }
+  if (!required) {
+    actions.push("Omit");
+  }
   const action = await ui.select(title, actions);
-  if (action === undefined) return { cancelled: true };
-  if (action === "Use default") return { cancelled: false, value: schema.default };
-  if (action === "Omit") return { cancelled: false, value: undefined };
+  if (action === undefined) {
+    return { cancelled: true };
+  }
+  if (action === "Use default") {
+    return { cancelled: false, value: schema.default };
+  }
+  if (action === "Omit") {
+    return { cancelled: false, value: undefined };
+  }
   const entered = await ui.input(title, current === undefined ? undefined : String(current));
   return entered === undefined ? { cancelled: true } : { cancelled: false, value: entered };
 }
@@ -225,7 +294,9 @@ export function coerceAndValidateFormValues(
   for (const [name, schema] of Object.entries(params.requestedSchema.properties)) {
     const value = values[name];
     if (value === undefined) {
-      if (required.has(name)) throw new Error(`Missing required elicitation field: ${name}`);
+      if (required.has(name)) {
+        throw new Error(`Missing required elicitation field: ${name}`);
+      }
       continue;
     }
     if (schema.type === "string") {
@@ -255,8 +326,9 @@ export function coerceAndValidateFormValues(
         throw new Error(`Elicitation field ${name} must be a number`);
       }
       const numberValue = typeof value === "number" ? value : Number(value);
-      if (!Number.isFinite(numberValue))
+      if (!Number.isFinite(numberValue)) {
         throw new Error(`Elicitation field ${name} must be a number`);
+      }
       if (schema.type === "integer" && !Number.isInteger(numberValue)) {
         throw new Error(`Elicitation field ${name} must be an integer`);
       }
@@ -274,7 +346,9 @@ export function coerceAndValidateFormValues(
       continue;
     }
     if (schema.type === "array") {
-      if (!Array.isArray(value)) throw new Error(`Elicitation field ${name} must be a list`);
+      if (!Array.isArray(value)) {
+        throw new Error(`Elicitation field ${name} must be a list`);
+      }
       const allowed = new Set(extractMultiSelectOptions(schema).map((option) => option.value));
       const arrayValue = value.map(String);
       if (schema.minItems !== undefined && arrayValue.length < schema.minItems) {
@@ -306,7 +380,9 @@ function uniqueLabels(labels: string[]): string[] {
   const used = new Set<string>();
   return labels.map((label) => {
     let unique = label;
-    while (used.has(unique)) unique += "…";
+    while (used.has(unique)) {
+      unique += "…";
+    }
     used.add(unique);
     return unique;
   });
@@ -314,7 +390,9 @@ function uniqueLabels(labels: string[]): string[] {
 
 function uniqueAction(label: string, choices: string[]): string {
   let unique = label;
-  while (choices.includes(unique)) unique += "…";
+  while (choices.includes(unique)) {
+    unique += "…";
+  }
   return unique;
 }
 
@@ -349,8 +427,9 @@ export async function handleUrlElicitation(
   options: ElicitationHandlerOptions,
   params: ElicitRequestURLParams,
 ): Promise<ElicitResult> {
-  if (!options.allowUrl)
+  if (!options.allowUrl) {
     throw new ProtocolError(ProtocolErrorCode.InvalidParams, "URL elicitation is not supported");
+  }
 
   let parsed: URL;
   try {
@@ -382,8 +461,12 @@ export async function handleUrlElicitation(
     ].join("\n"),
     ["Open", "Decline"],
   );
-  if (decision === undefined) return { action: "cancel" };
-  if (decision === "Decline") return { action: "decline" };
+  if (decision === undefined) {
+    return { action: "cancel" };
+  }
+  if (decision === "Decline") {
+    return { action: "decline" };
+  }
 
   try {
     await open(params.url);

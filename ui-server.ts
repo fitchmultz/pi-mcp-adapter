@@ -152,7 +152,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
     const envelope = getVisualizationStreamEnvelope(
       (payload as { structuredContent?: unknown } | null)?.structuredContent,
     );
-    if (!envelope) return;
+    if (!envelope) {
+      return;
+    }
     if (!streamSummary) {
       streamSummary = {
         streamId: envelope.streamId,
@@ -166,8 +168,11 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       streamSummary.phases.push(envelope.phase);
     }
     streamSummary.finalStatus = envelope.status;
-    if (envelope.message !== undefined) streamSummary.lastMessage = envelope.message;
-    else delete streamSummary.lastMessage;
+    if (envelope.message !== undefined) {
+      streamSummary.lastMessage = envelope.message;
+    } else {
+      delete streamSummary.lastMessage;
+    }
   };
 
   const serializeEvent = (eventId: number, name: string, payload: unknown): string => {
@@ -177,7 +182,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   const getLatestCheckpointIndex = () => {
     for (let index = eventLog.length - 1; index >= 0; index -= 1) {
       const entry = eventLog[index];
-      if (!entry) continue;
+      if (!entry) {
+        continue;
+      }
       const envelope = getVisualizationStreamEnvelope(
         (entry.payload as { structuredContent?: unknown } | null)?.structuredContent,
       );
@@ -189,7 +196,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   };
 
   const pruneEventLog = () => {
-    if (eventLog.length <= MAX_EVENT_LOG) return;
+    if (eventLog.length <= MAX_EVENT_LOG) {
+      return;
+    }
     const latestCheckpointIndex = getLatestCheckpointIndex();
 
     if (latestCheckpointIndex > 0) {
@@ -202,7 +211,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   };
 
   const pushEvent = (name: string, payload: unknown) => {
-    if (completed) return;
+    if (completed) {
+      return;
+    }
     const eventId = nextEventId++;
     eventLog.push({ id: eventId, name, payload });
     updateStreamSummary(payload);
@@ -246,13 +257,17 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   };
 
   const stopWatchdog = () => {
-    if (!watchdog) return;
+    if (!watchdog) {
+      return;
+    }
     clearInterval(watchdog);
     watchdog = null;
   };
 
   const markCompleted = (reason: string) => {
-    if (completed) return;
+    if (completed) {
+      return;
+    }
     log.debug("Session completed", { reason });
     pushEvent("session-complete", { reason });
     completed = true;
@@ -288,7 +303,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           );
           return;
         }
-        if (!validateTokenQuery(url, sessionToken, res)) return;
+        if (!validateTokenQuery(url, sessionToken, res)) {
+          return;
+        }
         touchHeartbeat();
 
         const html = buildHostHtmlTemplate({
@@ -312,7 +329,9 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (method === "GET" && url.pathname === "/events") {
-        if (!validateTokenQuery(url, sessionToken, res)) return;
+        if (!validateTokenQuery(url, sessionToken, res)) {
+          return;
+        }
         touchHeartbeat();
         log.debug("SSE client connected", { clientCount: sseClients.size + 1 });
         res.writeHead(200, {
@@ -334,13 +353,17 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (method === "GET" && url.pathname === "/health") {
-        if (!validateTokenQuery(url, sessionToken, res)) return;
+        if (!validateTokenQuery(url, sessionToken, res)) {
+          return;
+        }
         sendJson(res, 200, { ok: true, result: { healthy: true } });
         return;
       }
 
       if (method === "GET" && url.pathname === "/ui-app") {
-        if (!validateTokenQuery(url, uiResourceToken, res, "resource")) return;
+        if (!validateTokenQuery(url, uiResourceToken, res, "resource")) {
+          return;
+        }
         touchHeartbeat();
         // Enforce host metadata independently of where app HTML places its document head.
         const cspContent = buildCspMetaContent(options.resource.meta.csp);
@@ -375,8 +398,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       const body = await parseBody(req, res);
-      if (!body) return;
-      if (!validateTokenBody(body, sessionToken, res)) return;
+      if (!body) {
+        return;
+      }
+      if (!validateTokenBody(body, sessionToken, res)) {
+        return;
+      }
       // A partial upload is not accepted until its authenticated body is complete.
       if (
         completed &&
@@ -473,7 +500,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
               isToolCallApprovalRequired(options.config, options.serverName, toolMeta)
             ? { ok: false as const, reason: "approval_required_headless" as const }
             : { ok: true as const };
-        if (approval.ok === false) {
+        if (!approval.ok) {
           const denied = approval.reason === "denied";
           const message = denied
             ? `The user declined approval to run MCP tool "${callParams.name}" on server "${options.serverName}".`
@@ -522,7 +549,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
       }
 
       if (url.pathname === "/proxy/ui/consent") {
-        const approved = !!(params as { approved?: boolean }).approved;
+        const approved = Boolean((params as { approved?: boolean }).approved);
         options.consentManager.registerDecision(options.serverName, approved);
         sendJson(res, 200, { ok: true, result: { approved } });
         return;
@@ -594,7 +621,10 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
             sessionMessages.contexts.shift();
           }
         }
-        log.debug("UI context update", { hasContent: !!ctxParams.content, hasUpdate: !!update });
+        log.debug("UI context update", {
+          hasContent: Boolean(ctxParams.content),
+          hasUpdate: Boolean(update),
+        });
         await options.onContextUpdate?.(ctxParams);
         sendJson(res, 200, { ok: true, result: {} });
         return;
@@ -688,8 +718,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
   }
 
   watchdog = setInterval(() => {
-    if (completed) return;
-    if (Date.now() - lastHeartbeatAt <= ABANDONED_GRACE_MS) return;
+    if (completed) {
+      return;
+    }
+    if (Date.now() - lastHeartbeatAt <= ABANDONED_GRACE_MS) {
+      return;
+    }
     markCompleted("stale");
     try {
       server.close();
@@ -820,7 +854,9 @@ function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 function resolvePortCandidates(port: number | undefined): number[] {
-  if (port !== undefined) return [port];
+  if (port !== undefined) {
+    return [port];
+  }
   const candidates: number[] = [];
   const count = MOSHI_DISCOVERY_PORT_END - MOSHI_DISCOVERY_PORT_START + 1;
   for (let offset = 0; offset < count; offset += 1) {
@@ -834,7 +870,9 @@ function resolvePortCandidates(port: number | undefined): number[] {
 }
 
 function rememberMoshiDiscoveryPort(port: number): void {
-  if (port < MOSHI_DISCOVERY_PORT_START || port > MOSHI_DISCOVERY_PORT_END) return;
+  if (port < MOSHI_DISCOVERY_PORT_START || port > MOSHI_DISCOVERY_PORT_END) {
+    return;
+  }
   nextMoshiDiscoveryPort = port >= MOSHI_DISCOVERY_PORT_END ? MOSHI_DISCOVERY_PORT_START : port + 1;
 }
 

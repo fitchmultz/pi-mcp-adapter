@@ -40,7 +40,9 @@ export async function executeResourceList(
     state.manager.getConnection(server)?.status === "connected"
   ) {
     const prepared = await prepareMcpConnection(state, server, signal);
-    if (prepared.error) return prepared.error;
+    if (prepared.error) {
+      return prepared.error;
+    }
   }
   const prefix = resolveToolPrefix(definition, state.config.settings?.toolPrefix);
   const page = paginate(

@@ -169,7 +169,9 @@ async function getUiAppUrl(handle: UiServerHandle): Promise<string> {
   const host = await request(handle.url);
   const match =
     typeof host.body === "string" ? host.body.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/) : null;
-  if (!match?.[1]) throw new Error("UI resource token missing from host page");
+  if (!match?.[1]) {
+    throw new Error("UI resource token missing from host page");
+  }
   return `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(match[1])}`;
 }
 
@@ -180,7 +182,9 @@ describe("UiServer", () => {
     if (handle) {
       const ref = handle.getSessionMessages().historyRef;
       handle.close("test-cleanup");
-      if (ref) await rm(dirname(ref), { recursive: true, force: true });
+      if (ref) {
+        await rm(dirname(ref), { recursive: true, force: true });
+      }
       handle = null;
     }
   });
@@ -1409,7 +1413,7 @@ describe("UiServer", () => {
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/heartbeat`, {
         method: "POST",
-        body: "not json" as unknown,
+        body: "not json",
         headers: { "Content-Type": "text/plain" },
       });
 

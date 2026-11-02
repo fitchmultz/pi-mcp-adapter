@@ -10,8 +10,9 @@ function readAdapterVersion(): string {
   for (const path of ["./package.json", "../package.json"]) {
     try {
       const manifest = JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8"));
-      if (manifest.name === "@fitchmultz/pi-mcp-adapter" && typeof manifest.version === "string")
+      if (manifest.name === "@fitchmultz/pi-mcp-adapter" && typeof manifest.version === "string") {
         return manifest.version;
+      }
     } catch {}
   }
   return "0.0.0";
@@ -74,7 +75,9 @@ export async function parallelLimit<T, R>(
   async function worker() {
     while (true) {
       const next = iterator.next();
-      if (next.done) return;
+      if (next.done) {
+        return;
+      }
       const [index, item] = next.value;
       results[index] = await fn(item);
     }
@@ -106,24 +109,32 @@ function getMissingEnvVars(value: string): string[] {
 }
 
 export function toStringRecord(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
 
   const result: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry === "string") result[key] = entry;
+    if (typeof entry === "string") {
+      result[key] = entry;
+    }
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function interpolateSecretExpression(value: string): string {
-  if (value.startsWith("!!")) return interpolateEnvVars(value.slice(1));
+  if (value.startsWith("!!")) {
+    return interpolateEnvVars(value.slice(1));
+  }
   return value.startsWith("!") ? value : interpolateEnvVars(value);
 }
 
 export function interpolateEnvRecord(
   values: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
-  if (!values) return undefined;
+  if (!values) {
+    return undefined;
+  }
 
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => [key, interpolateSecretExpression(value)]),
@@ -144,9 +155,15 @@ export function resolveCommandSecret(
   value: string | undefined,
   context: string,
 ): string | undefined {
-  if (value === undefined) return undefined;
-  if (value.startsWith("!!")) return interpolateEnvVars(value.slice(1));
-  if (!value.startsWith("!")) return interpolateEnvVars(value);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value.startsWith("!!")) {
+    return interpolateEnvVars(value.slice(1));
+  }
+  if (!value.startsWith("!")) {
+    return interpolateEnvVars(value);
+  }
 
   let result;
   try {
@@ -178,7 +195,9 @@ export function resolveCommandSecret(
   }
 
   const resolved = result.stdout.trim();
-  if (!resolved) throw new Error(`Failed to resolve ${context}: command returned empty output`);
+  if (!resolved) {
+    throw new Error(`Failed to resolve ${context}: command returned empty output`);
+  }
   return resolved;
 }
 
@@ -187,7 +206,9 @@ export function resolveCommandSecretsRecord(
   values: Record<string, string> | undefined,
   context: (key: string) => string,
 ): Record<string, string> | undefined {
-  if (!values) return undefined;
+  if (!values) {
+    return undefined;
+  }
 
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => [key, resolveCommandSecret(value, context(key))]),
@@ -195,7 +216,9 @@ export function resolveCommandSecretsRecord(
 }
 
 export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string | undefined {
-  if (definition.url == null) return undefined;
+  if (definition.url == null) {
+    return undefined;
+  }
   if (typeof definition.url !== "string") {
     throw new Error("MCP server URL must be a string");
   }
@@ -219,10 +242,14 @@ export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string |
 }
 
 export function resolveConfigPath(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined) {
+    return undefined;
+  }
 
   const resolved = interpolateEnvVars(value);
-  if (resolved === "~") return homedir();
+  if (resolved === "~") {
+    return homedir();
+  }
   if (resolved.startsWith("~/") || resolved.startsWith("~\\")) {
     return join(homedir(), resolved.slice(2));
   }
@@ -253,7 +280,9 @@ export function stripOscSequences(text: string): string {
     index += isEscOsc ? 2 : 1;
     while (index < text.length) {
       const code = text.charCodeAt(index++);
-      if (code === 0x07 || code === 0x9c) break;
+      if (code === 0x07 || code === 0x9c) {
+        break;
+      }
       if (code === 0x1b && text[index] === "\\") {
         index++;
         break;
@@ -275,20 +304,33 @@ export function formatTerminalError(error: unknown): string {
   const messages: string[] = [];
   const seen = new Set<unknown>();
   const collect = (value: unknown) => {
-    if (seen.has(value)) return;
-    if ((typeof value === "object" && value !== null) || typeof value === "function")
+    if (seen.has(value)) {
+      return;
+    }
+    if ((typeof value === "object" && value !== null) || typeof value === "function") {
       seen.add(value);
+    }
 
     if (value instanceof AggregateError) {
       const countBefore = messages.length;
-      for (const nested of value.errors) collect(nested);
-      if (value.cause !== undefined) collect(value.cause);
-      if (messages.length === countBefore && value.message) messages.push(value.message);
+      for (const nested of value.errors) {
+        collect(nested);
+      }
+      if (value.cause !== undefined) {
+        collect(value.cause);
+      }
+      if (messages.length === countBefore && value.message) {
+        messages.push(value.message);
+      }
       return;
     }
     if (value instanceof Error) {
-      if (value.message) messages.push(value.message);
-      if (value.cause !== undefined) collect(value.cause);
+      if (value.message) {
+        messages.push(value.message);
+      }
+      if (value.cause !== undefined) {
+        collect(value.cause);
+      }
       return;
     }
     messages.push(String(value));
@@ -299,7 +341,9 @@ export function formatTerminalError(error: unknown): string {
 }
 
 export function truncateAtWord(text: string, target: number): string {
-  if (!text || text.length <= target) return text;
+  if (!text || text.length <= target) {
+    return text;
+  }
 
   const truncated = text.slice(0, target);
   const lastSpace = truncated.lastIndexOf(" ");
@@ -330,7 +374,9 @@ export function formatMcpStatus(
   config: Pick<McpConfig, "settings">,
   message: string,
 ): string | undefined {
-  if (config.settings?.mcpFooterStatus === "off") return undefined;
+  if (config.settings?.mcpFooterStatus === "off") {
+    return undefined;
+  }
   return `${config.settings?.showStatusIcon === false ? "MCP: " : "🔌 MCP: "}${message}`;
 }
 
@@ -341,7 +387,9 @@ export function extractToolUiStreamMode(
   toolMeta: Record<string, unknown> | undefined,
 ): "eager" | "stream-first" | undefined {
   const uiMeta = toolMeta?.ui;
-  if (!uiMeta || typeof uiMeta !== "object") return undefined;
+  if (!uiMeta || typeof uiMeta !== "object") {
+    return undefined;
+  }
   const streamMode = (uiMeta as Record<string, unknown>)["pi-mcp-adapter.streamMode"];
   if (streamMode === "eager" || streamMode === "stream-first") {
     return streamMode;
