@@ -707,7 +707,7 @@ export class McpServerManager {
           const baseMessage =
             reportedError instanceof Error ? reportedError.message : String(reportedError);
           const detail = lines.slice(-MAX_CAPTURED_STDERR_LINES).join(" — ");
-          throw new Error(`${baseMessage} (${detail})`, { cause: error });
+          throw new Error(`${baseMessage} (${detail})`, { cause: reportedError });
         }
       }
       throw reportedError;
@@ -736,9 +736,7 @@ export class McpServerManager {
         try {
           await abortCleanup;
         } catch (cleanupError) {
-          throw new AggregateError([error, cleanupError], "MCP connection abort cleanup failed", {
-            cause: cleanupError,
-          });
+          throw new AggregateError([error, cleanupError], "MCP connection abort cleanup failed");
         }
       }
       throw error;

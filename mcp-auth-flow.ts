@@ -508,9 +508,7 @@ export async function startAuth(
     try {
       await clearOAuthState(serverName, authStorageOptions);
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed", {
-        cause: cleanupError,
-      });
+      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed");
     }
     throw error;
   }
@@ -654,9 +652,7 @@ export async function startAuth(
     try {
       await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed", {
-        cause: cleanupError,
-      });
+      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed");
     }
     throw error;
   }
@@ -885,9 +881,7 @@ export async function completeAuth(
         await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
       } catch (cleanupError) {
         if (caughtError !== undefined) {
-          throw new AggregateError([caughtError, cleanupError], "OAuth completion cleanup failed", {
-            cause: cleanupError,
-          });
+          throw new AggregateError([caughtError, cleanupError], "OAuth completion cleanup failed");
         }
         throw cleanupError;
       }
@@ -991,9 +985,7 @@ export async function authenticate(
       try {
         await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
       } catch (cleanupError) {
-        throw new AggregateError([error, cleanupError], "OAuth cancellation cleanup failed", {
-          cause: cleanupError,
-        });
+        throw new AggregateError([error, cleanupError], "OAuth cancellation cleanup failed");
       }
       throw error;
     }

@@ -1,11 +1,7 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { dirname, isAbsolute, resolve } from "node:path";
-import {
-  type Transport,
-  type JSONRPCMessage,
-  type MessageExtraInfo,
-} from "@modelcontextprotocol/client";
+import type { Transport, JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
 
 export const MCP_TRACE_SCHEMA_VERSION = 1;
 export const DEFAULT_MCP_TRACE_MAX_BYTES = 256 * 1024;

@@ -74,7 +74,7 @@ export async function handleSamplingRequest(
 
   const supportsTemperature =
     model.compat && "supportsTemperature" in model.compat
-      ? model.compat.supportsTemperature
+      ? model.compat.supportsTemperature !== false
       : !(
           model.id === "gpt-6-astra" &&
           (model.api === "openai-responses" || model.api === "openai-codex-responses")

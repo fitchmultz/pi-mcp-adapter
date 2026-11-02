@@ -6,6 +6,18 @@ const { dirname, join } = require("node:path");
 
 const requireFromHere = createRequire(__filename);
 
+/** @param {unknown} error @returns {unknown} */
+function errorMessage(error) {
+  if (
+    error !== null &&
+    (typeof error === "object" || typeof error === "function") &&
+    "message" in error
+  ) {
+    return error.message;
+  }
+  return undefined;
+}
+
 function loadKeyringEntryClass() {
   try {
     return requireFromHere("@napi-rs/keyring").Entry;
@@ -21,7 +33,7 @@ function loadKeyringEntryClass() {
       }
     }
     const error = new Error(
-      `Failed to load @napi-rs/keyring in recovery helper: ${lastError instanceof Error ? lastError.message : String(lastError)}; ${loaderError instanceof Error ? loaderError.message : String(loaderError)}`,
+      `Failed to load @napi-rs/keyring in recovery helper: ${errorMessage(lastError) ?? errorMessage(loaderError)}`,
     );
     error.cause = loaderError;
     throw error;

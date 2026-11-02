@@ -470,13 +470,11 @@ export async function withSessionRecovery<T>(
     if (isNonInteractiveOAuth(definition.oauth)) {
       throw error;
     }
-    const onNeedsAuth = deps.onNeedsAuth;
-    const fresh = onNeedsAuth
-      ? await abortable(
-          onNeedsAuth(serverName, deps.signal, { connection: failed, error }),
-          deps.signal,
-        )
-      : undefined;
+    const fresh = await abortable(
+      deps.onNeedsAuth?.(serverName, deps.signal, { connection: failed, error }) ??
+        Promise.resolve(undefined),
+      deps.signal,
+    );
     throwIfAborted(deps.signal);
     if (!fresh || fresh === failed || fresh.status !== "connected") {
       throw new SessionRecoveryAuthRequiredError(serverName);

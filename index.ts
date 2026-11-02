@@ -6,7 +6,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpAdapterOptions, McpConfig, PromptMetadata } from "./types.ts";
-import { type McpOAuthRuntime, createOAuthRuntime, shutdownOAuth } from "./mcp-oauth-runtime.ts";
 import { Type } from "typebox";
 import {
   cloneMcpConfig,
@@ -29,6 +28,7 @@ import {
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { logger } from "./logger.ts";
 import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS, formatTerminalError } from "./utils.ts";
+import { type McpOAuthRuntime, createOAuthRuntime, shutdownOAuth } from "./mcp-oauth-runtime.ts";
 import { renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
 import {
   createMcpRuntimeOwner,

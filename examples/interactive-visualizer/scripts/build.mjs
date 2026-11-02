@@ -30,7 +30,11 @@ async function bundleUi() {
 
   const css = await readFile(path.join(srcDir, "ui", "app.css"), "utf-8");
   const template = await readFile(path.join(srcDir, "ui", "index.html"), "utf-8");
-  const js = escapeInlineJs(appResult.outputFiles[0]?.text ?? "");
+  const bundle = appResult.outputFiles[0];
+  if (!bundle) {
+    throw new Error("The interactive visualizer UI bundle was not produced");
+  }
+  const js = escapeInlineJs(bundle.text);
   // Use function replacers to avoid $& $` $' special replacement patterns in the content
   const html = template
     .replace("/*__INLINE_CSS__*/", () => escapeInlineCss(css))

@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { AgentToolResult, ToolInfo } from "@earendil-works/pi-coding-agent";
 import type { Client } from "@modelcontextprotocol/client";
-import { type McpExtensionState, type CompletedUiSession } from "./state.ts";
+import type { McpExtensionState, CompletedUiSession } from "./state.ts";
 import type { ServerConnection } from "./server-manager.ts";
 import type {
   ToolMetadata,

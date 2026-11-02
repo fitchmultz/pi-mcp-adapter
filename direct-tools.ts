@@ -4,15 +4,15 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
+import { parseDirectToolSelectors } from "./metadata-cache.ts";
+export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import {
   type DirectToolSpec,
   type McpAdapterOptions,
   type McpConfig,
   isServerDisabled,
 } from "./types.ts";
-import { abortable, throwIfAborted } from "./abort.ts";
-import { parseDirectToolSelectors } from "./metadata-cache.ts";
-export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { nativeMcpResult } from "./tool-registrar.ts";
 
 export function directToolSelection(
