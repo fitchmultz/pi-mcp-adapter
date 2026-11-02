@@ -43,7 +43,11 @@ export class McpLifecycleManager {
     this.keepAliveServers.set(name, definition);
   }
 
-  registerServer(name: string, definition: ServerDefinition, settings?: { idleTimeout?: number }): void {
+  registerServer(
+    name: string,
+    definition: ServerDefinition,
+    settings?: { idleTimeout?: number },
+  ): void {
     if (isServerDisabled(definition)) return;
     this.allServers.set(name, definition);
     if (settings?.idleTimeout !== undefined) this.serverSettings.set(name, settings);
@@ -79,7 +83,7 @@ export class McpLifecycleManager {
     this.healthCheckInterval = setInterval(() => {
       if (this.stopped || signal?.aborted || this.activeHealthCheck) return;
       const check = this.checkConnections(signal)
-        .catch(error => {
+        .catch((error) => {
           console.error(`MCP: Health check failed: ${formatTerminalError(error)}`);
         })
         .finally(() => {

@@ -15,33 +15,58 @@ for (const name of ["typescript", "@types/cross-spawn", "typebox"]) {
 }
 const consumer = mkdtempSync(join(tmpdir(), "adapter-type-consumer-"));
 try {
-  writeFileSync(join(consumer, "package.json"), JSON.stringify({
-    private: true,
-    type: "module",
-    dependencies: { "@fitchmultz/pi-mcp-adapter": `file:${installed}` },
-  }));
+  writeFileSync(
+    join(consumer, "package.json"),
+    JSON.stringify({
+      private: true,
+      type: "module",
+      dependencies: { "@fitchmultz/pi-mcp-adapter": `file:${installed}` },
+    }),
+  );
   // npm owns the link; the adapter's dependency tree stays production-only.
-  execFileSync("npm", ["install", "--ignore-scripts", "--omit=dev", "--install-links=false",
-    "--no-package-lock", "--no-audit", "--no-fund"], { cwd: consumer, stdio: "inherit" });
-  copyFileSync(join(repo, "__tests__/fixtures/published-types-consumer.mts"), join(consumer, "consumer.mts"));
-  writeFileSync(join(consumer, "tsconfig.json"), JSON.stringify({
-    // Keep the repository's existing strict NodeNext compiler settings.
-    extends: join(repo, "tsconfig.json"),
-    compilerOptions: {
-      // Only host SDK aliases, as supplied by Pi. No adapter or typebox alias.
-      paths: Object.fromEntries(["pi-ai", "pi-coding-agent", "pi-tui"].map(name => [
-        `@earendil-works/${name}`,
-        [join(repo, "node_modules/@earendil-works", name, "dist/index.d.ts")],
-      ])),
-      // Supply Node globals without exposing the checkout's private @types packages.
-      types: [],
-      typeRoots: [],
-    },
-    include: [],
-    files: ["consumer.mts", join(repo, "node_modules/@types/node/index.d.ts")],
-  }));
-  execFileSync(process.execPath, [join(repo, "scripts/tsc.mjs"),
-    "--project", join(consumer, "tsconfig.json")], { cwd: repo, stdio: "inherit" });
+  execFileSync(
+    "npm",
+    [
+      "install",
+      "--ignore-scripts",
+      "--omit=dev",
+      "--install-links=false",
+      "--no-package-lock",
+      "--no-audit",
+      "--no-fund",
+    ],
+    { cwd: consumer, stdio: "inherit" },
+  );
+  copyFileSync(
+    join(repo, "__tests__/fixtures/published-types-consumer.mts"),
+    join(consumer, "consumer.mts"),
+  );
+  writeFileSync(
+    join(consumer, "tsconfig.json"),
+    JSON.stringify({
+      // Keep the repository's existing strict NodeNext compiler settings.
+      extends: join(repo, "tsconfig.json"),
+      compilerOptions: {
+        // Only host SDK aliases, as supplied by Pi. No adapter or typebox alias.
+        paths: Object.fromEntries(
+          ["pi-ai", "pi-coding-agent", "pi-tui"].map((name) => [
+            `@earendil-works/${name}`,
+            [join(repo, "node_modules/@earendil-works", name, "dist/index.d.ts")],
+          ]),
+        ),
+        // Supply Node globals without exposing the checkout's private @types packages.
+        types: [],
+        typeRoots: [],
+      },
+      include: [],
+      files: ["consumer.mts", join(repo, "node_modules/@types/node/index.d.ts")],
+    }),
+  );
+  execFileSync(
+    process.execPath,
+    [join(repo, "scripts/tsc.mjs"), "--project", join(consumer, "tsconfig.json")],
+    { cwd: repo, stdio: "inherit" },
+  );
 } finally {
   rmSync(consumer, { recursive: true, force: true });
 }

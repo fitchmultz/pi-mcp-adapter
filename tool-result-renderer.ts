@@ -1,4 +1,9 @@
-import type { AgentToolResult, KeybindingHints, Theme, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  KeybindingHints,
+  Theme,
+  ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
@@ -51,7 +56,14 @@ class CollapsibleText implements Component {
   private readonly expandHint: string | undefined;
   private readonly preTruncated: boolean;
 
-  constructor(text: string, expanded: boolean, maxCollapsedLines: number, ellipsis: string, expandHint: string | undefined, preTruncated = false) {
+  constructor(
+    text: string,
+    expanded: boolean,
+    maxCollapsedLines: number,
+    ellipsis: string,
+    expandHint: string | undefined,
+    preTruncated = false,
+  ) {
     this.text = text;
     this.expanded = expanded;
     this.maxCollapsedLines = maxCollapsedLines;
@@ -59,7 +71,11 @@ class CollapsibleText implements Component {
     this.expandHint = expandHint;
     this.preTruncated = preTruncated;
     this.fullText = new Text(text, 0, 0);
-    this.footerText = new Text(expandHint === undefined ? ellipsis : `${ellipsis}\n${expandHint}`, 0, 0);
+    this.footerText = new Text(
+      expandHint === undefined ? ellipsis : `${ellipsis}\n${expandHint}`,
+      0,
+      0,
+    );
   }
 
   render(width: number): string[] {
@@ -70,9 +86,7 @@ class CollapsibleText implements Component {
     const safeWidth = Math.max(1, Math.floor(width));
     const charBudget = safeWidth * (this.maxCollapsedLines + 1) * COLLAPSED_RENDER_CHAR_SLACK;
     if (!this.collapsedText || this.collapsedText.charBudget !== charBudget) {
-      const prefix = this.text.length > charBudget
-        ? this.text.slice(0, charBudget)
-        : this.text;
+      const prefix = this.text.length > charBudget ? this.text.slice(0, charBudget) : this.text;
       this.collapsedText = {
         charBudget,
         fullyIncluded: prefix === this.text,
@@ -81,12 +95,14 @@ class CollapsibleText implements Component {
     }
 
     const lines = this.collapsedText.text.render(width);
-    if (!this.preTruncated && this.collapsedText.fullyIncluded && lines.length <= this.maxCollapsedLines) return lines;
+    if (
+      !this.preTruncated &&
+      this.collapsedText.fullyIncluded &&
+      lines.length <= this.maxCollapsedLines
+    )
+      return lines;
 
-    return [
-      ...lines.slice(0, this.maxCollapsedLines),
-      ...this.footerText.render(width),
-    ];
+    return [...lines.slice(0, this.maxCollapsedLines), ...this.footerText.render(width)];
   }
 
   invalidate(): void {}
@@ -114,7 +130,12 @@ function formatJsonish(value: unknown, maxChars: number): string {
 }
 
 function hasUsefulObjectContent(value: unknown): boolean {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length > 0;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length > 0
+  );
 }
 
 export function formatMcpProxyToolCallLines(
@@ -126,7 +147,9 @@ export function formatMcpProxyToolCallLines(
     const target = args.tool ?? args.query ?? args.uri ?? args.ref;
     let line = `mcp ${args.action}${target ? ` ${target}` : ""}${args.server ? `${target ? " @" : ""} ${args.server}` : ""}`;
     if (args.action === "search" && args.includeSchemas === false) line += " (schemas hidden)";
-    return args.action === "call" && args.args ? [line, formatJsonish(args.args, maxInputChars)] : [line];
+    return args.action === "call" && args.args
+      ? [line, formatJsonish(args.args, maxInputChars)]
+      : [line];
   }
 
   if (args.tool) {
@@ -164,7 +187,7 @@ function renderToolCallLines(lines: string[], theme?: RenderTheme) {
   const activeTheme = theme ?? plainTheme;
   const [title = "mcp", ...rest] = lines;
   const styledTitle = activeTheme.fg("toolTitle", activeTheme.bold(title));
-  const styledRest = rest.map(line => activeTheme.fg("muted", line));
+  const styledRest = rest.map((line) => activeTheme.fg("muted", line));
   return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
 }
 
@@ -237,16 +260,20 @@ function collectCollapsedResultLines(
   return { lines, truncated };
 }
 
-export function formatMcpToolResultIdentity(details: McpToolResultDetails | undefined): string | null {
+export function formatMcpToolResultIdentity(
+  details: McpToolResultDetails | undefined,
+): string | null {
   if (details?.mode !== "call") return null;
-  const server = typeof details.server === "string"
-    ? details.server
-    : typeof details.hintServer === "string"
-      ? details.hintServer
-      : null;
+  const server =
+    typeof details.server === "string"
+      ? details.server
+      : typeof details.hintServer === "string"
+        ? details.hintServer
+        : null;
   if (!server) return null;
   if (typeof details.tool === "string") return `MCP ${server}/${details.tool}`;
-  if (typeof details.resourceUri === "string") return `MCP ${server} resource ${details.resourceUri}`;
+  if (typeof details.resourceUri === "string")
+    return `MCP ${server} resource ${details.resourceUri}`;
   if (typeof details.requestedTool === "string") return `MCP ${server}/${details.requestedTool}`;
   return null;
 }
@@ -277,9 +304,10 @@ export function renderMcpToolResult(
     return new Text(activeTheme.fg("warning", "Running MCP tool..."), 0, 0);
   }
 
-  const details = typeof result.details === "object" && result.details !== null
-    ? result.details as McpToolResultDetails
-    : {};
+  const details =
+    typeof result.details === "object" && result.details !== null
+      ? (result.details as McpToolResultDetails)
+      : {};
   const hasErrorDetails = Boolean(details.error);
   const expanded = options.expanded || context?.isError === true || hasErrorDetails;
   const display = formatMcpToolResultLines(result, expanded);

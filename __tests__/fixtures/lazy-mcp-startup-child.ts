@@ -19,7 +19,9 @@ const hooks = registerHooks({
 });
 const require = createRequire(import.meta.url);
 function loadedModules(pattern: RegExp): string[] {
-  return [...new Set([...loaded, ...Object.keys(require.cache)])].filter(url => pattern.test(url)).sort();
+  return [...new Set([...loaded, ...Object.keys(require.cache)])]
+    .filter((url) => pattern.test(url))
+    .sort();
 }
 const sdkModules = () => loadedModules(/(?:\/|%2[fF])@modelcontextprotocol(?:\/|%2[fF])/);
 const zodModules = () => loadedModules(/(?:\/|%2[fF])zod(?:\/|%2[fF])/);
@@ -54,8 +56,16 @@ const loader = new sdk.DefaultResourceLoader({
   additionalExtensionPaths: [adapterPath],
 });
 await loader.reload();
-assert.deepEqual(loader.getExtensions().errors, [], "Source extension must load in the actual Pi loader");
-const sourceLoaded = loader.getExtensions().extensions.some((extension: { path: string }) => resolve(extension.path) === resolve(adapterPath));
+assert.deepEqual(
+  loader.getExtensions().errors,
+  [],
+  "Source extension must load in the actual Pi loader",
+);
+const sourceLoaded = loader
+  .getExtensions()
+  .extensions.some(
+    (extension: { path: string }) => resolve(extension.path) === resolve(adapterPath),
+  );
 assert(sourceLoaded, "Pi must load the source entrypoint, not an existing dist build");
 const modelRuntime = await sdk.ModelRuntime.create({
   authPath: join(agentDir, "auth.json"),
@@ -75,19 +85,39 @@ const { session } = await sdk.createAgentSession({
 const errors: ExtensionError[] = [];
 try {
   session.extensionRunner.setFlagValue("mcp-config", configPath);
-  await session.bindExtensions({ mode: "print", onError: (error: ExtensionError) => errors.push(error) });
+  await session.bindExtensions({
+    mode: "print",
+    onError: (error: ExtensionError) => errors.push(error),
+  });
   // Startup initialization is intentionally background work. Wait for its actual
   // status event, not a guessed delay or a mock initializeMcp completion.
   const deadline = Date.now() + 10_000;
-  while (!statuses.some(snapshot => snapshot.servers.length === 15)) {
-    assert(Date.now() < deadline, `Timed out waiting for native MCP startup: ${JSON.stringify(errors)}`);
-    await new Promise(resolve => setTimeout(resolve, 10));
+  while (!statuses.some((snapshot) => snapshot.servers.length === 15)) {
+    assert(
+      Date.now() < deadline,
+      `Timed out waiting for native MCP startup: ${JSON.stringify(errors)}`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  const tools = session.extensionRunner.getAllRegisteredTools().map(({ definition }: { definition: { name: string; description: string; parameters: unknown } }) => ({
-    name: definition.name, description: definition.description, parameters: definition.parameters,
-  }));
-  const commands = session.extensionRunner.getRegisteredCommands()
-    .map((command: { name: string; description: string }) => ({ name: command.name, description: command.description }))
+  const tools = session.extensionRunner
+    .getAllRegisteredTools()
+    .map(
+      ({
+        definition,
+      }: {
+        definition: { name: string; description: string; parameters: unknown };
+      }) => ({
+        name: definition.name,
+        description: definition.description,
+        parameters: definition.parameters,
+      }),
+    );
+  const commands = session.extensionRunner
+    .getRegisteredCommands()
+    .map((command: { name: string; description: string }) => ({
+      name: command.name,
+      description: command.description,
+    }))
     .sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name));
   const startupStatus = statuses.at(-1);
   const activeTools = session.getActiveToolNames().sort();
@@ -96,15 +126,30 @@ try {
   const eventsBeforeCall = await readEvents();
   // Use Pi's native registered-tool wrapper to supply its real runtime context.
   // No assistant/model is needed to exercise registration -> stdio -> result.
-  const registered = session.extensionRunner.getAllRegisteredTools()
+  const registered = session.extensionRunner
+    .getAllRegisteredTools()
     .find((tool: { definition: { name: string } }) => tool.definition.name === "lazy00_echo");
   assert(registered, "The cached direct tool must be registered before first use");
-  const call = await sdk.wrapRegisteredTool(registered, session.extensionRunner)
+  const call = await sdk
+    .wrapRegisteredTool(registered, session.extensionRunner)
     .execute("startup-regression", { text: "first use" }, undefined, undefined);
-  console.log(`LAZY_MCP_STARTUP=${JSON.stringify({
-    sourceLoaded, activeTools, errors, tools, commands, startupStatus, startupSdkModules,
-    afterCallSdkModules: sdkModules(), startupZodModules, afterCallZodModules: zodModules(), eventsBeforeCall, eventsAfterCall: await readEvents(), call,
-  })}`);
+  console.log(
+    `LAZY_MCP_STARTUP=${JSON.stringify({
+      sourceLoaded,
+      activeTools,
+      errors,
+      tools,
+      commands,
+      startupStatus,
+      startupSdkModules,
+      afterCallSdkModules: sdkModules(),
+      startupZodModules,
+      afterCallZodModules: zodModules(),
+      eventsBeforeCall,
+      eventsAfterCall: await readEvents(),
+      call,
+    })}`,
+  );
 } finally {
   try {
     await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
@@ -117,7 +162,11 @@ try {
 
 async function readEvents(): Promise<unknown[]> {
   try {
-    return (await readFile(eventsPath!, "utf8")).trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
+    return (await readFile(eventsPath!, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;

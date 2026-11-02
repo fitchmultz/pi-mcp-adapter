@@ -14,10 +14,17 @@ server.setRequestHandler("tools/list", async () => ({
     {
       name: "probe",
       description: "Read the current catalog phase",
-      inputSchema: { type: "object", properties: { value: { type: "string", description: phase ? "quartz" : "saffron" } } },
+      inputSchema: {
+        type: "object",
+        properties: { value: { type: "string", description: phase ? "quartz" : "saffron" } },
+      },
       annotations: { readOnlyHint: true },
     },
-    { name: "advance", description: "Update the catalog", inputSchema: { type: "object", properties: {} } },
+    {
+      name: "advance",
+      description: "Update the catalog",
+      inputSchema: { type: "object", properties: {} },
+    },
     {
       name: "hidden",
       description: "indigo discovery",
@@ -28,16 +35,22 @@ server.setRequestHandler("tools/list", async () => ({
 }));
 
 server.setRequestHandler("resources/list", async () => ({
-  resources: [{ name: "reference", uri: phase ? "fixture://new" : "fixture://old", description: `Resource ${phase}` }],
+  resources: [
+    {
+      name: "reference",
+      uri: phase ? "fixture://new" : "fixture://old",
+      description: `Resource ${phase}`,
+    },
+  ],
 }));
 
-server.setRequestHandler("resources/read", async request => {
+server.setRequestHandler("resources/read", async (request) => {
   const uri = phase ? "fixture://new" : "fixture://old";
   if (request.params.uri !== uri) throw new Error("Resource not found");
   return { contents: [{ uri, mimeType: "text/plain", text: `resource ${phase}` }] };
 });
 
-server.setRequestHandler("tools/call", async request => {
+server.setRequestHandler("tools/call", async (request) => {
   const { name } = request.params;
   appendFileSync(callsPath, `${name}\n`);
   if (name === "advance") {

@@ -24,7 +24,12 @@ describe("mcp-panel failure copy", () => {
     const cache = {
       version: 1 as const,
       servers: {
-        demo: { configHash: computeServerHash(config.mcpServers.demo), cachedAt: Date.now(), tools: [], resources: [] },
+        demo: {
+          configHash: computeServerHash(config.mcpServers.demo),
+          cachedAt: Date.now(),
+          tools: [],
+          resources: [],
+        },
       },
     };
     const panel = createMcpPanel(
@@ -36,7 +41,8 @@ describe("mcp-panel failure copy", () => {
         canAuthenticate: () => false,
         authenticate: async () => ({ ok: false }),
         getConnectionStatus: () => "failed",
-        getFailureMessage: () => "connection failed\n\x1b]8;;https://secret.invalid\x07details\x1b]8;;\x07",
+        getFailureMessage: () =>
+          "connection failed\n\x1b]8;;https://secret.invalid\x07details\x1b]8;;\x07",
         refreshCacheAfterReconnect: () => null,
       },
       { requestRender: () => {} },

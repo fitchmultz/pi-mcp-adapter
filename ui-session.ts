@@ -11,7 +11,11 @@ import {
   type UiModelContextParams,
   type UiStreamMode,
 } from "./types.ts";
-import { UI_STREAM_HOST_CONTEXT_KEY, UI_STREAM_REQUEST_META_KEY, UI_STREAM_STRUCTURED_CONTENT_KEY } from "./ui-stream-types.ts";
+import {
+  UI_STREAM_HOST_CONTEXT_KEY,
+  UI_STREAM_REQUEST_META_KEY,
+  UI_STREAM_STRUCTURED_CONTENT_KEY,
+} from "./ui-stream-types.ts";
 import { logger } from "./logger.ts";
 import { startUiServer, type UiServerHandle } from "./ui-server.ts";
 import { isGlimpseAvailable, openGlimpseWindow } from "./glimpse-ui.ts";
@@ -58,7 +62,9 @@ export interface UiSessionResultSummary {
   uiUrl?: string;
 }
 
-export function summarizeUiSessionResult(uiSession: UiSessionRuntime | null): UiSessionResultSummary {
+export function summarizeUiSessionResult(
+  uiSession: UiSessionRuntime | null,
+): UiSessionResultSummary {
   if (!uiSession) {
     return {
       message: "Interactive UI was unavailable; returning the tool result inline.",
@@ -67,7 +73,9 @@ export function summarizeUiSessionResult(uiSession: UiSessionRuntime | null): Ui
   }
 
   if (!uiSession.windowOpen) {
-    const action = uiSession.reused ? "Updated the suppressed MCP UI session." : "MCP UI window was suppressed.";
+    const action = uiSession.reused
+      ? "Updated the suppressed MCP UI session."
+      : "MCP UI window was suppressed.";
     return {
       message: `${action} Open manually: ${uiSession.url}`,
       uiOpen: false,
@@ -97,18 +105,22 @@ function withStreamEnvelope(
     return result;
   }
 
-  const structuredContent: Record<string, unknown> = result.structuredContent && typeof result.structuredContent === "object" && !Array.isArray(result.structuredContent)
-    ? { ...result.structuredContent }
-    : {};
+  const structuredContent: Record<string, unknown> =
+    result.structuredContent &&
+    typeof result.structuredContent === "object" &&
+    !Array.isArray(result.structuredContent)
+      ? { ...result.structuredContent }
+      : {};
 
   const rawEnvelope = structuredContent[UI_STREAM_STRUCTURED_CONTENT_KEY];
-  const envelope = rawEnvelope && typeof rawEnvelope === "object" && !Array.isArray(rawEnvelope)
-    ? { ...rawEnvelope as Record<string, unknown> }
-    : {
-        frameType: "final",
-        phase: "settled",
-        status: result.isError ? "error" : "ok",
-      };
+  const envelope =
+    rawEnvelope && typeof rawEnvelope === "object" && !Array.isArray(rawEnvelope)
+      ? { ...(rawEnvelope as Record<string, unknown>) }
+      : {
+          frameType: "final",
+          phase: "settled",
+          status: result.isError ? "error" : "ok",
+        };
 
   structuredContent[UI_STREAM_STRUCTURED_CONTENT_KEY] = {
     ...envelope,
@@ -122,7 +134,11 @@ function withStreamEnvelope(
   };
 }
 
-async function openInBrowser(state: McpExtensionState, url: string, signal: AbortSignal): Promise<string | null> {
+async function openInBrowser(
+  state: McpExtensionState,
+  url: string,
+  signal: AbortSignal,
+): Promise<string | null> {
   throwIfAborted(signal);
   try {
     await state.openBrowser(url);
@@ -167,7 +183,13 @@ function probeMoshiGateway(): Promise<boolean> {
   });
 }
 
-function remoteAccessHint(opts: { url: string; port: number; moshi: boolean; openError: string | null; openedOnHost?: boolean }): string {
+function remoteAccessHint(opts: {
+  url: string;
+  port: number;
+  moshi: boolean;
+  openError: string | null;
+  openedOnHost?: boolean;
+}): string {
   const lines = [
     opts.openError !== null
       ? "Couldn't open MCP UI here. Open it from your own device:"
@@ -180,7 +202,9 @@ function remoteAccessHint(opts: { url: string; port: number; moshi: boolean; ope
     lines.push(`Browser launch failed: ${opts.openError}`);
   }
   if (opts.moshi) {
-    lines.push("Moshi: tap the preview button in the terminal title bar and pick this MCP UI server.");
+    lines.push(
+      "Moshi: tap the preview button in the terminal title bar and pick this MCP UI server.",
+    );
   }
   lines.push(
     `SSH: run \`ssh -L ${opts.port}:127.0.0.1:${opts.port} <this-host>\` on your local machine, then open the URL above.`,
@@ -198,7 +222,8 @@ export async function maybeStartUiSession(
     server: request.serverName,
     tool: request.toolName,
   });
-  const runtimeSignal = combineAbortSignals(state.owner?.signal, request.signal) ?? new AbortController().signal;
+  const runtimeSignal =
+    combineAbortSignals(state.owner?.signal, request.signal) ?? new AbortController().signal;
 
   try {
     throwIfAborted(runtimeSignal);
@@ -276,11 +301,15 @@ export async function maybeStartUiSession(
       };
     }
 
-    const resource = await state.uiResourceHandler.readUiResource(request.serverName, request.uiResourceUri, {
-      config: state.config,
-      signal: runtimeSignal,
-      onNeedsAuth: request.onNeedsAuth,
-    });
+    const resource = await state.uiResourceHandler.readUiResource(
+      request.serverName,
+      request.uiResourceUri,
+      {
+        config: state.config,
+        signal: runtimeSignal,
+        onNeedsAuth: request.onNeedsAuth,
+      },
+    );
     throwIfAborted(runtimeSignal);
 
     if (state.uiServer) {
@@ -295,16 +324,17 @@ export async function maybeStartUiSession(
     const streamMode = request.streamMode;
     const streamId = streamMode ? randomUUID() : undefined;
     const streamToken = streamMode ? randomUUID() : undefined;
-    const hostContext: UiHostContext | undefined = streamMode && streamId
-      ? {
-          [UI_STREAM_HOST_CONTEXT_KEY]: {
-            mode: streamMode,
-            streamId,
-            intermediateResultPatches: streamMode === "stream-first",
-            partialInput: false,
-          },
-        }
-      : undefined;
+    const hostContext: UiHostContext | undefined =
+      streamMode && streamId
+        ? {
+            [UI_STREAM_HOST_CONTEXT_KEY]: {
+              mode: streamMode,
+              streamId,
+              intermediateResultPatches: streamMode === "stream-first",
+              partialInput: false,
+            },
+          }
+        : undefined;
 
     let active = true;
     let nextStreamSequence = 0;
@@ -335,7 +365,12 @@ export async function maybeStartUiSession(
             state.sendMessage(
               {
                 customType: "mcp-ui-prompt",
-                content: [{ type: "text", text: `User sent prompt from ${request.serverName} UI: "${prompt}"` }],
+                content: [
+                  {
+                    type: "text",
+                    text: `User sent prompt from ${request.serverName} UI: "${prompt}"`,
+                  },
+                ],
                 display: `💬 UI Prompt: ${prompt}`,
                 details: { server: request.serverName, tool: request.toolName, prompt },
               },
@@ -351,9 +386,19 @@ export async function maybeStartUiSession(
             state.sendMessage(
               {
                 customType: "mcp-ui-intent",
-                content: [{ type: "text", text: `User triggered intent from ${request.serverName} UI: ${intent}${paramsStr}` }],
+                content: [
+                  {
+                    type: "text",
+                    text: `User triggered intent from ${request.serverName} UI: ${intent}${paramsStr}`,
+                  },
+                ],
                 display: `🎯 UI Intent: ${intent}`,
-                details: { server: request.serverName, tool: request.toolName, intent, params: intentParams },
+                details: {
+                  server: request.serverName,
+                  tool: request.toolName,
+                  intent,
+                  params: intentParams,
+                },
               },
               { triggerTurn: true },
             );
@@ -378,7 +423,12 @@ export async function maybeStartUiSession(
           state.sendMessage(
             {
               customType: "mcp-ui-context",
-              content: [{ type: "text", text: `User submitted model context from ${request.serverName} UI:\n${update.summary}` }],
+              content: [
+                {
+                  type: "text",
+                  text: `User submitted model context from ${request.serverName} UI:\n${update.summary}`,
+                },
+              ],
               display: "UI Context submitted",
               details: { server: request.serverName, tool: request.toolName, context: update },
             },
@@ -446,7 +496,9 @@ export async function maybeStartUiSession(
         if (!active || state.uiServer !== handle) return;
         if (serverName !== request.serverName) return;
         nextStreamSequence += 1;
-        handle.sendResultPatch(withStreamEnvelope(notification.result as CallToolResult, streamId, nextStreamSequence));
+        handle.sendResultPatch(
+          withStreamEnvelope(notification.result as CallToolResult, streamId, nextStreamSequence),
+        );
       });
     }
 
@@ -462,22 +514,28 @@ export async function maybeStartUiSession(
     if (uiSuppressed) {
       viewer = "suppressed";
       windowOpen = false;
-      state.ui?.notify(`MCP UI window suppressed (MCP_UI_VIEWER=${viewerPref}). Open manually: ${handle.url}`, "info");
+      state.ui?.notify(
+        `MCP UI window suppressed (MCP_UI_VIEWER=${viewerPref}). Open manually: ${handle.url}`,
+        "info",
+      );
       log.info("Suppressing MCP UI window (MCP_UI_VIEWER=" + viewerPref + ")", { url: handle.url });
     } else {
-      const remoteLikely = remoteByEnv || await hasActiveRemoteLogin();
+      const remoteLikely = remoteByEnv || (await hasActiveRemoteLogin());
       const emitRemoteHint = async (openError: string | null, openedOnHost = false) => {
-        state.ui?.notify(remoteAccessHint({
-          url: handle.url,
-          port: handle.port,
-          moshi: await probeMoshiGateway(),
-          openError,
-          openedOnHost,
-        }), openError === null ? "info" : "warning");
+        state.ui?.notify(
+          remoteAccessHint({
+            url: handle.url,
+            port: handle.port,
+            moshi: await probeMoshiGateway(),
+            openError,
+            openedOnHost,
+          }),
+          openError === null ? "info" : "warning",
+        );
       };
       const glimpseDetected = !remoteByEnv && isGlimpseAvailable();
-      const useGlimpse = !remoteByEnv && (viewerPref === "glimpse" ||
-        (viewerPref !== "browser" && glimpseDetected));
+      const useGlimpse =
+        !remoteByEnv && (viewerPref === "glimpse" || (viewerPref !== "browser" && glimpseDetected));
 
       if (useGlimpse) {
         try {
@@ -555,7 +613,8 @@ export async function maybeStartUiSession(
       },
     };
   } catch (error) {
-    if (error instanceof UrlElicitationRequiredError || isAbortError(error, runtimeSignal)) throw error;
+    if (error instanceof UrlElicitationRequiredError || isAbortError(error, runtimeSignal))
+      throw error;
     const message = error instanceof Error ? error.message : String(error);
     log.error("Failed to start UI session", error instanceof Error ? error : undefined);
     state.ui?.notify(

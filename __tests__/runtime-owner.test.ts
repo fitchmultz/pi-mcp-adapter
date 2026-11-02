@@ -5,7 +5,9 @@ describe("MCP runtime ownership", () => {
   it("contains synchronous and asynchronous cleanup failures and is idempotent", async () => {
     const owner = createMcpRuntimeOwner();
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const cleanup = vi.fn(() => { throw new Error("cleanup failed \u001b]52;c;secret\u0007"); });
+    const cleanup = vi.fn(() => {
+      throw new Error("cleanup failed \u001b]52;c;secret\u0007");
+    });
     owner.addCleanup(cleanup);
     const first = owner.stop("reload");
     const second = owner.stop("shutdown");
@@ -21,23 +23,31 @@ describe("MCP runtime ownership", () => {
   it("refuses clean shutdown while a host callback's real promise is pending", async () => {
     const owner = createMcpRuntimeOwner();
     let finish!: () => void;
-    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
     const callback = owner.runCallback("onToolCall", async () => {
       await gate;
     });
-    const cleanup = vi.fn(); owner.addCleanup(cleanup);
+    const cleanup = vi.fn();
+    owner.addCleanup(cleanup);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await expect(owner.stop()).rejects.toThrow(AggregateError);
       expect(cleanup).toHaveBeenCalledOnce();
     } finally {
-      finish(); await callback; consoleError.mockRestore();
+      finish();
+      await callback;
+      consoleError.mockRestore();
     }
   });
 
   it("does not invoke nested UI methods after the owner stops", async () => {
     const owner = createMcpRuntimeOwner();
-    const ui = { notify: vi.fn(), theme: { fg: vi.fn((_color: string, text: string) => text) } } as any;
+    const ui = {
+      notify: vi.fn(),
+      theme: { fg: vi.fn((_color: string, text: string) => text) },
+    } as any;
     const owned = createOwnedUi(ui, owner);
     const theme = owned.theme;
 

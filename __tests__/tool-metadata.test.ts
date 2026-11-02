@@ -13,11 +13,13 @@ describe("formatSchema", () => {
       required: ["query"],
     };
 
-    expect(formatSchema(schema)).toBe([
-      "  query (string) *required* - Search term [default: \"all\"]",
-      "  limit (number | null)",
-      "  mode (enum: \"fast\", \"safe\")",
-    ].join("\n"));
+    expect(formatSchema(schema)).toBe(
+      [
+        '  query (string) *required* - Search term [default: "all"]',
+        "  limit (number | null)",
+        '  mode (enum: "fast", "safe")',
+      ].join("\n"),
+    );
   });
 
   it("expands union branches with const discriminator fields", () => {
@@ -48,16 +50,18 @@ describe("formatSchema", () => {
       required: ["document"],
     };
 
-    expect(formatSchema(schema)).toBe([
-      "  document *required*",
-      "    anyOf:",
-      "      - object",
-      "        type (const \"text\") *required*",
-      "        content (string) *required* [minLength: 1]",
-      "      - object",
-      "        type (const \"file\") *required*",
-      "        path (string) *required* [minLength: 1]",
-    ].join("\n"));
+    expect(formatSchema(schema)).toBe(
+      [
+        "  document *required*",
+        "    anyOf:",
+        "      - object",
+        '        type (const "text") *required*',
+        "        content (string) *required* [minLength: 1]",
+        "      - object",
+        '        type (const "file") *required*',
+        "        path (string) *required* [minLength: 1]",
+      ].join("\n"),
+    );
   });
 
   it("formats oneOf branches", () => {
@@ -65,20 +69,14 @@ describe("formatSchema", () => {
       type: "object",
       properties: {
         target: {
-          oneOf: [
-            { const: "draft" },
-            { const: "published" },
-          ],
+          oneOf: [{ const: "draft" }, { const: "published" }],
         },
       },
     };
 
-    expect(formatSchema(schema)).toBe([
-      "  target",
-      "    oneOf:",
-      "      - const \"draft\"",
-      "      - const \"published\"",
-    ].join("\n"));
+    expect(formatSchema(schema)).toBe(
+      ["  target", "    oneOf:", '      - const "draft"', '      - const "published"'].join("\n"),
+    );
   });
 
   it("formats nested object properties and array items", () => {
@@ -101,11 +99,13 @@ describe("formatSchema", () => {
       required: ["config"],
     };
 
-    expect(formatSchema(schema)).toBe([
-      "  config (object) *required*",
-      "    enabled (boolean) *required*",
-      "    tags (array) [minItems: 1]",
-      "      items (enum: \"alpha\", \"beta\")",
-    ].join("\n"));
+    expect(formatSchema(schema)).toBe(
+      [
+        "  config (object) *required*",
+        "    enabled (boolean) *required*",
+        "    tags (array) [minItems: 1]",
+        '      items (enum: "alpha", "beta")',
+      ].join("\n"),
+    );
   });
 });

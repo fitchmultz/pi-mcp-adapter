@@ -42,13 +42,23 @@ describe("Pi agent dir paths", () => {
     expect(getAgentDir()).toBe(agentDir);
     expect(getPiGlobalConfigPath()).toBe(join(agentDir, "fitch-mcp-adapter", "mcp.json"));
     expect(getMetadataCachePath()).toBe(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"));
-    expect(getOnboardingStatePath()).toBe(join(agentDir, "fitch-mcp-adapter", "mcp-onboarding.json"));
+    expect(getOnboardingStatePath()).toBe(
+      join(agentDir, "fitch-mcp-adapter", "mcp-onboarding.json"),
+    );
 
     saveAuthEntry("demo", { tokens: { accessToken: "token" } }, "https://example.com/mcp");
     expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
-    expect(getAuthEntryFilePath("demo").startsWith(join(agentDir, "fitch-mcp-adapter", "mcp-oauth"))).toBe(true);
-    expect(existsSync(join(agentDir, "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json"))).toBe(false);
-    expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json"))).toBe(false);
+    expect(
+      getAuthEntryFilePath("demo").startsWith(join(agentDir, "fitch-mcp-adapter", "mcp-oauth")),
+    ).toBe(true);
+    expect(
+      existsSync(join(agentDir, "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json")),
+    ).toBe(false);
+    expect(
+      existsSync(
+        join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json"),
+      ),
+    ).toBe(false);
   });
 
   it("expands tilde in PI_CODING_AGENT_DIR", async () => {
@@ -75,6 +85,8 @@ describe("Pi agent dir paths", () => {
     expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
     expect(getAuthEntryFilePath("demo").startsWith(oauthDir)).toBe(true);
     expect(existsSync(join(oauthDir, "demo", "tokens.json"))).toBe(false);
-    expect(existsSync(join(agentDir, "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json"))).toBe(false);
+    expect(
+      existsSync(join(agentDir, "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json")),
+    ).toBe(false);
   });
 });

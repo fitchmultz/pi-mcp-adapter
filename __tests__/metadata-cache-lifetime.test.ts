@@ -1,13 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { computeServerHash, getMetadataCachePath, isServerCacheValid, loadMetadataCache, saveMetadataCache } from "../metadata-cache.ts";
+import {
+  computeServerHash,
+  getMetadataCachePath,
+  isServerCacheValid,
+  loadMetadataCache,
+  saveMetadataCache,
+} from "../metadata-cache.ts";
 
 const week = 7 * 86400000;
 const definition = { command: "synthetic-server" };
-const entry = (cachedAt = Date.now()) => ({ configHash: computeServerHash(definition), cachedAt, tools: [{ name: "search" }], resources: [] });
+const entry = (cachedAt = Date.now()) => ({
+  configHash: computeServerHash(definition),
+  cachedAt,
+  tools: [{ name: "search" }],
+  resources: [],
+});
 let root: string;
 const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
 beforeEach(() => {
@@ -26,13 +46,35 @@ describe("metadata cache lifetime", () => {
     const stale = entry(Date.now() - week - 1000);
     const future = entry(Date.now() + week);
     const unknown = { futureFormat: true, cachedAt: future.cachedAt };
-    writeFileSync(getMetadataCachePath(), JSON.stringify({ version: 2, servers: {
-      "recovery-old": stale, old: stale, selected: stale, recent: entry(), unknown,
-      "recovery-future": future, "selected-future": future,
-    } }));
-    saveMetadataCache({ version: 2, servers: { current: entry(), "incoming-future": future } }, true, ["selected", "selected-future"]);
+    writeFileSync(
+      getMetadataCachePath(),
+      JSON.stringify({
+        version: 2,
+        servers: {
+          "recovery-old": stale,
+          old: stale,
+          selected: stale,
+          recent: entry(),
+          unknown,
+          "recovery-future": future,
+          "selected-future": future,
+        },
+      }),
+    );
+    saveMetadataCache(
+      { version: 2, servers: { current: entry(), "incoming-future": future } },
+      true,
+      ["selected", "selected-future"],
+    );
     const stored = JSON.parse(readFileSync(getMetadataCachePath(), "utf8"));
-    expect(Object.keys(stored.servers).sort()).toEqual(["current", "incoming-future", "recent", "selected", "selected-future", "unknown"]);
+    expect(Object.keys(stored.servers).sort()).toEqual([
+      "current",
+      "incoming-future",
+      "recent",
+      "selected",
+      "selected-future",
+      "unknown",
+    ]);
     expect(stored.servers["incoming-future"]).toEqual(future);
     expect(stored.servers["selected-future"]).toEqual(future);
     expect(stored.servers.selected).toEqual(stale);
@@ -43,14 +85,24 @@ describe("metadata cache lifetime", () => {
   it("rereads another process's merge rather than overwriting it with a retained snapshot", () => {
     saveMetadataCache({ version: 2, servers: { first: entry() } });
     expect(loadMetadataCache()?.servers.first?.tools[0]?.name).toBe("search");
-    const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
       import { saveMetadataCache } from ${JSON.stringify(new URL("../metadata-cache.ts", import.meta.url).href)};
       saveMetadataCache(${JSON.stringify({ version: 2, servers: { external: entry() } })});
-    `], { encoding: "utf8", env: process.env });
+    `,
+      ],
+      { encoding: "utf8", env: process.env },
+    );
     expect(child.status, child.stderr).toBe(0);
     saveMetadataCache({ version: 2, servers: { last: entry() } });
     expect(Object.keys(loadMetadataCache()!.servers).sort()).toEqual(["external", "first", "last"]);
-    expect(JSON.parse(readFileSync(getMetadataCachePath(), "utf8")).servers.external.tools[0].name).toBe("search");
+    expect(
+      JSON.parse(readFileSync(getMetadataCachePath(), "utf8")).servers.external.tools[0].name,
+    ).toBe("search");
   });
 
   it("observes atomic replacement even with an unchanged size and mtime, deletion, repair, and disabled reads", () => {
@@ -85,9 +137,12 @@ describe("metadata cache lifetime", () => {
     expect(Object.keys(loadMetadataCache()!.servers)).toEqual(["original"]);
   });
 
-  it.each([NaN, Infinity, -Infinity, -1, 0, Date.now() + week])("rejects invalid cachedAt %s", cachedAt => {
-    expect(isServerCacheValid(entry(cachedAt), definition)).toBe(false);
-  });
+  it.each([NaN, Infinity, -Infinity, -1, 0, Date.now() + week])(
+    "rejects invalid cachedAt %s",
+    (cachedAt) => {
+      expect(isServerCacheValid(entry(cachedAt), definition)).toBe(false);
+    },
+  );
 
   it("rejects recognized records with malformed descriptor collections", () => {
     expect(isServerCacheValid({ ...entry(), tools: "bad" } as never, definition)).toBe(false);

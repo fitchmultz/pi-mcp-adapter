@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -20,13 +29,19 @@ function createRecoveryHarness(): { harnessDir: string; storePath: string } {
   const helperPath = join(harnessDir, "helper.cjs");
   const storePath = join(harnessDir, "store.json");
 
-  writeFileSync(keyctlPath, `#!/usr/bin/env bash
+  writeFileSync(
+    keyctlPath,
+    `#!/usr/bin/env bash
 set -euo pipefail
 if [ "$1" != "session" ] || [ "$2" != "-" ]; then exit 64; fi
 shift 2
 exec "$@"
-`, { mode: 0o755 });
-  writeFileSync(helperPath, `const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    helperPath,
+    `const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const input = JSON.parse(readFileSync(0, 'utf8'));
 const path = process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE;
 const store = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
@@ -45,7 +60,8 @@ if (input.operation === 'read') {
   process.stdout.write(JSON.stringify({ ok: false, error: 'bad op' }) + '\\n');
   process.exitCode = 1;
 }
-`);
+`,
+  );
 
   process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "keyrevoked";
   process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY = "1";
@@ -66,11 +82,20 @@ describe("OAuth credential-store diagnostics", () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-android-loader-"));
     try {
       writeFileSync(join(home, "package.json"), '{"type":"module"}');
-      for (const file of ["mcp-auth.ts", "agent-dir.ts", "config.ts", "types.ts", "ui-stream-types.ts", "utils.ts"]) {
+      for (const file of [
+        "mcp-auth.ts",
+        "agent-dir.ts",
+        "config.ts",
+        "types.ts",
+        "ui-stream-types.ts",
+        "utils.ts",
+      ]) {
         cpSync(resolve(file), join(home, file));
       }
       const modules = join(home, "node_modules");
-      cpSync(resolve("node_modules/@napi-rs/keyring"), join(modules, "@napi-rs/keyring"), { recursive: true });
+      cpSync(resolve("node_modules/@napi-rs/keyring"), join(modules, "@napi-rs/keyring"), {
+        recursive: true,
+      });
       for (const dependency of ["smol-toml", "strip-json-comments", "zod"]) {
         symlinkSync(resolve("node_modules", dependency), join(modules, dependency), "dir");
       }
@@ -78,9 +103,11 @@ describe("OAuth credential-store diagnostics", () => {
         const binding = join(modules, "@napi-rs/keyring-android-arm64");
         mkdirSync(binding);
         writeFileSync(join(binding, "package.json"), '{"version":"2.1.0","main":"index.cjs"}');
-        writeFileSync(join(binding, "index.cjs"), mode === "unloadable"
-          ? 'throw new Error("synthetic binding cannot load");'
-          : `const entries = new Map();
+        writeFileSync(
+          join(binding, "index.cjs"),
+          mode === "unloadable"
+            ? 'throw new Error("synthetic binding cannot load");'
+            : `const entries = new Map();
 module.exports = {
   failure: undefined,
   Entry: class Entry {
@@ -89,17 +116,34 @@ module.exports = {
     setPassword(value) { if (module.exports.failure) throw module.exports.failure; entries.set(this.account, value); }
     deleteCredential() { if (module.exports.failure) throw module.exports.failure; return entries.delete(this.account); }
   },
-};`);
+};`,
+        );
       }
-      const result = spawnSync(process.execPath, [resolve("__tests__/fixtures/android-keyring-probe.mjs"), mode], {
-        cwd: home,
-        env: { HOME: home, PI_CODING_AGENT_DIR: join(home, ".pi", "agent"), PATH: dirname(process.execPath), TMPDIR: home },
-        encoding: "utf8",
-      });
+      const result = spawnSync(
+        process.execPath,
+        [resolve("__tests__/fixtures/android-keyring-probe.mjs"), mode],
+        {
+          cwd: home,
+          env: {
+            HOME: home,
+            PI_CODING_AGENT_DIR: join(home, ".pi", "agent"),
+            PATH: dirname(process.execPath),
+            TMPDIR: home,
+          },
+          encoding: "utf8",
+        },
+      );
       expect(result.error).toBeUndefined();
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const receipt = JSON.parse(result.stdout);
-      expect(receipt).toMatchObject({ platform: "android", arch: "arm64", execPath: process.execPath, version: process.version, mode, passed: true });
+      expect(receipt).toMatchObject({
+        platform: "android",
+        arch: "arm64",
+        execPath: process.execPath,
+        version: process.version,
+        mode,
+        passed: true,
+      });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -125,7 +169,8 @@ describe("mcp-auth storage paths", () => {
   const originalEnv = {
     FITCH_MCP_OAUTH_DIR: process.env.FITCH_MCP_OAUTH_DIR,
     PI_MCP_ADAPTER_TEST_AUTH_STORE: process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE,
-    PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY: process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY,
+    PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY:
+      process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY,
     PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL: process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL,
     PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE: process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE,
     PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER: process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER,
@@ -169,7 +214,9 @@ describe("mcp-auth storage paths", () => {
   });
 
   it("rejects non-string names at the storage boundary", () => {
-    expect(() => getAuthEntryFilePath(undefined as unknown as string)).toThrow(/Invalid MCP server name/);
+    expect(() => getAuthEntryFilePath(undefined as unknown as string)).toThrow(
+      /Invalid MCP server name/,
+    );
   });
 
   it("namespaces the configured oauthDir legacy import source", () => {
@@ -178,7 +225,14 @@ describe("mcp-auth storage paths", () => {
     const options = getAuthStorageOptions(".pi/oauth", project);
     const filePath = getAuthEntryFilePath("configured", options);
     mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, JSON.stringify({ tokens: { accessToken: "legacy-token" }, serverUrl: "https://example.com/mcp" }), "utf-8");
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        tokens: { accessToken: "legacy-token" },
+        serverUrl: "https://example.com/mcp",
+      }),
+      "utf-8",
+    );
 
     expect(getAuthEntry("configured", options)?.tokens?.accessToken).toBe("legacy-token");
     expect(filePath.startsWith(join(project, ".pi", "oauth", "fitch-mcp-adapter"))).toBe(true);
@@ -190,10 +244,14 @@ describe("mcp-auth storage paths", () => {
   it("does not migrate legacy credentials during status-only inspection", () => {
     const filePath = getAuthEntryFilePath("status-only");
     mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, JSON.stringify({
-      tokens: { accessToken: "legacy-token" },
-      serverUrl: "https://example.com/mcp",
-    }), "utf-8");
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        tokens: { accessToken: "legacy-token" },
+        serverUrl: "https://example.com/mcp",
+      }),
+      "utf-8",
+    );
 
     expect(inspectAuthForUrl("status-only", "https://example.com/mcp").status).toBe("present");
     expect(existsSync(filePath)).toBe(true);
@@ -209,8 +267,18 @@ describe("mcp-auth storage paths", () => {
     const optionsA = getAuthStorageOptions(".pi/oauth", projectA);
     const optionsB = getAuthStorageOptions(".pi/oauth", projectB);
 
-    saveAuthEntry("same-server", { tokens: { accessToken: "token-a" } }, "https://example.com/mcp", optionsA);
-    saveAuthEntry("same-server", { tokens: { accessToken: "token-b" } }, "https://example.com/mcp", optionsB);
+    saveAuthEntry(
+      "same-server",
+      { tokens: { accessToken: "token-a" } },
+      "https://example.com/mcp",
+      optionsA,
+    );
+    saveAuthEntry(
+      "same-server",
+      { tokens: { accessToken: "token-b" } },
+      "https://example.com/mcp",
+      optionsB,
+    );
 
     expect(getAuthEntry("same-server", optionsA)?.tokens?.accessToken).toBe("token-b");
     expect(getAuthEntry("same-server", optionsB)?.tokens?.accessToken).toBe("token-b");
@@ -222,7 +290,12 @@ describe("mcp-auth storage paths", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
     const options = getAuthStorageOptions(".pi/oauth", project);
 
-    saveAuthEntry("env-override", { tokens: { accessToken: "token" } }, "https://example.com/mcp", options);
+    saveAuthEntry(
+      "env-override",
+      { tokens: { accessToken: "token" } },
+      "https://example.com/mcp",
+      options,
+    );
 
     const filePath = getAuthEntryFilePath("env-override", options);
     expect(filePath.startsWith(authDir)).toBe(true);
@@ -262,9 +335,14 @@ describe("mcp-auth storage paths", () => {
 
       const store = readRecoveryStore(storePath);
       const chunkEntries = Object.entries(store).filter(([account]) => account.includes(".chunk."));
-      const manifestPayload = Object.entries(store).find(([account]) => !account.includes(".chunk."))?.[1];
+      const manifestPayload = Object.entries(store).find(
+        ([account]) => !account.includes(".chunk."),
+      )?.[1];
       expect(manifestPayload).toBeDefined();
-      const manifest = JSON.parse(manifestPayload!) as { __piMcpAdapterOAuthChunked?: number; chunkCount?: number };
+      const manifest = JSON.parse(manifestPayload!) as {
+        __piMcpAdapterOAuthChunked?: number;
+        chunkCount?: number;
+      };
       expect(manifest.__piMcpAdapterOAuthChunked).toBe(1);
       expect(chunkEntries).toHaveLength(manifest.chunkCount!);
       expect(chunkEntries.every(([, payload]) => payload.length <= 1800)).toBe(true);
@@ -293,7 +371,9 @@ describe("mcp-auth storage paths", () => {
 
     it("removes chunk payloads when credentials are cleared", () => {
       saveAuthEntry("removing", { tokens: { accessToken: "x".repeat(5000) } });
-      expect(Object.keys(readRecoveryStore(storePath)).some((account) => account.includes(".chunk."))).toBe(true);
+      expect(
+        Object.keys(readRecoveryStore(storePath)).some((account) => account.includes(".chunk.")),
+      ).toBe(true);
       clearAllCredentials("removing");
       expect(readRecoveryStore(storePath)).toEqual({});
     });

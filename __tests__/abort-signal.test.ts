@@ -13,12 +13,19 @@ function connectedState(client: Record<string, unknown>) {
       mcpServers: { demo: { command: "node", args: ["server.js"] } },
     },
     manager: {
-      getConnection: vi.fn(() => ({ status: "connected", client, tools: [{ name: "slow", description: "Slow tool" }], resources: [] })),
+      getConnection: vi.fn(() => ({
+        status: "connected",
+        client,
+        tools: [{ name: "slow", description: "Slow tool" }],
+        resources: [],
+      })),
       touch: vi.fn(),
       incrementInFlight: vi.fn(),
       decrementInFlight: vi.fn(),
       close: vi.fn(async () => undefined),
-      getRequestOptions: vi.fn((_server: string, signal?: AbortSignal) => signal ? { signal } : undefined),
+      getRequestOptions: vi.fn((_server: string, signal?: AbortSignal) =>
+        signal ? { signal } : undefined,
+      ),
     },
     toolMetadata: new Map([
       [
@@ -68,7 +75,9 @@ describe("AbortSignal propagation", () => {
     controller.abort(new Error("user cancelled"));
 
     const result = await inFlight;
-    expect((result.content[0] as TextContent).text).toContain("Failed to call tool: user cancelled");
+    expect((result.content[0] as TextContent).text).toContain(
+      "Failed to call tool: user cancelled",
+    );
     expect(result.details.error).toBe("aborted");
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },
@@ -87,7 +96,9 @@ describe("AbortSignal propagation", () => {
     controller.abort(new Error("user cancelled"));
 
     const result = await inFlight;
-    expect((result.content[0] as TextContent).text).toContain("Failed to call tool: user cancelled");
+    expect((result.content[0] as TextContent).text).toContain(
+      "Failed to call tool: user cancelled",
+    );
     expect(result.details.error).toBe("aborted");
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },
@@ -135,7 +146,11 @@ describe("AbortSignal propagation", () => {
     const result = await executeConnect(state, "demo", controller.signal);
 
     expect(result.details.error).toBe("aborted");
-    expect(state.manager.connect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, controller.signal);
+    expect(state.manager.connect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      controller.signal,
+    );
     expect(state.failureTracker.size).toBe(0);
   });
 
@@ -176,7 +191,9 @@ describe("AbortSignal propagation", () => {
 
     controller.abort(new Error("user cancelled"));
 
-    await expect((manager as any).fetchAllResources(client, { signal: controller.signal })).rejects.toThrow("user cancelled");
+    await expect(
+      (manager as any).fetchAllResources(client, { signal: controller.signal }),
+    ).rejects.toThrow("user cancelled");
   });
 
   it("server-manager readResource passes AbortSignal through the MCP SDK request options", async () => {

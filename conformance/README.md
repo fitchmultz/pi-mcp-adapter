@@ -50,8 +50,8 @@ The full runner is sequential. The conformance CLI's `--suite` mode runs scenari
 
 Current gaps:
 
-| Scenario | Reason |
-| --- | --- |
+| Scenario                              | Reason                                                                                                                                                                                             |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `auth/cross-app-access-complete-flow` | The referee's IdP OIDC document omits required `response_types_supported`, `subject_types_supported` and `id_token_signing_alg_values_supported`; the native SDK rejects it before token exchange. |
 
 Baseline comments contain the protocol-level details. Do not add a failure caused by the driver, callback-port contention, or test setup.

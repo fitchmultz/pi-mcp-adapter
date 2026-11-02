@@ -1,8 +1,20 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
-import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerEntry, ServerProvenance, ToolPrefix } from "./types.ts";
+import type {
+  McpConfig,
+  McpPanelCallbacks,
+  McpPanelResult,
+  ServerEntry,
+  ServerProvenance,
+  ToolPrefix,
+} from "./types.ts";
 import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
-import { reconstructToolMetadata, type MetadataCache, type ServerCacheEntry, type CachedTool } from "./metadata-cache.ts";
+import {
+  reconstructToolMetadata,
+  type MetadataCache,
+  type ServerCacheEntry,
+  type CachedTool,
+} from "./metadata-cache.ts";
 
 interface PanelTheme {
   border: string;
@@ -260,12 +272,10 @@ class McpPanel {
           const tool = server.tools[ti];
           if (!tool) continue;
           if (query) {
-            const score = mode === "name"
-              ? Math.max(
-                  fuzzyScore(query, tool.name),
-                  fuzzyScore(query, server.name) * 0.6,
-                )
-              : fuzzyScore(query, tool.description);
+            const score =
+              mode === "name"
+                ? Math.max(fuzzyScore(query, tool.name), fuzzyScore(query, server.name) * 0.6)
+                : fuzzyScore(query, tool.description);
             if (score === 0) continue;
           }
           this.visibleItems.push({ type: "tool", serverIndex: si, toolIndex: ti });
@@ -300,7 +310,10 @@ class McpPanel {
       } else if (directTools.length === 0) {
         changes.set(server.name, false);
       } else {
-        changes.set(server.name, directTools.map((t) => t.name));
+        changes.set(
+          server.name,
+          directTools.map((t) => t.name),
+        );
       }
     }
     return { changes, cancelled: false };
@@ -346,8 +359,14 @@ class McpPanel {
         }
         return;
       }
-      if (this.keys.selectUp(data)) { this.moveCursor(-1); return; }
-      if (this.keys.selectDown(data)) { this.moveCursor(1); return; }
+      if (this.keys.selectUp(data)) {
+        this.moveCursor(-1);
+        return;
+      }
+      if (this.keys.selectDown(data)) {
+        this.moveCursor(1);
+        return;
+      }
       if (matchesKey(data, "space")) {
         // Toggle even while in desc search
         const item = this.visibleItems[this.cursorIndex];
@@ -380,8 +399,14 @@ class McpPanel {
       return;
     }
 
-    if (this.keys.selectUp(data)) { this.moveCursor(-1); return; }
-    if (this.keys.selectDown(data)) { this.moveCursor(1); return; }
+    if (this.keys.selectUp(data)) {
+      this.moveCursor(-1);
+      return;
+    }
+    if (this.keys.selectDown(data)) {
+      this.moveCursor(1);
+      return;
+    }
 
     if (matchesKey(data, "space")) {
       const item = this.visibleItems[this.cursorIndex];
@@ -436,14 +461,19 @@ class McpPanel {
       if (!server || server.connectionStatus !== "failed" || !server.failureMessage) return;
       const serverName = sanitizeDisplayText(server.name);
       const failureMessage = sanitizeDisplayText(server.failureMessage);
-      import("@earendil-works/pi-coding-agent").then(({ copyToClipboard }) => copyToClipboard(failureMessage)).then(() => {
-        this.authNotice = `Copied error for ${serverName} to clipboard`;
-        this.tui.requestRender();
-      }).catch((error) => {
-        const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
-        this.authNotice = `Failed to copy error for ${serverName}: ${message}`;
-        this.tui.requestRender();
-      });
+      import("@earendil-works/pi-coding-agent")
+        .then(({ copyToClipboard }) => copyToClipboard(failureMessage))
+        .then(() => {
+          this.authNotice = `Copied error for ${serverName} to clipboard`;
+          this.tui.requestRender();
+        })
+        .catch((error) => {
+          const message = sanitizeDisplayText(
+            error instanceof Error ? error.message : String(error),
+          );
+          this.authNotice = `Failed to copy error for ${serverName}: ${message}`;
+          this.tui.requestRender();
+        });
       return;
     }
 
@@ -493,27 +523,30 @@ class McpPanel {
     this.authNotice = `Authenticating ${serverName}...`;
     this.tui.requestRender();
 
-    this.callbacks.authenticate(server.name).then((result) => {
-      server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
-      if (result.ok) {
-        this.authNotice = `OAuth finished for ${serverName}. Reconnecting...`;
+    this.callbacks
+      .authenticate(server.name)
+      .then((result) => {
+        server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
+        if (result.ok) {
+          this.authNotice = `OAuth finished for ${serverName}. Reconnecting...`;
+          this.authInFlight = null;
+          this.tui.requestRender();
+          this.reconnectServer(server, { afterAuth: true });
+          return;
+        }
+
+        const message = sanitizeDisplayText(result.message);
+        this.authNotice = `OAuth failed for ${serverName}${message ? `: ${message}` : ". Check the notification for details."}`;
         this.authInFlight = null;
         this.tui.requestRender();
-        this.reconnectServer(server, { afterAuth: true });
-        return;
-      }
-
-      const message = sanitizeDisplayText(result.message);
-      this.authNotice = `OAuth failed for ${serverName}${message ? `: ${message}` : ". Check the notification for details."}`;
-      this.authInFlight = null;
-      this.tui.requestRender();
-    }).catch((error) => {
-      const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
-      server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
-      this.authNotice = `OAuth failed for ${serverName}: ${message}`;
-      this.authInFlight = null;
-      this.tui.requestRender();
-    });
+      })
+      .catch((error) => {
+        const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
+        server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
+        this.authNotice = `OAuth failed for ${serverName}: ${message}`;
+        this.authInFlight = null;
+        this.tui.requestRender();
+      });
   }
 
   private reconnectServer(server: ServerState, options: { afterAuth?: boolean } = {}): void {
@@ -522,27 +555,31 @@ class McpPanel {
     server.connectionStatus = "connecting";
     this.tui.requestRender();
 
-    this.callbacks.reconnect(server.name, options.afterAuth).then((connected) => {
-      server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
-      server.failureMessage = this.callbacks.getFailureMessage?.(server.name) ?? null;
-      if (server.connectionStatus === "connected") {
-        const entry = this.callbacks.refreshCacheAfterReconnect(server.name);
-        if (entry) {
-          this.rebuildServerTools(server, entry);
+    this.callbacks
+      .reconnect(server.name, options.afterAuth)
+      .then((connected) => {
+        server.connectionStatus = this.callbacks.getConnectionStatus(server.name);
+        server.failureMessage = this.callbacks.getFailureMessage?.(server.name) ?? null;
+        if (server.connectionStatus === "connected") {
+          const entry = this.callbacks.refreshCacheAfterReconnect(server.name);
+          if (entry) {
+            this.rebuildServerTools(server, entry);
+          }
         }
-      }
-      if (options.afterAuth) {
-        this.authNotice = connected && server.connectionStatus === "connected"
-          ? `OAuth finished for ${serverName}. Reconnected.`
-          : `OAuth finished for ${serverName}, but reconnect did not complete. Press ctrl+r to retry.`;
-      }
-      this.tui.requestRender();
-    }).catch((error) => {
-      server.connectionStatus = "failed";
-      const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
-      this.authNotice = `Reconnect failed for ${serverName}: ${message}`;
-      this.tui.requestRender();
-    });
+        if (options.afterAuth) {
+          this.authNotice =
+            connected && server.connectionStatus === "connected"
+              ? `OAuth finished for ${serverName}. Reconnected.`
+              : `OAuth finished for ${serverName}, but reconnect did not complete. Press ctrl+r to retry.`;
+        }
+        this.tui.requestRender();
+      })
+      .catch((error) => {
+        server.connectionStatus = "failed";
+        const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
+        this.authNotice = `Reconnect failed for ${serverName}: ${message}`;
+        this.tui.requestRender();
+      });
   }
 
   private toggleItem(item: VisibleItem): void {
@@ -597,25 +634,31 @@ class McpPanel {
 
   private moveCursor(delta: number): void {
     if (this.visibleItems.length === 0) return;
-    this.cursorIndex = Math.max(0, Math.min(this.visibleItems.length - 1, this.cursorIndex + delta));
+    this.cursorIndex = Math.max(
+      0,
+      Math.min(this.visibleItems.length - 1, this.cursorIndex + delta),
+    );
   }
 
   private rebuildServerTools(server: ServerState, entry: ServerCacheEntry): void {
-    const existingState = new Map(server.tools.map(tool => [tool.name, tool]));
+    const existingState = new Map(server.tools.map((tool) => [tool.name, tool]));
     const metadata = reconstructToolMetadata(server.name, entry, this.prefix, server.definition);
-    server.resourceCount = metadata.filter(tool => tool.resourceUri !== undefined).length;
-    server.tools = metadata.filter(tool => tool.resourceUri === undefined).map(tool => {
-      const previous = existingState.get(tool.originalName);
-      const pinned = server.toolFilter === true
-        || (Array.isArray(server.toolFilter) && server.toolFilter.includes(tool.originalName));
-      return {
-        name: tool.originalName,
-        description: tool.description,
-        isDirect: previous?.isDirect ?? pinned,
-        wasDirect: previous?.wasDirect ?? pinned,
-        estimatedTokens: estimateTokens(tool),
-      };
-    });
+    server.resourceCount = metadata.filter((tool) => tool.resourceUri !== undefined).length;
+    server.tools = metadata
+      .filter((tool) => tool.resourceUri === undefined)
+      .map((tool) => {
+        const previous = existingState.get(tool.originalName);
+        const pinned =
+          server.toolFilter === true ||
+          (Array.isArray(server.toolFilter) && server.toolFilter.includes(tool.originalName));
+        return {
+          name: tool.originalName,
+          description: tool.description,
+          isDirect: previous?.isDirect ?? pinned,
+          wasDirect: previous?.wasDirect ?? pinned,
+          estimatedTokens: estimateTokens(tool),
+        };
+      });
     server.hasCachedData = true;
     this.rebuildVisibleItems();
     this.updateDirty();
@@ -630,7 +673,9 @@ class McpPanel {
     const inverse = (s: string) => `\x1b[7m${s}\x1b[27m`;
 
     const row = (content: string) =>
-      fg(t.border, "│") + truncateToWidth(" " + sanitizeRowContent(content), innerW, "…", true) + fg(t.border, "│");
+      fg(t.border, "│") +
+      truncateToWidth(" " + sanitizeRowContent(content), innerW, "…", true) +
+      fg(t.border, "│");
     const emptyRow = () => fg(t.border, "│") + " ".repeat(innerW) + fg(t.border, "│");
     const divider = () => fg(t.border, "├" + "─".repeat(innerW) + "┤");
 
@@ -638,7 +683,11 @@ class McpPanel {
     const borderLen = innerW - visibleWidth(titleText);
     const leftB = Math.floor(borderLen / 2);
     const rightB = borderLen - leftB;
-    lines.push(fg(t.border, "╭" + "─".repeat(leftB)) + fg(t.title, titleText) + fg(t.border, "─".repeat(rightB) + "╮"));
+    lines.push(
+      fg(t.border, "╭" + "─".repeat(leftB)) +
+        fg(t.title, titleText) +
+        fg(t.border, "─".repeat(rightB) + "╮"),
+    );
 
     lines.push(emptyRow());
 
@@ -663,12 +712,26 @@ class McpPanel {
 
     if (this.servers.length === 0) {
       lines.push(emptyRow());
-      lines.push(row(fg(t.hint, italic(this.authOnly ? "No OAuth-capable MCP servers configured." : "No MCP servers configured."))));
+      lines.push(
+        row(
+          fg(
+            t.hint,
+            italic(
+              this.authOnly
+                ? "No OAuth-capable MCP servers configured."
+                : "No MCP servers configured.",
+            ),
+          ),
+        ),
+      );
       lines.push(emptyRow());
     } else {
       const maxVis = McpPanel.MAX_VISIBLE;
       const total = this.visibleItems.length;
-      const startIdx = Math.max(0, Math.min(this.cursorIndex - Math.floor(maxVis / 2), total - maxVis));
+      const startIdx = Math.max(
+        0,
+        Math.min(this.cursorIndex - Math.floor(maxVis / 2), total - maxVis),
+      );
       const endIdx = Math.min(startIdx + maxVis, total);
 
       lines.push(emptyRow());
@@ -686,7 +749,10 @@ class McpPanel {
             lines.push(row(fg(t.hint, "    Resources: mcp actions resources / read-resource")));
           }
           if (isCursor && server.connectionStatus === "failed" && server.failureMessage) {
-            for (const line of this.wrapText(sanitizeDisplayText(server.failureMessage), innerW - 6)) {
+            for (const line of this.wrapText(
+              sanitizeDisplayText(server.failureMessage),
+              innerW - 6,
+            )) {
               lines.push(row(`    ${fg(t.cancel, line)}`));
             }
           }
@@ -700,7 +766,9 @@ class McpPanel {
 
       if (total > maxVis) {
         const prog = Math.round(((this.cursorIndex + 1) / total) * 10);
-        lines.push(row(`${rainbowProgress(prog, 10)}  ${fg(t.hint, `${this.cursorIndex + 1}/${total}`)}`));
+        lines.push(
+          row(`${rainbowProgress(prog, 10)}  ${fg(t.hint, `${this.cursorIndex + 1}/${total}`)}`),
+        );
         lines.push(emptyRow());
       }
 
@@ -718,25 +786,35 @@ class McpPanel {
     lines.push(emptyRow());
 
     if (this.confirmingDiscard) {
-      const discardBtn = this.discardSelected === 0
-        ? inverse(bold(fg(t.cancel, "  Discard  ")))
-        : fg(t.hint, "  Discard  ");
-      const keepBtn = this.discardSelected === 1
-        ? inverse(bold(fg(t.confirm, "  Keep & Close  ")))
-        : fg(t.hint, "  Keep & Close  ");
+      const discardBtn =
+        this.discardSelected === 0
+          ? inverse(bold(fg(t.cancel, "  Discard  ")))
+          : fg(t.hint, "  Discard  ");
+      const keepBtn =
+        this.discardSelected === 1
+          ? inverse(bold(fg(t.confirm, "  Keep & Close  ")))
+          : fg(t.hint, "  Keep & Close  ");
       lines.push(row(`Discard unsaved changes?  ${discardBtn}   ${keepBtn}`));
     } else {
       if (this.authOnly) {
         lines.push(row(fg(t.description, "select a server to authenticate")));
       } else {
-        const directCount = this.servers.reduce((sum, s) => sum + s.tools.filter((t) => t.isDirect).length, 0);
+        const directCount = this.servers.reduce(
+          (sum, s) => sum + s.tools.filter((t) => t.isDirect).length,
+          0,
+        );
         const totalTokens = this.servers.reduce(
-          (sum, s) => sum + s.tools.filter((t) => t.isDirect).reduce((ts, t) => ts + t.estimatedTokens, 0),
+          (sum, s) =>
+            sum + s.tools.filter((t) => t.isDirect).reduce((ts, t) => ts + t.estimatedTokens, 0),
           0,
         );
         const stats =
-          directCount > 0 ? `${directCount} pinned  ~${totalTokens.toLocaleString()} tokens` : "no pinned tools";
-        lines.push(row(fg(t.description, stats + (this.dirty ? fg(t.needsAuth, "  (unsaved)") : ""))));
+          directCount > 0
+            ? `${directCount} pinned  ~${totalTokens.toLocaleString()} tokens`
+            : "no pinned tools";
+        lines.push(
+          row(fg(t.description, stats + (this.dirty ? fg(t.needsAuth, "  (unsaved)") : ""))),
+        );
         lines.push(row(fg(t.hint, "Pins load at startup; discover more with mcp_search.")));
       }
     }
@@ -791,7 +869,9 @@ class McpPanel {
     const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
 
     const expandIcon = server.expanded ? "▾" : "▸";
-    const prefix = isCursor ? fg(t.selected, expandIcon) : fg(t.border, server.expanded ? expandIcon : "·");
+    const prefix = isCursor
+      ? fg(t.selected, expandIcon)
+      : fg(t.border, server.expanded ? expandIcon : "·");
 
     const serverName = sanitizeDisplayText(server.name);
     const importKind = sanitizeDisplayText(server.importKind ?? "import");
@@ -812,8 +892,12 @@ class McpPanel {
       toggleIcon = fg(t.needsAuth, "◐");
     }
 
-    const toolInfo = this.authOnly ? "" : fg(t.description,
-      `${totalCount} tool${totalCount === 1 ? "" : "s"}, ${directCount} pinned${server.resourceCount > 0 ? `, ${server.resourceCount} resource${server.resourceCount === 1 ? "" : "s"}` : ""}`);
+    const toolInfo = this.authOnly
+      ? ""
+      : fg(
+          t.description,
+          `${totalCount} tool${totalCount === 1 ? "" : "s"}, ${directCount} pinned${server.resourceCount > 0 ? `, ${server.resourceCount} resource${server.resourceCount === 1 ? "" : "s"}` : ""}`,
+        );
 
     return `${prefix} ${toggleIcon} ${nameStr}${importLabel}${statusLabel}  ${toolInfo}`;
   }
@@ -866,7 +950,8 @@ class McpPanel {
     if (server.connectionStatus === "needs-auth") return `  ${fg(t.needsAuth, "needs auth")}`;
     if (server.connectionStatus === "connecting") return `  ${fg(t.needsAuth, "connecting")}`;
     if (server.connectionStatus === "failed") return `  ${fg(t.cancel, "failed")}`;
-    if (this.authOnly && server.connectionStatus === "connected") return `  ${fg(t.direct, "connected")}`;
+    if (this.authOnly && server.connectionStatus === "connected")
+      return `  ${fg(t.direct, "connected")}`;
     if (this.authOnly) return `  ${fg(t.description, "idle")}`;
     return "";
   }

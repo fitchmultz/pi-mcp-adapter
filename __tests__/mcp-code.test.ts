@@ -20,7 +20,10 @@ let state: McpExtensionState;
 
 function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] {
   return result.content
-    .filter((block): block is TextContent => block.type === "text" && !block.text.startsWith("[MCP result saved:"))
+    .filter(
+      (block): block is TextContent =>
+        block.type === "text" && !block.text.startsWith("[MCP result saved:"),
+    )
     .map((block) => block.text);
 }
 
@@ -36,11 +39,14 @@ describe("runMcpScript", () => {
       getAllTools: vi.fn(() => []),
     } as any);
 
-    expect(registerTool).toHaveBeenCalledWith(expect.objectContaining({
-      name: "mcp_script",
-      description: expect.stringContaining("Compose MCP calls with trusted JavaScript"),
-      promptSnippet: "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
-    }));
+    expect(registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "mcp_script",
+        description: expect.stringContaining("Compose MCP calls with trusted JavaScript"),
+        promptSnippet:
+          "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
+      }),
+    );
   });
 
   it("skips mcp_script when scriptMode is false", () => {
@@ -64,11 +70,14 @@ describe("runMcpScript", () => {
     state = {
       config: { settings: {}, mcpServers: { fixture: definition } },
       toolMetadata: new Map([
-        ["fixture", [
-          { name: "fixture_echo", originalName: "echo", description: "Echo a value" },
-          { name: "fixture_fail", originalName: "fail", description: "Return an MCP tool error" },
-          { name: "fixture_hang", originalName: "hang", description: "Never resolves" },
-        ]],
+        [
+          "fixture",
+          [
+            { name: "fixture_echo", originalName: "echo", description: "Echo a value" },
+            { name: "fixture_fail", originalName: "fail", description: "Return an MCP tool error" },
+            { name: "fixture_hang", originalName: "hang", description: "Never resolves" },
+          ],
+        ],
       ]),
       manager,
       failureTracker: new Map(),
@@ -88,7 +97,9 @@ describe("runMcpScript", () => {
       ok: false,
       error: {
         code: "tool_not_found",
-        message: expect.stringContaining('Use await tools.search({ query: "..." }) inside mcp_script.'),
+        message: expect.stringContaining(
+          'Use await tools.search({ query: "..." }) inside mcp_script.',
+        ),
       },
     });
     expect(payload.error.message).not.toContain("mcp({ search:");
@@ -102,20 +113,42 @@ describe("runMcpScript", () => {
 
     expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
       first: {
-        items: [{ path: "fixture_echo", name: "echo", server: "fixture", description: "Echo a value", score: expect.any(Number) }],
+        items: [
+          {
+            path: "fixture_echo",
+            name: "echo",
+            server: "fixture",
+            description: "Echo a value",
+            score: expect.any(Number),
+          },
+        ],
         total: 3,
         coverage: { complete: true, knownServers: ["fixture"], unknownServers: [] },
         hasMore: true,
         nextOffset: 1,
       },
       second: {
-        items: [{ path: "fixture_fail", name: "fail", server: "fixture", description: "Return an MCP tool error", score: expect.any(Number) }],
+        items: [
+          {
+            path: "fixture_fail",
+            name: "fail",
+            server: "fixture",
+            description: "Return an MCP tool error",
+            score: expect.any(Number),
+          },
+        ],
         total: 3,
         coverage: { complete: true, knownServers: ["fixture"], unknownServers: [] },
         hasMore: true,
         nextOffset: 2,
       },
-      empty: { items: [], total: 0, hasMore: false, nextOffset: null, coverage: { complete: true, knownServers: ["fixture"], unknownServers: [] } },
+      empty: {
+        items: [],
+        total: 0,
+        hasMore: false,
+        nextOffset: null,
+        coverage: { complete: true, knownServers: ["fixture"], unknownServers: [] },
+      },
     });
   });
 
@@ -153,7 +186,13 @@ describe("runMcpScript", () => {
       calls: [
         { operation: "search", query: "fixture", ok: true, durationMs: expect.any(Number) },
         { operation: "describe", path: "fixture_echo", ok: true, durationMs: expect.any(Number) },
-        { operation: "describe", path: "fixture_missing", ok: false, error: "tool_not_found", durationMs: expect.any(Number) },
+        {
+          operation: "describe",
+          path: "fixture_missing",
+          ok: false,
+          error: "tool_not_found",
+          durationMs: expect.any(Number),
+        },
         { operation: "call", path: "fixture_echo", ok: true, durationMs: expect.any(Number) },
       ],
     });
@@ -272,33 +311,57 @@ describe("runMcpScript", () => {
       error: "timeout",
       calls: [
         { path: "fixture_echo", ok: true },
-        { path: "fixture_hang", ok: false, error: "ambiguous_outcome", recovery: { action: "readback" } },
+        {
+          path: "fixture_hang",
+          ok: false,
+          error: "ambiguous_outcome",
+          recovery: { action: "readback" },
+        },
       ],
     });
   });
 
   it("aborts nested calls and releases in-flight accounting on caller cancellation", async () => {
     const controller = new AbortController();
-    const pending = runMcpScript(state, 'await tools.fixture_hang({});', 5000, undefined, controller.signal);
+    const pending = runMcpScript(
+      state,
+      "await tools.fixture_hang({});",
+      5000,
+      undefined,
+      controller.signal,
+    );
     await expect.poll(() => manager.getConnection("fixture")?.inFlight).toBe(1);
     controller.abort(new Error("caller cancelled"));
     const result = await pending;
-    expect(result.details).toMatchObject({ error: "aborted", calls: [{ path: "fixture_hang", ok: false, error: "ambiguous_outcome", recovery: { action: "readback" } }] });
+    expect(result.details).toMatchObject({
+      error: "aborted",
+      calls: [
+        {
+          path: "fixture_hang",
+          ok: false,
+          error: "ambiguous_outcome",
+          recovery: { action: "readback" },
+        },
+      ],
+    });
     await expect.poll(() => manager.getConnection("fixture")?.inFlight).toBe(0);
   });
 
   it("returns promptly on early return and reports un-awaited dispatched calls as unknown", async () => {
     const start = Date.now();
-    const result = await runMcpScript(
-      state,
-      'tools.fixture_hang({}); return "early";',
-      5_000,
-    );
+    const result = await runMcpScript(state, 'tools.fixture_hang({}); return "early";', 5_000);
 
     expect(Date.now() - start).toBeLessThan(2_000);
     expect(result.details).not.toHaveProperty("error");
     expect(result.details).toMatchObject({
-      calls: [{ path: "fixture_hang", ok: false, error: "ambiguous_outcome", recovery: { action: "readback" } }],
+      calls: [
+        {
+          path: "fixture_hang",
+          ok: false,
+          error: "ambiguous_outcome",
+          recovery: { action: "readback" },
+        },
+      ],
     });
   });
 
@@ -379,39 +442,73 @@ describe("runMcpScript", () => {
 });
 
 describe("runMcpScript output", () => {
-  const scriptState = (settings: McpSettings, outputDirectory: string) => ({
-    config: { mcpServers: {}, settings }, toolMetadata: new Map(), failureTracker: new Map(), completedUiSessions: [], outputDirectory,
-  }) as unknown as McpExtensionState;
+  const scriptState = (settings: McpSettings, outputDirectory: string) =>
+    ({
+      config: { mcpServers: {}, settings },
+      toolMetadata: new Map(),
+      failureTracker: new Map(),
+      completedUiSessions: [],
+      outputDirectory,
+    }) as unknown as McpExtensionState;
 
-  it.each<McpSettings>([{ outputGuard: { maxBytes: 4096, maxLines: 40 } }, { outputGuard: false }])("streams many emits into the same guarded result as the complete output (%j)", async settings => {
-    const small = (index: number) => `${index}: π 😀 ${"é".repeat(index % 7)}${index % 10 === 0 ? "\nsecond line" : ""}`;
-    const values = [...Array.from({ length: 20 }, (_, index) => small(index)), `${"a".repeat(3000)}${"😀".repeat(2000)}`, ...Array.from({ length: 280 }, (_, index) => small(index + 20))];
-    const image = { type: "image" as const, data: "AAAA", mimeType: "image/png" };
-    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-script-output-"));
-    try {
-      const result = await runMcpScript(scriptState(settings, outputDirectory), `${JSON.stringify(values)}.forEach((value, index) => { if (index === 10) emit(${JSON.stringify(image)}); emit(value); });`);
-      const blocks = [...values.slice(0, 10).map(text => ({ type: "text" as const, text })), image, ...values.slice(10).map(text => ({ type: "text" as const, text }))];
-      const complete = await guardMcpOutput(blocks, resolveMcpOutputGuardOptions(settings, outputDirectory));
-      const path = (result.details as { outputGuard?: { fullOutputPath?: string } }).outputGuard?.fullOutputPath;
-      const visible = (content: unknown, outputGuard: unknown, artifact?: string) => {
-        const json = JSON.stringify({ content, outputGuard });
-        return JSON.parse(artifact ? json.replaceAll(artifact, "<artifact>") : json);
-      };
+  it.each<McpSettings>([{ outputGuard: { maxBytes: 4096, maxLines: 40 } }, { outputGuard: false }])(
+    "streams many emits into the same guarded result as the complete output (%j)",
+    async (settings) => {
+      const small = (index: number) =>
+        `${index}: π 😀 ${"é".repeat(index % 7)}${index % 10 === 0 ? "\nsecond line" : ""}`;
+      const values = [
+        ...Array.from({ length: 20 }, (_, index) => small(index)),
+        `${"a".repeat(3000)}${"😀".repeat(2000)}`,
+        ...Array.from({ length: 280 }, (_, index) => small(index + 20)),
+      ];
+      const image = { type: "image" as const, data: "AAAA", mimeType: "image/png" };
+      const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-script-output-"));
+      try {
+        const result = await runMcpScript(
+          scriptState(settings, outputDirectory),
+          `${JSON.stringify(values)}.forEach((value, index) => { if (index === 10) emit(${JSON.stringify(image)}); emit(value); });`,
+        );
+        const blocks = [
+          ...values.slice(0, 10).map((text) => ({ type: "text" as const, text })),
+          image,
+          ...values.slice(10).map((text) => ({ type: "text" as const, text })),
+        ];
+        const complete = await guardMcpOutput(
+          blocks,
+          resolveMcpOutputGuardOptions(settings, outputDirectory),
+        );
+        const path = (result.details as { outputGuard?: { fullOutputPath?: string } }).outputGuard
+          ?.fullOutputPath;
+        const visible = (content: unknown, outputGuard: unknown, artifact?: string) => {
+          const json = JSON.stringify({ content, outputGuard });
+          return JSON.parse(artifact ? json.replaceAll(artifact, "<artifact>") : json);
+        };
 
-      expect(visible(result.content, (result.details as { outputGuard?: unknown }).outputGuard, path)).toEqual(visible(complete.content, complete.outputGuard, complete.outputGuard?.fullOutputPath));
-      if (settings.outputGuard) expect(await readFile(path!, "utf8")).toBe(values.join("\n"));
-      else expect(path).toBeUndefined();
-    } finally { await rm(outputDirectory, { recursive: true, force: true }); }
-  });
+        expect(
+          visible(result.content, (result.details as { outputGuard?: unknown }).outputGuard, path),
+        ).toEqual(
+          visible(complete.content, complete.outputGuard, complete.outputGuard?.fullOutputPath),
+        );
+        if (settings.outputGuard) expect(await readFile(path!, "utf8")).toBe(values.join("\n"));
+        else expect(path).toBeUndefined();
+      } finally {
+        await rm(outputDirectory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     { name: "1 MiB emits larger in total than the host heap", length: 2 ** 20, count: 128 },
     { name: "a million single-character emits", length: 1, count: 1_000_000 },
-  ])("keeps host memory bounded while a script queues $name", async ({ length, count }) => {
-    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-script-memory-"));
-    try {
-      const script = join(outputDirectory, "host.mjs");
-      await writeFile(script, `
+  ])(
+    "keeps host memory bounded while a script queues $name",
+    async ({ length, count }) => {
+      const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-script-memory-"));
+      try {
+        const script = join(outputDirectory, "host.mjs");
+        await writeFile(
+          script,
+          `
         import { createReadStream } from "node:fs";
         import { createInterface } from "node:readline";
         import { runMcpScript } from ${JSON.stringify(new URL("../mcp-code.ts", import.meta.url).href)};
@@ -429,32 +526,48 @@ describe("runMcpScript output", () => {
           if (line === expected) lines.expected++;
         }
         console.log(JSON.stringify({ queuedGrowth, details, lines }));
-      `);
-      const child = spawnSync(process.execPath, ["--max-old-space-size=64", script], { encoding: "utf8", timeout: 60_000 });
+      `,
+        );
+        const child = spawnSync(process.execPath, ["--max-old-space-size=64", script], {
+          encoding: "utf8",
+          timeout: 60_000,
+        });
 
-      expect(child.status, child.stderr).toBe(0);
-      const report = JSON.parse(child.stdout);
-      expect(report.queuedGrowth).toBeLessThan(64 * 2 ** 20);
-      expect(report.details).not.toHaveProperty("error");
-      expect(report.details.outputGuard).toMatchObject({ originalBytes: count * (length + 1) - 1, originalLines: count });
-      expect(report.details.outputGuard.returnedBytes).toBeLessThanOrEqual(50 * 1024);
-      expect(report.lines).toEqual({ total: count, expected: count });
-    } finally { await rm(outputDirectory, { recursive: true, force: true }); }
-  }, 60_000);
+        expect(child.status, child.stderr).toBe(0);
+        const report = JSON.parse(child.stdout);
+        expect(report.queuedGrowth).toBeLessThan(64 * 2 ** 20);
+        expect(report.details).not.toHaveProperty("error");
+        expect(report.details.outputGuard).toMatchObject({
+          originalBytes: count * (length + 1) - 1,
+          originalLines: count,
+        });
+        expect(report.details.outputGuard.returnedBytes).toBeLessThanOrEqual(50 * 1024);
+        expect(report.lines).toEqual({ total: count, expected: count });
+      } finally {
+        await rm(outputDirectory, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
 
   it("delivers output to a running Pi whose adapter predates output flow control", async () => {
     // Such a host starts the updated worker file with the workerData it always sent.
-    const worker = new Worker(new URL("../mcp-script-worker.mjs", import.meta.url), { workerData: { code: `emit("a 😀"); console.log("b"); return "c";` }, env: {} });
+    const worker = new Worker(new URL("../mcp-script-worker.mjs", import.meta.url), {
+      workerData: { code: `emit("a 😀"); console.log("b"); return "c";` },
+      env: {},
+    });
     const messages: unknown[] = [];
     try {
       await new Promise((resolve, reject) => {
-        worker.on("message", message => {
+        worker.on("message", (message) => {
           messages.push(message);
           if (message.type === "done" || message.type === "error") resolve(undefined);
         });
         worker.on("error", reject);
       });
-    } finally { await worker.terminate(); }
+    } finally {
+      await worker.terminate();
+    }
 
     expect(messages).toEqual([
       { type: "emit", block: { type: "text", text: "a 😀" } },

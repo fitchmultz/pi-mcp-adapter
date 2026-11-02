@@ -1,7 +1,13 @@
 import { createServer } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { IssuerMismatchError } from "@modelcontextprotocol/client";
-import { createOAuthRuntime, startAuth, completeAuthFromInput, hasPendingAuth, shutdownOAuth } from "../mcp-auth-flow.ts";
+import {
+  createOAuthRuntime,
+  startAuth,
+  completeAuthFromInput,
+  hasPendingAuth,
+  shutdownOAuth,
+} from "../mcp-auth-flow.ts";
 import { clearAllCredentials, getAuthForUrl } from "../mcp-auth.ts";
 import { McpServerManager } from "../server-manager.ts";
 import { executeCall } from "../proxy-modes.ts";
@@ -27,49 +33,84 @@ async function oauthFixture() {
   const name = `local-oauth-${crypto.randomUUID()}`;
   const server = createServer(async (req, res) => {
     if (req.url?.startsWith("/.well-known/oauth-protected-resource")) {
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-        resource: `${origin}/mcp`, authorization_servers: [`${origin}/tenant`], scopes_supported: ["tools"],
-      }));
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          resource: `${origin}/mcp`,
+          authorization_servers: [`${origin}/tenant`],
+          scopes_supported: ["tools"],
+        }),
+      );
       return;
     }
     if (req.url?.startsWith("/.well-known/oauth-authorization-server")) {
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-        issuer, authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`,
-        response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
-        token_endpoint_auth_methods_supported: ["client_secret_post"], authorization_response_iss_parameter_supported: true,
-      }));
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          issuer,
+          authorization_endpoint: `${origin}/authorize`,
+          token_endpoint: `${origin}/token`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["client_secret_post"],
+          authorization_response_iss_parameter_supported: true,
+        }),
+      );
       return;
     }
     let data = "";
     for await (const chunk of req) data += chunk;
     if (req.url === "/token") {
       tokenRequests.push(new URLSearchParams(data));
-      if (tokenFailure) { req.socket.destroy(); return; }
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-        access_token: currentToken, refresh_token: "refresh", token_type: "Bearer", expires_in: 3600,
-      }));
+      if (tokenFailure) {
+        req.socket.destroy();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" }).end(
+        JSON.stringify({
+          access_token: currentToken,
+          refresh_token: "refresh",
+          token_type: "Bearer",
+          expires_in: 3600,
+        }),
+      );
       return;
     }
-    if (req.method !== "POST") { res.writeHead(405).end(); return; }
+    if (req.method !== "POST") {
+      res.writeHead(405).end();
+      return;
+    }
     const body = JSON.parse(data);
     if (body.method === "server/discover" && holdDiscovery) {
       discoveryStarted = true;
-      res.on("close", () => { discoveryClosed = true; });
+      res.on("close", () => {
+        discoveryClosed = true;
+      });
       return;
     }
     if (body.method === "tools/call") toolCalls++;
     if (req.headers.authorization !== `Bearer ${currentToken}`) {
-      res.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` }).end();
+      res
+        .writeHead(401, {
+          "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+        })
+        .end();
       return;
     }
-    const result = body.method === "server/discover"
-      ? { resultType: "complete", supportedVersions: ["2026-07-28"], capabilities: { tools: {} } }
-      : body.method === "tools/list"
-        ? { resultType: "complete", ttlMs: 10000, cacheScope: "private", tools: [{ name: "echo", inputSchema: { type: "object" } }] }
-        : { resultType: "complete", content: [{ type: "text", text: "authorized" }] };
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
+    const result =
+      body.method === "server/discover"
+        ? { resultType: "complete", supportedVersions: ["2026-07-28"], capabilities: { tools: {} } }
+        : body.method === "tools/list"
+          ? {
+              resultType: "complete",
+              ttlMs: 10000,
+              cacheScope: "private",
+              tools: [{ name: "echo", inputSchema: { type: "object" } }],
+            }
+          : { resultType: "complete", content: [{ type: "text", text: "authorized" }] };
+    res
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
   });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Fixture did not bind");
   origin = `http://127.0.0.1:${address.port}`;
@@ -82,15 +123,33 @@ async function oauthFixture() {
     await shutdownOAuth(runtime);
     clearAllCredentials(name);
     server.closeAllConnections();
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
   });
   const definition: ServerEntry = {
-    url: `${origin}/mcp`, auth: "oauth", retryOnTransportFailure: true,
-    oauth: { clientId: "fixture-client", clientSecret: "fixture-secret", redirectUri: "http://127.0.0.1:19878/callback" },
+    url: `${origin}/mcp`,
+    auth: "oauth",
+    retryOnTransportFailure: true,
+    oauth: {
+      clientId: "fixture-client",
+      clientSecret: "fixture-secret",
+      redirectUri: "http://127.0.0.1:19878/callback",
+    },
   };
-  const start = (skip?: boolean, signal?: AbortSignal) => startAuth(name, definition.url!, {
-    ...definition, oauth: { ...definition.oauth as object, ...(skip !== undefined ? { skipIssuerMetadataValidation: skip } : {}) },
-  }, { runtime, ...(signal ? { signal } : {}) });
+  const start = (skip?: boolean, signal?: AbortSignal) =>
+    startAuth(
+      name,
+      definition.url!,
+      {
+        ...definition,
+        oauth: {
+          ...(definition.oauth as object),
+          ...(skip !== undefined ? { skipIssuerMetadataValidation: skip } : {}),
+        },
+      },
+      { runtime, ...(signal ? { signal } : {}) },
+    );
   const complete = (authorizationUrl: string, iss: string | undefined = origin) => {
     const state = new URL(authorizationUrl).searchParams.get("state")!;
     const params = new URLSearchParams({ code: "fixture-code", state });
@@ -98,31 +157,59 @@ async function oauthFixture() {
     return completeAuthFromInput(name, `http://127.0.0.1:19878/callback?${params}`, { runtime });
   };
   const connect = async (implicit = false) => {
-    const config = { ...definition, ...(implicit ? { auth: undefined } : {}), oauth: { ...definition.oauth as object, skipIssuerMetadataValidation: true } } as ServerEntry;
+    const config = {
+      ...definition,
+      ...(implicit ? { auth: undefined } : {}),
+      oauth: { ...(definition.oauth as object), skipIssuerMetadataValidation: true },
+    } as ServerEntry;
     await manager.connect(name, config);
-    const state = { manager, config: { mcpServers: { [name]: config }, settings: {} },
-      toolMetadata: new Map([[name, [{ name: "local_echo", originalName: "echo", description: "Echo" }]]]),
-      failureTracker: new Map(), completedUiSessions: [],
+    const state = {
+      manager,
+      config: { mcpServers: { [name]: config }, settings: {} },
+      toolMetadata: new Map([
+        [name, [{ name: "local_echo", originalName: "echo", description: "Echo" }]],
+      ]),
+      failureTracker: new Map(),
+      completedUiSessions: [],
     } as unknown as McpExtensionState;
     return () => executeCall(state, "echo", {}, name);
   };
-  return { name, origin, runtime, definition, start, complete, connect, tokenRequests,
+  return {
+    name,
+    origin,
+    runtime,
+    definition,
+    start,
+    complete,
+    connect,
+    tokenRequests,
     toolCalls: () => toolCalls,
-    expire: () => { currentToken = "refreshed"; },
-    failTokenEndpoint: () => { tokenFailure = true; },
-    changeIssuer: () => { issuer = `${origin}/other`; },
-    holdDiscovery: () => { holdDiscovery = true; },
+    expire: () => {
+      currentToken = "refreshed";
+    },
+    failTokenEndpoint: () => {
+      tokenFailure = true;
+    },
+    changeIssuer: () => {
+      issuer = `${origin}/other`;
+    },
+    holdDiscovery: () => {
+      holdDiscovery = true;
+    },
     discoveryStarted: () => discoveryStarted,
     discoveryClosed: () => discoveryClosed,
   };
 }
 
 describe("published SDK OAuth compatibility over local HTTP", () => {
-  it.each([undefined, false])("rejects mismatched metadata unless explicitly opted out (%s)", async skip => {
-    const f = await oauthFixture();
-    await expect(f.start(skip)).rejects.toBeInstanceOf(IssuerMismatchError);
-    expect(f.tokenRequests).toHaveLength(0);
-  });
+  it.each([undefined, false])(
+    "rejects mismatched metadata unless explicitly opted out (%s)",
+    async (skip) => {
+      const f = await oauthFixture();
+      await expect(f.start(skip)).rejects.toBeInstanceOf(IssuerMismatchError);
+      expect(f.tokenRequests).toHaveLength(0);
+    },
+  );
 
   it("allows the explicit metadata exception, passes callback iss, and retains native refresh for implicit OAuth", async () => {
     const f = await oauthFixture();
@@ -144,9 +231,13 @@ describe("published SDK OAuth compatibility over local HTTP", () => {
     const f = await oauthFixture();
     const { authorizationUrl } = await f.start(true);
     const state = new URL(authorizationUrl).searchParams.get("state")!;
-    await expect(completeAuthFromInput(f.name, `code=fixture-code&state=${state}`, { runtime: f.runtime })).rejects.toThrow('requires the RFC 9207 "iss"');
+    await expect(
+      completeAuthFromInput(f.name, `code=fixture-code&state=${state}`, { runtime: f.runtime }),
+    ).rejects.toThrow('requires the RFC 9207 "iss"');
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
-    await expect(f.complete(authorizationUrl, "http://wrong.invalid")).rejects.toThrow("does not match");
+    await expect(f.complete(authorizationUrl, "http://wrong.invalid")).rejects.toThrow(
+      "does not match",
+    );
     expect(f.tokenRequests).toHaveLength(0);
   });
 

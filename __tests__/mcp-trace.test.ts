@@ -70,15 +70,27 @@ describe("MCP protocol tracing", () => {
     const operations: string[] = [];
     const writer = new McpTraceWriter({
       filePath: "/tmp/mcp-trace.jsonl",
-      writeFile: vi.fn(async () => { operations.push("reset"); }),
-      appendFile: vi.fn(async () => { operations.push("append"); }),
+      writeFile: vi.fn(async () => {
+        operations.push("reset");
+      }),
+      appendFile: vi.fn(async () => {
+        operations.push("append");
+      }),
       mkdir: vi.fn(async () => undefined),
     });
-    writer.write(createMcpTraceEvent("inbound", "s", "stdio", {
-      jsonrpc: "2.0",
-      method: "notifications/ping",
-      params: {},
-    }, "received"));
+    writer.write(
+      createMcpTraceEvent(
+        "inbound",
+        "s",
+        "stdio",
+        {
+          jsonrpc: "2.0",
+          method: "notifications/ping",
+          params: {},
+        },
+        "received",
+      ),
+    );
     await writer.flush();
     expect(operations).toEqual(["reset", "append"]);
   });
@@ -92,11 +104,19 @@ describe("MCP protocol tracing", () => {
       appendFile: append,
       mkdir: vi.fn(async () => undefined),
     });
-    writer.write(createMcpTraceEvent("inbound", "s", "stdio", {
-      jsonrpc: "2.0",
-      method: "notifications/tools/list_changed",
-      params: {},
-    }, "received"));
+    writer.write(
+      createMcpTraceEvent(
+        "inbound",
+        "s",
+        "stdio",
+        {
+          jsonrpc: "2.0",
+          method: "notifications/tools/list_changed",
+          params: {},
+        },
+        "received",
+      ),
+    );
     await writer.flush();
     expect(append).not.toHaveBeenCalled();
     expect(writer.stats.events).toBe(0);
@@ -104,7 +124,9 @@ describe("MCP protocol tracing", () => {
   });
 
   it("isolates writer failures and preserves send/onmessage callbacks", async () => {
-    const append = vi.fn(async () => { throw new Error("disk full"); });
+    const append = vi.fn(async () => {
+      throw new Error("disk full");
+    });
     const writer = new McpTraceWriter({
       filePath: "/tmp/mcp-trace.jsonl",
       appendFile: append,
@@ -114,7 +136,7 @@ describe("MCP protocol tracing", () => {
     const sent = vi.fn(async () => undefined);
     const underlying = fakeTransport({ send: sent });
     const wrapped = wrapTransportWithMcpTrace(underlying, "demo", "stdio", {
-      record: event => writer.write(event),
+      record: (event) => writer.write(event),
     });
     wrapped.onmessage = incoming;
     underlying.onmessage?.({ jsonrpc: "2.0", method: "notifications/ping", params: {} });
@@ -128,7 +150,11 @@ describe("MCP protocol tracing", () => {
 
   it("does not let a throwing observer break transport callbacks", async () => {
     const underlying = fakeTransport();
-    const observer = { record: () => { throw new Error("trace failure"); } };
+    const observer = {
+      record: () => {
+        throw new Error("trace failure");
+      },
+    };
     const wrapped = wrapTransportWithMcpTrace(underlying, "demo", "stdio", observer);
     const incoming = vi.fn();
     wrapped.onmessage = incoming;

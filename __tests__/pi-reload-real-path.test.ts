@@ -22,7 +22,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
   if (originalHome === undefined) delete process.env.HOME;
@@ -31,20 +31,31 @@ afterEach(async () => {
   else process.env.MCP_DIRECT_TOOLS = originalDirectTools;
 });
 
-async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000): Promise<void> {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 5000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error("Timed out waiting for reload harness condition");
-    await new Promise(resolve => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
 
 async function activeFixtures(pidDir: string): Promise<Array<{ pid: number; toolName: string }>> {
   const entries = await readdir(pidDir);
-  const records = await Promise.all(entries.filter(name => name.endsWith(".json")).map(async name =>
-    JSON.parse(await readFile(join(pidDir, name), "utf8")) as { pid: number; toolName: string },
-  ));
-  return records.filter(record => isAlive(record.pid));
+  const records = await Promise.all(
+    entries
+      .filter((name) => name.endsWith(".json"))
+      .map(
+        async (name) =>
+          JSON.parse(await readFile(join(pidDir, name), "utf8")) as {
+            pid: number;
+            toolName: string;
+          },
+      ),
+  );
+  return records.filter((record) => isAlive(record.pid));
 }
 
 async function waitForFixture(
@@ -92,21 +103,33 @@ async function createReloadHarness() {
     directTools: true,
   };
   const configPath = join(agentDir, "fitch-mcp-adapter", "mcp.json");
-  await writeFile(configPath, JSON.stringify({
-    mcpServers: { delayed: definition },
-    settings: { sampling: false, elicitation: false },
-  }));
-  await writeFile(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"), JSON.stringify({
-    version: 1,
-    servers: {
-      delayed: {
-        configHash: computeServerHash(definition),
-        tools: [{ name: "reload_identity", description: "Reload identity", inputSchema: { type: "object" } }],
-        resources: [],
-        cachedAt: Date.now(),
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      mcpServers: { delayed: definition },
+      settings: { sampling: false, elicitation: false },
+    }),
+  );
+  await writeFile(
+    join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"),
+    JSON.stringify({
+      version: 1,
+      servers: {
+        delayed: {
+          configHash: computeServerHash(definition),
+          tools: [
+            {
+              name: "reload_identity",
+              description: "Reload identity",
+              inputSchema: { type: "object" },
+            },
+          ],
+          resources: [],
+          cachedAt: Date.now(),
+        },
       },
-    },
-  }));
+    }),
+  );
   const settingsManager = SettingsManager.inMemory();
   const loader = new DefaultResourceLoader({
     cwd,
@@ -135,7 +158,11 @@ async function createReloadHarness() {
     modelRuntime,
   });
   session.extensionRunner.setFlagValue("mcp-config", configPath);
-  await session.bindExtensions({ mode: "tui", uiContext: ui, onError: error => errors.push(error) });
+  await session.bindExtensions({
+    mode: "tui",
+    uiContext: ui,
+    onError: (error) => errors.push(error),
+  });
   return {
     session,
     errors,
@@ -150,17 +177,24 @@ describe("Pi registered extension reload real path", () => {
     const oldPids: number[] = [];
     try {
       await harness.session.reload();
-      const firstActive = await waitForFixture(harness.pidDir, active => active.length === 1).catch(error => {
-        throw new Error(`${error instanceof Error ? error.message : String(error)}; errors=${JSON.stringify(harness.errors)}; statuses=${JSON.stringify(harness.statusCalls)}`);
+      const firstActive = await waitForFixture(
+        harness.pidDir,
+        (active) => active.length === 1,
+      ).catch((error) => {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; errors=${JSON.stringify(harness.errors)}; statuses=${JSON.stringify(harness.statusCalls)}`,
+        );
       });
       oldPids.push(firstActive[0]!.pid);
 
-
       await harness.session.reload();
-      const secondActive = await waitForFixture(harness.pidDir, active =>
-        active.length === 1 && active[0]!.pid !== oldPids[0],
-      ).catch(async error => {
-        throw new Error(`${error instanceof Error ? error.message : String(error)}; active=${JSON.stringify(await activeFixtures(harness.pidDir))}; errors=${JSON.stringify(harness.errors)}; statuses=${JSON.stringify(harness.statusCalls)}`);
+      const secondActive = await waitForFixture(
+        harness.pidDir,
+        (active) => active.length === 1 && active[0]!.pid !== oldPids[0],
+      ).catch(async (error) => {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; active=${JSON.stringify(await activeFixtures(harness.pidDir))}; errors=${JSON.stringify(harness.errors)}; statuses=${JSON.stringify(harness.statusCalls)}`,
+        );
       });
       oldPids.push(secondActive[0]!.pid);
       await waitFor(() => !isAlive(oldPids[0]!));
@@ -170,8 +204,9 @@ describe("Pi registered extension reload real path", () => {
       );
 
       await harness.session.reload();
-      const active = await waitForFixture(harness.pidDir, fixtures =>
-        fixtures.length === 1 && fixtures[0]!.pid !== oldPids[1],
+      const active = await waitForFixture(
+        harness.pidDir,
+        (fixtures) => fixtures.length === 1 && fixtures[0]!.pid !== oldPids[1],
       );
       oldPids.push(active[0]!.pid);
       await waitFor(() => !isAlive(oldPids[1]!));
@@ -179,16 +214,22 @@ describe("Pi registered extension reload real path", () => {
 
       expect(active).toHaveLength(1);
       expect(active[0]!.toolName).toBe("reload_identity");
-      const tools = harness.session.extensionRunner.getAllRegisteredTools().map(tool => tool.definition.name);
-      expect(tools.filter(name => name === "mcp")).toHaveLength(1);
-      expect(harness.errors.map(error => `${error.error}\n${error.stack ?? ""}`).join("\n"))
-        .not.toContain("This extension ctx is stale after session replacement or reload");
+      const tools = harness.session.extensionRunner
+        .getAllRegisteredTools()
+        .map((tool) => tool.definition.name);
+      expect(tools.filter((name) => name === "mcp")).toHaveLength(1);
+      expect(
+        harness.errors.map((error) => `${error.error}\n${error.stack ?? ""}`).join("\n"),
+      ).not.toContain("This extension ctx is stale after session replacement or reload");
       await harness.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
       await waitFor(() => !isAlive(oldPids[2]!));
-      await new Promise(resolve => setTimeout(resolve, 150));
+      await new Promise((resolve) => setTimeout(resolve, 150));
     } finally {
       try {
-        await harness.session.extensionRunner.emit({ type: "session_shutdown", reason: "test-finally" } as unknown as SessionShutdownEvent);
+        await harness.session.extensionRunner.emit({
+          type: "session_shutdown",
+          reason: "test-finally",
+        } as unknown as SessionShutdownEvent);
       } catch {
         // Preserve the original assertion while still attempting extension cleanup.
       }
@@ -227,23 +268,35 @@ describe("Pi registered extension reload real path", () => {
       directTools: true,
     };
     const configPath = join(root, "global-mcp.json");
-    await writeFile(configPath, JSON.stringify({
-      mcpServers: { demo: definition },
-      settings: { sampling: false, elicitation: false },
-    }));
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcpServers: { demo: definition },
+        settings: { sampling: false, elicitation: false },
+      }),
+    );
     const cachePath = join(agentDir, "fitch-mcp-adapter", "mcp-cache.json");
-    await writeFile(cachePath, JSON.stringify({
-      version: 1,
-      servers: {
-        demo: {
-          configHash: computeServerHash(definition),
-          tools: [{ name: "attacker", description: "ATTACKER CACHE TEXT", inputSchema: { type: "object" } }],
-          resources: [],
-          instructions: "ATTACKER CACHE TEXT",
-          cachedAt: Date.now(),
+    await writeFile(
+      cachePath,
+      JSON.stringify({
+        version: 1,
+        servers: {
+          demo: {
+            configHash: computeServerHash(definition),
+            tools: [
+              {
+                name: "attacker",
+                description: "ATTACKER CACHE TEXT",
+                inputSchema: { type: "object" },
+              },
+            ],
+            resources: [],
+            instructions: "ATTACKER CACHE TEXT",
+            cachedAt: Date.now(),
+          },
         },
-      },
-    }));
+      }),
+    );
 
     const settingsManager = SettingsManager.inMemory();
     settingsManager.setProjectTrusted(false);
@@ -267,23 +320,32 @@ describe("Pi registered extension reload real path", () => {
       modelRuntime,
     });
     session.extensionRunner.setFlagValue("mcp-config", configPath);
-    await session.bindExtensions({ mode: "print", onError: error => { throw new Error(error.error); } });
+    await session.bindExtensions({
+      mode: "print",
+      onError: (error) => {
+        throw new Error(error.error);
+      },
+    });
 
     let pid: number | undefined;
     try {
       await session.reload();
-      const active = await waitForFixture(pidDir, fixtures => fixtures.length === 1);
+      const active = await waitForFixture(pidDir, (fixtures) => fixtures.length === 1);
       pid = active[0]!.pid;
       const registered = session.extensionRunner.getAllRegisteredTools();
-      expect(registered.map(tool => tool.definition.name)).not.toContain("demo_attacker");
-      expect(registered.find(tool => tool.definition.name === "mcp")?.definition.description)
-        .not.toContain("ATTACKER CACHE TEXT");
+      expect(registered.map((tool) => tool.definition.name)).not.toContain("demo_attacker");
+      expect(
+        registered.find((tool) => tool.definition.name === "mcp")?.definition.description,
+      ).not.toContain("ATTACKER CACHE TEXT");
       expect(await readFile(cachePath, "utf8")).toContain("ATTACKER CACHE TEXT");
       await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
       await waitFor(() => pid === undefined || !isAlive(pid));
     } finally {
       try {
-        await session.extensionRunner.emit({ type: "session_shutdown", reason: "test-finally" } as unknown as SessionShutdownEvent);
+        await session.extensionRunner.emit({
+          type: "session_shutdown",
+          reason: "test-finally",
+        } as unknown as SessionShutdownEvent);
       } catch {
         // Preserve the original assertion while still attempting extension cleanup.
       }

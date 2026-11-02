@@ -1,8 +1,6 @@
 import { Server } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import {
-  UrlElicitationRequiredError,
-} from "@modelcontextprotocol/client";
+import { UrlElicitationRequiredError } from "@modelcontextprotocol/client";
 
 const server = new Server(
   { name: "elicitation-integration-server", version: "1.0.0" },
@@ -10,12 +8,14 @@ const server = new Server(
 );
 
 function urlRequiredError() {
-  return new UrlElicitationRequiredError([{
-    mode: "url",
-    message: "Connect your account",
-    elicitationId: "required-1",
-    url: "https://example.com/connect",
-  }]);
+  return new UrlElicitationRequiredError([
+    {
+      mode: "url",
+      message: "Connect your account",
+      elicitationId: "required-1",
+      url: "https://example.com/connect",
+    },
+  ]);
 }
 
 server.setRequestHandler("tools/list", async () => ({
@@ -24,7 +24,11 @@ server.setRequestHandler("tools/list", async () => ({
     { name: "form", inputSchema: { type: "object", properties: {} } },
     { name: "url", inputSchema: { type: "object", properties: {} } },
     { name: "url-required", inputSchema: { type: "object", properties: {} } },
-    { name: "app", inputSchema: { type: "object", properties: {} }, _meta: { ui: { resourceUri: "ui://url-required" } } },
+    {
+      name: "app",
+      inputSchema: { type: "object", properties: {} },
+      _meta: { ui: { resourceUri: "ui://url-required" } },
+    },
   ],
 }));
 
@@ -35,17 +39,19 @@ server.setRequestHandler("resources/list", async () => ({
   ],
 }));
 
-server.setRequestHandler("resources/read", async request => {
+server.setRequestHandler("resources/read", async (request) => {
   if (request.params.uri === "test://url-required" || request.params.uri === "ui://url-required") {
     throw urlRequiredError();
   }
   return { contents: [] };
 });
 
-server.setRequestHandler("tools/call", async request => {
+server.setRequestHandler("tools/call", async (request) => {
   if (request.params.name === "capabilities") {
     return {
-      content: [{ type: "text", text: JSON.stringify(server.getClientCapabilities()?.elicitation ?? null) }],
+      content: [
+        { type: "text", text: JSON.stringify(server.getClientCapabilities()?.elicitation ?? null) },
+      ],
     };
   }
 

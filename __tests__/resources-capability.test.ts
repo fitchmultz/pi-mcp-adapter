@@ -6,11 +6,13 @@ const managers: McpServerManager[] = [];
 
 describe("resources capability negotiation", () => {
   afterEach(async () => {
-    await Promise.all(managers.splice(0).map(m => m.closeAll()));
+    await Promise.all(managers.splice(0).map((m) => m.closeAll()));
   });
 
   it("skips resources/list for servers that omit the capability", async () => {
-    const listResources = vi.fn(async () => ({ resources: [{ name: "unreachable", uri: "test://unreachable" }] }));
+    const listResources = vi.fn(async () => ({
+      resources: [{ name: "unreachable", uri: "test://unreachable" }],
+    }));
     const client = { getServerCapabilities: () => ({ tools: {} }), listResources };
     const manager = new McpServerManager({} as any);
 
@@ -37,7 +39,7 @@ describe("resources capability negotiation", () => {
     await manager.connect("tools-only", { command: process.execPath, args: [fixture] });
 
     const connection = manager.getConnection("tools-only")!;
-    expect(connection.tools.map(t => t.name)).toEqual(["noop"]);
+    expect(connection.tools.map((t) => t.name)).toEqual(["noop"]);
     expect(connection.resources).toEqual([]);
   });
 });

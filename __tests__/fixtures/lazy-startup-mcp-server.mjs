@@ -14,16 +14,20 @@ const server = new Server(
   { capabilities: { tools: {}, resources: {}, prompts: {} } },
 );
 server.setRequestHandler("tools/list", async () => ({
-  tools: [{
-    name: "echo", description: "Echo a local argument",
-    inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
-  }],
+  tools: [
+    {
+      name: "echo",
+      description: "Echo a local argument",
+      inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    },
+  ],
 }));
 server.setRequestHandler("resources/list", async () => ({ resources: [] }));
 server.setRequestHandler("prompts/list", async () => ({ prompts: [] }));
-server.setRequestHandler("tools/call", async request => {
+server.setRequestHandler("tools/call", async (request) => {
   const text = request.params.arguments?.text;
-  if (request.params.name !== "echo" || typeof text !== "string") throw new Error("Invalid echo call");
+  if (request.params.name !== "echo" || typeof text !== "string")
+    throw new Error("Invalid echo call");
   await appendFile(eventsPath, `${JSON.stringify({ event: "call", server: name, text })}\n`);
   return { content: [{ type: "text", text: `${name}: ${text}` }] };
 });

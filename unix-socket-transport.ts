@@ -32,7 +32,7 @@ export class UnixSocketClientTransport implements Transport {
         connected = true;
         resolve();
       });
-      socket.on("data", chunk => {
+      socket.on("data", (chunk) => {
         try {
           this.readBuffer.append(chunk);
           while (true) {
@@ -46,7 +46,7 @@ export class UnixSocketClientTransport implements Transport {
           void this.close();
         }
       });
-      socket.on("error", error => {
+      socket.on("error", (error) => {
         if (!connected) reject(error);
         this.onerror?.(error);
       });
@@ -64,7 +64,7 @@ export class UnixSocketClientTransport implements Transport {
     this.readBuffer.clear();
     if (!socket || socket.destroyed) return;
 
-    await new Promise<void>(resolve => {
+    await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => socket.destroy(), 2_000);
       timeout.unref();
       socket.once("close", () => {
@@ -80,7 +80,7 @@ export class UnixSocketClientTransport implements Transport {
     if (!socket || socket.destroyed) throw new Error("Unix socket is not connected");
 
     await new Promise<void>((resolve, reject) => {
-      socket.write(serializeMessage(message), error => {
+      socket.write(serializeMessage(message), (error) => {
         if (error) reject(error);
         else resolve();
       });

@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
 
 function gate() {
   let resolve!: () => void;
-  const promise = new Promise<void>(res => { resolve = res; });
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
   return { promise, resolve };
 }
 
@@ -127,7 +129,9 @@ describe("MCP manager owner races", () => {
     const manager = new McpServerManager("/tmp/session");
     const connecting = manager.connect("demo", { command: "node", args: ["server.js"] });
     await waitForConnectSetup();
-    mocks.transports[0].close = vi.fn(async () => { throw new Error("transport close failed"); });
+    mocks.transports[0].close = vi.fn(async () => {
+      throw new Error("transport close failed");
+    });
 
     const closeAll = manager.closeAll();
     connectGate.resolve();
@@ -144,7 +148,9 @@ describe("MCP manager owner races", () => {
     const manager = new McpServerManager("/tmp/session");
     const connecting = manager.connect("demo", { command: "node", args: ["server.js"] });
     await waitForConnectSetup();
-    mocks.clients[0].close = vi.fn(async () => { throw new Error("client close failed"); });
+    mocks.clients[0].close = vi.fn(async () => {
+      throw new Error("client close failed");
+    });
     connectGate.resolve();
 
     await expect(connecting).rejects.toThrow("MCP connection setup failed");
@@ -157,8 +163,9 @@ describe("MCP manager owner races", () => {
 
     await manager.closeAll();
 
-    await expect(manager.connect("demo", { command: "node", args: ["server.js"] }))
-      .rejects.toThrow("MCP server manager is closed");
+    await expect(manager.connect("demo", { command: "node", args: ["server.js"] })).rejects.toThrow(
+      "MCP server manager is closed",
+    );
     expect(mocks.clients).toHaveLength(0);
     expect(mocks.transports).toHaveLength(0);
   });
@@ -183,36 +190,44 @@ describe("MCP manager owner races", () => {
     expect(mocks.transports).toHaveLength(0);
   });
 
-  it.each(["abort", "clear-config"] as const)("cancels URL elicitation when %s happens during the handler import", async change => {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
-    const { McpServerManager } = await import("../server-manager.ts");
-    const controller = new AbortController();
-    const ui = {
-      select: vi.fn(async () => "Decline"),
-      input: vi.fn(),
-      notify: vi.fn(),
-    };
-    const manager = new McpServerManager();
-    manager.setRuntimeSignal(controller.signal);
-    manager.setElicitationConfig({ allowUrl: true, ui: ui as any });
-    try {
-      const pending = manager.handleUrlElicitationRequired("demo", new UrlElicitationRequiredError([{
-        mode: "url",
-        message: "Connect your account",
-        elicitationId: "cancel-during-import",
-        url: "https://example.test/connect",
-      }]));
-      // Even a cached dynamic import yields. Change ownership before it resumes,
-      // rather than relying on a timer or a guessed number of microtasks.
-      if (change === "abort") controller.abort(new Error("owner stopped during import"));
-      else manager.setElicitationConfig(undefined);
+  it.each(["abort", "clear-config"] as const)(
+    "cancels URL elicitation when %s happens during the handler import",
+    async (change) => {
+      const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
+      const { McpServerManager } = await import("../server-manager.ts");
+      const controller = new AbortController();
+      const ui = {
+        select: vi.fn(async () => "Decline"),
+        input: vi.fn(),
+        notify: vi.fn(),
+      };
+      const manager = new McpServerManager();
+      manager.setRuntimeSignal(controller.signal);
+      manager.setElicitationConfig({ allowUrl: true, ui: ui as any });
+      try {
+        const pending = manager.handleUrlElicitationRequired(
+          "demo",
+          new UrlElicitationRequiredError([
+            {
+              mode: "url",
+              message: "Connect your account",
+              elicitationId: "cancel-during-import",
+              url: "https://example.test/connect",
+            },
+          ]),
+        );
+        // Even a cached dynamic import yields. Change ownership before it resumes,
+        // rather than relying on a timer or a guessed number of microtasks.
+        if (change === "abort") controller.abort(new Error("owner stopped during import"));
+        else manager.setElicitationConfig(undefined);
 
-      await expect(pending).resolves.toBe("cancel");
-      expect(ui.select).not.toHaveBeenCalled();
-      expect(ui.input).not.toHaveBeenCalled();
-      expect(ui.notify).not.toHaveBeenCalled();
-    } finally {
-      await manager.closeAll();
-    }
-  });
+        await expect(pending).resolves.toBe("cancel");
+        expect(ui.select).not.toHaveBeenCalled();
+        expect(ui.input).not.toHaveBeenCalled();
+        expect(ui.notify).not.toHaveBeenCalled();
+      } finally {
+        await manager.closeAll();
+      }
+    },
+  );
 });

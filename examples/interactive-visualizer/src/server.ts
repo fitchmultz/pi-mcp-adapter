@@ -29,7 +29,15 @@ server.registerResource(
   "app-html",
   new ResourceTemplate("ui://interactive-visualizer/app.html", { list: undefined }),
   { mimeType: "text/html;profile=mcp-app" },
-  () => ({ contents: [{ uri: "ui://interactive-visualizer/app.html", mimeType: "text/html;profile=mcp-app", text: appHtml }] }),
+  () => ({
+    contents: [
+      {
+        uri: "ui://interactive-visualizer/app.html",
+        mimeType: "text/html;profile=mcp-app",
+        text: appHtml,
+      },
+    ],
+  }),
 );
 
 async function sendStreamFrame(
@@ -159,14 +167,17 @@ function buildAdventureFrame(tiers: number): string {
     if (!node.parentId) continue;
     const parent = byId.get(node.parentId);
     if (!parent) continue;
-    const x1 = nodeX(parent), y1 = nodeY(parent) + nodeH;
-    const x2 = nodeX(node), y2 = nodeY(node);
+    const x1 = nodeX(parent),
+      y1 = nodeY(parent) + nodeH;
+    const x2 = nodeX(node),
+      y2 = nodeY(node);
     const my = (y1 + y2) / 2;
     svg += `<path d="M${x1} ${y1} C${x1} ${my} ${x2} ${my} ${x2} ${y2}" fill="none" stroke="#3a4a5c" stroke-width="1.5"/>`;
   }
 
   for (const node of allNodes) {
-    const x = nodeX(node), y = nodeY(node);
+    const x = nodeX(node),
+      y = nodeY(node);
     const fill = node.choice ? "#1a3a4a" : "#1a2030";
     const stroke = node.choice ? "#4a9ead" : "#2a3a4a";
     const textFill = node.choice ? "#7ad4e4" : "#8a9aaa";
@@ -181,7 +192,8 @@ function buildAdventureFrame(tiers: number): string {
 server.registerTool(
   "stream_adventure",
   {
-    description: "Stream an interactive choose-your-own-adventure decision tree. The story builds tier by tier. Click any choice node to send your decision back to the agent.",
+    description:
+      "Stream an interactive choose-your-own-adventure decision tree. The story builds tier by tier. Click any choice node to send your decision back to the agent.",
     inputSchema: z.object({}),
     _meta: { ui: { resourceUri: "ui://interactive-visualizer/app.html" } },
   },
@@ -208,7 +220,12 @@ server.registerTool(
     }
 
     return {
-      content: [{ type: "text", text: "Adventure tree complete. Click a choice to tell the agent your decision." }],
+      content: [
+        {
+          type: "text",
+          text: "Adventure tree complete. Click a choice to tell the agent your decision.",
+        },
+      ],
       structuredContent: { svg: buildAdventureFrame(STORY.length) },
     };
   },

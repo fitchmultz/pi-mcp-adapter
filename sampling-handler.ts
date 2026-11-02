@@ -25,10 +25,12 @@ export type ServerSamplingConfig = Omit<SamplingHandlerOptions, "serverName">;
 export function registerSamplingHandler(
   client: Client,
   options: SamplingHandlerOptions,
-  own: (run: () => Promise<CreateMessageResult>) => Promise<CreateMessageResult> = run => run(),
+  own: (run: () => Promise<CreateMessageResult>) => Promise<CreateMessageResult> = (run) => run(),
 ): void {
   // Own the handler's real promise, not the SDK caller's cancellable response facade.
-  client.setRequestHandler("sampling/createMessage", request => own(() => handleSamplingRequest(options, request)));
+  client.setRequestHandler("sampling/createMessage", (request) =>
+    own(() => handleSamplingRequest(options, request)),
+  );
 }
 
 export async function handleSamplingRequest(
@@ -61,13 +63,22 @@ export async function handleSamplingRequest(
   await confirmSampling(
     options,
     "Approve MCP sampling request",
-    formatRequestApproval(options.serverName, `${model.provider}/${model.id}`, params.systemPrompt, messages),
+    formatRequestApproval(
+      options.serverName,
+      `${model.provider}/${model.id}`,
+      params.systemPrompt,
+      messages,
+    ),
   );
   throwIfAborted(signal);
 
-  const supportsTemperature = model.compat && "supportsTemperature" in model.compat
-    ? model.compat.supportsTemperature !== false
-    : !(model.id === "gpt-6-astra" && (model.api === "openai-responses" || model.api === "openai-codex-responses"));
+  const supportsTemperature =
+    model.compat && "supportsTemperature" in model.compat
+      ? model.compat.supportsTemperature !== false
+      : !(
+          model.id === "gpt-6-astra" &&
+          (model.api === "openai-responses" || model.api === "openai-codex-responses")
+        );
   const result = await options.modelRegistry.complete(
     model,
     {
@@ -76,8 +87,12 @@ export async function handleSamplingRequest(
     },
     {
       maxTokens: params.maxTokens,
-      ...(supportsTemperature && params.temperature !== undefined ? { temperature: params.temperature } : {}),
-      ...(params.metadata !== undefined ? { metadata: params.metadata as Record<string, unknown> } : {}),
+      ...(supportsTemperature && params.temperature !== undefined
+        ? { temperature: params.temperature }
+        : {}),
+      ...(params.metadata !== undefined
+        ? { metadata: params.metadata as Record<string, unknown> }
+        : {}),
       ...(signal ? { signal } : {}),
     },
   );
@@ -98,7 +113,9 @@ function formatRequestApproval(
   systemPrompt: string | undefined,
   messages: Message[],
 ): string {
-  const lines = [`${serverName} wants to sample ${messages.length} message${messages.length === 1 ? "" : "s"} with ${modelName}.`];
+  const lines = [
+    `${serverName} wants to sample ${messages.length} message${messages.length === 1 ? "" : "s"} with ${modelName}.`,
+  ];
   if (systemPrompt) {
     lines.push(`System: ${truncateAtWord(systemPrompt, 400)}`);
   }
@@ -109,19 +126,22 @@ function formatRequestApproval(
 }
 
 function formatResponseApproval(serverName: string, response: CreateMessageResult): string {
-  const text = response.content.type === "text" ? response.content.text : `[${response.content.type} content]`;
+  const text =
+    response.content.type === "text" ? response.content.text : `[${response.content.type} content]`;
   return `${serverName} will receive this response from ${response.model}:\n\n${truncateAtWord(text, 1000)}`;
 }
 
 function messageText(message: Message): string {
   if (typeof message.content === "string") return message.content;
-  return message.content.map((block) => {
-    if (block.type === "text") return block.text;
-    if (block.type === "image") return `[image: ${block.mimeType}]`;
-    if (block.type === "thinking") return "[thinking]";
-    if (block.type === "toolCall") return `[tool call: ${block.name}]`;
-    return "[content]";
-  }).join("\n");
+  return message.content
+    .map((block) => {
+      if (block.type === "text") return block.text;
+      if (block.type === "image") return `[image: ${block.mimeType}]`;
+      if (block.type === "thinking") return "[thinking]";
+      if (block.type === "toolCall") return `[tool call: ${block.name}]`;
+      return "[content]";
+    })
+    .join("\n");
 }
 
 async function resolveSamplingModel(
@@ -169,15 +189,25 @@ async function resolveSamplingModel(
 }
 
 function addSamplingCandidate(candidates: Model<Api>[], model: Model<Api>): void {
-  if (!candidates.some((candidate) => candidate.provider === model.provider && candidate.id === model.id)) {
+  if (
+    !candidates.some(
+      (candidate) => candidate.provider === model.provider && candidate.id === model.id,
+    )
+  ) {
     candidates.push(model);
   }
 }
 
-async function confirmSampling(options: SamplingHandlerOptions, title: string, message: string): Promise<void> {
+async function confirmSampling(
+  options: SamplingHandlerOptions,
+  title: string,
+  message: string,
+): Promise<void> {
   if (options.autoApprove) return;
   if (!options.ui) {
-    throw new Error("MCP sampling requires interactive approval. Set settings.samplingAutoApprove to true to allow it without UI.");
+    throw new Error(
+      "MCP sampling requires interactive approval. Set settings.samplingAutoApprove to true to allow it without UI.",
+    );
   }
   const approved = await options.ui.confirm(title, message);
   if (!approved) {

@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   managers: [] as any[],
 }));
 
-vi.mock("../config.ts", async importOriginal => ({
+vi.mock("../config.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../config.ts")>()),
   loadMcpConfig: mocks.loadMcpConfig,
 }));
@@ -27,7 +27,9 @@ vi.mock("../server-manager.ts", () => ({
   }),
 }));
 
-function context(overrides: { hasUI?: boolean; mode?: ExtensionContext["mode"] } = {}): ExtensionContext {
+function context(
+  overrides: { hasUI?: boolean; mode?: ExtensionContext["mode"] } = {},
+): ExtensionContext {
   return {
     cwd: "/tmp/project",
     hasUI: true,
@@ -58,7 +60,9 @@ describe("initializeMcp elicitation config", () => {
     const api = extensionApi();
     const { initializeMcp } = await import("../init.ts");
     const { createMcpRuntimeOwner } = await import("../runtime-owner.ts");
-    const state = await initializeMcp(api, context({ hasUI: false }), createMcpRuntimeOwner(), { config });
+    const state = await initializeMcp(api, context({ hasUI: false }), createMcpRuntimeOwner(), {
+      config,
+    });
 
     expect(api.getFlag).not.toHaveBeenCalled();
     expect(mocks.loadMcpConfig).not.toHaveBeenCalled();

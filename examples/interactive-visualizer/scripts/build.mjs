@@ -14,9 +14,7 @@ function escapeInlineCss(css) {
 
 function escapeInlineJs(js) {
   // Escape both closing and opening script tags to prevent HTML parser issues
-  return js
-    .replace(/<\/script/gi, "<\\/script")
-    .replace(/<script/gi, "\\x3cscript");
+  return js.replace(/<\/script/gi, "<\\/script").replace(/<script/gi, "\\x3cscript");
 }
 
 async function bundleUi() {

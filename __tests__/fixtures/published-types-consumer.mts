@@ -42,13 +42,18 @@ const defaultExtension: typeof extension = adapter;
 const channel: "fitch-mcp-adapter/status/v1" = MCP_STATUS_EVENT;
 const snapshot: McpStatusSnapshot = {
   version: MCP_STATUS_SNAPSHOT_VERSION,
-  servers: [], totalTools: 0, totalResources: 0, connectedCount: 0, disabledCount: 0,
+  servers: [],
+  totalTools: 0,
+  totalResources: 0,
+  connectedCount: 0,
+  disabledCount: 0,
 };
 const prompt: string | undefined = extractUiPromptText({ prompt: "hello" });
-const patch: ServerStreamResultPatchNotification | undefined = serverStreamResultPatchNotificationSchema.safeParse({
-  method: SERVER_STREAM_RESULT_PATCH_METHOD,
-  params: { streamToken: "token", result: {} },
-}).data;
+const patch: ServerStreamResultPatchNotification | undefined =
+  serverStreamResultPatchNotificationSchema.safeParse({
+    method: SERVER_STREAM_RESULT_PATCH_METHOD,
+    params: { streamToken: "token", result: {} },
+  }).data;
 
 // @ts-expect-error Factory options must retain their declared value types.
 createMcpAdapter({ defaultScriptTimeoutMs: "unlimited" });

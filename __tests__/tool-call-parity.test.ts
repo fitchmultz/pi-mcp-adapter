@@ -5,8 +5,8 @@ import { executeCall } from "../proxy-modes.ts";
 import { SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
 
 const mocks = vi.hoisted(() => ({ authenticate: vi.fn() }));
-vi.mock("../mcp-auth-flow.ts", async importOriginal => ({
-  ...await importOriginal<typeof import("../mcp-auth-flow.ts")>(),
+vi.mock("../mcp-auth-flow.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../mcp-auth-flow.ts")>()),
   authenticate: mocks.authenticate,
 }));
 
@@ -49,56 +49,99 @@ function connectedState() {
 }
 
 describe("proxy and direct tool call parity", () => {
-  it.each(["direct", "proxy"])("bounds post-expiry auth and prevents late reconnect through %s", async entry => {
-    const state = connectedState();
-    state.config.settings.autoAuth = true;
-    state.config.mcpServers.demo = { url: "http://localhost/mcp", auth: "oauth", oauth: { grantType: "client_credentials" } };
-    const callTool = vi.fn().mockRejectedValue(new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "expired", { status: 404 }));
-    const stale = { status: "connected", transport: { sessionId: "expired" }, client: { callTool }, tools: [{ name: "echo" }], resources: [], prompts: [] };
-    let current = stale;
-    state.manager.getConnection = () => current;
-    state.manager.getRequestOptions = () => ({ timeout: 30 });
-    state.manager.reconnect = vi.fn(async () => { current = { ...stale, status: "needs-auth" }; return current; });
-    state.manager.connect = vi.fn();
-    let releaseAuth!: () => void;
-    let authSignal: AbortSignal | undefined;
-    mocks.authenticate.mockImplementation((_name, _url, _definition, options) => {
-      authSignal = options.signal;
-      return new Promise<void>(resolve => { releaseAuth = resolve; });
-    });
-    const output = entry === "direct"
-      ? await createDirectToolExecutor(() => state, () => null, {
-          serverName: "demo", originalName: "echo", prefixedName: "demo_echo", description: "Echo",
-        })("call-id", {}, undefined, undefined, {} as any)
-      : await executeCall(state, "demo_echo", {});
-    expect(output.details.error).toBe("call_failed");
-    expect(authSignal?.aborted).toBe(true);
-    releaseAuth();
-    await new Promise(resolve => setImmediate(resolve));
-    expect(state.manager.connect).not.toHaveBeenCalled();
-    expect(state.manager.reconnect).toHaveBeenCalledOnce();
-    expect(callTool).toHaveBeenCalledOnce();
-  });
+  it.each(["direct", "proxy"])(
+    "bounds post-expiry auth and prevents late reconnect through %s",
+    async (entry) => {
+      const state = connectedState();
+      state.config.settings.autoAuth = true;
+      state.config.mcpServers.demo = {
+        url: "http://localhost/mcp",
+        auth: "oauth",
+        oauth: { grantType: "client_credentials" },
+      };
+      const callTool = vi
+        .fn()
+        .mockRejectedValue(
+          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "expired", { status: 404 }),
+        );
+      const stale = {
+        status: "connected",
+        transport: { sessionId: "expired" },
+        client: { callTool },
+        tools: [{ name: "echo" }],
+        resources: [],
+        prompts: [],
+      };
+      let current = stale;
+      state.manager.getConnection = () => current;
+      state.manager.getRequestOptions = () => ({ timeout: 30 });
+      state.manager.reconnect = vi.fn(async () => {
+        current = { ...stale, status: "needs-auth" };
+        return current;
+      });
+      state.manager.connect = vi.fn();
+      let releaseAuth!: () => void;
+      let authSignal: AbortSignal | undefined;
+      mocks.authenticate.mockImplementation((_name, _url, _definition, options) => {
+        authSignal = options.signal;
+        return new Promise<void>((resolve) => {
+          releaseAuth = resolve;
+        });
+      });
+      const output =
+        entry === "direct"
+          ? await createDirectToolExecutor(
+              () => state,
+              () => null,
+              {
+                serverName: "demo",
+                originalName: "echo",
+                prefixedName: "demo_echo",
+                description: "Echo",
+              },
+            )("call-id", {}, undefined, undefined, {} as any)
+          : await executeCall(state, "demo_echo", {});
+      expect(output.details.error).toBe("call_failed");
+      expect(authSignal?.aborted).toBe(true);
+      releaseAuth();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(state.manager.connect).not.toHaveBeenCalled();
+      expect(state.manager.reconnect).toHaveBeenCalledOnce();
+      expect(callTool).toHaveBeenCalledOnce();
+    },
+  );
 
   it("returns the same details from both paths, including details.mcpResult", async () => {
     const proxy = await executeCall(connectedState(), "demo_echo", { x: 1 });
 
-    const direct = await createDirectToolExecutor(() => connectedState(), () => null, {
-      serverName: "demo",
-      originalName: "echo",
-      prefixedName: "demo_echo",
-      description: "Echo tool",
-    })("call-1", { x: 1 }, undefined, undefined, {} as any);
+    const direct = await createDirectToolExecutor(
+      () => connectedState(),
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "echo",
+        prefixedName: "demo_echo",
+        description: "Echo tool",
+      },
+    )("call-1", { x: 1 }, undefined, undefined, {} as any);
 
     // The raw MCP result reaches the caller on both paths. mcp_script reads this.
     expect(direct.details.mcpResult).toEqual(MCP_RESULT);
     expect(proxy.details.mcpResult).toEqual(MCP_RESULT);
 
     // `mode` is the only field the proxy adds; everything else must match.
-    expect(proxy.details).toEqual({ mode: "call", ...direct.details, resultRef: expect.any(String) });
+    expect(proxy.details).toEqual({
+      mode: "call",
+      ...direct.details,
+      resultRef: expect.any(String),
+    });
     expect(direct.content.slice(0, 2)).toEqual(proxy.content.slice(0, 2));
-    expect((direct.content.at(-1) as TextContent | undefined)?.text).toContain(direct.details.resultRef);
-    expect((proxy.content.at(-1) as TextContent | undefined)?.text).toContain(proxy.details.resultRef);
+    expect((direct.content.at(-1) as TextContent | undefined)?.text).toContain(
+      direct.details.resultRef,
+    );
+    expect((proxy.content.at(-1) as TextContent | undefined)?.text).toContain(
+      proxy.details.resultRef,
+    );
   });
 
   it("does not format the input schema on the success path", async () => {
@@ -107,7 +150,9 @@ describe("proxy and direct tool call parity", () => {
     const state = connectedState();
     const [tool] = state.toolMetadata.get("demo");
     Object.defineProperty(tool, "inputSchema", {
-      get() { throw new Error("input schema formatted on the success path"); },
+      get() {
+        throw new Error("input schema formatted on the success path");
+      },
     });
 
     const result = await executeCall(state, "demo_echo", { x: 1 });

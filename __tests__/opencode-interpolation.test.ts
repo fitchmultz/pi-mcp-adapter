@@ -32,14 +32,16 @@ describe("OpenCode environment interpolation", () => {
       Authorization: "Bearer interpolated",
     });
     expect(resolveConfigPath("{env:MCP_TEST_VALUE}/server")).toBe("interpolated/server");
-    expect(extractOAuthConfig({
-      url: "https://example.test/mcp",
-      oauth: {
-        clientId: "{env:MCP_TEST_VALUE}-client",
-        clientSecret: "{env:MCP_TEST_VALUE}-secret",
-        scope: "scope-{env:MCP_TEST_VALUE}",
-      },
-    })).toEqual({
+    expect(
+      extractOAuthConfig({
+        url: "https://example.test/mcp",
+        oauth: {
+          clientId: "{env:MCP_TEST_VALUE}-client",
+          clientSecret: "{env:MCP_TEST_VALUE}-secret",
+          scope: "scope-{env:MCP_TEST_VALUE}",
+        },
+      }),
+    ).toEqual({
       clientId: "interpolated-client",
       clientSecret: "interpolated-secret",
       scope: "scope-interpolated",
@@ -52,25 +54,35 @@ describe("OpenCode environment interpolation", () => {
     const expression = `!node -e "process.stdout.write('  resolved  ')"`;
 
     expect(resolveCommandSecret(expression, "test secret")).toBe("resolved");
-    expect(resolveCommandSecret("!!literal-{env:MCP_TEST_VALUE}", "test secret")).toBe("!literal-interpolated");
+    expect(resolveCommandSecret("!!literal-{env:MCP_TEST_VALUE}", "test secret")).toBe(
+      "!literal-interpolated",
+    );
     expect(interpolateEnvRecord({ Secret: expression })).toEqual({ Secret: expression });
-    expect(resolveBearerToken({ bearerTokenEnv: "MCP_TEST_BEARER_TOKEN_ENV" })).toBe("!literal-token");
+    expect(resolveBearerToken({ bearerTokenEnv: "MCP_TEST_BEARER_TOKEN_ENV" })).toBe(
+      "!literal-token",
+    );
 
-    expect(() => resolveCommandSecret(
-      `!node -e "process.stderr.write('private-stderr'); process.exit(7)"`,
-      "test secret",
-    )).toThrow(/^Failed to resolve test secret: command exited with code 7$/);
-    expect(() => resolveCommandSecret(`!node -e ""`, "test secret"))
-      .toThrow(/^Failed to resolve test secret: command returned empty output$/);
-    expect(() => resolveCommandSecret("!COMMAND_SECRET_SENTINEL\0", "test secret"))
-      .toThrow(/^Failed to resolve test secret: command failed to start$/);
+    expect(() =>
+      resolveCommandSecret(
+        `!node -e "process.stderr.write('private-stderr'); process.exit(7)"`,
+        "test secret",
+      ),
+    ).toThrow(/^Failed to resolve test secret: command exited with code 7$/);
+    expect(() => resolveCommandSecret(`!node -e ""`, "test secret")).toThrow(
+      /^Failed to resolve test secret: command returned empty output$/,
+    );
+    expect(() => resolveCommandSecret("!COMMAND_SECRET_SENTINEL\0", "test secret")).toThrow(
+      /^Failed to resolve test secret: command failed to start$/,
+    );
   });
 
   it("rejects non-string OAuth fields before interpolation", () => {
-    expect(() => extractOAuthConfig({
-      url: "https://example.test/mcp",
-      oauth: { clientId: 42 } as any,
-    })).toThrow("OAuth clientId must be a string");
+    expect(() =>
+      extractOAuthConfig({
+        url: "https://example.test/mcp",
+        oauth: { clientId: 42 } as any,
+      }),
+    ).toThrow("OAuth clientId must be a string");
   });
 
   it("fails closed before URL resolution when a brace variable is missing", () => {

@@ -3,7 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearAllCredentials, getAuthEntry, getAuthForUrl, migrateLegacyAuthEntry, saveAuthEntry } from "../mcp-auth.ts";
+import {
+  clearAllCredentials,
+  getAuthEntry,
+  getAuthForUrl,
+  migrateLegacyAuthEntry,
+  saveAuthEntry,
+} from "../mcp-auth.ts";
 
 const server = "same-configured-server";
 const account = `sha256-${createHash("sha256").update(server).digest("hex")}`;
@@ -11,8 +17,16 @@ const legacyKey = `pi-mcp-adapter.oauth\0${account}`;
 const ownedKey = `fitch-mcp-adapter.oauth\0${account}`;
 const legacyEntry = {
   serverUrl: "https://example.com/mcp",
-  tokens: { accessToken: "legacy-token", refreshToken: "refresh-token", issuer: "https://issuer.example" },
-  clientInfo: { clientId: "existing-client", redirectUris: ["http://localhost:19876/callback"], issuer: "https://issuer.example" },
+  tokens: {
+    accessToken: "legacy-token",
+    refreshToken: "refresh-token",
+    issuer: "https://issuer.example",
+  },
+  clientInfo: {
+    clientId: "existing-client",
+    redirectUris: ["http://localhost:19876/callback"],
+    issuer: "https://issuer.example",
+  },
 };
 
 // Exercise the real storage and Linux recovery path against a fake OS credential
@@ -27,7 +41,9 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
     const keyctl = join(root, "keyctl");
     const helper = join(root, "keyring.cjs");
     writeFileSync(keyctl, '#!/bin/sh\nshift 2\nexec "$@"\n', { mode: 0o755 });
-    writeFileSync(helper, `
+    writeFileSync(
+      helper,
+      `
 const { readFileSync, writeFileSync } = require("node:fs");
 const request = JSON.parse(readFileSync(0, "utf8"));
 const path = process.env.FITCH_TEST_KEYRING;
@@ -46,7 +62,8 @@ if (request.operation === "read") {
   writeFileSync(path, JSON.stringify(entries));
   process.stdout.write(JSON.stringify({ ok: true }));
 }
-`);
+`,
+    );
     writeFileSync(storePath, JSON.stringify({ [legacyKey]: JSON.stringify(legacyEntry) }));
     vi.stubEnv("PI_CODING_AGENT_DIR", root);
     vi.stubEnv("FITCH_TEST_KEYRING", storePath);
@@ -91,7 +108,11 @@ if (request.operation === "read") {
       [ownedKey]: JSON.stringify(legacyEntry),
     });
 
-    saveAuthEntry(server, { tokens: { accessToken: "renewed-fitch-token" } }, legacyEntry.serverUrl);
+    saveAuthEntry(
+      server,
+      { tokens: { accessToken: "renewed-fitch-token" } },
+      legacyEntry.serverUrl,
+    );
     expect(migrateLegacyAuthEntry(server)).toBe("existing");
     expect(getAuthEntry(server)?.tokens?.accessToken).toBe("renewed-fitch-token");
     clearAllCredentials(server);
@@ -104,7 +125,11 @@ if (request.operation === "read") {
     const payload = JSON.stringify(entry);
     const digest = createHash("sha256").update(payload).digest("hex").slice(0, 16);
     const source = {
-      [legacyKey]: JSON.stringify({ __piMcpAdapterOAuthChunked: 1, chunkCount: 2, chunkDigest: digest }),
+      [legacyKey]: JSON.stringify({
+        __piMcpAdapterOAuthChunked: 1,
+        chunkCount: 2,
+        chunkDigest: digest,
+      }),
       [`${legacyKey}.chunk.${digest}.0`]: payload.slice(0, 1800),
       [`${legacyKey}.chunk.${digest}.1`]: payload.slice(1800),
     };

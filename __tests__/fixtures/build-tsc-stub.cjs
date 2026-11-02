@@ -1,6 +1,6 @@
 if (process.env.TSC_STUB_FAIL === "1") {
-	console.error("stub-tsc: induced failure");
-	process.exit(1);
+  console.error("stub-tsc: induced failure");
+  process.exit(1);
 }
 
 const fs = require("node:fs");

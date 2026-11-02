@@ -4,7 +4,9 @@ import { toolErrorOverride } from "../error-signal.ts";
 describe("toolErrorOverride", () => {
   it("flags tool-execution failures (tool_error, call_failed)", () => {
     expect(toolErrorOverride({ error: "tool_error", server: "x" })).toEqual({ isError: true });
-    expect(toolErrorOverride({ mode: "call", error: "call_failed", message: "boom" })).toEqual({ isError: true });
+    expect(toolErrorOverride({ mode: "call", error: "call_failed", message: "boom" })).toEqual({
+      isError: true,
+    });
   });
 
   it("leaves the adapter's other details.error codes as successes (auth, connection, validation, routing)", () => {

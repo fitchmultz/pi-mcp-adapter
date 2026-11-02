@@ -60,14 +60,19 @@ describe("direct tools auto auth", () => {
       },
       manager: {
         close: vi.fn(),
-        reconnect: vi.fn(async () => { connection = connected; return connected; }),
+        reconnect: vi.fn(async () => {
+          connection = connected;
+          return connected;
+        }),
         getConnection: vi.fn(() => connection),
         getRequestOptions: vi.fn(() => ({ timeout: 4321 })),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
+      ]),
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],
@@ -95,7 +100,13 @@ describe("direct tools auto auth", () => {
     );
 
     const controller = new AbortController();
-    const result = await executor("id", { q: "hello" }, controller.signal, () => {}, undefined as any);
+    const result = await executor(
+      "id",
+      { q: "hello" },
+      controller.signal,
+      () => {},
+      undefined as any,
+    );
 
     expect(mocks.authenticate).toHaveBeenCalledWith(
       "demo",
@@ -104,7 +115,12 @@ describe("direct tools auto auth", () => {
       { signal: controller.signal },
     );
     expect(state.manager.close).not.toHaveBeenCalled();
-    expect(state.manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, needsAuth, controller.signal);
+    expect(state.manager.reconnect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      needsAuth,
+      controller.signal,
+    );
     expect(state.manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
     expect(connected.client.callTool).toHaveBeenCalledWith(
       {
@@ -137,18 +153,24 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
     mocks.lazyConnect.mockResolvedValue(true);
 
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search",
+      },
+    );
 
     const inFlight = executor("id", {}, controller.signal, undefined, undefined as any);
     await vi.waitFor(() => expect(connection.client.callTool).toHaveBeenCalledTimes(1));
@@ -182,21 +204,29 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
+      ]),
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],
     } as any;
     mocks.lazyConnect.mockResolvedValue(false);
 
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search",
+      },
+    );
 
-    await expect(executor("id", {}, controller.signal, undefined, undefined as any)).rejects.toBe(reason);
+    await expect(executor("id", {}, controller.signal, undefined, undefined as any)).rejects.toBe(
+      reason,
+    );
     expect(mocks.authenticate).toHaveBeenCalledWith(
       "demo",
       "https://api.example.com/mcp",
@@ -222,7 +252,9 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
+      ]),
       failureTracker: new Map(),
       ui: undefined,
       completedUiSessions: [],
@@ -251,12 +283,14 @@ describe("direct tools auto auth", () => {
   it("runs URL elicitations returned by a URL-required tool error", async () => {
     const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const error = new UrlElicitationRequiredError([{
-      mode: "url",
-      message: "Connect your account",
-      elicitationId: "connect-1",
-      url: "https://example.com/connect",
-    }]);
+    const error = new UrlElicitationRequiredError([
+      {
+        mode: "url",
+        message: "Connect your account",
+        elicitationId: "connect-1",
+        url: "https://example.com/connect",
+      },
+    ]);
     const connection = {
       status: "connected",
       client: { callTool: vi.fn().mockRejectedValue(error) },
@@ -270,18 +304,24 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
     mocks.lazyConnect.mockResolvedValue(true);
 
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo",
-      originalName: "search",
-      prefixedName: "demo_search",
-      description: "Search",
-    });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "search",
+        prefixedName: "demo_search",
+        description: "Search",
+      },
+    );
     const result = await executor("id", {}, undefined, undefined, undefined as any);
 
     expect(state.manager.handleUrlElicitationRequired).toHaveBeenCalledWith("demo", error);
@@ -309,7 +349,9 @@ describe("direct tools auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]]]),
+      toolMetadata: new Map([
+        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
+      ]),
       failureTracker: new Map(),
       ui: undefined,
       completedUiSessions: [],

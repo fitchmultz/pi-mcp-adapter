@@ -13,7 +13,9 @@ function createState(ui: unknown, settings: Partial<McpSettings> = {}) {
 
 describe("formatMcpStatus", () => {
   it("returns undefined when the MCP footer is off", () => {
-    expect(formatMcpStatus({ settings: { mcpFooterStatus: "off" } }, "connecting...")).toBeUndefined();
+    expect(
+      formatMcpStatus({ settings: { mcpFooterStatus: "off" } }, "connecting..."),
+    ).toBeUndefined();
   });
 });
 
@@ -49,10 +51,13 @@ describe("updateStatusBar", () => {
 
   it("keeps themed status text when a theme is available", () => {
     const setStatus = vi.fn();
-    const state = createState({
-      setStatus,
-      theme: { fg: vi.fn((_name: string, text: string) => `styled:${text}`) },
-    }, { mcpFooterStatus: "full" });
+    const state = createState(
+      {
+        setStatus,
+        theme: { fg: vi.fn((_name: string, text: string) => `styled:${text}`) },
+      },
+      { mcpFooterStatus: "full" },
+    );
 
     updateStatusBar(state);
 
@@ -68,18 +73,22 @@ describe("updateStatusBar", () => {
 
   it("removes the icon while preserving themed connected and disabled suffixes", () => {
     const setStatus = vi.fn();
-    const state = createState({
-      setStatus,
-      theme: { fg: vi.fn((_name: string, text: string) => `styled:${text}`) },
-    }, { showStatusIcon: false, mcpFooterStatus: "full" });
+    const state = createState(
+      {
+        setStatus,
+        theme: { fg: vi.fn((_name: string, text: string) => `styled:${text}`) },
+      },
+      { showStatusIcon: false, mcpFooterStatus: "full" },
+    );
     state.config.mcpServers.disabled = { command: "disabled", disabled: true };
-    state.manager.getAllConnections.mockReturnValue(new Map([[
-      "demo", { status: "connected" },
-    ]]));
+    state.manager.getAllConnections.mockReturnValue(new Map([["demo", { status: "connected" }]]));
 
     updateStatusBar(state);
 
-    expect(setStatus).toHaveBeenCalledWith("mcp", "styled:MCP: 1 server enabled (1 connected) (1 disabled)");
+    expect(setStatus).toHaveBeenCalledWith(
+      "mcp",
+      "styled:MCP: 1 server enabled (1 connected) (1 disabled)",
+    );
   });
 
   it("shows a compact connected/enabled footer by default", () => {

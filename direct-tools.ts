@@ -1,4 +1,8 @@
-import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  AgentToolUpdateCallback,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import type { DirectToolSpec, McpAdapterOptions, McpConfig } from "./types.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
@@ -7,7 +11,11 @@ export { getMissingConfiguredDirectToolServers } from "./metadata-cache.ts";
 import { isServerDisabled } from "./types.ts";
 import { nativeMcpResult } from "./tool-registrar.ts";
 
-export function directToolSelection(config: McpConfig, serverName: string, envOverride?: string[]): true | string[] | false {
+export function directToolSelection(
+  config: McpConfig,
+  serverName: string,
+  envOverride?: string[],
+): true | string[] | false {
   if (envOverride) {
     const selection = parseDirectToolSelectors(envOverride);
     if (selection.servers.has(serverName)) return true;
@@ -17,7 +25,10 @@ export function directToolSelection(config: McpConfig, serverName: string, envOv
 }
 
 export function buildProxyDescription(config: McpConfig): string {
-  const servers = Object.entries(config.mcpServers).filter(([, definition]) => !isServerDisabled(definition)).map(([name]) => name).sort();
+  const servers = Object.entries(config.mcpServers)
+    .filter(([, definition]) => !isServerDisabled(definition))
+    .map(([name]) => name)
+    .sort();
   return [
     'MCP gateway. Use mcp_search to discover typed tools; enable mcp_script with mcp_search({ enable: ["script"] }) for multi-call composition. Native Pi tools are called directly.',
     `Configured servers: ${servers.join(", ") || "none"}. Catalog discovery is lazy.`,
@@ -51,23 +62,38 @@ export function createDirectToolExecutor(
       } catch (error) {
         throwIfAborted(signal);
         const message = error instanceof Error ? error.message : String(error);
-        return nativeMcpResult({
-          content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
-          details: { error: "init_failed", message },
-        }, !!spec.outputSchema);
+        return nativeMcpResult(
+          {
+            content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
+            details: { error: "init_failed", message },
+          },
+          !!spec.outputSchema,
+        );
       }
     }
     if (!state) {
-      return nativeMcpResult({
-        content: [{ type: "text" as const, text: "MCP not initialized" }],
-        details: { error: "not_initialized" },
-      }, !!spec.outputSchema);
+      return nativeMcpResult(
+        {
+          content: [{ type: "text" as const, text: "MCP not initialized" }],
+          details: { error: "not_initialized" },
+        },
+        !!spec.outputSchema,
+      );
     }
 
     const { executeCall } = await import("./proxy-modes.ts");
     const result = await executeCall(
-      state, spec.originalName, params, spec.serverName, undefined, signal, { toolCallId },
-      beforeExecute ? (callSignal, operation) => beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation) : undefined,
+      state,
+      spec.originalName,
+      params,
+      spec.serverName,
+      undefined,
+      signal,
+      { toolCallId },
+      beforeExecute
+        ? (callSignal, operation) =>
+            beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)
+        : undefined,
       { exactOriginalName: true, ...(spec.resourceUri ? { resourceUri: spec.resourceUri } : {}) },
     );
     const { mode: _mode, ...details } = result.details;

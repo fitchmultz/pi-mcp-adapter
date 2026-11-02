@@ -59,6 +59,4 @@ describe("McpServerManager instructions", () => {
 
     expect(connection.instructions).toBeUndefined();
   });
-
-
 });

@@ -1,5 +1,17 @@
 // npx-resolver.ts - Resolve npx/npm exec binaries to avoid npm parent processes
-import { existsSync, readFileSync, realpathSync, readdirSync, statSync, writeFileSync, renameSync, mkdirSync, openSync, readSync, closeSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  realpathSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+  renameSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  closeSync,
+} from "node:fs";
 import { join, dirname, extname, resolve, sep } from "node:path";
 import { getAdapterPath } from "./agent-dir.ts";
 import { throwIfAborted } from "./abort.ts";
@@ -7,7 +19,8 @@ import crossSpawn from "cross-spawn";
 
 const CACHE_VERSION = 1;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const EXACT_PACKAGE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
+const EXACT_PACKAGE_VERSION_RE =
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
 interface NpxCacheEntry {
   resolvedBin: string;
@@ -44,11 +57,8 @@ export async function resolveNpxBinary(
   signal?: AbortSignal,
 ): Promise<NpxResolution | null> {
   throwIfAborted(signal);
-  const parsed = command === "npx"
-    ? parseNpxArgs(args)
-    : command === "npm"
-      ? parseNpmExecArgs(args)
-      : null;
+  const parsed =
+    command === "npx" ? parseNpxArgs(args) : command === "npm" ? parseNpmExecArgs(args) : null;
 
   if (!parsed) return null;
 
@@ -59,10 +69,10 @@ export async function resolveNpxBinary(
   const cached = cache?.entries?.[cacheKey];
 
   if (
-    cached
-    && Date.now() - cached.resolvedAt < CACHE_TTL_MS
-    && existsSync(cached.resolvedBin)
-    && (!packageSpec.exactVersion || cached.packageVersion === packageSpec.exactVersion)
+    cached &&
+    Date.now() - cached.resolvedAt < CACHE_TTL_MS &&
+    existsSync(cached.resolvedBin) &&
+    (!packageSpec.exactVersion || cached.packageVersion === packageSpec.exactVersion)
   ) {
     return { binPath: cached.resolvedBin, extraArgs: parsed.extraArgs, isJs: cached.isJs };
   }
@@ -78,7 +88,11 @@ export async function resolveNpxBinary(
   const resolvedAfterInstall = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
   if (resolvedAfterInstall) {
     saveCacheEntry(cacheKey, resolvedAfterInstall);
-    return { binPath: resolvedAfterInstall.resolvedBin, extraArgs: parsed.extraArgs, isJs: resolvedAfterInstall.isJs };
+    return {
+      binPath: resolvedAfterInstall.resolvedBin,
+      extraArgs: parsed.extraArgs,
+      isJs: resolvedAfterInstall.isJs,
+    };
   }
 
   return null;
@@ -256,7 +270,7 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
       const proc = crossSpawn(
         "npm",
         ["exec", "--yes", "--package", packageSpec, "--", "node", "-e", "1"],
-        { stdio: "ignore" }
+        { stdio: "ignore" },
       );
       const timer = setTimeout(() => {
         proc.kill();
@@ -331,7 +345,10 @@ function parsePackageSpec(spec: string): ParsedPackageSpec | null {
   if (!packageName) return null;
   const normalizedVersion = requestedVersion?.replace(/^=/, "").replace(/^v/i, "");
   // Let npm resolve ranges and tags rather than choosing an arbitrary cached version.
-  if (requestedVersion !== undefined && (!normalizedVersion || !EXACT_PACKAGE_VERSION_RE.test(normalizedVersion))) {
+  if (
+    requestedVersion !== undefined &&
+    (!normalizedVersion || !EXACT_PACKAGE_VERSION_RE.test(normalizedVersion))
+  ) {
     return null;
   }
   return {
@@ -348,17 +365,19 @@ function defaultBinName(packageName: string): string {
   return packageName;
 }
 
-function findCachedPackageDir(cacheDir: string, packageName: string, exactVersion?: string): string | null {
+function findCachedPackageDir(
+  cacheDir: string,
+  packageName: string,
+  exactVersion?: string,
+): string | null {
   const npxDir = join(cacheDir, "_npx");
   if (!existsSync(npxDir)) return null;
 
-  const packagePathParts = packageName.startsWith("@")
-    ? packageName.split("/")
-    : [packageName];
+  const packagePathParts = packageName.startsWith("@") ? packageName.split("/") : [packageName];
 
   const candidates = readdirSync(npxDir, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => {
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
       const full = join(npxDir, entry.name);
       const mtime = safeStatMtime(full);
       return { name: entry.name, mtime };

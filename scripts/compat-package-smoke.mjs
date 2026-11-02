@@ -1,7 +1,16 @@
 // Consumer-shaped compiled package, with only runtime dependencies and host-supplied peers.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -12,10 +21,30 @@ import { verifyNativeTools } from "./compat-native-tools.mjs";
 const root = mkdtempSync(join(tmpdir(), "mcp-package-"));
 const agentDir = join(root, "agent");
 mkdirSync(agentDir);
-const env = { ...process.env, HOME: root, USERPROFILE: root, PI_PACKAGE_DIR: hostRoot, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory" };
+const env = {
+  ...process.env,
+  HOME: root,
+  USERPROFILE: root,
+  PI_PACKAGE_DIR: hostRoot,
+  PI_CODING_AGENT_DIR: agentDir,
+  PI_OFFLINE: "1",
+  PI_TELEMETRY: "0",
+  PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory",
+};
 function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, env, encoding: "utf8", timeout: 120_000, maxBuffer: 10 * 1024 * 1024, shell: process.platform === "win32" && command === "npm.cmd" });
-  assert.equal(result.status, 0, `${command} ${args.join(" ")}\n${result.error ?? ""}\n${result.stderr}\n${result.stdout}`);
+  const result = spawnSync(command, args, {
+    cwd,
+    env,
+    encoding: "utf8",
+    timeout: 120_000,
+    maxBuffer: 10 * 1024 * 1024,
+    shell: process.platform === "win32" && command === "npm.cmd",
+  });
+  assert.equal(
+    result.status,
+    0,
+    `${command} ${args.join(" ")}\n${result.error ?? ""}\n${result.stderr}\n${result.stdout}`,
+  );
   return result.stdout;
 }
 let session;
@@ -24,67 +53,169 @@ try {
   let packageRoot = process.argv[2] ? resolve(process.argv[2]) : undefined;
   if (!packageRoot) {
     // npm 12 keys pack --json output by package name; npm 11 returned an array.
-    const [pack] = Object.values(JSON.parse(run(npm, ["pack", "--json", "--pack-destination", root], process.cwd())));
+    const [pack] = Object.values(
+      JSON.parse(run(npm, ["pack", "--json", "--pack-destination", root], process.cwd())),
+    );
     const consumer = join(root, "consumer");
     mkdirSync(consumer);
-    writeFileSync(join(consumer, "package.json"), JSON.stringify({
-      private: true,
-      dependencies: { "@fitchmultz/pi-mcp-adapter": `file:${join(root, pack.filename)}` },
-    }));
+    writeFileSync(
+      join(consumer, "package.json"),
+      JSON.stringify({
+        private: true,
+        dependencies: { "@fitchmultz/pi-mcp-adapter": `file:${join(root, pack.filename)}` },
+      }),
+    );
     run(npm, ["install", "--omit=dev", "--no-audit", "--no-fund"], consumer);
     packageRoot = join(consumer, "node_modules", "@fitchmultz", "pi-mcp-adapter");
     // Ordinary ESM consumers supply peers from the exact host graph, not private runtime copies.
-    for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
+    for (const name of [
+      "@earendil-works/pi-ai",
+      "@earendil-works/pi-coding-agent",
+      "@earendil-works/pi-tui",
+      "typebox",
+    ]) {
       const target = join(consumer, "node_modules", name);
       mkdirSync(dirname(target), { recursive: true });
-      if (!existsSync(target)) symlinkSync(dirname(findPackageJSON(name, pathToFileURL(hostIndex).href)), target, "junction");
+      if (!existsSync(target))
+        symlinkSync(
+          dirname(findPackageJSON(name, pathToFileURL(hostIndex).href)),
+          target,
+          "junction",
+        );
     }
   }
-  for (const file of ["dist/index.js", "dist/index.d.ts", "dist/mcp-script-worker.mjs", "dist/mcp-keyring-helper.cjs", "dist/app-bridge.bundle.js"]) assert.ok(readFileSync(join(packageRoot, file)).length, file);
+  for (const file of [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/mcp-script-worker.mjs",
+    "dist/mcp-keyring-helper.cjs",
+    "dist/app-bridge.bundle.js",
+  ])
+    assert.ok(readFileSync(join(packageRoot, file)).length, file);
   assert.ok(readFileSync(join(packageRoot, "skills/mcp-scripting/SKILL.md")).length);
   Object.assign(process.env, env);
   const sdk = await import(pathToFileURL(hostIndex).href);
   const settingsManager = sdk.SettingsManager.inMemory();
-  const resourceLoader = new sdk.DefaultResourceLoader({ cwd: root, agentDir, settingsManager, noExtensions: true, noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true, additionalExtensionPaths: [packageRoot] });
+  const resourceLoader = new sdk.DefaultResourceLoader({
+    cwd: root,
+    agentDir,
+    settingsManager,
+    noExtensions: true,
+    noSkills: true,
+    noContextFiles: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    additionalExtensionPaths: [packageRoot],
+  });
   await resourceLoader.reload();
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
   assert.equal(resourceLoader.getExtensions().extensions.length, 1);
-  assert.equal(resourceLoader.getExtensions().extensions[0].resolvedPath, join(packageRoot, "dist/index.js"));
-  const modelRuntime = await sdk.ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, modelsStorePath: join(agentDir, "models-store.json"), allowModelNetwork: false });
-  ({ session } = await sdk.createAgentSession({ cwd: root, agentDir, settingsManager, resourceLoader, modelRuntime, sessionManager: sdk.SessionManager.create(root, join(root, "sessions")), noTools: "builtin" }));
+  assert.equal(
+    resourceLoader.getExtensions().extensions[0].resolvedPath,
+    join(packageRoot, "dist/index.js"),
+  );
+  const modelRuntime = await sdk.ModelRuntime.create({
+    authPath: join(agentDir, "auth.json"),
+    modelsPath: null,
+    modelsStorePath: join(agentDir, "models-store.json"),
+    allowModelNetwork: false,
+  });
+  ({ session } = await sdk.createAgentSession({
+    cwd: root,
+    agentDir,
+    settingsManager,
+    resourceLoader,
+    modelRuntime,
+    sessionManager: sdk.SessionManager.create(root, join(root, "sessions")),
+    noTools: "builtin",
+  }));
   const errors = [];
-  await session.bindExtensions({ mode: "print", onError: error => errors.push(error) });
-  for (const name of ["mcp", "mcp_script"]) assert.ok(session.getAllTools().some(tool => tool.name === name), name);
-  assert.deepEqual(session.getActiveToolNames(), ["mcp_search"], "registered gateways must not be active by default");
-  const search = session.agent.state.tools.find(tool => tool.name === "mcp_search");
+  await session.bindExtensions({ mode: "print", onError: (error) => errors.push(error) });
+  for (const name of ["mcp", "mcp_script"])
+    assert.ok(
+      session.getAllTools().some((tool) => tool.name === name),
+      name,
+    );
+  assert.deepEqual(
+    session.getActiveToolNames(),
+    ["mcp_search"],
+    "registered gateways must not be active by default",
+  );
+  const search = session.agent.state.tools.find((tool) => tool.name === "mcp_search");
   const loaded = await search.execute("load-gateways", { enable: ["gateway", "script"] });
   assert.deepEqual(loaded.details.loaded, [{ name: "mcp" }, { name: "mcp_script" }]);
   assert.deepEqual(session.getActiveToolNames().sort(), ["mcp", "mcp_script", "mcp_search"]);
   await session.reload();
-  assert.deepEqual(session.getActiveToolNames().sort(), ["mcp", "mcp_script", "mcp_search"], "loaded gateways survive reload");
+  assert.deepEqual(
+    session.getActiveToolNames().sort(),
+    ["mcp", "mcp_script", "mcp_search"],
+    "loaded gateways survive reload",
+  );
   assert.deepEqual(errors, []);
-  assert.equal(resourceLoader.getExtensions().extensions[0]?.resolvedPath, join(packageRoot, "dist/index.js"));
-  for (const name of ["mcp", "mcp_script"]) assert.ok(session.getAllTools().some(tool => tool.name === name), `after reload: ${name}`);
+  assert.equal(
+    resourceLoader.getExtensions().extensions[0]?.resolvedPath,
+    join(packageRoot, "dist/index.js"),
+  );
+  for (const name of ["mcp", "mcp_script"])
+    assert.ok(
+      session.getAllTools().some((tool) => tool.name === name),
+      `after reload: ${name}`,
+    );
   const marker = join(root, "cli.json");
   const observer = join(root, "observer.ts");
-  writeFileSync(observer, `import { writeFileSync } from "node:fs";
+  writeFileSync(
+    observer,
+    `import { writeFileSync } from "node:fs";
 import { VERSION, getPackageDir } from "@earendil-works/pi-coding-agent";
-export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ version: VERSION, packageDir: getPackageDir(), tools: pi.getAllTools().map(t => t.name), activeTools: pi.getActiveTools(), commands: pi.getCommands().map(c => c.name) })); ctx.shutdown(); }); }`);
-  const child = spawnSync(process.execPath, [hostCli, "--mode", "rpc", "--no-session", "-ne", "-ns", "-np", "-nc", "--no-themes", "--approve", "-e", packageRoot, "-e", observer], { cwd: root, env, input: "", encoding: "utf8", timeout: 30_000 });
+export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ version: VERSION, packageDir: getPackageDir(), tools: pi.getAllTools().map(t => t.name), activeTools: pi.getActiveTools(), commands: pi.getCommands().map(c => c.name) })); ctx.shutdown(); }); }`,
+  );
+  const child = spawnSync(
+    process.execPath,
+    [
+      hostCli,
+      "--mode",
+      "rpc",
+      "--no-session",
+      "-ne",
+      "-ns",
+      "-np",
+      "-nc",
+      "--no-themes",
+      "--approve",
+      "-e",
+      packageRoot,
+      "-e",
+      observer,
+    ],
+    { cwd: root, env, input: "", encoding: "utf8", timeout: 30_000 },
+  );
   assert.equal(child.status, 0, `${child.error ?? ""}\n${child.stderr}`);
   assert.doesNotMatch(child.stderr, /Failed to load extension|Extension error/);
   const observed = JSON.parse(readFileSync(marker, "utf8"));
   assert.equal(observed.version, sdk.VERSION);
-  assert.equal(realpathSync(observed.packageDir), hostRoot, "CLI loader must use the selected host graph");
+  assert.equal(
+    realpathSync(observed.packageDir),
+    hostRoot,
+    "CLI loader must use the selected host graph",
+  );
   for (const name of ["mcp", "mcp_script"]) {
     assert.ok(observed.tools.includes(name), `CLI tool ${name}`);
     assert.ok(!observed.activeTools.includes(name), `CLI tool ${name} must start inactive`);
   }
   assert.ok(observed.activeTools.includes("mcp_search"));
-  for (const name of ["mcp", "mcp-auth"]) assert.ok(observed.commands.includes(name), `CLI command ${name}`);
+  for (const name of ["mcp", "mcp-auth"])
+    assert.ok(observed.commands.includes(name), `CLI command ${name}`);
   await verifyNativeTools(packageRoot);
-  console.log(`[compat-package] ${process.argv[2] ? "supplied consumer" : "npm install"}, native SDK reload, and bundled CLI passed`);
+  console.log(
+    `[compat-package] ${process.argv[2] ? "supplied consumer" : "npm install"}, native SDK reload, and bundled CLI passed`,
+  );
 } finally {
-  try { if (session) { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); } }
-  finally { rmSync(root, { recursive: true, force: true }); }
+  try {
+    if (session) {
+      await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      session.dispose();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }

@@ -55,7 +55,14 @@ function createEmptyDiscovery(): McpDiscoverySummary {
 }
 
 function createSetupCallbacks(): SetupPanelCallbacks {
-  const preview = { path: "/tmp/x", existed: false, changed: true, beforeText: "", afterText: "", diffText: "" };
+  const preview = {
+    path: "/tmp/x",
+    existed: false,
+    changed: true,
+    beforeText: "",
+    afterText: "",
+    diffText: "",
+  };
   return {
     previewImports: () => preview,
     previewStarterProject: () => preview,
@@ -222,14 +229,19 @@ describe("mcp-setup-panel custom keybindings", () => {
     const panel = createMcpSetupPanel(
       createEmptyDiscovery(),
       callbacks,
-      { mode: "setup", onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false } },
+      {
+        mode: "setup",
+        onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
+      },
       { requestRender: () => {} },
       () => {},
     );
 
     for (let i = 0; i < 3; i++) panel.handleInput(DOWN);
     const output = panel.render(90).join("\n");
-    expect(output).toContain("Cannot preview write: Cannot read MCP config at /tmp/project/.mcp.json");
+    expect(output).toContain(
+      "Cannot preview write: Cannot read MCP config at /tmp/project/.mcp.json",
+    );
     panel.dispose();
   });
 

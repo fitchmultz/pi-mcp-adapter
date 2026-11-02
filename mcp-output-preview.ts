@@ -2,7 +2,11 @@ import { randomBytes } from "node:crypto";
 import { closeSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { GuardedMcpOutput, McpOutputGuardDetails, McpOutputGuardOptions } from "./mcp-output-guard.ts";
+import type {
+  GuardedMcpOutput,
+  McpOutputGuardDetails,
+  McpOutputGuardOptions,
+} from "./mcp-output-guard.ts";
 import type { ContentBlock } from "./types.ts";
 
 // mcp-code.ts is imported on first use. A Pi process that loaded an older mcp-output-guard.ts
@@ -16,25 +20,43 @@ const SPOOL_WRITE_CHUNK = 1024 * 1024;
  * one private output artifact and only the preview head and image blocks are kept. Writes are
  * synchronous, so a producer may be released as soon as push() returns.
  */
-export function createMcpOutputSpool(options: Pick<McpOutputGuardOptions, "enabled" | "outputDirectory"> & Required<Pick<McpOutputGuardOptions, "maxBytes" | "maxLines">>) {
+export function createMcpOutputSpool(
+  options: Pick<McpOutputGuardOptions, "enabled" | "outputDirectory"> &
+    Required<Pick<McpOutputGuardOptions, "maxBytes" | "maxLines">>,
+) {
   const { maxBytes, maxLines } = options;
   let retained: ContentBlock[] | undefined = [];
   const images: ContentBlock[] = [];
-  let pushed = 0, textBlocks = 0, bytes = 0, newlines = 0, written = 0;
-  let head = "", headBytes = 0;
+  let pushed = 0,
+    textBlocks = 0,
+    bytes = 0,
+    newlines = 0,
+    written = 0;
+  let head = "",
+    headBytes = 0;
   let artifact: { path?: string; error?: string } = {};
   let fd: number | undefined;
-  let pending: string[] = [], pendingLength = 0;
-  const lines = () => bytes === 0 ? 0 : newlines + 1;
+  let pending: string[] = [],
+    pendingLength = 0;
+  const lines = () => (bytes === 0 ? 0 : newlines + 1);
 
   const fail = (error: unknown) => {
     artifact = { error: error instanceof Error ? error.message : String(error) };
-    if (fd !== undefined) try { closeSync(fd); } catch { /* the write error is the reported failure */ }
+    if (fd !== undefined)
+      try {
+        closeSync(fd);
+      } catch {
+        /* the write error is the reported failure */
+      }
     fd = undefined;
   };
   const flush = () => {
     if (fd !== undefined && pending.length > 0) {
-      try { writeFileSync(fd, pending.length === 1 ? pending[0]! : pending.join("")); } catch (error) { fail(error); }
+      try {
+        writeFileSync(fd, pending.length === 1 ? pending[0]! : pending.join(""));
+      } catch (error) {
+        fail(error);
+      }
     }
     pending = [];
     pendingLength = 0;
@@ -60,12 +82,19 @@ export function createMcpOutputSpool(options: Pick<McpOutputGuardOptions, "enabl
   };
   const spill = (blocks: ContentBlock[]) => {
     try {
-      const parent = options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory);
-      if (options.outputDirectory !== undefined) mkdirSync(parent, { recursive: true, mode: 0o700 });
-      const path = join(mkdtempSync(join(parent, "pi-mcp-output-")), `output-${randomBytes(4).toString("hex")}.txt`);
+      const parent =
+        options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory);
+      if (options.outputDirectory !== undefined)
+        mkdirSync(parent, { recursive: true, mode: 0o700 });
+      const path = join(
+        mkdtempSync(join(parent, "pi-mcp-output-")),
+        `output-${randomBytes(4).toString("hex")}.txt`,
+      );
       fd = openSync(path, "wx", 0o600);
       artifact = { path };
-    } catch (error) { fail(error); }
+    } catch (error) {
+      fail(error);
+    }
     for (const block of blocks) {
       if (block.type === "image") images.push(block);
       else appendText(block.text);
@@ -73,7 +102,9 @@ export function createMcpOutputSpool(options: Pick<McpOutputGuardOptions, "enabl
   };
 
   return {
-    get empty() { return pushed === 0; },
+    get empty() {
+      return pushed === 0;
+    },
     push(block: ContentBlock): void {
       pushed++;
       if (block.type === "image") {
@@ -97,7 +128,11 @@ export function createMcpOutputSpool(options: Pick<McpOutputGuardOptions, "enabl
       if (retained) return { content: retained };
       flush();
       if (fd !== undefined) {
-        try { closeSync(fd); } catch (error) { artifact = { error: error instanceof Error ? error.message : String(error) }; }
+        try {
+          closeSync(fd);
+        } catch (error) {
+          artifact = { error: error instanceof Error ? error.message : String(error) };
+        }
         fd = undefined;
       }
       return truncatedOutput(head, { bytes, lines: lines() }, artifact, images, maxBytes, maxLines);
@@ -143,14 +178,19 @@ function countNewlines(text: string): number {
 export function sanitizeContent(content: ContentBlock[]): ContentBlock[] {
   return content.map((block) => {
     if (block.type !== "image") return block;
-    const mimeType = typeof block.mimeType === "string" && block.mimeType.trim()
-      ? block.mimeType.trim().slice(0, 100)
-      : "image/png";
+    const mimeType =
+      typeof block.mimeType === "string" && block.mimeType.trim()
+        ? block.mimeType.trim().slice(0, 100)
+        : "image/png";
     return { ...block, mimeType };
   });
 }
 
-function reserveBudget(maxBytes: number, maxLines: number, notice: string): { maxBytes: number; maxLines: number } {
+function reserveBudget(
+  maxBytes: number,
+  maxLines: number,
+  notice: string,
+): { maxBytes: number; maxLines: number } {
   const noticeStats = textStats(`\n\n${notice}`);
   return {
     maxBytes: Math.max(0, maxBytes - noticeStats.bytes),
@@ -158,7 +198,11 @@ function reserveBudget(maxBytes: number, maxLines: number, notice: string): { ma
   };
 }
 
-function truncateHead(text: string, maxBytes: number, maxLines: number): { content: string; bytes: number; lines: number } {
+function truncateHead(
+  text: string,
+  maxBytes: number,
+  maxLines: number,
+): { content: string; bytes: number; lines: number } {
   const lines = text.split("\n");
   const output: string[] = [];
   let bytes = 0;

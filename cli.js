@@ -31,11 +31,10 @@ const IMPORT_PATHS = {
     path.join(HOME, ".claude.json"),
     path.join(HOME, ".claude", "claude_desktop_config.json"),
   ],
-  "claude-desktop": [path.join(HOME, "Library", "Application Support", "Claude", "claude_desktop_config.json")],
-  codex: [
-    path.join(HOME, ".codex", "config.toml"),
-    path.join(HOME, ".codex", "config.json"),
+  "claude-desktop": [
+    path.join(HOME, "Library", "Application Support", "Claude", "claude_desktop_config.json"),
   ],
+  codex: [path.join(HOME, ".codex", "config.toml"), path.join(HOME, ".codex", "config.json")],
   opencode: [
     path.join(HOME, ".config", "opencode", "opencode.json"),
     path.resolve(process.cwd(), "opencode.json"),
@@ -56,7 +55,9 @@ function printHelp(log = console.log) {
 }
 
 function readJsonFile(filePath) {
-  return JSON.parse(stripJsonComments(fs.readFileSync(filePath, "utf-8"), { trailingCommas: true }));
+  return JSON.parse(
+    stripJsonComments(fs.readFileSync(filePath, "utf-8"), { trailingCommas: true }),
+  );
 }
 
 function loadPiConfig() {
@@ -67,13 +68,17 @@ function loadPiConfig() {
   const raw = readJsonFile(PI_CONFIG_PATH);
   const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
   if (!mcpServers || typeof mcpServers !== "object" || Array.isArray(mcpServers)) {
-    throw new Error(`Invalid MCP config at ${PI_CONFIG_PATH}: expected \"mcpServers\" to be an object`);
+    throw new Error(
+      `Invalid MCP config at ${PI_CONFIG_PATH}: expected \"mcpServers\" to be an object`,
+    );
   }
 
   const normalized = { ...raw };
   delete normalized["mcp-servers"];
 
-  const imports = Array.isArray(raw.imports) ? raw.imports.filter((value) => typeof value === "string") : undefined;
+  const imports = Array.isArray(raw.imports)
+    ? raw.imports.filter((value) => typeof value === "string")
+    : undefined;
   return {
     ...normalized,
     mcpServers,
@@ -139,16 +144,21 @@ async function runInit(argv, log = console.log) {
 
   printDiscovery(log, foundImports);
 
-  const discoverySettingChanged = discoverHostConfigs && existingConfig.settings?.hostConfigDiscovery !== "on";
+  const discoverySettingChanged =
+    discoverHostConfigs && existingConfig.settings?.hostConfigDiscovery !== "on";
   if (importsToAdd.length === 0 && !discoverySettingChanged) {
     log("\nNo Pi config changes needed.");
-    log("Standard MCP configs are discovered automatically, and host-specific imports are already configured or unavailable.");
+    log(
+      "Standard MCP configs are discovered automatically, and host-specific imports are already configured or unavailable.",
+    );
     return 0;
   }
 
   const nextConfig = {
     ...existingConfig,
-    ...(discoverySettingChanged ? { settings: { ...existingConfig.settings, hostConfigDiscovery: "on" } } : {}),
+    ...(discoverySettingChanged
+      ? { settings: { ...existingConfig.settings, hostConfigDiscovery: "on" } }
+      : {}),
     ...(importsToAdd.length > 0 ? { imports: [...existingImports, ...importsToAdd] } : {}),
     mcpServers: existingConfig.mcpServers ?? {},
   };
@@ -157,7 +167,9 @@ async function runInit(argv, log = console.log) {
     log(`\nDetected host configs to import into Pi: ${importsToAdd.join(", ")}`);
   }
   if (discoverySettingChanged) {
-    log("Opting in to host-specific fallback discovery (standard and Pi-owned configs still take precedence).");
+    log(
+      "Opting in to host-specific fallback discovery (standard and Pi-owned configs still take precedence).",
+    );
   }
 
   if (dryRun) {
@@ -167,9 +179,13 @@ async function runInit(argv, log = console.log) {
 
   writePiConfig(nextConfig);
   log(`Updated ${PI_CONFIG_PATH}`);
-  log("Pi will now keep reading standard MCP configs automatically, while these imports cover host-specific config formats.");
+  log(
+    "Pi will now keep reading standard MCP configs automatically, while these imports cover host-specific config formats.",
+  );
   if (discoverySettingChanged) {
-    log("Host config discovery is explicit and does not write to or execute commands from external host files.");
+    log(
+      "Host config discovery is explicit and does not write to or execute commands from external host files.",
+    );
   }
   return 0;
 }
@@ -184,7 +200,9 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
 
   if (command === "install") {
     error("The custom downloader has been retired.");
-    error("Use `pi install npm:@fitchmultz/pi-mcp-adapter` instead, then optionally run `fitch-mcp-adapter init`.");
+    error(
+      "Use `pi install npm:@fitchmultz/pi-mcp-adapter` instead, then optionally run `fitch-mcp-adapter init`.",
+    );
     return 1;
   }
 
@@ -197,10 +215,13 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
     const dryRun = rest.includes("--dry-run");
     const result = migrateLegacyState({ dryRun });
     for (const file of result.files) log(`${file.status}: ${file.source} -> ${file.destination}`);
-    for (const credential of result.credentials) log(`OAuth ${credential.server}: ${credential.status}`);
-    log(dryRun
-      ? "Dry run: no files changed and no credential store accessed."
-      : "Migration complete. Existing destinations and all source files/credentials were left intact. Restart Pi to use the independent adapter.");
+    for (const credential of result.credentials)
+      log(`OAuth ${credential.server}: ${credential.status}`);
+    log(
+      dryRun
+        ? "Dry run: no files changed and no credential store accessed."
+        : "Migration complete. Existing destinations and all source files/credentials were left intact. Restart Pi to use the independent adapter.",
+    );
     return 0;
   }
 
@@ -210,13 +231,16 @@ export async function main(argv = process.argv.slice(2), log = console.log, erro
 }
 
 const resolvedEntrypoint = process.argv[1] ? fs.realpathSync(process.argv[1]) : undefined;
-const isEntrypoint = resolvedEntrypoint && import.meta.url === pathToFileURL(resolvedEntrypoint).href;
+const isEntrypoint =
+  resolvedEntrypoint && import.meta.url === pathToFileURL(resolvedEntrypoint).href;
 
 if (isEntrypoint) {
-  main().then((code) => {
-    process.exitCode = code;
-  }).catch((err) => {
-    console.error(`\nHelper failed: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  });
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err) => {
+      console.error(`\nHelper failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    });
 }

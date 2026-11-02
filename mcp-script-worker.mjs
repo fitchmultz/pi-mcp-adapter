@@ -8,10 +8,22 @@ const { code, outputFlow, outputWindow } = workerData;
 
 // Keep this formatting logic in sync with mcp-code.ts; the standalone worker cannot import the TypeScript host module.
 function needsInspectableFormatting(value, stack = new WeakSet()) {
-  if (value === undefined || typeof value === "bigint" || typeof value === "function" || typeof value === "symbol") return true;
+  if (
+    value === undefined ||
+    typeof value === "bigint" ||
+    typeof value === "function" ||
+    typeof value === "symbol"
+  )
+    return true;
   if (typeof value !== "object" || value === null) return false;
   if (stack.has(value)) return true;
-  if (value instanceof Map || value instanceof Set || value instanceof WeakMap || value instanceof WeakSet) return true;
+  if (
+    value instanceof Map ||
+    value instanceof Set ||
+    value instanceof WeakMap ||
+    value instanceof WeakSet
+  )
+    return true;
   stack.add(value);
   try {
     return Object.values(value).some((entry) => needsInspectableFormatting(entry, stack));
@@ -38,7 +50,11 @@ function toContentBlock(value) {
     if (value.type === "text" && typeof value.text === "string") {
       return { type: "text", text: value.text };
     }
-    if (value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string") {
+    if (
+      value.type === "image" &&
+      typeof value.data === "string" &&
+      typeof value.mimeType === "string"
+    ) {
       return { type: "image", data: value.data, mimeType: value.mimeType };
     }
   }
@@ -81,12 +97,18 @@ const tools = new Proxy(Object.create(null), {
             },
           };
         }
-        if (server !== undefined && (typeof server !== "string" || !server)) return { ok: false, error: { code: "invalid_arguments", message: "server must be a non-empty string" } };
+        if (server !== undefined && (typeof server !== "string" || !server))
+          return {
+            ok: false,
+            error: { code: "invalid_arguments", message: "server must be a non-empty string" },
+          };
         return request("call", { path, args, server });
       };
     }
-    if (property === "resources" || property === "listResources") return async (input) => request("resources", { input });
-    if (property === "readResource" || property === "readResult") return async (input) => request(property, { input });
+    if (property === "resources" || property === "listResources")
+      return async (input) => request("resources", { input });
+    if (property === "readResource" || property === "readResult")
+      return async (input) => request(property, { input });
     if (property === "describe") {
       return async (input) => request("describe", { input });
     }
@@ -110,31 +132,42 @@ const emit = (value) => {
   Atomics.add(outputFlow, 0, size);
   parentPort.postMessage({ type: "emit", block, size });
   // Block this worker, not the host, until the host consumes queued output.
-  for (let queued; (queued = Atomics.load(outputFlow, 0)) > outputWindow;) Atomics.wait(outputFlow, 0, queued);
+  for (let queued; (queued = Atomics.load(outputFlow, 0)) > outputWindow;)
+    Atomics.wait(outputFlow, 0, queued);
 };
 
 const capturedConsole = Object.freeze({
-  log: (...args) => emit(`[console.log] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
-  info: (...args) => emit(`[console.info] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
-  warn: (...args) => emit(`[console.warn] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
-  error: (...args) => emit(`[console.error] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
-  debug: (...args) => emit(`[console.debug] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  log: (...args) =>
+    emit(`[console.log] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  info: (...args) =>
+    emit(`[console.info] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  warn: (...args) =>
+    emit(`[console.warn] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  error: (...args) =>
+    emit(`[console.error] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
+  debug: (...args) =>
+    emit(`[console.debug] ${formatWithOptions({ colors: false, depth: 4 }, ...args)}`),
 });
 
 try {
-  const context = vm.createContext(Object.assign(Object.create(null), {
-    tools,
-    emit,
-    console: capturedConsole,
-  }), {
-    codeGeneration: { strings: false, wasm: false },
-    name: "mcp_script",
-  });
+  const context = vm.createContext(
+    Object.assign(Object.create(null), {
+      tools,
+      emit,
+      console: capturedConsole,
+    }),
+    {
+      codeGeneration: { strings: false, wasm: false },
+      name: "mcp_script",
+    },
+  );
   const script = new vm.Script(`(async () => {\n${code}\n})()`, { filename: "mcp_script.js" });
   const returnValue = await Promise.resolve(script.runInContext(context));
-  parentPort.postMessage(returnValue === undefined
-    ? { type: "done" }
-    : { type: "done", returnBlock: toContentBlock(returnValue) });
+  parentPort.postMessage(
+    returnValue === undefined
+      ? { type: "done" }
+      : { type: "done", returnBlock: toContentBlock(returnValue) },
+  );
 } catch (error) {
   parentPort.postMessage({
     type: "error",

@@ -2,7 +2,14 @@ import type { ReadResourceResult } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import type { McpServerManager } from "./server-manager.ts";
-import { isServerDisabled, type McpConfig, type UiResourceContent, type UiResourceCsp, type UiResourceMeta, type UiResourcePermissions } from "./types.ts";
+import {
+  isServerDisabled,
+  type McpConfig,
+  type UiResourceContent,
+  type UiResourceCsp,
+  type UiResourceMeta,
+  type UiResourcePermissions,
+} from "./types.ts";
 
 // MCP Apps resource media type; metadata reads must not import the app bridge.
 export const RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
@@ -32,9 +39,14 @@ export class UiResourceHandler {
     this.config = config;
   }
 
-  async readUiResource(serverName: string, uri: string, options: ReadUiResourceOptions = {}): Promise<UiResourceContent> {
+  async readUiResource(
+    serverName: string,
+    uri: string,
+    options: ReadUiResourceOptions = {},
+  ): Promise<UiResourceContent> {
     const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
-    const { SessionRecoveryAuthRequiredError, withSessionRecovery } = await import("./session-recovery.ts");
+    const { SessionRecoveryAuthRequiredError, withSessionRecovery } =
+      await import("./session-recovery.ts");
     const log = this.log.child({ server: serverName, uri });
 
     if (!uri.startsWith("ui://")) {
@@ -61,7 +73,11 @@ export class UiResourceHandler {
               ...(options.onNeedsAuth ? { onNeedsAuth: options.onNeedsAuth } : {}),
             },
             serverName,
-            (connection) => connection.client.readResource({ uri }, this.manager.getRequestOptions(serverName, options.signal)),
+            (connection) =>
+              connection.client.readResource(
+                { uri },
+                this.manager.getRequestOptions(serverName, options.signal),
+              ),
           );
         } finally {
           this.manager.decrementInFlight(serverName);
@@ -71,11 +87,17 @@ export class UiResourceHandler {
         result = await this.manager.readResource(serverName, uri, options.signal);
       }
     } catch (error) {
-      if (error instanceof UrlElicitationRequiredError || error instanceof SessionRecoveryAuthRequiredError) throw error;
+      if (
+        error instanceof UrlElicitationRequiredError ||
+        error instanceof SessionRecoveryAuthRequiredError
+      )
+        throw error;
       const message = error instanceof Error ? error.message : String(error);
       log.error("Failed to read resource", error instanceof Error ? error : undefined);
-      throw new Error(`Failed to fetch UI resource "${uri}": ${message}`,
-        error instanceof Error ? { cause: error } : undefined);
+      throw new Error(
+        `Failed to fetch UI resource "${uri}": ${message}`,
+        error instanceof Error ? { cause: error } : undefined,
+      );
     }
 
     const content = selectContent(result, uri);
@@ -84,7 +106,7 @@ export class UiResourceHandler {
     if (mimeType && !isHtmlMimeType(mimeType)) {
       log.warn("Unsupported MIME type", { mimeType });
       throw new Error(
-        `Invalid UI resource "${uri}": unsupported MIME type "${mimeType}" (expected text/html or ${RESOURCE_MIME_TYPE})`
+        `Invalid UI resource "${uri}": unsupported MIME type "${mimeType}" (expected text/html or ${RESOURCE_MIME_TYPE})`,
       );
     }
 
@@ -97,7 +119,7 @@ export class UiResourceHandler {
     const contentMeta = extractUiMeta(content._meta);
     const listMeta = extractUiMeta(this.getListResourceMeta(serverName, uri));
 
-    log.debug("Resource loaded successfully", { 
+    log.debug("Resource loaded successfully", {
       contentLength: html.length,
       hasCsp: !!contentMeta.csp || !!listMeta.csp,
     });
@@ -107,11 +129,15 @@ export class UiResourceHandler {
       html,
       mimeType: mimeType ?? RESOURCE_MIME_TYPE,
       meta: {
-        ...((contentMeta.csp ?? listMeta.csp) !== undefined ? { csp: contentMeta.csp ?? listMeta.csp } : {}),
+        ...((contentMeta.csp ?? listMeta.csp) !== undefined
+          ? { csp: contentMeta.csp ?? listMeta.csp }
+          : {}),
         ...((contentMeta.permissions ?? listMeta.permissions) !== undefined
           ? { permissions: contentMeta.permissions ?? listMeta.permissions }
           : {}),
-        ...((contentMeta.domain ?? listMeta.domain) !== undefined ? { domain: contentMeta.domain ?? listMeta.domain } : {}),
+        ...((contentMeta.domain ?? listMeta.domain) !== undefined
+          ? { domain: contentMeta.domain ?? listMeta.domain }
+          : {}),
         ...((contentMeta.prefersBorder ?? listMeta.prefersBorder) !== undefined
           ? { prefersBorder: contentMeta.prefersBorder ?? listMeta.prefersBorder }
           : {}),
@@ -119,7 +145,10 @@ export class UiResourceHandler {
     };
   }
 
-  private getListResourceMeta(serverName: string, uri: string): Record<string, unknown> | undefined {
+  private getListResourceMeta(
+    serverName: string,
+    uri: string,
+  ): Record<string, unknown> | undefined {
     const connection = this.manager.getConnection(serverName);
     if (!connection?.resources?.length) return undefined;
     const resource = connection.resources.find((entry) => entry.uri === uri);
@@ -138,7 +167,7 @@ function selectContent(result: ReadResourceResult, preferredUri: string): Resour
   if (byUri) return byUri;
 
   const byHtmlMime = contents.find(
-    (content) => content.mimeType && isHtmlMimeType(content.mimeType)
+    (content) => content.mimeType && isHtmlMimeType(content.mimeType),
   );
   if (byHtmlMime) return byHtmlMime;
 
@@ -194,14 +223,15 @@ function extractUiMeta(meta: Record<string, unknown> | undefined): UiResourceMet
     // A declared canonical container takes precedence even when malformed.
     out.csp = {};
   } else {
-    const standardCsp = hasStandardCsp
-      ? normalizeUiResourceCsp(standardCspValue)
-      : undefined;
+    const standardCsp = hasStandardCsp ? normalizeUiResourceCsp(standardCspValue) : undefined;
     if (openAiCsp || standardCsp) {
       out.csp = { ...openAiCsp, ...standardCsp };
       if (isRecord(standardCspValue)) {
         for (const [, standardField] of OPENAI_CSP_FIELD_MAPPINGS) {
-          if (hasOwnProperty(standardCspValue, standardField) && !copyStringArray(standardCspValue[standardField])) {
+          if (
+            hasOwnProperty(standardCspValue, standardField) &&
+            !copyStringArray(standardCspValue[standardField])
+          ) {
             delete out.csp[standardField];
           }
         }

@@ -44,14 +44,14 @@ By default, servers connect when Pi discovers an uncached catalog or calls a too
 
 ## Controls and settings
 
-| Command | Purpose |
-| --- | --- |
-| `/mcp` | Show servers and pin tools |
-| `/mcp status` | Show connection state and tool/resource counts |
-| `/mcp reconnect <server>` | Reconnect and refresh the catalog |
-| `/mcp-auth <server>` | Start OAuth in an interactive session |
-| `/mcp disable <server>` | Disable the server for this project; apply with `/reload` |
-| `/mcp enable <server>` | Enable the server for this project; apply with `/reload` |
+| Command                   | Purpose                                                   |
+| ------------------------- | --------------------------------------------------------- |
+| `/mcp`                    | Show servers and pin tools                                |
+| `/mcp status`             | Show connection state and tool/resource counts            |
+| `/mcp reconnect <server>` | Reconnect and refresh the catalog                         |
+| `/mcp-auth <server>`      | Start OAuth in an interactive session                     |
+| `/mcp disable <server>`   | Disable the server for this project; apply with `/reload` |
+| `/mcp enable <server>`    | Enable the server for this project; apply with `/reload`  |
 
 Use [`directTools`](docs/reference.md#typed-discovery-and-pinned-tools) to pin tools at startup. Other tools remain available for discovery. Global search covers known catalogs; select a server to discover an unknown catalog.
 

@@ -61,7 +61,9 @@ function renderSvg(svg: string) {
     const choice = target.getAttribute("data-choice");
     if (!choice) return;
     const label = target.textContent?.trim() || choice;
-    await app.sendMessage({ role: "user", content: [{ type: "text", text: `Chose: ${label}` }] }).catch(() => {});
+    await app
+      .sendMessage({ role: "user", content: [{ type: "text", text: `Chose: ${label}` }] })
+      .catch(() => {});
   });
 
   appendMessageForm();
@@ -92,7 +94,9 @@ function appendMessageForm() {
     try {
       await app.sendMessage({ role: "user", content: [{ type: "text", text }] });
       status.textContent = "Sent!";
-      setTimeout(() => { status.textContent = ""; }, 2000);
+      setTimeout(() => {
+        status.textContent = "";
+      }, 2000);
     } catch (err) {
       status.textContent = `Failed: ${err instanceof Error ? err.message : err}`;
     }

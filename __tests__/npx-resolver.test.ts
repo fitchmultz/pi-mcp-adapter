@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -43,7 +51,9 @@ describe("npx-resolver", () => {
 
     expect(result).not.toBeNull();
     expect(existsSync(join(agentDir, "fitch-mcp-adapter", "mcp-npx-cache.json"))).toBe(true);
-    expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp-npx-cache.json"))).toBe(false);
+    expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp-npx-cache.json"))).toBe(
+      false,
+    );
   });
 
   it("uses cross-spawn to read npm's cache directory", async () => {
@@ -218,41 +228,47 @@ describe("npx-resolver", () => {
     ["npm", ["exec", "--package", "plainpkg@~2.0.0", "--", "plainpkg"], "plainpkg"],
     ["npx", ["-y", "@scope/pkg@2.x"], "@scope/pkg"],
     ["npx", ["-y", "plainpkg@latest"], "plainpkg"],
-  ])("leaves %s %j to npm even with an incompatible cached binary", async (command, args, packageName) => {
-    const root = mkdtempSync(join(tmpdir(), "pi-mcp-npx-range-"));
-    const agentDir = join(root, "agent");
-    const npmCache = join(root, "npm");
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.NPM_CONFIG_CACHE = npmCache;
+  ])(
+    "leaves %s %j to npm even with an incompatible cached binary",
+    async (command, args, packageName) => {
+      const root = mkdtempSync(join(tmpdir(), "pi-mcp-npx-range-"));
+      const agentDir = join(root, "agent");
+      const npmCache = join(root, "npm");
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env.NPM_CONFIG_CACHE = npmCache;
 
-    try {
-      const wrongBin = writeCachedPackage(npmCache, packageName, "1.0.0");
-      const crossSpawn = vi.fn();
-      Object.assign(crossSpawn, { sync: vi.fn() });
-      vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
-      const { resolveNpxBinary } = await import("../npx-resolver.ts");
+      try {
+        const wrongBin = writeCachedPackage(npmCache, packageName, "1.0.0");
+        const crossSpawn = vi.fn();
+        Object.assign(crossSpawn, { sync: vi.fn() });
+        vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
+        const { resolveNpxBinary } = await import("../npx-resolver.ts");
 
-      expect(await resolveNpxBinary(command, args)).toBeNull();
+        expect(await resolveNpxBinary(command, args)).toBeNull();
 
-      // Old adapter versions may have persisted the incompatible resolution.
-      mkdirSync(join(agentDir, "fitch-mcp-adapter"), { recursive: true });
-      writeFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-npx-cache.json"), JSON.stringify({
-        version: 1,
-        entries: {
-          [JSON.stringify([command, ...args])]: {
-            resolvedBin: wrongBin,
-            resolvedAt: Date.now(),
-            packageVersion: "1.0.0",
-            isJs: true,
-          },
-        },
-      }));
-      expect(await resolveNpxBinary(command, args)).toBeNull();
-      expect(crossSpawn).not.toHaveBeenCalled();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+        // Old adapter versions may have persisted the incompatible resolution.
+        mkdirSync(join(agentDir, "fitch-mcp-adapter"), { recursive: true });
+        writeFileSync(
+          join(agentDir, "fitch-mcp-adapter", "mcp-npx-cache.json"),
+          JSON.stringify({
+            version: 1,
+            entries: {
+              [JSON.stringify([command, ...args])]: {
+                resolvedBin: wrongBin,
+                resolvedAt: Date.now(),
+                packageVersion: "1.0.0",
+                isJs: true,
+              },
+            },
+          }),
+        );
+        expect(await resolveNpxBinary(command, args)).toBeNull();
+        expect(crossSpawn).not.toHaveBeenCalled();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("ignores poisoned persistent cache entries for exact version requests", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
@@ -284,10 +300,14 @@ describe("npx-resolver", () => {
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
     const result = await resolveNpxBinary("npx", ["-y", "plainpkg@2.0.0"]);
-    const cache = JSON.parse(readFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-npx-cache.json"), "utf-8"));
+    const cache = JSON.parse(
+      readFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-npx-cache.json"), "utf-8"),
+    );
 
     expect(result?.binPath).toBe(correctBin);
-    expect(cache.entries[JSON.stringify(["npx", "-y", "plainpkg@2.0.0"])]?.packageVersion).toBe("2.0.0");
+    expect(cache.entries[JSON.stringify(["npx", "-y", "plainpkg@2.0.0"])]?.packageVersion).toBe(
+      "2.0.0",
+    );
   });
 });
 

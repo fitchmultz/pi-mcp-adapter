@@ -53,12 +53,21 @@ describe("structuredContent fallback — direct tool executor", () => {
   it("surfaces structuredContent to the model when content is empty", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
     const structured = { status: "available", summary: "## Notes" };
-    const state = makeState({ isError: false, content: [], structuredContent: structured }, "get-summary");
+    const state = makeState(
+      { isError: false, content: [], structuredContent: structured },
+      "get-summary",
+    );
 
     const executor = createDirectToolExecutor(
       () => state,
       () => null,
-      { serverName: "demo", originalName: "get-summary", prefixedName: "demo_get-summary", description: "Get summary", outputSchema: { type: "object" } },
+      {
+        serverName: "demo",
+        originalName: "get-summary",
+        prefixedName: "demo_get-summary",
+        description: "Get summary",
+        outputSchema: { type: "object" },
+      },
     );
 
     const result = await executor("id", {}, undefined as any, () => {}, undefined as any);
@@ -71,19 +80,39 @@ describe("structuredContent fallback — direct tool executor", () => {
 
   it("returns native failure and bounded receipts without copying private protocol metadata", async () => {
     const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const state = makeState({ isError: true, content: [{ type: "text", text: "human failure" }], structuredContent: { failed: true }, _meta: { private: "secret" } });
-    const executor = createDirectToolExecutor(() => state, () => null, {
-      serverName: "demo", originalName: "tool", prefixedName: "demo_tool", description: "Tool", outputSchema: { type: "object" },
+    const state = makeState({
+      isError: true,
+      content: [{ type: "text", text: "human failure" }],
+      structuredContent: { failed: true },
+      _meta: { private: "secret" },
     });
+    const executor = createDirectToolExecutor(
+      () => state,
+      () => null,
+      {
+        serverName: "demo",
+        originalName: "tool",
+        prefixedName: "demo_tool",
+        description: "Tool",
+        outputSchema: { type: "object" },
+      },
+    );
     const failed = await executor("failed", {}, undefined, undefined, undefined as any);
     expect(failed.isError).toBe(true);
     expect(failed.structuredContent).toEqual({ failed: true });
     expect(textOf(failed)).toContain("human failure");
     expect(JSON.stringify(failed.structuredContent)).not.toContain("secret");
     state.config.settings.outputGuard = { maxBytes: 1000, detailsMaxBytes: 100 };
-    state.manager.getConnection().client.callTool.mockResolvedValue({ content: [], structuredContent: { large: "x".repeat(5000) } });
+    state.manager
+      .getConnection()
+      .client.callTool.mockResolvedValue({
+        content: [],
+        structuredContent: { large: "x".repeat(5000) },
+      });
     const large = await executor("large", {}, undefined, undefined, undefined as any);
-    expect(large.structuredContent).toEqual({ mcpAdapter: { omitted: true, resultRef: large.details.resultRef } });
+    expect(large.structuredContent).toEqual({
+      mcpAdapter: { omitted: true, resultRef: large.details.resultRef },
+    });
     expect(textOf(large)).toContain(large.details.resultRef);
   });
 
@@ -113,7 +142,10 @@ describe("structuredContent fallback — proxy executeCall", () => {
   it("surfaces structuredContent to the model when content is empty", async () => {
     const { executeCall } = await import("../proxy-modes.ts");
     const structured = { status: "available", summary: "## Notes" };
-    const state = makeState({ isError: false, content: [], structuredContent: structured }, "get-summary");
+    const state = makeState(
+      { isError: false, content: [], structuredContent: structured },
+      "get-summary",
+    );
 
     const result = await executeCall(state, "demo_get-summary", {}, "demo");
 

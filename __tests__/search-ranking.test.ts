@@ -13,7 +13,10 @@ const tool = (name: string, description: string, originalName = name) => ({
 });
 
 function stateWithTools(tools: ToolMetadata[]): McpExtensionState {
-  return { config: { mcpServers: { demo: {} } }, toolMetadata: new Map([["demo", tools]]) } as unknown as McpExtensionState;
+  return {
+    config: { mcpServers: { demo: {} } },
+    toolMetadata: new Map([["demo", tools]]),
+  } as unknown as McpExtensionState;
 }
 
 describe("search ranking", () => {
@@ -28,7 +31,9 @@ describe("search ranking", () => {
     expect(control[0]!.tool.name).toBe("linear_save_diff_comment");
     const treatment = rankToolMatches(state, "linear_save_comment");
     expect(treatment[0]!.tool.name).toBe("linear_save_comment");
-    expect(treatment.slice(1)).toEqual(control.filter(match => match.tool.name !== "linear_save_comment"));
+    expect(treatment.slice(1)).toEqual(
+      control.filter((match) => match.tool.name !== "linear_save_comment"),
+    );
     expect(rankToolMatches(state, "LINEAR_SAVE_COMMENT")).toEqual(control);
     expect(rankToolMatches(state, " linear_save_comment ")).toEqual(treatment);
   });
@@ -36,27 +41,47 @@ describe("search ranking", () => {
   it("promotes original names only with server scope and keeps accounts separate", () => {
     const state = stateWithTools([]);
     state.config.mcpServers = { gh: {}, "gh-personal": {} };
-    state.toolMetadata = new Map(["gh", "gh-personal"].map(server => [server, [
-      tool(`${server.replace("-", "_")}_list_pull_requests_diff`, "list_pull_requests list_pull_requests", "list_pull_requests_diff"),
-      tool(`${server.replace("-", "_")}_list_pull_requests`, "Retrieve pull requests", "list_pull_requests"),
-    ]]));
+    state.toolMetadata = new Map(
+      ["gh", "gh-personal"].map((server) => [
+        server,
+        [
+          tool(
+            `${server.replace("-", "_")}_list_pull_requests_diff`,
+            "list_pull_requests list_pull_requests",
+            "list_pull_requests_diff",
+          ),
+          tool(
+            `${server.replace("-", "_")}_list_pull_requests`,
+            "Retrieve pull requests",
+            "list_pull_requests",
+          ),
+        ],
+      ]),
+    );
     const natural = rankToolMatches(state, "list pull requests");
     expect(natural[0]!.tool.originalName).toBe("list_pull_requests_diff");
     expect(rankToolMatches(state, "list_pull_requests")).toEqual(natural);
     expect(rankToolMatches(state, "list_pull_requests", "")).toEqual(natural);
-    expect(paginate(rankToolMatches(state, "list_pull_requests", ""), 1, 1))
-      .toEqual(paginate(rankToolMatches(state, "list_pull_requests"), 1, 1));
+    expect(paginate(rankToolMatches(state, "list_pull_requests", ""), 1, 1)).toEqual(
+      paginate(rankToolMatches(state, "list_pull_requests"), 1, 1),
+    );
     expect(rankToolMatches(state, "gh_list_pull_requests")[0]!.server).toBe("gh");
     expect(rankToolMatches(state, "gh_personal_list_pull_requests")[0]!.server).toBe("gh-personal");
     for (const server of ["gh", "gh-personal"]) {
       const ranked = rankToolMatches(state, "list_pull_requests", server);
       const lexical = rankToolMatches(state, "list pull requests", server);
       expect(ranked[0]!.tool.originalName).toBe("list_pull_requests");
-      expect(ranked.every(match => match.server === server)).toBe(true);
-      expect(ranked.slice(1)).toEqual(lexical.filter(match => match.tool.originalName !== "list_pull_requests"));
+      expect(ranked.every((match) => match.server === server)).toBe(true);
+      expect(ranked.slice(1)).toEqual(
+        lexical.filter((match) => match.tool.originalName !== "list_pull_requests"),
+      );
     }
     state.config.mcpServers.gh!.excludeTools = ["list_pull_requests"];
-    expect(rankToolMatches(state, "gh_list_pull_requests").some(match => match.tool.name === "gh_list_pull_requests")).toBe(false);
+    expect(
+      rankToolMatches(state, "gh_list_pull_requests").some(
+        (match) => match.tool.name === "gh_list_pull_requests",
+      ),
+    ).toBe(false);
     state.config.mcpServers["gh-personal"]!.disabled = true;
     expect(rankToolMatches(state, "list_pull_requests", "gh-personal")).toEqual([]);
   });
@@ -64,27 +89,45 @@ describe("search ranking", () => {
   it("retains every account when public names collide instead of choosing one", () => {
     const state = stateWithTools([]);
     state.config.mcpServers = { work: { toolPrefix: "none" }, personal: { toolPrefix: "none" } };
-    state.toolMetadata = new Map(["work", "personal"].map(server => [server, [
-      tool("save_comment", "Write a discussion message"),
-      tool("save_diff_comment", "save_comment save_comment"),
-    ]]));
+    state.toolMetadata = new Map(
+      ["work", "personal"].map((server) => [
+        server,
+        [
+          tool("save_comment", "Write a discussion message"),
+          tool("save_diff_comment", "save_comment save_comment"),
+        ],
+      ]),
+    );
     const lexical = rankToolMatches(state, "save comment");
-    const exact = lexical.filter(match => match.tool.name === "save_comment");
+    const exact = lexical.filter((match) => match.tool.name === "save_comment");
     expect(exact).toHaveLength(2);
     expect(rankToolMatches(state, "save_comment")).toEqual([
-      ...exact, ...lexical.filter(match => match.tool.name !== "save_comment"),
+      ...exact,
+      ...lexical.filter((match) => match.tool.name !== "save_comment"),
     ]);
     expect(rankToolMatches(state, "save_comment", "personal")[0]!.server).toBe("personal");
   });
 
   it("ranks a name match above a description match", () => {
-    const state = stateWithTools([tool("search_records", "Find records"), tool("find_records", "Search records")]);
-    expect(rankToolMatches(state, "search").map(match => match.tool.name)).toEqual(["search_records", "find_records"]);
+    const state = stateWithTools([
+      tool("search_records", "Find records"),
+      tool("find_records", "Search records"),
+    ]);
+    expect(rankToolMatches(state, "search").map((match) => match.tool.name)).toEqual([
+      "search_records",
+      "find_records",
+    ]);
   });
 
   it("retains partial candidates behind stronger multi-term matches", () => {
-    const state = stateWithTools([tool("search_records", "Find records"), tool("search_missing", "Search missing records")]);
-    expect(rankToolMatches(state, "search missing").map(match => match.tool.name)).toEqual(["search_missing", "search_records"]);
+    const state = stateWithTools([
+      tool("search_records", "Find records"),
+      tool("search_missing", "Search missing records"),
+    ]);
+    expect(rankToolMatches(state, "search missing").map((match) => match.tool.name)).toEqual([
+      "search_missing",
+      "search_records",
+    ]);
   });
 
   it("uses lexical prefixes without reverse stemming or fuzzy discovery", () => {
@@ -121,11 +164,11 @@ describe("search ranking", () => {
     state.config.mcpServers.other = {};
     state.toolMetadata.set("other", [tool("other_search", "Search records", "search")]);
     expect(rankToolMatches(state, "search")).toHaveLength(2);
-    expect(rankToolMatches(state, "search", "demo").map(match => match.server)).toEqual(["demo"]);
+    expect(rankToolMatches(state, "search", "demo").map((match) => match.server)).toEqual(["demo"]);
     expect(rankToolMatches(state, "search", "missing")).toEqual([]);
 
     state.config.mcpServers.other!.disabled = true;
-    expect(rankToolMatches(state, "search").map(match => match.server)).toEqual(["demo"]);
+    expect(rankToolMatches(state, "search").map((match) => match.server)).toEqual(["demo"]);
     expect(rankSuggestions(state, "other_serch", 5)).toEqual([]);
     state.config.mcpServers.demo!.includeTools = ["demo_search"];
     expect(rankToolMatches(state, "search")).toHaveLength(1);
@@ -139,17 +182,28 @@ describe("search ranking", () => {
   it("ranks same-server fuzzy suggestions and drops noise", () => {
     const state = {
       config: { mcpServers: { datadog: { command: "datadog" } } },
-      toolMetadata: new Map([["datadog", [
-        tool("datadog_get_datadog_incident", "Get an incident", "get_datadog_incident"),
-        tool("datadog_get_datadog_metric", "Get a metric", "get_datadog_metric"),
-        tool("datadog_get_datadog_dashboard", "Get a dashboard", "get_datadog_dashboard"),
-        tool("datadog_aggregate_events", "Aggregate events", "aggregate_events"),
-      ]]]),
+      toolMetadata: new Map([
+        [
+          "datadog",
+          [
+            tool("datadog_get_datadog_incident", "Get an incident", "get_datadog_incident"),
+            tool("datadog_get_datadog_metric", "Get a metric", "get_datadog_metric"),
+            tool("datadog_get_datadog_dashboard", "Get a dashboard", "get_datadog_dashboard"),
+            tool("datadog_aggregate_events", "Aggregate events", "aggregate_events"),
+          ],
+        ],
+      ]),
     } as any;
 
-    expect(rankSuggestions(state, "datadog_get_datadog_metrc", 5)[0]).toBe("datadog_get_datadog_metric");
-    expect(rankSuggestions(state, "datadog_aggregate_evnts", 5)).toEqual(["datadog_aggregate_events"]);
-    expect(rankSuggestions(state, "datadgo_aggregate_evnts", 5)).toEqual(["datadog_aggregate_events"]);
+    expect(rankSuggestions(state, "datadog_get_datadog_metrc", 5)[0]).toBe(
+      "datadog_get_datadog_metric",
+    );
+    expect(rankSuggestions(state, "datadog_aggregate_evnts", 5)).toEqual([
+      "datadog_aggregate_events",
+    ]);
+    expect(rankSuggestions(state, "datadgo_aggregate_evnts", 5)).toEqual([
+      "datadog_aggregate_events",
+    ]);
     expect(rankSuggestions(state, "datadog_get_datadog_xyzzy", 5)).toEqual([]);
     expect(rankSuggestions(state, `datadog_${"x".repeat(10_000)}`, 5)).toEqual([]);
   });
@@ -157,7 +211,15 @@ describe("search ranking", () => {
   it("falls back to token ranking for reordered names", () => {
     const state = {
       config: { mcpServers: { gh: { command: "gh" } } },
-      toolMetadata: new Map([["gh", [tool("gh_list_issues", "List issues", "list_issues"), tool("gh_create_issue", "Create an issue", "create_issue")]]]),
+      toolMetadata: new Map([
+        [
+          "gh",
+          [
+            tool("gh_list_issues", "List issues", "list_issues"),
+            tool("gh_create_issue", "Create an issue", "create_issue"),
+          ],
+        ],
+      ]),
     } as any;
 
     expect(rankSuggestions(state, "gh_issues_list", 5)[0]).toBe("gh_list_issues");
@@ -178,7 +240,9 @@ describe("search ranking", () => {
       config: { mcpServers: { datadog: { command: "datadog", toolPrefix: "none" } } },
       toolMetadata: new Map([["datadog", [tool("aggregate_events", "Aggregate events")]]]),
     } as any;
-    expect(rankSuggestions(unprefixed, "aggregate_evnts", 5, "datadog")).toEqual(["aggregate_events"]);
+    expect(rankSuggestions(unprefixed, "aggregate_evnts", 5, "datadog")).toEqual([
+      "aggregate_events",
+    ]);
 
     const server = "very-long-descriptive-server";
     const prefix = "very_long_descriptive_server";
@@ -191,13 +255,28 @@ describe("search ranking", () => {
 
   it("paginates including offsets beyond the result set", () => {
     expect(paginate(["a", "b", "c"], 1, 1)).toEqual({
-      items: ["b"], total: 3, hasMore: true, nextOffset: 2,
+      items: ["b"],
+      total: 3,
+      hasMore: true,
+      nextOffset: 2,
     });
     expect(paginate(["a", "b", "c"], 5, 1)).toEqual({
-      items: [], total: 3, hasMore: false, nextOffset: null,
+      items: [],
+      total: 3,
+      hasMore: false,
+      nextOffset: null,
     });
-    expect(paginate(Array.from({ length: 101 }, (_, index) => index), 0, 1_000)).toMatchObject({
-      items: expect.arrayContaining([0, 99]), total: 101, hasMore: true, nextOffset: 100,
+    expect(
+      paginate(
+        Array.from({ length: 101 }, (_, index) => index),
+        0,
+        1_000,
+      ),
+    ).toMatchObject({
+      items: expect.arrayContaining([0, 99]),
+      total: 101,
+      hasMore: true,
+      nextOffset: 100,
     });
   });
 });

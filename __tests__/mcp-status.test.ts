@@ -28,7 +28,10 @@ function createState() {
       ["cached", [{ name: "cached_search" }, { name: "read_doc", resourceUri: "docs://doc" }]],
       ["idle", [{ name: "old_search" }]],
     ]),
-    resourceCounts: new Map([["connected", 2], ["cached", 1]]),
+    resourceCounts: new Map([
+      ["connected", 2],
+      ["cached", 1],
+    ]),
     failureTracker: new Map([["failed", Date.now() - 4_000]]),
     statusEvents: undefined,
   } as any;
@@ -42,7 +45,10 @@ describe("MCP status snapshots", () => {
         return {
           status: "connected",
           tools: [{ name: "search" }],
-          resources: [{ name: "doc", uri: "file://doc" }, { name: "other", uri: "file://other" }],
+          resources: [
+            { name: "doc", uri: "file://doc" },
+            { name: "other", uri: "file://other" },
+          ],
           client: { secret: true },
           transport: { secret: true },
         };
@@ -59,15 +65,36 @@ describe("MCP status snapshots", () => {
       connectedCount: 1,
       disabledCount: 1,
     });
-    expect(snapshot.servers).toEqual(expect.arrayContaining([
-      { name: "connected", status: "connected", toolCount: 1, resourceCount: 2, disabled: false, catalogKnown: true },
-      { name: "cached", status: "cached", toolCount: 1, resourceCount: 1, disabled: false, catalogKnown: true },
-      expect.objectContaining({ name: "failed", status: "failed", toolCount: 0, disabled: false }),
-      { name: "auth", status: "needs-auth", toolCount: 0, disabled: false, catalogKnown: false },
-      { name: "idle", status: "cached", toolCount: 1, disabled: false, catalogKnown: true },
-      { name: "disabled", status: "disabled", toolCount: 0, disabled: true, catalogKnown: false },
-    ]));
-    const failed = snapshot.servers.find(server => server.name === "failed");
+    expect(snapshot.servers).toEqual(
+      expect.arrayContaining([
+        {
+          name: "connected",
+          status: "connected",
+          toolCount: 1,
+          resourceCount: 2,
+          disabled: false,
+          catalogKnown: true,
+        },
+        {
+          name: "cached",
+          status: "cached",
+          toolCount: 1,
+          resourceCount: 1,
+          disabled: false,
+          catalogKnown: true,
+        },
+        expect.objectContaining({
+          name: "failed",
+          status: "failed",
+          toolCount: 0,
+          disabled: false,
+        }),
+        { name: "auth", status: "needs-auth", toolCount: 0, disabled: false, catalogKnown: false },
+        { name: "idle", status: "cached", toolCount: 1, disabled: false, catalogKnown: true },
+        { name: "disabled", status: "disabled", toolCount: 0, disabled: true, catalogKnown: false },
+      ]),
+    );
+    const failed = snapshot.servers.find((server) => server.name === "failed");
     expect(failed?.failedAgoSeconds).toBeGreaterThanOrEqual(4);
     expect(failed?.failedAgoSeconds).toBeLessThanOrEqual(5);
     expect(state.manager.getConnection).toHaveBeenCalled();

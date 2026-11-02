@@ -47,13 +47,13 @@ export interface McpStatusSnapshot {
 }
 
 // Import sources for config
-export type ImportKind = 
-  | "cursor" 
-  | "claude-code" 
-  | "claude-desktop" 
-  | "codex" 
+export type ImportKind =
+  | "cursor"
+  | "claude-code"
+  | "claude-desktop"
+  | "codex"
   | "opencode"
-  | "windsurf" 
+  | "windsurf"
   | "vscode";
 
 type SdkTool = ListToolsResult["tools"][number];
@@ -184,7 +184,11 @@ export function extractUiPromptText(params: UiMessageParams): string | undefined
 
   if (params.role === "user" && Array.isArray(params.content)) {
     const text = params.content
-      .map((block) => (block && typeof block === "object" && "text" in block ? String((block as { text?: unknown }).text ?? "") : ""))
+      .map((block) =>
+        block && typeof block === "object" && "text" in block
+          ? String((block as { text?: unknown }).text ?? "")
+          : "",
+      )
       .filter(Boolean)
       .join("\n\n");
     return text || undefined;
@@ -263,7 +267,10 @@ export interface UiModelContextParams {
   structuredContent?: Record<string, unknown>;
 }
 
-export function createUiModelContextUpdate(params: UiModelContextParams, maxChars = 12_000): UiModelContextUpdate | undefined {
+export function createUiModelContextUpdate(
+  params: UiModelContextParams,
+  maxChars = 12_000,
+): UiModelContextUpdate | undefined {
   const payload = Object.fromEntries(
     Object.entries(params).filter(([, value]) => value !== undefined),
   );
@@ -340,7 +347,9 @@ export interface OAuthCrossAppAccessConfig {
 }
 
 export function isNonInteractiveOAuth(config: OAuthConfig | false | undefined): boolean {
-  return !!config && (config.grantType === "client_credentials" || config.crossAppAccess !== undefined);
+  return (
+    !!config && (config.grantType === "client_credentials" || config.crossAppAccess !== undefined)
+  );
 }
 
 // OAuth configuration (SDK handles discovery and client registration)
@@ -386,7 +395,7 @@ export interface ServerEntry {
   // HTTP fields
   url?: string;
   headers?: Record<string, string>;
-  /** 
+  /**
    * Authentication type:
    * - 'oauth' - Use OAuth 2.1 (auto-discovers endpoints, supports dynamic client registration)
    * - 'bearer' - Use static Bearer token
@@ -396,7 +405,7 @@ export interface ServerEntry {
   auth?: "oauth" | "bearer" | false;
   bearerToken?: string;
   bearerTokenEnv?: string;
-  /** 
+  /**
    * OAuth configuration (optional).
    * Eligible browser clients use the shared client metadata document when supported, otherwise dynamic registration.
    * Set to false to explicitly disable OAuth for this server.
@@ -417,7 +426,7 @@ export interface ServerEntry {
   // Require interactive approval before calling matching MCP tools/resources.
   approveTools?: boolean | string[];
   // Debug
-  debug?: boolean;  // Show server stderr (default: false)
+  debug?: boolean; // Show server stderr (default: false)
   /** Enable metadata-only JSONL protocol tracing for this server. */
   trace?: boolean;
   // Keep configuration visible without allowing connections or execution.
@@ -426,14 +435,24 @@ export interface ServerEntry {
 
 /** Validate protocol options for both file and in-memory configurations. */
 export function validateServerProtocolConfig(definition: ServerEntry): void {
-  if (definition.protocolVersion !== undefined && definition.protocolVersion !== "auto" && definition.protocolVersion !== "legacy") {
+  if (
+    definition.protocolVersion !== undefined &&
+    definition.protocolVersion !== "auto" &&
+    definition.protocolVersion !== "legacy"
+  ) {
     throw new Error("protocolVersion must be auto or legacy");
   }
-  if (definition.retryOnTransportFailure !== undefined && typeof definition.retryOnTransportFailure !== "boolean") {
+  if (
+    definition.retryOnTransportFailure !== undefined &&
+    typeof definition.retryOnTransportFailure !== "boolean"
+  ) {
     throw new Error("retryOnTransportFailure must be a boolean");
   }
-  if (definition.oauth && definition.oauth.skipIssuerMetadataValidation !== undefined
-    && typeof definition.oauth.skipIssuerMetadataValidation !== "boolean") {
+  if (
+    definition.oauth &&
+    definition.oauth.skipIssuerMetadataValidation !== undefined &&
+    typeof definition.oauth.skipIssuerMetadataValidation !== "boolean"
+  ) {
     throw new Error("oauth.skipIssuerMetadataValidation must be a boolean");
   }
 }
@@ -545,20 +564,27 @@ export type McpToolCallEvent = McpToolCallIdentity & {
   resourceUri?: string;
   signal: AbortSignal;
 } & (
-  | { phase: "before" }
-  | { phase: "after"; result: unknown }
-  | { phase: "after"; error: unknown }
-);
+    | { phase: "before" }
+    | { phase: "after"; result: unknown }
+    | { phase: "after"; error: unknown }
+  );
 
 /** Resolved operation facts before the service deadline; no connection/configuration objects. */
-export type McpOperationContext = Omit<Extract<McpToolCallEvent, { phase: "before" }>, "phase" | "signal"> & {
+export type McpOperationContext = Omit<
+  Extract<McpToolCallEvent, { phase: "before" }>,
+  "phase" | "signal"
+> & {
   /** The configured server opted into trusting annotations via retryOnTransportFailure. */
   annotationsTrusted: boolean;
 };
 
 export interface McpAdapterOptions {
   /** Awaited before the service deadline for each resolved call; operation is absent for other proxy modes. Honor ctx.signal. Selects native sequential sibling scheduling. */
-  beforeExecute?: (toolCallId: string, ctx: ExtensionContext, operation?: McpOperationContext) => Promise<void>;
+  beforeExecute?: (
+    toolCallId: string,
+    ctx: ExtensionContext,
+    operation?: McpOperationContext,
+  ) => Promise<void>;
   config?: McpConfig;
   configPath?: string;
   /** Synchronously transform a clone of the resolved config once per session_start, before registration/initialization.
@@ -576,10 +602,10 @@ export interface McpAdapterOptions {
 export type ServerDefinition = ServerEntry;
 
 export interface ToolMetadata extends Omit<McpTool, "name" | "description"> {
-  name: string;           // Prefixed tool name (e.g., "xcodebuild_list_sims")
-  originalName: string;   // Original MCP tool name (e.g., "list_sims")
+  name: string; // Prefixed tool name (e.g., "xcodebuild_list_sims")
+  originalName: string; // Original MCP tool name (e.g., "list_sims")
   description: string;
-  resourceUri?: string;   // Legacy resource alias; new calls address server + URI.
+  resourceUri?: string; // Legacy resource alias; new calls address server + URI.
   resourceDescriptor?: McpResource;
   uiResourceUri?: string; // For app-enabled tools: the UI resource URI
   uiVisibility?: UiToolVisibility[];
@@ -645,7 +671,9 @@ export interface McpPanelCallbacks {
   reconnect: (serverName: string, afterAuth?: boolean) => Promise<boolean>;
   canAuthenticate: (serverName: string) => boolean;
   authenticate: (serverName: string) => Promise<McpAuthResult>;
-  getConnectionStatus: (serverName: string) => "connected" | "idle" | "failed" | "needs-auth" | "disabled";
+  getConnectionStatus: (
+    serverName: string,
+  ) => "connected" | "idle" | "failed" | "needs-auth" | "disabled";
   getFailureMessage?: (serverName: string) => string | null;
   refreshCacheAfterReconnect: (serverName: string) => ServerCacheEntry | null;
 }
@@ -658,10 +686,7 @@ export interface McpPanelResult {
 /**
  * Get server prefix based on tool prefix mode.
  */
-export function getServerPrefix(
-  serverName: string,
-  mode: ToolPrefix
-): string {
+export function getServerPrefix(serverName: string, mode: ToolPrefix): string {
   if (mode === "none") return "";
   if (mode === "short") {
     let short = serverName.replace(/-?mcp$/i, "").replace(/-/g, "_");
@@ -675,11 +700,7 @@ export function getServerPrefix(
 /**
  * Format a tool name with server prefix.
  */
-export function formatToolName(
-  toolName: string,
-  serverName: string,
-  prefix: ToolPrefix
-): string {
+export function formatToolName(toolName: string, serverName: string, prefix: ToolPrefix): string {
   const p = getServerPrefix(serverName, prefix);
   const sanitized = toolName.replace(/\./g, "_");
   return p ? `${p}_${sanitized}` : sanitized;
@@ -703,7 +724,8 @@ export function formatPromptCommandName(
   serverName: string,
   prefix: ToolPrefix,
 ): string {
-  const serverPart = getServerPrefix(serverName, prefix) || serverName.replace(/-/g, "_") || "server";
+  const serverPart =
+    getServerPrefix(serverName, prefix) || serverName.replace(/-/g, "_") || "server";
   return `mcp__${serverPart}__${sanitizePromptName(promptName)}`;
 }
 
@@ -711,7 +733,11 @@ function normalizeToolName(value: string): string {
   return value.replace(/-/g, "_");
 }
 
-export function getToolNameCandidates(toolName: string, serverName: string, prefix: ToolPrefix): Set<string> {
+export function getToolNameCandidates(
+  toolName: string,
+  serverName: string,
+  prefix: ToolPrefix,
+): Set<string> {
   return new Set<string>([
     normalizeToolName(toolName),
     normalizeToolName(formatToolName(toolName, serverName, prefix)),
@@ -722,7 +748,10 @@ export function getToolNameCandidates(toolName: string, serverName: string, pref
 }
 
 function globToRegExp(pattern: string): RegExp {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
   return new RegExp(`^${escaped}$`);
 }
 
@@ -735,7 +764,10 @@ export function matchesToolPattern(candidates: Set<string>, patterns?: unknown):
     if (!normalized.includes("*") && !normalized.includes("?") && candidates.has(normalized)) {
       return true;
     }
-    if ((normalized.includes("*") || normalized.includes("?")) && [...candidates].some(candidate => globToRegExp(normalized).test(candidate))) {
+    if (
+      (normalized.includes("*") || normalized.includes("?")) &&
+      [...candidates].some((candidate) => globToRegExp(normalized).test(candidate))
+    ) {
       return true;
     }
   }
@@ -747,7 +779,7 @@ export function isToolIncluded(
   toolName: string,
   serverName: string,
   prefix: ToolPrefix,
-  includeTools?: unknown
+  includeTools?: unknown,
 ): boolean {
   if (!Array.isArray(includeTools) || includeTools.length === 0) return true;
   return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), includeTools);
@@ -757,7 +789,7 @@ export function isToolExcluded(
   toolName: string,
   serverName: string,
   prefix: ToolPrefix,
-  excludeTools?: unknown
+  excludeTools?: unknown,
 ): boolean {
   return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), excludeTools);
 }
@@ -769,6 +801,8 @@ export function isToolAllowed(
   includeTools?: unknown,
   excludeTools?: unknown,
 ): boolean {
-  return isToolIncluded(toolName, serverName, prefix, includeTools)
-    && !isToolExcluded(toolName, serverName, prefix, excludeTools);
+  return (
+    isToolIncluded(toolName, serverName, prefix, includeTools) &&
+    !isToolExcluded(toolName, serverName, prefix, excludeTools)
+  );
 }

@@ -1,6 +1,12 @@
 import type { TextContent } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
-import { executeCall, executeDescribe, executeList, executeSearch, executeStatus } from "../proxy-modes.ts";
+import {
+  executeCall,
+  executeDescribe,
+  executeList,
+  executeSearch,
+  executeStatus,
+} from "../proxy-modes.ts";
 import type { McpExtensionState } from "../state.ts";
 
 function createState(): McpExtensionState {
@@ -40,12 +46,34 @@ describe("proxy discovery", () => {
   it("returns exact input/output schemas and guidance in describe and search content", () => {
     const state = createState();
     const tool = state.toolMetadata.get("demo")![0]!;
-    tool.inputSchema = { type: "object", properties: { query: { type: "string", description: "Unique lookup guidance", pattern: "^[a-z]+$", default: "open" } }, additionalProperties: false };
-    tool.outputSchema = { type: "object", properties: { total: { type: "integer" } }, required: ["total"] };
+    tool.inputSchema = {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Unique lookup guidance",
+          pattern: "^[a-z]+$",
+          default: "open",
+        },
+      },
+      additionalProperties: false,
+    };
+    tool.outputSchema = {
+      type: "object",
+      properties: { total: { type: "integer" } },
+      required: ["total"],
+    };
     tool.title = "Record search";
     tool._meta = { "example/hint": "retain" };
-    const described = JSON.parse((executeDescribe(state, "demo_search").content[0] as TextContent).text);
-    expect(described).toMatchObject({ inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, title: tool.title, _meta: tool._meta });
+    const described = JSON.parse(
+      (executeDescribe(state, "demo_search").content[0] as TextContent).text,
+    );
+    expect(described).toMatchObject({
+      inputSchema: tool.inputSchema,
+      outputSchema: tool.outputSchema,
+      title: tool.title,
+      _meta: tool._meta,
+    });
     expect(described).not.toHaveProperty("inputTypeScript");
     const text = (executeSearch(state, "unique lookup").content[0] as TextContent).text;
     const searched = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
@@ -56,9 +84,19 @@ describe("proxy discovery", () => {
   it("reports partial catalog coverage and keeps resources out of the tool inventory", () => {
     const state = createState();
     state.config.mcpServers.unknown = { command: "not-started" };
-    state.toolMetadata.get("demo")!.push({ name: "demo_read_guide", originalName: "read_guide", description: "Guide", resourceUri: "docs://guide" });
+    state.toolMetadata
+      .get("demo")!
+      .push({
+        name: "demo_read_guide",
+        originalName: "read_guide",
+        description: "Guide",
+        resourceUri: "docs://guide",
+      });
     const search = executeSearch(state, "guide");
-    expect(search.details).toMatchObject({ count: 0, coverage: { complete: false, unknownServers: ["unknown"] } });
+    expect(search.details).toMatchObject({
+      count: 0,
+      coverage: { complete: false, unknownServers: ["unknown"] },
+    });
     expect((search.content[0] as TextContent).text).toContain("Catalog is incomplete");
     expect(executeList(state, "demo").details.count).toBe(2);
     expect(executeStatus(state).details.totalTools).toBe(2);
@@ -82,7 +120,9 @@ describe("proxy discovery", () => {
 
     expect((result.content[0] as TextContent).text).toContain("demo_search");
     expect((result.content[0] as TextContent).text).not.toContain("demo_find");
-    expect((result.content[0] as TextContent).text).toContain('1-1 of 2 — mcp({ action: "list", server: "demo", limit: 1, offset: 1 }) for more');
+    expect((result.content[0] as TextContent).text).toContain(
+      '1-1 of 2 — mcp({ action: "list", server: "demo", limit: 1, offset: 1 }) for more',
+    );
     expect(result.details).toMatchObject({
       count: 2,
       hasMore: true,
@@ -94,20 +134,26 @@ describe("proxy discovery", () => {
   it("explains an out-of-range server-list offset", () => {
     const result = executeList(createState(), "demo", 1, 99);
 
-    expect((result.content[0] as TextContent).text).toBe('No tools at offset 99; "demo" has 2 tools. Retry with mcp({ action: "list", server: "demo", limit: 1, offset: 0 }).');
+    expect((result.content[0] as TextContent).text).toBe(
+      'No tools at offset 99; "demo" has 2 tools. Retry with mcp({ action: "list", server: "demo", limit: 1, offset: 0 }).',
+    );
     expect(result.details).toMatchObject({ error: "offset_out_of_range", count: 2, tools: [] });
   });
 
   it("explains lazy connection state", () => {
     const result = executeStatus(createState());
 
-    expect((result.content[0] as TextContent).text).toContain("MCP: 0/1 connected, 2 tools available (calls connect lazily)");
+    expect((result.content[0] as TextContent).text).toContain(
+      "MCP: 0/1 connected, 2 tools available (calls connect lazily)",
+    );
   });
 
   it("returns ranked paged search details", () => {
     const result = executeSearch(createState(), "demo", undefined, false, 1, 0);
 
-    expect((result.content[0] as TextContent).text).toContain('1-1 of 2 — mcp({ action: "search", query: "demo", includeSchemas: false, limit: 1, offset: 1 }) for more');
+    expect((result.content[0] as TextContent).text).toContain(
+      '1-1 of 2 — mcp({ action: "search", query: "demo", includeSchemas: false, limit: 1, offset: 1 }) for more',
+    );
 
     expect(result.details).toMatchObject({
       count: 2,
@@ -128,8 +174,12 @@ describe("proxy discovery", () => {
     const page = executeSearch(state, "demo", "demo", false, 1, 0);
     const retry = executeSearch(state, "demo", "demo", false, 1, 99);
 
-    expect((page.content[0] as TextContent).text).toContain('mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 1 })');
-    expect((retry.content[0] as TextContent).text).toContain('mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 0 })');
+    expect((page.content[0] as TextContent).text).toContain(
+      'mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 1 })',
+    );
+    expect((retry.content[0] as TextContent).text).toContain(
+      'mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 0 })',
+    );
   });
 
   it("paginates search results without changing their order", () => {
@@ -147,23 +197,29 @@ describe("proxy discovery", () => {
   it("explains an out-of-range search offset", () => {
     const result = executeSearch(createState(), "demo", undefined, false, 1, 99);
 
-    expect((result.content[0] as TextContent).text).toContain("No search results at offset 99; 2 tools match");
+    expect((result.content[0] as TextContent).text).toContain(
+      "No search results at offset 99; 2 tools match",
+    );
     expect(result.details).toMatchObject({ error: "offset_out_of_range", count: 2, matches: [] });
   });
 
   it("scopes prefix-mangled suggestions to the matching server", () => {
     const state = createState();
     state.config.mcpServers.noise = { command: "npx", args: ["noise"] };
-    state.toolMetadata.set("noise", [{
-      name: "noise_search",
-      originalName: "search",
-      description: "Search demo records",
-    }]);
+    state.toolMetadata.set("noise", [
+      {
+        name: "noise_search",
+        originalName: "search",
+        description: "Search demo records",
+      },
+    ]);
 
     const result = executeDescribe(state, "demo_sear");
 
     expect(result.details).toMatchObject({ suggestions: ["demo_search"] });
-    expect((result.content[0] as TextContent).text).toContain('Inspect with mcp({ action: "describe", tool: "demo_search" })');
+    expect((result.content[0] as TextContent).text).toContain(
+      'Inspect with mcp({ action: "describe", tool: "demo_search" })',
+    );
   });
 
   it("keeps cached prefixed call typos bounded without connecting", async () => {
@@ -176,23 +232,39 @@ describe("proxy discovery", () => {
     expect(connect).not.toHaveBeenCalled();
     expect((result.content[0] as TextContent).text).toContain("Did you mean: demo_search");
     expect((result.content[0] as TextContent).text).not.toContain("demo_find");
-    expect((result.content[0] as TextContent).text).toContain('mcp({ action: "connect", server: "demo" })');
+    expect((result.content[0] as TextContent).text).toContain(
+      'mcp({ action: "connect", server: "demo" })',
+    );
     expect((result.content[0] as TextContent).text.length).toBeLessThan(300);
 
     const missing = await executeCall(state, "demo_new_tool");
-    expect((missing.content[0] as TextContent).text).toContain('mcp({ action: "connect", server: "demo" })');
+    expect((missing.content[0] as TextContent).text).toContain(
+      'mcp({ action: "connect", server: "demo" })',
+    );
     expect(connect).not.toHaveBeenCalled();
   });
 
   it("prefers the explicit server's original tool name over another server's exact name", async () => {
     const state = createState();
     state.config.mcpServers.noise = { command: "noise", toolPrefix: "none" };
-    state.toolMetadata.set("noise", [{ name: "search", originalName: "search", description: "Search noise" }]);
+    state.toolMetadata.set("noise", [
+      { name: "search", originalName: "search", description: "Search noise" },
+    ]);
 
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "demo result" }] }));
     state.manager = {
-      getConnection: (server: string) => server === "demo" ? { status: "connected", tools: [{ name: "search" }], resources: [], client: { callTool } } : undefined,
-      touch: vi.fn(), incrementInFlight: vi.fn(), decrementInFlight: vi.fn(),
+      getConnection: (server: string) =>
+        server === "demo"
+          ? {
+              status: "connected",
+              tools: [{ name: "search" }],
+              resources: [],
+              client: { callTool },
+            }
+          : undefined,
+      touch: vi.fn(),
+      incrementInFlight: vi.fn(),
+      decrementInFlight: vi.fn(),
     } as any;
     const result = await executeCall(state, "search", undefined, "demo");
 
@@ -204,8 +276,12 @@ describe("proxy discovery", () => {
   it("normalizes the explicit server's original tool name before redirecting", async () => {
     const state = createState();
     state.config.mcpServers.noise = { command: "noise", toolPrefix: "none" };
-    state.toolMetadata.set("demo", [{ name: "demo_list_issues", originalName: "list_issues", description: "List demo issues" }]);
-    state.toolMetadata.set("noise", [{ name: "list_issues", originalName: "list_issues", description: "List noise issues" }]);
+    state.toolMetadata.set("demo", [
+      { name: "demo_list_issues", originalName: "list_issues", description: "List demo issues" },
+    ]);
+    state.toolMetadata.set("noise", [
+      { name: "list_issues", originalName: "list_issues", description: "List noise issues" },
+    ]);
 
     const result = await executeCall(state, "list-issues", undefined, "demo");
 
@@ -216,7 +292,9 @@ describe("proxy discovery", () => {
   it("suggests unprefixed tools when an explicit server is provided", async () => {
     const state = createState();
     state.config.mcpServers.demo!.toolPrefix = "none";
-    state.toolMetadata.set("demo", [{ name: "search", originalName: "search", description: "Search" }]);
+    state.toolMetadata.set("demo", [
+      { name: "search", originalName: "search", description: "Search" },
+    ]);
 
     const result = await executeCall(state, "sear", undefined, "demo");
 
@@ -229,15 +307,22 @@ describe("proxy discovery", () => {
     state.config.mcpServers.slack = { command: "slack" };
     state.toolMetadata = new Map([
       ["gh", [{ name: "gh_list_issues", originalName: "list_issues", description: "List issues" }]],
-      ["slack", [
-        { name: "slack_send", originalName: "send", description: "Send" },
-        { name: "gh_list_issue", originalName: "gh_list_issue", description: "Near match" },
-      ]],
+      [
+        "slack",
+        [
+          { name: "slack_send", originalName: "send", description: "Send" },
+          { name: "gh_list_issue", originalName: "gh_list_issue", description: "Near match" },
+        ],
+      ],
     ]);
 
     const result = await executeCall(state, "gh_list_issues", undefined, "slack");
 
-    expect(result.details).toMatchObject({ hintServer: "slack", suggestedServer: "gh", suggestions: ["gh_list_issues"] });
+    expect(result.details).toMatchObject({
+      hintServer: "slack",
+      suggestedServer: "gh",
+      suggestions: ["gh_list_issues"],
+    });
     expect((result.content[0] as TextContent).text).toBe(
       'Tool "gh_list_issues" is on server "gh", not "slack". Retry the same call with server: "gh" or omit server.',
     );
@@ -252,12 +337,21 @@ describe("proxy discovery", () => {
       "github-enterprise": { command: "enterprise", toolPrefix: "none" },
       github: { command: "github" },
     };
-    state.toolMetadata = new Map([["github-enterprise", [{
-      name: "search",
-      originalName: "search",
-      description: "Search enterprise",
-    }]]]);
-    const connect = vi.fn<(server: string) => Promise<never>>(async () => { throw new Error("stop after routing"); });
+    state.toolMetadata = new Map([
+      [
+        "github-enterprise",
+        [
+          {
+            name: "search",
+            originalName: "search",
+            description: "Search enterprise",
+          },
+        ],
+      ],
+    ]);
+    const connect = vi.fn<(server: string) => Promise<never>>(async () => {
+      throw new Error("stop after routing");
+    });
     state.manager = {
       getConnection: () => undefined,
       getAllConnections: () => [],
@@ -275,7 +369,9 @@ describe("proxy discovery", () => {
     state.config.settings = { toolPrefix: "none" };
     state.config.mcpServers = { github: { command: "github", toolPrefix: "server" } };
     state.toolMetadata.clear();
-    const connect = vi.fn<(server: string) => Promise<never>>(async () => { throw new Error("stop after routing"); });
+    const connect = vi.fn<(server: string) => Promise<never>>(async () => {
+      throw new Error("stop after routing");
+    });
     state.manager = {
       getConnection: () => undefined,
       getAllConnections: () => [],
@@ -294,28 +390,34 @@ describe("proxy discovery", () => {
       "github-enterprise": { command: "enterprise" },
       github: { command: "github" },
     };
-    state.toolMetadata = new Map([["github-enterprise", [{
-      name: "github_enterprise_search",
-      originalName: "search",
-      description: "Search enterprise",
-    }]]]);
+    state.toolMetadata = new Map([
+      [
+        "github-enterprise",
+        [
+          {
+            name: "github_enterprise_search",
+            originalName: "search",
+            description: "Search enterprise",
+          },
+        ],
+      ],
+    ]);
     const connect = vi.fn();
     state.manager = { getConnection: () => undefined, connect } as never;
 
     const result = await executeCall(state, "github_enterprise_sear");
 
     expect(connect).not.toHaveBeenCalled();
-    expect(result.details).toMatchObject({ hintServer: "github-enterprise", suggestions: ["github_enterprise_search"] });
+    expect(result.details).toMatchObject({
+      hintServer: "github-enterprise",
+      suggestions: ["github_enterprise_search"],
+    });
   });
 
   it("tells callers to invoke native Pi tools directly", async () => {
-    const result = await executeCall(
-      createState(),
-      "read",
-      undefined,
-      undefined,
-      () => [{ name: "read", description: "Read a file" } as any],
-    );
+    const result = await executeCall(createState(), "read", undefined, undefined, () => [
+      { name: "read", description: "Read a file" } as any,
+    ]);
 
     expect((result.content[0] as TextContent).text).toBe(
       '"read" is a native Pi tool. Call read directly instead of using mcp({ action: "call", tool: "read" }).',

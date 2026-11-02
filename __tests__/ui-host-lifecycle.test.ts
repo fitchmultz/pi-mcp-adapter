@@ -69,10 +69,12 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function openHost(options: {
-  failCompletion?: boolean;
-  holdCompletion?: "request" | "response";
-} = {}) {
+async function openHost(
+  options: {
+    failCompletion?: boolean;
+    holdCompletion?: "request" | "response";
+  } = {},
+) {
   const completions: string[] = [];
   const handle = await startUiServer({
     port: 0,
@@ -106,17 +108,19 @@ async function openHost(options: {
   if (script === moduleScript) throw new Error("Served host module import not found");
 
   const clock = new BrowserClock();
-  const elements = new Map([
-    "mcp-app",
-    "status",
-    "done-btn",
-    "cancel-btn",
-    "error-overlay",
-    "completion-overlay",
-    "error-message",
-    "server-name",
-    "tool-name",
-  ].map((id) => [id, new Element()]));
+  const elements = new Map(
+    [
+      "mcp-app",
+      "status",
+      "done-btn",
+      "cancel-btn",
+      "error-overlay",
+      "completion-overlay",
+      "error-message",
+      "server-name",
+      "tool-name",
+    ].map((id) => [id, new Element()]),
+  );
   const element = (id: string) => {
     const result = elements.get(id);
     if (!result) throw new Error(`Missing element ${id}`);
@@ -127,12 +131,16 @@ async function openHost(options: {
   const consoleErrors: unknown[][] = [];
   const browserConsole = {
     ...console,
-    error: (...args: unknown[]) => { consoleErrors.push(args); },
+    error: (...args: unknown[]) => {
+      consoleErrors.push(args);
+    },
   };
   let closeAttempts = 0;
   const window = {
     innerWidth: 1024,
-    close: () => { closeAttempts += 1; },
+    close: () => {
+      closeAttempts += 1;
+    },
     addEventListener: (name: string, listener: (event: unknown) => void) => {
       const listeners = windowListeners.get(name) ?? new Set();
       listeners.add(listener);
@@ -270,26 +278,32 @@ async function openHost(options: {
   }
 
   const completionGate = Promise.withResolvers<void>();
-  const attempts: Array<{ path: string; status?: number; error?: string; settled: Promise<void> }> = [];
+  const attempts: Array<{ path: string; status?: number; error?: string; settled: Promise<void> }> =
+    [];
   const browserFetch = (path: string, init: RequestInit) => {
     const isCompletion = path === "/proxy/ui/complete";
     const send = () => fetch(new URL(path, origin), init);
-    const request = isCompletion && options.holdCompletion === "request"
-      ? completionGate.promise.then(send)
-      : send();
+    const request =
+      isCompletion && options.holdCompletion === "request"
+        ? completionGate.promise.then(send)
+        : send();
     const attempt: (typeof attempts)[number] = {
       path,
       settled: request.then(
-        (response) => { attempt.status = response.status; },
-        (error: unknown) => { attempt.error = String(error); },
+        (response) => {
+          attempt.status = response.status;
+        },
+        (error: unknown) => {
+          attempt.error = String(error);
+        },
       ),
     };
     attempts.push(attempt);
     return isCompletion && options.holdCompletion === "response"
       ? request.then(async (response) => {
-        await completionGate.promise;
-        return response;
-      })
+          await completionGate.promise;
+          return response;
+        })
       : request;
   };
   const requests = (path: string) => attempts.filter((attempt) => attempt.path === path);
@@ -300,8 +314,12 @@ async function openHost(options: {
   const bundle = await fetch(`${origin}/app-bridge.bundle.js`);
   expect(bundle.status).toBe(200);
   const bundleUrl = `data:text/javascript;base64,${Buffer.from(await bundle.text()).toString("base64")}`;
-  const { AppBridge, PostMessageTransport }: typeof import("@modelcontextprotocol/ext-apps/app-bridge") =
-    await import(/* @vite-ignore */ bundleUrl);
+  const {
+    AppBridge,
+    PostMessageTransport,
+  }: typeof import("@modelcontextprotocol/ext-apps/app-bridge") = await import(
+    /* @vite-ignore */ bundleUrl
+  );
   let bridge: InstanceType<typeof AppBridge> | undefined;
   class CapturedBridge extends AppBridge {
     constructor(...args: ConstructorParameters<typeof AppBridge>) {
@@ -317,20 +335,48 @@ async function openHost(options: {
   });
 
   const run = new Function(
-    "AppBridge", "PostMessageTransport", "document", "window", "EventSource",
-    "fetch", "setInterval", "clearInterval", "setTimeout", "console",
+    "AppBridge",
+    "PostMessageTransport",
+    "document",
+    "window",
+    "EventSource",
+    "fetch",
+    "setInterval",
+    "clearInterval",
+    "setTimeout",
+    "console",
     `return (async () => { ${script} })();`,
   );
   await Promise.all([
-    run(CapturedBridge, PostMessageTransport, document, window, LiveEventSource,
-      browserFetch, clock.setInterval, clock.clearInterval, clock.setTimeout, browserConsole),
+    run(
+      CapturedBridge,
+      PostMessageTransport,
+      document,
+      window,
+      LiveEventSource,
+      browserFetch,
+      clock.setInterval,
+      clock.clearInterval,
+      clock.setTimeout,
+      browserConsole,
+    ),
     iframeLoaded.promise,
   ]);
   await eventSource.connected.promise;
 
   return {
-    handle, completions, clock, element, eventSource, teardowns, teardownStarted: teardownStarted.promise,
-    respondToTeardowns, requests, settleRequests, consoleErrors, releaseCompletion: completionGate.resolve,
+    handle,
+    completions,
+    clock,
+    element,
+    eventSource,
+    teardowns,
+    teardownStarted: teardownStarted.promise,
+    respondToTeardowns,
+    requests,
+    settleRequests,
+    consoleErrors,
+    releaseCompletion: completionGate.resolve,
     closeAttempts: () => closeAttempts,
   };
 }
@@ -440,7 +486,9 @@ it("keeps heartbeats while a local completion request is unconfirmed", async () 
 
   host.clock.advance(30_000);
   await host.settleRequests("/proxy/ui/heartbeat");
-  expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual([200, 200, 200]);
+  expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual([
+    200, 200, 200,
+  ]);
   expect(host.completions).toEqual([]);
   expect(host.teardowns).toHaveLength(0);
 
@@ -473,7 +521,9 @@ it("reports a failed completion response without replaying an accepted operation
   expect(host.teardowns).toHaveLength(1);
   expect(host.requests("/proxy/ui/complete")).toHaveLength(1);
   expect(
-    host.consoleErrors.some((args) => args.some((arg) => String(arg).includes("Completion callback failed"))),
+    host.consoleErrors.some((args) =>
+      args.some((arg) => String(arg).includes("Completion callback failed")),
+    ),
   ).toBe(true);
   expect(host.element("error-overlay").classList.contains("visible")).toBe(false);
   expect(host.element("completion-overlay").classList.contains("visible")).toBe(true);
@@ -492,7 +542,9 @@ it("keeps active heartbeats and the watchdog after the SSE connection is interru
     await host.settleRequests();
     vi.advanceTimersByTime(10_000);
   }
-  expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual(Array(7).fill(200));
+  expect(host.requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual(
+    Array(7).fill(200),
+  );
   expect(host.completions).toEqual([]);
 
   vi.advanceTimersByTime(65_000);

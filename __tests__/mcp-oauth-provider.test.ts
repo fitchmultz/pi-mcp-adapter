@@ -58,7 +58,11 @@ describe("McpOAuthProvider addClientAuthentication", () => {
     );
     const params = new URLSearchParams({ grant_type: "authorization_code", code: "abc" });
 
-    await provider.addClientAuthentication(new Headers(), params, new URL("https://auth.example.com/token"));
+    await provider.addClientAuthentication(
+      new Headers(),
+      params,
+      new URL("https://auth.example.com/token"),
+    );
 
     expect(params.get("scope")).toBe("api://res/.default");
     expect(params.get("client_id")).toBe("my-client");
@@ -74,16 +78,23 @@ describe("McpOAuthProvider addClientAuthentication", () => {
     const headers = new Headers();
     const params = new URLSearchParams({ grant_type: "authorization_code", code: "abc" });
 
-    await provider.addClientAuthentication(headers, params, new URL("https://auth.example.com/token"), {
-      issuer: "https://auth.example.com",
-      authorization_endpoint: "https://auth.example.com/authorize",
-      token_endpoint: "https://auth.example.com/token",
-      response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code"],
-      token_endpoint_auth_methods_supported: ["client_secret_basic"],
-    });
+    await provider.addClientAuthentication(
+      headers,
+      params,
+      new URL("https://auth.example.com/token"),
+      {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        response_types_supported: ["code"],
+        grant_types_supported: ["authorization_code"],
+        token_endpoint_auth_methods_supported: ["client_secret_basic"],
+      },
+    );
 
-    expect(headers.get("Authorization")).toBe(`Basic ${Buffer.from("my-client:my-secret").toString("base64")}`);
+    expect(headers.get("Authorization")).toBe(
+      `Basic ${Buffer.from("my-client:my-secret").toString("base64")}`,
+    );
     expect(params.get("scope")).toBe("api://res/.default");
     expect(params.has("client_id")).toBe(false);
     expect(params.has("client_secret")).toBe(false);
@@ -99,7 +110,11 @@ describe("McpOAuthProvider addClientAuthentication", () => {
     const headers = new Headers();
     const params = new URLSearchParams({ grant_type: "authorization_code", code: "abc" });
 
-    await provider.addClientAuthentication(headers, params, new URL("https://auth.example.com/token"));
+    await provider.addClientAuthentication(
+      headers,
+      params,
+      new URL("https://auth.example.com/token"),
+    );
 
     expect(headers.has("Authorization")).toBe(false);
     expect(params.get("client_id")).toBe("my-client");
@@ -120,7 +135,11 @@ describe("McpOAuthProvider addClientAuthentication", () => {
       client_secret: "already-set-secret",
     });
 
-    await provider.addClientAuthentication(new Headers(), params, new URL("https://auth.example.com/token"));
+    await provider.addClientAuthentication(
+      new Headers(),
+      params,
+      new URL("https://auth.example.com/token"),
+    );
 
     expect(params.get("scope")).toBe("already-set");
     expect(params.get("client_id")).toBe("already-set-id");
@@ -136,7 +155,11 @@ describe("McpOAuthProvider addClientAuthentication", () => {
     );
     const params = new URLSearchParams({ grant_type: "refresh_token", refresh_token: "refresh" });
 
-    await provider.addClientAuthentication(new Headers(), params, new URL("https://auth.example.com/token"));
+    await provider.addClientAuthentication(
+      new Headers(),
+      params,
+      new URL("https://auth.example.com/token"),
+    );
 
     expect(params.has("scope")).toBe(false);
     expect(params.get("client_id")).toBe("my-client");
@@ -153,8 +176,9 @@ describe("McpOAuthProvider addClientAuthentication", () => {
     const params = new URLSearchParams({ grant_type: "authorization_code" });
     provider.deactivate();
 
-    await expect(provider.addClientAuthentication(headers, params, new URL("https://auth.example.com/token")))
-      .rejects.toThrow("OAuth flow is no longer active");
+    await expect(
+      provider.addClientAuthentication(headers, params, new URL("https://auth.example.com/token")),
+    ).rejects.toThrow("OAuth flow is no longer active");
     expect([...params.entries()]).toEqual([["grant_type", "authorization_code"]]);
     expect([...headers.entries()]).toEqual([]);
   });
@@ -168,10 +192,12 @@ describe("McpOAuthProvider addClientAuthentication", () => {
     );
     provider.deactivate();
 
-    await expect(provider.saveClientInformation({
-      client_id: "my-client",
-      issuer: "https://auth.example.com",
-    })).rejects.toThrow("OAuth flow is no longer active");
+    await expect(
+      provider.saveClientInformation({
+        client_id: "my-client",
+        issuer: "https://auth.example.com",
+      }),
+    ).rejects.toThrow("OAuth flow is no longer active");
 
     const { getAuthForUrl } = await import("../mcp-auth.ts");
     expect(getAuthForUrl("inactive-client-info", serverUrl)).toBeUndefined();
@@ -198,18 +224,22 @@ describe("McpOAuthProvider discovery state", () => {
   });
 
   it("back-stamps legacy client information and tokens with the discovered issuer", async () => {
-    saveAuthEntry("legacy-binding", {
-      clientInfo: {
-        clientId: "legacy-client",
-        clientSecret: "legacy-secret",
-        redirectUris: ["http://localhost:19876/callback"],
-      },
-      tokens: {
-        accessToken: "legacy-access",
-        refreshToken: "legacy-refresh",
+    saveAuthEntry(
+      "legacy-binding",
+      {
+        clientInfo: {
+          clientId: "legacy-client",
+          clientSecret: "legacy-secret",
+          redirectUris: ["http://localhost:19876/callback"],
+        },
+        tokens: {
+          accessToken: "legacy-access",
+          refreshToken: "legacy-refresh",
+        },
+        serverUrl,
       },
       serverUrl,
-    }, serverUrl);
+    );
     const provider = new McpOAuthProvider(
       "legacy-binding",
       serverUrl,
@@ -242,20 +272,24 @@ describe("McpOAuthProvider discovery state", () => {
   });
 
   it("rejects stored credentials when the issuer changes before refresh", async () => {
-    saveAuthEntry("changed-issuer", {
-      clientInfo: {
-        clientId: "bound-client",
-        clientSecret: "bound-secret",
-        redirectUris: ["http://localhost:19876/callback"],
-        issuer: "https://old-auth.example.com",
-      },
-      tokens: {
-        accessToken: "bound-access",
-        refreshToken: "bound-refresh",
-        issuer: "https://old-auth.example.com",
+    saveAuthEntry(
+      "changed-issuer",
+      {
+        clientInfo: {
+          clientId: "bound-client",
+          clientSecret: "bound-secret",
+          redirectUris: ["http://localhost:19876/callback"],
+          issuer: "https://old-auth.example.com",
+        },
+        tokens: {
+          accessToken: "bound-access",
+          refreshToken: "bound-refresh",
+          issuer: "https://old-auth.example.com",
+        },
+        serverUrl,
       },
       serverUrl,
-    }, serverUrl);
+    );
     const provider = new McpOAuthProvider(
       "changed-issuer",
       serverUrl,
@@ -282,16 +316,20 @@ describe("McpOAuthProvider discovery state", () => {
   });
 
   it("does not stamp unbound tokens when client information has a different issuer", async () => {
-    saveAuthEntry("partial-client-binding", {
-      clientInfo: {
-        clientId: "bound-client",
-        clientSecret: "bound-secret",
-        redirectUris: ["http://localhost:19876/callback"],
-        issuer: "https://old-auth.example.com",
+    saveAuthEntry(
+      "partial-client-binding",
+      {
+        clientInfo: {
+          clientId: "bound-client",
+          clientSecret: "bound-secret",
+          redirectUris: ["http://localhost:19876/callback"],
+          issuer: "https://old-auth.example.com",
+        },
+        tokens: { accessToken: "legacy-access", refreshToken: "legacy-refresh" },
+        serverUrl,
       },
-      tokens: { accessToken: "legacy-access", refreshToken: "legacy-refresh" },
       serverUrl,
-    }, serverUrl);
+    );
     const provider = new McpOAuthProvider(
       "partial-client-binding",
       serverUrl,
@@ -300,24 +338,30 @@ describe("McpOAuthProvider discovery state", () => {
     );
     await provider.saveDiscoveryState({ authorizationServerUrl: "https://new-auth.example.com" });
 
-    await expect(provider.tokens()).rejects.toThrow("clear credentials before authenticating again");
+    await expect(provider.tokens()).rejects.toThrow(
+      "clear credentials before authenticating again",
+    );
     expect(getAuthForUrl("partial-client-binding", serverUrl)?.tokens?.issuer).toBeUndefined();
   });
 
   it("does not stamp unbound client information when tokens have a different issuer", async () => {
-    saveAuthEntry("partial-token-binding", {
-      clientInfo: {
-        clientId: "legacy-client",
-        clientSecret: "legacy-secret",
-        redirectUris: ["http://localhost:19876/callback"],
-      },
-      tokens: {
-        accessToken: "bound-access",
-        refreshToken: "bound-refresh",
-        issuer: "https://old-auth.example.com",
+    saveAuthEntry(
+      "partial-token-binding",
+      {
+        clientInfo: {
+          clientId: "legacy-client",
+          clientSecret: "legacy-secret",
+          redirectUris: ["http://localhost:19876/callback"],
+        },
+        tokens: {
+          accessToken: "bound-access",
+          refreshToken: "bound-refresh",
+          issuer: "https://old-auth.example.com",
+        },
+        serverUrl,
       },
       serverUrl,
-    }, serverUrl);
+    );
     const provider = new McpOAuthProvider(
       "partial-token-binding",
       serverUrl,
@@ -326,7 +370,9 @@ describe("McpOAuthProvider discovery state", () => {
     );
     await provider.saveDiscoveryState({ authorizationServerUrl: "https://new-auth.example.com" });
 
-    await expect(provider.clientInformation()).rejects.toThrow("clear credentials before authenticating again");
+    await expect(provider.clientInformation()).rejects.toThrow(
+      "clear credentials before authenticating again",
+    );
     expect(getAuthForUrl("partial-token-binding", serverUrl)?.clientInfo?.issuer).toBeUndefined();
   });
 
@@ -360,14 +406,18 @@ describe("McpOAuthProvider discovery state", () => {
   });
 
   it("fails closed when a pre-registered client issuer changes", async () => {
-    saveAuthEntry("pre-registered-issuer-change", {
-      clientInfo: {
-        clientId: "config-client",
-        issuer: "https://old-auth.example.com",
-        configPreRegistered: true,
+    saveAuthEntry(
+      "pre-registered-issuer-change",
+      {
+        clientInfo: {
+          clientId: "config-client",
+          issuer: "https://old-auth.example.com",
+          configPreRegistered: true,
+        },
+        serverUrl,
       },
       serverUrl,
-    }, serverUrl);
+    );
     const provider = new McpOAuthProvider(
       "pre-registered-issuer-change",
       serverUrl,
@@ -387,8 +437,9 @@ describe("McpOAuthProvider discovery state", () => {
     await expect(provider.clientInformation()).rejects.toThrow(
       "clear credentials before authenticating again",
     );
-    expect(getAuthForUrl("pre-registered-issuer-change", serverUrl)?.clientInfo?.issuer)
-      .toBe("https://old-auth.example.com");
+    expect(getAuthForUrl("pre-registered-issuer-change", serverUrl)?.clientInfo?.issuer).toBe(
+      "https://old-auth.example.com",
+    );
   });
 
   it("round-trips callback-leg discovery state and invalidates it independently", async () => {
@@ -455,7 +506,12 @@ describe("McpOAuthProvider authorization fallback", () => {
   });
 
   it("throws UnauthorizedError when state is requested outside a user-initiated flow", async () => {
-    const provider = new McpOAuthProvider("state-missing", serverUrl, {}, { onRedirect: async () => {} });
+    const provider = new McpOAuthProvider(
+      "state-missing",
+      serverUrl,
+      {},
+      { onRedirect: async () => {} },
+    );
 
     await expect(provider.state()).rejects.toBeInstanceOf(UnauthorizedError);
     await expect(provider.state()).rejects.toThrow(/Re-authentication required/);
@@ -463,25 +519,39 @@ describe("McpOAuthProvider authorization fallback", () => {
 
   it("throws UnauthorizedError before redirecting when no OAuth flow is in progress", async () => {
     let redirected = false;
-    const provider = new McpOAuthProvider("redirect-missing", serverUrl, {}, {
-      onRedirect: async () => {
-        redirected = true;
+    const provider = new McpOAuthProvider(
+      "redirect-missing",
+      serverUrl,
+      {},
+      {
+        onRedirect: async () => {
+          redirected = true;
+        },
       },
-    });
+    );
 
-    await expect(provider.redirectToAuthorization(new URL("https://auth.example.com/authorize")))
-      .rejects.toBeInstanceOf(UnauthorizedError);
+    await expect(
+      provider.redirectToAuthorization(new URL("https://auth.example.com/authorize")),
+    ).rejects.toBeInstanceOf(UnauthorizedError);
     expect(redirected).toBe(false);
   });
 
   it("redirects when the active provider owns OAuth state", async () => {
     const authUrl = new URL("https://auth.example.com/authorize");
     let redirected: URL | undefined;
-    const provider = new McpOAuthProvider("redirect-active", serverUrl, {}, {
-      onRedirect: async (url) => {
-        redirected = url;
+    const provider = new McpOAuthProvider(
+      "redirect-active",
+      serverUrl,
+      {},
+      {
+        onRedirect: async (url) => {
+          redirected = url;
+        },
       },
-    }, {}, undefined, "state-abc");
+      {},
+      undefined,
+      "state-abc",
+    );
 
     await provider.redirectToAuthorization(authUrl);
 
@@ -490,18 +560,28 @@ describe("McpOAuthProvider authorization fallback", () => {
 
   it("throws before redirecting when only stale URL-bound state exists", async () => {
     let redirected = false;
-    saveAuthEntry("redirect-stale-url", {
-      oauthState: "state-abc",
-      serverUrl: "https://old.example.com/mcp",
-    }, "https://old.example.com/mcp");
-    const provider = new McpOAuthProvider("redirect-stale-url", serverUrl, {}, {
-      onRedirect: async () => {
-        redirected = true;
+    saveAuthEntry(
+      "redirect-stale-url",
+      {
+        oauthState: "state-abc",
+        serverUrl: "https://old.example.com/mcp",
       },
-    });
+      "https://old.example.com/mcp",
+    );
+    const provider = new McpOAuthProvider(
+      "redirect-stale-url",
+      serverUrl,
+      {},
+      {
+        onRedirect: async () => {
+          redirected = true;
+        },
+      },
+    );
 
-    await expect(provider.redirectToAuthorization(new URL("https://auth.example.com/authorize")))
-      .rejects.toBeInstanceOf(UnauthorizedError);
+    await expect(
+      provider.redirectToAuthorization(new URL("https://auth.example.com/authorize")),
+    ).rejects.toBeInstanceOf(UnauthorizedError);
     expect(redirected).toBe(false);
   });
 });

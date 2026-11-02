@@ -32,9 +32,7 @@ for (const project of projects) {
 
 const failed = results.filter((result) => result.status !== 0);
 if (failed.length > 0) {
-  console.error(
-    `typecheck failed for: ${failed.map((result) => result.name).join(", ")}`,
-  );
+  console.error(`typecheck failed for: ${failed.map((result) => result.name).join(", ")}`);
   process.exitCode = 1;
 } else {
   console.log(`typecheck passed for: ${results.map((result) => result.name).join(", ")}`);

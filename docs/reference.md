@@ -18,11 +18,11 @@ Use Pi 1.5.0 or later and Node.js 24 or later.
 
 The adapter reads standard MCP files automatically. No extra setup needed if you already have them.
 
-| You already have... | What happens |
-|---------------------|--------------|
-| `.mcp.json` or `~/.config/mcp/mcp.json` | Pi uses it immediately. The first time you open `/mcp`, you'll see a short heads-up explaining which file Pi detected and that Pi only writes adapter-specific overrides to its own files. |
-| Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing. |
-| Nothing configured yet | Run `/mcp setup` to scaffold a minimal `.mcp.json`, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine. |
+| You already have...                                                                | What happens                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.mcp.json` or `~/.config/mcp/mcp.json`                                            | Pi uses it immediately. The first time you open `/mcp`, you'll see a short heads-up explaining which file Pi detected and that Pi only writes adapter-specific overrides to its own files. |
+| Host-specific configs (Cursor, Claude Code, Codex, etc.) but no standard MCP files | Run `/mcp setup` to adopt those host configs into Pi. The setup flow shows exactly what it found, lets you pick which ones to import, and previews the exact file changes before writing.  |
+| Nothing configured yet                                                             | Run `/mcp setup` to scaffold a minimal `.mcp.json`, add a curated known server, quick-add RepoPrompt, or inspect what the adapter discovered on your machine.                              |
 
 If you prefer the terminal, run `fitch-mcp-adapter init` after install to scan for host-specific configs and add missing compatibility imports to `~/.pi/agent/fitch-mcp-adapter/mcp.json` (or `$PI_CODING_AGENT_DIR/fitch-mcp-adapter/mcp.json` when set).
 
@@ -68,7 +68,7 @@ Project layers and project-local host imports are read only after Pi marks the p
 Servers are **lazy by default**. Cached tool descriptors can be searched without a live connection. To discover an uncached server and load the tools relevant to a task:
 
 ```js
-mcp_search({ query: "take screenshot", server: "chrome-devtools" })
+mcp_search({ query: "take screenshot", server: "chrome-devtools" });
 ```
 
 The returned exact tool references become available with their full argument schemas on the next model request. The agent then calls the chosen typed tool normally. Discovery does not run it.
@@ -78,9 +78,9 @@ To use resources, authentication, UI messages, saved-result readback, or fallbac
 If the host only permits `mcp` (and excludes `mcp_search`), it stays eager. Use explicit gateway actions instead:
 
 ```js
-mcp({ action: "search", query: "take screenshot", server: "chrome-devtools" })
-mcp({ action: "describe", tool: "chrome_devtools_take_screenshot" })
-mcp({ action: "call", tool: "chrome_devtools_take_screenshot", args: { format: "png" } })
+mcp({ action: "search", query: "take screenshot", server: "chrome-devtools" });
+mcp({ action: "describe", tool: "chrome_devtools_take_screenshot" });
+mcp({ action: "call", tool: "chrome_devtools_take_screenshot", args: { format: "png" } });
 ```
 
 Gateway search returns schemas without activating direct tools. All paths preserve the same authentication, approval, and call-capture behavior.
@@ -91,14 +91,14 @@ Gateway search returns schemas without activating direct tools. All paths preser
 
 Use the shared MCP files when you want one setup to work across hosts, and Pi-owned files when you need Pi-specific overrides or settings.
 
-| File | Purpose |
-|------|---------|
-| `~/.config/mcp/mcp.json` | User-global shared MCP config |
-| `~/.agents/mcp.json` | User-global tool-agnostic MCP config |
-| `~/.agents/mcp/mcp.json` | User-global tool-agnostic MCP config |
-| `.mcp.json` | Project-local shared MCP config |
+| File                                        | Purpose                                           |
+| ------------------------------------------- | ------------------------------------------------- |
+| `~/.config/mcp/mcp.json`                    | User-global shared MCP config                     |
+| `~/.agents/mcp.json`                        | User-global tool-agnostic MCP config              |
+| `~/.agents/mcp/mcp.json`                    | User-global tool-agnostic MCP config              |
+| `.mcp.json`                                 | Project-local shared MCP config                   |
 | `<Pi agent dir>/fitch-mcp-adapter/mcp.json` | Adapter global override and compatibility imports |
-| `.pi/fitch-mcp-adapter/mcp.json` | Adapter project override |
+| `.pi/fitch-mcp-adapter/mcp.json`            | Adapter project override                          |
 
 The Pi agent dir defaults to `~/.pi/agent` and honors `PI_CODING_AGENT_DIR`. The owned `fitch-mcp-adapter/` root also contains `mcp-cache.json`, `mcp-onboarding.json`, `mcp-npx-cache.json`, and the `mcp-oauth/` legacy import directory.
 
@@ -241,41 +241,41 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `command` | Executable for stdio transport; mutually exclusive with `url` and `socket` |
-| `args` | Command arguments |
-| `socket` | Explicit `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url` |
-| `env` | Environment variables; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the stdio server connects; use `!!` for a literal leading `!`. |
-| `cwd` | Working directory; supports `${VAR}`, `$env:VAR`, and `~` expansion |
-| `protocolVersion` | `"auto"` or `"legacy"`. HTTP defaults to `"auto"`; stdio and Unix sockets default to `"legacy"`. |
-| `retryOnTransportFailure` | Trust explicit read-only/idempotent annotations for one modern transport retry (default: `false`); see [Transport compatibility](#transport-compatibility) before enabling. |
-| `url` | HTTP endpoint (StreamableHTTP with SSE fallback); supports raw `${VAR}` and `$env:VAR` interpolation, and missing URL variables fail before any request is sent |
-| `headers` | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the HTTP server connects or OAuth authenticates; use `!!` for a literal leading `!`. |
-| `auth` | `"bearer"` or `"oauth"` |
-| `oauth.grantType` | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth |
-| `oauth.clientId` | Pre-registered OAuth client ID; takes priority over stored clients and automatic registration |
-| `oauth.clientSecret` | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!` |
-| `oauth.privateKeyJwt` | Native private-key authentication: `privateKey` (PKCS#8 PEM, JWK object/JSON, environment or `!command` source), `algorithm`, optional `audience`, `lifetimeSeconds`, `claims`; requires a configured client ID or custom metadata document, not `clientSecret` |
-| `oauth.crossAppAccess` | Native enterprise OIDC exchange: `idpUrl`, IdP `clientId`, `idToken`, optional IdP `clientSecret`; all support lazy environment/`!command` sources. Omit `grantType`. |
-| `oauth.scope` | Requested OAuth scopes |
-| `oauth.redirectUri` | Exact localhost redirect URI for browser OAuth, including port and path, for providers that pre-register callbacks |
-| `oauth.clientName` | Client display name advertised during dynamic registration |
-| `oauth.clientUri` | Client homepage URI advertised during dynamic registration |
-| `oauth.clientMetadataUrl` | Custom HTTPS Client ID Metadata Document URL, or `false` to disable automatic CIMD for new registrations; supports environment interpolation |
-| `oauth.skipIssuerMetadataValidation` | Skip only the authorization-server metadata issuer check for a known incompatible provider (default: `false`). Stored issuer and callback checks remain enforced. |
-| `bearerToken` / `bearerTokenEnv` | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation. A leading `!` in `bearerToken` runs a command when the HTTP server connects; use `!!` for a literal leading `!`. |
-| `lifecycle` | `"lazy"` (default), `"eager"`, `"keep-alive"`, or `"lazy-keep-alive"` |
-| `idleTimeout` | Minutes before idle disconnect (overrides global) |
-| `requestTimeoutMs` | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used) |
-| `exposeResources` | Make MCP resources available through resource listing/reading (default: true) |
-| `directTools` | `true`, `string[]`, or `false` — pin real tools into the initial active tool set |
-| `toolPrefix` | Override global `settings.toolPrefix` for this server (`"server"`, `"short"`, `"none"`, or `"mcp"`) |
-| `includeTools` | `string[]` of tool names or glob patterns to expose (matches original names like `get_screenshot`, legacy resource filter aliases like `read_figjam`, and prefixed names like `figma_get_screenshot`) |
-| `excludeTools` | `string[]` of tool names or glob patterns to hide (applied after `includeTools`) |
-| `debug` | Show server stderr (default: false) |
-| `trace` | Enable metadata-only JSONL protocol tracing for this server; payloads, prompts, tool arguments/results, authorization data, and URLs are never persisted |
-| `disabled` | Keep the server visible in config and status, but prevent connections, authentication, tools, and resource calls (only literal `true` disables it) |
+| Field                                | Description                                                                                                                                                                                                                                                     |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command`                            | Executable for stdio transport; mutually exclusive with `url` and `socket`                                                                                                                                                                                      |
+| `args`                               | Command arguments                                                                                                                                                                                                                                               |
+| `socket`                             | Explicit `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url`                                                                                                                |
+| `env`                                | Environment variables; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the stdio server connects; use `!!` for a literal leading `!`.                                                                            |
+| `cwd`                                | Working directory; supports `${VAR}`, `$env:VAR`, and `~` expansion                                                                                                                                                                                             |
+| `protocolVersion`                    | `"auto"` or `"legacy"`. HTTP defaults to `"auto"`; stdio and Unix sockets default to `"legacy"`.                                                                                                                                                                |
+| `retryOnTransportFailure`            | Trust explicit read-only/idempotent annotations for one modern transport retry (default: `false`); see [Transport compatibility](#transport-compatibility) before enabling.                                                                                     |
+| `url`                                | HTTP endpoint (StreamableHTTP with SSE fallback); supports raw `${VAR}` and `$env:VAR` interpolation, and missing URL variables fail before any request is sent                                                                                                 |
+| `headers`                            | HTTP headers; supports `${VAR}` and `$env:VAR` interpolation. A value beginning with `!` runs a command when the HTTP server connects or OAuth authenticates; use `!!` for a literal leading `!`.                                                               |
+| `auth`                               | `"bearer"` or `"oauth"`                                                                                                                                                                                                                                         |
+| `oauth.grantType`                    | `"authorization_code"` (default) or `"client_credentials"` for non-interactive machine auth                                                                                                                                                                     |
+| `oauth.clientId`                     | Pre-registered OAuth client ID; takes priority over stored clients and automatic registration                                                                                                                                                                   |
+| `oauth.clientSecret`                 | OAuth client secret for confidential clients; a value beginning with `!` runs a command when OAuth authenticates, while `!!` escapes a literal leading `!`                                                                                                      |
+| `oauth.privateKeyJwt`                | Native private-key authentication: `privateKey` (PKCS#8 PEM, JWK object/JSON, environment or `!command` source), `algorithm`, optional `audience`, `lifetimeSeconds`, `claims`; requires a configured client ID or custom metadata document, not `clientSecret` |
+| `oauth.crossAppAccess`               | Native enterprise OIDC exchange: `idpUrl`, IdP `clientId`, `idToken`, optional IdP `clientSecret`; all support lazy environment/`!command` sources. Omit `grantType`.                                                                                           |
+| `oauth.scope`                        | Requested OAuth scopes                                                                                                                                                                                                                                          |
+| `oauth.redirectUri`                  | Exact localhost redirect URI for browser OAuth, including port and path, for providers that pre-register callbacks                                                                                                                                              |
+| `oauth.clientName`                   | Client display name advertised during dynamic registration                                                                                                                                                                                                      |
+| `oauth.clientUri`                    | Client homepage URI advertised during dynamic registration                                                                                                                                                                                                      |
+| `oauth.clientMetadataUrl`            | Custom HTTPS Client ID Metadata Document URL, or `false` to disable automatic CIMD for new registrations; supports environment interpolation                                                                                                                    |
+| `oauth.skipIssuerMetadataValidation` | Skip only the authorization-server metadata issuer check for a known incompatible provider (default: `false`). Stored issuer and callback checks remain enforced.                                                                                               |
+| `bearerToken` / `bearerTokenEnv`     | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation. A leading `!` in `bearerToken` runs a command when the HTTP server connects; use `!!` for a literal leading `!`.                                                           |
+| `lifecycle`                          | `"lazy"` (default), `"eager"`, `"keep-alive"`, or `"lazy-keep-alive"`                                                                                                                                                                                           |
+| `idleTimeout`                        | Minutes before idle disconnect (overrides global)                                                                                                                                                                                                               |
+| `requestTimeoutMs`                   | Request timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK default timeout is used)                                                                                                                                |
+| `exposeResources`                    | Make MCP resources available through resource listing/reading (default: true)                                                                                                                                                                                   |
+| `directTools`                        | `true`, `string[]`, or `false` — pin real tools into the initial active tool set                                                                                                                                                                                |
+| `toolPrefix`                         | Override global `settings.toolPrefix` for this server (`"server"`, `"short"`, `"none"`, or `"mcp"`)                                                                                                                                                             |
+| `includeTools`                       | `string[]` of tool names or glob patterns to expose (matches original names like `get_screenshot`, legacy resource filter aliases like `read_figjam`, and prefixed names like `figma_get_screenshot`)                                                           |
+| `excludeTools`                       | `string[]` of tool names or glob patterns to hide (applied after `includeTools`)                                                                                                                                                                                |
+| `debug`                              | Show server stderr (default: false)                                                                                                                                                                                                                             |
+| `trace`                              | Enable metadata-only JSONL protocol tracing for this server; payloads, prompts, tool arguments/results, authorization data, and URLs are never persisted                                                                                                        |
+| `disabled`                           | Keep the server visible in config and status, but prevent connections, authentication, tools, and resource calls (only literal `true` disables it)                                                                                                              |
 
 For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
 
@@ -359,13 +359,13 @@ On Linux, if credential access fails because Pi inherited a revoked session keyr
 If the gateway is inactive, first call `mcp_search({ enable: ["gateway"] })`.
 
 ```js
-mcp({ action: "auth-start", server: "linear-server" })
+mcp({ action: "auth-start", server: "linear-server" });
 ```
 
 Open the returned authorization URL in an authenticated browser. This can be a headless browser that can reach Pi's localhost callback; the adapter does not open a browser for `auth-start`. After approval reaches the callback, complete the flow in the same Pi session without copying the callback URL or code:
 
 ```js
-mcp({ action: "auth-complete", server: "linear-server" })
+mcp({ action: "auth-complete", server: "linear-server" });
 ```
 
 The validated callback stays in memory until explicit completion or the pending flow's five-minute timeout. Calling `auth-complete` before the callback arrives gives guidance and leaves the flow available. A denied callback reports failure without exchanging a code.
@@ -376,8 +376,8 @@ If the browser cannot reach Pi's callback (for example, Pi runs on a remote serv
 mcp({
   action: "auth-complete",
   server: "linear-server",
-  args: { redirectUrl: "http://localhost:19876/callback?code=...&state=..." }
-})
+  args: { redirectUrl: "http://localhost:19876/callback?code=...&state=..." },
+});
 ```
 
 You can also pass only the `code` query parameter with `args: { code: "..." }`. Treat authorization URLs and codes as sensitive; they can grant access to the MCP server until the flow expires or completes. Callback state and issuer are checked before provider error text is displayed, as well as before code exchange.
@@ -413,31 +413,31 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
       "maxEvents": 10000
     }
   },
-  "mcpServers": { }
+  "mcpServers": {}
 }
 ```
 
-| Setting | Description |
-|---------|-------------|
-| `toolPrefix` | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server. |
-| `idleTimeout` | Global idle timeout in minutes (default: 10, 0 to disable) |
-| `requestTimeoutMs` | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used) |
-| `showStatusIcon` | Show the plug icon in MCP status and connection text (default: `true`). Set to `false` for plain `MCP: ...` text. |
-| `mcpFooterStatus` | MCP footer verbosity: `"compact"` (default) for `MCP connected/enabled`, `"full"` for enabled/connected/disabled detail, or `"off"` to clear the persistent footer status. `/mcp status` remains available. |
-| `hostConfigDiscovery` | Host-specific config policy: `"off"` (default) or `"on"` (explicitly load detected host configs as the lowest-precedence fallback) |
-| `approveTools` | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this. |
-| `oauthDir` | Parent directory for legacy OAuth imports. Runtime uses its `fitch-mcp-adapter/` child; explicit v4 migration reads the original directory. Relative paths resolve from the active project cwd. `FITCH_MCP_OAUTH_DIR` overrides the final runtime import path; the old `MCP_OAUTH_DIR` is read only by explicit migration. Persistent credentials live in the OS credential store. |
-| `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden. |
-| `directTools` | Global default for all servers (default: false). Per-server overrides this. |
-| `freezeDirectTools` | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ action: "connect", server: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false. |
-| `scriptMode` | Make the MCP-only `mcp_script` plain-JavaScript tool loadable (default: true). Set to `false` to hide it. |
-| `disableProxyTool` | Hide `mcp` once configured pinned tools are available. Legacy resource pins keep it available for resource access. |
-| `autoAuth` | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false). |
-| `sampling` | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available). |
-| `samplingAutoApprove` | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false). |
-| `elicitation` | Allow MCP servers to request user input through Pi dialogs (default: true when Pi UI is available). |
-| `outputGuard` | Guard oversized MCP output: `true` (default), `false`, or `{ maxBytes, maxLines, detailsMaxBytes }`. See [Output Guard](#output-guard). |
-| `trace` | Opt-in metadata-only protocol tracing. Set `{ enabled: true }` globally or `trace: true` on a server. The per-session JSONL file defaults to `.pi/fitch-mcp-adapter/traces/`; `file`, `maxBytes` (default 262144), and `maxEvents` (default 10000) can be set. Raw MCP payloads, prompts, tool arguments/results, auth data, and URLs are never persisted. |
+| Setting                                       | Description                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `toolPrefix`                                  | `"server"` (default), `"short"` (strips `-mcp` suffix), `"none"`, or `"mcp"` (prefixes with `mcp__`, using server-mode normalization). Per-server `toolPrefix` overrides this for that server.                                                                                                                                                                                     |
+| `idleTimeout`                                 | Global idle timeout in minutes (default: 10, 0 to disable)                                                                                                                                                                                                                                                                                                                         |
+| `requestTimeoutMs`                            | Global request timeout in milliseconds for live MCP calls (if omitted or `<= 0`, the MCP SDK default timeout is used)                                                                                                                                                                                                                                                              |
+| `showStatusIcon`                              | Show the plug icon in MCP status and connection text (default: `true`). Set to `false` for plain `MCP: ...` text.                                                                                                                                                                                                                                                                  |
+| `mcpFooterStatus`                             | MCP footer verbosity: `"compact"` (default) for `MCP connected/enabled`, `"full"` for enabled/connected/disabled detail, or `"off"` to clear the persistent footer status. `/mcp status` remains available.                                                                                                                                                                        |
+| `hostConfigDiscovery`                         | Host-specific config policy: `"off"` (default) or `"on"` (explicitly load detected host configs as the lowest-precedence fallback)                                                                                                                                                                                                                                                 |
+| `approveTools`                                | `true` to require approval before every MCP tool call, or an array of glob patterns such as `["github_delete_*", "notion_update_*"]`. Per-server `approveTools` overrides this.                                                                                                                                                                                                    |
+| `oauthDir`                                    | Parent directory for legacy OAuth imports. Runtime uses its `fitch-mcp-adapter/` child; explicit v4 migration reads the original directory. Relative paths resolve from the active project cwd. `FITCH_MCP_OAUTH_DIR` overrides the final runtime import path; the old `MCP_OAUTH_DIR` is read only by explicit migration. Persistent credentials live in the OS credential store. |
+| `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden.                                                                                                                                                    |
+| `directTools`                                 | Global default for all servers (default: false). Per-server overrides this.                                                                                                                                                                                                                                                                                                        |
+| `freezeDirectTools`                           | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ action: "connect", server: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false.                                                                                                       |
+| `scriptMode`                                  | Make the MCP-only `mcp_script` plain-JavaScript tool loadable (default: true). Set to `false` to hide it.                                                                                                                                                                                                                                                                          |
+| `disableProxyTool`                            | Hide `mcp` once configured pinned tools are available. Legacy resource pins keep it available for resource access.                                                                                                                                                                                                                                                                 |
+| `autoAuth`                                    | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false).                                                                                                                                                                                                                                                                                 |
+| `sampling`                                    | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available).                                                                                                                                                                                                                    |
+| `samplingAutoApprove`                         | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false).                                                                                                                                                                                                                                                                                     |
+| `elicitation`                                 | Allow MCP servers to request user input through Pi dialogs (default: true when Pi UI is available).                                                                                                                                                                                                                                                                                |
+| `outputGuard`                                 | Guard oversized MCP output: `true` (default), `false`, or `{ maxBytes, maxLines, detailsMaxBytes }`. See [Output Guard](#output-guard).                                                                                                                                                                                                                                            |
+| `trace`                                       | Opt-in metadata-only protocol tracing. Set `{ enabled: true }` globally or `trace: true` on a server. The per-session JSONL file defaults to `.pi/fitch-mcp-adapter/traces/`; `file`, `maxBytes` (default 262144), and `maxEvents` (default 10000) can be set. Raw MCP payloads, prompts, tool arguments/results, auth data, and URLs are never persisted.                         |
 
 Per-server `idleTimeout`, `requestTimeoutMs`, and `approveTools` override the global settings. `debug` remains stderr display and is unrelated to protocol tracing.
 
@@ -483,7 +483,14 @@ Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — t
 Read a retained result without repeating the MCP operation. Load the gateway first if inactive with `mcp_search({ enable: ["gateway"] })`:
 
 ```js
-mcp({ action: "read-result", ref: "/returned/result/path", path: "/structuredContent/rows", fields: ["id", "title"], offset: 0, limit: 12000 })
+mcp({
+  action: "read-result",
+  ref: "/returned/result/path",
+  path: "/structuredContent/rows",
+  fields: ["id", "title"],
+  offset: 0,
+  limit: 12000,
+});
 ```
 
 `path` is an RFC 6901 JSON Pointer; `fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count **characters in the selected, pretty-printed JSON**, starting at zero—not rows, lines, or bytes. Readback defaults to 12,000 characters and remains bounded by the output byte/line caps. Continue with `details.nextOffset` until it is `null`. Readback requires an existing adapter output artifact in this host's output directory; it never calls the server again. The same operation is available as `tools.readResult` in scripts.
@@ -496,9 +503,7 @@ The bundled `mcp-scripting` skill is a separate Pi package resource. To hide tha
 
 ```json
 {
-  "packages": [
-    { "source": "npm:@fitchmultz/pi-mcp-adapter", "skills": [] }
-  ]
+  "packages": [{ "source": "npm:@fitchmultz/pi-mcp-adapter", "skills": [] }]
 }
 ```
 
@@ -529,15 +534,15 @@ return results;
 
 The script API is:
 
-| Method | Result |
-|--------|--------|
-| `tools.search({ query, server?, limit?, offset? })` | `{ items, total, hasMore, nextOffset, coverage }`; items include `path`, `name`, and `server`; discovery errors include `error` |
-| `tools.describe({ path, server? })` | Complete descriptor with `path`, `server`, `name`, and the server's `inputSchema`, `outputSchema`, `title`, annotations, `_meta`, and other fields when present; failures contain `error` |
-| `tools.call(path, args, server?)` or `tools.exact_flat_name(args)` | `{ ok: true, data, resultRef? }` or `{ ok: false, error: { code, message, ... }, data?, resultRef? }` |
-| `tools.resources({ server, limit?, offset? })` | `{ mode: "resources", server, items, total, hasMore, nextOffset }`; failures contain `error` |
-| `tools.readResource({ server, uri })` | The call envelope above, with raw resource data in `data.contents` |
-| `tools.readResult({ ref, path?, fields?, offset?, limit? })` | `{ content, details }`; readback text and `details.nextOffset`, or `details.error` on failure |
-| `emit(value)` / `console.log(value)` | Captured output before the final return value |
+| Method                                                             | Result                                                                                                                                                                                    |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tools.search({ query, server?, limit?, offset? })`                | `{ items, total, hasMore, nextOffset, coverage }`; items include `path`, `name`, and `server`; discovery errors include `error`                                                           |
+| `tools.describe({ path, server? })`                                | Complete descriptor with `path`, `server`, `name`, and the server's `inputSchema`, `outputSchema`, `title`, annotations, `_meta`, and other fields when present; failures contain `error` |
+| `tools.call(path, args, server?)` or `tools.exact_flat_name(args)` | `{ ok: true, data, resultRef? }` or `{ ok: false, error: { code, message, ... }, data?, resultRef? }`                                                                                     |
+| `tools.resources({ server, limit?, offset? })`                     | `{ mode: "resources", server, items, total, hasMore, nextOffset }`; failures contain `error`                                                                                              |
+| `tools.readResource({ server, uri })`                              | The call envelope above, with raw resource data in `data.contents`                                                                                                                        |
+| `tools.readResult({ ref, path?, fields?, offset?, limit? })`       | `{ content, details }`; readback text and `details.nextOffset`, or `details.error` on failure                                                                                             |
+| `emit(value)` / `console.log(value)`                               | Captured output before the final return value                                                                                                                                             |
 
 For an ambiguous flat name, call `tools.call(descriptor.name, args, descriptor.server)` using the original name and server returned by describe.
 
@@ -558,8 +563,8 @@ See the bundled `mcp-scripting` skill for the workflow and exact return shapes.
 Resources are catalog entries addressed by URI, separate from tools. Load the gateway first if inactive with `mcp_search({ enable: ["gateway"] })`:
 
 ```js
-mcp({ action: "resources", server: "docs", limit: 12, offset: 0 })
-mcp({ action: "read-resource", server: "docs", uri: "docs://guide" })
+mcp({ action: "resources", server: "docs", limit: 12, offset: 0 });
+mcp({ action: "read-resource", server: "docs", uri: "docs://guide" });
 ```
 
 List first, then use the exact URI. Listings preserve the server's resource descriptor fields, including name, title, MIME type, icons, and `_meta` when supplied. `exposeResources`, include/exclude filters, disabled servers, authentication, and approval policy remain binding. Existing `read_<resource>` filter names still select resources, but these compatibility aliases are not typed functions and cannot be pinned in `/mcp`. Scripts use `tools.resources` and `tools.readResource`.
@@ -615,11 +620,11 @@ Per-server (the `mcp.example.com` URLs are placeholders for your own endpoints):
 }
 ```
 
-| Value | Behavior |
-|-------|----------|
-| `true` | Pin all eligible real tools from this server |
-| `["tool_a", "tool_b"]` | Pin these tools (use original MCP names) |
-| Omitted or `false` | No initial pins; load tools with `mcp_search` when needed (default) |
+| Value                  | Behavior                                                            |
+| ---------------------- | ------------------------------------------------------------------- |
+| `true`                 | Pin all eligible real tools from this server                        |
+| `["tool_a", "tool_b"]` | Pin these tools (use original MCP names)                            |
+| Omitted or `false`     | No initial pins; load tools with `mcp_search` when needed (default) |
 
 To set a global default for all servers:
 
@@ -701,13 +706,13 @@ MCP servers can ship interactive UIs via [MCP Apps](https://github.com/modelcont
 
 **Message types from UI:**
 
-| Type | Purpose |
-|------|---------|
-| `prompt` | User message that triggers an agent response |
-| `intent` | Structured action with name + params |
-| `notify` | Fire-and-forget notification |
-| `message` | Generic message payload |
-| (custom) | Any other type forwarded as intent |
+| Type      | Purpose                                      |
+| --------- | -------------------------------------------- |
+| `prompt`  | User message that triggers an agent response |
+| `intent`  | Structured action with name + params         |
+| `notify`  | Fire-and-forget notification                 |
+| `message` | Generic message payload                      |
+| (custom)  | Any other type forwarded as intent           |
 
 **Retrieving UI messages:**
 
@@ -754,7 +759,7 @@ Shared MCP files are loaded automatically. Use `imports` only for host-specific 
 ```json
 {
   "imports": ["cursor", "claude-code", "claude-desktop", "opencode"],
-  "mcpServers": { }
+  "mcpServers": {}
 }
 ```
 
@@ -768,23 +773,23 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/fitch-mcp-adapt
 
 ## Usage
 
-| Action | Example |
-|--------|---------|
-| Discover and load typed tools | `mcp_search({ query: "screenshot", server: "chrome-devtools", limit: 5 })` |
-| Load gateway / script | `mcp_search({ enable: ["gateway", "script"] })` |
-| Status | `mcp({ action: "status" })` |
-| List server tools | `mcp({ action: "list", server: "name", limit: 12, offset: 0 })` |
-| Search without activation | `mcp({ action: "search", query: "screenshot navigate", limit: 12 })` |
-| Describe | `mcp({ action: "describe", tool: "tool_name", server: "name" })` |
-| Instructions | `mcp({ action: "instructions", server: "name" })` |
-| Call | `mcp({ action: "call", tool: "tool_name", args: { key: "value" } })` |
-| Connect or refresh | `mcp({ action: "connect", server: "name", limit: 12, offset: 0 })` |
-| List resources | `mcp({ action: "resources", server: "name" })` |
-| Read resource | `mcp({ action: "read-resource", server: "name", uri: "docs://guide" })` |
-| Read saved result | `mcp({ action: "read-result", ref: "/returned/result/path", path: "/structuredContent" })` |
-| UI messages | `mcp({ action: "ui-messages" })` |
-| Auth start | `mcp({ action: "auth-start", server: "name" })` |
-| Auth complete | `mcp({ action: "auth-complete", server: "name" })` after the browser callback, or supply `args: { redirectUrl: "..." }` |
+| Action                        | Example                                                                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Discover and load typed tools | `mcp_search({ query: "screenshot", server: "chrome-devtools", limit: 5 })`                                              |
+| Load gateway / script         | `mcp_search({ enable: ["gateway", "script"] })`                                                                         |
+| Status                        | `mcp({ action: "status" })`                                                                                             |
+| List server tools             | `mcp({ action: "list", server: "name", limit: 12, offset: 0 })`                                                         |
+| Search without activation     | `mcp({ action: "search", query: "screenshot navigate", limit: 12 })`                                                    |
+| Describe                      | `mcp({ action: "describe", tool: "tool_name", server: "name" })`                                                        |
+| Instructions                  | `mcp({ action: "instructions", server: "name" })`                                                                       |
+| Call                          | `mcp({ action: "call", tool: "tool_name", args: { key: "value" } })`                                                    |
+| Connect or refresh            | `mcp({ action: "connect", server: "name", limit: 12, offset: 0 })`                                                      |
+| List resources                | `mcp({ action: "resources", server: "name" })`                                                                          |
+| Read resource                 | `mcp({ action: "read-resource", server: "name", uri: "docs://guide" })`                                                 |
+| Read saved result             | `mcp({ action: "read-result", ref: "/returned/result/path", path: "/structuredContent" })`                              |
+| UI messages                   | `mcp({ action: "ui-messages" })`                                                                                        |
+| Auth start                    | `mcp({ action: "auth-start", server: "name" })`                                                                         |
+| Auth complete                 | `mcp({ action: "auth-complete", server: "name" })` after the browser callback, or supply `args: { redirectUrl: "..." }` |
 
 Load `mcp` first if inactive using the row above. `action` is required. Search requires `query`; describe/call require `tool`; list/connect/instructions/resources/auth require `server`; resource reads require `server` and `uri`; saved-result reads require `ref`. Pass object `args`. Optional `server` disambiguates tool calls and descriptions.
 
@@ -802,20 +807,20 @@ Gateway and typed-tool results render compactly in the terminal: long text shows
 
 ## Commands
 
-| Command | What it does |
-|---------|--------------|
-| `/mcp` | Interactive panel and first-run onboarding surface |
-| `/mcp setup` | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
-| `/mcp tools` | List discovered real tools, excluding resource aliases |
-| `/mcp status` | Show connection state and separate tool/resource counts |
-| `/mcp prompts` | List all MCP prompts registered as slash commands |
-| `/mcp reconnect` | Reconnect all servers |
-| `/mcp reconnect <server>` | Connect or reconnect a single server |
-| `/mcp disable <server>` | Disable a server in the project-local `.pi/fitch-mcp-adapter/mcp.json` (requires `/reload` to apply) |
-| `/mcp enable <server>` | Enable through the project-local override layer (requires `/reload` to apply) |
-| `/mcp logout <server>` | Clear stored OAuth credentials for a server and disconnect it |
-| `/mcp-auth` | Open an OAuth server picker in interactive UI sessions |
-| `/mcp-auth <server>` | OAuth setup for a specific server |
+| Command                   | What it does                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `/mcp`                    | Interactive panel and first-run onboarding surface                                                                       |
+| `/mcp setup`              | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
+| `/mcp tools`              | List discovered real tools, excluding resource aliases                                                                   |
+| `/mcp status`             | Show connection state and separate tool/resource counts                                                                  |
+| `/mcp prompts`            | List all MCP prompts registered as slash commands                                                                        |
+| `/mcp reconnect`          | Reconnect all servers                                                                                                    |
+| `/mcp reconnect <server>` | Connect or reconnect a single server                                                                                     |
+| `/mcp disable <server>`   | Disable a server in the project-local `.pi/fitch-mcp-adapter/mcp.json` (requires `/reload` to apply)                     |
+| `/mcp enable <server>`    | Enable through the project-local override layer (requires `/reload` to apply)                                            |
+| `/mcp logout <server>`    | Clear stored OAuth credentials for a server and disconnect it                                                            |
+| `/mcp-auth`               | Open an OAuth server picker in interactive UI sessions                                                                   |
+| `/mcp-auth <server>`      | OAuth setup for a specific server                                                                                        |
 
 If `settings.autoAuth` is `true`, `mcp({ action: "connect", server: "..." })`, gateway calls, and typed/script tool calls may run OAuth when needed, with at most one automatic auth attempt per invocation and one post-auth retry. Browser authorization requires an interactive host. Auth-only replacement preserves accepted work on the old client; ordinary `/mcp reconnect` and panel `ctrl+r` remain hard resets.
 

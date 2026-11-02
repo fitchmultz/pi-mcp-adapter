@@ -32,7 +32,14 @@ function makeState() {
   const connection = {
     status: "connected" as const,
     client: { callTool },
-    tools: [{ name: "app", description: "App", inputSchema: { type: "object" }, _meta: { ui: { resourceUri: "ui://app" } } }],
+    tools: [
+      {
+        name: "app",
+        description: "App",
+        inputSchema: { type: "object" },
+        _meta: { ui: { resourceUri: "ui://app" } },
+      },
+    ],
     resources: [],
   };
   const consentManager = new ConsentManager();
@@ -51,7 +58,10 @@ function makeState() {
     },
     lifecycle: {},
     toolMetadata: new Map([
-      ["demo", [{ name: "demo_app", originalName: "app", description: "App", uiResourceUri: "ui://app" }]],
+      [
+        "demo",
+        [{ name: "demo_app", originalName: "app", description: "App", uiResourceUri: "ui://app" }],
+      ],
     ]),
     serverInstructions: new Map(),
     failureTracker: new Map(),
@@ -82,37 +92,55 @@ afterEach(() => {
   delete process.env.MCP_UI_VIEWER;
   delete process.env.SSH_CONNECTION;
   delete process.env.SSH_TTY;
-  vi.mocked(execFile).mockImplementation((_command: any, _options: any, callback: any) => callback(null, "") as any);
+  vi.mocked(execFile).mockImplementation(
+    (_command: any, _options: any, callback: any) => callback(null, "") as any,
+  );
   glimpseMocks.isGlimpseAvailable.mockClear();
   glimpseMocks.openGlimpseWindow.mockClear();
 });
 
 describe("remote MCP UI viewers", () => {
-  it.each(["timeout", "abort"])("settles a script on %s while browser opening is pending", async ending => {
-    process.env.MCP_UI_VIEWER = "browser";
-    const { state, callTool } = makeState();
-    const controller = new AbortController();
-    let releaseOpen!: () => void;
-    state.openBrowser.mockImplementation(() => new Promise<void>(resolve => { releaseOpen = resolve; }));
-    let output: Awaited<ReturnType<typeof runMcpScript>> | undefined;
-    const pending = runMcpScript(state, "await tools.demo_app({});", ending === "timeout" ? 500 : 5000, undefined, controller.signal)
-      .then(result => { output = result; return result; });
-    try {
-      await expect.poll(() => state.openBrowser.mock.calls.length).toBe(1);
-      if (ending === "abort") controller.abort(new Error("caller cancelled"));
-      await expect.poll(() => output, { timeout: 1000 }).toBeDefined();
-      expect(output!.details).toMatchObject({
-        error: ending === "timeout" ? "timeout" : "aborted",
-        calls: [{ path: "demo_app", error: "aborted" }],
+  it.each(["timeout", "abort"])(
+    "settles a script on %s while browser opening is pending",
+    async (ending) => {
+      process.env.MCP_UI_VIEWER = "browser";
+      const { state, callTool } = makeState();
+      const controller = new AbortController();
+      let releaseOpen!: () => void;
+      state.openBrowser.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseOpen = resolve;
+          }),
+      );
+      let output: Awaited<ReturnType<typeof runMcpScript>> | undefined;
+      const pending = runMcpScript(
+        state,
+        "await tools.demo_app({});",
+        ending === "timeout" ? 500 : 5000,
+        undefined,
+        controller.signal,
+      ).then((result) => {
+        output = result;
+        return result;
       });
+      try {
+        await expect.poll(() => state.openBrowser.mock.calls.length).toBe(1);
+        if (ending === "abort") controller.abort(new Error("caller cancelled"));
+        await expect.poll(() => output, { timeout: 1000 }).toBeDefined();
+        expect(output!.details).toMatchObject({
+          error: ending === "timeout" ? "timeout" : "aborted",
+          calls: [{ path: "demo_app", error: "aborted" }],
+        });
+        expect(callTool).not.toHaveBeenCalled();
+      } finally {
+        releaseOpen?.();
+        await pending;
+        state.uiServer?.close("test-cleanup");
+      }
       expect(callTool).not.toHaveBeenCalled();
-    } finally {
-      releaseOpen?.();
-      await pending;
-      state.uiServer?.close("test-cleanup");
-    }
-    expect(callTool).not.toHaveBeenCalled();
-  });
+    },
+  );
 
   it("skips Glimpse and prints a remote access hint for SSH sessions", async () => {
     process.env.SSH_CONNECTION = "192.0.2.10 55555 127.0.0.1 22";
@@ -129,14 +157,23 @@ describe("remote MCP UI viewers", () => {
     expect(state.openBrowser).toHaveBeenCalledWith(expect.stringContaining("http://localhost:"));
     expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
-    expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("This looks like a remote session"), "info");
-    expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("SSH: run `ssh -L"), "info");
+    expect(state.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("This looks like a remote session"),
+      "info",
+    );
+    expect(state.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("SSH: run `ssh -L"),
+      "info",
+    );
 
     runtime?.close("test-cleanup");
   });
 
   it("uses local-window wording when a remote login is active but Glimpse opened", async () => {
-    vi.mocked(execFile).mockImplementation((_command: any, _options: any, callback: any) => callback(null, "user ttys001 2026-08-02 08:00 (192.0.2.10)\n") as any);
+    vi.mocked(execFile).mockImplementation(
+      (_command: any, _options: any, callback: any) =>
+        callback(null, "user ttys001 2026-08-02 08:00 (192.0.2.10)\n") as any,
+    );
     const { state } = makeState();
     glimpseMocks.openGlimpseWindow.mockResolvedValueOnce({ close: vi.fn() });
 
@@ -148,8 +185,14 @@ describe("remote MCP UI viewers", () => {
     });
 
     expect(runtime).toMatchObject({ viewer: "glimpse", windowOpen: true });
-    expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("MCP UI opened on this host"), "info");
-    expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("If you're controlling this session remotely"), "info");
+    expect(state.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("MCP UI opened on this host"),
+      "info",
+    );
+    expect(state.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("If you're controlling this session remotely"),
+      "info",
+    );
 
     runtime?.close("test-cleanup");
   });
@@ -162,31 +205,53 @@ describe("MCP UI context submissions", () => {
     const { state } = makeState();
     state.outputDirectory = root;
     const runtime = await maybeStartUiSession(state, {
-      serverName: "demo", toolName: "app", toolArgs: {}, uiResourceUri: "ui://app",
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
     });
     if (!runtime) throw new Error("expected UI runtime");
     const handle = state.uiServer;
     let upload: http.ClientRequest | undefined;
     try {
-      const body = (message: string) => JSON.stringify({
-        token: handle.sessionToken, params: { type: "notify", message },
-      });
+      const body = (message: string) =>
+        JSON.stringify({
+          token: handle.sessionToken,
+          params: { type: "notify", message },
+        });
       const first = await fetch(`http://127.0.0.1:${handle.port}/proxy/ui/message`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: body("accepted before completion"),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: body("accepted before completion"),
       });
       expect(first.status).toBe(200);
       const lateBody = body("not accepted after completion");
       let started!: () => void;
-      const admittedUpload = new Promise<void>(resolve => { started = resolve; });
+      const admittedUpload = new Promise<void>((resolve) => {
+        started = resolve;
+      });
       const receipt = new Promise<{ status: number; body: unknown }>((resolve, reject) => {
-        upload = http.request({
-          hostname: "127.0.0.1", port: handle.port, path: "/proxy/ui/message", method: "POST", agent: false,
-          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(lateBody), Expect: "100-continue" },
-        }, res => {
-          let text = "";
-          res.on("data", chunk => { text += chunk; });
-          res.on("end", () => resolve({ status: res.statusCode!, body: JSON.parse(text) }));
-        });
+        upload = http.request(
+          {
+            hostname: "127.0.0.1",
+            port: handle.port,
+            path: "/proxy/ui/message",
+            method: "POST",
+            agent: false,
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(lateBody),
+              Expect: "100-continue",
+            },
+          },
+          (res) => {
+            let text = "";
+            res.on("data", (chunk) => {
+              text += chunk;
+            });
+            res.on("end", () => resolve({ status: res.statusCode!, body: JSON.parse(text) }));
+          },
+        );
         upload.on("error", reject);
         upload.once("continue", started);
         upload.write(lateBody.slice(0, -1));
@@ -195,7 +260,10 @@ describe("MCP UI context submissions", () => {
       runtime.close("user-closed");
       upload!.end(lateBody.slice(-1));
       expect(await receipt).toMatchObject({ status: 409, body: { ok: false } });
-      expect(state.ui.notify).not.toHaveBeenCalledWith("[demo] not accepted after completion", "info");
+      expect(state.ui.notify).not.toHaveBeenCalledWith(
+        "[demo] not accepted after completion",
+        "info",
+      );
       const delivered = await executeUiMessages(state);
       expect(textOf(delivered)).toContain("accepted before completion");
       expect(textOf(delivered)).not.toContain("not accepted after completion");
@@ -223,7 +291,10 @@ describe("MCP UI context submissions", () => {
     await fetch(`${runtime.url.replace(/\/?\?.*$/, "")}/proxy/ui/context`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: state.uiServer.sessionToken, params: { content: [{ type: "text", text: "Use this selection" }] } }),
+      body: JSON.stringify({
+        token: state.uiServer.sessionToken,
+        params: { content: [{ type: "text", text: "Use this selection" }] },
+      }),
     });
 
     expect(state.sendMessage).toHaveBeenCalledWith(
@@ -256,8 +327,14 @@ describe("MCP_UI_VIEWER=none", () => {
     expect(state.openBrowser).not.toHaveBeenCalled();
     expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
-    expect(state.ui.notify).toHaveBeenCalledWith(expect.stringContaining("MCP UI window suppressed"), "info");
-    expect(state.ui.notify).toHaveBeenCalledWith(expect.not.stringContaining("Tool still ran"), "info");
+    expect(state.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("MCP UI window suppressed"),
+      "info",
+    );
+    expect(state.ui.notify).toHaveBeenCalledWith(
+      expect.not.stringContaining("Tool still ran"),
+      "info",
+    );
 
     runtime?.close("test-cleanup");
   });
@@ -284,7 +361,13 @@ describe("MCP_UI_VIEWER=none", () => {
     const execute = createDirectToolExecutor(
       () => state,
       () => null,
-      { serverName: "demo", originalName: "app", prefixedName: "demo_app", description: "App", uiResourceUri: "ui://app" },
+      {
+        serverName: "demo",
+        originalName: "app",
+        prefixedName: "demo_app",
+        description: "App",
+        uiResourceUri: "ui://app",
+      },
     );
 
     const result = await execute("call-1", {}, undefined as any, () => {}, undefined as any);

@@ -1,6 +1,10 @@
 import type { Client } from "@modelcontextprotocol/client";
 
-export type ClientOperation = "request/refresh" | "sampling callback" | "elicitation callback" | "subscription";
+export type ClientOperation =
+  | "request/refresh"
+  | "sampling callback"
+  | "elicitation callback"
+  | "subscription";
 export const clientOperations = new WeakMap<Client, Map<Promise<unknown>, ClientOperation>>();
 
 export async function drainClientCallbacks(client: Client): Promise<void> {

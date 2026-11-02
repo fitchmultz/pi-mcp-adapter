@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("direct tools in child Pi processes", () => {
@@ -18,16 +18,22 @@ describe("direct tools in child Pi processes", () => {
     roots.push(root);
     const agentDir = join(root, "agent");
     const projectDir = join(root, "project");
-    await Promise.all([mkdir(join(agentDir, "fitch-mcp-adapter"), { recursive: true }), mkdir(projectDir)]);
+    await Promise.all([
+      mkdir(join(agentDir, "fitch-mcp-adapter"), { recursive: true }),
+      mkdir(projectDir),
+    ]);
     const configPath = join(agentDir, "fitch-mcp-adapter", "mcp.json");
-    await writeFile(configPath, JSON.stringify({
-      mcpServers: {
-        demo: {
-          command: process.execPath,
-          args: [resolve("__tests__/fixtures/delayed-mcp-server.mjs")],
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcpServers: {
+          demo: {
+            command: process.execPath,
+            args: [resolve("__tests__/fixtures/delayed-mcp-server.mjs")],
+          },
         },
-      },
-    }));
+      }),
+    );
 
     const { stdout, stderr } = await execFileAsync(
       process.execPath,
@@ -49,8 +55,12 @@ describe("direct tools in child Pi processes", () => {
     );
 
     expect(stderr).not.toContain("MCP initialization failed");
-    const toolsLine = stdout.split("\n").find(line => line.startsWith("DIRECT_TOOLS_AT_AGENT_START="));
+    const toolsLine = stdout
+      .split("\n")
+      .find((line) => line.startsWith("DIRECT_TOOLS_AT_AGENT_START="));
     expect(toolsLine).toBeDefined();
-    expect(JSON.parse(toolsLine!.slice("DIRECT_TOOLS_AT_AGENT_START=".length))).toContain("demo_reload_identity");
+    expect(JSON.parse(toolsLine!.slice("DIRECT_TOOLS_AT_AGENT_START=".length))).toContain(
+      "demo_reload_identity",
+    );
   }, 70_000);
 });

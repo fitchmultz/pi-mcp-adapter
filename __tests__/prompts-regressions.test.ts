@@ -71,20 +71,30 @@ describe("MCP prompt regressions", () => {
       },
     });
 
-    expect(resolveCachedPrompts({ mcpServers: { demo: valid } }).map(prompt => prompt.originalName)).toEqual(["brief"]);
+    expect(
+      resolveCachedPrompts({ mcpServers: { demo: valid } }).map((prompt) => prompt.originalName),
+    ).toEqual(["brief"]);
   });
 
   it("does not register cached prompt commands for disabled servers", () => {
     saveMetadataCache({
       version: 1,
       servers: {
-        demo: { configHash: computeServerHash({ ...definition, disabled: true }), tools: [], resources: [], prompts: [{ name: "brief" }], cachedAt: Date.now() },
+        demo: {
+          configHash: computeServerHash({ ...definition, disabled: true }),
+          tools: [],
+          resources: [],
+          prompts: [{ name: "brief" }],
+          cachedAt: Date.now(),
+        },
       },
     });
 
-    expect(resolveCachedPrompts({
-      mcpServers: { demo: { ...definition, disabled: true } },
-    })).toEqual([]);
+    expect(
+      resolveCachedPrompts({
+        mcpServers: { demo: { ...definition, disabled: true } },
+      }),
+    ).toEqual([]);
   });
 
   it("fails closed when live discovery removes a cached prompt", async () => {
@@ -132,9 +142,10 @@ describe("MCP prompt regressions", () => {
 
     updateMetadataCache(current, "demo");
 
-    expect(JSON.parse(readFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"), "utf8")).servers.demo.prompts).toEqual([
-      { name: "brief", description: "cached" },
-    ]);
+    expect(
+      JSON.parse(readFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"), "utf8"))
+        .servers.demo.prompts,
+    ).toEqual([{ name: "brief", description: "cached" }]);
   });
 
   it("surfaces prompt discovery failures in /mcp prompts", async () => {
@@ -142,13 +153,18 @@ describe("MCP prompt regressions", () => {
     const current = state({
       manager: {
         getConnection: vi.fn(),
-        getAllConnections: vi.fn(() => new Map([["demo", { status: "connected", promptDiscoveryFailed: true }]])),
+        getAllConnections: vi.fn(
+          () => new Map([["demo", { status: "connected", promptDiscoveryFailed: true }]]),
+        ),
       },
     });
 
     await showPrompts(current, context(notify) as any);
 
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("Prompt discovery failed for: demo"), "info");
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining("Prompt discovery failed for: demo"),
+      "info",
+    );
   });
 
   it("preserves role markers while keeping delimiter-like server text lossless", () => {

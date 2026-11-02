@@ -1,6 +1,6 @@
 /**
  * Integration tests for MCP UI flow
- * 
+ *
  * These tests exercise the full flow from tool call with UI resource
  * through browser communication back to agent message retrieval.
  */
@@ -18,7 +18,7 @@ import type { UiResourceContent, UiResourcePermissions, UiSessionMessages } from
 // Helper to make HTTP requests
 async function request(
   url: string,
-  options: { method?: string; body?: unknown } = {}
+  options: { method?: string; body?: unknown } = {},
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -43,7 +43,7 @@ async function request(
           }
           resolve({ status: res.statusCode ?? 0, body });
         });
-      }
+      },
     );
     req.on("error", reject);
     if (options.body) req.write(JSON.stringify(options.body));
@@ -215,7 +215,7 @@ describe("MCP UI Integration", () => {
       // 1. Agent calls tool with UI
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager(); // No consent prompts
-      
+
       const resource: UiResourceContent = {
         uri: "ui://test/app",
         html: "<h1>Test App</h1>",
@@ -223,7 +223,11 @@ describe("MCP UI Integration", () => {
         meta: { permissions: [] as UiResourcePermissions },
       };
 
-      const receivedMessages: Omit<UiSessionMessages, "contexts"> = { prompts: [], notifications: [], intents: [] };
+      const receivedMessages: Omit<UiSessionMessages, "contexts"> = {
+        prompts: [],
+        notifications: [],
+        intents: [],
+      };
       const onMessage = vi.fn().mockImplementation((params) => {
         if (params.type === "prompt") receivedMessages.prompts.push(params.prompt);
       });
@@ -262,7 +266,7 @@ describe("MCP UI Integration", () => {
     it("handles multiple messages in conversation", async () => {
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager();
-      
+
       const resource: UiResourceContent = {
         uri: "ui://test/chat",
         html: "<div id='chat'></div>",
@@ -303,7 +307,7 @@ describe("MCP UI Integration", () => {
     it("handles consent flow for tool calls", async () => {
       const manager = createIntegrationManager();
       const consentManager = new ConsentManager();
-      
+
       const resource: UiResourceContent = {
         uri: "ui://test/app",
         html: "<h1>App</h1>",
@@ -337,7 +341,7 @@ describe("MCP UI Integration", () => {
     it("tracks in-flight requests correctly", async () => {
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager();
-      
+
       const resource: UiResourceContent = {
         uri: "ui://test/app",
         html: "<h1>App</h1>",
@@ -358,10 +362,7 @@ describe("MCP UI Integration", () => {
       await browser.loadPage();
 
       // Call multiple tools
-      await Promise.all([
-        browser.callTool("get_data"),
-        browser.callTool("save_file"),
-      ]);
+      await Promise.all([browser.callTool("get_data"), browser.callTool("save_file")]);
 
       // Both should have incremented/decremented
       expect(manager.incrementInFlight).toHaveBeenCalledTimes(2);
@@ -394,7 +395,9 @@ describe("MCP UI Integration", () => {
       const html = await browser.loadPage();
       const resourceToken = html.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/)?.[1];
       expect(resourceToken).toBeDefined();
-      const response = await request(`http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(resourceToken!)}`);
+      const response = await request(
+        `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(resourceToken!)}`,
+      );
       expect(response.status).toBe(200);
       expect(response.body).toBe(resource.html);
     });
@@ -405,7 +408,7 @@ describe("MCP UI Integration", () => {
       const onComplete = vi.fn();
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager();
-      
+
       handle = await startUiServer({
         serverName: "test-server",
         toolName: "test_tool",
@@ -445,7 +448,7 @@ describe("MCP UI Integration", () => {
       } as unknown as McpServerManager;
 
       const consentManager = approvedConsentManager();
-      
+
       handle = await startUiServer({
         serverName: "error-server",
         toolName: "error_tool",
@@ -477,7 +480,7 @@ describe("MCP UI Integration", () => {
       } as unknown as McpServerManager;
 
       const consentManager = approvedConsentManager();
-      
+
       handle = await startUiServer({
         serverName: "disconnected-server",
         toolName: "test_tool",
@@ -504,7 +507,7 @@ describe("MCP UI Integration", () => {
     it("allows switching display modes", async () => {
       const manager = createIntegrationManager();
       const consentManager = approvedConsentManager();
-      
+
       handle = await startUiServer({
         serverName: "test-server",
         toolName: "test_tool",

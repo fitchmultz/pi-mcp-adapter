@@ -29,7 +29,12 @@ function baseState(promptMetadata: Map<string, PromptMetadata[]>): McpExtensionS
   return {
     config: { mcpServers: { demo: { command: "demo" } } },
     manager: {
-      getConnection: vi.fn(() => ({ status: "connected" as const, tools: [], resources: [], prompts: [] })),
+      getConnection: vi.fn(() => ({
+        status: "connected" as const,
+        tools: [],
+        resources: [],
+        prompts: [],
+      })),
       getPrompt: vi.fn(),
     },
     toolMetadata: new Map(),
@@ -54,7 +59,9 @@ describe("prompt command naming", () => {
   });
 
   it("honors the toolPrefix short mode", () => {
-    expect(formatPromptCommandName("plan", "agent-board-mcp", "short")).toBe("mcp__agent_board__plan");
+    expect(formatPromptCommandName("plan", "agent-board-mcp", "short")).toBe(
+      "mcp__agent_board__plan",
+    );
   });
 
   it("falls back to the server name when toolPrefix is 'none'", () => {
@@ -178,7 +185,11 @@ describe("formatPromptResult", () => {
       messages: [
         {
           role: "user",
-          content: { type: "image", data: "b64", mimeType: "image/png" } as unknown as GetPromptResult["messages"][number]["content"],
+          content: {
+            type: "image",
+            data: "b64",
+            mimeType: "image/png",
+          } as unknown as GetPromptResult["messages"][number]["content"],
         },
       ],
     };
@@ -199,7 +210,12 @@ describe("createPromptCommand handler", () => {
     const command = createPromptCommand(pi, () => state, meta());
     await command.handler("ai", commandCtx());
 
-    expect(state.manager.getPrompt).toHaveBeenCalledWith("demo", "brief", { topic: "ai" }, undefined);
+    expect(state.manager.getPrompt).toHaveBeenCalledWith(
+      "demo",
+      "brief",
+      { topic: "ai" },
+      undefined,
+    );
     expect(pi.sendUserMessage).toHaveBeenCalledWith("Brief for ai");
   });
 
@@ -213,13 +229,18 @@ describe("createPromptCommand handler", () => {
     await command.handler("", commandCtx({ hasUI: true, ui: { notify } as any }));
 
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("Missing required argument"), "error");
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining("Missing required argument"),
+      "error",
+    );
   });
 
   it("surfaces MCP server errors without sending a user message", async () => {
     const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
     const state = baseState(promptMetadata);
-    (state.manager.getPrompt as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Prompt not found"));
+    (state.manager.getPrompt as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Prompt not found"),
+    );
     const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
     const notify = vi.fn();
 
@@ -233,7 +254,9 @@ describe("createPromptCommand handler", () => {
   it("prompts users to authenticate when the server needs auth", async () => {
     const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
     const state = baseState(promptMetadata);
-    (state.manager.getConnection as ReturnType<typeof vi.fn>).mockReturnValue({ status: "needs-auth" });
+    (state.manager.getConnection as ReturnType<typeof vi.fn>).mockReturnValue({
+      status: "needs-auth",
+    });
     const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
     const notify = vi.fn();
 

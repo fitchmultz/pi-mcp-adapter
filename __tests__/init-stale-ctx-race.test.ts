@@ -36,7 +36,8 @@ function contextThatGoesStale(armed: { value: boolean }, message?: string): Exte
     get hasUI() {
       if (armed.value) {
         throw new Error(
-          message ?? "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload()."
+          message ??
+            "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().",
         );
       }
       return true;
@@ -60,7 +61,10 @@ describe("initializeMcp vs. a ctx invalidated mid-connect", () => {
 
     let resolveConnect!: (value: unknown) => void;
     mocks.connect.mockImplementation(
-      () => new Promise((resolve) => { resolveConnect = resolve; })
+      () =>
+        new Promise((resolve) => {
+          resolveConnect = resolve;
+        }),
     );
 
     const { initializeMcp } = await import("../init.ts");
@@ -97,7 +101,10 @@ describe("initializeMcp vs. a ctx invalidated mid-connect", () => {
 
     let resolveConnect!: (value: unknown) => void;
     mocks.connect.mockImplementation(
-      () => new Promise((resolve) => { resolveConnect = resolve; })
+      () =>
+        new Promise((resolve) => {
+          resolveConnect = resolve;
+        }),
     );
 
     const { initializeMcp } = await import("../init.ts");

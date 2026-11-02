@@ -24,7 +24,9 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
   };
 
   const reportCleanupFailure = (error: unknown, late: boolean) => {
-    console.error(`MCP: ${late ? "late " : ""}runtime cleanup failed: ${formatTerminalError(error)}`);
+    console.error(
+      `MCP: ${late ? "late " : ""}runtime cleanup failed: ${formatTerminalError(error)}`,
+    );
   };
 
   return {
@@ -33,12 +35,18 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
       // Invocation/cancellation policy stays at the call site. In particular, an accepted
       // tool's outcome callback may still need to persist its result during shutdown.
       callbacks[kind]++;
-      try { return await run(); } finally { callbacks[kind]--; }
+      try {
+        return await run();
+      } finally {
+        callbacks[kind]--;
+      }
     },
     isActive: () => !controller.signal.aborted,
-    addCleanup: cleanup => {
+    addCleanup: (cleanup) => {
       if (controller.signal.aborted) {
-        void Promise.resolve().then(cleanup).catch(error => reportCleanupFailure(error, true));
+        void Promise.resolve()
+          .then(cleanup)
+          .catch((error) => reportCleanupFailure(error, true));
         return;
       }
       cleanups.push(cleanup);
@@ -46,11 +54,14 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
     stop: (reason = "MCP extension runtime stopped") => {
       if (stopPromise) return stopPromise;
       controller.abort(new Error(reason));
-      const pendingCleanups = cleanups.splice(0).reverse().map(cleanup =>
-        Promise.resolve().then(cleanup),
-      );
-      stopPromise = Promise.allSettled(pendingCleanups).then(results => {
-        const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      const pendingCleanups = cleanups
+        .splice(0)
+        .reverse()
+        .map((cleanup) => Promise.resolve().then(cleanup));
+      stopPromise = Promise.allSettled(pendingCleanups).then((results) => {
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
         const callback = pendingCallback();
         if (callback) failures.push(new Error(callback));
         if (failures.length > 0) {
@@ -61,11 +72,15 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
       });
       return stopPromise;
     },
-    throwIfInactive: () => { controller.signal.throwIfAborted(); },
+    throwIfInactive: () => {
+      controller.signal.throwIfAborted();
+    },
   };
 }
 
-export function combineAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+export function combineAbortSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal | undefined {
   const active = signals.filter((signal): signal is AbortSignal => signal !== undefined);
   if (active.length === 0) return undefined;
   if (active.length === 1) return active[0];
@@ -104,5 +119,8 @@ export function createOwnedUi(ui: ExtensionUIContext, owner: McpRuntimeOwner): E
 
 export function isAbortError(error: unknown, signal?: AbortSignal): boolean {
   if (signal?.aborted) return true;
-  return error instanceof Error && (error.name === "AbortError" || error.message === "MCP extension runtime stopped");
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.message === "MCP extension runtime stopped")
+  );
 }

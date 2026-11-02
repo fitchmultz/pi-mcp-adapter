@@ -41,7 +41,9 @@ describe("Logger", () => {
 
   it("formats call and child context", () => {
     logger.info("direct", { server: "test-server", tool: "test-tool" });
-    logger.child({ server: "child-server" }).child({ session: "session123" })
+    logger
+      .child({ server: "child-server" })
+      .child({ session: "session123" })
       .info("child", { tool: "child-tool" });
 
     expect(console.log).toHaveBeenNthCalledWith(

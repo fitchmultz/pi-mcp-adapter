@@ -37,7 +37,8 @@ export function createUiMessageHistory(outputDirectory?: string) {
       } catch (error) {
         failed = true;
         messages.historyError = error instanceof Error ? error.message : String(error);
-        if (category === "intents") messages.intents.push(value as UiSessionMessages["intents"][number]);
+        if (category === "intents")
+          messages.intents.push(value as UiSessionMessages["intents"][number]);
         else messages[category].push(value as string);
         return `UI history could not be saved; messages remain in memory for recovery: ${messages.historyError}. Unsaved messages will be lost on reload or process exit.`;
       }
@@ -45,12 +46,21 @@ export function createUiMessageHistory(outputDirectory?: string) {
   };
 }
 
-export async function* uiMessages(messages: UiSessionMessages, category: Category): AsyncGenerator<Message> {
+export async function* uiMessages(
+  messages: UiSessionMessages,
+  category: Category,
+): AsyncGenerator<Message> {
   if (messages.historyRef && messages.historyBytes) {
     // A failed partial append is not an accepted event; the in-memory tail owns it instead.
-    const input = createReadStream(messages.historyRef, { encoding: "utf8", end: messages.historyBytes - 1 });
-    let bytes = 0, count = 0;
-    input.on("data", chunk => { bytes += Buffer.byteLength(chunk); });
+    const input = createReadStream(messages.historyRef, {
+      encoding: "utf8",
+      end: messages.historyBytes - 1,
+    });
+    let bytes = 0,
+      count = 0;
+    input.on("data", (chunk) => {
+      bytes += Buffer.byteLength(chunk);
+    });
     const lines = createInterface({ input, crlfDelay: Infinity });
     try {
       for await (const line of lines) {
@@ -58,18 +68,33 @@ export async function* uiMessages(messages: UiSessionMessages, category: Categor
         count++;
         if (record.category === category) yield record.value;
       }
-      if (bytes !== messages.historyBytes || (messages.historyCount !== undefined && count !== messages.historyCount)) {
+      if (
+        bytes !== messages.historyBytes ||
+        (messages.historyCount !== undefined && count !== messages.historyCount)
+      ) {
         throw new Error("UI history is incomplete; accepted messages remain pending recovery");
       }
-    } finally { lines.close(); input.destroy(); }
+    } finally {
+      lines.close();
+      input.destroy();
+    }
   }
   for (const value of messages[category]) yield value;
 }
 
-export async function materializeUiMessages(messages: UiSessionMessages): Promise<UiSessionMessages> {
-  const result: UiSessionMessages = { prompts: [], intents: [], notifications: [], contexts: messages.contexts };
+export async function materializeUiMessages(
+  messages: UiSessionMessages,
+): Promise<UiSessionMessages> {
+  const result: UiSessionMessages = {
+    prompts: [],
+    intents: [],
+    notifications: [],
+    contexts: messages.contexts,
+  };
   for await (const value of uiMessages(messages, "prompts")) result.prompts.push(value as string);
-  for await (const value of uiMessages(messages, "intents")) result.intents.push(value as UiSessionMessages["intents"][number]);
-  for await (const value of uiMessages(messages, "notifications")) result.notifications.push(value as string);
+  for await (const value of uiMessages(messages, "intents"))
+    result.intents.push(value as UiSessionMessages["intents"][number]);
+  for await (const value of uiMessages(messages, "notifications"))
+    result.notifications.push(value as string);
   return result;
 }

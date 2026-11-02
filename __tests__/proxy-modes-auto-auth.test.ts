@@ -46,17 +46,17 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
     this.setRequestHandler = vi.fn();
     this.setNotificationHandler = vi.fn();
     this.connect = vi.fn((transport: unknown, requestOptions: unknown) =>
-      mocks.connectImpl(transport, requestOptions)
+      mocks.connectImpl(transport, requestOptions),
     );
     this.getServerCapabilities = vi.fn(() => ({ tools: {}, resources: {} }));
     this.listTools = vi.fn((params: unknown, requestOptions: unknown) =>
-      mocks.listToolsImpl(params, requestOptions)
+      mocks.listToolsImpl(params, requestOptions),
     );
     this.listResources = vi.fn((params: unknown, requestOptions: unknown) =>
-      mocks.listResourcesImpl(params, requestOptions)
+      mocks.listResourcesImpl(params, requestOptions),
     );
     this.callTool = vi.fn((params: unknown, schema: unknown, requestOptions: unknown) =>
-      mocks.callToolImpl(params, schema, requestOptions)
+      mocks.callToolImpl(params, schema, requestOptions),
     );
     this.close = vi.fn(async () => undefined);
     mocks.clients.push(this);
@@ -138,11 +138,18 @@ describe("proxy auto auth", () => {
 
     const result = await executeConnect(state, "demo");
 
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, stale, undefined);
+    expect(manager.reconnect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      stale,
+      undefined,
+    );
     expect(manager.connect).not.toHaveBeenCalled();
     expect(result.details).toMatchObject({ mode: "list", server: "demo", count: 13 });
     expect((result.content[0] as TextContent).text).toContain("demo_fresh");
-    expect((result.content[0] as TextContent).text).toContain('mcp({ action: "list", server: "demo", limit: 12, offset: 12 })');
+    expect((result.content[0] as TextContent).text).toContain(
+      'mcp({ action: "list", server: "demo", limit: 12, offset: 12 })',
+    );
     expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({ originalName: "fresh" });
   });
 
@@ -157,8 +164,14 @@ describe("proxy auto auth", () => {
     };
 
     const manager = {
-      connect: vi.fn(async () => { current = { status: "needs-auth" }; return current; }),
-      reconnect: vi.fn(async () => { current = connected; return current; }),
+      connect: vi.fn(async () => {
+        current = { status: "needs-auth" };
+        return current;
+      }),
+      reconnect: vi.fn(async () => {
+        current = connected;
+        return current;
+      }),
       close: vi.fn(async () => {
         current = undefined;
       }),
@@ -192,7 +205,12 @@ describe("proxy auto auth", () => {
     );
     expect(manager.close).not.toHaveBeenCalled();
     expect(manager.connect).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, { status: "needs-auth" }, undefined);
+    expect(manager.reconnect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      { status: "needs-auth" },
+      undefined,
+    );
     expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({
       name: "mcp__demo_search",
       originalName: "search",
@@ -261,12 +279,14 @@ describe("proxy auto auth", () => {
   it("runs URL elicitations returned by proxy tool calls", async () => {
     const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
     const { executeCall } = await import("../proxy-modes.ts");
-    const error = new UrlElicitationRequiredError([{
-      mode: "url",
-      message: "Connect your account",
-      elicitationId: "connect-1",
-      url: "https://example.com/connect",
-    }]);
+    const error = new UrlElicitationRequiredError([
+      {
+        mode: "url",
+        message: "Connect your account",
+        elicitationId: "connect-1",
+        url: "https://example.com/connect",
+      },
+    ]);
     const connection = {
       status: "connected",
       client: { callTool: vi.fn().mockRejectedValue(error) },
@@ -281,12 +301,19 @@ describe("proxy auto auth", () => {
     const state = {
       config: { settings: {}, mcpServers: { demo: { command: "demo" } } },
       manager,
-      toolMetadata: new Map([["demo", [{
-        name: "demo_search",
-        originalName: "search",
-        description: "Search",
-        inputSchema: { type: "object", properties: {} },
-      }]]]),
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
@@ -358,7 +385,14 @@ describe("proxy auto auth", () => {
     } as any;
 
     const controller = new AbortController();
-    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo", undefined, controller.signal);
+    const result = await executeCall(
+      state,
+      "demo_search",
+      { q: "hello" },
+      "demo",
+      undefined,
+      controller.signal,
+    );
 
     expect(statuses).toContain("MCP: connecting to demo...");
     expect(mocks.authenticate).toHaveBeenCalledWith(
@@ -368,7 +402,12 @@ describe("proxy auto auth", () => {
       { signal: controller.signal },
     );
     expect(manager.connect).not.toHaveBeenCalled();
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", state.config.mcpServers.demo, needsAuth, controller.signal);
+    expect(manager.reconnect).toHaveBeenCalledWith(
+      "demo",
+      state.config.mcpServers.demo,
+      needsAuth,
+      controller.signal,
+    );
     expect(manager.close).not.toHaveBeenCalled();
     expect(manager.getRequestOptions).toHaveBeenCalledWith("demo", controller.signal);
     expect(connected.client.callTool).toHaveBeenCalledWith(
@@ -399,13 +438,27 @@ describe("proxy auto auth", () => {
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search", inputSchema: { type: "object" } }]]]),
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object" },
+            },
+          ],
+        ],
+      ]),
       failureTracker: new Map(),
       ui: { setStatus: vi.fn() },
       completedUiSessions: [],
     } as any;
 
-    await expect(executeCall(state, "demo_search", {}, "demo", undefined, controller.signal)).rejects.toBe(reason);
+    await expect(
+      executeCall(state, "demo_search", {}, "demo", undefined, controller.signal),
+    ).rejects.toBe(reason);
     expect(mocks.authenticate).toHaveBeenCalledWith(
       "demo",
       "https://api.example.com/mcp",
@@ -435,12 +488,19 @@ describe("proxy auto auth", () => {
     const state = {
       config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
       manager,
-      toolMetadata: new Map([["demo", [{
-        name: "demo_search",
-        originalName: "search",
-        description: "Search",
-        inputSchema: { type: "object", properties: {} },
-      }]]]),
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        ],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
@@ -464,25 +524,43 @@ describe("proxy auto auth", () => {
     const { executeCall } = await import("../proxy-modes.ts");
     const owner = new AbortController();
     let markCallStarted!: () => void;
-    const callStarted = new Promise<void>(resolve => { markCallStarted = resolve; });
+    const callStarted = new Promise<void>((resolve) => {
+      markCallStarted = resolve;
+    });
     const connection = {
       status: "connected",
-      client: { callTool: vi.fn(() => {
-        markCallStarted();
-        return new Promise<never>(() => {});
-      }) },
+      client: {
+        callTool: vi.fn(() => {
+          markCallStarted();
+          return new Promise<never>(() => {});
+        }),
+      },
     };
     const state = {
       config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
       manager: {
         getConnection: vi.fn(() => connection),
-        getRequestOptions: vi.fn((_name: string, signal?: AbortSignal) => signal ? { signal } : undefined),
+        getRequestOptions: vi.fn((_name: string, signal?: AbortSignal) =>
+          signal ? { signal } : undefined,
+        ),
         touch: vi.fn(),
         incrementInFlight: vi.fn(),
         decrementInFlight: vi.fn(),
       },
       owner: { signal: owner.signal },
-      toolMetadata: new Map([["demo", [{ name: "demo_search", originalName: "search", description: "Search", inputSchema: { type: "object" } }]]]),
+      toolMetadata: new Map([
+        [
+          "demo",
+          [
+            {
+              name: "demo_search",
+              originalName: "search",
+              description: "Search",
+              inputSchema: { type: "object" },
+            },
+          ],
+        ],
+      ]),
       failureTracker: new Map(),
       completedUiSessions: [],
     } as any;
@@ -509,11 +587,13 @@ describe("proxy auto auth", () => {
     mocks.listToolsImpl.mockImplementation(async () => {
       await pause();
       return {
-        tools: [{
-          name: "search",
-          description: "Search",
-          inputSchema: { type: "object", properties: {} },
-        }],
+        tools: [
+          {
+            name: "search",
+            description: "Search",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
       };
     });
     mocks.listResourcesImpl.mockImplementation(async () => {
@@ -521,16 +601,21 @@ describe("proxy auto auth", () => {
       return { resources: [] };
     });
     mocks.lazyConnect.mockImplementation(async (state: any, serverName: string) => {
-      const connection = await state.manager.connect(serverName, state.config.mcpServers[serverName]);
+      const connection = await state.manager.connect(
+        serverName,
+        state.config.mcpServers[serverName],
+      );
       if (connection.status !== "connected") {
         return false;
       }
-      state.toolMetadata.set(serverName, [{
-        name: "mcp__demo_search",
-        originalName: "search",
-        description: "Search",
-        inputSchema: { type: "object", properties: {} },
-      }]);
+      state.toolMetadata.set(serverName, [
+        {
+          name: "mcp__demo_search",
+          originalName: "search",
+          description: "Search",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ]);
       return true;
     });
 
@@ -559,9 +644,17 @@ describe("proxy auto auth", () => {
     expect(client.connect).toHaveBeenCalledTimes(1);
     expect(client.connect).toHaveBeenCalledWith(mocks.transports[0], { timeout: 5000 });
     expect(client.listTools).toHaveBeenCalledTimes(1);
-    expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh", signal: expect.any(AbortSignal) });
+    expect(client.listTools).toHaveBeenCalledWith(undefined, {
+      timeout: 5000,
+      cacheMode: "refresh",
+      signal: expect.any(AbortSignal),
+    });
     expect(client.listResources).toHaveBeenCalledTimes(1);
-    expect(client.listResources).toHaveBeenCalledWith(undefined, { timeout: 5000, cacheMode: "refresh", signal: expect.any(AbortSignal) });
+    expect(client.listResources).toHaveBeenCalledWith(undefined, {
+      timeout: 5000,
+      cacheMode: "refresh",
+      signal: expect.any(AbortSignal),
+    });
     expect(client.callTool).toHaveBeenNthCalledWith(
       1,
       { name: "search", arguments: { q: "one" }, _meta: undefined },

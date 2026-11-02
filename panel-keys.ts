@@ -1,10 +1,7 @@
 import { matchesKey } from "@earendil-works/pi-tui";
 
 /** The `tui.select.*` keybinding ids the adapter panels resolve. */
-export type PanelSelectKeybinding =
-  | "tui.select.up"
-  | "tui.select.down"
-  | "tui.select.confirm";
+export type PanelSelectKeybinding = "tui.select.up" | "tui.select.down" | "tui.select.confirm";
 
 /** Structural subset of pi-tui's `KeybindingsManager` (which satisfies it). */
 export interface PanelKeybindings {
