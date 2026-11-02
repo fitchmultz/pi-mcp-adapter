@@ -1,10 +1,12 @@
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterEach, describe, expect, it } from "vitest";
-import { McpServerManager } from "../server-manager.ts";
+import { z } from "zod";
+import { McpServerManager } from "../../server-manager.ts";
 
 const managers: McpServerManager[] = [];
 
@@ -25,7 +27,7 @@ describe("McpServerManager legacy handshake", () => {
         const connection = await manager.connect("legacy", {
           command: process.execPath,
           args: [
-            fileURLToPath(new URL("./fixtures/legacy-no-discover-server.mjs", import.meta.url)),
+            fileURLToPath(new URL("../fixtures/legacy-no-discover-server.mjs", import.meta.url)),
           ],
           protocolVersion: "auto",
           requestTimeoutMs: 1000,
@@ -40,13 +42,13 @@ describe("McpServerManager legacy handshake", () => {
         expect(pids).toHaveLength(2);
         await manager.closeAll();
         for (const pid of pids) {
-          expect(() => process.kill(pid, 0)).toThrow();
+          expect(() => process.kill(pid, 0)).toThrow("ESRCH");
         }
-        if (trace) {
-          expect(await readFile(join(directory, "trace.jsonl"), "utf8")).toContain(
-            '"method":"initialize"',
-          );
-        }
+        const tracePath = join(directory, "trace.jsonl");
+        const traceExists = existsSync(tracePath);
+        expect(traceExists).toBe(trace);
+        const traceContent = traceExists ? await readFile(tracePath, "utf8") : "";
+        expect(traceContent.includes('"method":"initialize"')).toBe(trace);
       } finally {
         await manager.closeAll();
         await rm(directory, { recursive: true, force: true });
@@ -62,14 +64,19 @@ describe("McpServerManager legacy handshake", () => {
       const requestFile = join(directory, "initialize.json");
       const connection = await manager.connect("stdio-capabilities", {
         command: process.execPath,
-        args: [fileURLToPath(new URL("./fixtures/legacy-no-discover-server.mjs", import.meta.url))],
+        args: [
+          fileURLToPath(new URL("../fixtures/legacy-no-discover-server.mjs", import.meta.url)),
+        ],
         oauth: { grantType: "client_credentials", clientId: "unused-http-client" },
         env: { MCP_HANDSHAKE_REQUEST: requestFile },
       });
       expect(connection.status).toBe("connected");
-      expect(
-        JSON.parse(await readFile(requestFile, "utf8")).params.capabilities.extensions,
-      ).toBeUndefined();
+      const request = z
+        .object({
+          params: z.object({ capabilities: z.object({ extensions: z.unknown().optional() }) }),
+        })
+        .parse(JSON.parse(await readFile(requestFile, "utf8")));
+      expect(request.params.capabilities.extensions).toBeUndefined();
     } finally {
       await manager.closeAll();
       await rm(directory, { recursive: true, force: true });
@@ -83,7 +90,7 @@ describe("McpServerManager legacy handshake", () => {
 
     const connection = await manager.connect("legacy", {
       command: process.execPath,
-      args: [fileURLToPath(new URL("./fixtures/legacy-no-discover-server.mjs", import.meta.url))],
+      args: [fileURLToPath(new URL("../fixtures/legacy-no-discover-server.mjs", import.meta.url))],
     });
 
     expect(connection.status).toBe("connected");

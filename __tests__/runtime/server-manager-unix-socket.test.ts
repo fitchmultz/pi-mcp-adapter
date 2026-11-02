@@ -2,9 +2,9 @@ import { createServer, type Server } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ReadBuffer, serializeMessage, type JSONRPCMessage } from "@modelcontextprotocol/client";
+import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { McpServerManager } from "../server-manager.ts";
+import { McpServerManager } from "../../server-manager.ts";
 
 const managers: McpServerManager[] = [];
 const servers: Server[] = [];
@@ -42,24 +42,26 @@ describe("McpServerManager Unix socket transport", () => {
           if (message === null) {
             break;
           }
-          const request = message as JSONRPCMessage & { id?: string | number; method?: string };
-          const result =
-            request.method === "initialize"
-              ? {
-                  protocolVersion: "2025-06-18",
-                  capabilities: { tools: {} },
-                  serverInfo: { name: "shared", version: "1.0.0" },
-                }
-              : request.method === "tools/list"
-                ? { tools: [{ name: "shared_tool", inputSchema: { type: "object" } }] }
-                : undefined;
+          if (!("method" in message) || !("id" in message)) {
+            continue;
+          }
+          let result;
+          if (message.method === "initialize") {
+            result = {
+              protocolVersion: "2025-06-18",
+              capabilities: { tools: {} },
+              serverInfo: { name: "shared", version: "1.0.0" },
+            };
+          } else if (message.method === "tools/list") {
+            result = { tools: [{ name: "shared_tool", inputSchema: { type: "object" } }] };
+          }
           if (result !== undefined) {
-            socket.write(serializeMessage({ jsonrpc: "2.0", id: request.id!, result }));
-          } else if (request.id !== undefined) {
+            socket.write(serializeMessage({ jsonrpc: "2.0", id: message.id, result }));
+          } else {
             socket.write(
               serializeMessage({
                 jsonrpc: "2.0",
-                id: request.id,
+                id: message.id,
                 error: { code: -32601, message: "Method not found" },
               }),
             );
@@ -68,9 +70,9 @@ describe("McpServerManager Unix socket transport", () => {
       });
     });
     servers.push(server);
-    await new Promise<void>((resolve, reject) =>
-      server.listen(socketPath, resolve).once("error", reject),
-    );
+    await new Promise<void>((resolve, reject) => {
+      server.listen(socketPath, resolve).once("error", reject);
+    });
 
     const manager = new McpServerManager();
     managers.push(manager);
