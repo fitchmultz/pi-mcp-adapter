@@ -462,7 +462,7 @@ export function getAuthBaseDir(options: AuthStorageOptions = {}): string {
 /**
  * Get the legacy server-specific directory path.
  */
-function getServerDir(serverName: string, options?: AuthStorageOptions): string {
+function getServerDir(serverName: unknown, options?: AuthStorageOptions): string {
   if (typeof serverName !== "string") {
     throw new Error(`Invalid MCP server name: ${JSON.stringify(serverName)}`);
   }
@@ -480,7 +480,7 @@ function getAuthEntryAccount(serverName: string): string {
 /**
  * Get the legacy plaintext tokens file path for a server.
  */
-export function getAuthEntryFilePath(serverName: string, options?: AuthStorageOptions): string {
+export function getAuthEntryFilePath(serverName: unknown, options?: AuthStorageOptions): string {
   return join(getServerDir(serverName, options), "tokens.json");
 }
 
