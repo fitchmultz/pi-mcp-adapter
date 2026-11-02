@@ -45,8 +45,13 @@ async function startAdapter(outputDirectory?: string) {
     ...(outputDirectory === undefined ? {} : { outputDirectory }),
   };
   const host = await createTestExtensionContext("builtin", createMcpAdapter(options));
+  const errors: string[] = [];
+  const removeErrorListener = host.runner.onError((error) => {
+    errors.push(`${error.event}: ${error.error}`);
+  });
   try {
     await host.runner.emit({ type: "session_start", reason: "startup" });
+    assert.deepEqual(errors, []);
     return {
       call: (name: string, args: Record<string, unknown>) => {
         const tool = host.runner.getToolDefinition(name);
@@ -63,12 +68,15 @@ async function startAdapter(outputDirectory?: string) {
       stop: async () => {
         try {
           await host.runner.emit({ type: "session_shutdown", reason: "quit" });
+          assert.deepEqual(errors, []);
         } finally {
+          removeErrorListener();
           await host.dispose();
         }
       },
     };
   } catch (error) {
+    removeErrorListener();
     await host.dispose();
     throw error;
   }
