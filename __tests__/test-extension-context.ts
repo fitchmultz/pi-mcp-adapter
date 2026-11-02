@@ -22,6 +22,7 @@ export async function createTestExtensionContext(
   commandContext: ExtensionCommandContext;
   context: ExtensionContext;
   runner: ExtensionRunner;
+  resourceLoader: DefaultResourceLoader;
   dispose: () => Promise<void>;
 }> {
   const directory = await mkdtemp(join(tmpdir(), "pi-mcp-test-context-"));
@@ -63,6 +64,7 @@ export async function createTestExtensionContext(
         commandContext: session.extensionRunner.createCommandContext(),
         context: session.extensionRunner.createContext(),
         runner: session.extensionRunner,
+        resourceLoader,
         dispose: async () => {
           session.dispose();
           await rm(directory, { recursive: true, force: true });

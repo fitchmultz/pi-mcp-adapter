@@ -23,7 +23,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n",
+    "## QX-001: Native transport observation\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -206,6 +206,17 @@ const invalidSource = [
   "};",
   "",
 ].join("\n");
+const transformSource = [
+  'import assert from "node:assert/strict";',
+  'import type { McpConfig } from "./adapter/types.ts";',
+  "export const transform = function transformsSuppliedConfig(config: McpConfig): McpConfig {",
+  "assert(config.mcpServers.docs?.env !== undefined);",
+  "// oxlint-disable-next-line eslint/no-param-reassign -- QX-012: exercise the adapter-owned input snapshot.",
+  'config.mcpServers.docs.env.ORIGINAL = "transformed";',
+  "return config;",
+  "};",
+  "",
+].join("\n");
 
 describe("operation-bound exceptions", () => {
   it.each([
@@ -258,6 +269,25 @@ describe("operation-bound exceptions", () => {
       neighbor: `${invalidSource}export function unrelated(value: unknown): ServerEntry {\nreturn value as ServerEntry;\n}\n`,
       diagnostic:
         "forward.ts:9:8: Unsafe type assertion: type 'ServerEntry' is more narrow than the original type. [Error/typescript(no-unsafe-type-assertion)]",
+    },
+    {
+      name: "mutating configuration hook",
+      source: transformSource,
+      authorized: {
+        ...site,
+        id: "QX-012",
+        rule: "eslint/no-param-reassign",
+        scope: { type: "FunctionExpression", name: "transformsSuppliedConfig" },
+        path: ["body", "body", 1, "expression", "left"],
+        nodeType: "MemberExpression",
+        operation: "config.mcpServers.docs.env.ORIGINAL",
+      },
+      neighbor: transformSource.replace(
+        "return config;",
+        "config.settings = { scriptMode: false };\nreturn config;",
+      ),
+      diagnostic:
+        "forward.ts:7:1: Assignment to property of function parameter 'config'. [Error/eslint(no-param-reassign)]",
     },
   ])(
     "qualifies $name attachment and neighboring native protection",

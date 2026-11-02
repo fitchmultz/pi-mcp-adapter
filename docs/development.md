@@ -19,6 +19,7 @@ npm run lint:prompts
 npm run lint:runtime-tests
 npm run lint:tracing
 npm run lint:sdk-http
+npm run lint:lifecycle-tests
 npm run lint:auth-tests
 npm run lint:discovery-tests
 npm run lint:state-tests
@@ -40,6 +41,8 @@ Strict lint is enforced for `conformance/`, the prompt tests and their shared fi
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
 
 `lint:sdk-http` enforces the test profile for the real HTTP SDK suite and its typed native capture extension fixture. Latest-host qualification supplies one consistent SDK graph for their static imports and Jiti-loaded factories.
+
+`lint:lifecycle-tests` enforces the test profile for the adapter's native SDK lifecycle tests, their extension fixture, and the shared complete SDK context fixture.
 
 `check:directives` accepts only the operation-bound lint exceptions in `quality-exceptions.json`, documented in [quality exceptions](quality-exceptions.md). It rejects copied, replaced, duplicated, stale and incorrectly attached directives. The packed-consumer type fixture is the only approved negative type test; its `@ts-expect-error` comments require a description. Other TypeScript error suppressions, file-wide and range disables remain prohibited.
 

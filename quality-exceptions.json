@@ -51,5 +51,15 @@
     "nodeType": "TSAsExpression",
     "operation": "invalid as unknown as ServerEntry",
     "guards": []
+  },
+  {
+    "id": "QX-012",
+    "file": "__tests__/index-lifecycle.test.ts",
+    "rule": "eslint/no-param-reassign",
+    "scope": { "type": "FunctionExpression", "name": "transformsSuppliedConfig" },
+    "path": ["body", "body", 2, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "config.mcpServers.docs.env.ORIGINAL",
+    "guards": []
   }
 ]
