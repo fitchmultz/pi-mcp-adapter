@@ -2,17 +2,46 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { parseSync } from "oxc-parser";
+import { loadExceptionSites, resolveExceptionSite } from "./quality-exceptions.mjs";
 
 const negativeTypeTests = new Set(["__tests__/fixtures/published-types-consumer.test-d.mts"]);
+const inventory = loadExceptionSites();
+/** @type {Set<ReturnType<typeof resolveExceptionSite>>} */
+const usedSites = new Set();
+
+/**
+ * @param {string} source
+ * @param {import("oxc-parser").Comment} comment
+ * @param {ReturnType<typeof resolveExceptionSite>[]} sites
+ */
+function lintDirectiveFailure(source, comment, sites) {
+  const directive = comment.value
+    .trim()
+    .match(/^oxlint-disable-next-line ([\w-]+\/[\w-]+) -- (QX-\d+): \S.*$/u);
+  const site = sites.find(
+    (entry) =>
+      directive !== null &&
+      entry.rule === directive[1] &&
+      entry.id === directive[2] &&
+      /^\r?\n[\t ]*$/u.test(source.slice(comment.end, entry.start)),
+  );
+  if (comment.type !== "Line" || site === undefined) {
+    return "lint directive is not authorized for this operation";
+  }
+  usedSites.add(site);
+  return "";
+}
 
 /**
  * @param {string} file
+ * @param {string} source
  * @param {import("oxc-parser").Comment} comment
+ * @param {ReturnType<typeof resolveExceptionSite>[]} sites
  */
-function directiveFailure(file, comment) {
+function directiveFailure(file, source, comment, sites) {
   const value = comment.value.trim();
   if (/^(?:oxlint|eslint)(?:-|\s|$)/u.test(value)) {
-    return "lint directive is not authorized";
+    return lintDirectiveFailure(source, comment, sites);
   }
   const typeValue =
     comment.type === "Line"
@@ -53,8 +82,18 @@ for (const file of files) {
     console.error(`${file}: parse error: ${error.message}`);
     failed = true;
   }
+  /** @type {ReturnType<typeof resolveExceptionSite>[]} */
+  const sites = [];
+  for (const entry of inventory.filter((item) => item.file === file)) {
+    try {
+      sites.push(resolveExceptionSite(entry, parsed.program, source));
+    } catch (error) {
+      console.error(`${file}: ${error instanceof Error ? error.message : String(error)}`);
+      failed = true;
+    }
+  }
   for (const comment of parsed.comments) {
-    const reason = directiveFailure(file, comment);
+    const reason = directiveFailure(file, source, comment, sites);
     if (reason !== "") {
       const directiveOffset = reason.startsWith("lint")
         ? comment.value.search(/\S/u)
@@ -66,6 +105,18 @@ for (const file of files) {
       console.error(`${file}:${line}: ${reason}`);
       failed = true;
     }
+  }
+  for (const site of sites) {
+    if (!usedSites.has(site)) {
+      console.error(`${file}: unused exception site ${site.id} ${site.rule}`);
+      failed = true;
+    }
+  }
+}
+for (const site of inventory) {
+  if (!files.includes(site.file)) {
+    console.error(`${site.file}: exception file is absent from maintained source`);
+    failed = true;
   }
 }
 if (failed) {

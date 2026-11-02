@@ -100,43 +100,65 @@ function messageBytes(message: JSONRPCMessage): number | undefined {
   }
 }
 
-export function createMcpTraceEvent(
-  direction: McpTraceDirection,
-  server: string,
-  transport: McpTraceTransport,
-  message: JSONRPCMessage,
-  status: "sent" | "received" | "error",
-  options?: { relatedRequestId?: unknown; durationMs?: number },
-): McpTraceEvent {
-  const kind = messageKind(message);
-  const bytes = messageBytes(message);
-  const event: McpTraceEvent = {
+export interface McpTraceEventRequest {
+  direction: McpTraceDirection;
+  server: string;
+  transport: McpTraceTransport;
+  message: JSONRPCMessage;
+  status: "sent" | "received" | "error";
+  relatedRequestId?: unknown;
+  durationMs?: number;
+}
+
+export function createMcpTraceEvent(request: McpTraceEventRequest): McpTraceEvent {
+  const kind = messageKind(request.message);
+  const bytes = messageBytes(request.message);
+  return {
     version: MCP_TRACE_SCHEMA_VERSION,
     timestamp: new Date().toISOString(),
-    direction,
-    server: redactTraceText(server, 120),
-    transport,
+    direction: request.direction,
+    server: redactTraceText(request.server, 120),
+    transport: request.transport,
     kind,
-    status,
+    status: request.status,
     ...(bytes !== undefined ? { bytes } : {}),
+    ...traceMessageMetadata(request.message),
+    ...traceOutcomeMetadata(request),
   };
+}
+
+function traceMessageMetadata(message: JSONRPCMessage): Pick<McpTraceEvent, "method" | "id"> {
+  const fields: Pick<McpTraceEvent, "method" | "id"> = {};
   if ("method" in message) {
-    event.method = redactTraceText(message.method, 120);
+    fields.method = redactTraceText(message.method, 120);
   }
   if ("id" in message) {
-    event.id = traceId(message.id) ?? null;
+    fields.id = traceId(message.id) ?? null;
   }
-  const relatedRequestId = traceId(options?.relatedRequestId);
+  return fields;
+}
+
+function traceOutcomeMetadata(
+  request: McpTraceEventRequest,
+): Pick<McpTraceEvent, "relatedRequestId" | "errorCode" | "durationMs"> {
+  const fields: Pick<McpTraceEvent, "relatedRequestId" | "errorCode" | "durationMs"> = {};
+  const relatedRequestId = traceId(request.relatedRequestId);
   if (relatedRequestId !== undefined && relatedRequestId !== null) {
-    event.relatedRequestId = relatedRequestId;
+    fields.relatedRequestId = relatedRequestId;
   }
-  if ("error" in message && message.error && typeof message.error.code === "number") {
-    event.errorCode = message.error.code;
+  const wireError: unknown = "error" in request.message ? request.message.error : undefined;
+  if (
+    typeof wireError === "object" &&
+    wireError !== null &&
+    "code" in wireError &&
+    typeof wireError.code === "number"
+  ) {
+    fields.errorCode = wireError.code;
   }
-  if (options?.durationMs !== undefined && Number.isFinite(options.durationMs)) {
-    event.durationMs = Math.max(0, Math.round(options.durationMs * 100) / 100);
+  if (request.durationMs !== undefined && Number.isFinite(request.durationMs)) {
+    fields.durationMs = Math.max(0, Math.round(request.durationMs * 100) / 100);
   }
-  return event;
+  return fields;
 }
 
 export class McpTraceWriter {
@@ -177,7 +199,7 @@ export class McpTraceWriter {
       });
     this.fileReady = this.makeDirectory(dirname(this.options.filePath), { recursive: true })
       .then(() => this.resetFile(this.options.filePath, "", { encoding: "utf8" }))
-      .catch((error) => {
+      .catch((error: unknown) => {
         // Tracing must never change MCP request/response behavior.
         this.persistenceError = error;
         this.initializationFailed = true;
@@ -223,8 +245,9 @@ export class McpTraceWriter {
           return;
         }
         await this.append(this.options.filePath, line, { encoding: "utf8" });
+        return;
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         // Tracing must never change MCP request/response behavior.
         this.persistenceError ??= error;
         this.disabled = true;
@@ -235,6 +258,7 @@ export class McpTraceWriter {
     await this.fileReady;
     await this.queue;
     if (strict && this.persistenceError !== undefined) {
+      // oxlint-disable-next-line typescript/only-throw-error -- QX-009: preserve the recorded persistence failure.
       throw this.persistenceError;
     }
   }
@@ -247,17 +271,20 @@ export function createMcpTraceWriter(
 ): McpTraceWriter {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const configuredPath = settings.file;
-  const filePath = configuredPath
-    ? isAbsolute(configuredPath)
+  let filePath: string;
+  if (typeof configuredPath === "string" && configuredPath !== "") {
+    filePath = isAbsolute(configuredPath)
       ? configuredPath
-      : resolve(sessionCwd ?? process.cwd(), configuredPath)
-    : resolve(
-        sessionCwd ?? process.cwd(),
-        ".pi",
-        "fitch-mcp-adapter",
-        "traces",
-        `mcp-${timestamp}-${randomSuffix}.jsonl`,
-      );
+      : resolve(sessionCwd ?? process.cwd(), configuredPath);
+  } else {
+    filePath = resolve(
+      sessionCwd ?? process.cwd(),
+      ".pi",
+      "fitch-mcp-adapter",
+      "traces",
+      `mcp-${timestamp}-${randomSuffix}.jsonl`,
+    );
+  }
   return new McpTraceWriter({
     filePath,
     ...(settings.maxBytes !== undefined ? { maxBytes: settings.maxBytes } : {}),
@@ -266,7 +293,7 @@ export function createMcpTraceWriter(
 }
 
 export interface McpTraceObserver {
-  record(event: McpTraceEvent): void;
+  record: (event: McpTraceEvent) => void;
 }
 
 export function isMcpTraceEnabled(
@@ -295,17 +322,23 @@ export function wrapTransportWithMcpTrace(
       // An observer failure must never alter SDK transport behavior.
     }
   };
-  // Instrument the native instance: the SDK inspects stdio identity and HTTP
-  // hasPerRequestStream to choose negotiation and cancellation behavior.
+  // The SDK requires the native stdio prototype for sibling probing and reads
+  // HTTP hasPerRequestStream for cancellation. Compose callbacks in place.
   const send = transport.send.bind(transport);
+  // oxlint-disable-next-line eslint/no-param-reassign -- QX-001: SDK invokes this member on the instance it holds.
   transport.send = async (message, options) => {
     const started = performance.now();
-    const messages = Array.isArray(message) ? message : [message];
+    const messages: JSONRPCMessage[] = Array.isArray(message) ? message : [message];
     try {
       await send(message, options);
       for (const item of messages) {
         record(
-          createMcpTraceEvent("outbound", server, transportKind, item, "sent", {
+          createMcpTraceEvent({
+            direction: "outbound",
+            server,
+            transport: transportKind,
+            message: item,
+            status: "sent",
             durationMs: performance.now() - started,
           }),
         );
@@ -313,7 +346,12 @@ export function wrapTransportWithMcpTrace(
     } catch (error) {
       for (const item of messages) {
         record(
-          createMcpTraceEvent("outbound", server, transportKind, item, "error", {
+          createMcpTraceEvent({
+            direction: "outbound",
+            server,
+            transport: transportKind,
+            message: item,
+            status: "error",
             durationMs: performance.now() - started,
           }),
         );
@@ -327,7 +365,15 @@ export function wrapTransportWithMcpTrace(
     set: (handler: Transport["onmessage"]) => {
       messageHandler = handler
         ? (message: JSONRPCMessage, extra?: MessageExtraInfo) => {
-            record(createMcpTraceEvent("inbound", server, transportKind, message, "received"));
+            record(
+              createMcpTraceEvent({
+                direction: "inbound",
+                server,
+                transport: transportKind,
+                message,
+                status: "received",
+              }),
+            );
             handler(message, extra);
           }
         : undefined;
@@ -340,18 +386,20 @@ export function traceTransportKind(
   definition: { command?: string; url?: string; socket?: string },
   transport: Transport,
 ): McpTraceTransport {
-  if (definition.command) {
+  if (typeof definition.command === "string" && definition.command !== "") {
     return "stdio";
   }
-  if (definition.socket) {
+  if (typeof definition.socket === "string" && definition.socket !== "") {
     return "unix-socket";
   }
-  const constructorName = transport.constructor?.name.toLowerCase() ?? "";
+  const constructorName = transport.constructor.name.toLowerCase();
   if (constructorName.includes("sse")) {
     return "sse";
   }
   if (constructorName.includes("streamable")) {
     return "streamable-http";
   }
-  return definition.url ? "streamable-http" : "unknown";
+  return typeof definition.url === "string" && definition.url !== ""
+    ? "streamable-http"
+    : "unknown";
 }
