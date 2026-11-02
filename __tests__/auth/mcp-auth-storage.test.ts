@@ -12,6 +12,7 @@ import {
 import { spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { z } from "zod";
 import {
   clearAllCredentials,
   formatOAuthCredentialStoreUnavailable,
@@ -21,7 +22,7 @@ import {
   inspectAuthForUrl,
   OAuthCredentialStoreError,
   saveAuthEntry,
-} from "../mcp-auth.ts";
+} from "../../mcp-auth.ts";
 
 function createRecoveryHarness(): { harnessDir: string; storePath: string } {
   const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-keyring-recovery-"));
@@ -73,7 +74,7 @@ if (input.operation === 'read') {
 }
 
 function readRecoveryStore(storePath: string): Record<string, string> {
-  return JSON.parse(readFileSync(storePath, "utf8")) as Record<string, string>;
+  return z.record(z.string(), z.string()).parse(JSON.parse(readFileSync(storePath, "utf8")));
 }
 
 describe("OAuth credential-store diagnostics", () => {
@@ -135,7 +136,7 @@ module.exports = {
       );
       expect(result.error).toBeUndefined();
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      const receipt = JSON.parse(result.stdout);
+      const receipt: unknown = JSON.parse(result.stdout);
       expect(receipt).toMatchObject({
         platform: "android",
         arch: "arm64",
@@ -156,11 +157,12 @@ module.exports = {
     const error = new OAuthCredentialStoreError("read failed", "read", nativeError);
 
     const message = formatOAuthCredentialStoreUnavailable(error);
-    if (process.platform === "linux") {
-      expect(message).toContain("Linux session keyring may be revoked");
-      expect(message).toContain("fresh login/keyring session");
-    } else {
-      expect(message).toContain("OAuth credential store unavailable");
+    const expected =
+      process.platform === "linux"
+        ? ["Linux session keyring may be revoked", "fresh login/keyring session"]
+        : ["OAuth credential store unavailable"];
+    for (const text of expected) {
+      expect(message).toContain(text);
     }
   });
 });
@@ -213,10 +215,8 @@ describe("mcp-auth storage paths", () => {
     expect(existsSync(join(authDir, "..", "escape", "tokens.json"))).toBe(false);
   });
 
-  it("rejects non-string names at the storage boundary", () => {
-    expect(() => getAuthEntryFilePath(undefined as unknown as string)).toThrow(
-      /Invalid MCP server name/,
-    );
+  it.each([undefined, null, 42])("rejects non-string name %s at the storage boundary", (name) => {
+    expect(() => getAuthEntryFilePath(name)).toThrow(/Invalid MCP server name/);
   });
 
   it("namespaces the configured oauthDir legacy import source", () => {
@@ -339,12 +339,11 @@ describe("mcp-auth storage paths", () => {
         ([account]) => !account.includes(".chunk."),
       )?.[1];
       expect(manifestPayload).toBeDefined();
-      const manifest = JSON.parse(manifestPayload!) as {
-        __piMcpAdapterOAuthChunked?: number;
-        chunkCount?: number;
-      };
+      const manifest = z
+        .object({ __piMcpAdapterOAuthChunked: z.number(), chunkCount: z.number() })
+        .parse(JSON.parse(z.string().parse(manifestPayload)));
       expect(manifest.__piMcpAdapterOAuthChunked).toBe(1);
-      expect(chunkEntries).toHaveLength(manifest.chunkCount!);
+      expect(chunkEntries).toHaveLength(manifest.chunkCount);
       expect(chunkEntries.every(([, payload]) => payload.length <= 1800)).toBe(true);
     });
 
@@ -352,9 +351,10 @@ describe("mcp-auth storage paths", () => {
       const serverUrl = "https://example.com/mcp";
       saveAuthEntry("corrupt", { tokens: { accessToken: "x".repeat(5000) } }, serverUrl);
       const store = readRecoveryStore(storePath);
-      const missingChunk = Object.keys(store).find((account) => account.includes(".chunk."));
-      expect(missingChunk).toBeDefined();
-      delete store[missingChunk!];
+      const missingChunk = z
+        .string()
+        .parse(Object.keys(store).find((account) => account.includes(".chunk.")));
+      delete store[missingChunk];
       writeFileSync(storePath, JSON.stringify(store));
       expect(inspectAuthForUrl("corrupt", serverUrl).status).toBe("unavailable");
     });
