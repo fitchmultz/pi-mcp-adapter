@@ -252,8 +252,24 @@ export async function retainMcpResult(
     : Array.isArray(record?.contents)
       ? record.contents.map((resource) => ({ type: "resource", resource }))
       : [];
-  const payloadFiles = (
-    await Promise.all(
+  const oversized =
+    options.enabled !== false &&
+    rawBytes > (options.detailsMaxBytes ?? DEFAULT_MCP_DETAILS_MAX_BYTES);
+  const shouldSave =
+    oversized ||
+    !record ||
+    Object.keys(record).some((key) => key !== "content" && key !== "isError") ||
+    content.some((block) => {
+      const item = asRecord(block);
+      return (
+        item?.type !== "text" || Object.keys(item).some((key) => key !== "type" && key !== "text")
+      );
+    });
+  if (!shouldSave) {
+    return { mcpResult: result };
+  }
+  const [rawPayloadFiles, artifact] = await Promise.all([
+    Promise.all(
       content.map(async (block, index): Promise<McpPayloadFile | undefined> => {
         const item = asRecord(block);
         const resource = asRecord(item?.resource);
@@ -275,25 +291,10 @@ export async function retainMcpResult(
           ...(await saveArtifact("payload", Buffer.from(data, "base64"), options.outputDirectory)),
         };
       }),
-    )
-  ).filter((file): file is McpPayloadFile => file !== undefined);
-  const oversized =
-    options.enabled !== false &&
-    rawBytes > (options.detailsMaxBytes ?? DEFAULT_MCP_DETAILS_MAX_BYTES);
-  const shouldSave =
-    oversized ||
-    !record ||
-    Object.keys(record).some((key) => key !== "content" && key !== "isError") ||
-    content.some((block) => {
-      const item = asRecord(block);
-      return (
-        item?.type !== "text" || Object.keys(item).some((key) => key !== "type" && key !== "text")
-      );
-    });
-  if (!shouldSave) {
-    return { mcpResult: result };
-  }
-  const artifact = await saveArtifact("mcp-result", raw, options.outputDirectory);
+    ),
+    saveArtifact("mcp-result", raw, options.outputDirectory),
+  ]);
+  const payloadFiles = rawPayloadFiles.filter((file): file is McpPayloadFile => file !== undefined);
   return {
     mcpResult: oversized && !rawResult ? summarizeMcpResult(result, rawBytes, artifact) : result,
     ...(artifact.path ? { resultRef: artifact.path } : {}),
@@ -499,10 +500,10 @@ export async function readMcpResult(
       throw new Error("ref must be a retained MCP result path");
     }
     // Script-only hosts deliberately have no general filesystem capability.
-    const root = await realpath(
-      options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory),
-    );
-    const ref = await realpath(resolve(input.ref));
+    const [root, ref] = await Promise.all([
+      realpath(options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory)),
+      realpath(resolve(input.ref)),
+    ]);
     if (
       dirname(dirname(ref)) !== root ||
       !basename(dirname(ref)).startsWith("pi-mcp-output-") ||

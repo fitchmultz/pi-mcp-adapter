@@ -1216,16 +1216,21 @@ export async function runToolCall(
   args: Record<string, unknown> | undefined,
   options: ToolCallOptions,
 ): Promise<ProxyToolResult> {
-  const { DEFAULT_REQUEST_TIMEOUT_MSEC, UrlElicitationRequiredError } =
-    await import("@modelcontextprotocol/client");
-  const {
-    isInterruptedToolCall,
-    isToolTransportFailure,
-    trackToolCallOutcome,
-    SessionRecoveryAuthRequiredError,
-    withSessionRecovery,
-  } = await import("./session-recovery.ts");
-  const { maybeStartUiSession, summarizeUiSessionResult } = await import("./ui-session.ts");
+  const [
+    { DEFAULT_REQUEST_TIMEOUT_MSEC, UrlElicitationRequiredError },
+    {
+      isInterruptedToolCall,
+      isToolTransportFailure,
+      trackToolCallOutcome,
+      SessionRecoveryAuthRequiredError,
+      withSessionRecovery,
+    },
+    { maybeStartUiSession, summarizeUiSessionResult },
+  ] = await Promise.all([
+    import("@modelcontextprotocol/client"),
+    import("./session-recovery.ts"),
+    import("./ui-session.ts"),
+  ]);
   const { detailsBase, signal, recoverAuthConnection, authRequiredMessage, autoAuthAttempted } =
     options;
   const configuredOptions = state.manager.getRequestOptions?.(serverName, options.ownedSignal);

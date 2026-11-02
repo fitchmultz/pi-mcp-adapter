@@ -44,9 +44,13 @@ export class UiResourceHandler {
     uri: string,
     options: ReadUiResourceOptions = {},
   ): Promise<UiResourceContent> {
-    const { UrlElicitationRequiredError } = await import("@modelcontextprotocol/client");
-    const { SessionRecoveryAuthRequiredError, withSessionRecovery } =
-      await import("./session-recovery.ts");
+    const [
+      { UrlElicitationRequiredError },
+      { SessionRecoveryAuthRequiredError, withSessionRecovery },
+    ] = await Promise.all([
+      import("@modelcontextprotocol/client"),
+      import("./session-recovery.ts"),
+    ]);
     const log = this.log.child({ server: serverName, uri });
 
     if (!uri.startsWith("ui://")) {
