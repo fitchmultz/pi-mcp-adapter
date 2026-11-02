@@ -3,13 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   clearAllCredentials,
   getAuthEntry,
   getAuthForUrl,
   migrateLegacyAuthEntry,
   saveAuthEntry,
-} from "../mcp-auth.ts";
+} from "../../mcp-auth.ts";
 
 const server = "same-configured-server";
 const account = `sha256-${createHash("sha256").update(server).digest("hex")}`;
@@ -80,7 +81,16 @@ if (request.operation === "read") {
   });
 
   function storedEntries(): Record<string, string> {
-    return JSON.parse(readFileSync(storePath, "utf8"));
+    return z.record(z.string(), z.string()).parse(JSON.parse(readFileSync(storePath, "utf8")));
+  }
+
+  function storedEntry(key: string): unknown {
+    const entry = storedEntries()[key];
+    if (entry === undefined) {
+      throw new Error(`Missing keyring entry: ${key}`);
+    }
+    const value: unknown = JSON.parse(entry);
+    return value;
   }
 
   it("keeps legacy credentials intact across reads, writes and logout for the same server name", () => {
@@ -88,8 +98,8 @@ if (request.operation === "read") {
 
     saveAuthEntry(server, { tokens: { accessToken: "fitch-token" } }, legacyEntry.serverUrl);
     expect(getAuthEntry(server)?.tokens?.accessToken).toBe("fitch-token");
-    expect(JSON.parse(storedEntries()[legacyKey]!)).toEqual(legacyEntry);
-    expect(JSON.parse(storedEntries()[ownedKey]!)).toEqual({
+    expect(storedEntry(legacyKey)).toEqual(legacyEntry);
+    expect(storedEntry(ownedKey)).toEqual({
       serverUrl: legacyEntry.serverUrl,
       tokens: { accessToken: "fitch-token" },
     });
