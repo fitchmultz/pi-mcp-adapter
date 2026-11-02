@@ -39,10 +39,14 @@ function nativeLint(cwd: string) {
       include: [],
     }),
   );
-  return spawnSync(linter, ["--deny-warnings", "--config", lintConfig, "forward.ts"], {
-    cwd,
-    encoding: "utf8",
-  });
+  return spawnSync(
+    linter,
+    ["--deny-warnings", "--format", "unix", "--config", lintConfig, "forward.ts"],
+    {
+      cwd,
+      encoding: "utf8",
+    },
+  );
 }
 
 afterEach(() => {
@@ -175,7 +179,8 @@ describe("operation-bound exceptions", () => {
       source: forward,
       authorized: site,
       neighbor: `${forward}export function unrelated(error: unknown): never {\nthrow error;\n}\n`,
-      diagnostic: "forward.ts:6:7: error typescript(only-throw-error)",
+      diagnostic:
+        "forward.ts:6:7: Expected an error object to be thrown. [Error/typescript(only-throw-error)]",
     },
     {
       name: "transport send assignment",
@@ -192,7 +197,8 @@ describe("operation-bound exceptions", () => {
         "return transport;",
         "transport.close = (value) => value + 1;\nreturn transport;",
       ),
-      diagnostic: "forward.ts:4:1: error eslint(no-param-reassign)",
+      diagnostic:
+        "forward.ts:4:1: Assignment to property of function parameter 'transport'. [Error/eslint(no-param-reassign)]",
     },
   ])(
     "qualifies $name attachment and neighboring native protection",
