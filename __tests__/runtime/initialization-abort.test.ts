@@ -10,36 +10,31 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Server } from "@modelcontextprotocol/server";
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import { createMcpAdapter } from "../index.ts";
-import { computeServerHash } from "../metadata-cache.ts";
+import { McpServer, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createMcpAdapter } from "../../index.ts";
+import { computeServerHash } from "../../metadata-cache.ts";
 
 let root: string;
-let session: AgentSession;
-let server: Server;
-let release: () => void;
+let session: AgentSession | undefined;
+let server: McpServer | undefined;
+let release: (() => void) | undefined;
 let discoverySignal: AbortSignal;
-let pending: Promise<unknown>[];
-let calls: string[];
-let connect: MockInstance<Client["connect"]>;
+let pending: Promise<unknown>[] = [];
+let calls: string[] = [];
+let discoveries: number;
+const originalDirectTools = process.env.MCP_DIRECT_TOOLS;
 
-beforeEach(async () => {
+async function start() {
   root = await mkdtemp(join(tmpdir(), "pi-mcp-init-abort-"));
   const agentDir = join(root, "agent");
   await mkdir(join(agentDir, "fitch-mcp-adapter"), { recursive: true });
   vi.stubEnv("HOME", root);
   vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
-  vi.stubEnv("MCP_DIRECT_TOOLS", undefined);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(() => {
-      throw new Error("Unexpected network request");
-    }),
-  );
+  delete process.env.MCP_DIRECT_TOOLS;
   pending = [];
   calls = [];
+  discoveries = 0;
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
@@ -48,28 +43,34 @@ beforeEach(async () => {
     entered = resolve;
   });
   const tools = [{ name: "echo", description: "Echo", inputSchema: { type: "object" as const } }];
-  server = new Server({ name: "init-abort", version: "1" }, { capabilities: { tools: {} } });
-  server.setRequestHandler("tools/list", async (_request, ctx) => {
+  server = new McpServer({ name: "init-abort", version: "1" }, { capabilities: { tools: {} } });
+  server.server.setRequestHandler("tools/list", async (_request, ctx) => {
+    discoveries++;
     discoverySignal = ctx.mcpReq.signal;
     entered();
     await held;
     return { tools };
   });
-  server.setRequestHandler("tools/call", (request) => {
+  server.server.setRequestHandler("tools/call", (request) => {
     calls.push(request.params.name);
     return { content: [{ type: "text", text: "still connected" }] };
   });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  const nativeConnect = Client.prototype.connect;
-  // Replace only the wire transport; initialization, discovery and dispatch remain real.
-  connect = vi.spyOn(Client.prototype, "connect").mockImplementation(function (
-    this: Client,
-    _transport,
-    options,
-  ) {
-    return nativeConnect.call(this, clientTransport, options);
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+    enableJsonResponse: true,
   });
+  await server.connect(transport);
+  // Exercise both native HTTP transports without opening a network listener.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>((input, init) => {
+      const request = new Request(input, init);
+      if (request.url !== "https://unused.invalid/mcp") {
+        throw new Error(`Unexpected network request: ${request.url}`);
+      }
+      return transport.handleRequest(request);
+    }),
+  );
   const definition = {
     url: "https://unused.invalid/mcp",
     auth: false as const,
@@ -132,12 +133,15 @@ beforeEach(async () => {
   await discovering;
   expect(session.getActiveToolNames()).not.toContain("mcp");
   expect(session.getActiveToolNames()).not.toContain("mcp_script");
-  const loader = session.agent.state.tools.find((tool) => tool.name === "mcp_search")!;
+  const loader = session.agent.state.tools.find((tool) => tool.name === "mcp_search");
+  if (loader === undefined) {
+    throw new Error("mcp_search was not registered");
+  }
   const loaded = await loader.execute("load-during-startup", { enable: ["gateway", "script"] });
   expect(loaded.details).toMatchObject({ loaded: [{ name: "mcp" }, { name: "mcp_script" }] });
   expect(calls).toEqual([]);
-  expect(connect).toHaveBeenCalledTimes(1);
-});
+  expect(discoveries).toBe(1);
+}
 
 afterEach(async () => {
   release?.();
@@ -149,18 +153,26 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  if (originalDirectTools === undefined) {
+    delete process.env.MCP_DIRECT_TOOLS;
+  } else {
+    process.env.MCP_DIRECT_TOOLS = originalDirectTools;
+  }
   await rm(root, { recursive: true, force: true });
 });
 
 function call(name: string, signal?: AbortSignal) {
-  const tool = session.agent.state.tools.find((tool) => tool.name === name)!;
+  const tool = session?.agent.state.tools.find((entry) => entry.name === name);
   expect(tool).toBeDefined();
-  const args =
-    name === "mcp"
-      ? { tool: "demo_echo", args: {} }
-      : name === "mcp_script"
-        ? { code: "emit(await tools.demo_echo({}));" }
-        : {};
+  if (tool === undefined) {
+    throw new Error(`${name} was not registered`);
+  }
+  let args: object = {};
+  if (name === "mcp") {
+    args = { tool: "demo_echo", args: {} };
+  } else if (name === "mcp_script") {
+    args = { code: "emit(await tools.demo_echo({}));" };
+  }
   const result = tool.execute("init-abort", args, signal);
   pending.push(result);
   return result;
@@ -170,6 +182,7 @@ describe.each(["mcp", "mcp_script", "demo_echo"])("native registered %s initiali
   it.each(["before", "during"])(
     "honors cancellation %s the wait without cancelling shared startup",
     async (timing) => {
+      await start();
       const controller = new AbortController();
       const reason = new Error("caller cancelled");
       if (timing === "before") {
@@ -179,9 +192,11 @@ describe.each(["mcp", "mcp_script", "demo_echo"])("native registered %s initiali
       const cancelled = call(name, controller.signal).then(
         (value) => {
           outcome = value;
+          return value;
         },
-        (error) => {
+        (error: unknown) => {
           outcome = error;
+          return error;
         },
       );
       let siblingSettled = false;
@@ -190,8 +205,8 @@ describe.each(["mcp", "mcp_script", "demo_echo"])("native registered %s initiali
         return value;
       });
       await setImmediate();
+      expect(outcome).toBe(timing === "before" ? reason : undefined);
       if (timing === "during") {
-        expect(outcome).toBeUndefined();
         controller.abort(reason);
       }
       await expect.poll(() => outcome, { timeout: 500, interval: 10 }).toBe(reason);
@@ -199,20 +214,21 @@ describe.each(["mcp", "mcp_script", "demo_echo"])("native registered %s initiali
       expect(siblingSettled).toBe(false);
       expect(discoverySignal.aborted).toBe(false);
       expect(calls).toEqual([]);
-      expect(connect).toHaveBeenCalledTimes(1);
+      expect(discoveries).toBe(1);
 
-      release();
+      release?.();
       const result = await sibling;
-      expect(result.details?.error).toBeUndefined();
+      expect(result.isError).not.toBe(true);
+      expect(result.details).not.toHaveProperty("error");
       expect(JSON.stringify(result.content)).toContain("still connected");
       expect(calls).toEqual(["echo"]);
-      expect(connect).toHaveBeenCalledTimes(1);
-      expect(fetch).not.toHaveBeenCalled();
+      expect(discoveries).toBe(1);
     },
   );
 });
 
 it.each(["mcp", "mcp_script"])("keeps the %s 30-second initialization timeout", async (name) => {
+  await start();
   vi.useFakeTimers();
   let settled = false;
   const waiting = call(name).then((result) => {
