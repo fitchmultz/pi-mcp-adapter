@@ -1,0 +1,22 @@
+[
+  {
+    "id": "QX-001",
+    "file": "mcp-trace.ts",
+    "rule": "eslint/no-param-reassign",
+    "scope": { "type": "FunctionDeclaration", "name": "wrapTransportWithMcpTrace" },
+    "path": ["body", "body", 3, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "transport.send",
+    "guards": []
+  },
+  {
+    "id": "QX-009",
+    "file": "mcp-trace.ts",
+    "rule": "typescript/only-throw-error",
+    "scope": { "type": "MethodDefinition", "class": "McpTraceWriter", "name": "flush" },
+    "path": ["value", "body", "body", 2, "consequent", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw this.persistenceError;",
+    "guards": ["consequent: strict && this.persistenceError !== undefined"]
+  }
+]
