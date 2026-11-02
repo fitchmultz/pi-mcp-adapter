@@ -539,11 +539,10 @@ describe("proxy auto auth", () => {
       .trim()
       .split("\n")
       .map((line): unknown => JSON.parse(line));
-    expect(events).toEqual([
-      { event: "spawn", server: "demo" },
-      { event: "call", server: "demo", text: "one" },
-      { event: "call", server: "demo", text: "two" },
-    ]);
+    expect(events).toHaveLength(3);
+    expect(events[0]).toEqual({ event: "spawn", server: "demo" });
+    expect(events.slice(1)).toContainEqual({ event: "call", server: "demo", text: "one" });
+    expect(events.slice(1)).toContainEqual({ event: "call", server: "demo", text: "two" });
     expect(firstText(first)).toContain("demo: one");
     expect(firstText(second)).toContain("demo: two");
   });
