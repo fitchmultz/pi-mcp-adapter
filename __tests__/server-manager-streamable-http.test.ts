@@ -1,8 +1,9 @@
 import http from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadMcpConfig } from "../config.ts";
 import { McpServerManager } from "../server-manager.ts";
 
 const servers: http.Server[] = [];
@@ -39,7 +40,10 @@ afterEach(async () => {
 });
 
 describe("McpServerManager StreamableHTTP transport", () => {
-  it("does not read unavailable secure storage for an unauthenticated URL-only server", async () => {
+  it.each([
+    ["omitted", undefined],
+    ["null", null],
+  ])("connects an unauthenticated URL-only server with OAuth %s", async (_name, oauth) => {
     await withAuthStore("unavailable", async () => {
       const server = http.createServer(async (req, res) => {
         if (req.method === "GET") {
@@ -103,10 +107,24 @@ describe("McpServerManager StreamableHTTP transport", () => {
         throw new Error("server did not bind to a TCP port");
       }
 
+      const directory = await mkdtemp(join(tmpdir(), "pi-mcp-unauthenticated-"));
+      temporaryDirectories.push(directory);
+      const configPath = join(directory, "mcp.json");
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            unauthenticated: { url: `http://127.0.0.1:${address.port}/mcp`, oauth },
+          },
+        }),
+      );
+      const definition = loadMcpConfig(configPath, directory).mcpServers.unauthenticated;
+      expect(definition).toBeDefined();
+      if (definition === undefined) {
+        throw new Error("configured server not loaded");
+      }
       const manager = new McpServerManager();
-      const connection = await manager.connect("unauthenticated", {
-        url: `http://127.0.0.1:${address.port}/mcp`,
-      });
+      const connection = await manager.connect("unauthenticated", definition);
 
       expect(connection.status).toBe("connected");
       await manager.close("unauthenticated");

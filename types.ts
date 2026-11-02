@@ -348,9 +348,10 @@ export interface OAuthCrossAppAccessConfig {
   clientSecret?: string;
 }
 
-export function isNonInteractiveOAuth(config: OAuthConfig | false | undefined): boolean {
+export function isNonInteractiveOAuth(config: OAuthConfig | false | null | undefined): boolean {
   return (
     config !== false &&
+    config !== null &&
     config !== undefined &&
     (config.grantType === "client_credentials" || config.crossAppAccess !== undefined)
   );
