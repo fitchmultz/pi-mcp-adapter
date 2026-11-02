@@ -1,29 +1,37 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 describe("onboarding state", () => {
   const originalHome = process.env.HOME;
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+  let home: string;
 
   beforeEach(() => {
     delete process.env.PI_CODING_AGENT_DIR;
+    home = mkdtempSync(join(tmpdir(), "pi-mcp-onboarding-home-"));
+    process.env.HOME = home;
     vi.resetModules();
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
     if (originalAgentDir === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {
       process.env.PI_CODING_AGENT_DIR = originalAgentDir;
     }
+    rmSync(home, { recursive: true, force: true });
   });
 
   it("returns the default state when no file exists", async () => {
-    process.env.HOME = mkdtempSync(join(tmpdir(), "pi-mcp-onboarding-home-"));
-    const { loadOnboardingState, getOnboardingStatePath } = await import("../onboarding-state.ts");
+    const { loadOnboardingState, getOnboardingStatePath } =
+      await import("../../onboarding-state.ts");
 
     expect(loadOnboardingState()).toEqual({
       version: 1,
@@ -34,13 +42,12 @@ describe("onboarding state", () => {
   });
 
   it("persists hint and setup completion state", async () => {
-    process.env.HOME = mkdtempSync(join(tmpdir(), "pi-mcp-onboarding-home-"));
     const {
       markSharedConfigHintShown,
       markSetupCompleted,
       loadOnboardingState,
       getOnboardingStatePath,
-    } = await import("../onboarding-state.ts");
+    } = await import("../../onboarding-state.ts");
 
     markSharedConfigHintShown();
     markSetupCompleted();
@@ -51,8 +58,7 @@ describe("onboarding state", () => {
       setupCompleted: true,
     });
 
-    const raw = JSON.parse(readFileSync(getOnboardingStatePath(), "utf-8"));
-    expect(raw.sharedConfigHintShown).toBe(true);
-    expect(raw.setupCompleted).toBe(true);
+    const raw: unknown = JSON.parse(readFileSync(getOnboardingStatePath(), "utf-8"));
+    expect(raw).toMatchObject({ sharedConfigHintShown: true, setupCompleted: true });
   });
 });

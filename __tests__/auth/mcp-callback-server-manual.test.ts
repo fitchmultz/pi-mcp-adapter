@@ -3,17 +3,17 @@ import {
   ensureCallbackServer,
   releaseCallbackServer,
   stopCallbackServer,
-} from "../mcp-callback-server.ts";
+} from "../../mcp-callback-server.ts";
 import { validateAuthorizationResponseIssuer } from "@modelcontextprotocol/client";
-import { getOAuthCallbackPath, getOAuthCallbackPort } from "../mcp-oauth-provider.ts";
+import { getOAuthCallbackPath, getOAuthCallbackPort } from "../../mcp-oauth-provider.ts";
 
 describe("manual OAuth callback reservations", () => {
   beforeEach(async () => {
-    await stopCallbackServer().catch(() => {});
+    await stopCallbackServer();
   });
 
   afterEach(async () => {
-    await stopCallbackServer().catch(() => {});
+    await stopCallbackServer();
   });
 
   it("accepts successful callbacks for reserved manual auth states", async () => {
