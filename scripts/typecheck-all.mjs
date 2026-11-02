@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-/**
- * Purpose: Run every declared compiler project independently and aggregate failures.
- * Responsibilities: Own the canonical typecheck acceptance command; report each project's
- * result without hiding later failures behind an earlier one.
- * Scope: Compiler acceptance only; rule policy lives in scripts/check-policy.mjs.
- * Usage: `npm run typecheck`.
- */
-
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import process from "node:process";
