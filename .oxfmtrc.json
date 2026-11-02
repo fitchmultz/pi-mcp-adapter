@@ -20,7 +20,6 @@
     ".pi/**",
     ".dogfood/**",
     "app-bridge.bundle.js",
-    "CHANGELOG.md",
     "examples/interactive-visualizer/dist/**",
     "examples/interactive-visualizer/node_modules/**"
   ]
