@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
+- Enforce strict lint on OAuth recovery tests (#155) ([d752c5a](https://github.com/fitchmultz/pi-mcp-adapter/commit/d752c5a0f067f7d6fb0694bd2de3b0ca70baf6c8))
+
+### What's Changed
+
+- Enforce strict lint on OAuth recovery tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/155
+- Recheck unreported Cursor reviews in automatic releases by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/154
+
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.8...v8.0.9
 
 ## 8.0.8 - 2026-11-02
