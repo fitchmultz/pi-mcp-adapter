@@ -28,7 +28,13 @@ import {
 import { McpServerManager } from "./server-manager.ts";
 import { buildToolMetadata, totalToolCount } from "./tool-metadata.ts";
 import { UiResourceHandler } from "./ui-resource-handler.ts";
-import { formatMcpStatus, openUrl, parallelLimit, sanitizeTerminalText } from "./utils.ts";
+import {
+  formatMcpStatus,
+  MAX_CONCURRENT_SERVER_CONNECTS,
+  openUrl,
+  parallelLimit,
+  sanitizeTerminalText,
+} from "./utils.ts";
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { getAuthStorageOptions } from "./mcp-auth.ts";
@@ -49,8 +55,7 @@ import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
-/** Most servers one multi-server pass connects at once. */
-export const MAX_CONCURRENT_SERVER_CONNECTS = 10;
+export { MAX_CONCURRENT_SERVER_CONNECTS } from "./utils.ts";
 const failureExpiryTimers = new WeakMap<
   McpExtensionState,
   Map<string, ReturnType<typeof setTimeout>>
