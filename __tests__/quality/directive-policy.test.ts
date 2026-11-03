@@ -549,12 +549,14 @@ const positionalSite = {
 };
 
 describe("operation-bound exceptions", () => {
-  it("qualifies the published predicate directive and retains native parameter and unused checks", () => {
+  it("accepts the exact published predicate directive", () => {
     const accepted = checkSource("forward.ts", positionalSource, [positionalSite]);
     expect(accepted.status, accepted.stderr).toBe(0);
     const acceptedLint = nativeLint(accepted.cwd);
     expect(acceptedLint.status, acceptedLint.stdout + acceptedLint.stderr).toBe(0);
+  });
 
+  it("rejects the unsuppressed published predicate with the native parameter diagnostic", () => {
     const unguarded = checkSource(
       "forward.ts",
       positionalSource.replace(`${positionalDirective}\n`, ""),
@@ -565,7 +567,9 @@ describe("operation-bound exceptions", () => {
       "forward.ts:2:30: Function 'isToolAllowed' has too many parameters (5). Maximum allowed is 4.",
     );
     expect(unguardedLint.stdout + unguardedLint.stderr).toContain("[Error/eslint(max-params)]");
+  });
 
+  it("retains the native parameter check on the published predicate's neighbor", () => {
     const neighbor = checkSource(
       "forward.ts",
       `${positionalSource}export function neighbor(a: number, b: number, c: number, d: number, e: number): number { return a + b + c + d + e; }\n`,
@@ -578,7 +582,9 @@ describe("operation-bound exceptions", () => {
       "forward.ts:15:25: Function 'neighbor' has too many parameters (5). Maximum allowed is 4.",
     );
     expect(neighborLint.stdout + neighborLint.stderr).toContain("[Error/eslint(max-params)]");
+  });
 
+  it("rejects the published predicate's unused directive with the native diagnostic", () => {
     const unused = checkSource(
       "forward.ts",
       positionalSource
