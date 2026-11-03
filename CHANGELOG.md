@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.28 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce OAuth and elicitation runtime ownership (#200) ([cf77a19](https://github.com/fitchmultz/pi-mcp-adapter/commit/cf77a19abee0bdb1ac39ba19720f6bdbf3a5cca6))
+
+### What's Changed
+
+- Enforce OAuth and elicitation runtime ownership by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/200
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.27...v8.0.28
+
 ## 8.0.27 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
