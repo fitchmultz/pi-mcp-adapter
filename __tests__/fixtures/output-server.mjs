@@ -1,11 +1,9 @@
-import { Server } from "@modelcontextprotocol/server";
+import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
-const server = new Server(
-  { name: "output-server", version: "1.0.0" },
-  { capabilities: { tools: {}, resources: {} } },
-);
-server.setRequestHandler("tools/list", async () => ({
+const server = new McpServer({ name: "output-server", version: "1.0.0" });
+server.server.registerCapabilities({ tools: {}, resources: {} });
+server.server.setRequestHandler("tools/list", async () => ({
   tools: [
     {
       name: "echo",
@@ -13,17 +11,17 @@ server.setRequestHandler("tools/list", async () => ({
     },
   ],
 }));
-server.setRequestHandler("tools/call", async ({ params }) => {
+server.server.setRequestHandler("tools/call", async ({ params }) => {
   const text = params.arguments?.text;
   return {
     content: [{ type: "text", text: String(text) }],
     structuredContent: { echo: text },
   };
 });
-server.setRequestHandler("resources/list", async () => ({
+server.server.setRequestHandler("resources/list", async () => ({
   resources: [{ name: "large", uri: "test://large", mimeType: "text/plain" }],
 }));
-server.setRequestHandler("resources/read", async () => ({
+server.server.setRequestHandler("resources/read", async () => ({
   contents: [{ uri: "test://large", text: "resource\n".repeat(10_000) }],
 }));
 await server.connect(new StdioServerTransport());

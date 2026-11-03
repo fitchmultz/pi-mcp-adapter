@@ -34,7 +34,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-3003: Missing host theme\n## QX-3004: Native execute callback\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-3003: Missing host theme\n## QX-3004: Native execute callback\n## QX-025: Standalone bridge callback contracts\n## QX-026: Native raw echo coercion\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -663,6 +663,96 @@ const aggregateCases = [
 const urlValidationSource =
   'export function resolveServerUrl(resolved: string): string {\ntry {\n// oxlint-disable-next-line eslint/no-new -- QX-026: preserve native URL errors without canonicalizing the returned bytes.\nnew URL(resolved);\n} catch (error) {\nthrow new Error("Invalid URL", { cause: error });\n}\nreturn resolved;\n}\n';
 
+const residualCases = [
+  {
+    name: "standalone bridge request callback",
+    id: "QX-025",
+    rule: "unicorn/prefer-add-event-listener",
+    operation: "bridge.onmessage = callback;",
+    replacement: "bridge.onopenlink = callback;",
+    neighborSuffix:
+      'export function unrelated(): void {\nconst signal = new AbortController().signal;\nsignal.onabort = () => console.log("aborted");\n}\n',
+    diagnosticOffset: 2,
+    diagnosticRule: "[Error/unicorn(prefer-add-event-listener)]",
+  },
+  ...["oninitialized", "onsizechange"].flatMap((name) => [
+    {
+      name: `standalone bridge ${name} setter`,
+      id: "QX-025",
+      rule: "typescript/no-deprecated",
+      operation: `bridge.${name} = callback;`,
+      replacement: "bridge.onopenlink = callback;",
+      neighborSuffix:
+        'export const unrelated = new AppBridge(null, {name:"fixture",version:"1"}, {}).onsandboxready;\n',
+      diagnosticOffset: 0,
+      diagnosticRule: "[Error/typescript(no-deprecated)]",
+    },
+    {
+      name: `standalone bridge ${name} getter`,
+      id: "QX-025",
+      rule: "typescript/no-deprecated",
+      operation: `console.log(bridge.${name});`,
+      replacement: "console.log(bridge.onopenlink);",
+      neighborSuffix:
+        'export const unrelated = new AppBridge(null, {name:"fixture",version:"1"}, {}).onsandboxready;\n',
+      diagnosticOffset: 0,
+      diagnosticRule: "[Error/typescript(no-deprecated)]",
+    },
+  ]),
+].map(
+  ({
+    name,
+    id,
+    rule,
+    operation,
+    replacement,
+    neighborSuffix,
+    diagnosticOffset,
+    diagnosticRule,
+  }) => {
+    const needsCallback = operation.startsWith("bridge.");
+    const source = [
+      'import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";',
+      "export function probeBridge(): void {",
+      'const bridge = new AppBridge(null, {name:"fixture",version:"1"}, {});',
+      ...(needsCallback
+        ? [
+            `const callback = ${rule === "unicorn/prefer-add-event-listener" ? "async " : ""}() => ({});`,
+          ]
+        : []),
+      `// oxlint-disable-next-line ${rule} -- ${id}: retain the original callback contract.`,
+      operation,
+      "}",
+      "",
+    ].join("\n");
+    return {
+      name,
+      source,
+      operation,
+      replacement,
+      neighbor: source + neighborSuffix,
+      diagnostic: [`forward.ts:${source.split("\n").length + diagnosticOffset}:`, diagnosticRule],
+      authorized: {
+        ...site,
+        id,
+        rule,
+        scope: { type: "FunctionDeclaration", name: "probeBridge" },
+        path: ["body", "body", needsCallback ? 2 : 1],
+        nodeType: "ExpressionStatement",
+        operation,
+      },
+    };
+  },
+);
+const echoSource = [
+  'import type { CallToolRequest } from "@modelcontextprotocol/server";',
+  "export function callTool(request: CallToolRequest): string {",
+  "// oxlint-disable-next-line typescript/no-base-to-string -- QX-026: preserve native echo coercion.",
+  'const echoText = String(request.params.arguments?.value ?? "");',
+  "return echoText;",
+  "}",
+  "",
+].join("\n");
 const functionCases = [
   ...keyringCases,
   ...aggregateCases,
@@ -681,6 +771,24 @@ const functionCases = [
       path: ["body", "body", 0, "block", "body", 0],
       nodeType: "ExpressionStatement",
       operation: "new URL(resolved);",
+    },
+  },
+  ...residualCases,
+  {
+    name: "raw echo coercion",
+    source: echoSource,
+    operation: 'const echoText = String(request.params.arguments?.value ?? "");',
+    replacement: "const echoText = String({});",
+    neighbor: echoSource + "export const unrelated = String({});\n",
+    diagnostic: ["forward.ts:7:", "[Error/typescript(no-base-to-string)]"],
+    authorized: {
+      ...site,
+      id: "QX-026",
+      rule: "typescript/no-base-to-string",
+      scope: { type: "FunctionDeclaration", name: "callTool" },
+      path: ["body", "body", 0],
+      nodeType: "VariableDeclaration",
+      operation: 'const echoText = String(request.params.arguments?.value ?? "");',
     },
   },
   {

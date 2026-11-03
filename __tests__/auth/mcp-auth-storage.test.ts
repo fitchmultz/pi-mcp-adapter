@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   cpSync,
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -40,29 +41,7 @@ exec "$@"
 `,
     { mode: 0o755 },
   );
-  writeFileSync(
-    helperPath,
-    `const { existsSync, readFileSync, writeFileSync } = require('node:fs');
-const input = JSON.parse(readFileSync(0, 'utf8'));
-const path = process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE;
-const store = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
-if (input.operation === 'read') {
-  const value = store[input.account];
-  process.stdout.write(JSON.stringify(value === undefined ? { ok: true, found: false } : { ok: true, found: true, value }) + '\\n');
-} else if (input.operation === 'write') {
-  store[input.account] = input.payload;
-  writeFileSync(path, JSON.stringify(store));
-  process.stdout.write(JSON.stringify({ ok: true }) + '\\n');
-} else if (input.operation === 'remove') {
-  delete store[input.account];
-  writeFileSync(path, JSON.stringify(store));
-  process.stdout.write(JSON.stringify({ ok: true }) + '\\n');
-} else {
-  process.stdout.write(JSON.stringify({ ok: false, error: 'bad op' }) + '\\n');
-  process.exitCode = 1;
-}
-`,
-  );
+  copyFileSync(new URL("../fixtures/file-keyring.cjs", import.meta.url), helperPath);
 
   process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "keyrevoked";
   process.env.PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY = "1";
@@ -121,21 +100,17 @@ describe("OAuth credential-store diagnostics", () => {
         const binding = join(modules, "@napi-rs/keyring-android-arm64");
         mkdirSync(binding);
         writeFileSync(join(binding, "package.json"), '{"version":"2.1.0","main":"index.cjs"}');
-        writeFileSync(
-          join(binding, "index.cjs"),
-          mode === "unloadable"
-            ? 'throw new Error("synthetic binding cannot load");'
-            : `const entries = new Map();
-module.exports = {
-  failure: undefined,
-  Entry: class Entry {
-    constructor(service, account) { this.account = service + account; }
-    getPassword() { if (module.exports.failure) throw module.exports.failure; return entries.get(this.account) ?? null; }
-    setPassword(value) { if (module.exports.failure) throw module.exports.failure; entries.set(this.account, value); }
-    deleteCredential() { if (module.exports.failure) throw module.exports.failure; return entries.delete(this.account); }
-  },
-};`,
-        );
+        if (mode === "unloadable") {
+          writeFileSync(
+            join(binding, "index.cjs"),
+            'throw new Error("synthetic binding cannot load");',
+          );
+        } else {
+          copyFileSync(
+            new URL("../fixtures/android-keyring-test-binding.cjs", import.meta.url),
+            join(binding, "index.cjs"),
+          );
+        }
       }
       const result = spawnSync(
         process.execPath,

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -59,7 +60,8 @@ describe("direct tools in child Pi processes", () => {
       .split("\n")
       .find((line) => line.startsWith("DIRECT_TOOLS_AT_AGENT_START="));
     expect(toolsLine).toBeDefined();
-    expect(JSON.parse(toolsLine!.slice("DIRECT_TOOLS_AT_AGENT_START=".length))).toContain(
+    assert.ok(toolsLine !== undefined);
+    expect(JSON.parse(toolsLine.slice("DIRECT_TOOLS_AT_AGENT_START=".length))).toContain(
       "demo_reload_identity",
     );
   }, 70_000);

@@ -462,5 +462,65 @@
     "nodeType": "IfStatement",
     "operation": "if (ui.theme === undefined) {\n    ui.setStatus(\"mcp\", formattedStatus);\n    return;\n  }",
     "guards": []
+  },
+  {
+    "id": "QX-025",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 7],
+    "nodeType": "ExpressionStatement",
+    "operation": "bridge.onmessage = onmessage;",
+    "guards": []
+  },
+  {
+    "id": "QX-025",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 22],
+    "nodeType": "ExpressionStatement",
+    "operation": "bridge.oninitialized = oninitialized;",
+    "guards": []
+  },
+  {
+    "id": "QX-025",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 23],
+    "nodeType": "ExpressionStatement",
+    "operation": "assert.equal(bridge.oninitialized, oninitialized, \"oninitialized\");",
+    "guards": []
+  },
+  {
+    "id": "QX-025",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 25],
+    "nodeType": "ExpressionStatement",
+    "operation": "bridge.onsizechange = onsizechange;",
+    "guards": []
+  },
+  {
+    "id": "QX-025",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 26],
+    "nodeType": "ExpressionStatement",
+    "operation": "assert.equal(bridge.onsizechange, onsizechange, \"onsizechange\");",
+    "guards": []
+  },
+  {
+    "id": "QX-026",
+    "file": "__tests__/fixtures/mcp-code-server.mjs",
+    "rule": "typescript/no-base-to-string",
+    "scope": { "type": "FunctionExpression", "name": "callTool" },
+    "path": ["body", "body", 2],
+    "nodeType": "VariableDeclaration",
+    "operation": "const echoText = String(request.params.arguments?.value ?? \"\");",
+    "guards": []
   }
 ]

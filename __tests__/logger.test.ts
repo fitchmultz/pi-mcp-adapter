@@ -3,10 +3,13 @@ import { logger } from "../logger.ts";
 
 describe("Logger", () => {
   beforeEach(() => {
-    vi.spyOn(console, "debug").mockImplementation(() => {});
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const ignoreOutput = (): void => {
+      // Observe console calls without writing test diagnostics.
+    };
+    vi.spyOn(console, "debug").mockImplementation(ignoreOutput);
+    vi.spyOn(console, "log").mockImplementation(ignoreOutput);
+    vi.spyOn(console, "warn").mockImplementation(ignoreOutput);
+    vi.spyOn(console, "error").mockImplementation(ignoreOutput);
     logger.setLevel("debug");
   });
 

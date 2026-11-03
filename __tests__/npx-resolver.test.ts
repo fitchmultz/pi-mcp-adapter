@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { ChildProcess } from "node:child_process";
 
 describe("npx-resolver", () => {
   const originalHome = process.env.HOME;
@@ -66,8 +67,11 @@ describe("npx-resolver", () => {
     delete process.env.NPM_CONFIG_CACHE;
 
     const binPath = writeCachedPackage(npmCache, "demo-pkg");
-    const crossSpawn = vi.fn();
-    const sync = vi.fn(() => ({ status: 0, stdout: `${npmCache}\n` }));
+    const crossSpawn = vi.fn<() => void>();
+    const sync = vi.fn<() => { status: number; stdout: string }>(() => ({
+      status: 0,
+      stdout: `${npmCache}\n`,
+    }));
     Object.assign(crossSpawn, { sync });
     vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
 
@@ -88,20 +92,16 @@ describe("npx-resolver", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     delete process.env.NPM_CONFIG_CACHE;
 
-    const proc = {
-      kill: vi.fn(),
-      on: vi.fn((event: string, callback: () => void) => {
-        if (event === "close") {
-          queueMicrotask(callback);
-        }
-        return proc;
-      }),
-    };
-    const crossSpawn = vi.fn(() => {
+    const proc = new ChildProcess();
+    const crossSpawn = vi.fn<() => ChildProcess>(() => {
       writeCachedPackage(npmCache, "demo-pkg");
+      queueMicrotask(() => proc.emit("close", 0, null));
       return proc;
     });
-    const sync = vi.fn(() => ({ status: 0, stdout: `${npmCache}\n` }));
+    const sync = vi.fn<() => { status: number; stdout: string }>(() => ({
+      status: 0,
+      stdout: `${npmCache}\n`,
+    }));
     Object.assign(crossSpawn, { sync });
     vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
 
@@ -241,8 +241,8 @@ describe("npx-resolver", () => {
 
       try {
         const wrongBin = writeCachedPackage(npmCache, packageName, "1.0.0");
-        const crossSpawn = vi.fn();
-        Object.assign(crossSpawn, { sync: vi.fn() });
+        const crossSpawn = vi.fn<() => void>();
+        Object.assign(crossSpawn, { sync: vi.fn<() => void>() });
         vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
         const { resolveNpxBinary } = await import("../npx-resolver.ts");
 
@@ -289,7 +289,7 @@ describe("npx-resolver", () => {
       JSON.stringify({
         version: 1,
         entries: {
-          [JSON.stringify(["npx", "-y", "plainpkg@2.0.0"] as const)]: {
+          [JSON.stringify(["npx", "-y", "plainpkg@2.0.0"])]: {
             resolvedBin: wrongBin,
             resolvedAt: Date.now(),
             packageVersion: "1.0.0",
@@ -302,14 +302,14 @@ describe("npx-resolver", () => {
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
     const result = await resolveNpxBinary("npx", ["-y", "plainpkg@2.0.0"]);
-    const cache = JSON.parse(
+    const cache: unknown = JSON.parse(
       readFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-npx-cache.json"), "utf-8"),
     );
 
     expect(result?.binPath).toBe(correctBin);
-    expect(cache.entries[JSON.stringify(["npx", "-y", "plainpkg@2.0.0"])]?.packageVersion).toBe(
-      "2.0.0",
-    );
+    expect(cache).toMatchObject({
+      entries: { [JSON.stringify(["npx", "-y", "plainpkg@2.0.0"])]: { packageVersion: "2.0.0" } },
+    });
   });
 });
 

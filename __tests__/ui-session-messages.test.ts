@@ -18,7 +18,7 @@ describe("UiSessionMessages", () => {
 
       expect(messages.contexts).toHaveLength(1);
       expect(messages.contexts[0]).toMatchObject({ truncated: false });
-      expect(messages.contexts[0]!.summary).toContain("selection");
+      expect(messages.contexts[0]?.summary).toContain("selection");
     });
   });
 

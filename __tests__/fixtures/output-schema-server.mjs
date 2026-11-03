@@ -1,10 +1,8 @@
-import { Server } from "@modelcontextprotocol/server";
+import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
-const server = new Server(
-  { name: "output-schema-integration-server", version: "1.0.0" },
-  { capabilities: { tools: {} } },
-);
+const server = new McpServer({ name: "output-schema-integration-server", version: "1.0.0" });
+server.server.registerCapabilities({ tools: {} });
 
 const draft07Tuple = {
   type: "object",
@@ -39,7 +37,7 @@ const draft2020Schema = {
   ...draft2020Tuple,
 };
 
-server.setRequestHandler("tools/list", async () => ({
+server.server.setRequestHandler("tools/list", async () => ({
   tools: [
     { name: "draft07-valid", inputSchema: { type: "object" }, outputSchema: draft07Schema },
     {
@@ -52,7 +50,7 @@ server.setRequestHandler("tools/list", async () => ({
   ],
 }));
 
-server.setRequestHandler("tools/call", async (request) => {
+server.server.setRequestHandler("tools/call", async (request) => {
   const name = request.params.name;
   if (name === "draft07-valid" || name === "draft2020-valid") {
     return { structuredContent: { values: ["ok", 1] }, content: [{ type: "text", text: name }] };
