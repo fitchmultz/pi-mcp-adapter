@@ -96,10 +96,10 @@ async function compileToStaging(cwd, stagingDir) {
       [tscPath, "-p", "tsconfig.build.json", "--outDir", stagingDir],
       { cwd, maxBuffer: 10 * 1024 * 1024 },
     );
-    if (stdout) {
+    if (stdout !== "") {
       process.stdout.write(stdout);
     }
-    if (stderr) {
+    if (stderr !== "") {
       process.stderr.write(stderr);
     }
     for (const asset of RUNTIME_ASSETS) {
@@ -127,30 +127,35 @@ async function publishStaging(stagingDir, distDir) {
     // A failed dist removal must fail loudly; keep it outside the retry loop.
     // Remove dist exactly once so retries never delete a concurrent winner.
     await rm(distDir, RM_OPTIONS);
-    for (let retry = 0; ; retry++) {
-      try {
-        await rename(stagingDir, distDir);
-        return;
-      } catch (error) {
-        // A completed staged build is non-empty; a bare directory is not proof
-        // that a concurrent publisher won the race.
-        if (await hasPublishedDist(distDir)) {
-          console.warn(
-            "dist/ was published by a concurrent build; discarding this build's staging tree.",
-          );
-          return;
-        }
-        // At most 50 retries (~2.5s) keep persistent filesystem errors bounded.
-        if (existsSync(stagingDir) && retry < RENAME_RETRY_LIMIT) {
-          await delay(RENAME_RETRY_MS);
-          continue;
-        }
-        throw error;
-      }
-    }
+    await renameStaging(stagingDir, distDir);
   } finally {
     // Safe after success too: rename moved stagingDir, so force makes this a no-op.
     await discardStaging(stagingDir);
+  }
+}
+
+/** @param {string} stagingDir @param {string} distDir */
+async function renameStaging(stagingDir, distDir) {
+  for (let retry = 0; ; retry++) {
+    try {
+      await rename(stagingDir, distDir);
+      return;
+    } catch (error) {
+      // A completed staged build is non-empty; a bare directory is not proof
+      // that a concurrent publisher won the race.
+      if (await hasPublishedDist(distDir)) {
+        console.warn(
+          "dist/ was published by a concurrent build; discarding this build's staging tree.",
+        );
+        return;
+      }
+      // At most 50 retries (~2.5s) keep persistent filesystem errors bounded.
+      if (existsSync(stagingDir) && retry < RENAME_RETRY_LIMIT) {
+        await delay(RENAME_RETRY_MS);
+        continue;
+      }
+      throw error;
+    }
   }
 }
 
@@ -164,7 +169,7 @@ async function main() {
   await publishStaging(stagingDir, join(cwd, "dist"));
 }
 
-main().catch((error) => {
+main().catch((/** @type {unknown} */ error) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });
