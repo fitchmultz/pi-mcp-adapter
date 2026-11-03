@@ -8,7 +8,7 @@ import { executeCall } from "../proxy-modes.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { createMcpRuntimeOwner } from "../runtime-owner.ts";
 import { McpLifecycleManager } from "../lifecycle.ts";
-import type { McpExtensionState } from "../state.ts";
+import { createTestState } from "./test-state.ts";
 import type { ServerDefinition } from "../types.ts";
 
 const auth = vi.hoisted(() => ({ authenticate: vi.fn() }));
@@ -134,7 +134,7 @@ async function fixture(handler: (e: Exchange) => boolean | void = () => {}) {
     auth: false,
     requestTimeoutMs: 2000,
   };
-  const state = {
+  const state = createTestState({
     manager,
     config: { mcpServers: { local: definition }, settings: {} },
     toolMetadata: new Map([
@@ -146,7 +146,7 @@ async function fixture(handler: (e: Exchange) => boolean | void = () => {}) {
     serverInstructions: new Map(),
     failureTracker: new Map(),
     completedUiSessions: [],
-  } as unknown as McpExtensionState;
+  });
   const calls = (name: string) =>
     requests.filter((e) => e.body.method === "tools/call" && e.body.params.name === name);
   const call = (name: string, signal?: AbortSignal) =>
