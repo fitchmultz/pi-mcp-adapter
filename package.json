@@ -42,7 +42,7 @@
     "check:policy": "node scripts/check-policy.mjs",
     "lint": "oxlint --deny-warnings .",
     "lint:conformance": "oxlint --deny-warnings conformance",
-    "lint:consumer-tooling": "oxlint --deny-warnings scripts/compat-host.mjs scripts/compat-package-smoke.mjs scripts/compat-consumer-results.mjs scripts/compat-cli-observer.ts scripts/compat-native-tools.mjs scripts/native-compat",
+    "lint:consumer-tooling": "oxlint --deny-warnings scripts/compat-host.mjs scripts/compat-package-smoke.mjs scripts/compat-consumer-results.mjs scripts/compat-cli-observer.ts scripts/compat-native-tools.mjs scripts/native-compat scripts/release-candidate.mjs scripts/release-candidate",
     "lint:prompts": "oxlint --deny-warnings __tests__/prompts.test.ts __tests__/prompts-sdk-integration.test.ts __tests__/test-state.ts __tests__/test-extension-context.ts",
     "lint:runtime-tests": "oxlint --deny-warnings __tests__/runtime",
     "lint:tracing": "oxlint --deny-warnings mcp-trace.ts",
