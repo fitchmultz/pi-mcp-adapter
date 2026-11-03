@@ -1,9 +1,19 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import assert from "node:assert/strict";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadExceptionSites } from "../../scripts/quality-exceptions.mjs";
 
 const checker = fileURLToPath(new URL("../../scripts/check-directives.mjs", import.meta.url));
 const lintConfig = fileURLToPath(new URL("../../.oxlintrc.json", import.meta.url));
@@ -28,7 +38,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
 
-function nativeLint(cwd: string) {
+function nativeLint(cwd: string, file = "forward.ts") {
   symlinkSync(modules, join(cwd, "node_modules"), "junction");
   symlinkSync(fileURLToPath(new URL("../..", import.meta.url)), join(cwd, "adapter"), "junction");
   writeFileSync(
@@ -36,18 +46,14 @@ function nativeLint(cwd: string) {
     JSON.stringify({
       extends: compilerConfig,
       compilerOptions: { rootDir: cwd },
-      files: ["forward.ts"],
+      files: [file],
       include: [],
     }),
   );
-  return spawnSync(
-    linter,
-    ["--deny-warnings", "--format", "unix", "--config", lintConfig, "forward.ts"],
-    {
-      cwd,
-      encoding: "utf8",
-    },
-  );
+  return spawnSync(linter, ["--deny-warnings", "--format", "unix", "--config", lintConfig, file], {
+    cwd,
+    encoding: "utf8",
+  });
 }
 
 afterEach(() => {
@@ -297,6 +303,89 @@ const capabilityFunctionSource = [
   'mcp.registerTool("caps", {}, reportClientCapabilities);',
   "",
 ].join("\n");
+
+const helperFile = "mcp-keyring-helper.cjs";
+const helperSource = readFileSync(new URL(`../../${helperFile}`, import.meta.url), "utf8");
+const helperSite = loadExceptionSites().find((entry) => entry.file === helperFile);
+assert(helperSite !== undefined);
+const helperDirective = helperSource
+  .split("\n")
+  .find((line) => line.trimStart().startsWith("// oxlint-disable-next-line"));
+assert(helperDirective !== undefined);
+
+describe("standalone native keyring declaration exception", () => {
+  it("qualifies the actual CommonJS load while rejecting neighboring and unused assertions", () => {
+    const accepted = checkSource(helperFile, helperSource, [helperSite]);
+    const nativeAccepted = nativeLint(accepted.cwd, helperFile);
+    expect(accepted.status, accepted.stderr).toBe(0);
+    expect(nativeAccepted.status, nativeAccepted.stdout + nativeAccepted.stderr).toBe(0);
+
+    const neighbor = checkSource(
+      helperFile,
+      `${helperSource}/** @param {unknown} value */\nfunction unrelated(value) {\nreturn /** @type {Pick<typeof import("@napi-rs/keyring"), "Entry">} */ (value);\n}\n`,
+      [helperSite],
+    );
+    expect(neighbor.status, neighbor.stderr).toBe(0);
+    const nativeNeighbor = nativeLint(neighbor.cwd, helperFile);
+    expect(nativeNeighbor.status).toBe(1);
+    expect(nativeNeighbor.stdout + nativeNeighbor.stderr).toContain(
+      `${helperFile}:${helperSource.split("\n").length + 2}:`,
+    );
+    expect(nativeNeighbor.stdout + nativeNeighbor.stderr).toContain(
+      "[Error/typescript(no-unsafe-type-assertion)]",
+    );
+
+    const unused = checkSource(
+      helperFile,
+      helperSource.replace(helperSite.operation, 'require("@napi-rs/keyring")'),
+      [helperSite],
+    );
+    expect(unused.status).toBe(1);
+    expect(unused.stderr).toContain("Authorized operation changed");
+    const nativeUnused = nativeLint(unused.cwd, helperFile);
+    expect(nativeUnused.status).toBe(1);
+    expect(nativeUnused.stdout + nativeUnused.stderr).toContain("Unused oxlint-disable directive");
+    expect(nativeUnused.stdout + nativeUnused.stderr).toContain(
+      `${helperFile}:${helperSource.split("\n").indexOf(helperDirective) + 1}:`,
+    );
+  });
+
+  it.each([
+    ["copied", "copied.cjs", helperSource, "lint directive is not authorized"],
+    [
+      "wrong-site",
+      helperFile,
+      helperSource.replace("function loadKeyringEntryClass()", "function unrelated()"),
+      "Exception scope is missing",
+    ],
+    [
+      "wrong-origin with the same directive count",
+      helperFile,
+      helperSource.replace(
+        "requireFromHere(path.join(path.dirname(packageJsonPath), `keyring.${suffix}.node`))",
+        'requireFromHere("node:fs")',
+      ),
+      "Authorized operation changed",
+    ],
+    [
+      "duplicate",
+      helperFile,
+      `${helperSource}function duplicate() {\nreturn /** @type {Pick<typeof import("@napi-rs/keyring"), "Entry">} */ (\n${helperDirective}\n${helperSite.operation}\n).Entry;\n}\n`,
+      "lint directive is not authorized",
+    ],
+    [
+      "stale",
+      helperFile,
+      helperSource.replace(`${helperDirective}\n`, ""),
+      "unused exception site QX-018",
+    ],
+  ])("rejects a %s helper directive", (_name, file, source, diagnostic) => {
+    const result = checkSource(file, source, [helperSite]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${file}:`);
+    expect(result.stderr).toContain(diagnostic);
+  });
+});
 
 const keyringCases = [
   {

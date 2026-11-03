@@ -153,6 +153,33 @@
     "guards": []
   },
   {
+    "id": "QX-018",
+    "file": "mcp-keyring-helper.cjs",
+    "rule": "typescript/no-unsafe-type-assertion",
+    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringEntryClass" },
+    "path": [
+      "body",
+      "body",
+      0,
+      "handler",
+      "body",
+      "body",
+      2,
+      "body",
+      "body",
+      0,
+      "block",
+      "body",
+      1,
+      "argument",
+      "object",
+      "expression"
+    ],
+    "nodeType": "CallExpression",
+    "operation": "requireFromHere(path.join(path.dirname(packageJsonPath), `keyring.${suffix}.node`))",
+    "guards": []
+  },
+  {
     "id": "QX-020",
     "file": "mcp-auth.ts",
     "rule": "eslint/no-param-reassign",

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.25 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Strictly check native initialization contracts (#192) ([d2893f7](https://github.com/fitchmultz/pi-mcp-adapter/commit/d2893f772a37f3e000f0cd3da74aac65fd1ee819))
+
+### What's Changed
+
+- Strictly check native initialization contracts by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/192
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.24...v8.0.25
+
+## 8.0.24 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Strictly validate retained release qualification inputs (#191) ([9df1a79](https://github.com/fitchmultz/pi-mcp-adapter/commit/9df1a79d487d49d17d5629108d1e560f9fb4edf1))
+
+### What's Changed
+
+- Strictly validate retained release qualification inputs by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/191
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.23...v8.0.24
+
 ## 8.0.23 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
