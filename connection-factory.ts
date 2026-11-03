@@ -327,12 +327,13 @@ class ConnectionSetup {
       this.client,
       runtime.serverStreamResultPatchNotificationSchema,
     );
-    const instructions = this.client.getInstructions?.();
+    const instructions = this.client.getInstructions();
     const connection = this.connection(transport, "connected");
     if (instructions !== undefined) {
       connection.instructions = instructions;
     }
     // Track closure during discovery, for this client's connection only.
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: native Client exposes a callback, not EventTarget.
     this.client.onclose = () => {
       connection.status = "closed";
     };
@@ -394,7 +395,7 @@ async function fetchAllPrompts(
   client: Client,
   requestOptions?: RequestOptions,
 ): Promise<{ prompts: McpPrompt[]; failed: boolean }> {
-  if (!client.getServerCapabilities?.()?.prompts) {
+  if (!client.getServerCapabilities()?.prompts) {
     return { prompts: [], failed: false };
   }
   try {
@@ -418,7 +419,7 @@ async function fetchAllResources(
   client: Client,
   requestOptions?: RequestOptions,
 ): Promise<McpResource[]> {
-  if (!client.getServerCapabilities?.()?.resources) {
+  if (!client.getServerCapabilities()?.resources) {
     return [];
   }
   try {

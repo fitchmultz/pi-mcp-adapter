@@ -315,7 +315,7 @@ class RecoveryAttempt<T> {
     return (
       this.deps.retryOnTransportFailure === true &&
       this.deps.config.mcpServers[this.serverName]?.retryOnTransportFailure === true &&
-      connection.client.getProtocolEra?.() === "modern" &&
+      connection.client.getProtocolEra() === "modern" &&
       isToolTransportFailure(error)
     );
   }

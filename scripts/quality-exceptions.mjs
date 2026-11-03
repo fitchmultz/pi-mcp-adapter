@@ -11,6 +11,11 @@ const scopeSchema = z.discriminatedUnion("type", [
     name: z.string().min(1),
   }),
   z.strictObject({ type: z.literal("VariableDeclarator"), name: z.string().min(1) }),
+  z.strictObject({
+    type: z.literal("ExportNamedDeclaration"),
+    source: z.string().min(1),
+    name: z.string().min(1),
+  }),
 ]);
 const siteSchema = z.strictObject({
   id: z.string().regex(/^QX-\d+$/u),
@@ -81,6 +86,18 @@ function selectScope(program, selector) {
         selector.type === node.type &&
         node.id.type === "Identifier" &&
         node.id.name === selector.name
+      ) {
+        matches.push(node);
+      }
+    },
+    ExportNamedDeclaration(node) {
+      if (
+        selector.type === node.type &&
+        node.source?.value === selector.source &&
+        node.specifiers.some(
+          (specifier) =>
+            specifier.exported.type === "Identifier" && specifier.exported.name === selector.name,
+        )
       ) {
         matches.push(node);
       }

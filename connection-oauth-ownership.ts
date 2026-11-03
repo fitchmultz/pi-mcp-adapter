@@ -31,6 +31,7 @@ export function ownOAuthProvider(
     codeVerifier: () => own(() => provider.codeVerifier()),
     saveDiscoveryState: (...args) => own(() => provider.saveDiscoveryState(...args)),
     discoveryState: () => own(() => provider.discoveryState()),
+    // oxlint-disable-next-line typescript/no-deprecated -- QX-024: SDK auth still forwards the issuer for cross-app authorization.
     saveAuthorizationServerUrl: (...args) =>
       own(() => provider.saveAuthorizationServerUrl(...args)),
     saveResourceUrl: (...args) => own(() => provider.saveResourceUrl(...args)),

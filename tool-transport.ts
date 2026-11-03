@@ -294,11 +294,13 @@ class ToolTransportObserver {
 
   attach(): void {
     const onmessage = this.transport.onmessage;
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: preserve native Transport delivery and the previous receiver.
     this.transport.onmessage = (message, extra) => {
       this.receive(message);
       onmessage?.(message, extra);
     };
     const onerror = this.transport.onerror;
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: native Transport exposes a callback, not EventTarget.
     this.transport.onerror = (error) => {
       const pending = toolSend.getStore();
       // Reader failures precede SDK reporting; earlier parser errors are not retryable.

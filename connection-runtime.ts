@@ -136,6 +136,7 @@ export class ManagedClient extends Client {
     ...args: Parameters<Client["setLoggingLevel"]>
   ): ReturnType<Client["setLoggingLevel"]> {
     return this.track(
+      // oxlint-disable-next-line typescript/no-deprecated -- QX-024: own the supported native logging operation through settlement.
       (signal) => super.setLoggingLevel(args[0], { ...args[1], ...(signal ? { signal } : {}) }),
       args[1]?.signal,
     );
@@ -177,6 +178,7 @@ export { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 export {
   SdkHttpError,
   StreamableHTTPClientTransport,
+  // oxlint-disable-next-line typescript/no-deprecated -- QX-024: load the supported native SSE constructor with the lazy runtime.
   SSEClientTransport,
   auth,
   extractWWWAuthenticateParams,

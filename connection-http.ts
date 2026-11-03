@@ -116,22 +116,25 @@ class HttpConnection {
       fetch: this.createFetch(provider),
     };
     const url = new URL(this.serverUrl);
-    this.transport = legacySse
-      ? new runtime.SSEClientTransport(url, transportOptions)
-      : new runtime.StreamableHTTPClientTransport(url, {
-          ...transportOptions,
-          reconnectionScheduler: (reconnect, delay) => {
-            const timer = setTimeout(() => {
-              if (!this.transportClosed) {
-                reconnect();
-              }
-            }, delay);
-            return () => clearTimeout(timer);
-          },
-          ...(supportsOAuth(definition) && !isNonInteractiveOAuth(definition.oauth)
-            ? { onInsufficientScope: "throw" as const }
-            : {}),
-        });
+    if (legacySse) {
+      // oxlint-disable-next-line typescript/no-deprecated -- QX-024: retain the native legacy SSE fallback.
+      this.transport = new runtime.SSEClientTransport(url, transportOptions);
+    } else {
+      this.transport = new runtime.StreamableHTTPClientTransport(url, {
+        ...transportOptions,
+        reconnectionScheduler: (reconnect, delay) => {
+          const timer = setTimeout(() => {
+            if (!this.transportClosed) {
+              reconnect();
+            }
+          }, delay);
+          return () => clearTimeout(timer);
+        },
+        ...(supportsOAuth(definition) && !isNonInteractiveOAuth(definition.oauth)
+          ? { onInsufficientScope: "throw" as const }
+          : {}),
+      });
+    }
   }
 
   private active(): boolean {
@@ -251,6 +254,7 @@ class HttpConnection {
       return;
     }
     const previous = this.transport.onerror;
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: native Transport exposes a callback, not EventTarget.
     this.transport.onerror = (error) => {
       previous?.(error);
       if (

@@ -20,6 +20,7 @@ npm run lint:prompts
 npm run lint:runtime-tests
 npm run lint:tracing
 npm run lint:core-runtime
+npm run lint:manager-runtime
 npm run lint:sampling
 npm run lint:output-runtime
 npm run lint:credential-runtime
@@ -55,6 +56,8 @@ The command also checks the native-contract launcher under the production profil
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
 
 `lint:core-runtime` enforces the production profile for cancellation, client-operation drains, process paths, legacy migration, onboarding storage, logging, panel keys, search ranking and Unix-socket transport. Rejections retain their original values. Transport cleanup failures reach the existing error callback.
+
+`lint:manager-runtime` enforces the production profile for the manager, native client operation tracking, connection setup, callbacks, HTTP/stdio transports, disposal and lifecycle, session recovery and tool-transport outcomes. It also enforces the test profile for HTTP URL/header/auth configuration, native client-before-transport close ordering, AbortSignal propagation and its real HTTP fixture, session recovery policy/lifetime, real session cache and Pi reload suites. Manager reconnect, shutdown, stderr, configuration and callback-lifetime suites remain covered by `lint:runtime-tests`. QX-010 covers only enumerated native callback assignments; QX-023 preserves the original ordered abort/cleanup errors without adding cause; QX-024 retains four enumerated supported SDK operations. These scoped gates do not enable repository-wide lint.
 
 `lint:sampling` enforces the production profile for the supported MCP sampling bridge. Its native model-registry and approval tests are covered by `lint:runtime-tests`. QX-017 permits only five deprecated MCP sampling types from their actual SDK package in these two files. Other deprecations and all other rules remain checked.
 

@@ -1,5 +1,6 @@
+import assert from "node:assert/strict";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { McpServerManager } from "../server-manager.ts";
 import { fileURLToPath } from "node:url";
 
@@ -23,8 +24,9 @@ describe("McpServerManager connection close ownership", () => {
 
     expect(clientCloseSpy).toHaveBeenCalledTimes(1);
     expect(transportCloseSpy).toHaveBeenCalledTimes(1);
-    expect(clientCloseSpy.mock.invocationCallOrder[0]!).toBeLessThan(
-      transportCloseSpy.mock.invocationCallOrder[0]!,
-    );
+    const clientOrder = clientCloseSpy.mock.invocationCallOrder[0];
+    const transportOrder = transportCloseSpy.mock.invocationCallOrder[0];
+    assert(clientOrder !== undefined && transportOrder !== undefined);
+    expect(clientOrder).toBeLessThan(transportOrder);
   });
 });

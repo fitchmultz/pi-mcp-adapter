@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { Client, UrlElicitationRequiredError } from "@modelcontextprotocol/client";
@@ -106,14 +107,24 @@ describe("MCP manager owner races", () => {
     await fixture.initializeStarted;
     const transport = requireValue(observed.records[0]).transport;
     const close = transport.close.bind(transport);
+    const cleanupError = new Error("transport close failed");
     vi.spyOn(transport, "close").mockImplementationOnce(async () => {
       await close();
-      throw new Error("transport close failed");
+      throw cleanupError;
     });
+    const settled = Promise.allSettled([connecting]);
     const closeAll = manager.closeAll();
     fixture.release();
     await expect(closeAll).rejects.toThrow("MCP manager cleanup failed");
     await expect(connecting).rejects.toThrow("MCP connection abort cleanup failed");
+    const [outcome] = await settled;
+    assert(outcome.status === "rejected" && outcome.reason instanceof AggregateError);
+    const errors: unknown[] = outcome.reason.errors;
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toBeInstanceOf(Error);
+    expect(errors[0]).toHaveProperty("message", "MCP connection demo was closed");
+    expect(errors[1]).toBe(cleanupError);
+    expect(Object.hasOwn(outcome.reason, "cause")).toBe(false);
     // Native close ran before the injected failure; terminal cleanup is already observed.
     cleanups.pop();
   });

@@ -3,7 +3,10 @@
     "id": "QX-001",
     "file": "mcp-trace.ts",
     "rule": "eslint/no-param-reassign",
-    "scope": { "type": "FunctionDeclaration", "name": "wrapTransportWithMcpTrace" },
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "wrapTransportWithMcpTrace"
+    },
     "path": ["body", "body", 3, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "transport.send",
@@ -13,7 +16,10 @@
     "id": "QX-007",
     "file": "__tests__/fixtures/oauth-cross-app-stdio.ts",
     "rule": "typescript/no-deprecated",
-    "scope": { "type": "FunctionExpression", "name": "reportClientCapabilities" },
+    "scope": {
+      "type": "FunctionExpression",
+      "name": "reportClientCapabilities"
+    },
     "path": ["body", "body", 0],
     "nodeType": "VariableDeclaration",
     "operation": "const capabilities = server.server.getClientCapabilities();",
@@ -23,7 +29,10 @@
     "id": "QX-007",
     "file": "__tests__/runtime/fixtures/elicitation-server.mjs",
     "rule": "typescript/no-deprecated",
-    "scope": { "type": "FunctionDeclaration", "name": "reportClientCapabilities" },
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "reportClientCapabilities"
+    },
     "path": ["body", "body", 0],
     "nodeType": "VariableDeclaration",
     "operation": "const capabilities = server.getClientCapabilities();",
@@ -33,7 +42,11 @@
     "id": "QX-009",
     "file": "mcp-trace.ts",
     "rule": "typescript/only-throw-error",
-    "scope": { "type": "MethodDefinition", "class": "McpTraceWriter", "name": "flush" },
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "McpTraceWriter",
+      "name": "flush"
+    },
     "path": ["value", "body", "body", 2, "consequent", "body", 0],
     "nodeType": "ThrowStatement",
     "operation": "throw this.persistenceError;",
@@ -43,7 +56,10 @@
     "id": "QX-010",
     "file": "__tests__/sdk-v2-http.test.ts",
     "rule": "unicorn/prefer-add-event-listener",
-    "scope": { "type": "FunctionExpression", "name": "observesLateSseError" },
+    "scope": {
+      "type": "FunctionExpression",
+      "name": "observesLateSseError"
+    },
     "path": ["body", "body", 5, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "connection.client.onerror",
@@ -53,7 +69,10 @@
     "id": "QX-011",
     "file": "__tests__/sdk-v2-http.test.ts",
     "rule": "typescript/no-unsafe-type-assertion",
-    "scope": { "type": "FunctionExpression", "name": "rejectsInvalidProtocolOptions" },
+    "scope": {
+      "type": "FunctionExpression",
+      "name": "rejectsInvalidProtocolOptions"
+    },
     "path": [
       "body",
       "body",
@@ -76,7 +95,10 @@
     "id": "QX-012",
     "file": "__tests__/index-lifecycle.test.ts",
     "rule": "eslint/no-param-reassign",
-    "scope": { "type": "FunctionExpression", "name": "transformsSuppliedConfig" },
+    "scope": {
+      "type": "FunctionExpression",
+      "name": "transformsSuppliedConfig"
+    },
     "path": ["body", "body", 2, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "config.mcpServers.docs.env.ORIGINAL",
@@ -86,7 +108,10 @@
     "id": "QX-010",
     "file": "__tests__/runtime/callback-http-lifetime.test.ts",
     "rule": "unicorn/prefer-add-event-listener",
-    "scope": { "type": "FunctionExpression", "name": "retainsCancelledCallbackTail" },
+    "scope": {
+      "type": "FunctionExpression",
+      "name": "retainsCancelledCallbackTail"
+    },
     "path": ["body", "body", 13, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "transport.onmessage",
@@ -96,7 +121,10 @@
     "id": "QX-016",
     "file": "__tests__/runtime/callback-http-lifetime.test.ts",
     "rule": "typescript/unbound-method",
-    "scope": { "type": "VariableDeclarator", "name": "originalTokens" },
+    "scope": {
+      "type": "VariableDeclarator",
+      "name": "originalTokens"
+    },
     "path": ["init"],
     "nodeType": "MemberExpression",
     "operation": "McpOAuthProvider.prototype.tokens",
@@ -106,7 +134,10 @@
     "id": "QX-016",
     "file": "__tests__/runtime/callback-http-lifetime.test.ts",
     "rule": "typescript/unbound-method",
-    "scope": { "type": "VariableDeclarator", "name": "originalSaveTokens" },
+    "scope": {
+      "type": "VariableDeclarator",
+      "name": "originalSaveTokens"
+    },
     "path": ["init"],
     "nodeType": "MemberExpression",
     "operation": "McpOAuthProvider.prototype.saveTokens",
@@ -116,7 +147,10 @@
     "id": "QX-016",
     "file": "__tests__/runtime/callback-http-lifetime.test.ts",
     "rule": "typescript/unbound-method",
-    "scope": { "type": "VariableDeclarator", "name": "originalJson" },
+    "scope": {
+      "type": "VariableDeclarator",
+      "name": "originalJson"
+    },
     "path": ["init"],
     "nodeType": "MemberExpression",
     "operation": "Response.prototype.json",
@@ -126,7 +160,10 @@
     "id": "QX-018",
     "file": "keyring-store.ts",
     "rule": "typescript/no-unsafe-type-assertion",
-    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringEntryClass" },
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "loadKeyringEntryClass"
+    },
     "path": ["body", "body", 0, "block", "body", 0],
     "nodeType": "ReturnStatement",
     "operation": "return (require(\"@napi-rs/keyring\") as KeyringModule).Entry;",
@@ -136,7 +173,10 @@
     "id": "QX-013",
     "file": "keyring-store.ts",
     "rule": "eslint/preserve-caught-error",
-    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringEntryClass" },
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "loadKeyringEntryClass"
+    },
     "path": ["body", "body", 0, "handler", "body", "body", 0, "handler", "body", "body", 0],
     "nodeType": "ThrowStatement",
     "operation": "throw new Error(\n        `Failed to load @napi-rs/keyring; absolute-path native binding fallback also failed: ${formatErrorMessage(fallbackError)}`,\n        {\n          cause: loaderError,\n        },\n      );",
@@ -146,7 +186,10 @@
     "id": "QX-018",
     "file": "keyring-store.ts",
     "rule": "typescript/no-unsafe-type-assertion",
-    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringNativeBindingFallback" },
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "loadKeyringNativeBindingFallback"
+    },
     "path": ["body", "body", 3, "body", "body", 0, "block", "body", 1],
     "nodeType": "ReturnStatement",
     "operation": "return require(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;",
@@ -156,7 +199,10 @@
     "id": "QX-020",
     "file": "mcp-auth.ts",
     "rule": "eslint/no-param-reassign",
-    "scope": { "type": "FunctionDeclaration", "name": "saveAuthEntry" },
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "saveAuthEntry"
+    },
     "path": ["body", "body", 0, "consequent", "body", 0, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "entry.serverUrl",
@@ -166,10 +212,154 @@
     "id": "QX-021",
     "file": "auth-record-types.ts",
     "rule": "typescript/no-unsafe-type-assertion",
-    "scope": { "type": "FunctionDeclaration", "name": "createAuthRecordSchemas" },
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "createAuthRecordSchemas"
+    },
     "path": ["body", "body", 0],
     "nodeType": "VariableDeclaration",
     "operation": "const { z } = require(\"zod\") as typeof Zod;",
     "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "connection-factory.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ConnectionSetup",
+      "name": "discover"
+    },
+    "path": ["value", "body", "body", 5, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.client.onclose",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "connection-http.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "HttpConnection",
+      "name": "observeChallenge"
+    },
+    "path": ["value", "body", "body", 3, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.transport.onerror",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "tool-transport.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ToolTransportObserver",
+      "name": "attach"
+    },
+    "path": ["value", "body", "body", 1, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.transport.onmessage",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "tool-transport.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ToolTransportObserver",
+      "name": "attach"
+    },
+    "path": ["value", "body", "body", 3, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.transport.onerror",
+    "guards": []
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-http.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "HttpConnection",
+      "name": "constructor"
+    },
+    "path": ["value", "body", "body", 12, "consequent", "body", 0],
+    "nodeType": "ExpressionStatement",
+    "operation": "this.transport = new runtime.SSEClientTransport(url, transportOptions);",
+    "guards": ["consequent: legacySse"]
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-runtime.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ManagedClient",
+      "name": "setLoggingLevel"
+    },
+    "path": ["value", "body", "body", 0, "argument", "arguments", 0],
+    "nodeType": "ArrowFunctionExpression",
+    "operation": "(signal) => super.setLoggingLevel(args[0], { ...args[1], ...(signal ? { signal } : {}) })",
+    "guards": []
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-runtime.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "ExportNamedDeclaration",
+      "source": "@modelcontextprotocol/client",
+      "name": "SSEClientTransport"
+    },
+    "path": ["specifiers", 2],
+    "nodeType": "ExportSpecifier",
+    "operation": "SSEClientTransport",
+    "guards": []
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-oauth-ownership.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "ownOAuthProvider"
+    },
+    "path": ["body", "body", 1, "argument", "properties", 12],
+    "nodeType": "Property",
+    "operation": "saveAuthorizationServerUrl: (...args) =>\n      own(() => provider.saveAuthorizationServerUrl(...args))",
+    "guards": []
+  },
+  {
+    "id": "QX-023",
+    "file": "connection-handshake.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ConnectionHandshake",
+      "name": "run"
+    },
+    "path": [
+      "value",
+      "body",
+      "body",
+      7,
+      "handler",
+      "body",
+      "body",
+      0,
+      "consequent",
+      "body",
+      0,
+      "handler",
+      "body",
+      "body",
+      0
+    ],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([error, cleanupError], \"MCP connection abort cleanup failed\");",
+    "guards": ["consequent: abortCleanup"]
   }
 ]
