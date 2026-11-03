@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import MiniSearch from "minisearch";
 import { paginate, rankSuggestions, rankToolMatches } from "../search-ranking.ts";
 import type { McpExtensionState } from "../state.ts";
@@ -12,11 +12,13 @@ const tool = (name: string, description: string, originalName = name) => ({
   description,
 });
 
-function stateWithTools(tools: ToolMetadata[]): McpExtensionState {
+type CatalogState = Pick<McpExtensionState, "config" | "toolMetadata">;
+
+function stateWithTools(tools: ToolMetadata[]): CatalogState {
   return {
     config: { mcpServers: { demo: {} } },
     toolMetadata: new Map([["demo", tools]]),
-  } as unknown as McpExtensionState;
+  };
 }
 
 describe("search ranking", () => {
@@ -28,9 +30,9 @@ describe("search ranking", () => {
     ]);
     // Same MiniSearch tokens without an exact identifier.
     const control = rankToolMatches(state, "linear save comment");
-    expect(control[0]!.tool.name).toBe("linear_save_diff_comment");
+    expect(control[0]?.tool.name).toBe("linear_save_diff_comment");
     const treatment = rankToolMatches(state, "linear_save_comment");
-    expect(treatment[0]!.tool.name).toBe("linear_save_comment");
+    expect(treatment[0]?.tool.name).toBe("linear_save_comment");
     expect(treatment.slice(1)).toEqual(
       control.filter((match) => match.tool.name !== "linear_save_comment"),
     );
@@ -59,30 +61,32 @@ describe("search ranking", () => {
       ]),
     );
     const natural = rankToolMatches(state, "list pull requests");
-    expect(natural[0]!.tool.originalName).toBe("list_pull_requests_diff");
+    expect(natural[0]?.tool.originalName).toBe("list_pull_requests_diff");
     expect(rankToolMatches(state, "list_pull_requests")).toEqual(natural);
     expect(rankToolMatches(state, "list_pull_requests", "")).toEqual(natural);
     expect(paginate(rankToolMatches(state, "list_pull_requests", ""), 1, 1)).toEqual(
       paginate(rankToolMatches(state, "list_pull_requests"), 1, 1),
     );
-    expect(rankToolMatches(state, "gh_list_pull_requests")[0]!.server).toBe("gh");
-    expect(rankToolMatches(state, "gh_personal_list_pull_requests")[0]!.server).toBe("gh-personal");
+    expect(rankToolMatches(state, "gh_list_pull_requests")[0]?.server).toBe("gh");
+    expect(rankToolMatches(state, "gh_personal_list_pull_requests")[0]?.server).toBe("gh-personal");
     for (const server of ["gh", "gh-personal"]) {
       const ranked = rankToolMatches(state, "list_pull_requests", server);
       const lexical = rankToolMatches(state, "list pull requests", server);
-      expect(ranked[0]!.tool.originalName).toBe("list_pull_requests");
+      expect(ranked[0]?.tool.originalName).toBe("list_pull_requests");
       expect(ranked.every((match) => match.server === server)).toBe(true);
       expect(ranked.slice(1)).toEqual(
         lexical.filter((match) => match.tool.originalName !== "list_pull_requests"),
       );
     }
-    state.config.mcpServers.gh!.excludeTools = ["list_pull_requests"];
+    assert.ok(state.config.mcpServers.gh);
+    state.config.mcpServers.gh.excludeTools = ["list_pull_requests"];
     expect(
       rankToolMatches(state, "gh_list_pull_requests").some(
         (match) => match.tool.name === "gh_list_pull_requests",
       ),
     ).toBe(false);
-    state.config.mcpServers["gh-personal"]!.disabled = true;
+    assert.ok(state.config.mcpServers["gh-personal"]);
+    state.config.mcpServers["gh-personal"].disabled = true;
     expect(rankToolMatches(state, "list_pull_requests", "gh-personal")).toEqual([]);
   });
 
@@ -105,7 +109,7 @@ describe("search ranking", () => {
       ...exact,
       ...lexical.filter((match) => match.tool.name !== "save_comment"),
     ]);
-    expect(rankToolMatches(state, "save_comment", "personal")[0]!.server).toBe("personal");
+    expect(rankToolMatches(state, "save_comment", "personal")[0]?.server).toBe("personal");
   });
 
   it("ranks a name match above a description match", () => {
@@ -170,17 +174,18 @@ describe("search ranking", () => {
     state.config.mcpServers.other.disabled = true;
     expect(rankToolMatches(state, "search").map((match) => match.server)).toEqual(["demo"]);
     expect(rankSuggestions(state, "other_serch", 5)).toEqual([]);
-    state.config.mcpServers.demo!.includeTools = ["demo_search"];
+    assert.ok(state.config.mcpServers.demo);
+    state.config.mcpServers.demo.includeTools = ["demo_search"];
     expect(rankToolMatches(state, "search")).toHaveLength(1);
-    state.config.mcpServers.demo!.excludeTools = ["search"];
+    state.config.mcpServers.demo.excludeTools = ["search"];
     expect(rankToolMatches(state, "search")).toEqual([]);
-    state.config.mcpServers.demo!.excludeTools = [];
-    state.config.mcpServers.demo!.includeTools = ["unrelated"];
+    state.config.mcpServers.demo.excludeTools = [];
+    state.config.mcpServers.demo.includeTools = ["unrelated"];
     expect(rankToolMatches(state, "search")).toEqual([]);
   });
 
   it("ranks same-server fuzzy suggestions and drops noise", () => {
-    const state = {
+    const state: CatalogState = {
       config: { mcpServers: { datadog: { command: "datadog" } } },
       toolMetadata: new Map([
         [
@@ -193,7 +198,7 @@ describe("search ranking", () => {
           ],
         ],
       ]),
-    } as any;
+    };
 
     expect(rankSuggestions(state, "datadog_get_datadog_metrc", 5)[0]).toBe(
       "datadog_get_datadog_metric",
@@ -209,7 +214,7 @@ describe("search ranking", () => {
   });
 
   it("falls back to token ranking for reordered names", () => {
-    const state = {
+    const state: CatalogState = {
       config: { mcpServers: { gh: { command: "gh" } } },
       toolMetadata: new Map([
         [
@@ -220,7 +225,7 @@ describe("search ranking", () => {
           ],
         ],
       ]),
-    } as any;
+    };
 
     expect(rankSuggestions(state, "gh_issues_list", 5)[0]).toBe("gh_list_issues");
   });
@@ -236,20 +241,20 @@ describe("search ranking", () => {
   });
 
   it("uses explicit servers and tool suffixes for suggestions", () => {
-    const unprefixed = {
+    const unprefixed: CatalogState = {
       config: { mcpServers: { datadog: { command: "datadog", toolPrefix: "none" } } },
       toolMetadata: new Map([["datadog", [tool("aggregate_events", "Aggregate events")]]]),
-    } as any;
+    };
     expect(rankSuggestions(unprefixed, "aggregate_evnts", 5, "datadog")).toEqual([
       "aggregate_events",
     ]);
 
     const server = "very-long-descriptive-server";
     const prefix = "very_long_descriptive_server";
-    const longPrefix = {
+    const longPrefix: CatalogState = {
       config: { mcpServers: { [server]: { command: "demo" } } },
       toolMetadata: new Map([[server, [tool(`${prefix}_foo`, "Foo", "foo")]]]),
-    } as any;
+    };
     expect(rankSuggestions(longPrefix, `${prefix}_bar`, 5)).toEqual([]);
   });
 
@@ -266,14 +271,13 @@ describe("search ranking", () => {
       hasMore: false,
       nextOffset: null,
     });
-    expect(
-      paginate(
-        Array.from({ length: 101 }, (_, index) => index),
-        0,
-        1_000,
-      ),
-    ).toMatchObject({
-      items: expect.arrayContaining([0, 99]),
+    const page = paginate(
+      Array.from({ length: 101 }, (_, index) => index),
+      0,
+      1_000,
+    );
+    expect(page.items).toEqual(expect.arrayContaining([0, 99]));
+    expect(page).toMatchObject({
       total: 101,
       hasMore: true,
       nextOffset: 100,
