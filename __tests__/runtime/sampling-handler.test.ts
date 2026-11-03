@@ -1,12 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { CreateMessageRequest, ModelPreferences } from "@modelcontextprotocol/client";
-import type { SamplingHandlerOptions } from "../sampling-handler.ts";
+import type { SamplingHandlerOptions } from "../../sampling-handler.ts";
+import { createTestExtensionContext } from "../test-extension-context.ts";
+import { requireValue } from "../fixtures/extension-lifecycle.ts";
 
-const mocks = vi.hoisted(() => ({
-  complete: vi.fn(),
-}));
+const mocks = {
+  complete: vi.fn<SamplingHandlerOptions["modelRegistry"]["complete"]>(),
+};
+let native: Awaited<ReturnType<typeof createTestExtensionContext>>;
 
 const usage = {
   input: 0,
@@ -60,32 +63,33 @@ type SamplingTestOptions = Omit<SamplingHandlerOptions, "modelRegistry" | "ui"> 
 };
 
 function createOptions(overrides: Partial<SamplingTestOptions> = {}): SamplingHandlerOptions {
-  const { modelRegistry: modelRegistryOverride, ...rest } = overrides;
-  const options = {
+  const { modelRegistry: registryOverride, ui, ...rest } = overrides;
+  const modelRegistry = native.context.modelRegistry;
+  vi.spyOn(modelRegistry, "getAvailable").mockImplementation(
+    () => registryOverride?.getAvailable() ?? [model],
+  );
+  vi.spyOn(modelRegistry, "getApiKeyAndHeaders").mockImplementation(async (...args) => {
+    if (registryOverride !== undefined) {
+      return await registryOverride.getApiKeyAndHeaders(...args);
+    }
+    return { ok: true, apiKey: "key", headers: { authorization: null, "x-test": "1" } };
+  });
+  return {
     serverName: "i18n",
     autoApprove: true,
-    modelRegistry: {
-      getAvailable: vi.fn(() => [model]),
-      getApiKeyAndHeaders: vi.fn(async () => ({
-        ok: true,
-        apiKey: "key",
-        headers: { authorization: null, "x-test": "1" },
-      })),
-      ...modelRegistryOverride,
-      complete: mocks.complete,
-    },
-    getCurrentModel: vi.fn(() => {}),
-    getSignal: vi.fn(() => {}),
+    modelRegistry,
+    getCurrentModel: vi.fn<SamplingHandlerOptions["getCurrentModel"]>(),
+    getSignal: vi.fn<SamplingHandlerOptions["getSignal"]>(),
+    ...(ui !== undefined ? { ui: { ...native.context.ui, ...ui } } : {}),
     ...rest,
   };
-  return options as unknown as SamplingHandlerOptions;
 }
 
 async function runBasicSampling(
   overrides: Partial<SamplingTestOptions>,
   modelPreferences?: ModelPreferences,
 ): Promise<void> {
-  const { handleSamplingRequest } = await import("../sampling-handler.ts");
+  const { handleSamplingRequest } = await import("../../sampling-handler.ts");
   await handleSamplingRequest(
     createOptions(overrides),
     createSamplingRequest({
@@ -101,7 +105,9 @@ function createSamplingRequest(params: CreateMessageRequest["params"]): CreateMe
 }
 
 describe("sampling handler", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    native = await createTestExtensionContext();
+    vi.spyOn(native.context.modelRegistry, "complete").mockImplementation(mocks.complete);
     mocks.complete.mockReset().mockResolvedValue({
       role: "assistant",
       content: [{ type: "text", text: "Bonjour" }],
@@ -114,8 +120,13 @@ describe("sampling handler", () => {
     });
   });
 
+  afterEach(async () => {
+    await native.dispose();
+    vi.restoreAllMocks();
+  });
+
   it("converts approved MCP sampling requests through Pi's model runtime", async () => {
-    const { handleSamplingRequest } = await import("../sampling-handler.ts");
+    const { handleSamplingRequest } = await import("../../sampling-handler.ts");
     const result = await handleSamplingRequest(
       createOptions(),
       createSamplingRequest({
@@ -127,6 +138,7 @@ describe("sampling handler", () => {
       }),
     );
 
+    const timestamp: unknown = expect.any(Number);
     expect(mocks.complete).toHaveBeenCalledWith(
       model,
       {
@@ -135,7 +147,7 @@ describe("sampling handler", () => {
           {
             role: "user",
             content: [{ type: "text", text: "Hello" }],
-            timestamp: expect.any(Number),
+            timestamp,
           },
         ],
       },
@@ -157,7 +169,7 @@ describe("sampling handler", () => {
   it.each(["openai-responses", "openai-codex-responses"] as const)(
     "omits Astra's rejected temperature in nested %s sampling",
     async (api) => {
-      const { handleSamplingRequest } = await import("../sampling-handler.ts");
+      const { handleSamplingRequest } = await import("../../sampling-handler.ts");
       const astra = { ...model, provider: "openai", id: "gpt-6-astra", api };
       await handleSamplingRequest(
         createOptions({ getCurrentModel: () => astra }),
@@ -167,13 +179,13 @@ describe("sampling handler", () => {
           temperature: 0.2,
         }),
       );
-      expect(mocks.complete.mock.calls[0]![2]).not.toHaveProperty("temperature");
-      expect(mocks.complete.mock.calls[0]![2]).toHaveProperty("maxTokens", 50);
+      expect(requireValue(mocks.complete.mock.calls[0])[2]).not.toHaveProperty("temperature");
+      expect(requireValue(mocks.complete.mock.calls[0])[2]).toHaveProperty("maxTokens", 50);
     },
   );
 
   it("requires UI approval unless auto-approve is enabled", async () => {
-    const { handleSamplingRequest } = await import("../sampling-handler.ts");
+    const { handleSamplingRequest } = await import("../../sampling-handler.ts");
 
     await expect(
       handleSamplingRequest(
@@ -185,8 +197,8 @@ describe("sampling handler", () => {
   });
 
   it("asks for approval with inspectable request and response content", async () => {
-    const { handleSamplingRequest } = await import("../sampling-handler.ts");
-    const ui = { confirm: vi.fn(async (_title: string, _message: string) => true) };
+    const { handleSamplingRequest } = await import("../../sampling-handler.ts");
+    const ui = { confirm: vi.fn<ExtensionUIContext["confirm"]>().mockResolvedValue(true) };
 
     await handleSamplingRequest(
       createOptions({ autoApprove: false, ui }),
@@ -198,90 +210,118 @@ describe("sampling handler", () => {
     );
 
     expect(ui.confirm).toHaveBeenCalledTimes(2);
-    expect(ui.confirm.mock.calls[0]![0]).toBe("Approve MCP sampling request");
-    expect(ui.confirm.mock.calls[0]![1]).toContain("System: Translate tersely.");
-    expect(ui.confirm.mock.calls[0]![1]).toContain("1. user: Hello");
-    expect(ui.confirm.mock.calls[1]![0]).toBe("Return MCP sampling response");
-    expect(ui.confirm.mock.calls[1]![1]).toContain("Bonjour");
+    expect(requireValue(ui.confirm.mock.calls[0])[0]).toBe("Approve MCP sampling request");
+    expect(requireValue(ui.confirm.mock.calls[0])[1]).toContain("System: Translate tersely.");
+    expect(requireValue(ui.confirm.mock.calls[0])[1]).toContain("1. user: Hello");
+    expect(requireValue(ui.confirm.mock.calls[1])[0]).toBe("Return MCP sampling response");
+    expect(requireValue(ui.confirm.mock.calls[1])[1]).toContain("Bonjour");
   });
 
   it("uses model preference hints before the current conversation model", async () => {
     await runBasicSampling(
       {
         modelRegistry: {
-          getAvailable: vi.fn(() => [haiku, opus]),
-          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+          getAvailable: vi.fn<SamplingHandlerOptions["modelRegistry"]["getAvailable"]>(() => [
+            haiku,
+            opus,
+          ]),
+          getApiKeyAndHeaders: vi.fn<
+            SamplingHandlerOptions["modelRegistry"]["getApiKeyAndHeaders"]
+          >(async () => ({ ok: true as const, apiKey: "key" })),
         },
-        getCurrentModel: vi.fn(() => opus),
+        getCurrentModel: vi.fn<SamplingHandlerOptions["getCurrentModel"]>(() => opus),
       },
       { hints: [{ name: "haiku" }] },
     );
 
-    expect(mocks.complete.mock.calls[0]![0]).toBe(haiku);
+    expect(requireValue(mocks.complete.mock.calls[0])[0]).toBe(haiku);
   });
 
   it("matches model preference hints case-insensitively after trimming", async () => {
     await runBasicSampling(
       {
         modelRegistry: {
-          getAvailable: vi.fn(() => [haiku, opus]),
-          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+          getAvailable: vi.fn<SamplingHandlerOptions["modelRegistry"]["getAvailable"]>(() => [
+            haiku,
+            opus,
+          ]),
+          getApiKeyAndHeaders: vi.fn<
+            SamplingHandlerOptions["modelRegistry"]["getApiKeyAndHeaders"]
+          >(async () => ({ ok: true as const, apiKey: "key" })),
         },
-        getCurrentModel: vi.fn(() => opus),
+        getCurrentModel: vi.fn<SamplingHandlerOptions["getCurrentModel"]>(() => opus),
       },
       { hints: [{ name: " HAIKU " }] },
     );
 
-    expect(mocks.complete.mock.calls[0]![0]).toBe(haiku);
+    expect(requireValue(mocks.complete.mock.calls[0])[0]).toBe(haiku);
   });
 
   it("matches model preference hints against display names", async () => {
     await runBasicSampling(
       {
         modelRegistry: {
-          getAvailable: vi.fn(() => [geminiFlash, opus]),
-          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+          getAvailable: vi.fn<SamplingHandlerOptions["modelRegistry"]["getAvailable"]>(() => [
+            geminiFlash,
+            opus,
+          ]),
+          getApiKeyAndHeaders: vi.fn<
+            SamplingHandlerOptions["modelRegistry"]["getApiKeyAndHeaders"]
+          >(async () => ({ ok: true as const, apiKey: "key" })),
         },
-        getCurrentModel: vi.fn(() => opus),
+        getCurrentModel: vi.fn<SamplingHandlerOptions["getCurrentModel"]>(() => opus),
       },
       { hints: [{ name: "2.5 Flash" }] },
     );
 
-    expect(mocks.complete.mock.calls[0]![0]).toBe(geminiFlash);
+    expect(requireValue(mocks.complete.mock.calls[0])[0]).toBe(geminiFlash);
   });
 
   it("matches model preference hints against provider/id", async () => {
     await runBasicSampling(
       {
         modelRegistry: {
-          getAvailable: vi.fn(() => [geminiFlash, opus]),
-          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+          getAvailable: vi.fn<SamplingHandlerOptions["modelRegistry"]["getAvailable"]>(() => [
+            geminiFlash,
+            opus,
+          ]),
+          getApiKeyAndHeaders: vi.fn<
+            SamplingHandlerOptions["modelRegistry"]["getApiKeyAndHeaders"]
+          >(async () => ({ ok: true as const, apiKey: "key" })),
         },
-        getCurrentModel: vi.fn(() => opus),
+        getCurrentModel: vi.fn<SamplingHandlerOptions["getCurrentModel"]>(() => opus),
       },
       { hints: [{ name: "google/gemini" }] },
     );
 
-    expect(mocks.complete.mock.calls[0]![0]).toBe(geminiFlash);
+    expect(requireValue(mocks.complete.mock.calls[0])[0]).toBe(geminiFlash);
   });
 
   it("preserves preference order across multiple model hints", async () => {
     await runBasicSampling(
       {
         modelRegistry: {
-          getAvailable: vi.fn(() => [haiku, geminiFlash, opus]),
-          getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+          getAvailable: vi.fn<SamplingHandlerOptions["modelRegistry"]["getAvailable"]>(() => [
+            haiku,
+            geminiFlash,
+            opus,
+          ]),
+          getApiKeyAndHeaders: vi.fn<
+            SamplingHandlerOptions["modelRegistry"]["getApiKeyAndHeaders"]
+          >(async () => ({ ok: true as const, apiKey: "key" })),
         },
-        getCurrentModel: vi.fn(() => opus),
+        getCurrentModel: vi.fn<SamplingHandlerOptions["getCurrentModel"]>(() => opus),
       },
       { hints: [{ name: "gemini" }, { name: "haiku" }] },
     );
 
-    expect(mocks.complete.mock.calls[0]![0]).toBe(geminiFlash);
+    expect(requireValue(mocks.complete.mock.calls[0])[0]).toBe(geminiFlash);
   });
 
   it("falls back when hinted models do not have configured auth", async () => {
-    const getApiKeyAndHeaders = vi.fn(async (candidate: Model<Api>) => {
+    const getApiKeyAndHeaders = vi.fn<
+      SamplingHandlerOptions["modelRegistry"]["getApiKeyAndHeaders"]
+    >(async (candidate: Model<Api>) => {
       if (candidate.id === "claude-haiku") {
         return { ok: false as const, error: "missing key" };
       }
@@ -291,33 +331,38 @@ describe("sampling handler", () => {
     await runBasicSampling(
       {
         modelRegistry: {
-          getAvailable: vi.fn(() => [haiku, opus]),
+          getAvailable: vi.fn<SamplingHandlerOptions["modelRegistry"]["getAvailable"]>(() => [
+            haiku,
+            opus,
+          ]),
           getApiKeyAndHeaders,
         },
-        getCurrentModel: vi.fn(() => opus),
+        getCurrentModel: vi.fn<SamplingHandlerOptions["getCurrentModel"]>(() => opus),
       },
       { hints: [{ name: "haiku" }] },
     );
 
     expect(getApiKeyAndHeaders).toHaveBeenNthCalledWith(1, haiku);
     expect(getApiKeyAndHeaders).toHaveBeenNthCalledWith(2, opus);
-    expect(mocks.complete.mock.calls[0]![0]).toBe(opus);
+    expect(requireValue(mocks.complete.mock.calls[0])[0]).toBe(opus);
   });
 
   it("preserves current-model-first selection when no hints are provided", async () => {
     await runBasicSampling({
       modelRegistry: {
-        getAvailable: vi.fn(() => [haiku]),
-        getApiKeyAndHeaders: vi.fn(async () => ({ ok: true as const, apiKey: "key" })),
+        getAvailable: vi.fn<SamplingHandlerOptions["modelRegistry"]["getAvailable"]>(() => [haiku]),
+        getApiKeyAndHeaders: vi.fn<SamplingHandlerOptions["modelRegistry"]["getApiKeyAndHeaders"]>(
+          async () => ({ ok: true as const, apiKey: "key" }),
+        ),
       },
-      getCurrentModel: vi.fn(() => opus),
+      getCurrentModel: vi.fn<SamplingHandlerOptions["getCurrentModel"]>(() => opus),
     });
 
-    expect(mocks.complete.mock.calls[0]![0]).toBe(opus);
+    expect(requireValue(mocks.complete.mock.calls[0])[0]).toBe(opus);
   });
 
   it("rejects unsupported sampling features loudly", async () => {
-    const { handleSamplingRequest } = await import("../sampling-handler.ts");
+    const { handleSamplingRequest } = await import("../../sampling-handler.ts");
 
     await expect(
       handleSamplingRequest(

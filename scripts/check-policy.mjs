@@ -89,6 +89,33 @@ function verifyLintConfig() {
       "vitest/no-conditional-expect": "error",
     },
   };
+  const samplingProfile = {
+    files: ["sampling-handler.ts", "__tests__/runtime/sampling-handler.test.ts"],
+    rules: {
+      "typescript/no-deprecated": [
+        "error",
+        {
+          allow: [
+            {
+              from: "package",
+              package: "@modelcontextprotocol/client",
+              name: [
+                "CreateMessageRequest",
+                "CreateMessageResult",
+                "ModelPreferences",
+                "SamplingMessage",
+                "SamplingMessageContentBlock",
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const exceptions = readFileSync(join(root, "docs/quality-exceptions.md"), "utf8");
+  if (!exceptions.includes("## QX-017:")) {
+    throw new Error("Missing quality exception record: QX-017");
+  }
   expected.overrides = [
     {
       ...testProfile,
@@ -96,6 +123,7 @@ function verifyLintConfig() {
     },
     ...profiles.slice(1),
     vitestProfile,
+    samplingProfile,
   ];
   expected.ignorePatterns = ignorePatterns;
   const actual = recordSchema.parse(readJson(".oxlintrc.json"));

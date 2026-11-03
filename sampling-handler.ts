@@ -2,13 +2,13 @@ import type { Api, AssistantMessage, Message, Model, TextContent } from "@earend
 import { truncateAtWord } from "./utils.ts";
 import { throwIfAborted } from "./abort.ts";
 import type { ExtensionUIContext, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import {
-  type Client,
-  type CreateMessageRequest,
-  type CreateMessageResult,
-  type ModelPreferences,
-  type SamplingMessage,
-  type SamplingMessageContentBlock,
+import type {
+  Client,
+  CreateMessageRequest,
+  CreateMessageResult,
+  ModelPreferences,
+  SamplingMessage,
+  SamplingMessageContentBlock,
 } from "@modelcontextprotocol/client";
 
 export interface SamplingHandlerOptions {
@@ -41,21 +41,7 @@ export async function handleSamplingRequest(
   const signal = options.getSignal();
   throwIfAborted(signal);
 
-  if ("task" in params && params.task) {
-    throw new Error("MCP sampling tasks are not supported");
-  }
-  if (params.includeContext && params.includeContext !== "none") {
-    throw new Error("MCP sampling context inclusion is not supported");
-  }
-  if (params.tools?.length) {
-    throw new Error("MCP sampling tool use is not supported");
-  }
-  if (params.toolChoice) {
-    throw new Error("MCP sampling tool choice is not supported");
-  }
-  if (params.stopSequences?.length) {
-    throw new Error("MCP sampling stop sequences are not supported");
-  }
+  validateSamplingFeatures(params);
 
   const messages = params.messages.map(convertSamplingMessage);
   const model = await resolveSamplingModel(options, params.modelPreferences);
@@ -72,27 +58,13 @@ export async function handleSamplingRequest(
   );
   throwIfAborted(signal);
 
-  const supportsTemperature =
-    model.compat && "supportsTemperature" in model.compat
-      ? model.compat.supportsTemperature !== false
-      : !(
-          model.id === "gpt-6-astra" &&
-          (model.api === "openai-responses" || model.api === "openai-codex-responses")
-        );
   const result = await options.modelRegistry.complete(
     model,
     {
       ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
       messages,
     },
-    {
-      maxTokens: params.maxTokens,
-      ...(supportsTemperature && params.temperature !== undefined
-        ? { temperature: params.temperature }
-        : {}),
-      ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
-      ...(signal ? { signal } : {}),
-    },
+    samplingCompletionOptions(model, params, signal),
   );
 
   const converted = convertAssistantResult(result);
@@ -105,6 +77,46 @@ export async function handleSamplingRequest(
   return converted;
 }
 
+function validateSamplingFeatures(params: CreateMessageRequest["params"]): void {
+  if ("task" in params && params.task) {
+    throw new Error("MCP sampling tasks are not supported");
+  }
+  if (params.includeContext !== undefined && params.includeContext !== "none") {
+    throw new Error("MCP sampling context inclusion is not supported");
+  }
+  if (params.tools && params.tools.length > 0) {
+    throw new Error("MCP sampling tool use is not supported");
+  }
+  if (params.toolChoice) {
+    throw new Error("MCP sampling tool choice is not supported");
+  }
+  if (params.stopSequences && params.stopSequences.length > 0) {
+    throw new Error("MCP sampling stop sequences are not supported");
+  }
+}
+
+function samplingCompletionOptions(
+  model: Model<Api>,
+  params: CreateMessageRequest["params"],
+  signal: AbortSignal | undefined,
+): NonNullable<Parameters<ModelRegistry["complete"]>[2]> {
+  const supportsTemperature =
+    model.compat && "supportsTemperature" in model.compat
+      ? model.compat.supportsTemperature !== false
+      : !(
+          model.id === "gpt-6-astra" &&
+          (model.api === "openai-responses" || model.api === "openai-codex-responses")
+        );
+  return {
+    maxTokens: params.maxTokens,
+    ...(supportsTemperature && params.temperature !== undefined
+      ? { temperature: params.temperature }
+      : {}),
+    ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
+    ...(signal ? { signal } : {}),
+  };
+}
+
 function formatRequestApproval(
   serverName: string,
   modelName: string,
@@ -114,7 +126,7 @@ function formatRequestApproval(
   const lines = [
     `${serverName} wants to sample ${messages.length} message${messages.length === 1 ? "" : "s"} with ${modelName}.`,
   ];
-  if (systemPrompt) {
+  if (systemPrompt !== undefined && systemPrompt !== "") {
     lines.push(`System: ${truncateAtWord(systemPrompt, 400)}`);
   }
   for (const [index, message] of messages.entries()) {
@@ -144,24 +156,21 @@ function messageText(message: Message): string {
       if (block.type === "thinking") {
         return "[thinking]";
       }
-      if (block.type === "toolCall") {
-        return `[tool call: ${block.name}]`;
-      }
-      return "[content]";
+      return `[tool call: ${block.name}]`;
     })
     .join("\n");
 }
 
-async function resolveSamplingModel(
+function samplingCandidates(
   options: SamplingHandlerOptions,
   modelPreferences: ModelPreferences | undefined,
-): Promise<Model<Api>> {
+): Model<Api>[] {
   const candidates: Model<Api>[] = [];
   const availableModels = options.modelRegistry.getAvailable();
 
   for (const hint of modelPreferences?.hints ?? []) {
-    const normalizedHint = hint.name?.trim().toLowerCase();
-    if (!normalizedHint) {
+    const normalizedHint = (hint.name ?? "").trim().toLowerCase();
+    if (normalizedHint === "") {
       continue;
     }
     for (const model of availableModels) {
@@ -181,6 +190,14 @@ async function resolveSamplingModel(
     addSamplingCandidate(candidates, model);
   }
 
+  return candidates;
+}
+
+async function resolveSamplingModel(
+  options: SamplingHandlerOptions,
+  modelPreferences: ModelPreferences | undefined,
+): Promise<Model<Api>> {
+  const candidates = samplingCandidates(options, modelPreferences);
   const errors: string[] = [];
   const signal = options.getSignal();
   for (const model of candidates) {
@@ -279,7 +296,7 @@ function convertAssistantResult(message: AssistantMessage): CreateMessageResult 
         return block.text;
       }
       if (block.type === "thinking") {
-        return undefined;
+        return;
       }
       throw new Error(`MCP sampling result ${block.type} content is not supported`);
     })
@@ -287,7 +304,7 @@ function convertAssistantResult(message: AssistantMessage): CreateMessageResult 
     .join("\n\n")
     .trim();
 
-  if (!text) {
+  if (text === "") {
     throw new Error("MCP sampling result did not contain text content");
   }
 

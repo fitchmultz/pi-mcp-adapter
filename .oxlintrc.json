@@ -400,6 +400,29 @@
         ],
         "vitest/no-conditional-expect": "error"
       }
+    },
+    {
+      "files": ["sampling-handler.ts", "__tests__/runtime/sampling-handler.test.ts"],
+      "rules": {
+        "typescript/no-deprecated": [
+          "error",
+          {
+            "allow": [
+              {
+                "from": "package",
+                "package": "@modelcontextprotocol/client",
+                "name": [
+                  "CreateMessageRequest",
+                  "CreateMessageResult",
+                  "ModelPreferences",
+                  "SamplingMessage",
+                  "SamplingMessageContentBlock"
+                ]
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "ignorePatterns": [
