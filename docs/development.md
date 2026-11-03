@@ -63,7 +63,7 @@ The command also checks the native-contract launcher under the production profil
 
 `lint:sampling` enforces the production profile for the supported MCP sampling bridge. Its native model-registry and approval tests are covered by `lint:runtime-tests`. QX-017 permits only five deprecated MCP sampling types from their actual SDK package in these two files. Other deprecations and all other rules remain checked.
 
-`lint:output-runtime` enforces the production profile for `mcp-output-*.ts`: output guards, streaming previews, retained-result contracts, summaries and paged result reads. Raw MCP properties remain unknown until narrowed. The existing output suites verify artifact readback, private permissions, paging and UTF-8 boundaries.
+`lint:output-runtime` enforces the production profile for `mcp-output-*.ts` and the canonical `plain-result-reader.ts`: output guards, streaming previews, retained-result contracts, summaries and paged result reads. Raw MCP properties remain unknown until narrowed. The existing output suites, checked by `lint:output-tests`, verify artifact readback, private permissions, sparse paging, UTF-8 boundaries and native history append handoff.
 
 `lint:runtime-tests` includes native Pi gateway selection, reload, lazy startup and initialization tests, plus the standalone startup child. These tests use the installed Pi graph selected by qualification. The child installs module hooks before importing Pi, loads the source extension, and executes its first stdio call. Initialization tests use a real Pi context and public health-check timers.
 

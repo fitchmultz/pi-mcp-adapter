@@ -49,7 +49,7 @@
     "lint:core-runtime": "oxlint --deny-warnings abort.ts agent-dir.ts client-operations.ts error-signal.ts legacy-migration.ts logger.ts mcp-oauth-callback-config.ts onboarding-state.ts panel-keys.ts search-ranking.ts unix-socket-transport.ts",
     "lint:config-runtime": "oxlint --deny-warnings config*.ts types.ts public-types.ts tool-names.ts ui-message-types.ts __tests__/config.test.ts __tests__/opencode-interpolation.test.ts __tests__/oauth-config.test-d.ts",
     "lint:sampling": "oxlint --deny-warnings sampling-handler.ts",
-    "lint:output-runtime": "oxlint --deny-warnings mcp-output-*.ts",
+    "lint:output-runtime": "oxlint --deny-warnings mcp-output-*.ts plain-result-reader.ts",
     "lint:oauth-runtime": "oxlint --deny-warnings mcp-auth-flow.ts mcp-callback-server.ts mcp-oauth-provider.ts mcp-oauth-runtime.ts mcp-oauth-config.ts mcp-oauth-discovery.ts mcp-oauth-request.ts mcp-oauth-response.ts mcp-oauth-start.ts mcp-oauth-registration.ts mcp-oauth-client-auth.ts elicitation-handler.ts elicitation-form-dialog.ts elicitation-form-values.ts elicitation-form-schema.ts",
     "lint:credential-runtime": "oxlint --deny-warnings mcp-auth.ts auth-record-types.ts credential-payloads.ts credential-store-errors.ts keyring-store.ts keyring-recovery.ts mcp-keyring-helper.cjs",
     "lint:auth-boundaries": "oxlint --deny-warnings __tests__/server-manager-http-auth.test.ts __tests__/sdk-v2-oauth.test.ts __tests__/fixtures/android-keyring-probe.mjs",

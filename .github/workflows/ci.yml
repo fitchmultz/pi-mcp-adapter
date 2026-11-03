@@ -156,7 +156,8 @@ jobs:
       - run: npm run lint:core-runtime
       - run: npm run lint:config-runtime
       - run: npm run lint:sampling
-      - run: npm run lint:output-runtime
+      - name: Lint output runtime and canonical plain reader
+        run: npm run lint:output-runtime
       - run: npm run lint:oauth-runtime
       - run: npm run lint:credential-runtime
       - run: npm run lint:auth-boundaries
