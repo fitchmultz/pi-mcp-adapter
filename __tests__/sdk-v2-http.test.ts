@@ -305,13 +305,12 @@ async function fixture(
 
 async function call(state: McpExtensionState, entry: string, signal?: AbortSignal) {
   if (entry === "script") {
-    const output = await runMcpScript(
+    const output = await runMcpScript({
       state,
-      'return await tools.local_echo({ value: "test" });',
-      2000,
-      undefined,
-      signal,
-    );
+      code: 'return await tools.local_echo({ value: "test" });',
+      timeoutMs: 2000,
+      signal: signal,
+    });
     const text = output.content.findLast(
       (c) => c.type === "text" && !c.text.startsWith("[MCP result saved:"),
     );
@@ -945,14 +944,14 @@ describe("published SDK v2 over real local HTTP", () => {
       return true;
     });
     const { state } = await f.connect();
-    const script = await runMcpScript(
+    const script = await runMcpScript({
       state,
-      `
+      code: `
       const native = await tools.describe({ path: "local_echo" });
       const compact = await tools.describe({ path: "local_compact" });
       return { native, compact, called: await tools.call(native.path, { value: "test" }) };
     `,
-    );
+    });
     expect(script.details).not.toHaveProperty("error");
     const described = z
       .object({
@@ -1042,7 +1041,10 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(JSON.parse(textBlock(executeDescribe(state, "local_echo").content[0]))).toMatchObject({
       annotations: { readOnlyHint: true },
     });
-    const script = await runMcpScript(state, 'return tools.describe({ path: "local_echo" });');
+    const script = await runMcpScript({
+      state,
+      code: 'return tools.describe({ path: "local_echo" });',
+    });
     const described = z
       .object({ annotations: z.unknown() })
       .parse(JSON.parse(textBlock(script.content[0])));

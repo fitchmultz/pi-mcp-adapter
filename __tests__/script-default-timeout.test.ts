@@ -1,5 +1,10 @@
+import assert from "node:assert/strict";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { asObjectRecord } from "../mcp-output-values.ts";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -21,13 +26,89 @@ let sessions: AgentSession[];
 let calls: Array<{ name: string; args: Record<string, unknown> }>;
 let closed: unknown[];
 const nativeFetch = globalThis.fetch;
+const requestSchema = Type.Object({
+  method: Type.String(),
+  id: Type.Optional(Type.Unknown()),
+  params: Type.Optional(Type.Unknown()),
+});
+type NativeToolView = Pick<AgentTool<object, unknown>, "execute"> & { parameters: unknown };
+function requireNativeTool(session: AgentSession, name: string): NativeToolView {
+  const tool = session.agent.state.tools.find((entry) => entry.name === name);
+  assert.ok(tool, `Native tool ${name} was not registered`);
+  return tool;
+}
+function timeoutDescription(schema: unknown): unknown {
+  const properties = asObjectRecord(asObjectRecord(schema)?.properties);
+  return asObjectRecord(properties?.timeoutMs)?.description;
+}
+async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.writeHead(405).end();
+    return;
+  }
+  req.setEncoding("utf8");
+  let data = "";
+  for await (const chunk of req) {
+    const text: unknown = chunk;
+    assert.ok(typeof text === "string");
+    data += text;
+  }
+  const request: unknown = JSON.parse(data);
+  assert.ok(Value.Check(requestSchema, request));
+  const respond = (result: unknown): void => {
+    res
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
+  };
+  switch (request.method) {
+    case "server/discover":
+      respond({
+        resultType: "complete",
+        supportedVersions: ["2026-07-28"],
+        capabilities: { tools: {} },
+        _meta: { "io.modelcontextprotocol/serverInfo": { name: "script-deadline", version: "1" } },
+      });
+      return;
+    case "tools/list":
+      respond({
+        resultType: "complete",
+        ttlMs: 60_000,
+        cacheScope: "private",
+        tools: ["echo", "hang"].map((name) => ({
+          name,
+          inputSchema: { type: "object", properties: { id: { type: "string" } } },
+        })),
+      });
+      return;
+    case "tools/call": {
+      const params = asObjectRecord(request.params);
+      const name = params?.name;
+      const args = asObjectRecord(params?.arguments);
+      assert.ok(typeof name === "string" && args !== undefined);
+      calls.push({ name, args });
+      if (name === "hang") {
+        res.once("close", () => closed.push(args.id));
+        return;
+      }
+      respond({
+        resultType: "complete",
+        content: [{ type: "text", text: args.id }],
+        structuredContent: args,
+      });
+      return;
+    }
+    default:
+      res.writeHead(202).end();
+  }
+}
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "mcp-script-default-"));
   await mkdir(join(root, "agent"));
   vi.stubEnv("HOME", root);
   vi.stubEnv("PI_CODING_AGENT_DIR", join(root, "agent"));
-  vi.stubEnv("MCP_DIRECT_TOOLS", undefined);
+  vi.stubEnv("MCP_DIRECT_TOOLS", process.env.MCP_DIRECT_TOOLS);
+  delete process.env.MCP_DIRECT_TOOLS;
   vi.stubEnv("PI_OFFLINE", "1");
   vi.stubGlobal("fetch", (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const target = new URL(input instanceof Request ? input.url : input);
@@ -39,56 +120,16 @@ beforeEach(async () => {
   sessions = [];
   calls = [];
   closed = [];
-  server = createServer(async (req, res) => {
-    if (req.method !== "POST") {
-      res.writeHead(405).end();
-      return;
-    }
-    let data = "";
-    for await (const chunk of req) {
-      data += chunk;
-    }
-    const request = JSON.parse(data);
-    const respond = (result: unknown) =>
-      res
-        .writeHead(200, { "content-type": "application/json" })
-        .end(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
-    if (request.method === "server/discover") {
-      respond({
-        resultType: "complete",
-        supportedVersions: ["2026-07-28"],
-        capabilities: { tools: {} },
-        _meta: { "io.modelcontextprotocol/serverInfo": { name: "script-deadline", version: "1" } },
-      });
-    } else if (request.method === "tools/list") {
-      respond({
-        resultType: "complete",
-        ttlMs: 60_000,
-        cacheScope: "private",
-        tools: ["echo", "hang"].map((name) => ({
-          name,
-          inputSchema: { type: "object", properties: { id: { type: "string" } } },
-        })),
-      });
-    } else if (request.method === "tools/call") {
-      const { name, arguments: args } = request.params;
-      calls.push({ name, args });
-      if (name === "hang") {
-        res.once("close", () => closed.push(args.id));
-        return;
-      }
-      respond({
-        resultType: "complete",
-        content: [{ type: "text", text: args.id }],
-        structuredContent: args,
-      });
-    } else {
-      res.writeHead(202).end();
-    }
+  server = createServer((req, res) => {
+    handleRequest(req, res).catch((error: unknown) => {
+      res.destroy(error instanceof Error ? error : new Error(String(error)));
+    });
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
   const address = server.address();
-  if (!address || typeof address === "string") {
+  if (address === null || typeof address === "string") {
     throw new Error("Fixture did not bind");
   }
   url = `http://127.0.0.1:${address.port}/mcp`;
@@ -100,9 +141,15 @@ afterEach(async () => {
     session.dispose();
   }
   server.closeAllConnections();
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   await rm(root, { recursive: true, force: true });
@@ -151,14 +198,11 @@ async function startAdapter(options: McpAdapterOptions = {}, requestTimeoutMs = 
       throw new Error(error.error);
     },
   });
-  const loader = session.agent.state.tools.find((tool) => tool.name === "mcp_search")!;
+  const loader = requireNativeTool(session, "mcp_search");
   await loader.execute("bootstrap", { enable: ["gateway", "script"] });
-  const proxy = session.agent.state.tools.find((tool) => tool.name === "mcp");
-  const script = session.agent.state.tools.find((tool) => tool.name === "mcp_script");
-  if (!proxy || !script) {
-    throw new Error("Adapter tools were not registered");
-  }
-  expect((await proxy.execute("bootstrap", {})).details?.error).toBeUndefined();
+  const proxy = requireNativeTool(session, "mcp");
+  const script = requireNativeTool(session, "mcp_script");
+  expect(asObjectRecord((await proxy.execute("bootstrap", {})).details)?.error).toBeUndefined();
   return { script, session };
 }
 
@@ -217,7 +261,7 @@ it("lets an opted-in factory cross 30 seconds once while an unconfigured factory
     { type: "text", text: "opted-in-two" },
     { type: "text", text: "complete" },
   ]);
-  expect(optedIn.result.details?.resultRefs).toHaveLength(2);
+  expect(asObjectRecord(optedIn.result.details)?.resultRefs).toHaveLength(2);
   expect(
     optedIn.captured.map((event) => [
       event.phase,
@@ -234,18 +278,16 @@ it("lets an opted-in factory cross 30 seconds once while an unconfigured factory
   expect(ordinary.result.details).toMatchObject({ error: "timeout", timeoutMs: 30_000 });
   expect(ordinary.elapsedMs).toBeGreaterThanOrEqual(29_500);
   expect(ordinary.elapsedMs).toBeLessThan(40_000);
-  expect(calls.map((call) => call.args.id).sort()).toEqual([
-    "opted-in-one",
-    "opted-in-two",
-    "ordinary-one",
-  ]);
-  expect(optedIn.parameters.properties.timeoutMs.description).toContain("no default deadline");
-  expect(ordinary.parameters.properties.timeoutMs.description).toContain("default: 30000");
+  expect(
+    calls.map((call) => call.args.id).sort((a, b) => String(a).localeCompare(String(b))),
+  ).toEqual(["opted-in-one", "opted-in-two", "ordinary-one"]);
+  expect(timeoutDescription(optedIn.parameters)).toContain("no default deadline");
+  expect(timeoutDescription(ordinary.parameters)).toContain("default: 30000");
 }, 45_000);
 
 it("uses a numeric host default and lets an explicit shorter limit override it", async () => {
   const { script } = await startAdapter({ defaultScriptTimeoutMs: 250 });
-  expect(script.parameters.properties.timeoutMs.description).toContain("default: 250");
+  expect(timeoutDescription(script.parameters)).toContain("default: 250");
   const code = "await new Promise(() => {});";
   expect((await script.execute("host-default", { code })).details).toMatchObject({
     error: "timeout",
@@ -355,10 +397,10 @@ it("cancels an already-dispatched unfinished call on early script return", async
     ],
   });
   expect(result.content[0]).toEqual({ type: "text", text: "early" });
-  expect(result.content[1]).toMatchObject({
-    text: expect.stringContaining("Do not blindly repeat"),
-  });
-  expect(result.content[2]).toMatchObject({ text: expect.stringContaining("[MCP result saved:") });
+  const recoveryNotice: unknown = expect.stringContaining("Do not blindly repeat");
+  const savedNotice: unknown = expect.stringContaining("[MCP result saved:");
+  expect(result.content[1]).toMatchObject({ text: recoveryNotice });
+  expect(result.content[2]).toMatchObject({ text: savedNotice });
   expect(calls).toEqual([
     { name: "hang", args: { id: "straggler" } },
     { name: "echo", args: { id: "joined" } },

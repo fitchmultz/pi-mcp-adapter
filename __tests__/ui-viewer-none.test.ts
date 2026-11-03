@@ -100,13 +100,12 @@ describe("remote MCP UI viewers", () => {
         await open.promise;
       });
       let output: Awaited<ReturnType<typeof runMcpScript>> | undefined;
-      const pending = runMcpScript(
+      const pending = runMcpScript({
         state,
-        "await tools.demo_app({});",
-        ending === "timeout" ? 500 : 5000,
-        undefined,
-        controller.signal,
-      ).then((result) => {
+        code: "await tools.demo_app({});",
+        timeoutMs: ending === "timeout" ? 500 : 5000,
+        signal: controller.signal,
+      }).then((result) => {
         output = result;
         return result;
       });

@@ -1337,7 +1337,10 @@ async function callHost(
     return executeCall(state, { toolName: `${f.name}_echo`, args: {}, serverOverride: f.name });
   }
   if (host === "script") {
-    return runMcpScript(state, `emit(await tools.call(${JSON.stringify(`${f.name}_echo`)}, {}));`);
+    return runMcpScript({
+      state,
+      code: `emit(await tools.call(${JSON.stringify(`${f.name}_echo`)}, {}));`,
+    });
   }
   const execute = createDirectToolExecutor(
     () => state,
