@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,8 @@ import {
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ensureCallbackServer, waitForCallback } from "../mcp-callback-server.ts";
+import * as callbackServer from "../mcp-callback-server.ts";
+import * as authStorage from "../mcp-auth.ts";
 import { openMcpAuthPanel } from "../commands.ts";
 import { createMcpAdapter } from "../index.ts";
 import { runMcpScript } from "../mcp-code.ts";
@@ -167,6 +170,115 @@ async function collidingAuthBindings(kind: "pending" | "single-flight") {
 }
 
 describe("OAuth permission recovery through native HTTP and production hosts", () => {
+  it("retains ordered errors without cause when callback binding and startup cleanup fail", async () => {
+    const f = await fixture();
+    const occupied = createServer();
+    await new Promise<void>((resolve) => {
+      occupied.listen(0, "127.0.0.1", resolve);
+    });
+    cleanups.push(
+      () =>
+        new Promise<void>((resolve) => {
+          occupied.close(() => resolve());
+        }),
+    );
+    const address = occupied.address();
+    assert(address !== null && typeof address !== "string");
+    f.definition.oauth = { redirectUri: `http://127.0.0.1:${address.port}/callback` };
+    const binding = vi.spyOn(callbackServer, "ensureCallbackServer");
+    const cleanup = new Error("state cleanup unavailable");
+    vi.spyOn(authStorage, "clearOAuthState").mockImplementationOnce(() => {
+      throw cleanup;
+    });
+
+    const outcome = await settled(f.start());
+    assert(outcome.status === "rejected" && outcome.reason instanceof AggregateError);
+    const recorded = binding.mock.settledResults[0];
+    assert(recorded?.type === "rejected" && recorded.value instanceof Error);
+    expect(recorded.value).toHaveProperty("cause.code", "EADDRINUSE");
+    expect(outcome.reason.message).toBe("OAuth startup cleanup failed");
+    expect(outcome.reason.errors).toEqual([recorded.value, cleanup]);
+    expect(outcome.reason.errors[0]).toBe(recorded.value);
+    expect(outcome.reason.errors[1]).toBe(cleanup);
+    expect(Object.getOwnPropertyNames(outcome.reason)).toEqual(["stack", "message", "errors"]);
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(f.exchanges).toHaveLength(0);
+  });
+
+  it("retains ordered errors without cause when native client lookup and startup cleanup fail", async () => {
+    const f = await fixture();
+    const primary = new Error("client credentials unavailable");
+    const cleanup = new Error("state cleanup unavailable");
+    vi.spyOn(McpOAuthProvider.prototype, "clientInformation").mockRejectedValueOnce(primary);
+    vi.spyOn(authStorage, "getOAuthState").mockImplementationOnce(() => {
+      throw cleanup;
+    });
+
+    const outcome = await settled(f.start());
+    assert(outcome.status === "rejected" && outcome.reason instanceof AggregateError);
+    expect(outcome.reason.message).toBe("OAuth startup cleanup failed");
+    expect(outcome.reason.errors).toEqual([primary, cleanup]);
+    expect(outcome.reason.errors[0]).toBe(primary);
+    expect(outcome.reason.errors[1]).toBe(cleanup);
+    expect(Object.getOwnPropertyNames(outcome.reason)).toEqual(["stack", "message", "errors"]);
+    expect(f.http.some((request) => request.path.startsWith("/.well-known/"))).toBe(true);
+    expect(f.exchanges).toHaveLength(0);
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+  });
+
+  it("retains ordered errors without cause when token persistence and completion cleanup fail", async () => {
+    const f = await fixture();
+    const { authorizationUrl } = await f.start();
+    const callback = await f.authorize(authorizationUrl);
+    const primary = new Error("token persistence unavailable");
+    const cleanup = new Error("state cleanup unavailable");
+    vi.spyOn(McpOAuthProvider.prototype, "saveTokens").mockRejectedValueOnce(primary);
+    vi.spyOn(authStorage, "getOAuthState").mockImplementationOnce(() => {
+      throw cleanup;
+    });
+
+    const outcome = await settled(completeAuthFromInput(f.name, callback, { runtime: f.runtime }));
+    assert(outcome.status === "rejected" && outcome.reason instanceof AggregateError);
+    expect(outcome.reason.message).toBe("OAuth completion cleanup failed");
+    expect(outcome.reason.errors).toEqual([primary, cleanup]);
+    expect(outcome.reason.errors[0]).toBe(primary);
+    expect(outcome.reason.errors[1]).toBe(cleanup);
+    expect(Object.getOwnPropertyNames(outcome.reason)).toEqual(["stack", "message", "errors"]);
+    expect(f.exchanges).toHaveLength(1);
+    expect(f.stored()?.tokens).toBeUndefined();
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect((await fetch(callback)).status).toBe(400);
+  });
+
+  it("retains ordered errors without cause when cancellation and callback cleanup fail", async () => {
+    const f = await fixture();
+    const controller = new AbortController();
+    const primary = new Error("consent cancelled");
+    const cleanup = new Error("state cleanup unavailable");
+    const outcome = await settled(
+      authenticate(f.name, f.definition.url, f.definition, {
+        runtime: f.runtime,
+        signal: controller.signal,
+        onAuthorizationUrl: () => {
+          vi.spyOn(authStorage, "getOAuthState").mockImplementationOnce(() => {
+            throw cleanup;
+          });
+          controller.abort(primary);
+        },
+      }),
+    );
+
+    assert(outcome.status === "rejected" && outcome.reason instanceof AggregateError);
+    expect(outcome.reason.message).toBe("OAuth cancellation cleanup failed");
+    expect(outcome.reason.errors).toEqual([primary, cleanup]);
+    expect(outcome.reason.errors[0]).toBe(primary);
+    expect(outcome.reason.errors[1]).toBe(cleanup);
+    expect(Object.getOwnPropertyNames(outcome.reason)).toEqual(["stack", "message", "errors"]);
+    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(f.exchanges).toHaveLength(0);
+    expect(browser.open).not.toHaveBeenCalled();
+  });
+
   it.each(["tools/list", "prompts/list", "resources/list"])(
     "activates implicit OAuth for protected %s",
     async (method) => {

@@ -35,14 +35,14 @@ export function getOAuthRequest(
   return request?.serverUrl === serverUrl ? request : undefined;
 }
 
+type OAuthRequestBinding = Pick<OAuthRequest, "serverName" | "serverUrl"> & {
+  storageBase: string;
+  runtime?: McpOAuthRuntime | undefined;
+};
+
 /** Observe native challenges only; no credential reads or auth work here. */
-export function recordOAuthChallenge(
-  serverName: string,
-  serverUrl: string,
-  storageBase: string,
-  error: unknown,
-  runtime: McpOAuthRuntime = getLegacyRuntime(),
-): void {
+export function recordOAuthChallenge(binding: OAuthRequestBinding, error: unknown): void {
+  const { serverName, serverUrl, storageBase, runtime = getLegacyRuntime() } = binding;
   if (runtime.signal.aborted || !isOAuthChallenge(error)) {
     return;
   }
@@ -66,13 +66,8 @@ function scopeChallenge(
   };
 }
 
-export function bindOAuthRequestIssuer(
-  serverName: string,
-  serverUrl: string,
-  storageBase: string,
-  issuer: string,
-  runtime: McpOAuthRuntime = getLegacyRuntime(),
-): void {
+export function bindOAuthRequestIssuer(binding: OAuthRequestBinding, issuer: string): void {
+  const { serverName, serverUrl, storageBase, runtime = getLegacyRuntime() } = binding;
   const request = getOAuthRequest(serverName, serverUrl, storageBase, runtime);
   if (!request) {
     return;

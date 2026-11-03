@@ -58,9 +58,14 @@ nodeDescribe("McpOAuthProvider", () => {
   });
 
   function createProvider(config: McpOAuthConfig = {}) {
-    return new McpOAuthProvider(serverName, serverUrl, config, {
-      onRedirect: async (url) => {
-        redirectCaptured = url;
+    return new McpOAuthProvider({
+      serverName,
+      serverUrl,
+      config,
+      callbacks: {
+        onRedirect: async (url) => {
+          redirectCaptured = url;
+        },
       },
     });
   }
@@ -329,16 +334,16 @@ nodeDescribe("McpOAuthProvider", () => {
     nodeIt(
       "should save the current redirect URL when registration omits redirect_uris",
       async () => {
-        const provider = new McpOAuthProvider(
-          "redirect-fallback",
+        const provider = new McpOAuthProvider({
+          serverName: "redirect-fallback",
           serverUrl,
-          { redirectUri: "http://localhost:3118/custom" },
-          {
+          config: { redirectUri: "http://localhost:3118/custom" },
+          callbacks: {
             onRedirect() {
               throw new Error("Unexpected authorization redirect");
             },
           },
-        );
+        });
 
         await provider.saveClientInformation({
           client_id: "fallback-client",
@@ -355,16 +360,16 @@ nodeDescribe("McpOAuthProvider", () => {
     nodeIt(
       "should return stored dynamic client info even when redirect URIs are stale",
       async () => {
-        const provider = new McpOAuthProvider(
-          "stale-redirect-client",
+        const provider = new McpOAuthProvider({
+          serverName: "stale-redirect-client",
           serverUrl,
-          { redirectUri: "http://localhost:3118/current" },
-          {
+          config: { redirectUri: "http://localhost:3118/current" },
+          callbacks: {
             onRedirect() {
               throw new Error("Unexpected authorization redirect");
             },
           },
-        );
+        });
         saveAuthEntry(
           "stale-redirect-client",
           {
@@ -441,19 +446,19 @@ nodeDescribe("McpOAuthProvider", () => {
 
   nodeDescribe("redirectToAuthorization", () => {
     nodeIt("should call onRedirect with URL when a flow is in progress", async () => {
-      const provider = new McpOAuthProvider(
-        "redirect-with-state",
+      const provider = new McpOAuthProvider({
+        serverName: "redirect-with-state",
         serverUrl,
-        {},
-        {
+        config: {},
+        callbacks: {
           onRedirect: async (url) => {
             redirectCaptured = url;
           },
         },
-        {},
-        undefined,
-        "state-abc",
-      );
+        storageOptions: {},
+        runtimeSignal: undefined,
+        initialState: "state-abc",
+      });
       const testUrl = new URL("https://example.com/auth");
 
       await provider.redirectToAuthorization(testUrl);
@@ -462,16 +467,16 @@ nodeDescribe("McpOAuthProvider", () => {
     });
 
     nodeIt("should throw UnauthorizedError when no flow is in progress", async () => {
-      const provider = new McpOAuthProvider(
-        "redirect-no-state",
+      const provider = new McpOAuthProvider({
+        serverName: "redirect-no-state",
         serverUrl,
-        {},
-        {
+        config: {},
+        callbacks: {
           onRedirect() {
             throw new Error("Unexpected authorization redirect");
           },
         },
-      );
+      });
 
       await assert.rejects(
         async () => provider.redirectToAuthorization(new URL("https://example.com/auth")),
@@ -484,16 +489,16 @@ nodeDescribe("McpOAuthProvider", () => {
       "should ignore OAuth state saved for a different server URL before redirecting",
       async () => {
         let redirected = false;
-        const provider = new McpOAuthProvider(
-          "redirect-url-bound",
+        const provider = new McpOAuthProvider({
+          serverName: "redirect-url-bound",
           serverUrl,
-          {},
-          {
+          config: {},
+          callbacks: {
             onRedirect: async () => {
               redirected = true;
             },
           },
-        );
+        });
         saveAuthEntry(
           "redirect-url-bound",
           {
@@ -515,16 +520,16 @@ nodeDescribe("McpOAuthProvider", () => {
 
   nodeDescribe("codeVerifier / saveCodeVerifier", () => {
     nodeIt("should save and retrieve code verifier", async () => {
-      const provider = new McpOAuthProvider(
-        "code-verifier-test",
+      const provider = new McpOAuthProvider({
+        serverName: "code-verifier-test",
         serverUrl,
-        {},
-        {
+        config: {},
+        callbacks: {
           onRedirect() {
             throw new Error("Unexpected authorization redirect");
           },
         },
-      );
+      });
 
       await provider.saveCodeVerifier("verifier-abc-123");
 
@@ -534,31 +539,31 @@ nodeDescribe("McpOAuthProvider", () => {
     });
 
     nodeIt("should throw when no code verifier", async () => {
-      const provider = new McpOAuthProvider(
-        "code-verifier-throw",
+      const provider = new McpOAuthProvider({
+        serverName: "code-verifier-throw",
         serverUrl,
-        {},
-        {
+        config: {},
+        callbacks: {
           onRedirect() {
             throw new Error("Unexpected authorization redirect");
           },
         },
-      );
+      });
 
       await assert.rejects(async () => provider.codeVerifier(), /No code verifier saved/);
     });
 
     nodeIt("should ignore code verifiers saved for a different server URL", async () => {
-      const provider = new McpOAuthProvider(
-        "code-verifier-url-bound",
+      const provider = new McpOAuthProvider({
+        serverName: "code-verifier-url-bound",
         serverUrl,
-        {},
-        {
+        config: {},
+        callbacks: {
           onRedirect() {
             throw new Error("Unexpected authorization redirect");
           },
         },
-      );
+      });
       saveAuthEntry(
         "code-verifier-url-bound",
         {
@@ -574,16 +579,16 @@ nodeDescribe("McpOAuthProvider", () => {
 
   nodeDescribe("state / saveState", () => {
     nodeIt("should save and retrieve state", async () => {
-      const provider = new McpOAuthProvider(
-        "state-test-save",
+      const provider = new McpOAuthProvider({
+        serverName: "state-test-save",
         serverUrl,
-        {},
-        {
+        config: {},
+        callbacks: {
           onRedirect() {
             throw new Error("Unexpected authorization redirect");
           },
         },
-      );
+      });
 
       await provider.saveState("state-xyz-789");
 
@@ -593,16 +598,16 @@ nodeDescribe("McpOAuthProvider", () => {
     });
 
     nodeIt("should throw UnauthorizedError when no state is saved", async () => {
-      const provider = new McpOAuthProvider(
-        "state-test-throw",
+      const provider = new McpOAuthProvider({
+        serverName: "state-test-throw",
         serverUrl,
-        {},
-        {
+        config: {},
+        callbacks: {
           onRedirect() {
             throw new Error("Unexpected authorization redirect");
           },
         },
-      );
+      });
 
       await assert.rejects(
         async () => provider.state(),
@@ -612,16 +617,16 @@ nodeDescribe("McpOAuthProvider", () => {
     });
 
     nodeIt("should ignore OAuth state saved for a different server URL", async () => {
-      const provider = new McpOAuthProvider(
-        "state-url-bound",
+      const provider = new McpOAuthProvider({
+        serverName: "state-url-bound",
         serverUrl,
-        {},
-        {
+        config: {},
+        callbacks: {
           onRedirect() {
             throw new Error("Unexpected authorization redirect");
           },
         },
-      );
+      });
       saveAuthEntry(
         "state-url-bound",
         {

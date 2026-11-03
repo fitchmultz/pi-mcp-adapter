@@ -49,6 +49,7 @@ import {
   selectClientMetadataUrl,
   configuredClientMetadata,
   addAuthorizationParams,
+  addConfiguredScope,
   type McpOAuthConfig,
 } from "./mcp-oauth-config.ts";
 export {
@@ -70,6 +71,16 @@ import {
 export interface McpOAuthCallbacks {
   onRedirect: (url: URL) => void | Promise<void>;
   onDiscoveryState?: (state: OAuthDiscoveryState) => void;
+}
+
+interface McpOAuthProviderOptions {
+  serverName: string;
+  serverUrl: string;
+  config: McpOAuthConfig;
+  callbacks: McpOAuthCallbacks;
+  storageOptions?: AuthStorageOptions;
+  runtimeSignal?: AbortSignal | undefined;
+  initialState?: string;
 }
 
 /**
@@ -96,15 +107,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private readonly callbacks: McpOAuthCallbacks;
   private readonly storageOptions: AuthStorageOptions;
 
-  constructor(
-    serverName: string,
-    serverUrl: string,
-    config: McpOAuthConfig,
-    callbacks: McpOAuthCallbacks,
-    storageOptions: AuthStorageOptions = {},
-    runtimeSignal?: AbortSignal,
-    initialState?: string,
-  ) {
+  constructor(options: McpOAuthProviderOptions) {
+    const {
+      serverName,
+      serverUrl,
+      config,
+      callbacks,
+      storageOptions = {},
+      runtimeSignal,
+      initialState,
+    } = options;
     this.serverName = serverName;
     this.serverUrl = serverUrl;
     this.config = config;
@@ -599,17 +611,6 @@ export class McpOAuthProvider implements OAuthClientProvider {
       params.set("scope", requestedScope);
     }
     return params;
-  }
-}
-
-function addConfiguredScope(params: URLSearchParams, config: McpOAuthConfig): void {
-  if (
-    params.get("grant_type") === "authorization_code" &&
-    !params.has("scope") &&
-    config.scope !== undefined &&
-    config.scope !== ""
-  ) {
-    params.set("scope", config.scope);
   }
 }
 

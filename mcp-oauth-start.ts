@@ -95,18 +95,18 @@ async function startNonInteractive(context: StartContext): Promise<{ authorizati
     getAuthForUrl(serverName, serverUrl, authStorageOptions),
   );
   await resetIncompleteRegistration(context, storedAuth);
-  const authProvider = new McpOAuthProvider(
+  const authProvider = new McpOAuthProvider({
     serverName,
     serverUrl,
     config,
-    {
+    callbacks: {
       onRedirect: async () => {
         throw new Error("Browser redirect is not used for noninteractive OAuth flows");
       },
     },
-    authStorageOptions,
-    signal,
-  );
+    storageOptions: authStorageOptions,
+    runtimeSignal: signal,
+  });
   try {
     const discovery = applyConfiguredScope(
       await probeAuthDiscovery(serverUrl, context.definition, signal),
@@ -139,11 +139,13 @@ function issuerBinding(context: StartContext) {
       callbackIssuer.issParameterSupported =
         state.authorizationServerMetadata?.authorization_response_iss_parameter_supported === true;
       bindOAuthRequestIssuer(
-        context.serverName,
-        context.serverUrl,
-        getAuthBaseDir(context.authStorageOptions),
+        {
+          serverName: context.serverName,
+          serverUrl: context.serverUrl,
+          storageBase: getAuthBaseDir(context.authStorageOptions),
+          runtime: context.runtime,
+        },
         callbackIssuer.expectedIssuer ?? state.authorizationServerUrl,
-        context.runtime,
       );
     },
   };
@@ -178,6 +180,7 @@ async function reserveCallback(
       clearOAuthState(serverName, authStorageOptions);
       await Promise.resolve();
     } catch (cleanupError) {
+      // oxlint-disable-next-line eslint/preserve-caught-error -- QX-023: preserve ordered failures without adding cause.
       throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed");
     }
     throw error;
@@ -219,11 +222,11 @@ function createInteractiveFlow(
     ...context.config,
     ...(request?.challenge && (discovery.scope ?? "") !== "" ? { scope: discovery.scope } : {}),
   };
-  const authProvider = new McpOAuthProvider(
-    context.serverName,
-    context.serverUrl,
-    flowConfig,
-    {
+  const authProvider = new McpOAuthProvider({
+    serverName: context.serverName,
+    serverUrl: context.serverUrl,
+    config: flowConfig,
+    callbacks: {
       onRedirect: (url) => {
         capturedUrl = url;
         const requestedScope = url.searchParams.get("scope") ?? undefined;
@@ -246,10 +249,10 @@ function createInteractiveFlow(
       },
       onDiscoveryState: binding.onDiscoveryState,
     },
-    context.authStorageOptions,
-    context.runtime.signal,
-    initial.oauthState,
-  );
+    storageOptions: context.authStorageOptions,
+    runtimeSignal: context.runtime.signal,
+    initialState: initial.oauthState,
+  });
   return {
     authProvider,
     get discovery() {
@@ -375,6 +378,7 @@ async function startInteractive(
         context.authStorageOptions,
       );
     } catch (cleanupError) {
+      // oxlint-disable-next-line eslint/preserve-caught-error -- QX-023: preserve ordered failures without adding cause.
       throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed");
     }
     throw error;

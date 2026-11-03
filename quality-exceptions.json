@@ -171,5 +171,57 @@
     "nodeType": "VariableDeclaration",
     "operation": "const { z } = require(\"zod\") as typeof Zod;",
     "guards": []
+  },
+  {
+    "id": "QX-023",
+    "file": "mcp-auth-flow.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "cleanupFailedCompletion"
+    },
+    "path": ["body", "body", 0, "handler", "body", "body", 0, "consequent", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([primary, cleanupError], \"OAuth completion cleanup failed\");",
+    "guards": ["consequent: primary !== undefined"]
+  },
+  {
+    "id": "QX-023",
+    "file": "mcp-auth-flow.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "authenticateOnce"
+    },
+    "path": ["body", "body", 7, "handler", "body", "body", 1, "handler", "body", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([error, cleanupError], \"OAuth cancellation cleanup failed\");",
+    "guards": []
+  },
+  {
+    "id": "QX-023",
+    "file": "mcp-oauth-start.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "reserveCallback"
+    },
+    "path": ["body", "body", 1, "handler", "body", "body", 1, "handler", "body", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([error, cleanupError], \"OAuth startup cleanup failed\");",
+    "guards": []
+  },
+  {
+    "id": "QX-023",
+    "file": "mcp-oauth-start.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "startInteractive"
+    },
+    "path": ["body", "body", 5, "handler", "body", "body", 1, "handler", "body", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([error, cleanupError], \"OAuth startup cleanup failed\");",
+    "guards": []
   }
 ]

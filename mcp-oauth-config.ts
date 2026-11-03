@@ -286,6 +286,17 @@ export function addAuthorizationParams(
   return nextUrl;
 }
 
+export function addConfiguredScope(params: URLSearchParams, config: McpOAuthConfig): void {
+  if (
+    params.get("grant_type") === "authorization_code" &&
+    !params.has("scope") &&
+    config.scope !== undefined &&
+    config.scope !== ""
+  ) {
+    params.set("scope", config.scope);
+  }
+}
+
 export function oauthModeLabel(config: McpOAuthConfig): string {
   if (config.privateKeyJwt) {
     return "privateKeyJwt";
