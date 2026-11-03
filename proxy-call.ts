@@ -16,6 +16,7 @@ import { ensureToolCallApproved } from "./tool-approval.ts";
 import { getAuthRequiredMessage } from "./proxy-auth.ts";
 import { prepareMcpConnection } from "./proxy-connection.ts";
 import { runToolCall } from "./proxy-call-runtime.ts";
+import { asObjectRecord } from "./mcp-output-values.ts";
 export interface ExecuteCallOptions {
   exactOriginalName?: boolean;
   resourceUri?: string;
@@ -25,7 +26,7 @@ export interface ExecuteCallOptions {
 
 interface ExecuteCallRequest {
   toolName: string;
-  args?: Record<string, unknown> | undefined;
+  args?: unknown;
   serverOverride?: string | undefined;
   getPiTools?: (() => ToolInfo[]) | undefined;
   signal?: AbortSignal | undefined;
@@ -35,15 +36,12 @@ interface ExecuteCallRequest {
     | undefined;
   options?: ExecuteCallOptions | undefined;
 }
-interface CallRequest extends ExecuteCallRequest {
+interface CallRequest extends Omit<ExecuteCallRequest, "args"> {
+  args: Record<string, unknown> | undefined;
   identity: McpToolCallIdentity;
   options: ExecuteCallOptions;
 }
-function invalidCall(
-  toolName: unknown,
-  serverOverride: unknown,
-  args: unknown,
-): ProxyToolResult | undefined {
+function invalidCall(toolName: unknown, serverOverride: unknown): ProxyToolResult | undefined {
   if (
     typeof toolName !== "string" ||
     toolName.trim().length === 0 ||
@@ -57,23 +55,32 @@ function invalidCall(
       details: { mode: "call", error: "invalid_arguments" },
     };
   }
-  if (args !== undefined && (args === null || typeof args !== "object" || Array.isArray(args))) {
-    return {
-      content: [{ type: "text", text: "Tool arguments must be an object." }],
-      details: { mode: "call", error: "invalid_arguments", requestedTool: toolName },
-    };
-  }
   return;
 }
 export async function executeCall(
   state: McpExtensionState,
   request: ExecuteCallRequest,
 ): Promise<ProxyToolResult> {
-  return executeResolvedCall(state, {
+  const input = {
     ...request,
     identity: request.identity ?? {},
     options: request.options ?? {},
-  });
+  };
+  const { toolName, args: rawArgs, serverOverride, signal } = input;
+  const ownedSignal = combineAbortSignals(state.owner.signal, signal);
+  throwIfAborted(ownedSignal);
+  const invalid = invalidCall(toolName, serverOverride);
+  if (invalid) {
+    return invalid;
+  }
+  const args = asObjectRecord(rawArgs);
+  if (rawArgs !== undefined && (args === undefined || Array.isArray(rawArgs))) {
+    return {
+      content: [{ type: "text", text: "Tool arguments must be an object." }],
+      details: { mode: "call", error: "invalid_arguments", requestedTool: toolName },
+    };
+  }
+  return executeResolvedCall(state, { ...input, args }, ownedSignal);
 }
 
 function callPreparationError(
@@ -359,14 +366,9 @@ class CallLookup {
 async function executeResolvedCall(
   state: McpExtensionState,
   request: CallRequest,
+  ownedSignal: AbortSignal | undefined,
 ): Promise<ProxyToolResult> {
-  const { toolName, args, serverOverride, signal } = request;
-  const ownedSignal = combineAbortSignals(state.owner.signal, signal);
-  throwIfAborted(ownedSignal);
-  const invalid = invalidCall(toolName, serverOverride, args);
-  if (invalid) {
-    return invalid;
-  }
+  const { toolName } = request;
   const lookup = new CallLookup(state, request);
   const resolved = lookup.resolve();
   if (typeof resolved !== "string") {

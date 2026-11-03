@@ -242,7 +242,7 @@ describe("runMcpScript", () => {
   it("calls exact paths and returns an invalid-path envelope without throwing", async () => {
     const result = await runMcpScript({
       state,
-      code: 'return { success: await tools.call("fixture_echo", { value: "canonical" }), invalid: await tools.call("", {}) };',
+      code: 'return { success: await tools.call("fixture_echo", { value: "canonical" }), invalid: await tools.call("", {}), invalidDynamic: await tools[""]([]), invalidArguments: await tools.fixture_echo([]) };',
     });
 
     expect(JSON.parse(lastText(result))).toMatchObject({
@@ -257,8 +257,25 @@ describe("runMcpScript", () => {
           message: "tools.call(path, args) requires a non-empty tool path.",
         },
       },
+      invalidDynamic: {
+        ok: false,
+        error: {
+          code: "invalid_arguments",
+          message: "Specify a non-empty tool name and, when supplied, server.",
+        },
+      },
+      invalidArguments: {
+        ok: false,
+        error: { code: "invalid_arguments", message: "Tool arguments must be an object." },
+      },
     });
-    expect(result.details).toMatchObject({ calls: [{ path: "fixture_echo", ok: true }] });
+    expect(result.details).toMatchObject({
+      calls: [
+        { path: "fixture_echo", ok: true },
+        { path: "", ok: false, error: "invalid_arguments" },
+        { path: "fixture_echo", ok: false, error: "invalid_arguments" },
+      ],
+    });
   });
 
   it("records approval-gate outcomes in the call trace", async () => {

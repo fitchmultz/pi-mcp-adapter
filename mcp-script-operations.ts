@@ -178,17 +178,10 @@ export class ScriptOperations {
 
   private callTool(message: Extract<ScriptRequest, { type: "call" }>): Promise<unknown> {
     return this.recordCall(message.path, () => {
-      const args = asObjectRecord(message.args);
-      if (message.args !== undefined && (args === undefined || Array.isArray(message.args))) {
-        return Promise.resolve({
-          content: [{ type: "text", text: "Tool arguments must be an object." }],
-          details: { mode: "call", error: "invalid_arguments", requestedTool: message.path },
-        });
-      }
       const { state, getPiTools, signal, beforeDispatch } = this.options;
       return executeCall(state, {
         toolName: message.path,
-        args,
+        args: message.args,
         serverOverride: message.server,
         getPiTools,
         signal,
