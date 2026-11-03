@@ -34,6 +34,7 @@ npm run lint:state-tests
 npm run lint:output-tests
 npm run lint:packaging-tests
 npm run lint:quality
+npm run lint:ui-runtime
 npm run lint:ui-host-tests
 npm run lint:panel-tests
 npm run typecheck
@@ -51,6 +52,10 @@ Strict lint is enforced for `conformance/`, the prompt tests and their shared fi
 The same command checks the native-contract launcher under the production profile and `scripts/native-compat/` under the test profile. That directory contains only native SDK and CLI contract assertions and their HTTP, provider and extension fixtures. Its checked consumer uses ordinary ESM imports of the selected package and host. The scenarios retain nested-call redaction, cancellation without replay, tree and reload selection, saved-output paging, pinning and tool restrictions. The launcher resolves symlinked entrypoints before dispatch and rejects failed consumer assertions.
 
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
+
+`lint:ui-runtime` enforces the production profile for all root `ui-*.ts` modules and `glimpse-ui.ts`: HTTP admission and completion, authenticated proxy routes, SSE delivery and replay, private durable history, resource metadata, session streams and optional viewers. `ui-server-contracts.ts` owns the public server handle; `ui-server.ts` re-exports it.
+
+`lint:ui-host-tests` covers `__tests__/ui-host/`, the root UI host-lifecycle, integration, resource-handler, server-session-recovery, server, streaming and viewer-none suites, and all `strict-ui-boundaries` fixtures. Native HTTP peers exercise resource schemas, session recovery and notifications. The served host and bundle tests retain heartbeat/watchdog, callback ordering, teardown and accepted-operation no-replay assertions. UI controls and layout are unchanged.
 
 `lint:core-runtime` enforces the production profile for cancellation, client-operation drains, process paths, legacy migration, onboarding storage, logging, panel keys, search ranking and Unix-socket transport. Rejections retain their original values. Transport cleanup failures reach the existing error callback.
 

@@ -168,6 +168,7 @@ jobs:
       - run: npm run lint:output-tests
       - run: npm run lint:packaging-tests
       - run: npm run lint:quality
+      - run: npm run lint:ui-runtime
       - run: npm run lint:ui-host-tests
       - run: npm run lint:panel-tests
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

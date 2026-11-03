@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { execFile } from "node:child_process";
+import assert from "node:assert/strict";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { ServerConnection } from "../server-manager.ts";
+import type { McpTool } from "../types.ts";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
 import http from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,92 +14,107 @@ import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeUiMessages } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { maybeStartUiSession } from "../ui-session.ts";
+import type { isGlimpseAvailable, openGlimpseWindow } from "../glimpse-ui.ts";
 
 const glimpseMocks = vi.hoisted(() => ({
-  isGlimpseAvailable: vi.fn(() => true),
-  openGlimpseWindow: vi.fn(),
+  isGlimpseAvailable: vi.fn<typeof isGlimpseAvailable>(() => true),
+  openGlimpseWindow: vi.fn<typeof openGlimpseWindow>(),
 }));
 
 vi.mock("../glimpse-ui.ts", () => glimpseMocks);
+const processMocks = vi.hoisted(() => ({ whoOutput: "" }));
 vi.mock("node:child_process", () => ({
-  execFile: vi.fn((_command, _options, callback) => callback(null, "")),
+  execFile: vi.fn<
+    (_command: string, _options: unknown, callback: (error: null, output: string) => void) => void
+  >((_command, _options, callback) => {
+    callback(null, processMocks.whoOutput);
+  }),
 }));
 
-function textOf(result: any): string {
-  return result.content.map((entry: any) => entry.text ?? "").join("\n");
+function textOf(result: { content: unknown }): string {
+  assert(Array.isArray(result.content));
+  const content: unknown[] = result.content;
+  return content
+    .map((entry) =>
+      entry !== null &&
+      typeof entry === "object" &&
+      "text" in entry &&
+      typeof entry.text === "string"
+        ? entry.text
+        : "",
+    )
+    .join("\n");
 }
 
-function makeState() {
-  const callTool = vi.fn(async () => ({
-    isError: false,
-    content: [{ type: "text" as const, text: "tool output" }],
-  }));
-  const connection = {
-    status: "connected" as const,
-    client: { callTool },
-    tools: [
-      {
-        name: "app",
-        description: "App",
-        inputSchema: { type: "object" },
-        _meta: { ui: { resourceUri: "ui://app" } },
-      },
-    ],
-    resources: [],
-  };
+const fixtures: Array<{
+  state: ReturnType<typeof createTestState>;
+  host: Awaited<ReturnType<typeof createTestExtensionContext>>;
+}> = [];
+
+async function makeState() {
+  const host = await createTestExtensionContext("builtin");
+  const ui = host.context.ui;
+  const notify = vi.spyOn(ui, "notify");
   const consentManager = new ConsentManager();
   consentManager.registerDecision("demo", true);
-  const state = {
-    config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
-    manager: {
-      getConnection: vi.fn(() => connection),
-      getAllConnections: vi.fn(() => new Map([["demo", connection]])),
-      getRequestOptions: vi.fn(() => {}),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-      registerUiStreamListener: vi.fn(),
-      removeUiStreamListener: vi.fn(),
-    },
-    lifecycle: {},
+  const tool: McpTool = {
+    name: "app",
+    description: "App",
+    inputSchema: { type: "object" },
+    _meta: { ui: { resourceUri: "ui://app" } },
+  };
+  const connection: ServerConnection = {
+    status: "connected",
+    client: new Client({ name: "ui-viewer-test", version: "1" }),
+    transport: new InMemoryTransport(),
+    definition: { command: "demo" },
+    tools: [tool],
+    resources: [],
+    prompts: [],
+    lastUsedAt: Date.now(),
+    inFlight: 0,
+  };
+  const callTool = vi.spyOn(connection.client, "callTool").mockResolvedValue({
+    isError: false,
+    content: [{ type: "text", text: "tool output" }],
+  });
+  const state = createTestState({
+    config: { settings: { toolPrefix: "server" }, mcpServers: { demo: connection.definition } },
     toolMetadata: new Map([
       [
         "demo",
         [{ name: "demo_app", originalName: "app", description: "App", uiResourceUri: "ui://app" }],
       ],
     ]),
-    serverInstructions: new Map(),
-    failureTracker: new Map(),
-    uiResourceHandler: {
-      readUiResource: vi.fn(async () => ({
-        uri: "ui://app",
-        html: "<main>App</main>",
-        mimeType: "text/html",
-        meta: {},
-      })),
-    },
     consentManager,
-    uiServer: null,
-    completedUiSessions: [],
-    openBrowser: vi.fn(async () => {}),
-    sendMessage: vi.fn(),
-    ui: {
-      notify: vi.fn(),
-      setStatus: vi.fn(),
-      theme: { fg: (_name: string, value: string) => value },
-    },
-  } as any;
-
-  return { state, callTool };
+    ui,
+  });
+  vi.spyOn(state.manager, "getConnection").mockReturnValue(connection);
+  vi.spyOn(state.manager, "getAllConnections").mockReturnValue(new Map([["demo", connection]]));
+  vi.spyOn(state.uiResourceHandler, "readUiResource").mockResolvedValue({
+    uri: "ui://app",
+    html: "<main>App</main>",
+    mimeType: "text/html",
+    meta: {},
+  });
+  const openBrowser = vi.spyOn(state, "openBrowser");
+  const sendMessage = vi.fn<NonNullable<typeof state.sendMessage>>();
+  const testState = Object.assign(state, { ui, openBrowser, sendMessage });
+  fixtures.push({ state, host });
+  return { state: testState, callTool, host, notify };
 }
 
-afterEach(() => {
+afterEach(async () => {
+  for (const { state, host } of fixtures.splice(0)) {
+    state.uiServer?.close("test-cleanup");
+    await state.manager.closeAll();
+    await host.dispose();
+  }
+
   delete process.env.MCP_UI_VIEWER;
   delete process.env.SSH_CONNECTION;
   delete process.env.SSH_TTY;
-  vi.mocked(execFile).mockImplementation((_command: any, _options: any, callback: any) =>
-    callback(null, ""),
-  );
+  processMocks.whoOutput = "";
   glimpseMocks.isGlimpseAvailable.mockClear();
   glimpseMocks.openGlimpseWindow.mockClear();
 });
@@ -104,15 +124,10 @@ describe("remote MCP UI viewers", () => {
     "settles a script on %s while browser opening is pending",
     async (ending) => {
       process.env.MCP_UI_VIEWER = "browser";
-      const { state, callTool } = makeState();
+      const { state, callTool } = await makeState();
       const controller = new AbortController();
-      let releaseOpen!: () => void;
-      state.openBrowser.mockImplementation(
-        () =>
-          new Promise<void>((resolve) => {
-            releaseOpen = resolve;
-          }),
-      );
+      const opening: PromiseWithResolvers<void> = Promise.withResolvers();
+      state.openBrowser.mockImplementation(() => opening.promise);
       let output: Awaited<ReturnType<typeof runMcpScript>> | undefined;
       const pending = runMcpScript(
         state,
@@ -130,13 +145,14 @@ describe("remote MCP UI viewers", () => {
           controller.abort(new Error("caller cancelled"));
         }
         await expect.poll(() => output, { timeout: 1000 }).toBeDefined();
-        expect(output!.details).toMatchObject({
+        assert(output);
+        expect(output.details).toMatchObject({
           error: ending === "timeout" ? "timeout" : "aborted",
           calls: [{ path: "demo_app", error: "aborted" }],
         });
         expect(callTool).not.toHaveBeenCalled();
       } finally {
-        releaseOpen?.();
+        opening.resolve();
         await pending;
         state.uiServer?.close("test-cleanup");
       }
@@ -146,7 +162,7 @@ describe("remote MCP UI viewers", () => {
 
   it("skips Glimpse and prints a remote access hint for SSH sessions", async () => {
     process.env.SSH_CONNECTION = "192.0.2.10 55555 127.0.0.1 22";
-    const { state } = makeState();
+    const { state, notify } = await makeState();
 
     const runtime = await maybeStartUiSession(state, {
       serverName: "demo",
@@ -159,24 +175,19 @@ describe("remote MCP UI viewers", () => {
     expect(state.openBrowser).toHaveBeenCalledWith(expect.stringContaining("http://localhost:"));
     expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
-    expect(state.ui.notify).toHaveBeenCalledWith(
+    expect(notify).toHaveBeenCalledWith(
       expect.stringContaining("This looks like a remote session"),
       "info",
     );
-    expect(state.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("SSH: run `ssh -L"),
-      "info",
-    );
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("SSH: run `ssh -L"), "info");
 
     runtime?.close("test-cleanup");
   });
 
   it("uses local-window wording when a remote login is active but Glimpse opened", async () => {
-    vi.mocked(execFile).mockImplementation((_command: any, _options: any, callback: any) =>
-      callback(null, "user ttys001 2026-08-02 08:00 (192.0.2.10)\n"),
-    );
-    const { state } = makeState();
-    glimpseMocks.openGlimpseWindow.mockResolvedValueOnce({ close: vi.fn() });
+    processMocks.whoOutput = "user ttys001 2026-08-02 08:00 (192.0.2.10)\n";
+    const { state, notify } = await makeState();
+    glimpseMocks.openGlimpseWindow.mockResolvedValueOnce({ close: vi.fn<() => void>() });
 
     const runtime = await maybeStartUiSession(state, {
       serverName: "demo",
@@ -186,11 +197,11 @@ describe("remote MCP UI viewers", () => {
     });
 
     expect(runtime).toMatchObject({ viewer: "glimpse", windowOpen: true });
-    expect(state.ui.notify).toHaveBeenCalledWith(
+    expect(notify).toHaveBeenCalledWith(
       expect.stringContaining("MCP UI opened on this host"),
       "info",
     );
-    expect(state.ui.notify).toHaveBeenCalledWith(
+    expect(notify).toHaveBeenCalledWith(
       expect.stringContaining("If you're controlling this session remotely"),
       "info",
     );
@@ -203,7 +214,7 @@ describe("MCP UI context submissions", () => {
   it("rejects an authenticated message whose upload finishes after UI completion", async () => {
     process.env.MCP_UI_VIEWER = "none";
     const root = await mkdtemp(join(tmpdir(), "mcp-ui-late-message-"));
-    const { state } = makeState();
+    const { state, notify } = await makeState();
     state.outputDirectory = root;
     const runtime = await maybeStartUiSession(state, {
       serverName: "demo",
@@ -215,6 +226,7 @@ describe("MCP UI context submissions", () => {
       throw new Error("expected UI runtime");
     }
     const handle = state.uiServer;
+    assert(handle);
     let upload: http.ClientRequest | undefined;
     try {
       const body = (message: string) =>
@@ -229,10 +241,7 @@ describe("MCP UI context submissions", () => {
       });
       expect(first.status).toBe(200);
       const lateBody = body("not accepted after completion");
-      let started!: () => void;
-      const admittedUpload = new Promise<void>((resolve) => {
-        started = resolve;
-      });
+      const admittedUpload: PromiseWithResolvers<void> = Promise.withResolvers();
       const receipt = new Promise<{ status: number; body: unknown }>((resolve, reject) => {
         upload = http.request(
           {
@@ -248,25 +257,35 @@ describe("MCP UI context submissions", () => {
             },
           },
           (res) => {
+            res.setEncoding("utf8");
             let text = "";
-            res.on("data", (chunk) => {
-              text += chunk;
+            res.on("data", (chunk: unknown) => {
+              if (typeof chunk === "string" || Buffer.isBuffer(chunk)) {
+                text += chunk.toString();
+              }
             });
-            res.on("end", () => resolve({ status: res.statusCode!, body: JSON.parse(text) }));
+            res.on("end", () => {
+              try {
+                const responseBody: unknown = JSON.parse(text);
+                assert(res.statusCode !== undefined);
+                resolve({ status: res.statusCode, body: responseBody });
+              } catch (error) {
+                reject(error);
+              }
+            });
+            res.on("error", reject);
           },
         );
         upload.on("error", reject);
-        upload.once("continue", started);
+        upload.once("continue", () => admittedUpload.resolve());
         upload.write(lateBody.slice(0, -1));
       });
-      await admittedUpload;
+      await admittedUpload.promise;
       runtime.close("user-closed");
-      upload!.end(lateBody.slice(-1));
+      assert(upload);
+      upload.end(lateBody.slice(-1));
       expect(await receipt).toMatchObject({ status: 409, body: { ok: false } });
-      expect(state.ui.notify).not.toHaveBeenCalledWith(
-        "[demo] not accepted after completion",
-        "info",
-      );
+      expect(notify).not.toHaveBeenCalledWith("[demo] not accepted after completion", "info");
       const delivered = await executeUiMessages(state);
       expect(textOf(delivered)).toContain("accepted before completion");
       expect(textOf(delivered)).not.toContain("not accepted after completion");
@@ -281,7 +300,7 @@ describe("MCP UI context submissions", () => {
 
   it("triggers an agent turn when the UI updates model context", async () => {
     process.env.MCP_UI_VIEWER = "none";
-    const { state } = makeState();
+    const { state } = await makeState();
 
     const runtime = await maybeStartUiSession(state, {
       serverName: "demo",
@@ -297,15 +316,16 @@ describe("MCP UI context submissions", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        token: state.uiServer.sessionToken,
+        token: new URL(runtime.url).searchParams.get("session"),
         params: { content: [{ type: "text", text: "Use this selection" }] },
       }),
     });
 
+    const selectionMatcher: unknown = expect.stringContaining("Use this selection");
     expect(state.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         customType: "mcp-ui-context",
-        content: [{ type: "text", text: expect.stringContaining("Use this selection") }],
+        content: [{ type: "text", text: selectionMatcher }],
         display: "UI Context submitted",
       }),
       { triggerTurn: true },
@@ -318,7 +338,7 @@ describe("MCP UI context submissions", () => {
 describe("MCP_UI_VIEWER=none", () => {
   it.each(["none", "off", "disabled"])("suppresses window opening for %s", async (value) => {
     process.env.MCP_UI_VIEWER = value;
-    const { state } = makeState();
+    const { state, notify } = await makeState();
 
     const runtime = await maybeStartUiSession(state, {
       serverName: "demo",
@@ -332,21 +352,18 @@ describe("MCP_UI_VIEWER=none", () => {
     expect(state.openBrowser).not.toHaveBeenCalled();
     expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
-    expect(state.ui.notify).toHaveBeenCalledWith(
+    expect(notify).toHaveBeenCalledWith(
       expect.stringContaining("MCP UI window suppressed"),
       "info",
     );
-    expect(state.ui.notify).toHaveBeenCalledWith(
-      expect.not.stringContaining("Tool still ran"),
-      "info",
-    );
+    expect(notify).toHaveBeenCalledWith(expect.not.stringContaining("Tool still ran"), "info");
 
     runtime?.close("test-cleanup");
   });
 
   it("reports suppressed UI state in proxy tool results", async () => {
     process.env.MCP_UI_VIEWER = "none";
-    const { state } = makeState();
+    const { state } = await makeState();
 
     const result = await executeCall(state, "demo_app", {}, "demo");
 
@@ -362,7 +379,7 @@ describe("MCP_UI_VIEWER=none", () => {
 
   it("reports suppressed UI state in direct tool results", async () => {
     process.env.MCP_UI_VIEWER = "none";
-    const { state } = makeState();
+    const { state, host } = await makeState();
     const execute = createDirectToolExecutor(
       () => state,
       () => null,
@@ -375,7 +392,14 @@ describe("MCP_UI_VIEWER=none", () => {
       },
     );
 
-    const result = await execute("call-1", {}, undefined, () => {}, undefined as any);
+    const signal = new AbortController().signal;
+    const result = await execute(
+      "call-1",
+      {},
+      signal,
+      undefined,
+      host.runner.createToolContext("call-1", signal),
+    );
 
     expect(textOf(result)).toContain("tool output");
     expect(textOf(result)).toContain("MCP UI window was suppressed");
