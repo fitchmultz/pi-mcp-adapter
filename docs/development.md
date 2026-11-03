@@ -49,7 +49,9 @@ Strict lint is enforced for `conformance/`, the prompt tests and their shared fi
 
 `lint:consumer-tooling` enforces the production profile for the selected-host resolver and packed-consumer loader, their result schemas and the checked CLI observer. The loader validates external JSON and checks the real SDK, gateway activation, reload and CLI registration against the selected host graph.
 
-The same command checks the native-contract launcher under the production profile and `scripts/native-compat/` under the test profile. That directory contains only native SDK and CLI contract assertions and their HTTP, provider and extension fixtures. Its checked consumer uses ordinary ESM imports of the selected package and host. The scenarios retain nested-call redaction, cancellation without replay, tree and reload selection, saved-output paging, pinning and tool restrictions. The launcher resolves symlinked entrypoints before dispatch and rejects failed consumer assertions.
+The same command enforces the production profile for `scripts/release-candidate.mjs` and its automation adapter. The launcher starts before source dependencies are installed, validates only the dynamic values it consumes, and preserves the selected automation's original host identity. Retained tarball, source, host-graph and packed-consumer checks remain owned by the release workflow.
+
+The command also checks the native-contract launcher under the production profile and `scripts/native-compat/` under the test profile. That directory contains only native SDK and CLI contract assertions and their HTTP, provider and extension fixtures. Its checked consumer uses ordinary ESM imports of the selected package and host. The scenarios retain nested-call redaction, cancellation without replay, tree and reload selection, saved-output paging, pinning and tool restrictions. The launcher resolves symlinked entrypoints before dispatch and rejects failed consumer assertions.
 
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
 
@@ -62,6 +64,8 @@ The same command checks the native-contract launcher under the production profil
 `lint:output-runtime` enforces the production profile for `mcp-output-*.ts`: output guards, streaming previews, retained-result contracts, summaries and paged result reads. Raw MCP properties remain unknown until narrowed. The existing output suites verify artifact readback, private permissions, paging and UTF-8 boundaries.
 
 `lint:runtime-tests` includes native Pi gateway selection, reload, lazy startup and initialization tests, plus the standalone startup child. These tests use the installed Pi graph selected by qualification. The child installs module hooks before importing Pi, loads the source extension, and executes its first stdio call. Initialization tests use a real Pi context and public health-check timers.
+
+The runtime scope includes disabled-server, elicitation-policy, footer, stale-context and failure-state initialization tests. Complete native contexts and owned managers replace partial host objects. Real HTTP capability and callback delivery, a stdio cwd tool, config files and SDK context invalidation retain the initialization contracts. Footer assertions retain the deliberate JavaScript-host missing-theme fault. Failure-state tests cross the expiry timer and verify owner shutdown prevents publication.
 
 The runtime scope also includes the real HTTP callback-lifetime suite and its server fixture. It covers callback cancellation and reply drain, token reads and persistence, subscription refresh, URL completion and accepted-operation no-replay through native Pi contexts and MCP transports.
 
