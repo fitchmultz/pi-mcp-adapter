@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { McpConfig, ServerEntry } from "../config-types.ts";
 import { isConfigObject } from "../config-validation.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -115,6 +116,9 @@ describe("config discovery", () => {
 
   it.each([
     { mcpServers: { invalid: { command: 42 } } },
+    { mcpServers: { invalid: { socket: 42 } } },
+    { mcpServers: { invalid: { oauth: true } } },
+    { mcpServers: { invalid: { disabled: 1 } } },
     { mcpServers: { invalid: { args: ["node", 42] } } },
     { mcpServers: { invalid: { headers: { Authorization: false } } } },
     { mcpServers: { invalid: { directTools: [false] } } },
@@ -125,6 +129,7 @@ describe("config discovery", () => {
     { settings: { autoAuth: "true" } },
     { settings: { outputGuard: { maxBytes: "100" } } },
     { settings: { trace: { enabled: "true" } } },
+    { settings: { trace: { file: 42 } } },
   ])("warns and ignores a complete file with malformed known fields: %j", async (invalid) => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-project-"));
@@ -151,19 +156,76 @@ describe("config discovery", () => {
     }
   });
 
+  it("retains legacy values through precedence, cloning and metadata identity without rewriting disk", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-legacy-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-legacy-project-"));
+    process.env.HOME = home;
+    const file = join(project, ".mcp.json");
+    const inherited = join(home, ".config", "mcp", "mcp.json");
+    writeJson(inherited, {
+      mcpServers: {
+        remote: {
+          command: "node",
+          env: { SECRET: "inherited" },
+          oauth: { clientId: "inherited" },
+          disabled: true,
+        },
+      },
+    });
+    const remote = {
+      command: null,
+      socket: null,
+      oauth: null,
+      disabled: "true",
+      url: "https://example.test/mcp",
+      extension: { retained: [null, "legacy"] },
+    } satisfies ServerEntry & { extension: { retained: (string | null)[] } };
+    const original = {
+      mcpServers: { remote, absent: { url: "https://example.test/absent" } },
+      settings: { trace: { enabled: true, file: null } },
+    } satisfies McpConfig;
+    writeJson(file, original);
+    chmodSync(file, 0o600);
+    const before = readFileSync(file, "utf8");
+    const { loadMcpConfig, cloneMcpConfig } = await import("../config.ts");
+    const { computeServerHash } = await import("../metadata-cache.ts");
+    const loaded = loadMcpConfig(undefined, project);
+    expect(loaded).toEqual(original);
+    assert(loaded.mcpServers.remote !== undefined);
+    assert(loaded.mcpServers.absent !== undefined);
+    expect(Object.hasOwn(loaded.mcpServers.remote, "command")).toBe(true);
+    expect(Object.hasOwn(loaded.mcpServers.absent, "command")).toBe(false);
+    expect(computeServerHash(loaded.mcpServers.remote)).not.toBe(
+      computeServerHash({ ...remote, command: "" }),
+    );
+    const cloned = cloneMcpConfig(loaded);
+    expect(cloned).toEqual(original);
+    expect(cloned.mcpServers.remote).not.toBe(loaded.mcpServers.remote);
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
   it("omits malformed imported entries without dropping valid neighbors or rewriting disk", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-import-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-import-project-"));
     process.env.HOME = home;
     const imported = join(home, ".cursor", "mcp.json");
     const entry = { command: "node", extension: { retained: true } };
+    const legacy = {
+      command: null,
+      socket: null,
+      oauth: null,
+      disabled: "true",
+      url: "https://example.test/mcp",
+      extension: { retained: true },
+    } satisfies ServerEntry & { extension: { retained: boolean } };
     writeJson(imported, {
-      mcpServers: { valid: entry, invalid: { args: [42] }, primitive: "node" },
+      mcpServers: { valid: entry, legacy, invalid: { args: [42] }, primitive: "node" },
     });
     writeJson(join(project, ".mcp.json"), { imports: ["cursor"], mcpServers: {} });
     const before = readFileSync(imported, "utf-8");
     const { loadMcpConfig } = await import("../config.ts");
-    expect(loadMcpConfig(undefined, project).mcpServers).toEqual({ valid: entry });
+    expect(loadMcpConfig(undefined, project).mcpServers).toEqual({ valid: entry, legacy });
     expect(readFileSync(imported, "utf-8")).toBe(before);
   });
 

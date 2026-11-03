@@ -19,6 +19,8 @@ export function isUnknownArray(value: unknown): value is unknown[] {
 }
 
 const isString = (value: unknown): value is string => typeof value === "string";
+const isNullableString = (value: unknown): value is string | null =>
+  value === null || isString(value);
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
 const isNumber = (value: unknown): value is number => typeof value === "number";
 export const isStringArray = (value: unknown): value is string[] =>
@@ -86,13 +88,17 @@ const oauthFields = {
   clientUri: isString,
   clientMetadataUrl: isFalseOrString,
 } satisfies OptionalFields<OAuthConfig>;
-function isOAuth(value: unknown): value is OAuthConfig | false {
-  return value === false || (isConfigObject(value) && matchesOptionalFields(value, oauthFields));
+function isOAuth(value: unknown): value is OAuthConfig | false | null {
+  return (
+    value === false ||
+    value === null ||
+    (isConfigObject(value) && matchesOptionalFields(value, oauthFields))
+  );
 }
 const serverFields = {
-  command: isString,
+  command: isNullableString,
   args: isStringArray,
-  socket: isString,
+  socket: isNullableString,
   env: isStringRecord,
   cwd: isString,
   protocolVersion: (value: unknown): value is "auto" | "legacy" =>
@@ -117,7 +123,7 @@ const serverFields = {
   approveTools: isToolSelection,
   debug: isBoolean,
   trace: isBoolean,
-  disabled: isBoolean,
+  disabled: (value: unknown): value is boolean | string => isBoolean(value) || isString(value),
 } satisfies OptionalFields<ServerEntry>;
 export function isServerEntry(value: unknown): value is ServerEntry {
   return isConfigObject(value) && matchesOptionalFields(value, serverFields);
@@ -138,7 +144,7 @@ function isTrace(value: unknown): value is McpTraceSettings {
     isConfigObject(value) &&
     matchesOptionalFields(value, {
       enabled: isBoolean,
-      file: isString,
+      file: isNullableString,
       maxBytes: isNumber,
       maxEvents: isNumber,
     } satisfies OptionalFields<McpTraceSettings>)

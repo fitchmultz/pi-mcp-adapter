@@ -64,10 +64,11 @@ export interface OAuthConfig {
 
 // Server configuration
 export interface ServerEntry {
-  command?: string;
+  /** Null is a legacy inactive transport, including in higher-precedence overrides. */
+  command?: string | null;
   args?: string[];
   /** Explicit rmcp-mux Unix-domain socket path. Mutually exclusive with command and url. */
-  socket?: string;
+  socket?: string | null;
   env?: Record<string, string>;
   cwd?: string;
   /** HTTP defaults to auto negotiation; stdio/socket default to legacy. */
@@ -90,9 +91,9 @@ export interface ServerEntry {
   /**
    * OAuth configuration (optional).
    * Eligible browser clients use the shared client metadata document when supported, otherwise dynamic registration.
-   * Set to false to explicitly disable OAuth for this server.
+   * Set to false to explicitly disable OAuth for this server. Legacy null uses auto-detection.
    */
-  oauth?: OAuthConfig | false;
+  oauth?: OAuthConfig | false | null;
   lifecycle?: "keep-alive" | "lazy" | "lazy-keep-alive" | "eager";
   idleTimeout?: number; // minutes, overrides global setting
   requestTimeoutMs?: number; // milliseconds, overrides global request timeout when > 0
@@ -111,8 +112,8 @@ export interface ServerEntry {
   debug?: boolean; // Show server stderr (default: false)
   /** Enable metadata-only JSONL protocol tracing for this server. */
   trace?: boolean;
-  // Keep configuration visible without allowing connections or execution.
-  disabled?: boolean;
+  /** Only literal true disables execution; legacy string values remain enabled. */
+  disabled?: boolean | string;
 }
 
 // Output guard tuning (settings.outputGuard object form)
@@ -133,8 +134,8 @@ export type McpFooterStatus = "full" | "compact" | "off";
 export interface McpTraceSettings {
   /** Enable tracing for all servers unless a server sets trace to false. */
   enabled?: boolean;
-  /** JSONL destination; relative paths are resolved from the session cwd. */
-  file?: string;
+  /** JSONL destination; relative paths resolve from the session cwd. Null uses the default. */
+  file?: string | null;
   /** Maximum per-session trace file size in bytes. */
   maxBytes?: number;
   /** Maximum events retained in the per-session trace file. */
