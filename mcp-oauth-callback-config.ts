@@ -6,7 +6,10 @@ export const DEFAULT_OAUTH_CALLBACK_PATH = "/callback";
 
 let configuredOAuthCallbackPort = DEFAULT_OAUTH_CALLBACK_PORT;
 
-if (process.env.MCP_OAUTH_CALLBACK_PORT) {
+if (
+  process.env.MCP_OAUTH_CALLBACK_PORT !== undefined &&
+  process.env.MCP_OAUTH_CALLBACK_PORT !== ""
+) {
   const parsedPort = Number.parseInt(process.env.MCP_OAUTH_CALLBACK_PORT, 10);
   if (Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
     configuredOAuthCallbackPort = parsedPort;

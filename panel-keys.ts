@@ -5,7 +5,7 @@ export type PanelSelectKeybinding = "tui.select.up" | "tui.select.down" | "tui.s
 
 /** Structural subset of pi-tui's `KeybindingsManager` (which satisfies it). */
 export interface PanelKeybindings {
-  matches(data: string, keybinding: PanelSelectKeybinding): boolean;
+  matches: (data: string, keybinding: PanelSelectKeybinding) => boolean;
 }
 
 /**
@@ -13,9 +13,9 @@ export interface PanelKeybindings {
  * manager is provided, otherwise the previous hardcoded defaults.
  */
 export interface PanelKeys {
-  selectUp(data: string): boolean;
-  selectDown(data: string): boolean;
-  selectConfirm(data: string): boolean;
+  selectUp: (data: string) => boolean;
+  selectDown: (data: string) => boolean;
+  selectConfirm: (data: string) => boolean;
 }
 
 export function createPanelKeys(keybindings?: PanelKeybindings): PanelKeys {

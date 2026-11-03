@@ -1,5 +1,5 @@
 export function throwIfAborted(signal?: AbortSignal): void {
-  if (!signal?.aborted) {
+  if (signal?.aborted !== true) {
     return;
   }
   throw signal.reason instanceof Error
@@ -28,23 +28,27 @@ export async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): P
       );
     };
     signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        resolve(value);
-      },
-      (error) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
+    promise
+      .then(
+        (value) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          resolve(value);
+        },
+        (error: unknown) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          reject(error);
+        },
+      )
+      .catch((error: unknown) => {
         reject(error);
-      },
-    );
+      });
   });
 }

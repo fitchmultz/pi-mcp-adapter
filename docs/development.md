@@ -18,6 +18,7 @@ npm run lint:conformance
 npm run lint:prompts
 npm run lint:runtime-tests
 npm run lint:tracing
+npm run lint:core-runtime
 npm run lint:sampling
 npm run lint:output-runtime
 npm run lint:credential-runtime
@@ -45,6 +46,8 @@ For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs
 Strict lint is enforced for `conformance/`, the prompt tests and their shared fixtures, `__tests__/runtime/`, `__tests__/auth/`, `__tests__/discovery/`, `__tests__/state/`, `__tests__/output/`, `__tests__/packaging/`, `__tests__/ui-host/`, `__tests__/panel/`, and the pinning test fixture. Repository-wide strict lint remains a migration target.
 
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
+
+`lint:core-runtime` enforces the production profile for cancellation, client-operation drains, process paths, legacy migration, onboarding storage, logging, panel keys and Unix-socket transport. Rejections retain their original values. Transport cleanup failures reach the existing error callback.
 
 `lint:sampling` enforces the production profile for the supported MCP sampling bridge. Its native model-registry and approval tests are covered by `lint:runtime-tests`. QX-017 permits only five deprecated MCP sampling types from their actual SDK package in these two files. Other deprecations and all other rules remain checked.
 

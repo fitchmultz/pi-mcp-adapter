@@ -45,7 +45,8 @@ class Logger {
 
     const prefix = LEVEL_PREFIX[level];
     const contextStr = formatContext(context);
-    const fullMessage = contextStr ? `${prefix} ${message} ${contextStr}` : `${prefix} ${message}`;
+    const fullMessage =
+      contextStr !== "" ? `${prefix} ${message} ${contextStr}` : `${prefix} ${message}`;
 
     if (level === "error") {
       console.error(fullMessage, error ?? "");
