@@ -31,7 +31,7 @@ function probeBridge(): void {
   bridge.oncalltool = oncalltool;
   assert.equal(bridge.oncalltool, oncalltool, "oncalltool");
   const onmessage: NonNullable<AppBridge["onmessage"]> = async () => ({});
-  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-025: ui/message is a request callback, not an event.
+  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-030: ui/message is a request callback, not an event.
   bridge.onmessage = onmessage;
   assert.equal(bridge.onmessage, onmessage, "onmessage");
   const onupdatemodelcontext: NonNullable<AppBridge["onupdatemodelcontext"]> = async () => ({});
@@ -51,16 +51,16 @@ function probeBridge(): void {
   const oninitialized: NonNullable<AppBridge["oninitialized"]> = () => {
     // Only callback registration is under test.
   };
-  // oxlint-disable-next-line typescript/no-deprecated -- QX-025: retain the standalone bundle callback contract.
+  // oxlint-disable-next-line typescript/no-deprecated -- QX-030: retain the standalone bundle callback contract.
   bridge.oninitialized = oninitialized;
-  // oxlint-disable-next-line typescript/no-deprecated -- QX-025: verify the original callback identity.
+  // oxlint-disable-next-line typescript/no-deprecated -- QX-030: verify the original callback identity.
   assert.equal(bridge.oninitialized, oninitialized, "oninitialized");
   const onsizechange: NonNullable<AppBridge["onsizechange"]> = () => {
     // Only callback registration is under test.
   };
-  // oxlint-disable-next-line typescript/no-deprecated -- QX-025: retain the standalone bundle callback contract.
+  // oxlint-disable-next-line typescript/no-deprecated -- QX-030: retain the standalone bundle callback contract.
   bridge.onsizechange = onsizechange;
-  // oxlint-disable-next-line typescript/no-deprecated -- QX-025: verify the original callback identity.
+  // oxlint-disable-next-line typescript/no-deprecated -- QX-030: verify the original callback identity.
   assert.equal(bridge.onsizechange, onsizechange, "onsizechange");
 }
 

@@ -40,7 +40,7 @@ server.server.setRequestHandler("tools/call", async function callTool(request) {
       // Remain pending until the native client cancels or closes its transport.
     });
   }
-  // oxlint-disable-next-line typescript/no-base-to-string -- QX-026: preserve native coercion of arbitrary echo values.
+  // oxlint-disable-next-line typescript/no-base-to-string -- QX-031: preserve native coercion of arbitrary echo values.
   const echoText = String(request.params.arguments?.value ?? "");
   return {
     content: [{ type: "text", text: echoText }],

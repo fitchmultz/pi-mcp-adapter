@@ -1,46 +1,5 @@
 # Quality exceptions
 
-## QX-025: Preserve the standalone bridge's callback surface
-
-- **Finding and scope:** Oxlint 1.90.0 with oxlint-tsgolint 7.0.2005 reports `unicorn/prefer-add-event-listener` for the native `AppBridge.onmessage` setter and `typescript/no-deprecated` for the two legacy notification setters and their identity reads. Only the five expressions in `probeBridge` in `__tests__/fixtures/app-bridge-bundle-probe.ts` are authorized by the operation inventory.
-- **Contract:** The standalone-bundle test retains its original export, method and all eight callback assertions. The probe statically imports the installed Apps 2.0.4 declaration; a synchronous Node resolver hook loads the exact newly generated standalone bytes instead. No class predicate, structural imitation or unsafe module assertion replaces the native receiver. Apps declares `onmessage` as a `ui/message` request handler at `node_modules/@modelcontextprotocol/ext-apps/dist/src/app-bridge.d.ts:405-443`, distinct from the notification events. The initialized getter/setter remains declared at lines 404-405, and the sizechange getter/setter at lines 352-353.
-- **Actual comparison:** Replacing the initialized or sizechange assignment with `addEventListener` preserves notification listening but fails the original callback identity assertion: each getter returns `undefined`. Replacing the message request setter with `addEventListener("message", ...)` rejects with `Unknown event: message`; the typed event map also excludes that event. These three alternatives were executed against the real committed standalone bundle. Event-only tests would silently drop the original compatibility assertions rather than adopt a safer implementation of them.
-- **Adjustment and protection:** Five next-line directives retain these existing checks; new code is not encouraged to use deprecated notification setters. All other callback operations, deprecations, types and rules remain checked. The native neighbor controls in `__tests__/quality/directive-policy.test.ts` retain deprecation and event-listener findings, and the inventory rejects wrong-file, replaced and duplicated directives.
-- **Evidence and review:** The adopting change retains the actual alternative programs, failing callback assertions, native diagnostics and passing original-bundle probe in its task evidence. Initial missing-environment attempts are recorded separately and are not qualification. Review is a distinct self-performed pass; integration and independent review remain coordinator-owned. Revisit when the shipped compatibility surface deliberately changes or native lint recognizes request setters and retained compatibility tests.
-
-## QX-026: Keep native coercion in the raw echo fixture
-
-- **Finding and scope:** Oxlint 1.90.0 with oxlint-tsgolint 7.0.2005, `typescript/no-base-to-string` (`checkUnknown: false`), reports the native `String(request.params.arguments?.value ?? "")` in the named `callTool` handler of `__tests__/fixtures/mcp-code-server.mjs`. Only its `echoText` declaration is authorized.
-- **Contract:** This actual stdio server accepts arbitrary wire values and returns both their native JavaScript text representation and their untouched structured value. An object echoes as `[object Object]`; JSON serialization is a different output contract. The handler retains native dispatch, errors, cancellation, pending-call behavior and raw extensions.
-- **Actual compliant comparison:** Replacing `String` with the suggested `JSON.stringify` was run through the real SDK transport and fails the original object-text contract, returning `{"value":1}`. A fully lint- and compiler-clean comparison instead decomposes coercion into nullish, primitive, array and object cases, recursively maps array elements, checks an own `toString` property, synthesizes the native TypeError, and returns the object tag. It executes successfully through the same native stdio call but replaces one native operation with a maintained reimplementation of JavaScript coercion. That is a material readability and maintenance cost, with no additional validation responsibility for this echo fixture. The exact comparison implementation and all intermediate failures are retained with the adopting change's evidence; no failing attempt is reported as compliant.
-
-The compliant comparison replaces the native `String(value ?? "")` operation with this function. It passes native lint and the canonical compiler, and its object echo passes through the same SDK transport:
-
-```js
-/** @param {unknown} value @returns {string} */
-function coerceEcho(value) {
-  if (value === undefined || value === null) {
-    return "";
-  }
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  if (typeof value !== "object") {
-    throw new TypeError("Non-JSON echo value");
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => coerceEcho(item)).join(",");
-  }
-  if (Object.hasOwn(value, "toString")) {
-    throw new TypeError("Cannot convert object to primitive value");
-  }
-  return "[object Object]";
-}
-```
-
-- **Adjustment and protection:** One next-line directive preserves native coercion. This does not allow general object stringification, change accepted inputs, widen an annotation, or disable unchecked-value protections. The neighboring native control still rejects an unrelated object conversion. The directive inventory rejects copying, same-count replacement, duplication and stale directives. All other rules stay active.
-- **Evidence and review:** Real SDK object echoes and the JSON alternative establish the byte difference. `__tests__/mcp-code.test.ts` and the other actual consumers retain script, instructions, cancellation and output assertions. `__tests__/quality/directive-policy.test.ts` qualifies the accepted operation and neighboring finding. A distinct self-performed review checks the comparison and remaining detection; integration and independent review remain coordinator-owned. Revisit if the fixture's text contract or native rule changes.
-
 `quality-exceptions.json` binds each site-based exception to its file, native rule, named AST scope, child path, node kind, operation text and enclosing conditions. A changed selector requires review with the affected implementation. The inventory verifies scope, not the quality argument. `check:directives` checks attachment and rejects copied, replaced, duplicated and stale directives. Native Oxlint still checks every unaffected operation and reports unused directives.
 
 ## QX-001: Observe the native transport in place
@@ -310,3 +269,44 @@ The existing directive-policy owner reads the actual helper and inventory. Its c
 - **Adjustment:** One next-line directive for `eslint/max-params` on the exported `isToolAllowed` declaration. `quality-exceptions.json` inventories only this complete declaration, including its exact signature and filtering body. The existing AST checker selects its `ExportNamedDeclaration`, so the directive attaches before `export` without widening the allowed comment-to-operation gap. No other function or signature is authorized.
 - **Verification:** `npm run lint:config-runtime`, `npm run check:directives`, `npm run lint:quality`, `npm run typecheck`, `npm run typecheck:all`, the focused config and filtering suites, and `vitest run __tests__/quality/directive-policy.test.ts` qualify the selected implementation. The policy suite checks native accepted and unsuppressed cases, an unapproved five-parameter neighbor, native unused-disable detection, wrong file, wrong function, same-count signature replacement, wrong rule, wrong decision, duplication and a missing directive. The packed consumer verifies the public entrypoints; the adoption evidence additionally executes the packed predicate with all five positions and compiles valid and invalid positional consumers.
 - **Remaining protection and review:** The parameter-count diagnostic is lost only for this inventoried declaration. Other structural and safety rules remain active, as does `max-params` on every neighbor. The compiler checks the public signature, and runtime tests retain include/exclude outcomes. The AST inventory establishes operation identity, not API compatibility by itself. Revisit on a public API change, a native rule change, or a supported migration that can preserve existing positional consumers without hiding arity.
+
+## QX-030: Preserve the standalone bridge's callback surface
+
+- **Finding and scope:** Oxlint 1.90.0 with oxlint-tsgolint 7.0.2005 reports `unicorn/prefer-add-event-listener` for the native `AppBridge.onmessage` setter and `typescript/no-deprecated` for the two legacy notification setters and their identity reads. Only the five expressions in `probeBridge` in `__tests__/fixtures/app-bridge-bundle-probe.ts` are authorized by the operation inventory.
+- **Contract:** The standalone-bundle test retains its original export, method and all eight callback assertions. The probe statically imports the installed Apps 2.0.4 declaration; a synchronous Node resolver hook loads the exact newly generated standalone bytes instead. No class predicate, structural imitation or unsafe module assertion replaces the native receiver. Apps declares `onmessage` as a `ui/message` request handler at `node_modules/@modelcontextprotocol/ext-apps/dist/src/app-bridge.d.ts:406-442`, distinct from the notification events in `AppBridgeEventMap` at lines 97-103. The deprecated initialized getter/setter is declared at lines 402-405, and the deprecated sizechange getter/setter at lines 350-353.
+- **Actual comparison:** Replacing the initialized or sizechange assignment with `addEventListener` preserves notification listening but fails the original callback identity assertion: each getter returns `undefined`. Replacing the message request setter with `addEventListener("message", ...)` throws `Unknown event: message`; the canonical compiler also reports TS2345 because the typed event map excludes that event. These three alternatives were executed against the real committed standalone bundle. Event-only tests would silently drop the original compatibility assertions rather than adopt a safer implementation of them.
+- **Adjustment and protection:** Five next-line directives retain these existing checks; new code is not encouraged to use deprecated notification setters. All other callback operations, deprecations, types and rules remain checked. The native neighbor controls in `__tests__/quality/directive-policy.test.ts` retain deprecation and event-listener findings, and the inventory rejects wrong-file, replaced and duplicated directives.
+- **Evidence and review:** The adopting change retains the actual alternative programs, failing callback assertions, native diagnostics and passing original-bundle probe in its task evidence. Initial missing-environment attempts are recorded separately and are not qualification. A separate self-review accompanied adoption. An independent review re-executed these alternatives and a mutated-bundle control that fails the probe's callback identity assertion. Revisit when the shipped compatibility surface deliberately changes or native lint recognizes request setters and retained compatibility tests.
+
+## QX-031: Keep native coercion in the raw echo fixture
+
+- **Finding and scope:** Oxlint 1.90.0 with oxlint-tsgolint 7.0.2005, `typescript/no-base-to-string` (`checkUnknown: false`), reports the native `String(request.params.arguments?.value ?? "")` in the named `callTool` handler of `__tests__/fixtures/mcp-code-server.mjs`. Only its `echoText` declaration is authorized.
+- **Contract:** This actual stdio server accepts arbitrary wire values and returns both their native JavaScript text representation and their untouched structured value. An object echoes as `[object Object]`; JSON serialization is a different output contract. The handler retains native dispatch, errors, cancellation, pending-call behavior and raw extensions.
+- **Actual compliant comparison:** Replacing `String` with the suggested `JSON.stringify` was run through the real SDK transport. It returns `{"value":1}` for an object, quotes strings and the nullish fallback, and fails the existing string echo assertion at `__tests__/mcp-code.test.ts:253` with `"\"round trip\""`. A fully lint- and compiler-clean comparison instead decomposes coercion into nullish, primitive, array and object cases, recursively maps array elements, checks an own `toString` property, synthesizes the native TypeError, and returns the object tag. It executes successfully through the same native stdio call and the actual consumer suites, but replaces one native operation with a maintained reimplementation of JavaScript coercion. That is a material readability and maintenance cost, with no additional validation responsibility for this echo fixture. The exact comparison implementation and all intermediate failures are retained with the adopting change's evidence; no failing attempt is reported as compliant.
+
+The compliant comparison replaces the native `String(value ?? "")` operation with this function. It passes native lint and the canonical compiler, and its object echo passes through the same SDK transport:
+
+```js
+/** @param {unknown} value @returns {string} */
+function coerceEcho(value) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (typeof value !== "object") {
+    throw new TypeError("Non-JSON echo value");
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => coerceEcho(item)).join(",");
+  }
+  if (Object.hasOwn(value, "toString")) {
+    throw new TypeError("Cannot convert object to primitive value");
+  }
+  return "[object Object]";
+}
+```
+
+- **Adjustment and protection:** One next-line directive preserves native coercion. This does not allow general object stringification, change accepted inputs, widen an annotation, or disable unchecked-value protections. The neighboring native control still rejects an unrelated object conversion. The directive inventory rejects copying, same-count replacement, duplication and stale directives. All other rules stay active.
+- **Evidence and review:** Real SDK object echoes and the JSON alternative establish the byte difference. `__tests__/mcp-code.test.ts` and the other actual consumers retain script, instructions, cancellation and output assertions. `__tests__/quality/directive-policy.test.ts` qualifies the accepted operation and neighboring finding. A separate self-review accompanied adoption. An independent review re-ran both alternatives through the SDK transport and the actual consumer suites, and confirmed the native finding and inventory failures at the real site. Revisit if the fixture's text contract or native rule changes.

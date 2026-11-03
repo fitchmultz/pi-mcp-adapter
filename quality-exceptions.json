@@ -210,7 +210,7 @@
     "guards": []
   },
   {
-    "id": "QX-025",
+    "id": "QX-030",
     "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
     "rule": "unicorn/prefer-add-event-listener",
     "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
@@ -220,7 +220,7 @@
     "guards": []
   },
   {
-    "id": "QX-025",
+    "id": "QX-030",
     "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
     "rule": "typescript/no-deprecated",
     "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
@@ -230,7 +230,7 @@
     "guards": []
   },
   {
-    "id": "QX-025",
+    "id": "QX-030",
     "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
     "rule": "typescript/no-deprecated",
     "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
@@ -240,7 +240,7 @@
     "guards": []
   },
   {
-    "id": "QX-025",
+    "id": "QX-030",
     "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
     "rule": "typescript/no-deprecated",
     "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
@@ -250,7 +250,7 @@
     "guards": []
   },
   {
-    "id": "QX-025",
+    "id": "QX-030",
     "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
     "rule": "typescript/no-deprecated",
     "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
@@ -260,7 +260,7 @@
     "guards": []
   },
   {
-    "id": "QX-026",
+    "id": "QX-031",
     "file": "__tests__/fixtures/mcp-code-server.mjs",
     "rule": "typescript/no-base-to-string",
     "scope": { "type": "FunctionExpression", "name": "callTool" },
