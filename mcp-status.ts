@@ -1,4 +1,6 @@
 import type { McpExtensionState } from "./state.ts";
+import type { McpStatusEventBus } from "./mcp-status-events.ts";
+export type { McpStatusEventBus } from "./mcp-status-events.ts";
 import {
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
@@ -7,10 +9,6 @@ import {
 } from "./types.ts";
 
 const FAILURE_BACKOFF_MS = 60 * 1000;
-
-export interface McpStatusEventBus {
-  emit: (channel: string, data: unknown) => void;
-}
 
 function getActiveFailureAgeSeconds(
   state: McpExtensionState,

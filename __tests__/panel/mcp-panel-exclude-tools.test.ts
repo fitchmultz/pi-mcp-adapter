@@ -37,11 +37,11 @@ describe("mcp-panel include/exclude tools", () => {
       ],
     };
     const done = vi.fn<(result: McpPanelResult) => void>();
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      { version: 2, servers: { docs: entry } },
-      new Map(),
-      {
+      cache: { version: 2, servers: { docs: entry } },
+      provenance: new Map(),
+      callbacks: {
         reconnect: async () => true,
         canAuthenticate: () => false,
         authenticate: async () => ({ ok: false }),
@@ -51,9 +51,9 @@ describe("mcp-panel include/exclude tools", () => {
           tools: [...entry.tools, { name: "details" }],
         }),
       },
-      { requestRender: noop },
+      tui: { requestRender: noop },
       done,
-    );
+    });
     panel.handleInput("\r");
     let output = stripAnsi(panel.render(100).join("\n"));
     expect(output).not.toMatch(/app_only|excluded|read_guide|read_secret/);
@@ -78,9 +78,9 @@ describe("mcp-panel include/exclude tools", () => {
     const config = {
       mcpServers: { docs: { command: "node", exposeResources: false } },
     } satisfies McpConfig;
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      {
+      cache: {
         version: 1,
         servers: {
           docs: {
@@ -91,17 +91,17 @@ describe("mcp-panel include/exclude tools", () => {
           },
         },
       },
-      new Map(),
-      {
+      provenance: new Map(),
+      callbacks: {
         reconnect: async () => true,
         canAuthenticate: () => false,
         authenticate: async () => ({ ok: false }),
         getConnectionStatus: () => "idle",
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
     panel.handleInput("\r");
     const output = stripAnsi(panel.render(100).join("\n"));
     expect(output).not.toMatch(/app_only|read_guide|resources \/ read-resource/);
@@ -136,20 +136,20 @@ describe("mcp-panel include/exclude tools", () => {
       },
     };
 
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
       cache,
-      new Map(),
-      {
+      provenance: new Map(),
+      callbacks: {
         reconnect: async () => true,
         canAuthenticate: () => false,
         authenticate: async () => ({ ok: false }),
         getConnectionStatus: () => "idle",
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("g");
     panel.handleInput("e");
@@ -193,20 +193,20 @@ describe("mcp-panel include/exclude tools", () => {
       },
     };
 
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
       cache,
-      new Map(),
-      {
+      provenance: new Map(),
+      callbacks: {
         reconnect: async () => true,
         canAuthenticate: () => false,
         authenticate: async () => ({ ok: false }),
         getConnectionStatus: () => "idle",
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("g");
     panel.handleInput("e");

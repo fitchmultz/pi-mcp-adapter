@@ -127,7 +127,7 @@ function createPanelServer(
       connectionStatus: input.callbacks.getConnectionStatus(name),
       failureMessage: input.callbacks.getFailureMessage?.(name) ?? null,
       tools: [],
-      hasCachedData: cache !== undefined,
+      hasCachedData: Boolean(cache),
     },
     defaults.prefix,
   );

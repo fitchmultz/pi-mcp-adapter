@@ -10,6 +10,17 @@ import {
   type VisibleItem,
 } from "./mcp-panel-model.ts";
 import { PanelView } from "./mcp-panel-view.ts";
+
+interface McpPanelInput {
+  config: McpConfig;
+  cache: MetadataCache | null;
+  provenance: Map<string, ServerProvenance>;
+  callbacks: McpPanelCallbacks;
+  tui: Pick<TUI, "requestRender">;
+  done: (result: McpPanelResult) => void;
+  options?: { noticeLines?: string[]; authOnly?: boolean; keybindings?: PanelKeybindings };
+}
+
 class McpPanel implements Component {
   private readonly noticeLines: string[];
   private readonly servers: PanelServer[];
@@ -23,7 +34,6 @@ class McpPanel implements Component {
   private importNotice: string | null = null;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private visibleItems: VisibleItem[] = [];
-  private readonly tui: Pick<TUI, "requestRender">;
   private readonly authOnly: boolean;
   private readonly keys: PanelKeys;
 
@@ -32,23 +42,14 @@ class McpPanel implements Component {
   private readonly connections: PanelConnections;
   private readonly done: (result: McpPanelResult) => void;
 
-  constructor(input: {
-    config: McpConfig;
-    cache: MetadataCache | null;
-    provenance: Map<string, ServerProvenance>;
-    callbacks: McpPanelCallbacks;
-    tui: Pick<TUI, "requestRender">;
-    done: (result: McpPanelResult) => void;
-    options: { noticeLines?: string[]; authOnly?: boolean; keybindings?: PanelKeybindings };
-  }) {
-    const { config, cache, provenance, callbacks, tui, done, options } = input;
+  constructor(input: McpPanelInput) {
+    const { config, cache, provenance, callbacks, tui, done, options = {} } = input;
     this.connections = new PanelConnections({
       callbacks,
       tui,
       refreshTools: (server, entry) => this.rebuildServerTools(server, entry),
     });
     this.done = done;
-    this.tui = tui;
     this.noticeLines = options.noticeLines ?? [];
     this.authOnly = options.authOnly === true;
     this.keys = createPanelKeys(options.keybindings);
@@ -431,14 +432,6 @@ class McpPanel implements Component {
   }
 }
 
-export function createMcpPanel(
-  config: McpConfig,
-  cache: MetadataCache | null,
-  provenance: Map<string, ServerProvenance>,
-  callbacks: McpPanelCallbacks,
-  tui: Pick<TUI, "requestRender">,
-  done: (result: McpPanelResult) => void,
-  options?: { noticeLines?: string[]; authOnly?: boolean; keybindings?: PanelKeybindings },
-): McpPanel & { dispose: () => void } {
-  return new McpPanel({ config, cache, provenance, callbacks, tui, done, options: options ?? {} });
+export function createMcpPanel(input: McpPanelInput): McpPanel {
+  return new McpPanel(input);
 }

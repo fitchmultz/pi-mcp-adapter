@@ -12,6 +12,14 @@ import { getSetupActions, getDetectedPaths } from "./mcp-setup-actions.ts";
 import { SetupView } from "./mcp-setup-view.ts";
 export type { SetupPanelCallbacks, SetupPanelOptions } from "./mcp-setup-contract.ts";
 
+interface McpSetupPanelInput {
+  discovery: McpDiscoverySummary;
+  callbacks: SetupPanelCallbacks;
+  options: SetupPanelOptions;
+  tui: Pick<TUI, "requestRender">;
+  done: () => void;
+}
+
 export class McpSetupPanel implements Component {
   private screen: Screen;
   private actionCursor = 0;
@@ -30,13 +38,8 @@ export class McpSetupPanel implements Component {
   private readonly options: SetupPanelOptions;
   private readonly done: () => void;
 
-  constructor(
-    discovery: McpDiscoverySummary,
-    callbacks: SetupPanelCallbacks,
-    options: SetupPanelOptions,
-    tui: Pick<TUI, "requestRender">,
-    done: () => void,
-  ) {
+  constructor(input: McpSetupPanelInput) {
+    const { discovery, callbacks, options, tui, done } = input;
     this.discovery = discovery;
     this.callbacks = callbacks;
     this.options = options;
@@ -321,12 +324,6 @@ export class McpSetupPanel implements Component {
   }
 }
 
-export function createMcpSetupPanel(
-  discovery: McpDiscoverySummary,
-  callbacks: SetupPanelCallbacks,
-  options: SetupPanelOptions,
-  tui: Pick<TUI, "requestRender">,
-  done: () => void,
-): McpSetupPanel & { dispose: () => void } {
-  return new McpSetupPanel(discovery, callbacks, options, tui, done);
+export function createMcpSetupPanel(input: McpSetupPanelInput): McpSetupPanel {
+  return new McpSetupPanel(input);
 }

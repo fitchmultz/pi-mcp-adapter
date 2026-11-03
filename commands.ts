@@ -37,6 +37,7 @@ import type { SetupPanelCallbacks } from "./mcp-setup-contract.ts";
 import { showStatus } from "./mcp-inspection-commands.ts";
 import { reconnectServer } from "./mcp-connection-commands.ts";
 import { authenticateServer } from "./mcp-auth-commands.ts";
+import { logger } from "./logger.ts";
 export { showStatus, showPrompts, showTools } from "./mcp-inspection-commands.ts";
 export { reconnectServer, reconnectServers } from "./mcp-connection-commands.ts";
 export { authenticateServer, logoutServer } from "./mcp-auth-commands.ts";
@@ -138,13 +139,14 @@ function buildSetupCallbacks(input: {
   };
 }
 
-export async function openMcpSetup(
-  state: McpExtensionState,
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  configOverridePath?: string,
-  mode: "empty" | "setup" = "setup",
-): Promise<PanelFlowResult> {
+export async function openMcpSetup(input: {
+  state: McpExtensionState;
+  pi: ExtensionAPI;
+  ctx: ExtensionContext;
+  configOverridePath?: string | undefined;
+  mode?: "empty" | "setup";
+}): Promise<PanelFlowResult> {
+  const { state, pi, ctx, configOverridePath, mode = "setup" } = input;
   if (!ctx.hasUI) {
     return { configChanged: false };
   }
@@ -179,9 +181,13 @@ export async function openMcpSetup(
 
   return ctx.ui.custom<PanelFlowResult>(
     (tui, _theme, keybindings, done) =>
-      createMcpSetupPanel(discovery, callbacks, { mode, onboardingState, keybindings }, tui, () =>
-        done({ configChanged }),
-      ),
+      createMcpSetupPanel({
+        discovery,
+        callbacks,
+        options: { mode, onboardingState, keybindings },
+        tui,
+        done: () => done({ configChanged }),
+      }),
     { overlay: true, overlayOptions: { anchor: "center", width: 92 } },
   );
 }
@@ -245,7 +251,13 @@ function buildMcpPanelCallbacks(
       return definition ? !isServerDisabled(definition) && supportsOAuth(definition) : false;
     },
     authenticate: (serverName: string) =>
-      authenticateServer(serverName, config, ctx, state.owner.signal, state.oauthRuntime),
+      authenticateServer({
+        serverName,
+        config,
+        ctx,
+        signal: state.owner.signal,
+        runtime: state.oauthRuntime,
+      }),
     getConnectionStatus: (serverName: string) => {
       authStatusFailures.delete(serverName);
       const definition = config.mcpServers[serverName];
@@ -282,15 +294,16 @@ function buildMcpPanelCallbacks(
   };
 }
 
-export async function openMcpPanel(
-  state: McpExtensionState,
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  configOverridePath?: string,
-  onDirectToolsConfigChanged?: (
-    changes: Map<string, true | string[] | false>,
-  ) => void | Promise<void>,
-): Promise<PanelFlowResult> {
+export async function openMcpPanel(input: {
+  state: McpExtensionState;
+  pi: ExtensionAPI;
+  ctx: ExtensionContext;
+  configOverridePath?: string | undefined;
+  onDirectToolsConfigChanged?:
+    | ((changes: Map<string, true | string[] | false>) => void | Promise<void>)
+    | undefined;
+}): Promise<PanelFlowResult> {
+  const { state, pi, ctx, configOverridePath, onDirectToolsConfigChanged } = input;
   if (!ctx.isProjectTrusted() || ctx.mode !== "tui") {
     if (ctx.hasUI) {
       await showStatus(state, ctx);
@@ -308,7 +321,7 @@ export async function openMcpPanel(
     return { configChanged: false };
   }
   if (Object.keys(state.config.mcpServers).length === 0) {
-    return openMcpSetup(state, pi, ctx, configOverridePath, "empty");
+    return openMcpSetup({ state, pi, ctx, configOverridePath, mode: "empty" });
   }
 
   const config = state.config;
@@ -323,29 +336,33 @@ export async function openMcpPanel(
 
   await ctx.ui.custom<McpPanelResult>(
     (tui, _theme, keybindings, done) => {
-      return createMcpPanel(
+      return createMcpPanel({
         config,
         cache,
-        provenanceMap,
+        provenance: provenanceMap,
         callbacks,
         tui,
-        (result: McpPanelResult) => {
+        done: (result: McpPanelResult) => {
           (async () => {
-            if (!result.cancelled && result.changes.size > 0) {
-              writeDirectToolsConfig(result.changes, provenanceMap);
-              await onDirectToolsConfigChanged?.(result.changes);
-              ctx.ui.notify("Direct tools updated for this session.", "info");
+            try {
+              if (!result.cancelled && result.changes.size > 0) {
+                writeDirectToolsConfig(result.changes, provenanceMap);
+                await onDirectToolsConfigChanged?.(result.changes);
+                ctx.ui.notify("Direct tools updated for this session.", "info");
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              ctx.ui.notify(`Direct tools updated, but live refresh failed: ${message}`, "error");
+              configChanged = true;
+            } finally {
+              done(result);
             }
-            done(result);
           })().catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error);
-            ctx.ui.notify(`Direct tools updated, but live refresh failed: ${message}`, "error");
-            configChanged = true;
-            done(result);
+            logger.error("MCP panel completion failed", undefined, { error });
           });
         },
-        { noticeLines, keybindings },
-      );
+        options: { noticeLines, keybindings },
+      });
     },
     { overlay: true, overlayOptions: { anchor: "center", width: 82 } },
   );
@@ -397,19 +414,19 @@ export async function openMcpAuthPanel(
 
   return ctx.ui.custom<PanelFlowResult>(
     (tui, _theme, keybindings, done) =>
-      createMcpPanel(
+      createMcpPanel({
         config,
         cache,
-        provenanceMap,
+        provenance: provenanceMap,
         callbacks,
         tui,
-        () => done({ configChanged: false }),
-        {
+        done: () => done({ configChanged: false }),
+        options: {
           authOnly: true,
           keybindings,
           noticeLines: ["Select an OAuth MCP server and press Enter or ctrl+a to authenticate."],
         },
-      ),
+      }),
     { overlay: true, overlayOptions: { anchor: "center", width: 82 } },
   );
 }

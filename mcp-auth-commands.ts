@@ -108,13 +108,14 @@ async function authenticationAttempt(
   }
 }
 
-export async function authenticateServer(
-  serverName: string,
-  config: McpConfig,
-  ctx: ExtensionContext,
-  signal?: AbortSignal,
-  runtime?: McpOAuthRuntime,
-): Promise<McpAuthResult> {
+export async function authenticateServer(input: {
+  serverName: string;
+  config: McpConfig;
+  ctx: ExtensionContext;
+  signal?: AbortSignal | undefined;
+  runtime?: McpOAuthRuntime | undefined;
+}): Promise<McpAuthResult> {
+  const { serverName, config, ctx, signal, runtime } = input;
   const ui = ctx.hasUI ? ctx.ui : undefined;
   const authSignal = signal ?? ctx.signal;
   if (!ui) {

@@ -564,13 +564,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             );
             break;
           }
-          const result = await openMcpSetup(
-            commandState,
+          const result = await openMcpSetup({
+            state: commandState,
             pi,
-            commandCtx,
-            currentConfigPath,
-            "setup",
-          );
+            ctx: commandCtx,
+            configOverridePath: currentConfigPath,
+            mode: "setup",
+          });
           if (result?.configChanged) {
             commandOwner?.throwIfInactive();
             await ctx.reload();
@@ -648,16 +648,16 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
               await showStatus(commandState, commandCtx);
               break;
             }
-            const result = await openMcpPanel(
-              commandState,
+            const result = await openMcpPanel({
+              state: commandState,
               pi,
-              commandCtx,
-              currentConfigPath,
-              (changes) => {
+              ctx: commandCtx,
+              configOverridePath: currentConfigPath,
+              onDirectToolsConfigChanged: (changes) => {
                 applyDirectToolConfigChanges(changes);
                 syncToolSurface(commandCtx);
               },
-            );
+            });
             if (result?.configChanged) {
               commandOwner?.throwIfInactive();
               await ctx.reload();
@@ -699,13 +699,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
         return;
       }
 
-      const result = await authenticateServer(
+      const result = await authenticateServer({
         serverName,
-        commandState.config,
-        commandCtx,
-        commandCtx.signal,
-        commandState.oauthRuntime,
-      );
+        config: commandState.config,
+        ctx: commandCtx,
+        signal: commandCtx.signal,
+        runtime: commandState.oauthRuntime,
+      });
       if (result.ok) {
         commandOwner?.throwIfInactive();
         await reconnectServer(commandState, commandCtx, serverName, true);
