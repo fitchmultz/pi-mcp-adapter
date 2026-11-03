@@ -71,5 +71,45 @@
     "nodeType": "MemberExpression",
     "operation": "config.mcpServers.docs.env.ORIGINAL",
     "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "__tests__/runtime/callback-http-lifetime.test.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": { "type": "FunctionExpression", "name": "retainsCancelledCallbackTail" },
+    "path": ["body", "body", 13, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "transport.onmessage",
+    "guards": []
+  },
+  {
+    "id": "QX-016",
+    "file": "__tests__/runtime/callback-http-lifetime.test.ts",
+    "rule": "typescript/unbound-method",
+    "scope": { "type": "VariableDeclarator", "name": "originalTokens" },
+    "path": ["init"],
+    "nodeType": "MemberExpression",
+    "operation": "McpOAuthProvider.prototype.tokens",
+    "guards": []
+  },
+  {
+    "id": "QX-016",
+    "file": "__tests__/runtime/callback-http-lifetime.test.ts",
+    "rule": "typescript/unbound-method",
+    "scope": { "type": "VariableDeclarator", "name": "originalSaveTokens" },
+    "path": ["init"],
+    "nodeType": "MemberExpression",
+    "operation": "McpOAuthProvider.prototype.saveTokens",
+    "guards": []
+  },
+  {
+    "id": "QX-016",
+    "file": "__tests__/runtime/callback-http-lifetime.test.ts",
+    "rule": "typescript/unbound-method",
+    "scope": { "type": "VariableDeclarator", "name": "originalJson" },
+    "path": ["init"],
+    "nodeType": "MemberExpression",
+    "operation": "Response.prototype.json",
+    "guards": []
   }
 ]

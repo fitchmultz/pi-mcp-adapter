@@ -23,7 +23,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -198,6 +198,58 @@ const clientSite = {
   nodeType: "MemberExpression",
   operation: "client.onerror",
 };
+const messageSource = [
+  'import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";',
+  "export const observe = function observesTransportMessage(): StreamableHTTPClientTransport {",
+  'const transport = new StreamableHTTPClientTransport(new URL("http://127.0.0.1/mcp"));',
+  clientDirective,
+  "transport.onmessage = (message) => console.log(message);",
+  "return transport;",
+  "};",
+  "",
+].join("\n");
+const captureDirective =
+  "// oxlint-disable-next-line typescript/unbound-method -- QX-016: retain the original for a receiver-preserving call.";
+const captures = [
+  {
+    name: "OAuth token reader",
+    import: 'import { McpOAuthProvider } from "./adapter/mcp-oauth-provider.ts";',
+    variable: "originalTokens",
+    operation: "McpOAuthProvider.prototype.tokens",
+    neighbor: "McpOAuthProvider.prototype.saveTokens",
+  },
+  {
+    name: "OAuth token persistence",
+    import: 'import { McpOAuthProvider } from "./adapter/mcp-oauth-provider.ts";',
+    variable: "originalSaveTokens",
+    operation: "McpOAuthProvider.prototype.saveTokens",
+    neighbor: "McpOAuthProvider.prototype.tokens",
+  },
+  {
+    name: "native Response body reader",
+    import: "",
+    variable: "originalJson",
+    operation: "Response.prototype.json",
+    neighbor: "Response.prototype.text",
+  },
+].map(({ name, import: importSource, variable, operation, neighbor }) => ({
+  name,
+  variable,
+  operation,
+  neighbor,
+  source: [importSource, `export const ${variable} =`, captureDirective, `${operation};`, ""].join(
+    "\n",
+  ),
+  authorized: {
+    ...site,
+    id: "QX-016",
+    rule: "typescript/unbound-method",
+    scope: { type: "VariableDeclarator", name: variable },
+    path: ["init"],
+    nodeType: "MemberExpression",
+    operation,
+  },
+}));
 const invalidDirective =
   "// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-011: exercise runtime validation.";
 const invalidSource = [
@@ -270,6 +322,26 @@ describe("operation-bound exceptions", () => {
       diagnostic:
         "forward.ts:11:8: Prefer `addEventListener()` over their `on`-function counterparts. [Error/unicorn(prefer-add-event-listener)]",
     },
+    {
+      name: "native transport message callback",
+      source: messageSource,
+      authorized: {
+        ...clientSite,
+        scope: { type: "FunctionExpression", name: "observesTransportMessage" },
+        path: ["body", "body", 1, "expression", "left"],
+        operation: "transport.onmessage",
+      },
+      neighbor: `${messageSource}export function unrelated(): AbortSignal {\nconst signal = new AbortController().signal;\nsignal.onabort = () => console.log("aborted");\nreturn signal;\n}\n`,
+      diagnostic:
+        "forward.ts:10:8: Prefer `addEventListener()` over their `on`-function counterparts. [Error/unicorn(prefer-add-event-listener)]",
+    },
+    ...captures.map((capture) => ({
+      name: capture.name,
+      source: capture.source,
+      authorized: capture.authorized,
+      neighbor: `${capture.source}export const unrelated = ${capture.neighbor};\n`,
+      diagnostic: ["forward.ts:5:", "[Error/typescript(unbound-method)]"],
+    })),
     {
       name: "invalid runtime option assertion",
       source: invalidSource,
@@ -424,5 +496,25 @@ describe("operation-bound exceptions", () => {
     const result = checkSource("forward.ts", source, [guarded]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Authorized operation changed");
+  });
+
+  it.each(captures)("rejects copied, replaced and duplicate $name captures", (capture) => {
+    const copied = checkSource("copied.ts", capture.source, [capture.authorized]);
+    const replaced = checkSource(
+      "forward.ts",
+      capture.source.replace(capture.operation, capture.neighbor),
+      [capture.authorized],
+    );
+    const duplicate = checkSource(
+      "forward.ts",
+      `${capture.source}\nfunction duplicate() {\nconst ${capture.variable} =\n${captureDirective}\n${capture.operation};\n}\n`,
+      [capture.authorized],
+    );
+    expect(copied.status).toBe(1);
+    expect(copied.stderr).toContain("lint directive is not authorized for this operation");
+    expect(replaced.status).toBe(1);
+    expect(replaced.stderr).toContain("Authorized operation changed");
+    expect(duplicate.status).toBe(1);
+    expect(duplicate.stderr).toContain("Exception scope is missing or ambiguous");
   });
 });
