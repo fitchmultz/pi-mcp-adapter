@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -16,6 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { hostCli, hostIndex, hostRoot } from "./compat-host.mjs";
+import { cliObservationSchema, packResultSchema } from "./compat-consumer-results.mjs";
 import { verifyNativeTools } from "./compat-native-tools.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "mcp-package-"));
@@ -49,48 +51,62 @@ function run(command, args, cwd) {
   assert.equal(
     result.status,
     0,
-    `${command} ${args.join(" ")}\n${result.error ?? ""}\n${result.stderr}\n${result.stdout}`,
+    `${command} ${args.join(" ")}\n${String(result.error ?? "")}\n${result.stderr}\n${result.stdout}`,
   );
   return result.stdout;
 }
+
+/** @param {string} consumer */
+function linkHostPeers(consumer) {
+  for (const name of [
+    "@earendil-works/pi-ai",
+    "@earendil-works/pi-coding-agent",
+    "@earendil-works/pi-tui",
+    "typebox",
+  ]) {
+    const target = join(consumer, "node_modules", name);
+    mkdirSync(dirname(target), { recursive: true });
+    if (!existsSync(target)) {
+      const packageDir = findPackageJSON(name, pathToFileURL(hostIndex).href);
+      if (packageDir === undefined) {
+        throw new Error(`compat-package-smoke: ${name} is not installed in the host graph`);
+      }
+      symlinkSync(dirname(packageDir), target, "junction");
+    }
+  }
+}
+
+/** @param {string} npm */
+function installConsumer(npm) {
+  const [pack] = Object.values(
+    packResultSchema.parse(
+      JSON.parse(run(npm, ["pack", "--json", "--pack-destination", root], process.cwd())),
+    ),
+  );
+  assert.ok(pack, "npm pack must report the consumer tarball");
+  const consumer = join(root, "consumer");
+  mkdirSync(consumer);
+  writeFileSync(
+    join(consumer, "package.json"),
+    JSON.stringify({
+      private: true,
+      dependencies: { "@fitchmultz/pi-mcp-adapter": `file:${join(root, pack.filename)}` },
+    }),
+  );
+  run(npm, ["install", "--omit=dev", "--no-audit", "--no-fund"], consumer);
+  // Ordinary ESM consumers supply peers from the exact host graph, not private runtime copies.
+  linkHostPeers(consumer);
+  return join(consumer, "node_modules", "@fitchmultz", "pi-mcp-adapter");
+}
+
 let session;
 try {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  let packageRoot = process.argv[2] ? resolve(process.argv[2]) : undefined;
-  if (!packageRoot) {
-    // npm 12 keys pack --json output by package name; npm 11 returned an array.
-    const [pack] = Object.values(
-      JSON.parse(run(npm, ["pack", "--json", "--pack-destination", root], process.cwd())),
-    );
-    const consumer = join(root, "consumer");
-    mkdirSync(consumer);
-    writeFileSync(
-      join(consumer, "package.json"),
-      JSON.stringify({
-        private: true,
-        dependencies: { "@fitchmultz/pi-mcp-adapter": `file:${join(root, pack.filename)}` },
-      }),
-    );
-    run(npm, ["install", "--omit=dev", "--no-audit", "--no-fund"], consumer);
-    packageRoot = join(consumer, "node_modules", "@fitchmultz", "pi-mcp-adapter");
-    // Ordinary ESM consumers supply peers from the exact host graph, not private runtime copies.
-    for (const name of [
-      "@earendil-works/pi-ai",
-      "@earendil-works/pi-coding-agent",
-      "@earendil-works/pi-tui",
-      "typebox",
-    ]) {
-      const target = join(consumer, "node_modules", name);
-      mkdirSync(dirname(target), { recursive: true });
-      if (!existsSync(target)) {
-        const packageDir = findPackageJSON(name, pathToFileURL(hostIndex).href);
-        if (packageDir === undefined) {
-          throw new Error(`compat-package-smoke: ${name} is not installed in the host graph`);
-        }
-        symlinkSync(dirname(packageDir), target, "junction");
-      }
-    }
-  }
+  const suppliedPackage = process.argv[2];
+  const packageRoot =
+    suppliedPackage !== undefined && suppliedPackage !== ""
+      ? resolve(suppliedPackage)
+      : installConsumer(npm);
   for (const file of [
     "dist/index.js",
     "dist/index.d.ts",
@@ -98,11 +114,11 @@ try {
     "dist/mcp-keyring-helper.cjs",
     "dist/app-bridge.bundle.js",
   ]) {
-    assert.ok(readFileSync(join(packageRoot, file)).length, file);
+    assert.ok(readFileSync(join(packageRoot, file)).length > 0, file);
   }
-  assert.ok(readFileSync(join(packageRoot, "skills/mcp-scripting/SKILL.md")).length);
+  assert.ok(readFileSync(join(packageRoot, "skills/mcp-scripting/SKILL.md")).length > 0);
   Object.assign(process.env, env);
-  const sdk = await import(pathToFileURL(hostIndex).href);
+  const sdk = await import("@earendil-works/pi-coding-agent");
   const settingsManager = sdk.SettingsManager.inMemory();
   const resourceLoader = new sdk.DefaultResourceLoader({
     cwd: root,
@@ -119,7 +135,7 @@ try {
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
   assert.equal(resourceLoader.getExtensions().extensions.length, 1);
   assert.equal(
-    resourceLoader.getExtensions().extensions[0].resolvedPath,
+    resourceLoader.getExtensions().extensions[0]?.resolvedPath,
     join(packageRoot, "dist/index.js"),
   );
   const modelRuntime = await sdk.ModelRuntime.create({
@@ -141,11 +157,11 @@ try {
   const errors = [];
   await session.bindExtensions({
     mode: "print",
-    onError: (/** @type {unknown} */ error) => errors.push(error),
+    onError: (error) => errors.push(error),
   });
   for (const name of ["mcp", "mcp_script"]) {
     assert.ok(
-      session.getAllTools().some((/** @type {{ name: string }} */ tool) => tool.name === name),
+      session.getAllTools().some((tool) => tool.name === name),
       name,
     );
   }
@@ -154,11 +170,13 @@ try {
     ["mcp_search"],
     "registered gateways must not be active by default",
   );
-  const search = session.agent.state.tools.find(
-    (/** @type {{ name: string }} */ tool) => tool.name === "mcp_search",
-  );
+  const search = session.agent.state.tools.find((tool) => tool.name === "mcp_search");
+  assert.ok(search, "mcp_search must be registered");
   const loaded = await search.execute("load-gateways", { enable: ["gateway", "script"] });
-  assert.deepEqual(loaded.details.loaded, [{ name: "mcp" }, { name: "mcp_script" }]);
+  /** @type {unknown} */
+  const details = loaded.details;
+  assert.ok(details !== null && typeof details === "object" && "loaded" in details);
+  assert.deepEqual(details.loaded, [{ name: "mcp" }, { name: "mcp_script" }]);
   assert.deepEqual(session.getActiveToolNames().sort(), ["mcp", "mcp_script", "mcp_search"]);
   await session.reload();
   assert.deepEqual(
@@ -173,18 +191,13 @@ try {
   );
   for (const name of ["mcp", "mcp_script"]) {
     assert.ok(
-      session.getAllTools().some((/** @type {{ name: string }} */ tool) => tool.name === name),
+      session.getAllTools().some((tool) => tool.name === name),
       `after reload: ${name}`,
     );
   }
   const marker = join(root, "cli.json");
   const observer = join(root, "observer.ts");
-  writeFileSync(
-    observer,
-    `import { writeFileSync } from "node:fs";
-import { VERSION, getPackageDir } from "@earendil-works/pi-coding-agent";
-export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ version: VERSION, packageDir: getPackageDir(), tools: pi.getAllTools().map(t => t.name), activeTools: pi.getActiveTools(), commands: pi.getCommands().map(c => c.name) })); ctx.shutdown(); }); }`,
-  );
+  copyFileSync(new URL("./compat-cli-observer.ts", import.meta.url), observer);
   const child = spawnSync(
     process.execPath,
     [
@@ -203,11 +216,17 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
       "-e",
       observer,
     ],
-    { cwd: root, env, input: "", encoding: "utf8", timeout: 30_000 },
+    {
+      cwd: root,
+      env: { ...env, PI_COMPAT_OBSERVATION: marker },
+      input: "",
+      encoding: "utf8",
+      timeout: 30_000,
+    },
   );
-  assert.equal(child.status, 0, `${child.error ?? ""}\n${child.stderr}`);
+  assert.equal(child.status, 0, `${String(child.error ?? "")}\n${child.stderr}`);
   assert.doesNotMatch(child.stderr, /Failed to load extension|Extension error/);
-  const observed = JSON.parse(readFileSync(marker, "utf8"));
+  const observed = cliObservationSchema.parse(JSON.parse(readFileSync(marker, "utf8")));
   assert.equal(observed.version, sdk.VERSION);
   assert.equal(
     realpathSync(observed.packageDir),
@@ -224,11 +243,11 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
   }
   await verifyNativeTools(packageRoot);
   console.log(
-    `[compat-package] ${process.argv[2] ? "supplied consumer" : "npm install"}, native SDK reload, and bundled CLI passed`,
+    `[compat-package] ${suppliedPackage !== undefined && suppliedPackage !== "" ? "supplied consumer" : "npm install"}, native SDK reload, and bundled CLI passed`,
   );
 } finally {
   try {
-    if (session) {
+    if (session !== undefined) {
       await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
       session.dispose();
     }

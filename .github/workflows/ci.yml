@@ -149,6 +149,7 @@ jobs:
       - run: npm run check:directives
       - run: npm run check:policy
       - run: npm run lint:conformance
+      - run: npm run lint:consumer-tooling
       - run: npm run lint:prompts
       - run: npm run lint:runtime-tests
       - run: npm run lint:tracing

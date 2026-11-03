@@ -15,6 +15,7 @@ npm run format:check
 npm run check:directives
 npm run check:policy
 npm run lint:conformance
+npm run lint:consumer-tooling
 npm run lint:prompts
 npm run lint:runtime-tests
 npm run lint:tracing
@@ -43,6 +44,8 @@ npm run test:conformance
 For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$PWD" --host official --target latest --output /tmp/pi-mcp-adapter-official`, then qualify the packed latest maintained fork with `--host fork --target /path/to/fork-package`. Plain `npm ci` checks only the locked development snapshot, not latest qualification. Preserve the separate extras checks in `.github/workflows/ci.yml`.
 
 Strict lint is enforced for `conformance/`, the prompt tests and their shared fixtures, `__tests__/runtime/`, `__tests__/auth/`, `__tests__/discovery/`, `__tests__/state/`, `__tests__/output/`, `__tests__/packaging/`, `__tests__/ui-host/`, `__tests__/panel/`, and the pinning test fixture. Repository-wide strict lint remains a migration target.
+
+`lint:consumer-tooling` enforces the production profile for the selected-host resolver and packed-consumer loader, their result schemas and the checked CLI observer. The loader validates external JSON and checks the real SDK, gateway activation, reload and CLI registration against the selected host graph.
 
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
 
