@@ -21,6 +21,19 @@ const globalConfig =
   '{\n // Keep the existing JSONC and formatting.\n "mcpServers": { "global": { "command": "unused-global-server" } }\n}\n';
 const projectConfig = '{"mcpServers":{"project":{"command":"unused-project-server"}}}\n';
 
+function sourceFiles(agent: string, project: string): Map<string, string> {
+  return new Map([
+    [join(agent, "mcp.json"), globalConfig],
+    [join(agent, "mcp-cache.json"), '{"version":1,"servers":{}}'],
+    [
+      join(agent, "mcp-onboarding.json"),
+      '{"version":1,"setupCompleted":true,"sharedConfigHintShown":true}',
+    ],
+    [join(agent, "mcp-npx-cache.json"), '{"version":1,"entries":{}}'],
+    [join(project, ".pi", "mcp.json"), projectConfig],
+  ]);
+}
+
 describe("explicit pre-v5 state migration", () => {
   let root: string;
   let agent: string;
@@ -67,17 +80,8 @@ describe("explicit pre-v5 state migration", () => {
   });
 
   it("copies owned state byte-for-byte and keeps later config/cache writes separate", async () => {
-    const sourceFiles = new Map([
-      [join(agent, "mcp.json"), globalConfig],
-      [join(agent, "mcp-cache.json"), '{"version":1,"servers":{}}'],
-      [
-        join(agent, "mcp-onboarding.json"),
-        '{"version":1,"setupCompleted":true,"sharedConfigHintShown":true}',
-      ],
-      [join(agent, "mcp-npx-cache.json"), '{"version":1,"entries":{}}'],
-      [join(project, ".pi", "mcp.json"), projectConfig],
-    ]);
-    for (const [path, contents] of sourceFiles) {
+    const sources = sourceFiles(agent, project);
+    for (const [path, contents] of sources) {
       write(path, contents);
     }
     const { migrateLegacyState } = await import("../legacy-migration.ts");
@@ -86,10 +90,7 @@ describe("explicit pre-v5 state migration", () => {
     expect(result.files.every((file) => file.status === "copied")).toBe(true);
     expect(result.credentials).toEqual([]);
     for (const file of result.files) {
-      expect(readFileSync(file.destination, "utf8")).toBe(sourceFiles.get(file.source));
-      if (process.platform !== "win32") {
-        expect(statSync(file.destination).mode & 0o777).toBe(0o600);
-      }
+      expect(readFileSync(file.destination, "utf8")).toBe(sources.get(file.source));
     }
 
     const { loadMcpConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
@@ -100,11 +101,26 @@ describe("explicit pre-v5 state migration", () => {
     ]);
     writeProjectServerDisabledOverride(undefined, project, "global", true);
     saveMetadataCache({ version: 1, servers: {} });
-    expect(loadMcpConfig(undefined, project).mcpServers.global!.disabled).toBe(true);
-    for (const [path, contents] of sourceFiles) {
+    expect(loadMcpConfig(undefined, project).mcpServers.global?.disabled).toBe(true);
+    for (const [path, contents] of sources) {
       expect(readFileSync(path, "utf8")).toBe(contents);
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "creates every migrated file with private permissions",
+    async () => {
+      for (const [path, contents] of sourceFiles(agent, project)) {
+        write(path, contents);
+      }
+      const { migrateLegacyState } = await import("../legacy-migration.ts");
+      const result = migrateLegacyState({ cwd: project });
+      expect(result.files).toHaveLength(5);
+      for (const file of result.files) {
+        expect(statSync(file.destination).mode & 0o777).toBe(0o600);
+      }
+    },
+  );
 
   it("does not overwrite destinations on first or repeated migration", async () => {
     write(join(agent, "mcp.json"), globalConfig);
@@ -113,7 +129,7 @@ describe("explicit pre-v5 state migration", () => {
     write(destination, independent);
     const { migrateLegacyState } = await import("../legacy-migration.ts");
     for (let run = 0; run < 2; run++) {
-      expect(migrateLegacyState({ cwd: project }).files[0]!.status).toBe("existing");
+      expect(migrateLegacyState({ cwd: project }).files[0]?.status).toBe("existing");
       expect(readFileSync(destination, "utf8")).toBe(independent);
       expect(readFileSync(join(agent, "mcp.json"), "utf8")).toBe(globalConfig);
     }

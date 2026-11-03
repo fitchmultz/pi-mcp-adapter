@@ -1,9 +1,8 @@
-import { createRequire, syncBuiltinESMExports } from "node:module";
+import { syncBuiltinESMExports } from "node:module";
+import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import { basename, join } from "node:path";
 
-const require = createRequire(import.meta.url);
-const fs = require("node:fs");
-const fsPromises = require("node:fs/promises");
 const originalRename = fsPromises.rename;
 const originalRm = fsPromises.rm;
 
@@ -75,10 +74,11 @@ const faults = {
 };
 
 const faultName = process.env.BUILD_SWAP_FAULT;
-if (faultName && !Object.hasOwn(faults, faultName)) {
+if (faultName !== undefined && faultName !== "" && !Object.hasOwn(faults, faultName)) {
   throw new Error(`unknown build-swap fault: ${faultName}`);
 }
 if (faultName !== undefined) {
-  /** @type {Record<string, () => void>} */ (faults)[faultName]?.();
+  const fault = Object.entries(faults).find(([name]) => name === faultName)?.[1];
+  fault?.();
 }
 syncBuiltinESMExports();

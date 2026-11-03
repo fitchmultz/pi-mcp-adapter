@@ -11,7 +11,18 @@ const configPath = process.env.MCP_CHILD_CONFIG;
 const projectDir = process.env.MCP_CHILD_PROJECT_DIR;
 const adapterPath = process.env.MCP_CHILD_ADAPTER_PATH;
 const probePath = process.env.MCP_CHILD_PROBE_PATH;
-if (!agentDir || !configPath || !projectDir || !adapterPath || !probePath) {
+if (
+  agentDir === undefined ||
+  agentDir === "" ||
+  configPath === undefined ||
+  configPath === "" ||
+  projectDir === undefined ||
+  projectDir === "" ||
+  adapterPath === undefined ||
+  adapterPath === "" ||
+  probePath === undefined ||
+  probePath === ""
+) {
   throw new Error("Missing direct-tool child harness environment");
 }
 
@@ -43,6 +54,6 @@ try {
   await session.reload();
   await session.extensionRunner.emit({ type: "agent_start" });
 } finally {
-  await session.extensionRunner.emit({ type: "session_shutdown", reason: "test" as "quit" });
+  await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
   session.dispose();
 }

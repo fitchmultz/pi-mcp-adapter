@@ -36,6 +36,7 @@ npm run lint:packaging-tests
 npm run lint:quality
 npm run lint:ui-host-tests
 npm run lint:panel-tests
+npm run lint:residual-tests
 npm run typecheck
 npm run typecheck:all
 npm test
@@ -45,6 +46,8 @@ npm run test:conformance
 For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$PWD" --host official --target latest --output /tmp/pi-mcp-adapter-official`, then qualify the packed latest maintained fork with `--host fork --target /path/to/fork-package`. Plain `npm ci` checks only the locked development snapshot, not latest qualification. Preserve the separate extras checks in `.github/workflows/ci.yml`.
 
 Strict lint is enforced for `conformance/`, the prompt tests and their shared fixtures, `__tests__/runtime/`, `__tests__/auth/`, `__tests__/discovery/`, `__tests__/state/`, `__tests__/output/`, `__tests__/packaging/`, `__tests__/ui-host/`, `__tests__/panel/`, and the pinning test fixture. The discovery scope also includes the root search-ranking suite. Repository-wide strict lint remains a migration target.
+
+`lint:residual-tests` checks the remaining small root tests, their executed stdio and filesystem-fault fixtures, the standalone bridge probe, and the extracted credential-store test programs. Root compiler membership includes the checked CommonJS fixtures and bridge loader. The two credential suites copy one file-backed keyring program into their isolated directories. The Android binding remains a test double, not hardware qualification. QX-025 retains the original standalone-bundle callback assertions, and QX-026 preserves native coercion in the raw echo fixture. Other repository-wide migration work remains separate.
 
 `lint:consumer-tooling` enforces the production profile for the selected-host resolver and packed-consumer loader, their result schemas and the checked CLI observer. The loader validates external JSON and checks the real SDK, gateway activation, reload and CLI registration against the selected host graph.
 

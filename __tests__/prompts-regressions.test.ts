@@ -1,8 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
+import { McpServerManager } from "../server-manager.ts";
 import { createPromptCommand, formatPromptResult, resolveCachedPrompts } from "../prompts.ts";
 import { showPrompts } from "../commands.ts";
 import { computeServerHash, saveMetadataCache } from "../metadata-cache.ts";
@@ -10,7 +13,15 @@ import { updateMetadataCache } from "../init.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { PromptMetadata } from "../types.ts";
 
-const definition = { command: "demo" };
+const definition = {
+  command: process.execPath,
+  args: [fileURLToPath(new URL("./fixtures/prompts-server.mjs", import.meta.url))],
+  env: { MCP_TEST_PROMPTS_LIST_FAILURE: "1" },
+};
+const toolsOnlyDefinition = {
+  command: process.execPath,
+  args: [fileURLToPath(new URL("./fixtures/tools-only-server.mjs", import.meta.url))],
+};
 const metadata: PromptMetadata = {
   serverName: "demo",
   originalName: "brief",
@@ -19,30 +30,40 @@ const metadata: PromptMetadata = {
   arguments: [],
 };
 
-function context(notify = vi.fn()): ExtensionCommandContext {
-  return { hasUI: true, ui: { notify }, signal: undefined } as unknown as ExtensionCommandContext;
+async function connectedState(failedDiscovery: boolean): Promise<McpExtensionState> {
+  const manager = new McpServerManager();
+  managers.push(manager);
+  const server = failedDiscovery ? definition : toolsOnlyDefinition;
+  await manager.connect("demo", server);
+  return createTestState({
+    manager,
+    config: { mcpServers: { demo: server } },
+    metadataCacheEnabled: true,
+    promptMetadata: new Map([["demo", []]]),
+    promptMetadataLive: new Set(["demo"]),
+  });
 }
 
-function state(overrides: Record<string, unknown> = {}): McpExtensionState {
-  return {
-    config: { mcpServers: { demo: definition } },
-    manager: {
-      getConnection: vi.fn(() => ({ status: "connected", tools: [], resources: [], prompts: [] })),
-      getAllConnections: vi.fn(() => new Map()),
-      getPrompt: vi.fn(),
-    },
-    toolMetadata: new Map(),
-    promptMetadata: new Map([["demo", [metadata]]]),
-    promptMetadataLive: new Set<string>(),
-    serverInstructions: new Map(),
-    failureTracker: new Map(),
-    failureMessages: new Map(),
-    ...overrides,
-  } as unknown as McpExtensionState;
-}
+const managers: McpServerManager[] = [];
 
 describe("MCP prompt regressions", () => {
   let agentDir: string;
+  let host: Awaited<ReturnType<typeof createTestExtensionContext>>;
+  beforeAll(async () => {
+    host = await createTestExtensionContext();
+  });
+  afterAll(async () => {
+    await host.dispose();
+  });
+
+  function commandHost() {
+    const ui = { ...host.commandContext.ui };
+    const notify = vi.spyOn(ui, "notify");
+    const sendUserMessage = vi.spyOn(host.api, "sendUserMessage").mockImplementation(() => {
+      // This command regression must not start an agent turn.
+    });
+    return { context: { ...host.commandContext, hasUI: true, ui }, notify, sendUserMessage };
+  }
   const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
 
   beforeEach(() => {
@@ -50,7 +71,9 @@ describe("MCP prompt regressions", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(managers.splice(0).map((manager) => manager.closeAll()));
+    vi.restoreAllMocks();
     if (oldAgentDir === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {
@@ -101,26 +124,18 @@ describe("MCP prompt regressions", () => {
   });
 
   it("fails closed when live discovery removes a cached prompt", async () => {
-    const notify = vi.fn();
-    const manager = {
-      getConnection: vi.fn(() => ({ status: "connected", tools: [], resources: [], prompts: [] })),
-      getPrompt: vi.fn(),
-    };
-    const current = state({
-      manager,
-      promptMetadata: new Map([["demo", []]]),
-      promptMetadataLive: new Set(["demo"]),
-    });
-    const pi = { sendUserMessage: vi.fn() } as unknown as ExtensionAPI;
+    const current = await connectedState(false);
+    const getPrompt = vi.spyOn(current.manager, "getPrompt");
+    const { context, notify, sendUserMessage } = commandHost();
 
-    await createPromptCommand(pi, () => current, metadata).handler("", context(notify));
+    await createPromptCommand(host.api, () => current, metadata).handler("", context);
 
-    expect(manager.getPrompt).not.toHaveBeenCalled();
-    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    expect(getPrompt).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("no longer advertised"), "error");
   });
 
-  it("retains same-config cached prompts after an advertised prompts/list failure", () => {
+  it("retains same-config cached prompts after an advertised prompts/list failure", async () => {
     const configHash = computeServerHash(definition);
     saveMetadataCache({
       version: 1,
@@ -134,35 +149,26 @@ describe("MCP prompt regressions", () => {
         },
       },
     });
-    const connection = {
-      status: "connected",
-      tools: [],
-      resources: [],
-      prompts: [],
-      promptDiscoveryFailed: true,
-    };
-    const current = state({ manager: { getConnection: vi.fn(() => connection) } });
+    const current = await connectedState(true);
+    expect(current.manager.getConnection("demo")?.promptDiscoveryFailed).toBe(true);
 
     updateMetadataCache(current, "demo");
 
-    expect(
-      JSON.parse(readFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"), "utf8"))
-        .servers.demo.prompts,
-    ).toEqual([{ name: "brief", description: "cached" }]);
+    const cache: unknown = JSON.parse(
+      readFileSync(join(agentDir, "fitch-mcp-adapter", "mcp-cache.json"), "utf8"),
+    );
+    const expectedDemo: unknown = expect.objectContaining({
+      prompts: [{ name: "brief", description: "cached" }],
+    });
+    const expectedServers: unknown = expect.objectContaining({ demo: expectedDemo });
+    expect(cache).toEqual(expect.objectContaining({ servers: expectedServers }));
   });
 
   it("surfaces prompt discovery failures in /mcp prompts", async () => {
-    const notify = vi.fn();
-    const current = state({
-      manager: {
-        getConnection: vi.fn(),
-        getAllConnections: vi.fn(
-          () => new Map([["demo", { status: "connected", promptDiscoveryFailed: true }]]),
-        ),
-      },
-    });
+    const current = await connectedState(true);
+    const { context, notify } = commandHost();
 
-    await showPrompts(current, context(notify));
+    await showPrompts(current, context);
 
     expect(notify).toHaveBeenCalledWith(
       expect.stringContaining("Prompt discovery failed for: demo"),
