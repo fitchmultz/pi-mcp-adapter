@@ -5,10 +5,12 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import type { McpAdapterHost } from "./host-contract.ts";
+import type * as Commands from "./commands.ts";
 import { createOwnedUi, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { writeProjectServerDisabledOverride } from "./config.ts";
 
 type Command = {
+  commands: typeof Commands;
   state: McpExtensionState;
   ctx: ExtensionContext;
   original: ExtensionCommandContext;
@@ -85,7 +87,9 @@ export class McpHostCommands {
       return;
     }
     const parts = args.trim().split(/\s+/);
+    const commands = await import("./commands.ts");
     const command: Command = {
+      commands,
       state,
       ctx,
       original,
@@ -93,7 +97,6 @@ export class McpHostCommands {
       target: parts[1],
       rest: parts.slice(1).join(" "),
     };
-    const commands = await import("./commands.ts");
     switch (parts[0] ?? "") {
       case "reconnect":
         owner?.throwIfInactive();
@@ -124,7 +127,7 @@ export class McpHostCommands {
     }
   }
 
-  private async setup({ state, ctx, owner, original }: Command): Promise<void> {
+  private async setup({ commands, state, ctx, owner, original }: Command): Promise<void> {
     owner?.throwIfInactive();
     if (this.host.programmaticConfig) {
       ctx.ui.notify(
@@ -133,8 +136,7 @@ export class McpHostCommands {
       );
       return;
     }
-    const { openMcpSetup } = await import("./commands.ts");
-    const result = await openMcpSetup({
+    const result = await commands.openMcpSetup({
       state,
       pi: this.pi,
       ctx,
@@ -147,7 +149,7 @@ export class McpHostCommands {
     }
   }
 
-  private async logout({ state, ctx, owner, rest }: Command): Promise<void> {
+  private async logout({ commands, state, ctx, owner, rest }: Command): Promise<void> {
     if (rest.length === 0) {
       if (ctx.hasUI) {
         ctx.ui.notify("Usage: /mcp logout <server>", "error");
@@ -155,8 +157,7 @@ export class McpHostCommands {
       return;
     }
     owner?.throwIfInactive();
-    const { logoutServer } = await import("./commands.ts");
-    await logoutServer(rest, state, ctx);
+    await commands.logoutServer(rest, state, ctx);
   }
 
   private setDisabled({ state, ctx, owner, rest }: Command, disabled: boolean): void {
@@ -196,10 +197,9 @@ export class McpHostCommands {
     ctx.ui.notify(message, "info");
   }
 
-  private async status({ state, ctx, owner, original }: Command): Promise<void> {
-    const { showStatus, openMcpPanel } = await import("./commands.ts");
+  private async status({ commands, state, ctx, owner, original }: Command): Promise<void> {
     if (!ctx.hasUI) {
-      await showStatus(state, ctx);
+      await commands.showStatus(state, ctx);
       return;
     }
     owner?.throwIfInactive();
@@ -208,10 +208,10 @@ export class McpHostCommands {
         "MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.",
         "info",
       );
-      await showStatus(state, ctx);
+      await commands.showStatus(state, ctx);
       return;
     }
-    const result = await openMcpPanel({
+    const result = await commands.openMcpPanel({
       state,
       pi: this.pi,
       ctx,
