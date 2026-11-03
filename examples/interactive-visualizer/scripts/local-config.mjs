@@ -24,9 +24,9 @@ export const configPath = path.join(getAgentDir(), "fitch-mcp-adapter", "mcp.jso
 export const serverName = "interactive-visualizer";
 
 // These commands own one entry, not validation of unrelated server definitions.
-// Object schemas emit declared keys before the user's other keys, so the document
-// passes through a schema without declared keys and the server map is validated at
-// its own path, then spread back into its original position.
+// Object schemas return a copy that omits an own "__proto__" key, so the commands
+// rewrite the parsed objects themselves. The schemas report a malformed document or
+// server map at its path.
 const jsonObjectSchema = z.looseObject({});
 const serversFieldSchema = z.object({ mcpServers: z.record(z.string(), z.unknown()).nullish() });
 const installedEntrySchema = z.looseObject({
@@ -39,14 +39,26 @@ export function isInstalledExample(entry) {
   return installedEntrySchema.safeParse(entry).success;
 }
 
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isJsonObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** @returns {Promise<{ [key: string]: unknown; mcpServers?: Record<string, unknown> | null | undefined } | undefined>} */
 export async function loadConfig() {
   try {
     const raw = await readFile(configPath, "utf-8");
     /** @type {unknown} */
     const parsed = JSON.parse(raw);
-    const config = jsonObjectSchema.parse(parsed);
-    return { ...config, ...serversFieldSchema.parse(config) };
+    const config = isJsonObject(parsed) ? parsed : jsonObjectSchema.parse(parsed);
+    const { mcpServers } = config;
+    return {
+      ...config,
+      mcpServers:
+        mcpServers === undefined || mcpServers === null || isJsonObject(mcpServers)
+          ? mcpServers
+          : serversFieldSchema.parse(config).mcpServers,
+    };
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return;

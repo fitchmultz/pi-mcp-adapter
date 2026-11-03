@@ -62,12 +62,17 @@ function printHelp(log = console.log) {
 
 // Init edits only imports and the discovery setting. Keep other config values
 // intact; full server validation belongs to the runtime config loader. Object
-// schemas emit declared keys before the user's other keys, so user objects pass
-// through schemas without declared keys and settings is validated at its own path.
+// schemas return a copy that omits an own "__proto__" key, so init rewrites the
+// parsed objects themselves. The schemas report a malformed document or settings
+// container at its path.
 const jsonObjectSchema = z.looseObject({});
 const settingsFieldSchema = z.object({ settings: jsonObjectSchema.nullish() });
-const serversSchema = z.record(z.string(), z.unknown());
 const importsSchema = z.array(z.unknown());
+
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isJsonObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 /**
  * @typedef {{
@@ -88,10 +93,14 @@ function loadPiConfig() {
   const parsed = JSON.parse(
     stripJsonComments(fs.readFileSync(PI_CONFIG_PATH, "utf-8"), { trailingCommas: true }),
   );
-  const raw = jsonObjectSchema.parse(parsed);
-  const { settings } = settingsFieldSchema.parse(raw);
-  const servers = serversSchema.safeParse(raw.mcpServers ?? raw["mcp-servers"] ?? {});
-  if (!servers.success) {
+  const raw = isJsonObject(parsed) ? parsed : jsonObjectSchema.parse(parsed);
+  const { settings: rawSettings } = raw;
+  const settings =
+    rawSettings === undefined || rawSettings === null || isJsonObject(rawSettings)
+      ? rawSettings
+      : settingsFieldSchema.parse(raw).settings;
+  const servers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
+  if (!isJsonObject(servers)) {
     throw new Error(
       `Invalid MCP config at ${PI_CONFIG_PATH}: expected "mcpServers" to be an object`,
     );
@@ -104,7 +113,7 @@ function loadPiConfig() {
   // Assigned last: an added settings key follows the existing keys and imports.
   return {
     ...normalized,
-    mcpServers: servers.data,
+    mcpServers: servers,
     imports: imports.success
       ? imports.data.filter((value) => typeof value === "string")
       : undefined,

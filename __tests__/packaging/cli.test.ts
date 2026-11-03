@@ -181,34 +181,20 @@ describe("cli init helper", () => {
     expect(logs.join("\n")).toContain("Opting in to host-specific fallback discovery");
   });
 
-  it("keeps the existing Pi config property order when it adds imports and discovery", async () => {
-    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-order-home-"));
-    const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-order-project-"));
-    process.env.HOME = home;
-    process.chdir(project);
-    writeJson(join(home, ".cursor", "mcp.json"), { mcpServers: {} });
-    const piConfigPath = join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json");
-    writeJson(piConfigPath, {
-      imports: ["vscode"],
-      settings: { toolPrefix: "short", hostConfigDiscovery: "off" },
-      custom: 1,
-      mcpServers: { existing: { command: "existing" } },
-    });
-
-    const logs: string[] = [];
-    const errors: string[] = [];
-    const main = await loadMain();
-    const exitCode = await main(
-      ["init", "--discover-host-configs"],
-      (line) => logs.push(line),
-      (line) => errors.push(line),
-    );
-
-    expect(exitCode).toBe(0);
-    expect(errors).toEqual([]);
-    expect(logs).toContain(`Updated ${piConfigPath}`);
-    expect(readFileSync(piConfigPath, "utf-8")).toBe(
-      [
+  it.each([
+    {
+      preserved: "property order",
+      document: `${JSON.stringify(
+        {
+          imports: ["vscode"],
+          settings: { toolPrefix: "short", hostConfigDiscovery: "off" },
+          custom: 1,
+          mcpServers: { existing: { command: "existing" } },
+        },
+        null,
+        2,
+      )}\n`,
+      expected: [
         "{",
         '  "imports": [',
         '    "vscode",',
@@ -226,9 +212,91 @@ describe("cli init helper", () => {
         "  }",
         "}",
         "",
-      ].join("\n"),
-    );
-  });
+      ],
+    },
+    {
+      preserved: "own __proto__ keys, nested settings and unrelated servers",
+      document:
+        '{"__proto__":{"mcpServers":{"fromProto":{"command":"proto"}}},"imports":["vscode"],' +
+        '"settings":{"__proto__":{"hostConfigDiscovery":"on"},"nested":{"__proto__":{"keep":true}}},' +
+        '"mcpServers":{"__proto__":{"command":"proto-server"},' +
+        '"other":{"command":"retained","args":["space arg"],"__proto__":{"env":{"A":"1"}}},' +
+        '"opaque":[null,3]}}',
+      expected: [
+        "{",
+        '  "__proto__": {',
+        '    "mcpServers": {',
+        '      "fromProto": {',
+        '        "command": "proto"',
+        "      }",
+        "    }",
+        "  },",
+        '  "imports": [',
+        '    "vscode",',
+        '    "cursor"',
+        "  ],",
+        '  "settings": {',
+        '    "__proto__": {',
+        '      "hostConfigDiscovery": "on"',
+        "    },",
+        '    "nested": {',
+        '      "__proto__": {',
+        '        "keep": true',
+        "      }",
+        "    },",
+        '    "hostConfigDiscovery": "on"',
+        "  },",
+        '  "mcpServers": {',
+        '    "__proto__": {',
+        '      "command": "proto-server"',
+        "    },",
+        '    "other": {',
+        '      "command": "retained",',
+        '      "args": [',
+        '        "space arg"',
+        "      ],",
+        '      "__proto__": {',
+        '        "env": {',
+        '          "A": "1"',
+        "        }",
+        "      }",
+        "    },",
+        '    "opaque": [',
+        "      null,",
+        "      3",
+        "    ]",
+        "  }",
+        "}",
+        "",
+      ],
+    },
+  ])(
+    "keeps the existing Pi config $preserved when it adds imports and discovery",
+    async ({ document, expected }) => {
+      const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-order-home-"));
+      const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-order-project-"));
+      process.env.HOME = home;
+      process.chdir(project);
+      writeJson(join(home, ".cursor", "mcp.json"), { mcpServers: {} });
+      const piConfigPath = join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json");
+      mkdirSync(dirname(piConfigPath), { recursive: true });
+      writeFileSync(piConfigPath, document, "utf-8");
+
+      const logs: string[] = [];
+      const errors: string[] = [];
+      const main = await loadMain();
+      const exitCode = await main(
+        ["init", "--discover-host-configs"],
+        (line) => logs.push(line),
+        (line) => errors.push(line),
+      );
+
+      expect(exitCode).toBe(0);
+      expect(errors).toEqual([]);
+      expect(logs).toContain(`Updated ${piConfigPath}`);
+      expect(readFileSync(piConfigPath, "utf-8")).toBe(expected.join("\n"));
+    },
+  );
 
   it.each([
     {

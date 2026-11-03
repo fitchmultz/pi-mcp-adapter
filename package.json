@@ -61,7 +61,7 @@
     "lint:discovery-tests": "oxlint --deny-warnings __tests__/discovery __tests__/fixtures/pinned-tools.ts __tests__/search-ranking.test.ts",
     "lint:state-tests": "oxlint --deny-warnings __tests__/state",
     "lint:output-tests": "oxlint --deny-warnings __tests__/output",
-    "lint:packaging-tests": "oxlint --deny-warnings __tests__/packaging",
+    "lint:packaging-tests": "oxlint --deny-warnings __tests__/packaging __tests__/interactive-visualizer-install.test.ts __tests__/fixtures/interactive-visualizer-disappearing-config.mjs",
     "lint:quality": "oxlint --deny-warnings scripts/check-directives.mjs scripts/check-policy.mjs scripts/quality-exceptions.mjs __tests__/quality",
     "lint:build-tooling": "oxlint --deny-warnings scripts/build.mjs scripts/build-app-bridge.mjs scripts/prepare.mjs scripts/tsc.mjs scripts/typecheck-all.mjs scripts/check-consumer-types.mjs cli.js cli.d.ts vitest.config.ts examples/interactive-visualizer/scripts/install-local.mjs examples/interactive-visualizer/scripts/uninstall-local.mjs examples/interactive-visualizer/scripts/local-config.mjs",
     "lint:ui-host-tests": "oxlint --deny-warnings __tests__/ui-host",
