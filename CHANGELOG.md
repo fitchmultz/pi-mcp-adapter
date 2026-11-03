@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
-- Enforce strict lint on packaging tests (#133) ([4653875](https://github.com/fitchmultz/pi-mcp-adapter/commit/465387568e3ec5c7e2eb3efd33a6f8ad4aa3c67e))
+- Enforce strict checks for Node OAuth suites (#176) ([b6cd92d](https://github.com/fitchmultz/pi-mcp-adapter/commit/b6cd92d380ff1c4be01b212cb5d30ad516b1e1fd))
 
 ### What's Changed
 
