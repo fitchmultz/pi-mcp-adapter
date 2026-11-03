@@ -3,10 +3,7 @@
     "id": "QX-001",
     "file": "mcp-trace.ts",
     "rule": "eslint/no-param-reassign",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "wrapTransportWithMcpTrace"
-    },
+    "scope": { "type": "FunctionDeclaration", "name": "wrapTransportWithMcpTrace" },
     "path": ["body", "body", 3, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "transport.send",
@@ -16,10 +13,7 @@
     "id": "QX-007",
     "file": "__tests__/fixtures/oauth-cross-app-stdio.ts",
     "rule": "typescript/no-deprecated",
-    "scope": {
-      "type": "FunctionExpression",
-      "name": "reportClientCapabilities"
-    },
+    "scope": { "type": "FunctionExpression", "name": "reportClientCapabilities" },
     "path": ["body", "body", 0],
     "nodeType": "VariableDeclaration",
     "operation": "const capabilities = server.server.getClientCapabilities();",
@@ -29,10 +23,7 @@
     "id": "QX-007",
     "file": "__tests__/runtime/fixtures/elicitation-server.mjs",
     "rule": "typescript/no-deprecated",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "reportClientCapabilities"
-    },
+    "scope": { "type": "FunctionDeclaration", "name": "reportClientCapabilities" },
     "path": ["body", "body", 0],
     "nodeType": "VariableDeclaration",
     "operation": "const capabilities = server.getClientCapabilities();",
@@ -42,11 +33,7 @@
     "id": "QX-009",
     "file": "mcp-trace.ts",
     "rule": "typescript/only-throw-error",
-    "scope": {
-      "type": "MethodDefinition",
-      "class": "McpTraceWriter",
-      "name": "flush"
-    },
+    "scope": { "type": "MethodDefinition", "class": "McpTraceWriter", "name": "flush" },
     "path": ["value", "body", "body", 2, "consequent", "body", 0],
     "nodeType": "ThrowStatement",
     "operation": "throw this.persistenceError;",
@@ -56,10 +43,7 @@
     "id": "QX-010",
     "file": "__tests__/sdk-v2-http.test.ts",
     "rule": "unicorn/prefer-add-event-listener",
-    "scope": {
-      "type": "FunctionExpression",
-      "name": "observesLateSseError"
-    },
+    "scope": { "type": "FunctionExpression", "name": "observesLateSseError" },
     "path": ["body", "body", 5, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "connection.client.onerror",
@@ -69,10 +53,7 @@
     "id": "QX-011",
     "file": "__tests__/sdk-v2-http.test.ts",
     "rule": "typescript/no-unsafe-type-assertion",
-    "scope": {
-      "type": "FunctionExpression",
-      "name": "rejectsInvalidProtocolOptions"
-    },
+    "scope": { "type": "FunctionExpression", "name": "rejectsInvalidProtocolOptions" },
     "path": [
       "body",
       "body",
@@ -95,10 +76,7 @@
     "id": "QX-012",
     "file": "__tests__/index-lifecycle.test.ts",
     "rule": "eslint/no-param-reassign",
-    "scope": {
-      "type": "FunctionExpression",
-      "name": "transformsSuppliedConfig"
-    },
+    "scope": { "type": "FunctionExpression", "name": "transformsSuppliedConfig" },
     "path": ["body", "body", 2, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "config.mcpServers.docs.env.ORIGINAL",
@@ -108,10 +86,7 @@
     "id": "QX-010",
     "file": "__tests__/runtime/callback-http-lifetime.test.ts",
     "rule": "unicorn/prefer-add-event-listener",
-    "scope": {
-      "type": "FunctionExpression",
-      "name": "retainsCancelledCallbackTail"
-    },
+    "scope": { "type": "FunctionExpression", "name": "retainsCancelledCallbackTail" },
     "path": ["body", "body", 13, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "transport.onmessage",
@@ -121,10 +96,7 @@
     "id": "QX-016",
     "file": "__tests__/runtime/callback-http-lifetime.test.ts",
     "rule": "typescript/unbound-method",
-    "scope": {
-      "type": "VariableDeclarator",
-      "name": "originalTokens"
-    },
+    "scope": { "type": "VariableDeclarator", "name": "originalTokens" },
     "path": ["init"],
     "nodeType": "MemberExpression",
     "operation": "McpOAuthProvider.prototype.tokens",
@@ -134,10 +106,7 @@
     "id": "QX-016",
     "file": "__tests__/runtime/callback-http-lifetime.test.ts",
     "rule": "typescript/unbound-method",
-    "scope": {
-      "type": "VariableDeclarator",
-      "name": "originalSaveTokens"
-    },
+    "scope": { "type": "VariableDeclarator", "name": "originalSaveTokens" },
     "path": ["init"],
     "nodeType": "MemberExpression",
     "operation": "McpOAuthProvider.prototype.saveTokens",
@@ -147,10 +116,7 @@
     "id": "QX-016",
     "file": "__tests__/runtime/callback-http-lifetime.test.ts",
     "rule": "typescript/unbound-method",
-    "scope": {
-      "type": "VariableDeclarator",
-      "name": "originalJson"
-    },
+    "scope": { "type": "VariableDeclarator", "name": "originalJson" },
     "path": ["init"],
     "nodeType": "MemberExpression",
     "operation": "Response.prototype.json",
@@ -160,10 +126,7 @@
     "id": "QX-018",
     "file": "keyring-store.ts",
     "rule": "typescript/no-unsafe-type-assertion",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "loadKeyringEntryClass"
-    },
+    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringEntryClass" },
     "path": ["body", "body", 0, "block", "body", 0],
     "nodeType": "ReturnStatement",
     "operation": "return (require(\"@napi-rs/keyring\") as KeyringModule).Entry;",
@@ -173,10 +136,7 @@
     "id": "QX-013",
     "file": "keyring-store.ts",
     "rule": "eslint/preserve-caught-error",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "loadKeyringEntryClass"
-    },
+    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringEntryClass" },
     "path": ["body", "body", 0, "handler", "body", "body", 0, "handler", "body", "body", 0],
     "nodeType": "ThrowStatement",
     "operation": "throw new Error(\n        `Failed to load @napi-rs/keyring; absolute-path native binding fallback also failed: ${formatErrorMessage(fallbackError)}`,\n        {\n          cause: loaderError,\n        },\n      );",
@@ -186,23 +146,44 @@
     "id": "QX-018",
     "file": "keyring-store.ts",
     "rule": "typescript/no-unsafe-type-assertion",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "loadKeyringNativeBindingFallback"
-    },
+    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringNativeBindingFallback" },
     "path": ["body", "body", 3, "body", "body", 0, "block", "body", 1],
     "nodeType": "ReturnStatement",
     "operation": "return require(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;",
     "guards": []
   },
   {
+    "id": "QX-018",
+    "file": "mcp-keyring-helper.cjs",
+    "rule": "typescript/no-unsafe-type-assertion",
+    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringEntryClass" },
+    "path": [
+      "body",
+      "body",
+      0,
+      "handler",
+      "body",
+      "body",
+      2,
+      "body",
+      "body",
+      0,
+      "block",
+      "body",
+      1,
+      "argument",
+      "object",
+      "expression"
+    ],
+    "nodeType": "CallExpression",
+    "operation": "requireFromHere(path.join(path.dirname(packageJsonPath), `keyring.${suffix}.node`))",
+    "guards": []
+  },
+  {
     "id": "QX-020",
     "file": "mcp-auth.ts",
     "rule": "eslint/no-param-reassign",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "saveAuthEntry"
-    },
+    "scope": { "type": "FunctionDeclaration", "name": "saveAuthEntry" },
     "path": ["body", "body", 0, "consequent", "body", 0, "expression", "left"],
     "nodeType": "MemberExpression",
     "operation": "entry.serverUrl",
@@ -212,23 +193,27 @@
     "id": "QX-021",
     "file": "auth-record-types.ts",
     "rule": "typescript/no-unsafe-type-assertion",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "createAuthRecordSchemas"
-    },
+    "scope": { "type": "FunctionDeclaration", "name": "createAuthRecordSchemas" },
     "path": ["body", "body", 0],
     "nodeType": "VariableDeclaration",
     "operation": "const { z } = require(\"zod\") as typeof Zod;",
     "guards": []
   },
   {
+    "id": "QX-022",
+    "file": "tool-names.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "ExportNamedDeclaration", "name": "isToolAllowed" },
+    "path": [],
+    "nodeType": "ExportNamedDeclaration",
+    "operation": "export function isToolAllowed(\n  toolName: string,\n  serverName: string,\n  prefix: ToolPrefix,\n  includeTools?: unknown,\n  excludeTools?: unknown,\n): boolean {\n  return (\n    isToolIncluded(toolName, serverName, prefix, includeTools) &&\n    !isToolExcluded(toolName, serverName, prefix, excludeTools)\n  );\n}",
+    "guards": []
+  },
+  {
     "id": "QX-3004",
     "file": "host-tools.ts",
     "rule": "eslint/max-params",
-    "scope": {
-      "type": "FunctionExpression",
-      "name": "executeMcpSearch"
-    },
+    "scope": { "type": "FunctionExpression", "name": "executeMcpSearch" },
     "path": [],
     "nodeType": "FunctionExpression",
     "operation": "async function executeMcpSearch(toolCallId, params, signal, _onUpdate, ctx) {\n        if (beforeExecute) {\n          if (host.owner) {\n            await host.owner.runCallback(\"beforeExecute\", () => beforeExecute(toolCallId, ctx));\n          } else {\n            await beforeExecute(toolCallId, ctx);\n          }\n        }\n        return searchAndLoad(params, signal);\n      }",
@@ -238,10 +223,7 @@
     "id": "QX-3004",
     "file": "host-tools.ts",
     "rule": "eslint/max-params",
-    "scope": {
-      "type": "FunctionExpression",
-      "name": "executeMcpScript"
-    },
+    "scope": { "type": "FunctionExpression", "name": "executeMcpScript" },
     "path": [],
     "nodeType": "FunctionExpression",
     "operation": "async function executeMcpScript(toolCallId, params, signal, _onUpdate, ctx) {\n        const ready = await getToolState(signal);\n        if (\"content\" in ready) {\n          return ready;\n        }\n        const { runMcpScript } = await import(\"./mcp-code.ts\");\n        return runMcpScript(\n          ready,\n          params.code,\n          params.timeoutMs ?? options.defaultScriptTimeoutMs,\n          getPiTools,\n          signal,\n          toolCallId,\n          beforeExecute\n            ? (callSignal, operation) =>\n                beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)\n            : undefined,\n        );\n      }",
@@ -251,10 +233,7 @@
     "id": "QX-3004",
     "file": "host-tools.ts",
     "rule": "eslint/max-params",
-    "scope": {
-      "type": "FunctionExpression",
-      "name": "executeMcpGateway"
-    },
+    "scope": { "type": "FunctionExpression", "name": "executeMcpGateway" },
     "path": [],
     "nodeType": "FunctionExpression",
     "operation": "async function executeMcpGateway(toolCallId, rawParams, signal, _onUpdate, ctx) {\n        return executeGateway(pi, host, options, [toolCallId, rawParams, signal, _onUpdate, ctx]);\n      }",
@@ -264,10 +243,7 @@
     "id": "QX-3003",
     "file": "init-status.ts",
     "rule": "typescript/no-unnecessary-condition",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "updateStatusBar"
-    },
+    "scope": { "type": "FunctionDeclaration", "name": "updateStatusBar" },
     "path": ["body", "body", 13],
     "nodeType": "IfStatement",
     "operation": "if (ui.theme === undefined) {\n    ui.setStatus(\"mcp\", formattedStatus);\n    return;\n  }",
