@@ -23,6 +23,8 @@ import {
   type ToolPrefix,
 } from "./types.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
+import { isCacheEntry, projectMetadataCache, readCacheEnvelope } from "./metadata-cache-format.ts";
+import { asObjectRecord } from "./mcp-output-values.ts";
 import {
   interpolateEnvRecord,
   resolveBearerToken,
@@ -42,7 +44,7 @@ function cacheRevision(path: string): string {
 }
 
 function freezeMetadata<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     for (const child of Object.values(value)) {
       freezeMetadata(child);
     }
@@ -73,17 +75,8 @@ export function loadMetadataCache(enabled = true): MetadataCache | null {
     if (snapshot?.path === cachePath && snapshot.revision === revision) {
       return snapshot.cache;
     }
-    const raw = JSON.parse(readFileSync(cachePath, "utf-8"));
-    const cache =
-      raw &&
-      typeof raw === "object" &&
-      !Array.isArray(raw) &&
-      (raw.version === 1 || raw.version === CACHE_VERSION) &&
-      raw.servers &&
-      typeof raw.servers === "object" &&
-      !Array.isArray(raw.servers)
-        ? freezeMetadata(raw as MetadataCache)
-        : null;
+    const raw: unknown = JSON.parse(readFileSync(cachePath, "utf-8"));
+    const cache = freezeMetadata(projectMetadataCache(raw));
     // A concurrent rename must not associate the old bytes with the new file's revision.
     snapshot =
       cacheRevision(cachePath) === revision ? { path: cachePath, revision, cache } : undefined;
@@ -106,32 +99,17 @@ export function saveMetadataCache(
   const dir = dirname(cachePath);
   mkdirSync(dir, { recursive: true });
 
-  const merged: MetadataCache = { version: CACHE_VERSION, servers: {} };
-  try {
-    if (existsSync(cachePath)) {
-      const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as MetadataCache;
-      if (
-        existing &&
-        (existing.version === 1 || existing.version === CACHE_VERSION) &&
-        existing.servers
-      ) {
-        merged.servers = { ...existing.servers };
-      }
-    }
-  } catch {
-    // Ignore parse errors and proceed with empty cache
-  }
-
-  merged.version = CACHE_VERSION;
-  merged.servers = { ...merged.servers, ...cache.servers };
+  const merged = {
+    version: CACHE_VERSION,
+    servers: { ...readExistingServers(cachePath), ...cache.servers },
+  };
   const protectedServers = new Set([...selectedServers, ...Object.keys(cache.servers)]);
   const now = Date.now();
   for (const [name, entry] of Object.entries(merged.servers)) {
-    if (
-      !protectedServers.has(name) &&
-      isCacheEntry(entry) &&
-      (entry.cachedAt > now || now - entry.cachedAt > CACHE_MAX_AGE_MS)
-    ) {
+    if (protectedServers.has(name) || !isCacheEntry(entry)) {
+      continue;
+    }
+    if (entry.cachedAt > now || now - entry.cachedAt > CACHE_MAX_AGE_MS) {
       delete merged.servers[name];
     }
   }
@@ -187,21 +165,16 @@ export function isServerCacheValid(
   return true;
 }
 
-function isCacheEntry(entry: unknown): entry is ServerCacheEntry {
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-    return false;
+function readExistingServers(path: string): Record<string, unknown> {
+  try {
+    if (existsSync(path)) {
+      const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
+      return readCacheEnvelope(raw)?.servers ?? {};
+    }
+  } catch {
+    // Malformed cache envelopes do not prevent a fresh cache write.
   }
-  const value = entry as Partial<ServerCacheEntry>;
-  return (
-    typeof value.configHash === "string" &&
-    typeof value.cachedAt === "number" &&
-    Number.isFinite(value.cachedAt) &&
-    value.cachedAt > 0 &&
-    Array.isArray(value.tools) &&
-    Array.isArray(value.resources) &&
-    (value.prompts === undefined || Array.isArray(value.prompts)) &&
-    (value.instructions === undefined || typeof value.instructions === "string")
-  );
+  return {};
 }
 
 export function parseDirectToolSelectors(selectors: string[]): {
@@ -214,15 +187,15 @@ export function parseDirectToolSelectors(selectors: string[]): {
   for (let selector of selectors) {
     selector = selector.replace(/\/+$/, "");
     if (selector.includes("/")) {
-      const [server, tool] = selector.split("/", 2);
-      if (server && tool) {
+      const [server = "", tool = ""] = selector.split("/", 2);
+      if (server !== "" && tool !== "") {
         const serverTools = tools.get(server) ?? new Set<string>();
         serverTools.add(tool);
         tools.set(server, serverTools);
-      } else if (server) {
+      } else if (server !== "") {
         servers.add(server);
       }
-    } else if (selector) {
+    } else if (selector !== "") {
       servers.add(selector);
     }
   }
@@ -243,23 +216,33 @@ export function getMissingConfiguredDirectToolServers(
     if (isServerDisabled(definition)) {
       continue;
     }
-    const hasDirectTools = envSelection
-      ? envSelection.servers.has(serverName) || envSelection.tools.has(serverName)
-      : definition.directTools !== undefined
-        ? Boolean(definition.directTools)
-        : Boolean(globalDirect);
+    const hasDirectTools = selectedDirectTools(
+      serverName,
+      definition.directTools ?? globalDirect,
+      envSelection,
+    );
 
     if (!hasDirectTools) {
       continue;
     }
 
-    const serverCache = cache?.servers?.[serverName];
+    const serverCache = cache?.servers[serverName];
     if (!serverCache || !isServerCacheValid(serverCache, definition)) {
       missing.push(serverName);
     }
   }
 
   return missing;
+}
+
+function selectedDirectTools(
+  serverName: string,
+  configured: ServerEntry["directTools"],
+  selection: ReturnType<typeof parseDirectToolSelectors> | null,
+): boolean {
+  return selection
+    ? selection.servers.has(serverName) || selection.tools.has(serverName)
+    : Boolean(configured);
 }
 
 export function reconstructToolMetadata(
@@ -285,8 +268,8 @@ export function reconstructToolMetadata(
     return previous.metadata;
   }
   const metadata = buildToolMetadata(
-    (entry.tools ?? []).filter((tool) => tool?.name).map(restoreCachedTool),
-    entry.resources ?? [],
+    entry.tools.filter((tool) => tool.name !== "").map(restoreCachedTool),
+    entry.resources,
     definition,
     serverName,
     prefix,
@@ -318,34 +301,43 @@ function restoreCachedTool(tool: CachedTool): McpTool {
 }
 
 export function serializeTools(tools: McpTool[]): CachedTool[] {
-  return tools.filter((tool) => tool?.name);
+  return tools.filter((tool) => tool.name !== "");
 }
 
 export function serializeResources(resources: McpResource[]): CachedResource[] {
-  return resources.filter((resource) => resource?.name && resource?.uri);
+  return resources.filter((resource) => resource.name !== "" && resource.uri !== "");
 }
 
 export function serializePrompts(prompts: McpPrompt[]): CachedPrompt[] {
-  return (prompts ?? [])
-    .filter((prompt) => prompt?.name)
-    .map((prompt) => ({
+  const result: CachedPrompt[] = [];
+  for (const prompt of prompts) {
+    if (prompt.name === "") {
+      continue;
+    }
+    result.push({
       name: prompt.name,
       ...(prompt.title !== undefined ? { title: prompt.title } : {}),
       ...(prompt.description !== undefined ? { description: prompt.description } : {}),
       ...(Array.isArray(prompt.arguments)
-        ? {
-            arguments: prompt.arguments
-              .filter((argument) => argument?.name)
-              .map((argument) => ({
-                name: argument.name,
-                ...(argument.description !== undefined
-                  ? { description: argument.description }
-                  : {}),
-                ...(argument.required !== undefined ? { required: argument.required } : {}),
-              })),
-          }
+        ? { arguments: copyPromptArguments(prompt.arguments) }
         : {}),
-    }));
+    });
+  }
+  return result;
+}
+
+function copyPromptArguments(args: McpPromptArgument[]): NonNullable<CachedPrompt["arguments"]> {
+  const result: NonNullable<CachedPrompt["arguments"]> = [];
+  for (const argument of args) {
+    if (argument.name !== "") {
+      result.push({
+        name: argument.name,
+        ...(argument.description !== undefined ? { description: argument.description } : {}),
+        ...(argument.required !== undefined ? { required: argument.required } : {}),
+      });
+    }
+  }
+  return result;
 }
 
 export function reconstructPromptMetadata(
@@ -355,38 +347,33 @@ export function reconstructPromptMetadata(
   definition?: Pick<ServerEntry, "toolPrefix">,
 ): PromptMetadata[] {
   const effectivePrefix = resolveToolPrefix(definition, prefix);
-  return (prompts ?? [])
-    .filter((prompt) => prompt?.name)
-    .map((prompt) => {
-      const args: McpPromptArgument[] = Array.isArray(prompt.arguments)
-        ? prompt.arguments
-            .filter((argument) => argument?.name)
-            .map((argument) => ({
-              name: argument.name,
-              ...(argument.description !== undefined ? { description: argument.description } : {}),
-              ...(argument.required !== undefined ? { required: argument.required } : {}),
-            }))
-        : [];
-      return {
-        serverName,
-        originalName: prompt.name,
-        commandName: formatPromptCommandName(prompt.name, serverName, effectivePrefix),
-        ...(prompt.title !== undefined ? { title: prompt.title } : {}),
-        description: prompt.description ?? "",
-        arguments: args,
-      };
+  const result: PromptMetadata[] = [];
+  for (const prompt of prompts) {
+    if (prompt.name === "") {
+      continue;
+    }
+    result.push({
+      serverName,
+      originalName: prompt.name,
+      commandName: formatPromptCommandName(prompt.name, serverName, effectivePrefix),
+      ...(prompt.title !== undefined ? { title: prompt.title } : {}),
+      description: prompt.description ?? "",
+      arguments: Array.isArray(prompt.arguments) ? copyPromptArguments(prompt.arguments) : [],
     });
+  }
+  return result;
 }
 
 function stableStringify(value: unknown): string {
-  if (value === null || value === undefined || typeof value !== "object") {
-    const serialized = JSON.stringify(value);
-    return serialized === undefined ? "undefined" : serialized;
+  if (value === null || typeof value !== "object") {
+    const serialized: unknown = JSON.stringify(value);
+    return typeof serialized === "string" ? serialized : "undefined";
   }
   if (Array.isArray(value)) {
     return `[${value.map((v) => stableStringify(v)).join(",")}]`;
   }
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
+  const entries = Object.entries(asObjectRecord(value) ?? {}).sort(([left], [right]) =>
+    left < right ? -1 : Number(left > right),
+  );
+  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`).join(",")}}`;
 }
