@@ -424,7 +424,7 @@
     "guards": ["consequent: abortCleanup"]
   },
   {
-    "id": "QX-3004",
+    "id": "QX-025",
     "file": "host-tools.ts",
     "rule": "eslint/max-params",
     "scope": { "type": "FunctionExpression", "name": "executeMcpSearch" },
@@ -434,7 +434,7 @@
     "guards": []
   },
   {
-    "id": "QX-3004",
+    "id": "QX-025",
     "file": "host-tools.ts",
     "rule": "eslint/max-params",
     "scope": { "type": "FunctionExpression", "name": "executeMcpScript" },
@@ -444,7 +444,7 @@
     "guards": []
   },
   {
-    "id": "QX-3004",
+    "id": "QX-025",
     "file": "host-tools.ts",
     "rule": "eslint/max-params",
     "scope": { "type": "FunctionExpression", "name": "executeMcpGateway" },

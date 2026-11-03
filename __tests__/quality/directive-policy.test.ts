@@ -34,7 +34,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-3003: Missing host theme\n## QX-3004: Native execute callback\n## QX-030: Standalone bridge callback contracts\n## QX-031: Native raw echo coercion\n## QX-7001: JSON Schema conditional keyword\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-3003: Missing host theme\n## QX-030: Standalone bridge callback contracts\n## QX-031: Native raw echo coercion\n## QX-7001: JSON Schema conditional keyword\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -875,7 +875,7 @@ const themeSource = [
   "",
 ].join("\n");
 const executeDirective =
-  "// oxlint-disable-next-line eslint/max-params -- QX-3004: preserve Pi's five native callback positions.";
+  "// oxlint-disable-next-line eslint/max-params -- QX-025: preserve Pi's five native callback positions.";
 const executeOperation = [
   "async function nativeExecute(toolCallId, params, signal, _onUpdate, ctx) {",
   'return { content: [{ type: "text", text: `${toolCallId}:${params.text}:${ctx.cwd}:${signal?.aborted === true}` }], details: {} };',
@@ -914,7 +914,7 @@ const hostCases = [
     replacement: executeOperation.replace("nativeExecute", "localExecute"),
     authorized: {
       ...site,
-      id: "QX-3004",
+      id: "QX-025",
       rule: "eslint/max-params",
       scope: { type: "FunctionExpression", name: "nativeExecute" },
       nodeType: "FunctionExpression",

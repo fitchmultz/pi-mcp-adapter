@@ -165,7 +165,7 @@ export class McpHostTools {
     const searchAndLoad = (params: SearchParams, signal?: AbortSignal) =>
       this.searchAndLoad(params, signal);
     const execute: HostToolExecute<SearchParams> =
-      // oxlint-disable-next-line eslint/max-params -- QX-3004: preserve Pi's native five-position execute callback.
+      // oxlint-disable-next-line eslint/max-params -- QX-025: preserve Pi's native five-position execute callback.
       async function executeMcpSearch(toolCallId, params, signal, _onUpdate, ctx) {
         if (beforeExecute) {
           if (host.owner) {
@@ -222,7 +222,7 @@ export class McpHostTools {
     const getToolState = (signal?: AbortSignal) => this.host.getToolState(signal);
     const getPiTools = () => this.pi.getAllTools();
     const execute: HostToolExecute<{ code: string; timeoutMs?: number }> =
-      // oxlint-disable-next-line eslint/max-params -- QX-3004: preserve Pi's native five-position execute callback.
+      // oxlint-disable-next-line eslint/max-params -- QX-025: preserve Pi's native five-position execute callback.
       async function executeMcpScript(toolCallId, params, signal, _onUpdate, ctx) {
         const ready = await getToolState(signal);
         if ("content" in ready) {
@@ -275,7 +275,7 @@ export class McpHostTools {
     const beforeExecute = this.options.beforeExecute;
     const { pi, host, options } = this;
     const execute: HostToolExecute<Record<string, unknown>> =
-      // oxlint-disable-next-line eslint/max-params -- QX-3004: preserve Pi's native five-position execute callback.
+      // oxlint-disable-next-line eslint/max-params -- QX-025: preserve Pi's native five-position execute callback.
       async function executeMcpGateway(toolCallId, rawParams, signal, _onUpdate, ctx) {
         return executeGateway(pi, host, options, [toolCallId, rawParams, signal, _onUpdate, ctx]);
       };
