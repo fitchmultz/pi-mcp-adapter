@@ -183,6 +183,7 @@ describe("MCP execution redesign", () => {
       content: [],
       structuredContent: {
         "a/b": { "~key": Array.from({ length: 4 }, (_, id) => ({ id, extra: "omit" })) },
+        arrayRows: [["not an object"]],
       },
     };
     const { state, directory } = await fixture(raw);
@@ -218,6 +219,14 @@ describe("MCP execution redesign", () => {
       { outputDirectory: directory },
     );
     expect(unknown.details.error).toBe("result_read_failed");
+    const arrayRows = await output.readMcpResult(
+      { ...input, path: "/structuredContent/arrayRows", fields: ["0"] },
+      { outputDirectory: directory },
+    );
+    expect(arrayRows.details).toMatchObject({
+      error: "result_read_failed",
+      message: "fields requires an object or array of objects",
+    });
     const unrelated = join(directory, "other.txt");
     await writeFile(unrelated, "private host file");
     expect(
