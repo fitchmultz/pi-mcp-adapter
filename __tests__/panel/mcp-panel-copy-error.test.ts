@@ -35,11 +35,11 @@ describe("mcp-panel failure copy", () => {
         },
       },
     };
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
       cache,
-      new Map(),
-      {
+      provenance: new Map(),
+      callbacks: {
         reconnect: async () => true,
         canAuthenticate: () => false,
         authenticate: async () => ({ ok: false }),
@@ -48,9 +48,9 @@ describe("mcp-panel failure copy", () => {
           "connection failed\n\x1b]8;;https://secret.invalid\x07details\x1b]8;;\x07",
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\x19");
     await flush();
@@ -65,11 +65,11 @@ describe("mcp-panel failure copy", () => {
   it("does nothing when the selected server has no failure reason", async () => {
     const { createMcpPanel } = await import("../../mcp-panel.ts");
     const config = { mcpServers: { demo: { command: "node" } } };
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      null,
-      new Map(),
-      {
+      cache: null,
+      provenance: new Map(),
+      callbacks: {
         reconnect: async () => true,
         canAuthenticate: () => false,
         authenticate: async () => ({ ok: false }),
@@ -77,9 +77,9 @@ describe("mcp-panel failure copy", () => {
         getFailureMessage: () => null,
         refreshCacheAfterReconnect: () => null,
       },
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\x19");
     await flush();

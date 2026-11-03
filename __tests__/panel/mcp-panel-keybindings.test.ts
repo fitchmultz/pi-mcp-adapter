@@ -112,15 +112,15 @@ describe("panel-keys", () => {
 describe("mcp-panel custom keybindings", () => {
   it("navigates with ctrl+n/ctrl+p when bound to tui.select.down/up", async () => {
     const callbacks = createAuthCallbacks();
-    const panel = createMcpPanel(
-      createTwoServerConfig(),
-      null,
-      new Map(),
+    const panel = createMcpPanel({
+      config: createTwoServerConfig(),
+      cache: null,
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-      { authOnly: true, keybindings: createEmacsKeybindings() },
-    );
+      tui: { requestRender: noop },
+      done: noop,
+      options: { authOnly: true, keybindings: createEmacsKeybindings() },
+    });
 
     panel.handleInput(CTRL_N);
     panel.handleInput(ENTER);
@@ -136,15 +136,15 @@ describe("mcp-panel custom keybindings", () => {
 
   it("keeps arrow keys working alongside custom bindings", async () => {
     const callbacks = createAuthCallbacks();
-    const panel = createMcpPanel(
-      createTwoServerConfig(),
-      null,
-      new Map(),
+    const panel = createMcpPanel({
+      config: createTwoServerConfig(),
+      cache: null,
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-      { authOnly: true, keybindings: createEmacsKeybindings() },
-    );
+      tui: { requestRender: noop },
+      done: noop,
+      options: { authOnly: true, keybindings: createEmacsKeybindings() },
+    });
 
     panel.handleInput(DOWN);
     panel.handleInput(ENTER);
@@ -155,15 +155,15 @@ describe("mcp-panel custom keybindings", () => {
 
   it("treats ctrl+p/ctrl+n as unbound without a keybindings manager", async () => {
     const callbacks = createAuthCallbacks();
-    const panel = createMcpPanel(
-      createTwoServerConfig(),
-      null,
-      new Map(),
+    const panel = createMcpPanel({
+      config: createTwoServerConfig(),
+      cache: null,
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-      { authOnly: true },
-    );
+      tui: { requestRender: noop },
+      done: noop,
+      options: { authOnly: true },
+    });
 
     panel.handleInput(CTRL_N);
     panel.handleInput(ENTER);
@@ -177,17 +177,17 @@ describe("mcp-panel custom keybindings", () => {
 describe("mcp-setup-panel custom keybindings", () => {
   it("navigates actions with ctrl+n and confirms with enter", async () => {
     const callbacks = createSetupCallbacks();
-    const panel = createMcpSetupPanel(
-      createEmptyDiscovery(),
+    const panel = createMcpSetupPanel({
+      discovery: createEmptyDiscovery(),
       callbacks,
-      {
+      options: {
         mode: "setup",
         onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
         keybindings: createEmacsKeybindings(),
       },
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     // Actions for this discovery: view-example, scaffold-project, show-precedence, close.
     panel.handleInput(CTRL_N);
@@ -199,16 +199,16 @@ describe("mcp-setup-panel custom keybindings", () => {
   });
 
   it("keeps setup previews usable at mobile width", () => {
-    const panel = createMcpSetupPanel(
-      createEmptyDiscovery(),
-      createSetupCallbacks(),
-      {
+    const panel = createMcpSetupPanel({
+      discovery: createEmptyDiscovery(),
+      callbacks: createSetupCallbacks(),
+      options: {
         mode: "setup",
         onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
       },
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     // Actions for this discovery: view-example, scaffold-project, show-precedence, known presets, close.
     panel.handleInput(DOWN);
@@ -229,16 +229,16 @@ describe("mcp-setup-panel custom keybindings", () => {
     callbacks.previewKnownServer = () => {
       throw new Error("Cannot read MCP config at /tmp/project/.mcp.json");
     };
-    const panel = createMcpSetupPanel(
-      createEmptyDiscovery(),
+    const panel = createMcpSetupPanel({
+      discovery: createEmptyDiscovery(),
       callbacks,
-      {
+      options: {
         mode: "setup",
         onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
       },
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     for (let i = 0; i < 3; i++) {
       panel.handleInput(DOWN);
@@ -251,16 +251,16 @@ describe("mcp-setup-panel custom keybindings", () => {
   });
 
   it("shows the actual config precedence including .agents paths", () => {
-    const panel = createMcpSetupPanel(
-      createEmptyDiscovery(),
-      createSetupCallbacks(),
-      {
+    const panel = createMcpSetupPanel({
+      discovery: createEmptyDiscovery(),
+      callbacks: createSetupCallbacks(),
+      options: {
         mode: "setup",
         onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
       },
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     // Actions for this discovery: view-example, scaffold-project, show-precedence, close.
     panel.handleInput(DOWN);

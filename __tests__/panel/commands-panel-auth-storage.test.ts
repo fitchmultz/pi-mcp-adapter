@@ -36,7 +36,7 @@ function createState() {
 
 const panels = [
   ["/mcp", openMcpPanel],
-  ["/mcp-auth", (state, _pi, context) => openMcpAuthPanel(state, context)],
+  ["/mcp-auth", ({ state, ctx }) => openMcpAuthPanel(state, ctx)],
 ] satisfies [string, typeof openMcpPanel][];
 
 describe("MCP panels with unreadable OAuth credentials", () => {
@@ -51,7 +51,7 @@ describe("MCP panels with unreadable OAuth credentials", () => {
       };
       const host = await createPanelHost();
       hosts.push(host);
-      const opening = openPanel(state, host.api, { ...host.context, cwd: "/tmp" });
+      const opening = openPanel({ state, pi: host.api, ctx: { ...host.context, cwd: "/tmp" } });
       await expect.poll(host.component).toBeDefined();
       const rendered = stripAnsi(requireValue(host.component()).render(100).join("\n"));
       host.input("\x03");
@@ -85,7 +85,11 @@ describe("MCP panels with unreadable OAuth credentials", () => {
       writeFileSync(filePath, bytes);
       const host = await createPanelHost();
       hosts.push(host);
-      const opening = openPanel(createState(), host.api, { ...host.context, cwd: "/tmp" });
+      const opening = openPanel({
+        state: createState(),
+        pi: host.api,
+        ctx: { ...host.context, cwd: "/tmp" },
+      });
       await expect.poll(host.component).toBeDefined();
       const rendered = stripAnsi(requireValue(host.component()).render(100).join("\n"));
       host.input("\x03");

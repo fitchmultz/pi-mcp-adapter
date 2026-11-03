@@ -13,9 +13,9 @@ import type {
 } from "./types.ts";
 import type { UiResourceHandler } from "./ui-resource-handler.ts";
 import type { UiServerHandle } from "./ui-server-contracts.ts";
-import type { McpStatusEventBus } from "./mcp-status-events.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
+import type { McpStatusEventBus } from "./mcp-status-events.ts";
 
 export interface CompletedUiSession {
   serverName: string;

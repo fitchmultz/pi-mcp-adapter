@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { noop } from "./helpers.ts";
 import { createMcpPanel } from "../../mcp-panel.ts";
-import { computeServerHash, type MetadataCache } from "../../metadata-cache.ts";
+import {
+  computeServerHash,
+  getMetadataCachePath,
+  loadMetadataCache,
+  type MetadataCache,
+} from "../../metadata-cache.ts";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult } from "../../types.ts";
 
 function stripAnsi(input: string): string {
@@ -37,14 +45,14 @@ function createFailedPanel(
     getConnectionStatus: () => connectionStatus,
     getFailureMessage: () => failureMessage,
   };
-  const panel = createMcpPanel(
+  const panel = createMcpPanel({
     config,
-    createCache(config),
-    new Map(),
+    cache: createCache(config),
+    provenance: new Map(),
     callbacks,
-    { requestRender: noop },
-    noop,
-  );
+    tui: { requestRender: noop },
+    done: noop,
+  });
   const output = stripAnsi(panel.render(width).join("\n"));
   panel.dispose();
   return output;
@@ -76,16 +84,42 @@ function createCache(config: McpConfig): MetadataCache {
 }
 
 describe("mcp-panel rendering", () => {
+  it("leaves a null server entry from the disk cache undiscovered", () => {
+    const directory = mkdtempSync(join(tmpdir(), "pi-mcp-panel-null-cache-"));
+    vi.stubEnv("PI_CODING_AGENT_DIR", directory);
+    try {
+      const path = getMetadataCachePath();
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, JSON.stringify({ version: 2, servers: { atlassian: null } }));
+      const panel = createMcpPanel({
+        config: createConfig(),
+        cache: loadMetadataCache(),
+        provenance: new Map(),
+        callbacks: createCallbacks(),
+        tui: { requestRender: noop },
+        done: noop,
+      });
+      try {
+        expect(stripAnsi(panel.render(100).join("\n"))).toContain("atlassian  (undiscovered)");
+      } finally {
+        panel.dispose();
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("renders MCP metadata as single-line display text", () => {
     const config = createConfig();
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map(),
-      createCallbacks(),
-      { requestRender: noop },
-      noop,
-    );
+      cache: createCache(config),
+      provenance: new Map(),
+      callbacks: createCallbacks(),
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\r");
 
@@ -110,14 +144,16 @@ describe("mcp-panel rendering", () => {
     ["tool space", ["\r", "\x1b[B", " "]],
   ])("explains imported tool selections after %s", (_label, keys) => {
     const config = createConfig();
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map([["atlassian", { path: "/pi/mcp.json", kind: "import", importKind: "cursor" }]]),
-      createCallbacks(),
-      { requestRender: noop },
-      noop,
-    );
+      cache: createCache(config),
+      provenance: new Map([
+        ["atlassian", { path: "/pi/mcp.json", kind: "import", importKind: "cursor" }],
+      ]),
+      callbacks: createCallbacks(),
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     for (const key of keys) {
       panel.handleInput(key);
@@ -129,15 +165,17 @@ describe("mcp-panel rendering", () => {
 
   it("sanitizes OSC sequences in notice lines before styling", () => {
     const config = createConfig();
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map(),
-      createCallbacks(),
-      { requestRender: noop },
-      noop,
-      { noticeLines: ["Open \x1b]8;;https://example.invalid/notice\x07docs\x1b]8;;\x07 now"] },
-    );
+      cache: createCache(config),
+      provenance: new Map(),
+      callbacks: createCallbacks(),
+      tui: { requestRender: noop },
+      done: noop,
+      options: {
+        noticeLines: ["Open \x1b]8;;https://example.invalid/notice\x07docs\x1b]8;;\x07 now"],
+      },
+    });
 
     const output = stripAnsi(panel.render(120).join("\n"));
 
@@ -149,15 +187,15 @@ describe("mcp-panel rendering", () => {
 
   it("strips an unterminated OSC payload from notices", () => {
     const config = createConfig();
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map(),
-      createCallbacks(),
-      { requestRender: noop },
-      noop,
-      { noticeLines: ["Open \x1b]8;;https://secret.invalid/truncated"] },
-    );
+      cache: createCache(config),
+      provenance: new Map(),
+      callbacks: createCallbacks(),
+      tui: { requestRender: noop },
+      done: noop,
+      options: { noticeLines: ["Open \x1b]8;;https://secret.invalid/truncated"] },
+    });
 
     const output = stripAnsi(panel.render(120).join("\n"));
 
@@ -186,14 +224,14 @@ describe("mcp-panel rendering", () => {
   it("keeps dirty changes and closes when Keep & Close is confirmed", () => {
     const config = createConfig();
     const done = vi.fn<(result: McpPanelResult) => void>();
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map(),
-      createCallbacks(),
-      { requestRender: noop },
+      cache: createCache(config),
+      provenance: new Map(),
+      callbacks: createCallbacks(),
+      tui: { requestRender: noop },
       done,
-    );
+    });
 
     panel.handleInput("\r");
     panel.handleInput("\x1b[B");

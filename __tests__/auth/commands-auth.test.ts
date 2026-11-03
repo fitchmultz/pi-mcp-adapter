@@ -64,11 +64,11 @@ describe("authenticateServer", () => {
     const definition = { url: "${MCP_AUTH_URL}", auth: "oauth" as const };
     const controller = new AbortController();
     const callback: unknown = expect.any(Function);
-    const result = await authenticateServer(
-      "sentry",
-      { mcpServers: { sentry: definition } },
-      { ...host.context, signal: controller.signal },
-    );
+    const result = await authenticateServer({
+      serverName: "sentry",
+      config: { mcpServers: { sentry: definition } },
+      ctx: { ...host.context, signal: controller.signal },
+    });
 
     expect(result.ok).toBe(true);
     expect(mocks.authenticate).toHaveBeenCalledWith(
@@ -82,11 +82,11 @@ describe("authenticateServer", () => {
   it("fails OAuth authentication before requests when URL variables are missing", async () => {
     delete process.env.MCP_AUTH_URL;
     const { ui } = host.context;
-    const result = await authenticateServer(
-      "sentry",
-      { mcpServers: { sentry: { url: "https://${MCP_AUTH_URL}/mcp", auth: "oauth" } } },
-      host.context,
-    );
+    const result = await authenticateServer({
+      serverName: "sentry",
+      config: { mcpServers: { sentry: { url: "https://${MCP_AUTH_URL}/mcp", auth: "oauth" } } },
+      ctx: host.context,
+    });
 
     expect(result.ok).toBe(false);
     expect(result.message).toBe("Missing environment variable in MCP server URL: MCP_AUTH_URL");
@@ -137,11 +137,11 @@ describe("authenticateServer", () => {
       await options?.onAuthorizationUrl?.(authorizationUrl);
       return "authenticated";
     });
-    const result = await authenticateServer(
-      "sentry",
-      { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
-      host.context,
-    );
+    const result = await authenticateServer({
+      serverName: "sentry",
+      config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
+      ctx: host.context,
+    });
 
     expect(result.ok).toBe(true);
     expect(mocks.authenticate).toHaveBeenCalledWith(

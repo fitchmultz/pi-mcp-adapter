@@ -66,6 +66,7 @@
     "lint:quality": "oxlint --deny-warnings scripts/check-directives.mjs scripts/check-policy.mjs scripts/quality-exceptions.mjs __tests__/quality",
     "lint:ui-host-tests": "oxlint --deny-warnings __tests__/ui-host",
     "lint:panel-tests": "oxlint --deny-warnings __tests__/panel",
+    "lint:panel-runtime": "oxlint --deny-warnings commands.ts mcp-*-commands.ts mcp-panel*.ts mcp-setup-*.ts mcp-status*.ts __tests__/mcp-status.test.ts __tests__/panel __tests__/auth/commands-auth.test.ts __tests__/index-lifecycle.test.ts __tests__/fixtures/panel-host.ts __tests__/fixtures/panel-native-lifecycle.ts __tests__/fixtures/extension-lifecycle.ts __tests__/test-state.ts __tests__/test-extension-context.ts",
     "lint:agent": "oxlint --deny-warnings --format=agent .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",

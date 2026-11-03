@@ -134,7 +134,13 @@ export class McpHostCommands {
       return;
     }
     const { openMcpSetup } = await import("./commands.ts");
-    const result = await openMcpSetup(state, this.pi, ctx, this.host.configPath, "setup");
+    const result = await openMcpSetup({
+      state,
+      pi: this.pi,
+      ctx,
+      configOverridePath: this.host.configPath,
+      mode: "setup",
+    });
     if (result.configChanged) {
       owner?.throwIfInactive();
       await original.reload();
@@ -205,9 +211,15 @@ export class McpHostCommands {
       await showStatus(state, ctx);
       return;
     }
-    const result = await openMcpPanel(state, this.pi, ctx, this.host.configPath, (changes) => {
-      this.host.applyDirectToolConfigChanges(changes);
-      this.host.syncToolSurface();
+    const result = await openMcpPanel({
+      state,
+      pi: this.pi,
+      ctx,
+      configOverridePath: this.host.configPath,
+      onDirectToolsConfigChanged: (changes) => {
+        this.host.applyDirectToolConfigChanges(changes);
+        this.host.syncToolSurface();
+      },
     });
     if (result.configChanged) {
       owner?.throwIfInactive();
@@ -238,13 +250,13 @@ export class McpHostCommands {
       await openMcpAuthPanel(state, ctx, this.host.configPath);
       return;
     }
-    const result = await authenticateServer(
+    const result = await authenticateServer({
       serverName,
-      state.config,
+      config: state.config,
       ctx,
-      ctx.signal,
-      state.oauthRuntime,
-    );
+      signal: ctx.signal,
+      runtime: state.oauthRuntime,
+    });
     if (result.ok) {
       owner?.throwIfInactive();
       await reconnectServer(state, ctx, serverName, true);

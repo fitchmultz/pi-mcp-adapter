@@ -39,6 +39,7 @@ npm run lint:packaging-tests
 npm run lint:quality
 npm run lint:ui-host-tests
 npm run lint:panel-tests
+npm run lint:panel-runtime
 npm run typecheck
 npm run typecheck:all
 npm test
@@ -55,7 +56,7 @@ The same command enforces the production profile for `scripts/release-candidate.
 
 The command also checks the native-contract launcher under the production profile and `scripts/native-compat/` under the test profile. That directory contains only native SDK and CLI contract assertions and their HTTP, provider and extension fixtures. Its checked consumer uses ordinary ESM imports of the selected package and host. The scenarios retain nested-call redaction, cancellation without replay, tree and reload selection, saved-output paging, pinning and tool restrictions. The launcher resolves symlinked entrypoints before dispatch and rejects failed consumer assertions.
 
-`lint:host-runtime` checks the complete adapter factory, host runtime, command and tool registration, gateway dispatch, initialization, metadata, status, state cleanup, lifecycle and runtime ownership modules. It also checks their canonical UI-handle and status-event contracts, the root host and activation tests, the runtime directory, the native lifecycle/context fixtures and the affected directive-policy tests. QX-3003 preserves the JavaScript-host missing-theme fallback. QX-3004 covers only the three native five-position Pi execute callbacks, whose signatures derive from the installed SDK. The legacy `ui-server.ts` and `mcp-status.ts` implementations retain separate migration ownership; extracting their type declarations does not qualify those whole implementations.
+`lint:host-runtime` checks the complete adapter factory, host runtime, command and tool registration, gateway dispatch, initialization, metadata, status, state cleanup, lifecycle and runtime ownership modules. It also checks their canonical UI-handle and status-event contracts, the root host and activation tests, the runtime directory, the native lifecycle/context fixtures and the affected directive-policy tests. QX-3003 preserves the JavaScript-host missing-theme fallback. QX-3004 covers only the three native five-position Pi execute callbacks, whose signatures derive from the installed SDK. The legacy `ui-server.ts` implementation retains separate migration ownership; extracting its handle declaration does not qualify the whole implementation. `lint:panel-runtime` owns `mcp-status.ts`.
 
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
 
@@ -92,6 +93,8 @@ The runtime scope includes the stock-dialog elicitation and real stdio SDK suite
 `lint:oauth-recovery` enforces the test profile for the real HTTP OAuth recovery suite and its native Pi and HTTP fixtures. The suite covers callback validation, scope recovery, cancellation, accepted-operation no-replay, and interactive and headless callers.
 
 `lint:oauth-flows` enforces the test profile for client-credentials, private-key JWT, cross-app authorization and client-metadata document suites, their shared HTTP and wire fixtures, and their standalone stdio and shutdown fixtures. The OAuth configuration suite runs as both executable runtime validation and a dedicated negative type test: the compiler verifies described invalid API arguments, and Vitest verifies their real rejection and redaction. All HTTP, PKCE, refresh, signing, cancellation, storage and source-laziness assertions remain active. Malformed stored client-metadata callbacks enter through raw legacy JSON in an isolated credential directory, not an unsafe typed API call.
+
+`lint:panel-runtime` enforces the production profile for `commands.ts`, `mcp-*-commands.ts`, `mcp-panel*.ts`, `mcp-setup-*.ts`, and `mcp-status*.ts`. It also checks the panel, status, command-authentication and index-lifecycle suites and their complete native context, state and host fixtures. The native panel child starts an isolated interactive host with piped terminal I/O; it verifies overlay disposal and factory-rejection ownership. Panel completion keeps the native overlay open until pin persistence and live refresh finish. Internal panel and authentication APIs use options objects. The status-event sink lives in `mcp-status-events.ts`, with its existing type re-export retained in `mcp-status.ts`. The host command callers in `host-commands.ts` and the status import in `state.ts` are checked by `lint:host-runtime`.
 
 The auth, runtime and panel scopes include the command authentication, status, onboarding and credential-storage suites. They use complete native Pi contexts and real panel components. They verify URL notifications, failure diagnostics, pending authorization cancellation and the disk writes that preserve inherited server definitions.
 
