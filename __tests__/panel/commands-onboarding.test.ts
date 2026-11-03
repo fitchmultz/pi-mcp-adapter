@@ -277,6 +277,55 @@ describe("commands onboarding", () => {
     },
   );
 
+  it("keeps the native panel open until live pin refresh finishes", async () => {
+    const home = temporaryDirectory("pi-mcp-refresh-home-");
+    const project = temporaryDirectory("pi-mcp-refresh-project-");
+    vi.stubEnv("HOME", home);
+    const projectConfig = join(project, ".mcp.json");
+    writeJson(projectConfig, { mcpServers: { demo: { command: "node" } } });
+    const { loadMcpConfig } = await import("../../config.ts");
+    const { openMcpPanel } = await import("../../commands.ts");
+    const state = await createState({ config: loadMcpConfig(undefined, project) });
+    const started = Promise.withResolvers<null>();
+    const release = Promise.withResolvers<null>();
+    const events: string[] = [];
+    const nativeCustom = host.context.ui.custom.bind(host.context.ui);
+    function observeCompletion<T>(
+      factory: Parameters<typeof host.context.ui.custom<T>>[0],
+    ): Promise<T> {
+      return nativeCustom<T>((tui, theme, keybindings, done) =>
+        factory(tui, theme, keybindings, (result) => {
+          events.push("closed");
+          done(result);
+        }),
+      );
+    }
+    vi.spyOn(host.context.ui, "custom").mockImplementation(observeCompletion);
+    panelResult = { cancelled: false, changes: new Map([["demo", true]]) };
+    const opening = openMcpPanel(
+      state,
+      host.api,
+      { ...host.context, cwd: project },
+      undefined,
+      async () => {
+        events.push("refresh");
+        started.resolve(null);
+        await release.promise;
+      },
+    );
+    try {
+      await started.promise;
+      expect(readJson(projectConfig)).toEqual({
+        mcpServers: { demo: { command: "node", directTools: true } },
+      });
+      expect(events).toEqual(["refresh"]);
+    } finally {
+      release.resolve(null);
+      await opening;
+    }
+    expect(events).toEqual(["refresh", "closed"]);
+  });
+
   it("clears OAuth credentials, cancels pending auth, and closes the server on logout", async () => {
     vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-commands-logout-"));
     const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");
