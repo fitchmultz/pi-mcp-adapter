@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.20 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Validate and strictly check packed-consumer tooling (#183) ([2b41738](https://github.com/fitchmultz/pi-mcp-adapter/commit/2b41738faa18de2f24c3f1bacbeb9fcb78b78d83))
+
+### What's Changed
+
+- Validate and strictly check packed-consumer tooling by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/183
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.19...v8.0.20
+
 ## 8.0.19 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
