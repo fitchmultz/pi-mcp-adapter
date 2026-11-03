@@ -63,7 +63,9 @@ jobs:
           check-latest: true
           package-manager-cache: false
       - name: Use the reviewed npm version
-        run: npm install --global "$(node -p 'require("./automation/package.json").packageManager')"
+        run: |
+          PM="$(jq -er .packageManager automation/package.json)"
+          npm install --global "$PM"
       - name: Install native TUI prerequisites
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.sources
@@ -93,7 +95,9 @@ jobs:
           git diff --exit-code
       - name: Use the extension npm version
         id: extension-npm
-        run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
+        run: |
+          PM="$(jq -er .packageManager extension/package.json)"
+          npm install --global "$PM"
       - name: Qualify official Pi
         if: ${{ !cancelled() && steps.fork-build.outcome == 'success' && steps.extension-npm.outcome == 'success' }}
         env:
@@ -147,7 +151,9 @@ jobs:
             extension/package-lock.json
             extension/examples/interactive-visualizer/package-lock.json
       - name: Use the extension npm version
-        run: npm install --global "$(node -p 'require("./package.json").packageManager')"
+        run: |
+          PM="$(jq -er .packageManager package.json)"
+          npm install --global "$PM"
       - name: Lockfiles resolve only from the public npm registry
         id: lockfiles
         run: |

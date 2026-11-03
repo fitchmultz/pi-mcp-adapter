@@ -15,6 +15,9 @@ import { createOutcomeResponder } from "./fixtures/scripting-runtime-outcome.ts"
 const outcomeFixture = fileURLToPath(
   new URL("./fixtures/scripting-runtime-outcome.ts", import.meta.url),
 );
+const closingWriteFixture = fileURLToPath(
+  new URL("./fixtures/closing-write-server.ts", import.meta.url),
+);
 
 function assertNoScriptError(output: Awaited<ReturnType<typeof runMcpScript>>): void {
   expect(output.details).not.toHaveProperty("error");
@@ -226,24 +229,7 @@ it.each([false, true])(
     try {
       const definition = {
         command: process.execPath,
-        args: [
-          "--input-type=module",
-          "--eval",
-          `
-        import { createInterface } from "node:readline";
-        import { appendFileSync } from "node:fs";
-        createInterface({ input: process.stdin }).on("line", line => {
-          const request = JSON.parse(line);
-          if (request.id === undefined) return;
-          let result;
-          if (request.method === "initialize") result = { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "close", version: "1" } };
-          else if (request.method === "tools/list") result = { tools: [{ name: "write", inputSchema: { type: "object" }, annotations: { idempotentHint: ${idempotent} } }] };
-          else if (request.method === "tools/call") { appendFileSync(${JSON.stringify(marker)}, "committed\\n"); process.exit(0); }
-          else return;
-          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
-        });
-      `,
-        ],
+        args: [closingWriteFixture, marker, String(idempotent)],
         requestTimeoutMs: 2000,
         retryOnTransportFailure: true,
       };

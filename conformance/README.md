@@ -6,7 +6,7 @@ The driver uses the adapter's own code rather than constructing a bare SDK clien
 
 ```text
 conformance referee
-  -> conformance/driver.sh (isolated token store and callback port)
+  -> conformance/driver.sh (isolated token store; callback-port.ts allocates the callback port)
   -> conformance/driver.ts
   -> McpServerManager
   -> mcp-auth-flow + McpOAuthProvider + localhost callback server

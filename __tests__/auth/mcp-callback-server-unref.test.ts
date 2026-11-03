@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 type ErrorHandler = (error?: NodeJS.ErrnoException) => void;
@@ -109,13 +110,10 @@ describe("mcp-callback-server", () => {
   });
 
   it("allows a process with a live callback listener to exit naturally", () => {
-    const callbackModule = new URL("../../mcp-callback-server.ts", import.meta.url).href;
-    const script = `
-      import { ensureCallbackServer } from ${JSON.stringify(callbackModule)};
-      await ensureCallbackServer({ callbackHost: "127.0.0.1" });
-      console.log("callback-bound");
-    `;
-    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    const child = fileURLToPath(
+      new URL("../fixtures/callback-server-unref-child.ts", import.meta.url),
+    );
+    const result = spawnSync(process.execPath, [child], {
       encoding: "utf8",
       timeout: 5000,
     });
