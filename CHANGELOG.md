@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.11 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+### What's Changed
+
+- Enforce strict lint on native lazy startup tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/160
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.10...v8.0.11
+
 ## 8.0.10 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
