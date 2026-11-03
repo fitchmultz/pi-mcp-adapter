@@ -159,7 +159,7 @@ function discoveryCapabilities(definition?: ServerEntry): ConstructorParameters<
   }
   const oauth = definition?.oauth;
   const crossAppAccess =
-    oauth !== undefined && oauth !== false && oauth.crossAppAccess !== undefined;
+    oauth !== undefined && oauth !== null && oauth !== false && oauth.crossAppAccess !== undefined;
   return {
     capabilities: {
       extensions: {

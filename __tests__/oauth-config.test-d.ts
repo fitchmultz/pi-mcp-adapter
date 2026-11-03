@@ -256,3 +256,13 @@ it("rejects malformed OAuth authorizationParams", () => {
     /authorizationParams\.prompt must be a string/,
   );
 });
+
+it("rejects non-string OAuth fields before interpolation", () => {
+  expect(() =>
+    extractOAuthConfig({
+      url: "https://example.test/mcp",
+      // @ts-expect-error OAuth clientId is a string in the public typed configuration.
+      oauth: { clientId: 42 },
+    }),
+  ).toThrow("OAuth clientId must be a string");
+});
