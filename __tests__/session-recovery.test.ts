@@ -1,17 +1,30 @@
+import assert from "node:assert/strict";
 import { describe, expect, it, vi } from "vitest";
-import { SdkError, SdkHttpError, SdkErrorCode, ProtocolError } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+  SdkError,
+  SdkHttpError,
+  SdkErrorCode,
+  ProtocolError,
+} from "@modelcontextprotocol/client";
 import {
   SessionRecoveryAuthRequiredError,
   isTerminatedSession,
   withSessionRecovery,
 } from "../session-recovery.ts";
-import type { ServerConnection } from "../server-manager.ts";
+import { McpServerManager, type ServerConnection } from "../server-manager.ts";
 import type { McpConfig } from "../types.ts";
 
-function makeConnection(sessionId: string | undefined): ServerConnection {
+type RecoveryCall = (connection: ServerConnection) => Promise<string>;
+
+function makeConnection(sessionId?: string): ServerConnection {
   return {
-    client: {} as ServerConnection["client"],
-    transport: { sessionId } as unknown as ServerConnection["transport"],
+    client: new Client({ name: "recovery-policy", version: "1" }),
+    transport: new StreamableHTTPClientTransport(
+      new URL("https://example.test/mcp"),
+      sessionId === undefined ? {} : { sessionId },
+    ),
     definition: { url: "https://example.test/mcp" },
     tools: [],
     resources: [],
@@ -110,13 +123,13 @@ describe("isTerminatedSession", () => {
 
 describe("withSessionRecovery", () => {
   function makeManager(overrides: {
-    getConnection: () => ServerConnection | undefined;
-    reconnect: (...args: unknown[]) => Promise<ServerConnection>;
+    getConnection: McpServerManager["getConnection"];
+    reconnect: McpServerManager["reconnect"];
   }) {
-    return {
-      getConnection: vi.fn(overrides.getConnection),
-      reconnect: vi.fn(overrides.reconnect),
-    };
+    const manager = new McpServerManager();
+    vi.spyOn(manager, "getConnection").mockImplementation(overrides.getConnection);
+    const reconnect = vi.spyOn(manager, "reconnect").mockImplementation(overrides.reconnect);
+    return { manager, reconnect };
   }
 
   const config: McpConfig = {
@@ -126,12 +139,12 @@ describe("withSessionRecovery", () => {
   it("transparently recovers: fn is retried exactly once against the fresh connection", async () => {
     const stale = makeConnection("session-1");
     const fresh = makeConnection("session-2");
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => stale,
       reconnect: async () => fresh,
     });
 
-    const fn = vi.fn(async (conn: ServerConnection) => {
+    const fn = vi.fn<RecoveryCall>(async (conn) => {
       if (conn === stale) {
         throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
           status: 404,
@@ -140,94 +153,86 @@ describe("withSessionRecovery", () => {
       return "ok";
     });
 
-    const result = await withSessionRecovery({ manager: manager as any, config }, "demo", fn);
+    const result = await withSessionRecovery({ manager, config }, "demo", fn);
 
     expect(result).toBe("ok");
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn).toHaveBeenNthCalledWith(1, stale);
     expect(fn).toHaveBeenNthCalledWith(2, fresh);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale);
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
+    expect(reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale);
+    expect(reconnect).toHaveBeenCalledTimes(1);
   });
 
   it("transparently recovers server-not-initialized MCP errors", async () => {
     const stale = makeConnection("session-1");
     const fresh = makeConnection("session-2");
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => stale,
       reconnect: async () => fresh,
     });
 
-    const fn = vi.fn(async (conn: ServerConnection) => {
+    const fn = vi.fn<RecoveryCall>(async (conn) => {
       if (conn === stale) {
         throw new ProtocolError(-32000, "Server not initialized");
       }
       return "ok";
     });
 
-    const result = await withSessionRecovery({ manager: manager as any, config }, "demo", fn);
+    const result = await withSessionRecovery({ manager, config }, "demo", fn);
 
     expect(result).toBe("ok");
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn).toHaveBeenNthCalledWith(1, stale);
     expect(fn).toHaveBeenNthCalledWith(2, fresh);
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale);
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
+    expect(reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale);
+    expect(reconnect).toHaveBeenCalledTimes(1);
   });
 
   it("does not recover unrelated -32000 MCP errors", async () => {
     const connection = makeConnection("session-1");
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => connection,
       reconnect: async () => connection,
     });
     const err = new ProtocolError(-32000, "Connection closed");
-    const fn = vi.fn().mockRejectedValue(err);
+    const fn = vi.fn<RecoveryCall>().mockRejectedValue(err);
 
-    await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(
-      err,
-    );
+    await expect(withSessionRecovery({ manager, config }, "demo", fn)).rejects.toBe(err);
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).not.toHaveBeenCalled();
+    expect(reconnect).not.toHaveBeenCalled();
   });
 
   it("does not replay SDK2 ConnectionClosed while a sibling is recovering", async () => {
     const stale = makeConnection("session-1");
     const fresh = makeConnection("session-2");
-    let finishReconnect!: (connection: ServerConnection) => void;
-    const manager = makeManager({
+    const replacement = Promise.withResolvers<ServerConnection>();
+    const { manager, reconnect } = makeManager({
       getConnection: () => stale,
-      reconnect: () =>
-        new Promise((resolve) => {
-          finishReconnect = resolve;
-        }),
+      reconnect: () => replacement.promise,
     });
-    let closeSibling!: (error: Error) => void;
+    const siblingFailure = Promise.withResolvers<string>();
     const siblingFn = vi
-      .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise((_resolve, reject) => {
-            closeSibling = reject;
-          }),
-      )
+      .fn<RecoveryCall>()
+      .mockImplementationOnce(() => siblingFailure.promise)
       .mockResolvedValue("unsafe replay");
-    const sibling = withSessionRecovery({ manager: manager as any, config }, "demo", siblingFn);
+    const sibling = withSessionRecovery({ manager, config }, "demo", siblingFn);
     const closed = new SdkError(SdkErrorCode.ConnectionClosed, "Connection closed");
-    const siblingResult = expect(sibling).rejects.toBe(closed);
+    const siblingResult = Promise.allSettled([sibling]);
     const rejectedFn = vi
-      .fn()
+      .fn<RecoveryCall>()
       .mockRejectedValueOnce(
         new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
           status: 404,
         }),
       )
       .mockResolvedValueOnce("recovered");
-    const rejected = withSessionRecovery({ manager: manager as any, config }, "demo", rejectedFn);
-    await vi.waitFor(() => expect(manager.reconnect).toHaveBeenCalledTimes(1));
-    closeSibling(closed);
-    finishReconnect(fresh);
-    await siblingResult;
+    const rejected = withSessionRecovery({ manager, config }, "demo", rejectedFn);
+    await vi.waitFor(() => expect(reconnect).toHaveBeenCalledTimes(1));
+    siblingFailure.reject(closed);
+    replacement.resolve(fresh);
+    const [siblingOutcome] = await siblingResult;
+    assert(siblingOutcome.status === "rejected");
+    expect(siblingOutcome.reason).toBe(closed);
     expect(await rejected).toBe("recovered");
     expect(siblingFn).toHaveBeenCalledTimes(1);
     expect(rejectedFn).toHaveBeenCalledTimes(2);
@@ -235,15 +240,15 @@ describe("withSessionRecovery", () => {
 
   it("lets an auth callback replace a needs-auth reconnect before retrying", async () => {
     const stale = makeConnection("session-1");
-    const needsAuth = { ...makeConnection("session-2"), status: "needs-auth" as const };
+    const needsAuth: ServerConnection = { ...makeConnection("session-2"), status: "needs-auth" };
     const authed = makeConnection("session-3");
-    const manager = makeManager({
+    const { manager } = makeManager({
       getConnection: () => stale,
       reconnect: async () => needsAuth,
     });
-    const onNeedsAuth = vi.fn(async () => authed);
+    const onNeedsAuth = vi.fn<() => Promise<ServerConnection>>(async () => authed);
 
-    const fn = vi.fn(async (conn: ServerConnection) => {
+    const fn = vi.fn<RecoveryCall>(async (conn) => {
       if (conn === stale) {
         throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
           status: 404,
@@ -252,11 +257,7 @@ describe("withSessionRecovery", () => {
       return conn === authed ? "ok" : "wrong-connection";
     });
 
-    const result = await withSessionRecovery(
-      { manager: manager as any, config, onNeedsAuth },
-      "demo",
-      fn,
-    );
+    const result = await withSessionRecovery({ manager, config, onNeedsAuth }, "demo", fn);
 
     expect(result).toBe("ok");
     expect(onNeedsAuth).toHaveBeenCalledWith("demo", undefined);
@@ -265,31 +266,31 @@ describe("withSessionRecovery", () => {
 
   it("reports auth required when reconnect cannot produce a connected session", async () => {
     const stale = makeConnection("session-1");
-    const needsAuth = { ...makeConnection("session-2"), status: "needs-auth" as const };
-    const manager = makeManager({
+    const needsAuth: ServerConnection = { ...makeConnection("session-2"), status: "needs-auth" };
+    const { manager } = makeManager({
       getConnection: () => stale,
       reconnect: async () => needsAuth,
     });
-    const fn = vi.fn(async () => {
+    const fn = vi.fn<RecoveryCall>(async () => {
       throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
         status: 404,
       });
     });
 
-    await expect(
-      withSessionRecovery({ manager: manager as any, config }, "demo", fn),
-    ).rejects.toBeInstanceOf(SessionRecoveryAuthRequiredError);
+    await expect(withSessionRecovery({ manager, config }, "demo", fn)).rejects.toBeInstanceOf(
+      SessionRecoveryAuthRequiredError,
+    );
   });
 
   it("passes the abort signal into reconnect", async () => {
     const stale = makeConnection("session-1");
     const fresh = makeConnection("session-2");
     const signal = new AbortController().signal;
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => stale,
       reconnect: async () => fresh,
     });
-    const fn = vi.fn(async (conn: ServerConnection) => {
+    const fn = vi.fn<RecoveryCall>(async (conn) => {
       if (conn === stale) {
         throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
           status: 404,
@@ -298,22 +299,20 @@ describe("withSessionRecovery", () => {
       return "ok";
     });
 
-    await expect(
-      withSessionRecovery({ manager: manager as any, config, signal }, "demo", fn),
-    ).resolves.toBe("ok");
+    await expect(withSessionRecovery({ manager, config, signal }, "demo", fn)).resolves.toBe("ok");
 
-    expect(manager.reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale, signal);
+    expect(reconnect).toHaveBeenCalledWith("demo", config.mcpServers.demo, stale, signal);
   });
 
   it("does not reconnect after the caller aborts", async () => {
     const stale = makeConnection("session-1");
     const reason = new Error("stop");
     const controller = new AbortController();
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => stale,
       reconnect: async () => makeConnection("session-2"),
     });
-    const fn = vi.fn(async () => {
+    const fn = vi.fn<RecoveryCall>(async () => {
       controller.abort(reason);
       throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
         status: 404,
@@ -321,39 +320,33 @@ describe("withSessionRecovery", () => {
     });
 
     await expect(
-      withSessionRecovery(
-        { manager: manager as any, config, signal: controller.signal },
-        "demo",
-        fn,
-      ),
+      withSessionRecovery({ manager, config, signal: controller.signal }, "demo", fn),
     ).rejects.toBe(reason);
-    expect(manager.reconnect).not.toHaveBeenCalled();
+    expect(reconnect).not.toHaveBeenCalled();
   });
 
   it("retries exactly once: a second server-not-initialized MCP error propagates unchanged", async () => {
     const stale = makeConnection("session-1");
     const fresh = makeConnection("session-2");
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => stale,
       reconnect: async () => fresh,
     });
 
     const err1 = new ProtocolError(-32000, "Server not initialized");
     const err2 = new ProtocolError(-32000, "Server not initialized");
-    const fn = vi.fn().mockRejectedValueOnce(err1).mockRejectedValueOnce(err2);
+    const fn = vi.fn<RecoveryCall>().mockRejectedValueOnce(err1).mockRejectedValueOnce(err2);
 
-    await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(
-      err2,
-    );
+    await expect(withSessionRecovery({ manager, config }, "demo", fn)).rejects.toBe(err2);
 
     expect(fn).toHaveBeenCalledTimes(2);
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
+    expect(reconnect).toHaveBeenCalledTimes(1);
   });
 
   it("retries exactly once: a second 404 propagates unchanged", async () => {
     const stale = makeConnection("session-1");
     const fresh = makeConnection("session-2");
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => stale,
       reconnect: async () => fresh,
     });
@@ -364,99 +357,94 @@ describe("withSessionRecovery", () => {
     const err2 = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
       status: 404,
     });
-    const fn = vi.fn().mockRejectedValueOnce(err1).mockRejectedValueOnce(err2);
+    const fn = vi.fn<RecoveryCall>().mockRejectedValueOnce(err1).mockRejectedValueOnce(err2);
 
-    await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(
-      err2,
-    );
+    await expect(withSessionRecovery({ manager, config }, "demo", fn)).rejects.toBe(err2);
 
     expect(fn).toHaveBeenCalledTimes(2);
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
+    expect(reconnect).toHaveBeenCalledTimes(1);
   });
 
   it("does not recover a resolved tool-result error (isError content is not a thrown error)", async () => {
     const connection = makeConnection("session-1");
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => connection,
       reconnect: async () => connection,
     });
-    const fn = vi.fn(async () => ({ isError: true, content: [] }));
+    const fn = vi.fn<() => Promise<{ isError: boolean; content: unknown[] }>>(async () => ({
+      isError: true,
+      content: [],
+    }));
 
-    const result = await withSessionRecovery({ manager: manager as any, config }, "demo", fn);
+    const result = await withSessionRecovery({ manager, config }, "demo", fn);
 
     expect(result).toEqual({ isError: true, content: [] });
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).not.toHaveBeenCalled();
+    expect(reconnect).not.toHaveBeenCalled();
   });
 
   it("does not recover a 404 without a session id (never initialized / wrong URL)", async () => {
-    const connection = makeConnection(undefined);
-    const manager = makeManager({
+    const connection = makeConnection();
+    const { manager, reconnect } = makeManager({
       getConnection: () => connection,
       reconnect: async () => connection,
     });
     const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Not found", {
       status: 404,
     });
-    const fn = vi.fn().mockRejectedValue(err);
+    const fn = vi.fn<RecoveryCall>().mockRejectedValue(err);
 
-    await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(
-      err,
-    );
+    await expect(withSessionRecovery({ manager, config }, "demo", fn)).rejects.toBe(err);
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).not.toHaveBeenCalled();
+    expect(reconnect).not.toHaveBeenCalled();
   });
 
   it("does not recover an AbortError", async () => {
     const connection = makeConnection("session-1");
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => connection,
       reconnect: async () => connection,
     });
     const err = new DOMException("aborted", "AbortError");
-    const fn = vi.fn().mockRejectedValue(err);
+    const fn = vi.fn<RecoveryCall>().mockRejectedValue(err);
 
-    await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(
-      err,
-    );
+    await expect(withSessionRecovery({ manager, config }, "demo", fn)).rejects.toBe(err);
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).not.toHaveBeenCalled();
+    expect(reconnect).not.toHaveBeenCalled();
   });
 
   it("does not recover a 400 (ambiguous status, never matched)", async () => {
     const connection = makeConnection("session-1");
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => connection,
       reconnect: async () => connection,
     });
     const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Bad request", {
       status: 400,
     });
-    const fn = vi.fn().mockRejectedValue(err);
+    const fn = vi.fn<RecoveryCall>().mockRejectedValue(err);
 
-    await expect(withSessionRecovery({ manager: manager as any, config }, "demo", fn)).rejects.toBe(
-      err,
-    );
+    await expect(withSessionRecovery({ manager, config }, "demo", fn)).rejects.toBe(err);
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).not.toHaveBeenCalled();
+    expect(reconnect).not.toHaveBeenCalled();
   });
 
   it("rethrows the original error when the server was removed from config before reconnecting", async () => {
     const connection = makeConnection("session-1");
-    const manager = makeManager({
+    const { manager, reconnect } = makeManager({
       getConnection: () => connection,
       reconnect: async () => connection,
     });
     const err = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
       status: 404,
     });
-    const fn = vi.fn().mockRejectedValue(err);
+    const fn = vi.fn<RecoveryCall>().mockRejectedValue(err);
     const emptyConfig: McpConfig = { mcpServers: {} };
 
-    await expect(
-      withSessionRecovery({ manager: manager as any, config: emptyConfig }, "demo", fn),
-    ).rejects.toBe(err);
+    await expect(withSessionRecovery({ manager, config: emptyConfig }, "demo", fn)).rejects.toBe(
+      err,
+    );
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).not.toHaveBeenCalled();
+    expect(reconnect).not.toHaveBeenCalled();
   });
 });
