@@ -36,6 +36,7 @@ npm run lint:packaging-tests
 npm run lint:quality
 npm run lint:ui-host-tests
 npm run lint:panel-tests
+npm run lint:example-runtime
 npm run typecheck
 npm run typecheck:all
 npm test
@@ -53,6 +54,8 @@ The same command enforces the production profile for `scripts/release-candidate.
 The command also checks the native-contract launcher under the production profile and `scripts/native-compat/` under the test profile. That directory contains only native SDK and CLI contract assertions and their HTTP, provider and extension fixtures. Its checked consumer uses ordinary ESM imports of the selected package and host. The scenarios retain nested-call redaction, cancellation without replay, tree and reload selection, saved-output paging, pinning and tool restrictions. The launcher resolves symlinked entrypoints before dispatch and rejects failed consumer assertions.
 
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
+
+`lint:example-runtime` checks all handwritten JavaScript and TypeScript under `examples/interactive-visualizer/`, including the UI, server, build script, and standalone install helpers. It also checks the root `interactive-visualizer-*.test.ts` suites and their filesystem-fault fixture under the test profile. Install the example dependencies before running it. The example compiler checks its source and scripts; the root compiler checks the suites and fixture. Oxfmt owns the handwritten files, and the example build owns its generated `dist/` output. CI extras requires this lint gate and both real stdio delivery and isolated installer tests after building the example.
 
 `lint:core-runtime` enforces the production profile for cancellation, client-operation drains, process paths, legacy migration, onboarding storage, logging, panel keys, search ranking and Unix-socket transport. Rejections retain their original values. Transport cleanup failures reach the existing error callback.
 

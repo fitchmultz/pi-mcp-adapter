@@ -212,6 +212,7 @@ jobs:
         run: |
           npm ci --prefix examples/interactive-visualizer --ignore-scripts --no-audit --no-fund
           npm run --prefix examples/interactive-visualizer build
-          npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts
+          npm run lint:example-runtime
+          npm exec -- vitest run __tests__/interactive-visualizer-*.test.ts
       - run: npm run typecheck:all
       - run: npm run test:conformance
