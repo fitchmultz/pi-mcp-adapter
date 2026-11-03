@@ -154,9 +154,11 @@ jobs:
       - run: npm run lint:runtime-tests
       - run: npm run lint:tracing
       - run: npm run lint:core-runtime
+      - run: npm run lint:config-runtime
       - run: npm run lint:sampling
       - run: npm run lint:output-runtime
       - run: npm run lint:credential-runtime
+      - run: npm run lint:auth-boundaries
       - run: npm run lint:node-oauth
       - run: npm run lint:sdk-http
       - run: npm run lint:lifecycle-tests
