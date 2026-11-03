@@ -1,156 +1,113 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PassThrough } from "node:stream";
+import assert from "node:assert/strict";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { McpServerManager } from "../server-manager.ts";
+import { requireValue } from "./fixtures/extension-lifecycle.ts";
+import { observeNativeConnections } from "./fixtures/strict-manager-boundaries-sdk.ts";
 
-const mocks = vi.hoisted(() => ({
-  transports: [] as any[],
-  connectImpl: null as null | ((transport: any) => Promise<void>),
-}));
+vi.mock("@modelcontextprotocol/client", async () =>
+  (await import("./fixtures/strict-manager-boundaries-sdk.ts")).nativeClientModule(),
+);
+vi.mock("@modelcontextprotocol/client/stdio", async () =>
+  (await import("./fixtures/strict-manager-boundaries-sdk.ts")).nativeStdioModule(),
+);
 
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  Client: vi.fn().mockImplementation(function (this: any) {
-    this.setRequestHandler = vi.fn();
-    this.setNotificationHandler = vi.fn();
-    this.connect = vi.fn(async (transport: any) => {
-      if (mocks.connectImpl) {
-        return mocks.connectImpl(transport);
-      }
-    });
-    this.listTools = vi.fn(async () => ({ tools: [] }));
-    this.listResources = vi.fn(async () => ({ resources: [] }));
-    this.close = vi.fn(async () => {});
-  }),
-  StreamableHTTPClientTransport: vi.fn().mockImplementation(function (this: any) {
-    this.send = vi.fn(async () => {});
-    this.close = vi.fn(async () => {});
-    mocks.transports.push(this);
-  }),
-  SSEClientTransport: vi.fn().mockImplementation(function (this: any) {
-    this.close = vi.fn(async () => {});
-    mocks.transports.push(this);
-  }),
-}));
-
-vi.mock("@modelcontextprotocol/client/stdio", () => ({
-  StdioClientTransport: vi.fn().mockImplementation(function (this: any, options: any) {
-    this.options = options;
-    this.stderr = options?.stderr === "pipe" ? new PassThrough() : null;
-    this.send = vi.fn(async () => {});
-    this.close = vi.fn(async () => {});
-    mocks.transports.push(this);
-  }),
-}));
-
-vi.mock("../npx-resolver.ts", () => ({
-  resolveNpxBinary: vi.fn(async () => null),
-}));
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  try {
+    for (const cleanup of cleanups.splice(0).reverse()) {
+      await cleanup();
+    }
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
+function manager(): McpServerManager {
+  const instance = new McpServerManager();
+  cleanups.push(() => instance.closeAll());
+  return instance;
+}
+function stdio(mode: string) {
+  return {
+    command: process.execPath,
+    args: [join(import.meta.dirname, "fixtures/strict-manager-boundaries-stdio.ts"), mode],
+  };
+}
+async function connectionFailure(attempt: Promise<unknown>): Promise<Error> {
+  const result = await Promise.allSettled([attempt]);
+  const failure = requireValue(result[0]);
+  assert.equal(failure.status, "rejected", "Connection must fail");
+  const error: unknown = failure.reason;
+  assert(error instanceof Error);
+  return error;
+}
 
 describe("McpServerManager stderr capture", () => {
-  beforeEach(() => {
-    mocks.transports.length = 0;
-    mocks.connectImpl = null;
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-    vi.unstubAllGlobals();
-  });
-
   it("pipes stderr for normal stdio servers and preserves inherit for debug", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-
-    await manager.connect("demo", { command: "node", args: ["server.js"] });
-    expect(mocks.transports[0].options.stderr).toBe("pipe");
-
-    await manager.connect("debug", { command: "node", args: ["server.js"], debug: true });
-    expect(mocks.transports[1].options.stderr).toBe("inherit");
+    const observed = observeNativeConnections();
+    const instance = manager();
+    await instance.connect("demo", stdio("serve"));
+    const normal = requireValue(observed.records[0]).transport;
+    assert(normal instanceof StdioClientTransport);
+    expect(normal.stderr).not.toBeNull();
+    expect(requireValue(observed.stdio[0]).parameters.stderr).toBe("pipe");
+    await instance.connect("debug", { ...stdio("serve"), debug: true });
+    const debug = requireValue(observed.records[1]).transport;
+    assert(debug instanceof StdioClientTransport);
+    expect(debug.stderr).toBeNull();
+    expect(requireValue(observed.stdio[1]).parameters.stderr).toBe("inherit");
   });
 
   it("appends captured stderr to the connection error", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-    mocks.connectImpl = async (transport) => {
-      transport.stderr.write(
-        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock.\n",
-      );
-      await new Promise((resolve) => setImmediate(resolve));
-      throw new Error("MCP error -32000: Connection closed");
-    };
-
-    await expect(manager.connect("loki", { command: "docker" })).rejects.toThrow(
-      /MCP error -32000: Connection closed \(Cannot connect to the Docker daemon/,
+    const connect = vi.spyOn(Client.prototype, "connect");
+    const error = await connectionFailure(manager().connect("loki", stdio("docker")));
+    await expect(requireValue(connect.mock.results[0]).value).rejects.toBe(error.cause);
+    assert(error.cause instanceof Error);
+    expect(error.message).toBe(
+      `${error.cause.message} (Cannot connect to the Docker daemon at unix:///var/run/docker.sock.)`,
     );
   });
 
   it("bounds oversized string stderr chunks before retaining their tail", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
     const connectionError = new Error("connection failed");
-    mocks.connectImpl = async (transport) => {
-      transport.stderr.emit("data", "x".repeat(1_000_000));
-      await new Promise((resolve) => setImmediate(resolve));
+    // A child pipe splits large writes into buffers. Inject one string event on
+    // the native pre-start stream to cover the separate bounded-string branch.
+    vi.spyOn(Client.prototype, "connect").mockImplementationOnce(async (transport) => {
+      assert(transport instanceof StdioClientTransport);
+      requireValue(transport.stderr).emit("data", "x".repeat(1_000_000));
       throw connectionError;
-    };
-
-    let capturedError: Error | undefined;
-    try {
-      await manager.connect("demo", { command: "node" });
-    } catch (error) {
-      capturedError = error as Error;
-    }
-    expect(capturedError?.cause).toBe(connectionError);
-    expect(Buffer.byteLength(capturedError?.message ?? "", "utf8")).toBeLessThanOrEqual(
-      8_192 + 100,
-    );
+    });
+    const error = await connectionFailure(manager().connect("demo", stdio("serve")));
+    expect(error.cause).toBe(connectionError);
+    expect(Buffer.byteLength(error.message, "utf8")).toBeLessThanOrEqual(8192 + 100);
   });
 
   it("keeps connection errors unchanged without sending a redundant HTTP probe", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response("<html>Not found</html>", {
-          status: 404,
-          headers: { "content-type": "text/html" },
-        }),
-      ),
+    const fetch = vi.spyOn(globalThis, "fetch");
+    vi.spyOn(Client.prototype, "connect").mockRejectedValue(
+      new Error("MCP error -32000: Connection closed"),
     );
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-    mocks.connectImpl = async () => {
-      throw new Error("MCP error -32000: Connection closed");
-    };
-
-    await expect(manager.connect("stdio", { command: "node" })).rejects.toThrow(
+    const instance = manager();
+    await expect(instance.connect("stdio", stdio("serve"))).rejects.toThrow(
       /^MCP error -32000: Connection closed$/,
     );
-    await expect(manager.connect("http", { url: "https://example.com/mcp" })).rejects.toThrow(
+    await expect(instance.connect("http", { url: "https://example.com/mcp" })).rejects.toThrow(
       /^MCP error -32000: Connection closed$/,
     );
     expect(fetch).not.toHaveBeenCalled();
   });
 
   it("bounds captured stderr and keeps only its final three lines", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-    const connectionError = new Error("connection failed");
-    mocks.connectImpl = async (transport) => {
-      transport.stderr.write("x".repeat(8_192));
-      transport.stderr.write("\nline-1\nline-2\nline-3\nline-4\n");
-      await new Promise((resolve) => setImmediate(resolve));
-      throw connectionError;
-    };
-
-    let capturedError: Error | undefined;
-    try {
-      await manager.connect("demo", { command: "node" });
-    } catch (error) {
-      capturedError = error as Error;
-    }
-
-    expect(Buffer.byteLength(capturedError?.message ?? "", "utf8")).toBeLessThan(8_192 + 200);
-    expect(capturedError?.message).toContain("line-2 — line-3 — line-4");
-    expect(capturedError?.message).not.toContain("line-1");
-    expect(capturedError?.cause).toBe(connectionError);
+    const connect = vi.spyOn(Client.prototype, "connect");
+    const error = await connectionFailure(manager().connect("demo", stdio("tail")));
+    await expect(requireValue(connect.mock.results[0]).value).rejects.toBe(error.cause);
+    expect(Buffer.byteLength(error.message, "utf8")).toBeLessThan(8192 + 200);
+    expect(error.message).toContain("line-2 — line-3 — line-4");
+    expect(error.message).not.toContain("line-1");
+    expect(error.cause).toBeInstanceOf(Error);
+    assert(error.cause instanceof Error);
+    expect(error.cause.message).toContain("Connection closed");
   });
 });
