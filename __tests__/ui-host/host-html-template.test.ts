@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import { z } from "zod";
 import {
@@ -10,6 +12,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { hostConfiguration } from "../fixtures/host-document.ts";
 import { closeHosts, openHost } from "../fixtures/host-runtime.ts";
 import { readToolResult } from "../../host-browser-contracts.ts";
+import type { UiServerOptions } from "../../ui-server-options.ts";
 
 afterEach(closeHosts);
 import { buildHostHtmlTemplate, type HostHtmlTemplateInput } from "../../host-html-template.ts";
@@ -94,6 +97,33 @@ describe("buildHostHtmlTemplate", () => {
       expect((await materializeUiMessages(host.handle.getSessionMessages())).prompts).toEqual([
         "direct app message",
       ]);
+    });
+
+    it("forwards raw app messages with their original fields", async () => {
+      const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
+      const host = await openHost({ onMessage });
+      const params = { node: "雪😀", ["__proto__"]: { own: "intent parameter" } };
+      host.dispatchWindow({
+        vendor: { opaque: ["raw extension"] },
+        ["__proto__"]: { own: "top-level key" },
+        method: "vendor/raw",
+        type: "intent",
+        payload: { intent: "inspect", params },
+      });
+      await vi.waitFor(() => expect(onMessage).toHaveBeenCalledOnce());
+      const forwarded = {
+        type: "intent",
+        vendor: { opaque: ["raw extension"] },
+        ["__proto__"]: { own: "top-level key" },
+        method: "vendor/raw",
+        intent: "inspect",
+        params,
+      };
+      expect(onMessage).toHaveBeenCalledExactlyOnceWith(forwarded);
+      // Serialized text also proves key order, which deep equality ignores.
+      expect(JSON.stringify(onMessage.mock.calls[0]?.[0])).toBe(JSON.stringify(forwarded));
+      const { intents } = await materializeUiMessages(host.handle.getSessionMessages());
+      expect(JSON.stringify(intents)).toBe(JSON.stringify([{ intent: "inspect", params }]));
     });
 
     it("includes control buttons", () => {
@@ -373,10 +403,27 @@ describe("buildHostHtmlTemplate", () => {
   });
 
   describe("module loading", () => {
+    const importMap = (html: string): unknown =>
+      JSON.parse(html.match(/<script type="importmap">([\s\S]*?)<\/script>/)?.[1] ?? "null");
+    // The year-long cached asset is content-addressed, so an upgraded host never
+    // links against an earlier cached copy that lacks its imports.
+    const sdkUrl = `/app-bridge.bundle.js?v=${createHash("sha256")
+      .update(readFileSync(new URL("../../app-bridge.bundle.js", import.meta.url)))
+      .digest("base64url")}`;
+
     it("uses default AppBridge module URL", () => {
       const html = buildHostHtmlTemplate(createMinimalInput());
 
       expect(html).toContain("/app-bridge.bundle.js");
+      // The host shares the cached native SDK asset for its bridge, schemas and Zod.
+      expect(importMap(html)).toEqual({
+        imports: {
+          "@modelcontextprotocol/ext-apps/app-bridge": sdkUrl,
+          "@modelcontextprotocol/ext-apps": sdkUrl,
+          "@modelcontextprotocol/core": sdkUrl,
+          zod: sdkUrl,
+        },
+      });
     });
 
     it("uses custom AppBridge module URL when provided", () => {
@@ -387,6 +434,15 @@ describe("buildHostHtmlTemplate", () => {
       );
 
       expect(html).toContain("https://cdn.example.com/app-bridge.js");
+      // A custom bridge supplies only AppBridge and PostMessageTransport; shared schemas stay local.
+      expect(importMap(html)).toEqual({
+        imports: {
+          "@modelcontextprotocol/ext-apps/app-bridge": "https://cdn.example.com/app-bridge.js",
+          "@modelcontextprotocol/ext-apps": sdkUrl,
+          "@modelcontextprotocol/core": sdkUrl,
+          zod: sdkUrl,
+        },
+      });
     });
   });
 
@@ -416,17 +472,32 @@ describe("buildHostHtmlTemplate", () => {
 
     it("registers the stream patch notification method", async () => {
       const host = await openHost();
-      host.handle.sendResultPatch({
+      // A valid JSON result may use an own "__proto__" key; the app receives the original.
+      const patch = {
+        ["__proto__"]: { own: "result key" },
         content: [],
         structuredContent: { extension: { values: [1, "unknown"] } },
-      });
+      };
+      host.handle.sendResultPatch(patch);
       await vi.waitFor(() =>
         expect(host.appMessages).toContainEqual({
           jsonrpc: "2.0",
           method: "notifications/pi-mcp-adapter/ui-result-patch",
-          params: { content: [], structuredContent: { extension: { values: [1, "unknown"] } } },
+          params: patch,
         }),
       );
+      const delivered = host.appMessages
+        .map(
+          (message) =>
+            z
+              .object({
+                method: z.literal("notifications/pi-mcp-adapter/ui-result-patch"),
+                params: z.unknown(),
+              })
+              .safeParse(message).data?.params,
+        )
+        .filter((params) => params !== undefined);
+      expect(JSON.stringify(delivered)).toBe(JSON.stringify([patch]));
     });
 
     it.each(["stream-first", "eager"] as const)(

@@ -9,5 +9,5 @@
     "sourceMap": false
   },
   "include": ["*.ts"],
-  "exclude": ["*.test.ts", "vitest.config.ts", "dist", "node_modules"]
+  "exclude": ["*.test.ts", "vitest.config.ts", "host-browser-*.ts", "dist", "node_modules"]
 }

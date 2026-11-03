@@ -11,7 +11,13 @@ const result = await build({
   format: "esm",
   target: "es2022",
   minify: true,
-  external: ["@modelcontextprotocol/ext-apps/app-bridge"],
+  // The host page's import map resolves these to the cached app-bridge.bundle.js asset.
+  external: [
+    "@modelcontextprotocol/ext-apps/app-bridge",
+    "@modelcontextprotocol/ext-apps",
+    "@modelcontextprotocol/core",
+    "zod",
+  ],
   supported: { "inline-script": true },
   outfile,
   write: !check,

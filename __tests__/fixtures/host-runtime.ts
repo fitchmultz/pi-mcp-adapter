@@ -4,8 +4,7 @@ import { runInContext } from "node:vm";
 import { JSDOM, VirtualConsole, type DOMWindow } from "jsdom";
 import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { transform } from "esbuild";
-import { hostModuleScript } from "./host-module.ts";
+import { evaluateHostModules, loadHostModuleGraph } from "./host-module.ts";
 import type { UiHostContext, UiResourcePermissions } from "../../types.ts";
 import { z } from "zod";
 import { expect, vi } from "vitest";
@@ -13,6 +12,7 @@ import { ConsentManager } from "../../consent-manager.ts";
 import { McpServerManager } from "../../server-manager.ts";
 import { startUiServer } from "../../ui-server.ts";
 import type { UiServerHandle } from "../../ui-server-contracts.ts";
+import type { UiServerOptions } from "../../ui-server-options.ts";
 
 const completionSchema = z.object({ reason: z.string() });
 
@@ -113,6 +113,7 @@ export async function openHost(
     toolArgs?: Record<string, unknown>;
     confirm?: boolean;
     permissions?: UiResourcePermissions;
+    onMessage?: UiServerOptions["onMessage"];
   } = {},
 ): Promise<HostRuntime> {
   const completions: string[] = [];
@@ -122,6 +123,7 @@ export async function openHost(
     toolName: "test-tool",
     toolArgs: options.toolArgs ?? {},
     ...(options.hostContext === undefined ? {} : { hostContext: options.hostContext }),
+    ...(options.onMessage === undefined ? {} : { onMessage: options.onMessage }),
     resource: {
       uri: "ui://test/app",
       html: "<h1>Test app</h1>",
@@ -149,11 +151,7 @@ export async function openHost(
   const page = await fetch(`${origin}/?session=${encodeURIComponent(handle.sessionToken)}`);
   expect(page.status).toBe(200);
   const html = await page.text();
-  const moduleScript = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
-  if (moduleScript === undefined || moduleScript === "") {
-    throw new Error("Served host module not found");
-  }
-  const script = hostModuleScript(moduleScript);
+  const moduleGraph = await loadHostModuleGraph(html, origin);
   const clock = new BrowserClock();
   const consoleErrors: unknown[][] = [];
   const virtualConsole = new VirtualConsole();
@@ -357,12 +355,6 @@ export async function openHost(
     );
   };
 
-  const bundle = await fetch(`${origin}/app-bridge.bundle.js`);
-  expect(bundle.status).toBe(200);
-  const bridgeScript = await transform(await bundle.text(), {
-    format: "iife",
-    globalName: "bridgeModule",
-  });
   const context = dom.getInternalVMContext();
   Object.assign(window, {
     EventSource: LiveEventSource,
@@ -381,9 +373,8 @@ export async function openHost(
     }
     respondToTeardowns();
   });
-  const bridgeLoaded: unknown = runInContext(bridgeScript.code, context);
-  await bridgeLoaded;
-  const running: unknown = runInContext(script, context);
+  await evaluateHostModules(moduleGraph, context);
+  const running: unknown = runInContext(moduleGraph.script, context);
   await Promise.all([running, iframeLoaded.promise]);
   const eventSource = eventSources[0];
   assert(eventSource);

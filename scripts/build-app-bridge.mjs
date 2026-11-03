@@ -3,8 +3,12 @@ import { build } from "esbuild";
 
 await build({
   stdin: {
-    contents:
-      'export { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";',
+    // The native app-bridge API plus the Zod and core bindings the host page shares.
+    contents: [
+      'export * from "@modelcontextprotocol/ext-apps/app-bridge";',
+      'export { EmptyResultSchema } from "@modelcontextprotocol/core";',
+      'export { z } from "zod";',
+    ].join("\n"),
     resolveDir: process.cwd(),
   },
   bundle: true,

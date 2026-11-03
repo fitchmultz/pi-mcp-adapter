@@ -11,6 +11,12 @@ import type { HostBrowserProxy } from "./host-browser-proxy.ts";
 import type { HostBrowserView } from "./host-browser-view.ts";
 
 const patchParamsSchema = z.record(z.string(), z.unknown());
+
+// Forward the validated original patch, keeping the native parse error.
+function assertPatchParams(value: unknown): asserts value is z.input<typeof patchParamsSchema> {
+  patchParamsSchema.parse(value);
+}
+
 const eventSubjects = {
   "tool-input": "tool input",
   "tool-result": "tool result",
@@ -96,9 +102,10 @@ export class HostBrowserSession {
         await this.bridge.sendToolCancelled(value);
         return;
       case "result-patch":
+        assertPatchParams(value);
         await this.bridge.notification({
           method: UI_STREAM_RESULT_PATCH_METHOD,
-          params: patchParamsSchema.parse(value),
+          params: value,
         });
         return;
       case "host-context":

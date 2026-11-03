@@ -1,8 +1,7 @@
 import type { ServerResponse } from "node:http";
-import { ContentBlockSchema } from "@modelcontextprotocol/core";
-import { z } from "zod";
 import type { UiServerOptions } from "./ui-server-options.ts";
 import { createUiMessageHistory } from "./ui-message-history.ts";
+import { isUiMessageParams, isUiModelContextParams } from "./ui-message-schema.ts";
 import {
   createUiModelContextUpdate,
   extractUiPromptText,
@@ -16,26 +15,6 @@ import { sendJson } from "./ui-http.ts";
 import type { logger } from "./logger.ts";
 
 const MAX_CONTEXT_UPDATES = 20;
-const uiMessageSchema = z.looseObject({
-  role: z.string().exactOptional(),
-  content: z.array(z.unknown()).exactOptional(),
-  type: z.enum(["prompt", "notify", "intent", "message"]).exactOptional(),
-  message: z.string().exactOptional(),
-  prompt: z.string().exactOptional(),
-  intent: z.string().exactOptional(),
-  params: z.record(z.string(), z.unknown()).exactOptional(),
-});
-const modelContextSchema = z.looseObject({
-  // Validate with the native schema without stripping accepted block extensions.
-  content: z
-    .array(
-      z.custom<z.infer<typeof ContentBlockSchema>>(
-        (block) => ContentBlockSchema.safeParse(block).success,
-      ),
-    )
-    .exactOptional(),
-  structuredContent: z.record(z.string(), z.unknown()).exactOptional(),
-});
 
 /** Authenticated UI actions and their ordered, durable history. */
 export class UiProxyRoutes {
@@ -100,13 +79,12 @@ export class UiProxyRoutes {
   }
 
   private async message(params: unknown, res: ServerResponse): Promise<void> {
-    const parsed = uiMessageSchema.safeParse(params);
-    if (!parsed.success) {
+    if (!isUiMessageParams(params)) {
       sendJson(res, 400, { ok: false, error: "Invalid UI message params" });
       return;
     }
-    const warning = this.recordMessage(parsed.data);
-    await this.options.onMessage?.(parsed.data);
+    const warning = this.recordMessage(params);
+    await this.options.onMessage?.(params);
     if (warning !== undefined && warning !== "") {
       this.log.warn(warning);
       this.options.state?.ui?.notify(warning, "warning");
@@ -154,12 +132,11 @@ export class UiProxyRoutes {
   }
 
   private async context(params: unknown, res: ServerResponse): Promise<void> {
-    const parsed = modelContextSchema.safeParse(params);
-    if (!parsed.success) {
+    if (!isUiModelContextParams(params)) {
       sendJson(res, 400, { ok: false, error: "Invalid update-model-context params" });
       return;
     }
-    const update = createUiModelContextUpdate(parsed.data);
+    const update = createUiModelContextUpdate(params);
     const messages = this.history.messages;
     if (update) {
       messages.contexts.push(update);
@@ -168,10 +145,10 @@ export class UiProxyRoutes {
       }
     }
     this.log.debug("UI context update", {
-      hasContent: Boolean(parsed.data.content),
+      hasContent: Boolean(params.content),
       hasUpdate: Boolean(update),
     });
-    await this.options.onContextUpdate?.(parsed.data);
+    await this.options.onContextUpdate?.(params);
     sendJson(res, 200, { ok: true, result: {} });
   }
 

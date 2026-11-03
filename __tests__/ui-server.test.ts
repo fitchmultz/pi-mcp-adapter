@@ -947,13 +947,19 @@ describe("UiServer", () => {
 
     it("forwards message extensions and round-trips arbitrary intent parameters on disk", async () => {
       const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
-      handle = await startUiServer(createServerOptions({ onMessage }));
+      handle = await startUiServer(createServerOptions({ onMessage, port: 0 }));
+      // Valid JSON may put unknown keys first and use an own "__proto__" key.
       const params = {
+        vendor: { opaque: ["extension"] },
+        ["__proto__"]: { own: "top-level key" },
         type: "intent",
         intent: "inspect",
-        params: { node: "雪😀", extension: { values: [null, 7, true] } },
+        params: {
+          node: "雪😀",
+          ["__proto__"]: { own: "intent parameter" },
+          extension: { values: [null, 7, true] },
+        },
         _meta: { vendor: "unchanged" },
-        vendor: { opaque: ["extension"] },
       };
       const res = await request(`http://localhost:${handle.port}/proxy/ui/message`, {
         method: "POST",
@@ -961,16 +967,21 @@ describe("UiServer", () => {
       });
       expect(res.status).toBe(200);
       expect(onMessage).toHaveBeenCalledExactlyOnceWith(params);
+      // Serialized text also proves key order, which deep equality ignores.
+      expect(JSON.stringify(onMessage.mock.calls[0]?.[0])).toBe(JSON.stringify(params));
       const messages = handle.getSessionMessages();
       assert(messages.historyRef !== undefined && messages.historyRef !== "");
-      const record: unknown = JSON.parse(await readFile(messages.historyRef, "utf8"));
+      const history = await readFile(messages.historyRef, "utf8");
+      const record: unknown = JSON.parse(history);
       expect(record).toEqual({
         category: "intents",
         value: { intent: params.intent, params: params.params },
       });
-      expect((await materializeUiMessages(messages)).intents).toEqual([
-        { intent: params.intent, params: params.params },
-      ]);
+      const intent = { intent: params.intent, params: params.params };
+      expect(history).toBe(`${JSON.stringify({ category: "intents", value: intent })}\n`);
+      const { intents } = await materializeUiMessages(messages);
+      expect(intents).toEqual([{ intent: params.intent, params: params.params }]);
+      expect(JSON.stringify(intents)).toBe(JSON.stringify([intent]));
     });
 
     it("acknowledges failed persistence with recovery data and an operator warning", async () => {
@@ -1316,8 +1327,13 @@ describe("UiServer", () => {
 
     it("preserves context extensions in the callback and retained payload", async () => {
       const onContextUpdate = vi.fn<NonNullable<UiServerOptions["onContextUpdate"]>>();
-      handle = await startUiServer(createServerOptions({ onContextUpdate }));
+      handle = await startUiServer(createServerOptions({ onContextUpdate, port: 0 }));
+      // Valid JSON may put unknown keys first and use an own "__proto__" key.
       const params = {
+        vendor: { opaque: [null, 7, true] },
+        ["__proto__"]: { own: "top-level key" },
+        _meta: { progressToken: "selection-7" },
+        structuredContent: { selected: "雪😀", ["__proto__"]: { own: "structured key" } },
         content: [
           {
             type: "text",
@@ -1326,9 +1342,6 @@ describe("UiServer", () => {
             vendor: { opaque: ["retained block extension"] },
           },
         ],
-        structuredContent: { selected: "雪😀" },
-        _meta: { progressToken: "selection-7" },
-        vendor: { opaque: [null, 7, true] },
       };
       const res = await request(`http://localhost:${handle.port}/proxy/ui/context`, {
         method: "POST",
@@ -1336,6 +1349,8 @@ describe("UiServer", () => {
       });
       expect(res.status).toBe(200);
       expect(onContextUpdate).toHaveBeenCalledExactlyOnceWith(params);
+      // Serialized text also proves key order, which deep equality ignores.
+      expect(JSON.stringify(onContextUpdate.mock.calls[0]?.[0])).toBe(JSON.stringify(params));
       expect(handle.getSessionMessages().contexts).toEqual([
         { payload: params, summary: JSON.stringify(params), truncated: false },
       ]);
