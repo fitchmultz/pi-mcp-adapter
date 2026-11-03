@@ -44,6 +44,8 @@ Strict lint is enforced for `conformance/`, the prompt tests and their shared fi
 
 `lint:runtime-tests` includes native Pi gateway selection, reload, lazy startup and initialization tests, plus the standalone startup child. These tests use the installed Pi graph selected by qualification. The child installs module hooks before importing Pi, loads the source extension, and executes its first stdio call. Initialization tests use a real Pi context and public health-check timers.
 
+The runtime scope also includes the real HTTP callback-lifetime suite and its server fixture. It covers callback cancellation and reply drain, token reads and persistence, subscription refresh, URL completion and accepted-operation no-replay through native Pi contexts and MCP transports.
+
 `lint:sdk-http` enforces the test profile for the real HTTP SDK suite and its typed native capture extension fixture. Latest-host qualification supplies one consistent SDK graph for their static imports and Jiti-loaded factories.
 
 `lint:lifecycle-tests` enforces the test profile for the adapter's native SDK lifecycle tests, their extension fixture, and the shared complete SDK context fixture.
