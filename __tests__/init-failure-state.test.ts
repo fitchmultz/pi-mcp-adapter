@@ -1,17 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearFailure, getFailureAgeSeconds, getFailureMessage, recordFailure } from "../init.ts";
 import { createMcpRuntimeOwner } from "../runtime-owner.ts";
+import type { McpStatusEventBus } from "../mcp-status.ts";
+import { createTestState } from "./test-state.ts";
 
 describe("MCP failure state", () => {
   afterEach(() => vi.useRealTimers());
 
   it("bounds messages and removes diagnostics after the backoff TTL", () => {
     vi.useFakeTimers();
-    const state = {
-      owner: createMcpRuntimeOwner(),
-      failureTracker: new Map<string, number>(),
-      failureMessages: new Map<string, string>(),
-    } as any;
+    const state = createTestState();
 
     recordFailure(state, "demo", "x".repeat(100_000));
 
@@ -28,11 +26,7 @@ describe("MCP failure state", () => {
 
   it("clears a prior expiry timer when a failure recovers", () => {
     vi.useFakeTimers();
-    const state = {
-      owner: createMcpRuntimeOwner(),
-      failureTracker: new Map<string, number>(),
-      failureMessages: new Map<string, string>(),
-    } as any;
+    const state = createTestState();
 
     recordFailure(state, "demo", "failed");
     clearFailure(state, "demo");
@@ -45,17 +39,13 @@ describe("MCP failure state", () => {
   it("does not publish failure expiry after the runtime owner stops", async () => {
     vi.useFakeTimers();
     const owner = createMcpRuntimeOwner();
-    const state = {
-      owner,
-      failureTracker: new Map<string, number>(),
-      failureMessages: new Map<string, string>(),
-      statusEvents: { emit: vi.fn() },
-    } as any;
+    const emit = vi.fn<McpStatusEventBus["emit"]>();
+    const state = createTestState({ owner, statusEvents: { emit } });
 
     recordFailure(state, "demo", "failed");
     await owner.stop("session shutdown");
     vi.advanceTimersByTime(60_000);
 
-    expect(state.statusEvents.emit).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
   });
 });
