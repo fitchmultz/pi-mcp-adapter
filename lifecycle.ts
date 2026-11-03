@@ -19,7 +19,6 @@ export class McpLifecycleManager {
   private activeHealthCheck: Promise<void> | undefined;
   private shutdownPromise: Promise<void> | undefined;
   private stopped = false;
-  private healthSignal: AbortSignal | undefined;
   private removeHealthAbortListener: (() => void) | undefined;
 
   private readonly manager: McpServerManager;
@@ -75,10 +74,8 @@ export class McpLifecycleManager {
     }
     this.removeHealthAbortListener?.();
     this.stopped = false;
-    this.healthSignal = signal;
-    if (signal?.aborted) {
+    if (signal?.aborted === true) {
       this.stopped = true;
-      this.healthSignal = undefined;
       return;
     }
     const stop = () => {
@@ -91,11 +88,11 @@ export class McpLifecycleManager {
     signal?.addEventListener("abort", stop, { once: true });
     this.removeHealthAbortListener = () => signal?.removeEventListener("abort", stop);
     this.healthCheckInterval = setInterval(() => {
-      if (this.stopped || signal?.aborted || this.activeHealthCheck) {
+      if (this.stopped || signal?.aborted === true || this.activeHealthCheck) {
         return;
       }
       const check = this.checkConnections(signal)
-        .catch((error) => {
+        .catch((error: unknown) => {
           console.error(`MCP: Health check failed: ${formatTerminalError(error)}`);
         })
         .finally(() => {
@@ -108,38 +105,55 @@ export class McpLifecycleManager {
     this.healthCheckInterval.unref();
   }
 
+  private isStopped(signal?: AbortSignal): boolean {
+    return this.stopped || signal?.aborted === true;
+  }
+
+  private needsReconnect(name: string, definition: ServerDefinition): boolean {
+    return (
+      !isServerDisabled(definition) && this.manager.getConnection(name)?.status !== "connected"
+    );
+  }
+
+  private async reconnect(
+    name: string,
+    definition: ServerDefinition,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!this.needsReconnect(name, definition)) {
+      return;
+    }
+    if (this.hasPendingAuthForServer(name)) {
+      logger.debug(`Skipping reconnect for ${name} while OAuth authorization is pending`);
+      return;
+    }
+    try {
+      await this.manager.connect(name, definition, signal);
+      if (this.isStopped(signal)) {
+        return;
+      }
+      logger.debug(`Reconnected to ${name}`);
+      this.onReconnect?.(name);
+    } catch (error) {
+      if (this.isStopped(signal)) {
+        return;
+      }
+      this.onReconnectFailure?.(name, error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`MCP: Failed to reconnect to ${name}: ${sanitizeTerminalText(message)}`);
+    }
+  }
+
   private async checkConnections(signal?: AbortSignal): Promise<void> {
-    if (this.stopped || signal?.aborted) {
+    if (this.isStopped(signal)) {
       return;
     }
     for (const [name, definition] of this.keepAliveServers) {
-      if (isServerDisabled(definition)) {
-        continue;
-      }
-      const connection = this.manager.getConnection(name);
-      if (!connection || connection.status !== "connected") {
-        if (this.hasPendingAuthForServer(name)) {
-          logger.debug(`Skipping reconnect for ${name} while OAuth authorization is pending`);
-          continue;
-        }
-        try {
-          await this.manager.connect(name, definition, signal);
-          if (this.stopped || signal?.aborted) {
-            return;
-          }
-          logger.debug(`Reconnected to ${name}`);
-          this.onReconnect?.(name);
-        } catch (error) {
-          if (this.stopped || signal?.aborted) {
-            return;
-          }
-          this.onReconnectFailure?.(name, error);
-          const message = error instanceof Error ? error.message : String(error);
-          console.error(`MCP: Failed to reconnect to ${name}: ${sanitizeTerminalText(message)}`);
-        }
+      await this.reconnect(name, definition, signal);
+      if (this.isStopped(signal)) {
+        return;
       }
     }
-
     for (const [name] of this.allServers) {
       if (this.keepAliveServers.has(name)) {
         continue;
@@ -147,7 +161,7 @@ export class McpLifecycleManager {
       const timeout = this.getIdleTimeout(name);
       if (timeout > 0 && this.manager.isIdle(name, timeout)) {
         await this.manager.close(name);
-        if (this.stopped || signal?.aborted) {
+        if (this.isStopped(signal)) {
           return;
         }
         this.onIdleShutdown?.(name);
@@ -179,14 +193,11 @@ export class McpLifecycleManager {
     this.healthCheckInterval = undefined;
     this.removeHealthAbortListener?.();
     this.removeHealthAbortListener = undefined;
-    this.healthSignal = undefined;
     await this.activeHealthCheck;
     this.activeHealthCheck = undefined;
     this.onReconnect = undefined;
     this.onReconnectFailure = undefined;
     this.onIdleShutdown = undefined;
-    if (typeof this.manager.closeAll === "function") {
-      await this.manager.closeAll();
-    }
+    await this.manager.closeAll();
   }
 }

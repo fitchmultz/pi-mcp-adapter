@@ -157,6 +157,8 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.isPathInsideProject.mockReturnValue(false);
     mocks.getMetadataCachePath.mockReturnValue("/global/mcp-cache.json");
     mocks.loadMetadataCache.mockReturnValue(null);
+    mocks.openMcpPanel.mockResolvedValue({ configChanged: false });
+    mocks.openMcpSetup.mockResolvedValue({ configChanged: false });
     mocks.buildProxyDescription.mockReturnValue("MCP gateway");
     mocks.createDirectToolExecutor.mockImplementation(direct.createDirectToolExecutor);
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue([]);
