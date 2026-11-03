@@ -34,7 +34,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-3003: Missing host theme\n## QX-3004: Native execute callback\n## QX-030: Standalone bridge callback contracts\n## QX-031: Native raw echo coercion\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-3003: Missing host theme\n## QX-3004: Native execute callback\n## QX-030: Standalone bridge callback contracts\n## QX-031: Native raw echo coercion\n## QX-7001: JSON Schema conditional keyword\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -76,7 +76,11 @@ describe("directive policy", () => {
         "/** @ts-ignore\n * not a TypeScript directive */",
       ].join("\n"),
     );
-    const negatives = [negativeTest, "__tests__/oauth-config.test-d.ts"].map((file) =>
+    const negatives = [
+      negativeTest,
+      "__tests__/oauth-config.test-d.ts",
+      "__tests__/catalog-metadata.test-d.ts",
+    ].map((file) =>
       checkSource(
         file,
         '// @ts-expect-error A string is not assignable to a number.\nconst number: number = "x";\n',
@@ -921,6 +925,54 @@ const hostCases = [
     diagnostic: ["forward.ts:7:", "[Error/eslint(max-params)]"],
   },
 ];
+const descriptorDirective =
+  "// oxlint-disable-next-line unicorn/no-thenable -- QX-7001: JSON Schema conditional keyword, not a Promise thenable.";
+const descriptorOperation = 'then: { required: ["limit"] }';
+const descriptorSource = [
+  "export const descriptor = {",
+  "inputSchema: {",
+  'type: "object" as const,',
+  "allOf: [",
+  "{",
+  'if: { required: ["state"] },',
+  descriptorDirective,
+  `${descriptorOperation},`,
+  "},",
+  "],",
+  "},",
+  "};",
+  "",
+].join("\n");
+const descriptorCase = {
+  name: "JSON Schema conditional keyword",
+  source: descriptorSource,
+  directive: descriptorDirective,
+  operation: descriptorOperation,
+  replacement: 'then: () => ({ required: ["limit"] })',
+  authorized: {
+    ...site,
+    id: "QX-7001",
+    rule: "unicorn/no-thenable",
+    scope: { type: "VariableDeclarator", name: "descriptor" },
+    path: [
+      "init",
+      "properties",
+      0,
+      "value",
+      "properties",
+      1,
+      "value",
+      "elements",
+      0,
+      "properties",
+      1,
+    ],
+    nodeType: "Property",
+    operation: descriptorOperation,
+  },
+  neighbor: `${descriptorSource}export const unrelated = { if: { required: ["limit"] }, then: { required: ["state"] } };\n`,
+  diagnostic: ["forward.ts:13:", "[Error/unicorn(no-thenable)]"],
+};
 
 describe("operation-bound exceptions", () => {
   it("accepts the exact published predicate directive", () => {
@@ -1006,6 +1058,7 @@ describe("operation-bound exceptions", () => {
   it.each([
     ...functionCases,
     ...hostCases,
+    descriptorCase,
     {
       name: "native tool execute callback",
       source: directCallbackSource,
@@ -1325,29 +1378,60 @@ describe("operation-bound exceptions", () => {
     );
   });
 
-  it.each(hostCases)("rejects copied, replaced, duplicate and stale $name directives", (entry) => {
-    const copied = checkSource("copied.ts", entry.source, [entry.authorized]);
-    const replaced = checkSource(
+  it.each([...hostCases, descriptorCase])(
+    "rejects copied, replaced, duplicate and stale $name directives",
+    (entry) => {
+      const copied = checkSource("copied.ts", entry.source, [entry.authorized]);
+      const replaced = checkSource(
+        "forward.ts",
+        entry.source.replace(entry.operation, entry.replacement),
+        [entry.authorized],
+      );
+      const duplicate = checkSource(
+        "forward.ts",
+        entry.source.replace(entry.operation, `${entry.directive}\n${entry.operation}`),
+        [entry.authorized],
+      );
+      const stale = checkSource("forward.ts", entry.source.replace(`${entry.directive}\n`, ""), [
+        entry.authorized,
+      ]);
+      expect(copied.status, copied.stderr).toBe(1);
+      expect(copied.stderr).toContain("lint directive is not authorized");
+      expect(replaced.status, replaced.stderr).toBe(1);
+      expect(replaced.stderr).toMatch(/Authorized operation changed|scope is missing/u);
+      expect(duplicate.status, duplicate.stderr).toBe(1);
+      expect(duplicate.stderr).toContain("lint directive is not authorized");
+      expect(stale.status, stale.stderr).toBe(1);
+      expect(stale.stderr).toContain("unused exception site");
+    },
+  );
+
+  it("requires the descriptor directive to suppress a real no-thenable finding at its site", () => {
+    const unsuppressed = checkSource(
       "forward.ts",
-      entry.source.replace(entry.operation, entry.replacement),
-      [entry.authorized],
+      descriptorSource.replace(`${descriptorDirective}\n`, ""),
+      [descriptorCase.authorized],
     );
-    const duplicate = checkSource(
+    const nativeUnsuppressed = nativeLint(unsuppressed.cwd);
+    expect(unsuppressed.status).toBe(1);
+    expect(unsuppressed.stderr).toContain("unused exception site QX-7001");
+    expect(nativeUnsuppressed.status).toBe(1);
+    expect(nativeUnsuppressed.stdout + nativeUnsuppressed.stderr).toContain(
+      "forward.ts:7:1: Do not add `then` to an object. [Error/unicorn(no-thenable)]",
+    );
+
+    const unused = checkSource(
       "forward.ts",
-      entry.source.replace(entry.operation, `${entry.directive}\n${entry.operation}`),
-      [entry.authorized],
+      descriptorSource.replace(descriptorOperation, 'else: { required: ["limit"] }'),
+      [descriptorCase.authorized],
     );
-    const stale = checkSource("forward.ts", entry.source.replace(`${entry.directive}\n`, ""), [
-      entry.authorized,
-    ]);
-    expect(copied.status, copied.stderr).toBe(1);
-    expect(copied.stderr).toContain("lint directive is not authorized");
-    expect(replaced.status, replaced.stderr).toBe(1);
-    expect(replaced.stderr).toMatch(/Authorized operation changed|scope is missing/u);
-    expect(duplicate.status, duplicate.stderr).toBe(1);
-    expect(duplicate.stderr).toContain("lint directive is not authorized");
-    expect(stale.status, stale.stderr).toBe(1);
-    expect(stale.stderr).toContain("unused exception site");
+    const nativeUnused = nativeLint(unused.cwd);
+    expect(unused.status).toBe(1);
+    expect(unused.stderr).toContain("Authorized operation changed");
+    expect(nativeUnused.status).toBe(1);
+    expect(nativeUnused.stdout + nativeUnused.stderr).toContain(
+      "forward.ts:7:1: Unused oxlint-disable directive (no problems were reported). [Error]",
+    );
   });
 
   it("rejects wrong-origin, replaced and duplicate named callback operations", () => {
