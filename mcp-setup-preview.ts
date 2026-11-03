@@ -3,7 +3,6 @@ import type { ConfigWritePreview, McpDiscoverySummary } from "./config.ts";
 import type { ImportKind } from "./types.ts";
 import type { Action, SetupPanelCallbacks } from "./mcp-setup-contract.ts";
 import { getDetectedPaths } from "./mcp-setup-actions.ts";
-const DESKTOP_PREVIEW_WIDTH = 74;
 export function wrapSetupText(text: string, width: number): string[] {
   if (width <= 8) {
     return [text];
@@ -39,7 +38,7 @@ export class SetupPreview {
   constructor(state: PreviewState) {
     this.state = state;
   }
-  getActionPreview(action?: Action, previewW = DESKTOP_PREVIEW_WIDTH): string[] {
+  getActionPreview(action: Action | undefined, previewW: number): string[] {
     switch (action?.id) {
       case "run-setup":
         return this.formatPreview(
@@ -162,7 +161,7 @@ export class SetupPreview {
     );
   }
 
-  formatPreview(lines: string[], width = DESKTOP_PREVIEW_WIDTH): string[] {
+  formatPreview(lines: string[], width: number): string[] {
     const preview: string[] = [];
     for (const line of lines) {
       preview.push(...wrapSetupText(line, width));
@@ -173,8 +172,8 @@ export class SetupPreview {
   formatWritePreview(
     title: string,
     preview: ConfigWritePreview,
-    intro: string[] = [],
-    width = DESKTOP_PREVIEW_WIDTH,
+    intro: string[],
+    width: number,
   ): string[] {
     const lines: string[] = [];
     for (const line of intro) {

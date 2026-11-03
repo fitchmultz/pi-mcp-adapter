@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   createAgentSessionServices,
   createAgentSessionFromServices,
@@ -14,7 +14,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 import { openMcpAuthPanel, openMcpPanel, openMcpSetup } from "../../commands.ts";
+import { computeServerHash, getMetadataCachePath } from "../../metadata-cache.ts";
 import { McpServerManager, type ServerConnection } from "../../server-manager.ts";
+import type { ServerEntry } from "../../types.ts";
 import { createTestState } from "../test-state.ts";
 
 const failure = new Error("native panel factory failed");
@@ -60,10 +62,13 @@ const runtime = await createAgentSessionRuntime(
 );
 const mode = new InteractiveMode(runtime, { tuiMode: "regular" });
 const manager = new FailingManager();
+const definition: ServerEntry = { url: "https://example.test/mcp", auth: "oauth" };
 const state = createTestState({
   manager,
-  config: { mcpServers: { demo: { url: "https://example.test/mcp", auth: "oauth" } } },
+  metadataCacheEnabled: true,
+  config: { mcpServers: { demo: definition } },
 });
+const events: string[] = [];
 
 try {
   await mode.init();
@@ -88,6 +93,7 @@ try {
         const dispose = panel.dispose?.bind(panel);
         panel.dispose = () => {
           disposed++;
+          events.push("disposed");
           dispose?.();
         };
         return panel;
@@ -101,7 +107,11 @@ try {
       },
     );
   }
-  const ctx = { ...native, ui: { ...native.ui, custom } };
+  const notify: typeof native.ui.notify = (message, type) => {
+    events.push(`${String(type)}: ${message}`);
+    native.ui.notify(message, type);
+  };
+  const ctx = { ...native, ui: { ...native.ui, custom, notify } };
   const panels = [
     () => openMcpPanel({ state, pi: extension, ctx }),
     () => openMcpSetup({ state, pi: extension, ctx }),
@@ -120,10 +130,65 @@ try {
     assert.equal(tui.hasOverlay(), false);
   }
   assert.equal(disposed, 3);
+
+  // Saving persists the pin and finishes live refresh, with its visible notice, before close.
+  const projectConfig = join(directory, ".mcp.json");
+  const cachePath = getMetadataCachePath();
+  await mkdir(dirname(cachePath), { recursive: true });
+  const cachedServer = {
+    configHash: computeServerHash(definition),
+    cachedAt: Date.now(),
+    tools: [{ name: "echo", description: "Echo input" }],
+    resources: [],
+  };
+  await writeFile(cachePath, JSON.stringify({ version: 2, servers: { demo: cachedServer } }));
+  for (const refreshFails of [false, true]) {
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: { demo: definition } }));
+    events.length = 0;
+    const refreshStarted = Promise.withResolvers<null>();
+    const releaseRefresh = Promise.withResolvers<null>();
+    shown = Promise.withResolvers();
+    const saving = openMcpPanel({
+      state,
+      pi: extension,
+      ctx,
+      onDirectToolsConfigChanged: async () => {
+        events.push("refresh");
+        refreshStarted.resolve(null);
+        await releaseRefresh.promise;
+        if (refreshFails) {
+          throw new Error("held refresh failed");
+        }
+      },
+    });
+    await shown.promise;
+    assert(tui !== undefined);
+    assert(tui.hasOverlay());
+    assert(panel?.handleInput !== undefined);
+    panel.handleInput(" ");
+    panel.handleInput("\x13");
+    await refreshStarted.promise;
+    assert(tui.hasOverlay());
+    assert.deepEqual(JSON.parse(await readFile(projectConfig, "utf8")), {
+      mcpServers: { demo: { ...definition, directTools: true } },
+    });
+    releaseRefresh.resolve(null);
+    assert.deepEqual(await saving, { configChanged: refreshFails });
+    assert.equal(tui.hasOverlay(), false);
+    assert.deepEqual(events, [
+      "refresh",
+      refreshFails
+        ? "error: Direct tools updated, but live refresh failed: held refresh failed"
+        : "info: Direct tools updated for this session.",
+      "disposed",
+    ]);
+  }
+  assert.equal(disposed, 5);
+
   manager.fail = true;
   await assert.rejects(openMcpPanel({ state, pi: extension, ctx }), (error) => error === failure);
   assert.equal(tui?.hasOverlay(), false);
-  assert.equal(disposed, 3);
+  assert.equal(disposed, 5);
   console.log("NATIVE_PANEL_LIFECYCLE_PASS");
 } finally {
   mode.stop();

@@ -55,8 +55,9 @@ function applyConnectionMetadata(
     );
     state.promptMetadataLive.add(name);
   }
-  if ((connection.instructions ?? "").length > 0) {
-    state.serverInstructions.set(name, connection.instructions ?? "");
+  const { instructions } = connection;
+  if (instructions !== undefined && instructions.length > 0) {
+    state.serverInstructions.set(name, instructions);
   } else {
     state.serverInstructions.delete(name);
   }
