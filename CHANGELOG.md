@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
-- Enforce strict lint for discovery and result tests (#130) ([3d3dc70](https://github.com/fitchmultz/pi-mcp-adapter/commit/3d3dc7044d28403e37a95cf24af7a276cc1eafec))
-
 ### What's Changed
 
 - Enforce strict lint on HTTP callback lifetimes by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/163
