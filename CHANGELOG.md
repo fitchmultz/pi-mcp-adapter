@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.26 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce native credential boundary checks (#196) ([f9181ff](https://github.com/fitchmultz/pi-mcp-adapter/commit/f9181ffda568266f2c6a8fd08f293f5ee5e5d8d1))
+
+### What's Changed
+
+- Enforce native credential boundary checks by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/196
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.25...v8.0.26
+
 ## 8.0.25 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
