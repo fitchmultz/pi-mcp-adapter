@@ -10,26 +10,28 @@
  * then the plaintext file is removed.
  */
 
-import { spawnSync } from "child_process";
 import { createHash } from "crypto";
-import { createRequire } from "module";
 import { readFileSync, existsSync, rmSync } from "fs";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { join } from "path";
 import { getAdapterPath, getAgentPath } from "./agent-dir.ts";
 import { resolveConfiguredOAuthDir } from "./config.ts";
 
-const require = createRequire(import.meta.url);
+import { getAuthSecretStore, type AuthSecretStore } from "./keyring-store.ts";
+import {
+  linuxKeyringRecoveryAuthSecretStore,
+  shouldAttemptLinuxKeyringRecovery,
+} from "./keyring-recovery.ts";
+import {
+  OAuthCredentialStoreError,
+  formatOAuthCredentialStoreUnavailable,
+} from "./credential-store-errors.ts";
+export {
+  OAuthCredentialStoreError,
+  formatOAuthCredentialStoreUnavailable,
+} from "./credential-store-errors.ts";
 const AUTH_SECRET_SERVICE = "fitch-mcp-adapter.oauth";
 const LEGACY_AUTH_SECRET_SERVICE = "pi-mcp-adapter.oauth";
-const TEST_AUTH_STORE_ENV = "PI_MCP_ADAPTER_TEST_AUTH_STORE";
 const AUTH_SECRET_CHUNK_SIZE = 1800;
-const KEYRING_RECOVERY_DISABLED_ENV = "PI_MCP_ADAPTER_DISABLE_KEYRING_RECOVERY";
-const KEYRING_RECOVERY_KEYCTL_ENV = "PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL";
-const KEYRING_RECOVERY_NODE_ENV = "PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE";
-const KEYRING_RECOVERY_HELPER_ENV = "PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER";
-const TEST_LINUX_KEYRING_RECOVERY_ENV = "PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY";
-const KEYRING_RECOVERY_TIMEOUT_MS = 10_000;
 const AUTH_CHUNK_MANIFEST_KEY = "__piMcpAdapterOAuthChunked";
 
 /** OAuth token storage format */
@@ -77,373 +79,15 @@ export interface AuthStorageOptions {
   baseDir?: string;
 }
 
-export class OAuthCredentialStoreError extends Error {
-  readonly code = "OAUTH_CREDENTIAL_STORE_UNAVAILABLE";
-  readonly operation: "read" | "write" | "remove";
-
-  constructor(message: string, operation: "read" | "write" | "remove", cause: unknown) {
-    super(
-      isAndroidKeyringLoadFailure(cause)
-        ? `${message}. Android/Termux: @napi-rs/keyring could not load a native binding. Persistent OAuth requires a supported platform with an OS credential store; no plaintext fallback is used.`
-        : message,
-      { cause },
-    );
-    this.operation = operation;
-    this.name = "OAuthCredentialStoreError";
-  }
-}
-
 export type OAuthCredentialStatus =
   | { status: "present"; entry: AuthEntry }
   | { status: "absent" }
   | { status: "unavailable"; message: string };
 
-function causeChainContains(error: unknown, pattern: RegExp): boolean {
-  const seen = new Set<unknown>();
-  let current = error;
-  while ((typeof current === "object" && current !== null) || typeof current === "function") {
-    if (seen.has(current)) {
-      break;
-    }
-    seen.add(current);
-    const candidate = current as {
-      name?: unknown;
-      message?: unknown;
-      code?: unknown;
-      cause?: unknown;
-    };
-    if (
-      [candidate.name, candidate.message, candidate.code].some(
-        (value) => typeof value === "string" && pattern.test(value),
-      )
-    ) {
-      return true;
-    }
-    current = candidate.cause;
-  }
-  return false;
-}
-
-function isAndroidKeyringLoadFailure(error: unknown): boolean {
-  return (
-    process.platform === "android" &&
-    causeChainContains(error, /^Failed to load @napi-rs\/keyring;/)
-  );
-}
-
-export function formatOAuthCredentialStoreUnavailable(error: OAuthCredentialStoreError): string {
-  if (isAndroidKeyringLoadFailure(error)) {
-    return error.message;
-  }
-  if (
-    process.platform === "linux" &&
-    causeChainContains(error, /key\s*(?:has been\s*)?revoked|keyrevoked/i)
-  ) {
-    return "OAuth credential store unavailable: the Linux session keyring may be revoked. Start Pi from a fresh login/keyring session and retry.";
-  }
-  return "OAuth credential store unavailable. Configure or unlock the OS credential store and retry.";
-}
-
-interface KeyringEntry {
-  getPassword(): string | null;
-  setPassword(password: string): void;
-  deleteCredential(): boolean;
-}
-
-type KeyringEntryConstructor = new (service: string, account: string) => KeyringEntry;
-type KeyringModule = { Entry: KeyringEntryConstructor };
-type KeyringRequire = ((id: string) => unknown) & { resolve(id: string): string };
-
-interface AuthSecretStore {
-  read(account: string): string | undefined;
-  write(account: string, payload: string): void;
-  remove(account: string): void;
-}
-
 interface AuthEntryChunkManifest {
   [AUTH_CHUNK_MANIFEST_KEY]: 1;
   chunkCount: number;
   chunkDigest: string;
-}
-
-let KeyringEntryClass: KeyringEntryConstructor | undefined;
-const memoryAuthEntries = new Map<string, string>();
-
-function memoryAuthSecretStore(service: string): AuthSecretStore {
-  return {
-    read(account) {
-      return memoryAuthEntries.get(`${service}\0${account}`);
-    },
-    write(account, payload) {
-      memoryAuthEntries.set(`${service}\0${account}`, payload);
-    },
-    remove(account) {
-      memoryAuthEntries.delete(`${service}\0${account}`);
-    },
-  };
-}
-
-function keyringAuthSecretStore(service: string): AuthSecretStore {
-  return {
-    read(account) {
-      return getKeyringEntry(account, service).getPassword() ?? undefined;
-    },
-    write(account, payload) {
-      getKeyringEntry(account, service).setPassword(payload);
-    },
-    remove(account) {
-      getKeyringEntry(account, service).deleteCredential();
-    },
-  };
-}
-
-const unavailableAuthSecretStore: AuthSecretStore = {
-  read() {
-    throw new Error("simulated secure credential store unavailable");
-  },
-  write() {
-    throw new Error("simulated secure credential store unavailable");
-  },
-  remove() {
-    throw new Error("simulated secure credential store unavailable");
-  },
-};
-
-function createKeyRevokedTestError(): Error {
-  return new Error("Couldn't access platform storage: KeyRevoked", {
-    cause: new Error("KeyRevoked"),
-  });
-}
-
-const keyRevokedAuthSecretStore: AuthSecretStore = {
-  read() {
-    throw createKeyRevokedTestError();
-  },
-  write() {
-    throw createKeyRevokedTestError();
-  },
-  remove() {
-    throw createKeyRevokedTestError();
-  },
-};
-
-function getAuthSecretStore(service = AUTH_SECRET_SERVICE): AuthSecretStore {
-  if (process.env[TEST_AUTH_STORE_ENV] === "memory") {
-    return memoryAuthSecretStore(service);
-  }
-  if (process.env[TEST_AUTH_STORE_ENV] === "unavailable") {
-    return unavailableAuthSecretStore;
-  }
-  if (process.env[TEST_AUTH_STORE_ENV] === "keyrevoked") {
-    return keyRevokedAuthSecretStore;
-  }
-  return keyringAuthSecretStore(service);
-}
-
-function getKeyringEntry(account: string, service: string): KeyringEntry {
-  try {
-    KeyringEntryClass ??= loadKeyringEntryClass();
-    return new KeyringEntryClass(service, account);
-  } catch (error) {
-    throw new Error(
-      "OAuth secure credential storage is unavailable. Configure the OS credential store and retry authentication.",
-      { cause: error },
-    );
-  }
-}
-
-function loadKeyringEntryClass(
-  keyringRequire: KeyringRequire = require,
-  platform: NodeJS.Platform = process.platform,
-  arch: NodeJS.Architecture = process.arch,
-): KeyringEntryConstructor {
-  try {
-    return (keyringRequire("@napi-rs/keyring") as KeyringModule).Entry;
-  } catch (loaderError) {
-    try {
-      return loadKeyringNativeBindingFallback(keyringRequire, platform, arch).Entry;
-    } catch (fallbackError) {
-      throw new Error(
-        `Failed to load @napi-rs/keyring; absolute-path native binding fallback also failed: ${formatErrorMessage(fallbackError)}`,
-        {
-          cause: loaderError,
-        },
-      );
-    }
-  }
-}
-
-function loadKeyringNativeBindingFallback(
-  keyringRequire: KeyringRequire,
-  platform: NodeJS.Platform,
-  arch: NodeJS.Architecture,
-): KeyringModule {
-  const targets = getKeyringNativeBindingTargets(platform, arch);
-  if (targets.length === 0) {
-    throw new Error(`Unsupported @napi-rs/keyring native binding target: ${platform}-${arch}`);
-  }
-
-  let lastError: unknown;
-  for (const target of targets) {
-    try {
-      const packageJsonPath = keyringRequire.resolve(`${target.packageName}/package.json`);
-      return keyringRequire(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
-}
-
-function getKeyringNativeBindingTargets(
-  platform: NodeJS.Platform,
-  arch: NodeJS.Architecture,
-): { packageName: string; bindingFile: string }[] {
-  return getKeyringNativeBindingSuffixes(platform, arch).map((suffix) => ({
-    packageName: `@napi-rs/keyring-${suffix}`,
-    bindingFile: `keyring.${suffix}.node`,
-  }));
-}
-
-function getKeyringNativeBindingSuffixes(
-  platform: NodeJS.Platform,
-  arch: NodeJS.Architecture,
-): string[] {
-  if (platform === "darwin") {
-    if (arch === "arm64") {
-      return ["darwin-arm64"];
-    }
-    if (arch === "x64") {
-      return ["darwin-x64"];
-    }
-  }
-  if (platform === "win32") {
-    if (arch === "arm64") {
-      return ["win32-arm64-msvc"];
-    }
-    if (arch === "x64") {
-      return ["win32-x64-msvc"];
-    }
-    if (arch === "ia32") {
-      return ["win32-ia32-msvc"];
-    }
-  }
-  if (platform === "linux") {
-    if (arch === "arm64") {
-      return ["linux-arm64-gnu", "linux-arm64-musl"];
-    }
-    if (arch === "arm") {
-      return ["linux-arm-gnueabihf"];
-    }
-    if (arch === "riscv64") {
-      return ["linux-riscv64-gnu"];
-    }
-    if (arch === "x64") {
-      return ["linux-x64-gnu", "linux-x64-musl"];
-    }
-  }
-  if (platform === "freebsd" && arch === "x64") {
-    return ["freebsd-x64"];
-  }
-  return [];
-}
-
-function formatErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-type KeyringRecoveryOperation = "read" | "write" | "remove";
-
-type KeyringRecoveryResponse =
-  | { ok: true; found?: boolean; value?: string }
-  | { ok: false; error?: string };
-
-function isLinuxKeyringRecoveryEnabled(): boolean {
-  if (process.env[KEYRING_RECOVERY_DISABLED_ENV] === "1") {
-    return false;
-  }
-  return process.platform === "linux" || process.env[TEST_LINUX_KEYRING_RECOVERY_ENV] === "1";
-}
-
-function shouldAttemptLinuxKeyringRecovery(error: unknown): boolean {
-  return (
-    isLinuxKeyringRecoveryEnabled() &&
-    causeChainContains(error, /key\s*(?:has been\s*)?revoked|keyrevoked/i)
-  );
-}
-
-function runLinuxKeyringRecoveryOperation(
-  operation: KeyringRecoveryOperation,
-  account: string,
-  payload: string | undefined,
-  service: string,
-): KeyringRecoveryResponse {
-  const keyctl = process.env[KEYRING_RECOVERY_KEYCTL_ENV]?.trim() || "keyctl";
-  const node = process.env[KEYRING_RECOVERY_NODE_ENV]?.trim() || "node";
-  const helper =
-    process.env[KEYRING_RECOVERY_HELPER_ENV]?.trim() ||
-    fileURLToPath(new URL("./mcp-keyring-helper.cjs", import.meta.url));
-  const request = JSON.stringify({ operation, service, account, payload });
-  const result = spawnSync(keyctl, ["session", "-", node, helper], {
-    input: `${request}\n`,
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-    timeout: KEYRING_RECOVERY_TIMEOUT_MS,
-    windowsHide: true,
-  });
-
-  if (result.error) {
-    throw new Error(`Linux keyring recovery helper could not start: ${result.error.message}`, {
-      cause: result.error,
-    });
-  }
-  if (result.status !== 0) {
-    throw new Error(
-      `Linux keyring recovery helper failed with exit code ${result.status ?? "unknown"}`,
-    );
-  }
-
-  let response: unknown;
-  try {
-    response = JSON.parse(result.stdout.trim()) as unknown;
-  } catch (error) {
-    throw new Error("Linux keyring recovery helper returned invalid JSON", { cause: error });
-  }
-  if (
-    typeof response !== "object" ||
-    response === null ||
-    typeof (response as { ok?: unknown }).ok !== "boolean"
-  ) {
-    throw new Error("Linux keyring recovery helper returned an invalid response");
-  }
-  const typedResponse = response as KeyringRecoveryResponse;
-  if (!typedResponse.ok) {
-    throw new Error(typedResponse.error || "Linux keyring recovery helper failed");
-  }
-  if (
-    operation === "read" &&
-    typedResponse.found === true &&
-    typeof typedResponse.value !== "string"
-  ) {
-    throw new Error("Linux keyring recovery helper returned an invalid read response");
-  }
-  return typedResponse;
-}
-
-function linuxKeyringRecoveryAuthSecretStore(service = AUTH_SECRET_SERVICE): AuthSecretStore {
-  return {
-    read(account) {
-      const response = runLinuxKeyringRecoveryOperation("read", account, undefined, service);
-      return response.ok && response.found === true ? response.value : undefined;
-    },
-    write(account, payload) {
-      runLinuxKeyringRecoveryOperation("write", account, payload, service);
-    },
-    remove(account) {
-      runLinuxKeyringRecoveryOperation("remove", account, undefined, service);
-    },
-  };
 }
 
 export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): AuthStorageOptions {
@@ -682,12 +326,16 @@ function writeSecureAuthEntryToStore(
 
 function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
   try {
-    writeSecureAuthEntryToStore(getAuthSecretStore(), serverName, entry);
+    writeSecureAuthEntryToStore(getAuthSecretStore(AUTH_SECRET_SERVICE), serverName, entry);
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) {
       throw error;
     }
-    writeSecureAuthEntryToStore(linuxKeyringRecoveryAuthSecretStore(), serverName, entry);
+    writeSecureAuthEntryToStore(
+      linuxKeyringRecoveryAuthSecretStore(AUTH_SECRET_SERVICE),
+      serverName,
+      entry,
+    );
   }
 }
 
@@ -881,12 +529,12 @@ function removeAuthEntryFromStore(store: AuthSecretStore, serverName: string): v
 
 export function removeAuthEntry(serverName: string, options?: AuthStorageOptions): void {
   try {
-    removeAuthEntryFromStore(getAuthSecretStore(), serverName);
+    removeAuthEntryFromStore(getAuthSecretStore(AUTH_SECRET_SERVICE), serverName);
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) {
       throw error;
     }
-    removeAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore(), serverName);
+    removeAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore(AUTH_SECRET_SERVICE), serverName);
   }
   removeLegacyAuthEntry(serverName, options);
 }

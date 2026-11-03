@@ -121,5 +121,35 @@
     "nodeType": "MemberExpression",
     "operation": "Response.prototype.json",
     "guards": []
+  },
+  {
+    "id": "QX-018",
+    "file": "keyring-store.ts",
+    "rule": "typescript/no-unsafe-type-assertion",
+    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringEntryClass" },
+    "path": ["body", "body", 0, "block", "body", 0],
+    "nodeType": "ReturnStatement",
+    "operation": "return (require(\"@napi-rs/keyring\") as KeyringModule).Entry;",
+    "guards": []
+  },
+  {
+    "id": "QX-013",
+    "file": "keyring-store.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringEntryClass" },
+    "path": ["body", "body", 0, "handler", "body", "body", 0, "handler", "body", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new Error(\n        `Failed to load @napi-rs/keyring; absolute-path native binding fallback also failed: ${formatErrorMessage(fallbackError)}`,\n        {\n          cause: loaderError,\n        },\n      );",
+    "guards": []
+  },
+  {
+    "id": "QX-018",
+    "file": "keyring-store.ts",
+    "rule": "typescript/no-unsafe-type-assertion",
+    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringNativeBindingFallback" },
+    "path": ["body", "body", 3, "body", "body", 0, "block", "body", 1],
+    "nodeType": "ReturnStatement",
+    "operation": "return require(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;",
+    "guards": []
   }
 ]
