@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { McpAdapterHost, HostToolArguments } from "./host-contract.ts";
+import type { McpAdapterHost, HostToolExecute } from "./host-contract.ts";
 import type { DirectToolSpec, McpAdapterOptions, McpConfig } from "./types.ts";
 import {
   buildProxyDescription,
@@ -169,6 +169,18 @@ export class McpHostTools {
     const host = this.host;
     const searchAndLoad = (params: SearchParams, signal?: AbortSignal) =>
       this.searchAndLoad(params, signal);
+    const execute: HostToolExecute<SearchParams> =
+      // oxlint-disable-next-line eslint/max-params -- QX-3004: preserve Pi's native five-position execute callback.
+      async function executeMcpSearch(toolCallId, params, signal, _onUpdate, ctx) {
+        if (beforeExecute) {
+          if (host.owner) {
+            await host.owner.runCallback("beforeExecute", () => beforeExecute(toolCallId, ctx));
+          } else {
+            await beforeExecute(toolCallId, ctx);
+          }
+        }
+        return searchAndLoad(params, signal);
+      };
     const searchDefinition = {
       name: "mcp_search",
       label: "MCP Search",
@@ -201,16 +213,7 @@ export class McpHostTools {
         },
       ),
       renderResult: renderMcpToolResult,
-      async execute(...[toolCallId, params, signal, , ctx]: HostToolArguments<SearchParams>) {
-        if (beforeExecute) {
-          if (host.owner) {
-            await host.owner.runCallback("beforeExecute", () => beforeExecute(toolCallId, ctx));
-          } else {
-            await beforeExecute(toolCallId, ctx);
-          }
-        }
-        return searchAndLoad(params, signal);
-      },
+      execute,
     };
     this.pi.registerTool(searchDefinition);
   }
@@ -223,6 +226,27 @@ export class McpHostTools {
     const beforeExecute = options.beforeExecute;
     const getToolState = (signal?: AbortSignal) => this.host.getToolState(signal);
     const getPiTools = () => this.pi.getAllTools();
+    const execute: HostToolExecute<{ code: string; timeoutMs?: number }> =
+      // oxlint-disable-next-line eslint/max-params -- QX-3004: preserve Pi's native five-position execute callback.
+      async function executeMcpScript(toolCallId, params, signal, _onUpdate, ctx) {
+        const ready = await getToolState(signal);
+        if ("content" in ready) {
+          return ready;
+        }
+        const { runMcpScript } = await import("./mcp-code.ts");
+        return runMcpScript(
+          ready,
+          params.code,
+          params.timeoutMs ?? options.defaultScriptTimeoutMs,
+          getPiTools,
+          signal,
+          toolCallId,
+          beforeExecute
+            ? (callSignal, operation) =>
+                beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)
+            : undefined,
+        );
+      };
     this.loader.registerFeature("script", {
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp_script",
@@ -247,36 +271,19 @@ export class McpHostTools {
         ),
       }),
       renderResult: renderMcpToolResult,
-      async execute(
-        ...[toolCallId, params, signal, , ctx]: HostToolArguments<{
-          code: string;
-          timeoutMs?: number;
-        }>
-      ) {
-        const ready = await getToolState(signal);
-        if ("content" in ready) {
-          return ready;
-        }
-        const { runMcpScript } = await import("./mcp-code.ts");
-        return runMcpScript(
-          ready,
-          params.code,
-          params.timeoutMs ?? options.defaultScriptTimeoutMs,
-          getPiTools,
-          signal,
-          toolCallId,
-          beforeExecute
-            ? (callSignal, operation) =>
-                beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)
-            : undefined,
-        );
-      },
+      execute,
     });
     this.scriptToolRegistered = true;
   }
 
   private registerProxyTool(description: string): void {
     const beforeExecute = this.options.beforeExecute;
+    const { pi, host, options } = this;
+    const execute: HostToolExecute<GatewayArguments> =
+      // oxlint-disable-next-line eslint/max-params -- QX-3004: preserve Pi's native five-position execute callback.
+      async function executeMcpGateway(toolCallId, rawParams, signal, _onUpdate, ctx) {
+        return executeGateway(pi, host, options, [toolCallId, rawParams, signal, _onUpdate, ctx]);
+      };
     this.loader.registerFeature("gateway", {
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp",
@@ -288,8 +295,7 @@ export class McpHostTools {
       parameters: gatewayParameters,
       prepareArguments: prepareGatewayArguments,
       renderResult: renderMcpToolResult,
-      execute: (...args: HostToolArguments<GatewayArguments>) =>
-        executeGateway(this.pi, this.host, this.options, args),
+      execute,
     });
     this.proxyToolRegistered = true;
     this.proxyToolDescription = description;

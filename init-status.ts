@@ -93,6 +93,11 @@ export function updateStatusBar(state: McpExtensionState): void {
     ui.setStatus("mcp", undefined);
     return;
   }
+  // oxlint-disable-next-line typescript/no-unnecessary-condition -- QX-3003: JavaScript hosts can omit Pi's required theme.
+  if (ui.theme === undefined) {
+    ui.setStatus("mcp", formattedStatus);
+    return;
+  }
   ui.setStatus("mcp", ui.theme.fg("accent", formattedStatus));
 }
 

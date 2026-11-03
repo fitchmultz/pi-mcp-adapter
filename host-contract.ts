@@ -27,6 +27,10 @@ export interface McpAdapterHost {
   >;
 }
 
-export type HostToolArguments<Params> = Parameters<
-  ToolDefinition<TUnsafe<Params>, Record<string, unknown>, unknown>["execute"]
->;
+export type HostToolExecute<Params> = ToolDefinition<
+  TUnsafe<Params>,
+  Record<string, unknown>,
+  unknown
+>["execute"];
+
+export type HostToolArguments<Params> = Parameters<HostToolExecute<Params>>;

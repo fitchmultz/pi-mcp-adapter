@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ConsentManager } from "./consent-manager.ts";
 import type { McpLifecycleManager } from "./lifecycle.ts";
 import type { McpServerManager } from "./server-manager.ts";
@@ -12,7 +12,8 @@ import type {
   UiStreamSummary,
 } from "./types.ts";
 import type { UiResourceHandler } from "./ui-resource-handler.ts";
-import type { UiServerHandle } from "./ui-server.ts";
+import type { UiServerHandle } from "./ui-server-contracts.ts";
+import type { McpStatusEventBus } from "./mcp-status-events.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 
@@ -66,5 +67,5 @@ export interface McpExtensionState {
   ui?: ExtensionContext["ui"];
   sendMessage?: SendMessageFn;
   onToolMetadataUpdated?: (serverName: string, reason: string) => void | Promise<void>;
-  statusEvents?: Pick<ExtensionAPI["events"], "emit">;
+  statusEvents?: McpStatusEventBus;
 }
