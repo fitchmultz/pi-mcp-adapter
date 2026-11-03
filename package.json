@@ -48,7 +48,7 @@
     "lint:tracing": "oxlint --deny-warnings mcp-trace.ts",
     "lint:core-runtime": "oxlint --deny-warnings abort.ts agent-dir.ts client-operations.ts error-signal.ts legacy-migration.ts logger.ts mcp-oauth-callback-config.ts onboarding-state.ts panel-keys.ts search-ranking.ts unix-socket-transport.ts",
     "lint:sampling": "oxlint --deny-warnings sampling-handler.ts",
-    "lint:output-runtime": "oxlint --deny-warnings mcp-output-*.ts",
+    "lint:output-runtime": "oxlint --deny-warnings mcp-output-*.ts plain-result-reader.ts",
     "lint:credential-runtime": "oxlint --deny-warnings mcp-auth.ts auth-record-types.ts credential-payloads.ts credential-store-errors.ts keyring-store.ts keyring-recovery.ts",
     "lint:node-oauth": "oxlint --deny-warnings mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts __tests__/fixtures/keyring-read-only.cts",
     "lint:sdk-http": "oxlint --deny-warnings __tests__/sdk-v2-http.test.ts __tests__/fixtures/native-capture-extension.ts",

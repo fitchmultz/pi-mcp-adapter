@@ -83,8 +83,9 @@ async function readPlainOutputPage(
   input: ReadMcpResultInput,
   options: McpOutputGuardOptions,
 ): Promise<ReadMcpResultSuccess> {
-  const { offset, limit, maxBytes, maxLines } = plainReadBounds(input, options);
-  const { page, total } = await readPlainResult(ref, offset, limit, maxBytes, maxLines);
+  const window = plainReadBounds(input, options);
+  const { offset } = window;
+  const { page, total } = await readPlainResult(ref, window);
   const end = offset + page.length;
   const nextOffset = end < total ? end : null;
   return {
