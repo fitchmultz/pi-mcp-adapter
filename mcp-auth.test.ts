@@ -2,13 +2,13 @@
  * Tests for mcp-auth.ts - Auth storage module
  */
 
-import { describe, it, before, after } from "node:test";
+import { describe as nodeDescribe, it as nodeIt, before, after } from "node:test";
 import assert from "node:assert";
 import { mkdirSync, rmSync, existsSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { tmpdir } from "os";
 import { randomBytes } from "crypto";
-import Module from "node:module";
+import { registerHooks } from "node:module";
 
 // Set up isolated temp directory for tests
 const TEST_DIR = join(tmpdir(), `mcp-oauth-test-${randomBytes(4).toString("hex")}`);
@@ -31,7 +31,7 @@ import {
   type AuthEntry,
 } from "./mcp-auth.ts";
 
-describe("mcp-auth", () => {
+nodeDescribe("mcp-auth", () => {
   before(() => {
     // Ensure clean state
     try {
@@ -55,99 +55,68 @@ describe("mcp-auth", () => {
     }
   });
 
-  describe("keyring native binding fallback", () => {
-    class FakeEntry {
-      readonly service: string;
-      readonly account: string;
-      constructor(service: string, account: string) {
-        this.service = service;
-        this.account = account;
-      }
-      getPassword(): string | null {
-        return null;
-      }
-      setPassword(): void {}
-      deleteCredential(): boolean {
-        return true;
-      }
-    }
-
-    const moduleLoader = Module as unknown as {
-      _load: (request: string, parent: unknown, isMain: boolean) => unknown;
-      _resolveFilename: (
-        request: string,
-        parent: unknown,
-        isMain: boolean,
-        options?: unknown,
-      ) => string;
-    };
-
-    it("preserves loader failures and tries the Linux musl binding after gnu", () => {
+  nodeDescribe("keyring native binding fallback", () => {
+    nodeIt("preserves loader failures and tries the Linux musl binding after gnu", () => {
       const originalStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
-      const originalLoad = moduleLoader._load;
-      const originalResolve = moduleLoader._resolveFilename;
-      const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
-      const archDescriptor = Object.getOwnPropertyDescriptor(process, "arch")!;
+      const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+      const archDescriptor = Object.getOwnPropertyDescriptor(process, "arch");
+      assert(platformDescriptor !== undefined);
+      assert(archDescriptor !== undefined);
       const loaderError = new Error("package loader failed");
-      try {
-        delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
-        moduleLoader._load = (request, parent, isMain) => {
-          if (request === "@napi-rs/keyring") {
+      const resolved: string[] = [];
+      let linuxFallback = false;
+      const hooks = registerHooks({
+        resolve(specifier, context, nextResolve) {
+          if (specifier === "@napi-rs/keyring") {
             throw loaderError;
           }
-          if (request.endsWith(".node")) {
+          if (linuxFallback && specifier.startsWith("@napi-rs/keyring-linux-x64-")) {
+            resolved.push(specifier);
+            if (specifier.includes("-gnu/")) {
+              throw new Error("gnu binding unavailable");
+            }
+            return { url: "file:///tmp/keyring-linux-x64-musl/package.json", shortCircuit: true };
+          }
+          if (specifier.endsWith(".node")) {
+            if (linuxFallback && specifier.endsWith("keyring.linux-x64-musl.node")) {
+              return {
+                url: new URL("./__tests__/fixtures/keyring-read-only.cts", import.meta.url).href,
+                shortCircuit: true,
+              };
+            }
             throw new Error("native binding failed");
           }
-          return originalLoad.call(Module, request, parent, isMain);
-        };
-
+          return nextResolve(specifier, context);
+        },
+      });
+      try {
+        delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
         assert.throws(
           () => getAuthEntry("fallback-failure"),
           (error) => {
             assert(error instanceof Error);
             assert.match(error.message, /Failed to read OAuth credentials/);
             let current: unknown = error;
-            while (current && typeof current === "object") {
+            while (typeof current === "object" && current !== null) {
               if (current === loaderError) {
                 return true;
               }
-              current = (current as { cause?: unknown }).cause;
+              current = "cause" in current ? current.cause : undefined;
             }
             assert.fail("original loader error was not preserved in the cause chain");
           },
         );
 
-        const resolved: string[] = [];
         Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
         Object.defineProperty(process, "arch", { ...archDescriptor, value: "x64" });
-        moduleLoader._resolveFilename = (request, parent, isMain, options) => {
-          if (request.startsWith("@napi-rs/keyring-linux-x64-")) {
-            resolved.push(request);
-            if (request.includes("-gnu/")) {
-              throw new Error("gnu binding unavailable");
-            }
-            return "/tmp/keyring-linux-x64-musl/package.json";
-          }
-          return originalResolve.call(Module, request, parent, isMain, options);
-        };
-        moduleLoader._load = (request, parent, isMain) => {
-          if (request === "@napi-rs/keyring") {
-            throw loaderError;
-          }
-          if (request.endsWith("keyring.linux-x64-musl.node")) {
-            return { Entry: FakeEntry };
-          }
-          return originalLoad.call(Module, request, parent, isMain);
-        };
-
+        linuxFallback = true;
         assert.strictEqual(getAuthEntry("fallback-success"), undefined);
         assert.deepStrictEqual(resolved, [
           "@napi-rs/keyring-linux-x64-gnu/package.json",
           "@napi-rs/keyring-linux-x64-musl/package.json",
         ]);
       } finally {
-        moduleLoader._load = originalLoad;
-        moduleLoader._resolveFilename = originalResolve;
+        hooks.deregister();
         Object.defineProperty(process, "platform", platformDescriptor);
         Object.defineProperty(process, "arch", archDescriptor);
         if (originalStore === undefined) {
@@ -159,13 +128,13 @@ describe("mcp-auth", () => {
     });
   });
 
-  describe("getAuthEntry", () => {
-    it("should return undefined for non-existent entry", () => {
+  nodeDescribe("getAuthEntry", () => {
+    nodeIt("should return undefined for non-existent entry", () => {
       const entry = getAuthEntry("non-existent");
       assert.strictEqual(entry, undefined);
     });
 
-    it("should import legacy plaintext entries and remove the file", () => {
+    nodeIt("should import legacy plaintext entries and remove the file", () => {
       const filePath = getAuthEntryFilePath("legacy-import");
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(
@@ -183,7 +152,7 @@ describe("mcp-auth", () => {
       assert.strictEqual(getAuthEntry("legacy-import")?.tokens?.accessToken, "legacy-token");
     });
 
-    it("should fail closed when the secure credential store is unavailable", () => {
+    nodeIt("should fail closed when the secure credential store is unavailable", () => {
       const previous = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
       process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
       try {
@@ -201,8 +170,8 @@ describe("mcp-auth", () => {
     });
   });
 
-  describe("saveAuthEntry / getAuthEntry", () => {
-    it("should save and retrieve an auth entry", () => {
+  nodeDescribe("saveAuthEntry / getAuthEntry", () => {
+    nodeIt("should save and retrieve an auth entry", () => {
       const entry: AuthEntry = {
         tokens: {
           accessToken: "test-token",
@@ -219,7 +188,7 @@ describe("mcp-auth", () => {
       assert.deepStrictEqual(retrieved, entry);
     });
 
-    it("should update existing entries", () => {
+    nodeIt("should update existing entries", () => {
       const entry1: AuthEntry = {
         tokens: { accessToken: "token1" },
         serverUrl: "https://api.example.com",
@@ -237,8 +206,8 @@ describe("mcp-auth", () => {
     });
   });
 
-  describe("getAuthForUrl", () => {
-    it("should return entry when URL matches", () => {
+  nodeDescribe("getAuthForUrl", () => {
+    nodeIt("should return entry when URL matches", () => {
       const entry: AuthEntry = {
         tokens: { accessToken: "test-token" },
         serverUrl: "https://api.example.com",
@@ -250,7 +219,7 @@ describe("mcp-auth", () => {
       assert.deepStrictEqual(retrieved, entry);
     });
 
-    it("should return undefined when URL doesn't match", () => {
+    nodeIt("should return undefined when URL doesn't match", () => {
       const entry: AuthEntry = {
         tokens: { accessToken: "test-token" },
         serverUrl: "https://api.example.com",
@@ -262,7 +231,7 @@ describe("mcp-auth", () => {
       assert.strictEqual(retrieved, undefined);
     });
 
-    it("should return undefined when serverUrl is not stored", () => {
+    nodeIt("should return undefined when serverUrl is not stored", () => {
       const entry: AuthEntry = {
         tokens: { accessToken: "test-token" },
       };
@@ -274,8 +243,8 @@ describe("mcp-auth", () => {
     });
   });
 
-  describe("removeAuthEntry", () => {
-    it("should remove an entry", () => {
+  nodeDescribe("removeAuthEntry", () => {
+    nodeIt("should remove an entry", () => {
       const entry: AuthEntry = {
         tokens: { accessToken: "test-token" },
       };
@@ -288,8 +257,8 @@ describe("mcp-auth", () => {
     });
   });
 
-  describe("updateTokens", () => {
-    it("should update tokens for a server", () => {
+  nodeDescribe("updateTokens", () => {
+    nodeIt("should update tokens for a server", () => {
       updateTokens("test-server", {
         accessToken: "new-token",
         refreshToken: "new-refresh",
@@ -301,16 +270,16 @@ describe("mcp-auth", () => {
       assert.strictEqual(entry?.tokens?.accessToken, "new-token");
     });
 
-    it("should preserve existing client info", () => {
+    nodeIt("should preserve existing client info", () => {
       updateClientInfo("test-server", { clientId: "client-123" });
       updateTokens("test-server", { accessToken: "token" });
 
       const entry = getAuthEntry("test-server");
       assert.strictEqual(entry?.clientInfo?.clientId, "client-123");
-      assert.strictEqual(entry?.tokens?.accessToken, "token");
+      assert.strictEqual(entry.tokens?.accessToken, "token");
     });
 
-    it("should clear URL-bound auth state when tokens move to a different server URL", () => {
+    nodeIt("should clear URL-bound auth state when tokens move to a different server URL", () => {
       saveAuthEntry(
         "token-url-change",
         {
@@ -331,12 +300,12 @@ describe("mcp-auth", () => {
       );
       const newEntry = getAuthForUrl("token-url-change", "https://new.example.com/mcp");
       assert.strictEqual(newEntry?.tokens?.accessToken, "new-token");
-      assert.strictEqual(newEntry?.clientInfo, undefined);
-      assert.strictEqual(newEntry?.codeVerifier, undefined);
-      assert.strictEqual(newEntry?.oauthState, undefined);
+      assert.strictEqual(newEntry.clientInfo, undefined);
+      assert.strictEqual(newEntry.codeVerifier, undefined);
+      assert.strictEqual(newEntry.oauthState, undefined);
     });
 
-    it("should clear legacy URL-bound auth state when saving tokens with a server URL", () => {
+    nodeIt("should clear legacy URL-bound auth state when saving tokens with a server URL", () => {
       saveAuthEntry("token-legacy-url-change", {
         tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
         clientInfo: { clientId: "old-client" },
@@ -352,14 +321,14 @@ describe("mcp-auth", () => {
 
       const newEntry = getAuthForUrl("token-legacy-url-change", "https://new.example.com/mcp");
       assert.strictEqual(newEntry?.tokens?.accessToken, "new-token");
-      assert.strictEqual(newEntry?.clientInfo, undefined);
-      assert.strictEqual(newEntry?.codeVerifier, undefined);
-      assert.strictEqual(newEntry?.oauthState, undefined);
+      assert.strictEqual(newEntry.clientInfo, undefined);
+      assert.strictEqual(newEntry.codeVerifier, undefined);
+      assert.strictEqual(newEntry.oauthState, undefined);
     });
   });
 
-  describe("updateClientInfo", () => {
-    it("should update client info for a server", () => {
+  nodeDescribe("updateClientInfo", () => {
+    nodeIt("should update client info for a server", () => {
       updateClientInfo("test-server", {
         clientId: "client-123",
         clientSecret: "secret",
@@ -369,62 +338,68 @@ describe("mcp-auth", () => {
 
       const entry = getAuthEntry("test-server");
       assert.strictEqual(entry?.clientInfo?.clientId, "client-123");
-      assert.strictEqual(entry?.clientInfo?.clientSecret, "secret");
+      assert.strictEqual(entry.clientInfo.clientSecret, "secret");
     });
 
-    it("should clear URL-bound credentials when client info moves to a different server URL", () => {
-      saveAuthEntry(
-        "url-change",
-        {
+    nodeIt(
+      "should clear URL-bound credentials when client info moves to a different server URL",
+      () => {
+        saveAuthEntry(
+          "url-change",
+          {
+            tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
+            clientInfo: { clientId: "old-client" },
+            codeVerifier: "old-verifier",
+            oauthState: "old-state",
+            serverUrl: "https://old.example.com/mcp",
+          },
+          "https://old.example.com/mcp",
+        );
+
+        updateClientInfo("url-change", { clientId: "new-client" }, "https://new.example.com/mcp");
+
+        assert.strictEqual(getAuthForUrl("url-change", "https://old.example.com/mcp"), undefined);
+        const newEntry = getAuthForUrl("url-change", "https://new.example.com/mcp");
+        assert.strictEqual(newEntry?.clientInfo?.clientId, "new-client");
+        assert.strictEqual(newEntry.tokens, undefined);
+        assert.strictEqual(newEntry.codeVerifier, undefined);
+        assert.strictEqual(newEntry.oauthState, undefined);
+      },
+    );
+
+    nodeIt(
+      "should clear stale verifier and state when legacy client info gains a server URL",
+      () => {
+        saveAuthEntry("legacy-url-change", {
           tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
           clientInfo: { clientId: "old-client" },
           codeVerifier: "old-verifier",
           oauthState: "old-state",
-          serverUrl: "https://old.example.com/mcp",
-        },
-        "https://old.example.com/mcp",
-      );
+        });
 
-      updateClientInfo("url-change", { clientId: "new-client" }, "https://new.example.com/mcp");
+        updateClientInfo(
+          "legacy-url-change",
+          { clientId: "new-client" },
+          "https://new.example.com/mcp",
+        );
 
-      assert.strictEqual(getAuthForUrl("url-change", "https://old.example.com/mcp"), undefined);
-      const newEntry = getAuthForUrl("url-change", "https://new.example.com/mcp");
-      assert.strictEqual(newEntry?.clientInfo?.clientId, "new-client");
-      assert.strictEqual(newEntry?.tokens, undefined);
-      assert.strictEqual(newEntry?.codeVerifier, undefined);
-      assert.strictEqual(newEntry?.oauthState, undefined);
-    });
-
-    it("should clear stale verifier and state when legacy client info gains a server URL", () => {
-      saveAuthEntry("legacy-url-change", {
-        tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
-        clientInfo: { clientId: "old-client" },
-        codeVerifier: "old-verifier",
-        oauthState: "old-state",
-      });
-
-      updateClientInfo(
-        "legacy-url-change",
-        { clientId: "new-client" },
-        "https://new.example.com/mcp",
-      );
-
-      const newEntry = getAuthForUrl("legacy-url-change", "https://new.example.com/mcp");
-      assert.strictEqual(newEntry?.clientInfo?.clientId, "new-client");
-      assert.strictEqual(newEntry?.tokens, undefined);
-      assert.strictEqual(newEntry?.codeVerifier, undefined);
-      assert.strictEqual(newEntry?.oauthState, undefined);
-    });
+        const newEntry = getAuthForUrl("legacy-url-change", "https://new.example.com/mcp");
+        assert.strictEqual(newEntry?.clientInfo?.clientId, "new-client");
+        assert.strictEqual(newEntry.tokens, undefined);
+        assert.strictEqual(newEntry.codeVerifier, undefined);
+        assert.strictEqual(newEntry.oauthState, undefined);
+      },
+    );
   });
 
-  describe("legacy flow state cleanup", () => {
-    it("clears a code verifier", () => {
+  nodeDescribe("legacy flow state cleanup", () => {
+    nodeIt("clears a code verifier", () => {
       saveAuthEntry("test-server", { codeVerifier: "verifier-123" });
       clearCodeVerifier("test-server");
       assert.strictEqual(getAuthEntry("test-server")?.codeVerifier, undefined);
     });
 
-    it("clears OAuth state", () => {
+    nodeIt("clears OAuth state", () => {
       saveAuthEntry("test-server", { oauthState: "state-abc-123" });
       assert.strictEqual(getOAuthState("test-server"), "state-abc-123");
       clearOAuthState("test-server");
@@ -432,8 +407,8 @@ describe("mcp-auth", () => {
     });
   });
 
-  describe("clearAllCredentials", () => {
-    it("should remove all credentials", () => {
+  nodeDescribe("clearAllCredentials", () => {
+    nodeIt("should remove all credentials", () => {
       saveAuthEntry("test-server", {
         tokens: { accessToken: "token" },
         clientInfo: { clientId: "client" },
@@ -446,8 +421,8 @@ describe("mcp-auth", () => {
     });
   });
 
-  describe("clearClientInfo", () => {
-    it("should only remove client info", () => {
+  nodeDescribe("clearClientInfo", () => {
+    nodeIt("should only remove client info", () => {
       updateTokens("test-server", { accessToken: "token" });
       updateClientInfo("test-server", { clientId: "client" });
 
@@ -459,8 +434,8 @@ describe("mcp-auth", () => {
     });
   });
 
-  describe("clearTokens", () => {
-    it("should only remove tokens", () => {
+  nodeDescribe("clearTokens", () => {
+    nodeIt("should only remove tokens", () => {
       updateTokens("test-server", { accessToken: "token" });
       updateClientInfo("test-server", { clientId: "client" });
 

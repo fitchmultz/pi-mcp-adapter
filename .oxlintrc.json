@@ -302,6 +302,33 @@
   "overrides": [
     {
       "files": [
+        "mcp-auth-flow.test.ts",
+        "mcp-auth.test.ts",
+        "mcp-callback-server.test.ts",
+        "mcp-oauth-provider.test.ts"
+      ],
+      "excludeFiles": ["**/*/*"],
+      "rules": {
+        "typescript/no-floating-promises": [
+          "error",
+          {
+            "checkThenables": true,
+            "ignoreIIFE": false,
+            "ignoreVoid": false,
+            "allowForKnownSafeCalls": [
+              {
+                "from": "package",
+                "package": "node:test",
+                "name": ["nodeIt", "nodeDescribe"]
+              }
+            ],
+            "allowForKnownSafePromises": []
+          }
+        ]
+      }
+    },
+    {
+      "files": [
         "**/*.test.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
         "**/*.spec.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
         "**/__tests__/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",

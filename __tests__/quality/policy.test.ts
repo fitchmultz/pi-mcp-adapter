@@ -204,25 +204,47 @@ describe("quality policy", () => {
       (root: string) => write(root, "other.d.ts", "export {};\n"),
       "Declaration is absent from the declaration project",
     ],
-    [
-      "missing sampling exception record",
-      (root: string) =>
-        write(
-          root,
-          "docs/quality-exceptions.md",
-          readFileSync(join(root, "docs/quality-exceptions.md"), "utf8").replace(
-            "## QX-017:",
-            "## Unrecorded:",
-          ),
-        ),
-      "Missing quality exception record: QX-017",
-    ],
   ])("rejects %s", (_name, mutate, diagnostic) => {
     const root = repository();
     mutate(root);
     const result = check(root);
     expect(result.status, result.stderr).toBe(1);
     expect(result.stderr).toContain(diagnostic);
+  });
+
+  it.each(["QX-017", "QX-019"])("requires the %s configuration exception record", (id) => {
+    const root = repository();
+    write(
+      root,
+      "docs/quality-exceptions.md",
+      readFileSync(join(root, "docs/quality-exceptions.md"), "utf8").replace(
+        `## ${id}:`,
+        "## Unrecorded:",
+      ),
+    );
+    const result = check(root);
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(`Missing quality exception record: ${id}`);
+  });
+
+  it("rejects an expanded Node registration allowance", () => {
+    const root = repository();
+    updateJson(root, ".oxlintrc.json", (config) => {
+      const profiles = z.array(recordSchema).parse(config.overrides);
+      const index = profiles.findIndex((profile) =>
+        z.array(z.string()).parse(profile.files).includes("mcp-auth.test.ts"),
+      );
+      const profile = profiles[index];
+      if (profile === undefined) {
+        throw new Error("Missing Node registration profile");
+      }
+      const files = z.array(z.string()).parse(profile.files);
+      profiles[index] = { ...profile, files: [...files, "probe.ts"] };
+      return { ...config, overrides: profiles };
+    });
+    const result = check(root);
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("Oxlint overrides");
   });
 
   it.each([

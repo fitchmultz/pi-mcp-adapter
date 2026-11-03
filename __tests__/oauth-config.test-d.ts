@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { expect, it } from "vitest";
-import { extractOAuthConfig } from "../mcp-auth-flow.ts";
+import { extractOAuthConfig, startAuth } from "../mcp-auth-flow.ts";
 import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
 import sharedDocument from "../docs/client-metadata.json" with { type: "json" };
 
@@ -196,4 +196,63 @@ it("validates document URLs at extraction and direct-provider boundaries without
     expect(message).not.toContain("USERINFO_SECRET_SENTINEL");
     expect(message).not.toContain("example.com");
   }
+});
+
+it("rejects non-string OAuth redirectUri values", async () => {
+  await assert.rejects(
+    () =>
+      startAuth("typed-redirect", "https://api.example.com/mcp", {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        // @ts-expect-error OAuth redirect URIs are strings, not port numbers.
+        oauth: { redirectUri: 3118 },
+      }),
+    /redirectUri must be a string/,
+  );
+});
+
+it("rejects non-string OAuth clientName and clientUri values", () => {
+  assert.throws(
+    () =>
+      extractOAuthConfig({
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        // @ts-expect-error OAuth client names are strings, not numbers.
+        oauth: { clientName: 123 },
+      }),
+    /clientName must be a string/,
+  );
+  assert.throws(
+    () =>
+      extractOAuthConfig({
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        // @ts-expect-error OAuth client URIs are strings, not numbers.
+        oauth: { clientUri: 123 },
+      }),
+    /clientUri must be a string/,
+  );
+});
+
+it("rejects malformed OAuth authorizationParams", () => {
+  assert.throws(
+    () =>
+      extractOAuthConfig({
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        // @ts-expect-error OAuth authorization parameters require a string-valued object.
+        oauth: { authorizationParams: [] },
+      }),
+    /authorizationParams must be an object/,
+  );
+  assert.throws(
+    () =>
+      extractOAuthConfig({
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        // @ts-expect-error Individual OAuth authorization parameter values must be strings.
+        oauth: { authorizationParams: { prompt: 123 } },
+      }),
+    /authorizationParams\.prompt must be a string/,
+  );
 });

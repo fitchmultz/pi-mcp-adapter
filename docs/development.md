@@ -20,6 +20,7 @@ npm run lint:runtime-tests
 npm run lint:tracing
 npm run lint:sampling
 npm run lint:credential-runtime
+npm run lint:node-oauth
 npm run lint:sdk-http
 npm run lint:lifecycle-tests
 npm run lint:oauth-recovery
@@ -57,6 +58,8 @@ The runtime scope includes the stock-dialog elicitation and real stdio SDK suite
 `lint:credential-runtime` enforces the production profile for native keyring loading, credential-store diagnostics and Linux recovery dispatch. Native declarations type the lazy synchronous module loads. QX-013 preserves the primary loader failure, and QX-018 covers only the two enumerated native module assertions. The same scope includes the shared auth-record types and the payload store for hashed accounts, manifest validation, chunk reads/writes and cleanup. The storage suite retains real child-process recovery, platform diagnostics, chunking and plaintext migration checks.
 
 `lint:sdk-http` enforces the test profile for the real HTTP SDK suite and its typed native capture extension fixture. Latest-host qualification supplies one consistent SDK graph for their static imports and Jiti-loaded factories.
+
+`lint:node-oauth` covers the four root Node OAuth suites and their native-loader fixture. QX-019 permits only the `nodeIt` and `nodeDescribe` imports from `node:test` in those four root files. Registrations retain Node's scheduling. Context subtests and other asynchronous work still require ownership. The loader test uses synchronous `registerHooks` and restores its hooks and process descriptors. Invalid OAuth argument tests run in the compiler-checked negative configuration suite.
 
 `lint:lifecycle-tests` enforces the test profile for the adapter's native SDK lifecycle tests, their extension fixture, and the shared complete SDK context fixture.
 
