@@ -13,7 +13,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadExceptionSites } from "../../scripts/quality-exceptions.mjs";
+import { parseSync } from "oxc-parser";
+import { loadExceptionSites, resolveExceptionSite } from "../../scripts/quality-exceptions.mjs";
 
 const checker = fileURLToPath(new URL("../../scripts/check-directives.mjs", import.meta.url));
 const lintConfig = fileURLToPath(new URL("../../.oxlintrc.json", import.meta.url));
@@ -33,7 +34,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -163,6 +164,113 @@ describe("directive policy", () => {
     const result = checkSource("broken.ts", "const = ;");
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("broken.ts: parse error:");
+  });
+});
+
+const managerFiles = [
+  "connection-factory.ts",
+  "connection-http.ts",
+  "connection-runtime.ts",
+  "connection-oauth-ownership.ts",
+  "connection-handshake.ts",
+  "tool-transport.ts",
+];
+const managerSites = loadExceptionSites().filter((entry) => managerFiles.includes(entry.file));
+
+describe("manager operation inventory", () => {
+  it.each(managerFiles)("accepts the actual native operations in %s", (file) => {
+    const source = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8").replaceAll(
+      '"./',
+      '"./adapter/',
+    );
+    const entries = managerSites
+      .filter((entry) => entry.file === file)
+      .map((entry) => Object.assign({}, entry, { file: "forward.ts" }));
+    expect(entries.length).toBeGreaterThan(0);
+    const result = checkSource("forward.ts", source, entries);
+    expect(result.status, result.stderr).toBe(0);
+    const native = nativeLint(result.cwd);
+    expect(native.status, native.stdout + native.stderr).toBe(0);
+  });
+
+  it.each(managerSites)("rejects unauthorized uses of $file $operation", (entry) => {
+    const source = readFileSync(new URL(`../../${entry.file}`, import.meta.url), "utf8").replaceAll(
+      '"./',
+      '"./adapter/',
+    );
+    const entries = managerSites
+      .filter((siteEntry) => siteEntry.file === entry.file)
+      .map((siteEntry) => Object.assign({}, siteEntry, { file: "forward.ts" }));
+    const operation = resolveExceptionSite(
+      entry,
+      parseSync("forward.ts", source).program,
+      source,
+    ).start;
+    const offset = source.lastIndexOf("// oxlint-disable-next-line", operation);
+    expect(offset).toBeGreaterThanOrEqual(0);
+    const end = source.indexOf("\n", offset);
+    const comment = source.slice(offset, end);
+    const withoutDirective = source.slice(0, offset) + source.slice(end + 1);
+    const copied = checkSource("copied.ts", source, entries);
+    const missing = checkSource("forward.ts", withoutDirective, entries);
+    const duplicate = checkSource(
+      "forward.ts",
+      source.slice(0, offset) + comment + "\n" + source.slice(offset),
+      entries,
+    );
+    const misplaced = checkSource(
+      "forward.ts",
+      source.slice(0, end) + "\n" + source.slice(end),
+      entries,
+    );
+    const replacement = checkSource(
+      "forward.ts",
+      source.slice(0, operation) +
+        entry.operation.replace(
+          /onclose|onerror|onmessage|SSEClientTransport|setLoggingLevel|saveAuthorizationServerUrl|cleanupError/u,
+          "unauthorized",
+        ) +
+        source.slice(operation + entry.operation.length),
+      entries,
+    );
+    for (const result of [copied, missing, duplicate, misplaced, replacement]) {
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toMatch(
+        /not authorized|unused exception site|operation changed|scope is missing/u,
+      );
+    }
+    const nativeMissing = nativeLint(missing.cwd);
+    expect(nativeMissing.status).toBe(1);
+    const line = withoutDirective.slice(0, offset).split("\n").length;
+    const rule = entry.rule.replace("/", "(") + ")";
+    expect(nativeMissing.stdout + nativeMissing.stderr).toContain(`forward.ts:${line}:`);
+    expect(nativeMissing.stdout + nativeMissing.stderr).toContain(`[Error/${rule}]`);
+    const unused = checkSource(
+      "forward.ts",
+      `${withoutDirective}\n${comment}\nexport const qxUnused = 1;\n`,
+      entries,
+    );
+    expect(unused.status).toBe(1);
+    expect(unused.stderr).toContain("lint directive is not authorized");
+    const nativeUnused = nativeLint(unused.cwd);
+    expect(nativeUnused.status).toBe(1);
+    expect(nativeUnused.stdout + nativeUnused.stderr).toContain("Unused");
+  });
+
+  it("rejects a same-named SSE export from a different declaration origin", () => {
+    const file = "connection-runtime.ts";
+    const source = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8")
+      .replaceAll('"./', '"./adapter/')
+      .replace(
+        'UnauthorizedError,\n} from "@modelcontextprotocol/client";',
+        'UnauthorizedError,\n} from "node:events";',
+      );
+    const entries = managerSites
+      .filter((entry) => entry.file === file)
+      .map((entry) => Object.assign({}, entry, { file: "forward.ts" }));
+    const result = checkSource("forward.ts", source, entries);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Exception scope is missing or ambiguous");
   });
 });
 

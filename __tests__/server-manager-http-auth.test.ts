@@ -185,6 +185,7 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(authProvider.clientMetadata.client_name).toBe("Custom MCP");
     expect(authProvider.clientMetadata.client_uri).toBe("https://example.com/custom-mcp");
     expect(headers().authorization).toBeUndefined();
+    expect(requests.map((request) => request.method)).toEqual(["server/discover", "tools/list"]);
   });
 
   it("connects the actual HTTP client once with the configured timeout", async () => {
@@ -196,6 +197,7 @@ describe("McpServerManager HTTP bearer auth", () => {
     expect(captures.clients).toHaveLength(1);
     expect(captures.transports).toHaveLength(1);
     expect(connect).toHaveBeenCalledWith(transport().transport, { timeout: 5000 });
+    expect(connect.mock.contexts[0]).toBe(captures.clients[0]);
     expect(requests.map((request) => request.method)).toEqual(["server/discover", "tools/list"]);
   });
 });

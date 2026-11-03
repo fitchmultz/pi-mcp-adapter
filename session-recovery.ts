@@ -20,270 +20,31 @@
 //     many things other than "your session is gone"
 //   - treat generic -32000/ConnectionClosed errors as session expiry
 //   - treat AbortError/cancellation as a session failure
-import { AsyncLocalStorage } from "node:async_hooks";
 import {
-  SdkError,
   SdkHttpError,
   SdkErrorCode,
   ProtocolError,
   InsufficientScopeError,
   UnauthorizedError,
-  type FetchLike,
-  type Transport,
 } from "@modelcontextprotocol/client";
 import { logger } from "./logger.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
-import { isServerDisabled, isNonInteractiveOAuth, type McpConfig } from "./types.ts";
+import {
+  isServerDisabled,
+  isNonInteractiveOAuth,
+  type McpConfig,
+  type ServerDefinition,
+} from "./types.ts";
 import type { McpServerManager, ServerConnection } from "./server-manager.ts";
 import { supportsOAuth } from "./mcp-auth-flow.ts";
-
-const toolTransportFailures = new WeakSet<object>();
-export function isToolTransportFailure(error: unknown): boolean {
-  return error instanceof Error && toolTransportFailures.has(error);
-}
-const interruptedToolCalls = new WeakSet<object>();
-export function isInterruptedToolCall(error: unknown): boolean {
-  return error instanceof Error && interruptedToolCalls.has(error);
-}
-type ToolCallOutcome = { pending: boolean; cleanup: Set<() => void> };
-const toolCallOutcome = new AsyncLocalStorage<ToolCallOutcome>();
-
-/** Interrupted outcome reporting is separate from the transport retry policy. */
-export async function trackToolCallOutcome<T>(
-  fn: () => Promise<T>,
-  signal?: AbortSignal,
-): Promise<T> {
-  const outcome: ToolCallOutcome = { pending: false, cleanup: new Set() };
-  return toolCallOutcome.run(outcome, async () => {
-    try {
-      return await fn();
-    } catch (error) {
-      if (
-        outcome.pending &&
-        error instanceof Error &&
-        (signal?.aborted ||
-          (error instanceof SdkError &&
-            (error.code === SdkErrorCode.RequestTimeout ||
-              error.code === SdkErrorCode.ConnectionClosed)))
-      ) {
-        // Abort reasons can be shared by calls that never reached dispatch.
-        const interrupted = new Error(error.message, { cause: error });
-        interruptedToolCalls.add(interrupted);
-        throw interrupted;
-      }
-      throw error;
-    } finally {
-      for (const cleanup of outcome.cleanup) {
-        cleanup();
-      }
-    }
-  });
-}
-
-type ToolSend = {
-  id: string | number;
-  outcome: ToolCallOutcome | undefined;
-  streaming: boolean;
-  responseReceived: boolean;
-  bodyFailure: Error | undefined;
-  otherFailure: Error | undefined;
-  finishSend: () => void;
-};
-const toolSend = new AsyncLocalStorage<ToolSend | undefined>();
-
-/** Retain fetch/body-error origin without parsing or buffering the response. */
-export const trackToolTransportFailure: FetchLike = async (input, init) => {
-  const pending = toolSend.getStore();
-  if (pending) {
-    pending.bodyFailure = undefined;
-  }
-  let toolPost = false;
-  if (pending && init?.method === "POST" && typeof init.body === "string") {
-    try {
-      const request = JSON.parse(init.body);
-      toolPost = request.method === "tools/call" && request.id === pending.id;
-    } catch {}
-  }
-  if (toolPost && pending?.outcome) {
-    pending.outcome.pending = true;
-  }
-  try {
-    const response = await fetch(input, init);
-    if (toolPost && !response.ok && response.status < 500 && pending?.outcome) {
-      pending.outcome.pending = false;
-    }
-    const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-    const observeBody = response.ok
-      ? mediaType === "text/event-stream" || (toolPost && mediaType === "application/json")
-      : toolPost && response.status >= 500;
-    if (!pending || !response.body || !observeBody) {
-      return response;
-    }
-    pending.streaming = response.ok && mediaType === "text/event-stream";
-    // The native end hook has no error argument. Only a failed body read proves loss.
-    const reader = response.body.getReader();
-    return new Response(
-      new ReadableStream({
-        async pull(controller) {
-          try {
-            const { done, value } = await reader.read();
-            if (done) {
-              controller.close();
-              reader.releaseLock();
-            } else {
-              controller.enqueue(value);
-            }
-          } catch (error) {
-            // Native intentional closure suppresses onRequestStreamEnd.
-            if (init?.signal?.aborted) {
-              pending.finishSend();
-            } else if (error instanceof Error) {
-              pending.bodyFailure = error;
-              if (!pending.streaming) {
-                interruptedToolCalls.add(error);
-              }
-            }
-            controller.error(error);
-            reader.releaseLock();
-          }
-        },
-        cancel: (reason) => reader.cancel(reason).finally(() => reader.releaseLock()),
-      }),
-      response,
-    );
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      !init?.signal?.aborted &&
-      init?.method === "POST" &&
-      new Headers(init.headers).get("Mcp-Method") === "tools/call"
-    ) {
-      toolTransportFailures.add(error);
-    }
-    throw error;
-  }
-};
-
-/** Observe only the originating tool send, not OAuth or catalog requests. */
-export function trackToolTransport(transport: Transport, http = false): void {
-  const requests = new Map<string | number, ToolSend>();
-  const onmessage = transport.onmessage;
-  transport.onmessage = (message, extra) => {
-    const pending =
-      ("id" in message && message.id !== undefined ? requests.get(message.id) : undefined) ??
-      toolSend.getStore();
-    if (
-      pending &&
-      "id" in message &&
-      message.id === pending.id &&
-      ("result" in message || "error" in message)
-    ) {
-      pending.responseReceived = true;
-      if (pending.outcome) {
-        pending.outcome.pending = false;
-      }
-      requests.delete(pending.id);
-      pending.finishSend();
-    }
-    onmessage?.(message, extra);
-  };
-  const onerror = transport.onerror;
-  transport.onerror = (error) => {
-    const pending = toolSend.getStore();
-    // Reader failures are observed before the SDK reports them; earlier parser errors are not retryable.
-    if (pending && !pending.bodyFailure) {
-      pending.otherFailure ??= error;
-    }
-    onerror?.(error);
-  };
-  const send = transport.send.bind(transport);
-  transport.send = async (message, options) => {
-    try {
-      if (!("method" in message && message.method === "tools/call" && "id" in message)) {
-        await toolSend.run(undefined, () => send(message, options));
-        return;
-      }
-      const pending: ToolSend = {
-        id: message.id,
-        outcome: toolCallOutcome.getStore(),
-        streaming: false,
-        responseReceived: false,
-        bodyFailure: undefined,
-        otherFailure: undefined,
-        finishSend: () => {},
-      };
-      if (pending.outcome) {
-        requests.set(message.id, pending);
-        pending.outcome.cleanup.add(() => requests.delete(message.id));
-        if (!http) {
-          pending.outcome.pending = true;
-        }
-      }
-      try {
-        if (!options?.requestSignal) {
-          await toolSend.run(pending, () => send(message, options));
-          return;
-        }
-        await abortable(
-          new Promise<void>((resolve, reject) => {
-            pending.finishSend = resolve;
-            void toolSend
-              .run(pending, () =>
-                send(message, {
-                  ...options,
-                  onRequestStreamEnd: () => {
-                    options.onRequestStreamEnd?.();
-                    const error = pending.otherFailure ?? pending.bodyFailure;
-                    if (!pending.responseReceived && error) {
-                      if (!pending.otherFailure) {
-                        toolTransportFailures.add(error);
-                      }
-                      reject(error);
-                    } else {
-                      resolve();
-                    }
-                  },
-                }),
-              )
-              .then(() => {
-                if (!pending.streaming) {
-                  resolve();
-                }
-              }, reject);
-          }),
-          options.requestSignal,
-        );
-      } catch (error) {
-        // Local send failures are distinct from a sent request waiting for its reply.
-        if (!http && pending.outcome) {
-          pending.outcome.pending = false;
-        }
-        throw error;
-      } finally {
-        pending.finishSend = () => {};
-      }
-    } catch (error) {
-      if (
-        "method" in message &&
-        message.method === "tools/call" &&
-        error instanceof SdkHttpError &&
-        error.code === SdkErrorCode.ClientHttpNotImplemented &&
-        error.status >= 500 &&
-        error.status < 600
-      ) {
-        let errorBody = false;
-        try {
-          const body = JSON.parse(String(error.data.text));
-          errorBody = body?.jsonrpc === "2.0" && body.error !== undefined;
-        } catch {}
-        if (!errorBody) {
-          toolTransportFailures.add(error);
-        }
-      }
-      throw error;
-    }
-  };
-}
+import { isToolTransportFailure } from "./tool-transport.ts";
+export {
+  isToolTransportFailure,
+  isInterruptedToolCall,
+  trackToolCallOutcome,
+  trackToolTransport,
+  trackToolTransportFailure,
+} from "./tool-transport.ts";
 
 /**
  * True when `err` is a stale Streamable HTTP session signal for a request
@@ -321,11 +82,8 @@ export function isTerminatedSession(err: unknown, hadSessionId: boolean): boolea
 }
 
 function hasSessionId(connection: ServerConnection): boolean {
-  // Only StreamableHTTPClientTransport exposes `sessionId`; stdio/SSE
-  // transports (and test doubles that omit `transport` entirely) simply
-  // read as `undefined` here.
-  const transport = connection.transport as { sessionId?: string } | undefined;
-  return transport?.sessionId != null;
+  // Only Streamable HTTP exposes sessionId. Other native transports have none.
+  return "sessionId" in connection.transport && connection.transport.sessionId !== undefined;
 }
 
 export class SessionRecoveryAuthRequiredError extends Error {
@@ -360,156 +118,214 @@ export interface SessionRecoveryDeps {
   ) => Promise<ServerConnection | undefined>;
 }
 
-/**
- * Retry once on the same modern client when explicitly enabled, or reconnect
- * an expired legacy session once. Neither path retries its second failure.
- */
-export async function withSessionRecovery<T>(
-  deps: SessionRecoveryDeps,
-  serverName: string,
-  fn: (conn: ServerConnection) => Promise<T>,
-): Promise<T> {
-  if (isServerDisabled(deps.config.mcpServers[serverName])) {
-    throw new Error(`MCP server "${serverName}" is disabled`);
-  }
-  throwIfAborted(deps.signal);
-  let connection = deps.manager.getConnection(serverName);
-  if (!connection) {
-    throw new Error(`Server "${serverName}" is not connected`);
+class RecoveryAttempt<T> {
+  private readonly deps: SessionRecoveryDeps;
+  private readonly serverName: string;
+  private readonly dispatch: (connection: ServerConnection) => Promise<T>;
+
+  constructor(
+    deps: SessionRecoveryDeps,
+    serverName: string,
+    dispatch: (connection: ServerConnection) => Promise<T>,
+  ) {
+    this.deps = deps;
+    this.serverName = serverName;
+    this.dispatch = dispatch;
   }
 
-  const reconnect = async (stale: ServerConnection, error: unknown): Promise<ServerConnection> => {
-    const definition = deps.config.mcpServers[serverName];
+  private async reconnect(stale: ServerConnection, error: Error): Promise<ServerConnection> {
+    const definition = this.deps.config.mcpServers[this.serverName];
     if (!definition) {
       throw error;
     }
-    throwIfAborted(deps.signal);
+    throwIfAborted(this.deps.signal);
     let fresh = stale;
     if (fresh.status !== "needs-auth") {
-      fresh = deps.signal
-        ? await deps.manager.reconnect(serverName, definition, stale, deps.signal)
-        : await deps.manager.reconnect(serverName, definition, stale);
+      fresh = this.deps.signal
+        ? await this.deps.manager.reconnect(this.serverName, definition, stale, this.deps.signal)
+        : await this.deps.manager.reconnect(this.serverName, definition, stale);
     }
-    throwIfAborted(deps.signal);
-    if (fresh.status === "needs-auth" && deps.onNeedsAuth) {
-      fresh = (await abortable(deps.onNeedsAuth(serverName, deps.signal), deps.signal)) ?? fresh;
-      throwIfAborted(deps.signal);
+    throwIfAborted(this.deps.signal);
+    if (fresh.status === "needs-auth" && this.deps.onNeedsAuth) {
+      fresh =
+        (await abortable(
+          this.deps.onNeedsAuth(this.serverName, this.deps.signal),
+          this.deps.signal,
+        )) ?? fresh;
+      throwIfAborted(this.deps.signal);
     }
     if (fresh.status === "needs-auth") {
-      throw new SessionRecoveryAuthRequiredError(serverName);
+      throw new SessionRecoveryAuthRequiredError(this.serverName);
     }
     if (fresh.status !== "connected") {
       throw error;
     }
     return fresh;
-  };
+  }
 
-  const isRecoverableAuth = (
+  private isRecoverableAuth(
     error: unknown,
     failed: ServerConnection,
     activating = false,
-  ): error is Error => {
-    const definition = deps.config.mcpServers[serverName];
-    if (!definition || isServerDisabled(definition) || !supportsOAuth(definition)) {
+  ): error is Error {
+    const definition = this.deps.config.mcpServers[this.serverName];
+    if (!definition || !this.supportsAuthRecovery(definition)) {
       return false;
     }
     if (error instanceof SdkHttpError) {
-      // A provider's exhausted native 401/M2M retry is terminal, not another consent cycle.
-      return (
-        failed.oauthProvider === false &&
-        error.status === 401 &&
-        error.code !== SdkErrorCode.ClientHttpAuthentication
-      );
+      // Exhausted native 401/M2M retry is terminal, not another consent cycle.
+      return this.isAnonymousAuthFailure(error, failed);
     }
-    if (failed.oauthProvider && isNonInteractiveOAuth(definition.oauth)) {
+    if (failed.oauthProvider === true && isNonInteractiveOAuth(definition.oauth)) {
       return false;
     }
     return (
       error instanceof InsufficientScopeError || (activating && error instanceof UnauthorizedError)
     );
-  };
+  }
 
-  const terminalDispatch = async (fresh: ServerConnection): Promise<T> => {
-    throwIfAborted(deps.signal);
+  private isAnonymousAuthFailure(error: SdkHttpError, failed: ServerConnection): boolean {
+    return (
+      failed.oauthProvider === false &&
+      error.status === 401 &&
+      error.code !== SdkErrorCode.ClientHttpAuthentication
+    );
+  }
+
+  private supportsAuthRecovery(definition: ServerDefinition): boolean {
+    return !isServerDisabled(definition) && supportsOAuth(definition);
+  }
+
+  private async terminalDispatch(fresh: ServerConnection): Promise<T> {
+    throwIfAborted(this.deps.signal);
     try {
-      return await fn(fresh);
+      return await this.dispatch(fresh);
     } catch (error) {
-      throwIfAborted(deps.signal);
-      if (isRecoverableAuth(error, fresh)) {
-        throw new SessionRecoveryAuthRequiredError(serverName);
+      throwIfAborted(this.deps.signal);
+      if (this.isRecoverableAuth(error, fresh)) {
+        throw new SessionRecoveryAuthRequiredError(this.serverName);
       }
       throw error;
     }
-  };
+  }
 
-  const recoverAuth = async (failed: ServerConnection, error: Error): Promise<T> => {
-    const definition = deps.config.mcpServers[serverName]!;
-    const current = deps.manager.getConnection(serverName);
+  private async activateProvider(
+    failed: ServerConnection,
+    error: Error,
+  ): Promise<
+    { kind: "result"; value: T } | { kind: "challenge"; challenge: AuthChallengeContext }
+  > {
+    const definition = this.deps.config.mcpServers[this.serverName];
+    if (!definition || failed.oauthProvider !== false) {
+      return { kind: "challenge", challenge: { connection: failed, error } };
+    }
+    // One anonymous rejection may activate the provider without prompting.
+    const activated = await this.deps.manager.reconnect(
+      this.serverName,
+      definition,
+      failed,
+      this.deps.signal,
+    );
+    throwIfAborted(this.deps.signal);
+    if (activated.status !== "connected") {
+      return { kind: "challenge", challenge: { connection: activated, error } };
+    }
+    try {
+      return { kind: "result", value: await this.dispatch(activated) };
+    } catch (providerError) {
+      throwIfAborted(this.deps.signal);
+      if (!this.isRecoverableAuth(providerError, activated, true)) {
+        throw providerError;
+      }
+      return { kind: "challenge", challenge: { connection: activated, error: providerError } };
+    }
+  }
+
+  private async recoverAuth(failed: ServerConnection, error: Error): Promise<T> {
+    const definition = this.deps.config.mcpServers[this.serverName];
+    const current = this.deps.manager.getConnection(this.serverName);
     if (current && current !== failed && failed.oauthProvider !== false) {
-      return terminalDispatch(
-        current.status === "connected" ? current : await reconnect(current, error),
+      return this.terminalDispatch(
+        current.status === "connected" ? current : await this.reconnect(current, error),
       );
     }
-
-    if (failed.oauthProvider === false) {
-      // One anonymous rejection may activate the provider without asking the user to sign in.
-      failed = await deps.manager.reconnect(serverName, definition, failed, deps.signal);
-      throwIfAborted(deps.signal);
-      if (failed.status === "connected") {
-        try {
-          return await fn(failed);
-        } catch (providerError) {
-          throwIfAborted(deps.signal);
-          if (!isRecoverableAuth(providerError, failed, true)) {
-            throw providerError;
-          }
-          error = providerError;
-        }
-      }
+    const activation = await this.activateProvider(failed, error);
+    if (activation.kind === "result") {
+      return activation.value;
     }
-    if (isNonInteractiveOAuth(definition.oauth)) {
-      throw error;
+    return this.requestConsent(definition?.oauth, activation.challenge);
+  }
+
+  private async requestConsent(
+    oauth: ServerDefinition["oauth"],
+    challenge: AuthChallengeContext,
+  ): Promise<T> {
+    if (isNonInteractiveOAuth(oauth)) {
+      throw challenge.error;
     }
     const fresh = await abortable(
-      deps.onNeedsAuth?.(serverName, deps.signal, { connection: failed, error }) ??
-        Promise.resolve(undefined),
-      deps.signal,
+      Promise.resolve(this.deps.onNeedsAuth?.(this.serverName, this.deps.signal, challenge)),
+      this.deps.signal,
     );
-    throwIfAborted(deps.signal);
-    if (!fresh || fresh === failed || fresh.status !== "connected") {
-      throw new SessionRecoveryAuthRequiredError(serverName);
+    throwIfAborted(this.deps.signal);
+    if (!fresh || fresh === challenge.connection || fresh.status !== "connected") {
+      throw new SessionRecoveryAuthRequiredError(this.serverName);
     }
-    return terminalDispatch(fresh);
-  };
-
-  // Nothing has been dispatched yet: wait for replacement/auth begun during UI preparation.
-  if (connection.status !== "connected") {
-    connection = await reconnect(connection, new Error(`Server "${serverName}" is not connected`));
+    return this.terminalDispatch(fresh);
   }
-  const hadSessionId = hasSessionId(connection);
 
-  try {
-    return await fn(connection);
-  } catch (err) {
-    throwIfAborted(deps.signal);
-    if (isRecoverableAuth(err, connection)) {
-      return recoverAuth(connection, err);
+  async run(): Promise<T> {
+    if (isServerDisabled(this.deps.config.mcpServers[this.serverName])) {
+      throw new Error(`MCP server "${this.serverName}" is disabled`);
     }
-    if (
-      deps.retryOnTransportFailure === true &&
-      deps.config.mcpServers[serverName]?.retryOnTransportFailure === true &&
-      connection.client.getProtocolEra?.() === "modern" &&
-      isToolTransportFailure(err)
-    ) {
-      return terminalDispatch(connection);
+    throwIfAborted(this.deps.signal);
+    let connection = this.deps.manager.getConnection(this.serverName);
+    if (!connection) {
+      throw new Error(`Server "${this.serverName}" is not connected`);
     }
-    if (!isTerminatedSession(err, hadSessionId)) {
-      throw err;
+    // Nothing dispatched yet: wait for replacement/auth begun during UI preparation.
+    if (connection.status !== "connected") {
+      connection = await this.reconnect(
+        connection,
+        new Error(`Server "${this.serverName}" is not connected`),
+      );
     }
-
-    logger.debug(`MCP session for "${serverName}" expired; reconnecting`, {
-      server: serverName,
-    });
-    return terminalDispatch(await reconnect(connection, err));
+    const hadSessionId = hasSessionId(connection);
+    try {
+      return await this.dispatch(connection);
+    } catch (error) {
+      throwIfAborted(this.deps.signal);
+      if (this.isRecoverableAuth(error, connection)) {
+        return this.recoverAuth(connection, error);
+      }
+      if (this.canRetryTransport(error, connection)) {
+        return this.terminalDispatch(connection);
+      }
+      if (!(error instanceof Error) || !isTerminatedSession(error, hadSessionId)) {
+        throw error;
+      }
+      logger.debug(`MCP session for "${this.serverName}" expired; reconnecting`, {
+        server: this.serverName,
+      });
+      return this.terminalDispatch(await this.reconnect(connection, error));
+    }
   }
+
+  private canRetryTransport(error: unknown, connection: ServerConnection): boolean {
+    return (
+      this.deps.retryOnTransportFailure === true &&
+      this.deps.config.mcpServers[this.serverName]?.retryOnTransportFailure === true &&
+      connection.client.getProtocolEra() === "modern" &&
+      isToolTransportFailure(error)
+    );
+  }
+}
+
+/** Retry an explicitly replay-safe modern call or reconnect an expired legacy session once. */
+export function withSessionRecovery<T>(
+  deps: SessionRecoveryDeps,
+  serverName: string,
+  fn: (conn: ServerConnection) => Promise<T>,
+): Promise<T> {
+  return new RecoveryAttempt(deps, serverName, fn).run();
 }

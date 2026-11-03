@@ -281,5 +281,146 @@
     "part": "signature",
     "operation": "async function execute(toolCallId, params, signal, _onUpdate, ctx) ",
     "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "connection-factory.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ConnectionSetup",
+      "name": "discover"
+    },
+    "path": ["value", "body", "body", 5, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.client.onclose",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "connection-http.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "HttpConnection",
+      "name": "observeChallenge"
+    },
+    "path": ["value", "body", "body", 3, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.transport.onerror",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "tool-transport.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ToolTransportObserver",
+      "name": "attach"
+    },
+    "path": ["value", "body", "body", 1, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.transport.onmessage",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "tool-transport.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ToolTransportObserver",
+      "name": "attach"
+    },
+    "path": ["value", "body", "body", 3, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.transport.onerror",
+    "guards": []
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-http.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "HttpConnection",
+      "name": "constructor"
+    },
+    "path": ["value", "body", "body", 12, "consequent", "body", 0],
+    "nodeType": "ExpressionStatement",
+    "operation": "this.transport = new runtime.SSEClientTransport(url, transportOptions);",
+    "guards": ["consequent: legacySse"]
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-runtime.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ManagedClient",
+      "name": "setLoggingLevel"
+    },
+    "path": ["value", "body", "body", 0, "argument", "arguments", 0],
+    "nodeType": "ArrowFunctionExpression",
+    "operation": "(signal) => super.setLoggingLevel(args[0], { ...args[1], ...(signal ? { signal } : {}) })",
+    "guards": []
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-runtime.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "ExportNamedDeclaration",
+      "source": "@modelcontextprotocol/client",
+      "name": "SSEClientTransport"
+    },
+    "path": ["specifiers", 2],
+    "nodeType": "ExportSpecifier",
+    "operation": "SSEClientTransport",
+    "guards": []
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-oauth-ownership.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "ownOAuthProvider"
+    },
+    "path": ["body", "body", 1, "argument", "properties", 12],
+    "nodeType": "Property",
+    "operation": "saveAuthorizationServerUrl: (...args) =>\n      own(() => provider.saveAuthorizationServerUrl(...args))",
+    "guards": []
+  },
+  {
+    "id": "QX-023",
+    "file": "connection-handshake.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ConnectionHandshake",
+      "name": "run"
+    },
+    "path": [
+      "value",
+      "body",
+      "body",
+      7,
+      "handler",
+      "body",
+      "body",
+      0,
+      "consequent",
+      "body",
+      0,
+      "handler",
+      "body",
+      "body",
+      0
+    ],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([error, cleanupError], \"MCP connection abort cleanup failed\");",
+    "guards": ["consequent: abortCleanup"]
   }
 ]

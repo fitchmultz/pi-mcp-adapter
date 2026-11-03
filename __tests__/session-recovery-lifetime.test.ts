@@ -1,23 +1,33 @@
+import assert from "node:assert/strict";
+import { setImmediate } from "node:timers/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { Client } from "@modelcontextprotocol/client";
-import { McpServerManager } from "../server-manager.ts";
+import { McpServerManager, type ServerConnection } from "../server-manager.ts";
+import type * as authFlow from "../mcp-auth-flow.ts";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
+import { requireValue } from "./fixtures/extension-lifecycle.ts";
 import { SessionRecoveryAuthRequiredError, withSessionRecovery } from "../session-recovery.ts";
 import { clearFailure } from "../init.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { createMcpRuntimeOwner } from "../runtime-owner.ts";
 import { McpLifecycleManager } from "../lifecycle.ts";
-import type { McpExtensionState } from "../state.ts";
 import type { ServerDefinition } from "../types.ts";
 
-const auth = vi.hoisted(() => ({ authenticate: vi.fn() }));
+const auth = vi.hoisted(() => ({ authenticate: vi.fn<typeof authFlow.authenticate>() }));
 vi.mock("../mcp-auth-flow.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../mcp-auth-flow.ts")>()),
+  ...(await importOriginal<typeof authFlow>()),
   authenticate: auth.authenticate,
 }));
 
 const cleanups: Array<() => Promise<void>> = [];
+beforeAll(() => {
+  initTheme();
+});
 afterEach(async () => {
   for (const cleanup of cleanups.reverse()) {
     await cleanup();
@@ -34,10 +44,22 @@ function gate() {
   return { promise, resolve };
 }
 
+const bodySchema = z.object({
+  id: z.union([z.string(), z.number()]).optional(),
+  method: z.string().optional(),
+  params: z
+    .object({
+      name: z.string().optional(),
+      uri: z.string().optional(),
+      cursor: z.string().optional(),
+    })
+    .optional(),
+});
+
 type Exchange = {
   req: IncomingMessage;
   res: ServerResponse;
-  body: { id?: number; method?: string; params?: any };
+  body: z.infer<typeof bodySchema>;
 };
 const tools = ["effect", "trigger", "A", "B", "C"].map((name) => ({
   name,
@@ -50,94 +72,122 @@ function result(e: Exchange, value: unknown, headers = {}) {
     .end(JSON.stringify({ jsonrpc: "2.0", id: e.body.id, result: value }));
 }
 
-async function fixture(handler: (e: Exchange) => boolean | void = () => {}) {
+async function readBody(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    const value: unknown = chunk;
+    assert(Buffer.isBuffer(value));
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function fixture(handler: (e: Exchange) => boolean | undefined = () => false) {
   const requests: Exchange[] = [];
   const executions: string[] = [];
   let sessions = 0;
-  const server = createServer(async (req, res) => {
-    let data = "";
-    for await (const chunk of req) {
-      data += chunk;
-    }
-    const e: Exchange = { req, res, body: data ? JSON.parse(data) : {} };
+  const errors: unknown[] = [];
+  const server = createServer((req, res) => {
+    handle(req, res).catch((error: unknown) => {
+      errors.push(error);
+      res.destroy();
+    });
+  });
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const data = await readBody(req);
+    const e: Exchange = {
+      req,
+      res,
+      body: bodySchema.parse(data.length === 0 ? {} : JSON.parse(data)),
+    };
     requests.push(e);
-    if (handler(e)) {
+    if (handler(e) === true) {
       return;
     }
     if (req.method === "GET") {
       res.writeHead(405).end();
       return;
     }
-    if (req.method === "DELETE" || e.body.method?.startsWith("notifications/")) {
+    if (req.method === "DELETE" || e.body.method?.startsWith("notifications/") === true) {
       res.writeHead(202).end();
       return;
     }
-    if (e.body.method === "initialize") {
-      result(
-        e,
-        {
-          protocolVersion: "2025-06-18",
-          capabilities: {
-            tools: { listChanged: true },
-            resources: { listChanged: true },
-            prompts: { listChanged: true },
+    switch (e.body.method) {
+      case "initialize": {
+        result(
+          e,
+          {
+            protocolVersion: "2025-06-18",
+            capabilities: {
+              tools: { listChanged: true },
+              resources: { listChanged: true },
+              prompts: { listChanged: true },
+            },
+            serverInfo: { name: "lifetime", version: "1" },
           },
-          serverInfo: { name: "lifetime", version: "1" },
-        },
-        { "mcp-session-id": `session-${++sessions}` },
-      );
-      return;
+          { "mcp-session-id": `session-${++sessions}` },
+        );
+        return;
+      }
+      case "tools/list":
+        result(e, { tools });
+        return;
+      case "resources/list":
+        result(e, { resources: [{ name: "document", uri: "test://document" }] });
+        return;
+      case "prompts/list":
+        result(e, { prompts: [{ name: "prompt" }] });
+        return;
+      case "resources/read":
+        result(e, { contents: [{ uri: e.body.params?.uri, text: "document" }] });
+        return;
+      case "prompts/get":
+        result(e, { messages: [{ role: "user", content: { type: "text", text: "prompt" } }] });
+        return;
+      case "tools/call": {
+        const name = requireValue(e.body.params?.name);
+        executions.push(name);
+        result(e, content(name));
+        return;
+      }
+      case undefined:
+      default:
+        res.writeHead(500).end("unexpected request");
     }
-    if (e.body.method === "tools/list") {
-      result(e, { tools });
-      return;
-    }
-    if (e.body.method === "resources/list") {
-      result(e, { resources: [{ name: "document", uri: "test://document" }] });
-      return;
-    }
-    if (e.body.method === "prompts/list") {
-      result(e, { prompts: [{ name: "prompt" }] });
-      return;
-    }
-    if (e.body.method === "resources/read") {
-      result(e, { contents: [{ uri: e.body.params.uri, text: "document" }] });
-      return;
-    }
-    if (e.body.method === "prompts/get") {
-      result(e, { messages: [{ role: "user", content: { type: "text", text: "prompt" } }] });
-      return;
-    }
-    if (e.body.method === "tools/call") {
-      executions.push(e.body.params.name);
-      result(e, content(e.body.params.name));
-      return;
-    }
-    res.writeHead(500).end("unexpected request");
+  }
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (!address || typeof address === "string") {
+  if (address === null || typeof address === "string") {
     throw new Error("Fixture did not bind");
   }
   cleanups.push(async () => {
     server.closeAllConnections();
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+    assert.deepEqual(errors, []);
   });
+  const native = await createTestExtensionContext();
+  cleanups.push(native.dispose);
   const manager = new McpServerManager();
   cleanups.push(() => manager.closeAll());
+  const url = `http://127.0.0.1:${address.port}/mcp`;
   const definition: ServerDefinition = {
-    url: `http://127.0.0.1:${address.port}/mcp`,
+    url,
     protocolVersion: "legacy",
     auth: false,
     requestTimeoutMs: 2000,
   };
-  const owner = createMcpRuntimeOwner();
-  cleanups.push(() => owner.stop("test cleanup"));
-  const state = {
-    owner,
+  const state = createTestState({
     manager,
     config: { mcpServers: { local: definition }, settings: {} },
     toolMetadata: new Map([
@@ -146,15 +196,12 @@ async function fixture(handler: (e: Exchange) => boolean | void = () => {}) {
         tools.map((t) => ({ name: `local_${t.name}`, originalName: t.name, description: t.name })),
       ],
     ]),
-    serverInstructions: new Map(),
-    failureTracker: new Map(),
-    completedUiSessions: [],
-  } as unknown as McpExtensionState;
+  });
   const calls = (name: string) =>
-    requests.filter((e) => e.body.method === "tools/call" && e.body.params.name === name);
+    requests.filter((e) => e.body.method === "tools/call" && e.body.params?.name === name);
   const call = (name: string, signal?: AbortSignal) =>
     withSessionRecovery(
-      { manager, config: state.config, signal: signal as AbortSignal },
+      { manager, config: state.config, ...(signal ? { signal } : {}) },
       "local",
       (connection) =>
         connection.client.callTool({ name }, manager.getRequestOptions("local", signal)),
@@ -163,6 +210,8 @@ async function fixture(handler: (e: Exchange) => boolean | void = () => {}) {
     manager,
     state,
     definition,
+    url,
+    native,
     requests,
     executions,
     calls,
@@ -173,13 +222,13 @@ async function fixture(handler: (e: Exchange) => boolean | void = () => {}) {
 
 function oauthMetadata(e: Exchange, url: string): boolean {
   const origin = new URL(url).origin;
-  if (e.req.url?.startsWith("/.well-known/oauth-protected-resource")) {
+  if (e.req.url?.startsWith("/.well-known/oauth-protected-resource") === true) {
     e.res
       .writeHead(200, { "content-type": "application/json" })
       .end(JSON.stringify({ resource: url, authorization_servers: [origin] }));
     return true;
   }
-  if (e.req.url?.startsWith("/.well-known/oauth-authorization-server")) {
+  if (e.req.url?.startsWith("/.well-known/oauth-authorization-server") === true) {
     e.res.writeHead(200, { "content-type": "application/json" }).end(
       JSON.stringify({
         issuer: origin,
@@ -197,7 +246,7 @@ function oauthMetadata(e: Exchange, url: string): boolean {
 // The server has already executed the effect and sent 200 before expiry; only its body tail is held.
 function holdAccepted(e: Exchange) {
   e.res.writeHead(200, { "content-type": "application/json", "x-accepted-effect": "yes" });
-  e.res.write(`{"jsonrpc":"2.0","id":${e.body.id},"result":`);
+  e.res.write(`{"jsonrpc":"2.0","id":${JSON.stringify(e.body.id)},"result":`);
   return () => e.res.end(`${JSON.stringify(content("effect"))}}`);
 }
 function observeAcceptedHeaders() {
@@ -214,18 +263,20 @@ function observeAcceptedHeaders() {
 }
 
 // Attach rejection handlers immediately, including on deliberately interrupted requests.
-const settle = <T>(promise: Promise<T>) =>
-  Promise.allSettled([promise]).then(([outcome]) => outcome);
+async function settle<T>(promise: Promise<T>) {
+  const [outcome] = await Promise.allSettled([promise]);
+  return requireValue(outcome);
+}
 
 describe("native session replacement lifetime", () => {
   it("preserves an accepted response without replaying its effect", async () => {
     const headers = observeAcceptedHeaders();
-    let release = () => {};
+    let release: (() => void) | undefined;
     let expired = false;
     const f = await fixture((e) => {
       if (
         e.body.method === "tools/call" &&
-        e.body.params.name === "effect" &&
+        e.body.params?.name === "effect" &&
         f.calls("effect").length === 1
       ) {
         f.executions.push("effect");
@@ -237,9 +288,9 @@ describe("native session replacement lifetime", () => {
         return true;
       }
       if (e.body.method === "initialize" && expired) {
-        release();
+        requireValue(release)();
       }
-      return undefined;
+      return;
     });
     const old = await f.manager.connect("local", f.definition);
     const close = vi.spyOn(old.client, "close");
@@ -266,7 +317,7 @@ describe("native session replacement lifetime", () => {
         e.req.headers["mcp-session-id"] === "session-1" &&
         e.body.method === "tools/call"
       ) {
-        if (e.body.params.name === "C") {
+        if (e.body.params?.name === "C") {
           e.res.writeHead(404).end("Session not found");
         } else {
           held.push(e);
@@ -274,9 +325,11 @@ describe("native session replacement lifetime", () => {
         return true;
       }
       if (e.body.method === "initialize" && expired) {
-        for (const pending of held) pending.res.writeHead(404).end("Session not found");
+        for (const pending of held) {
+          pending.res.writeHead(404).end("Session not found");
+        }
       }
-      return undefined;
+      return;
     });
     await f.manager.connect("local", f.definition);
     expired = true;
@@ -301,7 +354,7 @@ describe("native session replacement lifetime", () => {
         initialization = e;
         return true;
       }
-      return undefined;
+      return;
     });
     const old = await f.manager.connect("local", f.definition);
     const replacing = settle(f.manager.reconnect("local", f.definition, old));
@@ -309,8 +362,9 @@ describe("native session replacement lifetime", () => {
     const pending = settle(f.call("effect"));
     expect(f.manager.getConnection("local")?.status).toBe("closed");
     expect(f.calls("effect")).toHaveLength(0);
+    assert(initialization !== undefined);
     result(
-      initialization!,
+      initialization,
       {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {} },
@@ -321,7 +375,7 @@ describe("native session replacement lifetime", () => {
     expect(await replacing).toMatchObject({ status: "fulfilled" });
     expect(await pending).toMatchObject({ status: "fulfilled" });
     expect(f.calls("effect")).toHaveLength(1);
-    expect(f.calls("effect")[0]!.req.headers["mcp-session-id"]).toBe("session-2");
+    expect(f.calls("effect")[0]?.req.headers["mcp-session-id"]).toBe("session-2");
   });
 
   it.each(["tool", "resource"])(
@@ -358,7 +412,7 @@ describe("native session replacement lifetime", () => {
         discovery = e;
         return true;
       }
-      return undefined;
+      return;
     });
     const old = await f.manager.connect("local", f.definition);
     const prompt = settle(f.manager.getPrompt("local", "prompt"));
@@ -378,12 +432,12 @@ describe("native session replacement lifetime", () => {
     expect(await prompt).toMatchObject({ status: "fulfilled" });
     expect(await resource).toMatchObject({ status: "fulfilled" });
     expect(old.inFlight).toBe(0);
-    result(discovery!, { tools });
+    result(requireValue(discovery), { tools });
     expect(await replacing).toMatchObject({ status: "fulfilled" });
     expect(f.manager.getConnection("local")?.inFlight).toBe(0);
   });
 
-  it.each(["tools", "resources", "prompts"])(
+  it.each<"tools" | "resources" | "prompts">(["tools", "resources", "prompts"])(
     "drains native paginated %s/list_changed without publishing stale metadata",
     async (catalog) => {
       let stream: ServerResponse | undefined;
@@ -402,34 +456,34 @@ describe("native session replacement lifetime", () => {
           e.body.method === `${catalog}/list` &&
           e.req.headers["mcp-session-id"] === "session-1"
         ) {
-          if (e.body.params?.cursor) {
+          if (e.body.params?.cursor !== undefined) {
             page = e;
           } else {
             refresh = e;
           }
           return true;
         }
-        return undefined;
+        return;
       });
       const old = await f.manager.connect("local", f.definition);
       const close = vi.spyOn(old.client, "close");
-      const metadata = vi.fn();
+      const metadata = vi.fn<(server: string, reason: string) => void>();
       f.manager.setMetadataListChangedListener(metadata);
       await expect.poll(() => stream).toBeDefined();
       refreshing = true;
-      stream!.write(
+      requireValue(stream).write(
         `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: `notifications/${catalog}/list_changed` })}\n\n`,
       );
       await expect.poll(() => refresh).toBeDefined();
       const fresh = await f.manager.reconnect("local", f.definition, old);
       expect(close).not.toHaveBeenCalled();
-      result(refresh!, { [catalog]: [], nextCursor: "page-2" });
+      result(requireValue(refresh), { [catalog]: [], nextCursor: "page-2" });
       await expect.poll(() => page).toBeDefined();
       expect(close).not.toHaveBeenCalled();
-      result(page!, { [catalog]: [] });
+      result(requireValue(page), { [catalog]: [] });
       await expect.poll(() => close.mock.calls.length).toBe(1);
       expect(f.manager.getConnection("local")).toBe(fresh);
-      expect(fresh[catalog as "tools" | "resources" | "prompts"].length).toBeGreaterThan(0);
+      expect(fresh[catalog].length).toBeGreaterThan(0);
       expect(metadata).not.toHaveBeenCalled();
     },
   );
@@ -448,7 +502,7 @@ describe("native session replacement lifetime", () => {
           discovery = e;
           return true;
         }
-        return undefined;
+        return;
       });
       await f.manager.connect("local", f.definition);
       if (cancellation === "deadline") {
@@ -474,7 +528,7 @@ describe("native session replacement lifetime", () => {
       expect((await first).details.error).toBe(
         cancellation === "abort" ? "aborted" : "call_failed",
       );
-      result(discovery!, { tools });
+      result(requireValue(discovery), { tools });
       expect((await second).details.error).toBeUndefined();
       expect(f.calls("trigger")).toHaveLength(1);
       expect(f.calls("effect")).toHaveLength(1);
@@ -504,7 +558,7 @@ describe("native session replacement lifetime", () => {
           discovery = e;
           return true;
         }
-        return undefined;
+        return;
       });
       const owner = createMcpRuntimeOwner();
       f.manager.setRuntimeSignal(owner.signal);
@@ -517,8 +571,8 @@ describe("native session replacement lifetime", () => {
       const replacing = settle(f.manager.reconnect("local", f.definition, old));
       await expect.poll(() => discovery).toBeDefined();
       if (phase === "ready") {
-        result(discovery!, { tools });
-        expect(await replacing).toMatchObject({ status: "fulfilled" });
+        result(requireValue(discovery), { tools });
+        await replacing;
       }
       const waiting = phase === "discovery" ? settle(f.call("trigger")) : undefined;
       const started = performance.now();
@@ -531,17 +585,21 @@ describe("native session replacement lifetime", () => {
       }
       expect(await effect).toMatchObject({ status: "rejected" });
       expect(performance.now() - started).toBeLessThan(750);
+      expect(await replacing).toMatchObject({
+        status: phase === "ready" ? "fulfilled" : "rejected",
+      });
+      expect((await waiting)?.status).toBe(phase === "discovery" ? "rejected" : undefined);
       if (phase === "discovery") {
-        expect(await replacing).toMatchObject({ status: "rejected" });
-        expect(await waiting).toMatchObject({ status: "rejected" });
-        result(discovery!, { tools });
+        result(requireValue(discovery), { tools });
       }
       expect(f.manager.getConnection("local")).toBeUndefined();
       expect(closes).toHaveBeenCalledTimes(2);
       expect(new Set(closes.mock.contexts).size).toBe(2);
       expect(closes.mock.contexts).toContain(old.client);
       expect(f.calls("trigger")).toHaveLength(0);
-      await expect(f.manager.reconnect("local", f.definition, old)).rejects.toThrow();
+      await expect(f.manager.reconnect("local", f.definition, old)).rejects.toThrow(
+        /not connected|closed|reload/,
+      );
       expect(f.manager.getConnection("local")).toBeUndefined();
       expect(f.sessions()).toBe(2);
     },
@@ -585,42 +643,43 @@ describe("native session replacement lifetime", () => {
     });
     const release = gate();
     const disposing = gate();
-    const listTools = Client.prototype.listTools;
+    const listTools = vi.spyOn(Client.prototype, "listTools");
     let closing: Promise<void> | undefined;
     let closed = false;
-    vi.spyOn(Client.prototype, "listTools").mockImplementation(function (this: Client, ...args) {
-      return listTools.apply(this, args).then((value) => {
-        closing = f.manager.close("local").then(() => {
+    listTools.mockImplementationOnce(function (this: Client, ...args) {
+      return Client.prototype.listTools.call(this, ...args).then((value) => {
+        closing = (async () => {
+          await f.manager.close("local");
           closed = true;
-        });
+        })();
         return value;
       });
     });
-    const nativeClose = Client.prototype.close;
-    const close = vi.spyOn(Client.prototype, "close").mockImplementation(async function (
-      this: Client,
-    ) {
+    const close = vi.spyOn(Client.prototype, "close");
+    close.mockImplementationOnce(async function (this: Client) {
       disposing.resolve();
       await release.promise;
-      await nativeClose.call(this);
+      await Client.prototype.close.call(this);
     });
     const connecting = settle(f.manager.connect("local", f.definition));
     try {
       await disposing.promise;
-      await new Promise((resolve) => setImmediate(resolve));
+      await setImmediate();
       expect(closed).toBe(false);
     } finally {
       release.resolve();
       await closing;
     }
     expect(await connecting).toMatchObject({ status: "rejected" });
-    expect(close).toHaveBeenCalledTimes(1);
+    // One gated invocation delegates once through the same spy to the native implementation.
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(close.mock.contexts[0]).toBe(close.mock.contexts[1]);
     expect(f.manager.getConnection("local")).toBeUndefined();
   });
 
   it("reports failed retirement on explicit cleanup without replacing a successful result or disposing twice", async () => {
     const f = await fixture();
-    const cleanup = cleanups.pop()!;
+    const cleanup = requireValue(cleanups.pop());
     const old = await f.manager.connect("local", f.definition);
     const nativeClose = old.client.close.bind(old.client);
     const close = vi.spyOn(old.client, "close").mockImplementation(async () => {
@@ -637,7 +696,9 @@ describe("native session replacement lifetime", () => {
       await expect(f.manager.closeAll()).rejects.toThrow("MCP manager cleanup failed");
       expect(close).toHaveBeenCalledTimes(1);
     } finally {
-      await cleanup().catch(() => {}); // This test deliberately retains a reported cleanup failure.
+      await cleanup().catch(() => {
+        // The expected cleanup failure is already asserted above.
+      });
     }
   });
 
@@ -647,7 +708,7 @@ describe("native session replacement lifetime", () => {
       let authorized = false;
       let attempts = 0;
       const f = await fixture((e) => {
-        if (oauthMetadata(e, f.definition.url!)) {
+        if (oauthMetadata(e, f.url)) {
           return true;
         }
         if (e.body.method !== "initialize") {
@@ -659,7 +720,7 @@ describe("native session replacement lifetime", () => {
         } else {
           e.res
             .writeHead(401, {
-              "www-authenticate": `Bearer resource_metadata="${new URL(f.definition.url!).origin}/.well-known/oauth-protected-resource/mcp"`,
+              "www-authenticate": `Bearer resource_metadata="${new URL(f.url).origin}/.well-known/oauth-protected-resource/mcp"`,
             })
             .end();
         }
@@ -670,8 +731,11 @@ describe("native session replacement lifetime", () => {
         clientId: "local-failure",
         redirectUri: "http://127.0.0.1:19878/callback",
       };
-      f.state.config.settings!.autoAuth = true;
-      f.state.ui = { setStatus: vi.fn() } as any;
+      f.state.config.settings = { ...f.state.config.settings, autoAuth: true };
+      f.state.ui = {
+        ...f.native.context.ui,
+        setStatus: vi.fn<typeof f.native.context.ui.setStatus>(),
+      };
       f.state.failureMessages = new Map();
       cleanups.push(async () => {
         clearFailure(f.state, "local");
@@ -695,7 +759,13 @@ describe("native session replacement lifetime", () => {
                 prefixedName: "local_effect",
                 description: "effect",
               },
-            )("call", {}, undefined, undefined, {} as any)
+            )(
+              "call",
+              {},
+              undefined,
+              undefined,
+              f.native.runner.createToolContext("call", f.native.context.signal),
+            )
           : executeCall(f.state, {
               toolName: "local_effect",
               args: {},
@@ -710,13 +780,29 @@ describe("native session replacement lifetime", () => {
     },
   );
 
-  it.each(["authenticate", "missing callback", "abort", "shutdown"])(
-    "handles a native needs-auth record before dispatch: %s",
-    async (mode) => {
+  const authRequiredReason: unknown = expect.any(SessionRecoveryAuthRequiredError);
+  it.each([
+    {
+      mode: "authenticate",
+      expected: { status: "fulfilled", value: content("effect") },
+      dispatches: 1,
+      attempts: 2,
+    },
+    {
+      mode: "missing callback",
+      expected: { status: "rejected", reason: authRequiredReason },
+      dispatches: 0,
+      attempts: 1,
+    },
+    { mode: "abort", expected: { status: "rejected" }, dispatches: 0, attempts: 1 },
+    { mode: "shutdown", expected: { status: "rejected" }, dispatches: 0, attempts: 1 },
+  ])(
+    "handles a native needs-auth record before dispatch: $mode",
+    async ({ mode, expected, dispatches, attempts: expectedAttempts }) => {
       let authorized = false;
       let attempts = 0;
       const f = await fixture((e) => {
-        if (oauthMetadata(e, f.definition.url!)) {
+        if (oauthMetadata(e, f.url)) {
           return true;
         }
         if (e.body.method !== "initialize") {
@@ -728,7 +814,7 @@ describe("native session replacement lifetime", () => {
         }
         e.res
           .writeHead(401, {
-            "www-authenticate": `Bearer resource_metadata="${new URL(f.definition.url!).origin}/.well-known/oauth-protected-resource/mcp"`,
+            "www-authenticate": `Bearer resource_metadata="${new URL(f.url).origin}/.well-known/oauth-protected-resource/mcp"`,
           })
           .end();
         return true;
@@ -742,12 +828,14 @@ describe("native session replacement lifetime", () => {
       expect(needsAuth.status).toBe("needs-auth");
       const consent = gate();
       const controller = new AbortController();
-      const onNeedsAuth = vi.fn(async () => {
+      const onNeedsAuth = vi.fn<() => Promise<ServerConnection>>(async () => {
         await consent.promise;
         authorized = true;
         return f.manager.reconnect("local", f.definition, needsAuth, controller.signal);
       });
-      const dispatch = vi.fn((connection) => connection.client.callTool({ name: "effect" }));
+      const dispatch = vi.fn<(connection: ServerConnection) => ReturnType<Client["callTool"]>>(
+        (connection) => connection.client.callTool({ name: "effect" }),
+      );
       const pending = settle(
         withSessionRecovery(
           {
@@ -760,32 +848,25 @@ describe("native session replacement lifetime", () => {
           dispatch,
         ),
       );
-      if (mode !== "missing callback") {
-        await vi.waitFor(() => expect(onNeedsAuth).toHaveBeenCalledTimes(1));
-        expect(dispatch).not.toHaveBeenCalled();
-        expect(attempts).toBe(1);
-        if (mode === "abort") {
-          controller.abort(new Error("caller cancelled auth wait"));
-        }
-        if (mode === "shutdown") {
-          await f.manager.closeAll();
-        }
-        consent.resolve();
+      await vi.waitFor(() =>
+        expect(onNeedsAuth).toHaveBeenCalledTimes(mode === "missing callback" ? 0 : 1),
+      );
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(attempts).toBe(1);
+      if (mode === "abort") {
+        controller.abort(new Error("caller cancelled auth wait"));
       }
+      if (mode === "shutdown") {
+        await f.manager.closeAll();
+      }
+      consent.resolve();
       const outcome = await pending;
-      if (mode === "authenticate") {
-        expect(outcome).toMatchObject({ status: "fulfilled", value: content("effect") });
-        expect(dispatch).toHaveBeenCalledTimes(1);
-        expect(dispatch).toHaveBeenCalledWith(f.manager.getConnection("local"));
-        expect(attempts).toBe(2);
-      } else {
-        expect(outcome).toMatchObject({ status: "rejected" });
-        if (mode === "missing callback" && outcome?.status === "rejected") {
-          expect(outcome.reason).toBeInstanceOf(SessionRecoveryAuthRequiredError);
-        }
-        expect(dispatch).not.toHaveBeenCalled();
-        expect(attempts).toBe(1);
-      }
+      expect(outcome).toMatchObject(expected);
+      expect(dispatch).toHaveBeenCalledTimes(dispatches);
+      expect(dispatch.mock.calls).toEqual(
+        mode === "authenticate" ? [[f.manager.getConnection("local")]] : [],
+      );
+      expect(attempts).toBe(expectedAttempts);
     },
   );
 
@@ -793,13 +874,13 @@ describe("native session replacement lifetime", () => {
     "keeps an accepted effect through automatic post-expiry auth via %s",
     async (entry) => {
       const headers = observeAcceptedHeaders();
-      let release = () => {};
+      let release: (() => void) | undefined;
       let expired = false;
       let authorized = false;
       let challenges = 0;
       const f = await fixture((e) => {
-        const origin = new URL(f.definition.url!).origin;
-        if (oauthMetadata(e, f.definition.url!)) {
+        const origin = new URL(f.url).origin;
+        if (oauthMetadata(e, f.url)) {
           return true;
         }
         if (e.body.method === "initialize" && expired) {
@@ -812,7 +893,7 @@ describe("native session replacement lifetime", () => {
               .end();
             return true;
           }
-          release();
+          requireValue(release)();
         }
         if (
           expired &&
@@ -824,22 +905,25 @@ describe("native session replacement lifetime", () => {
         }
         if (
           e.body.method === "tools/call" &&
-          e.body.params.name === "effect" &&
+          e.body.params?.name === "effect" &&
           f.calls("effect").length === 1
         ) {
           f.executions.push("effect");
           release = holdAccepted(e);
           return true;
         }
-        return undefined;
+        return;
       });
       f.definition.auth = "oauth";
       f.definition.oauth = {
         clientId: "local-lifetime",
         redirectUri: "http://127.0.0.1:19878/callback",
       };
-      f.state.config.settings!.autoAuth = true;
-      f.state.ui = { setStatus: vi.fn() } as any;
+      f.state.config.settings = { ...f.state.config.settings, autoAuth: true };
+      f.state.ui = {
+        ...f.native.context.ui,
+        setStatus: vi.fn<typeof f.native.context.ui.setStatus>(),
+      };
       auth.authenticate.mockReset().mockImplementation(async () => {
         authorized = true;
         return "authenticated";
@@ -858,7 +942,13 @@ describe("native session replacement lifetime", () => {
                 prefixedName: `local_${name}`,
                 description: name,
               },
-            )("call", {}, undefined, undefined, {} as any);
+            )(
+              "call",
+              {},
+              undefined,
+              undefined,
+              f.native.runner.createToolContext("call", f.native.context.signal),
+            );
       const effect = call("effect");
       await headers;
       expired = true;
