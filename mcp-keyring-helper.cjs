@@ -27,11 +27,10 @@ function loadKeyringEntryClass() {
     for (const suffix of suffixes) {
       try {
         const packageJsonPath = requireFromHere.resolve(`@napi-rs/keyring-${suffix}/package.json`);
-        /** @type {unknown} */
-        const binding = requireFromHere(
-          path.join(path.dirname(packageJsonPath), `keyring.${suffix}.node`),
-        );
-        return /** @type {Pick<typeof import("@napi-rs/keyring"), "Entry">} */ (binding).Entry;
+        return /** @type {Pick<typeof import("@napi-rs/keyring"), "Entry">} */ (
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-018: the resolved native binary exports the published Entry declaration.
+          requireFromHere(path.join(path.dirname(packageJsonPath), `keyring.${suffix}.node`))
+        ).Entry;
       } catch (error) {
         lastError = error;
       }

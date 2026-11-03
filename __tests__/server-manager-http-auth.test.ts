@@ -14,23 +14,36 @@ import {
 import { requireValue } from "./fixtures/extension-lifecycle.ts";
 
 const captures = vi.hoisted(() => {
+  const clients: Client[] = [];
   const transports: {
     url: URL;
     options: ConstructorParameters<typeof StreamableHTTPClientTransport>[1];
     transport: StreamableHTTPClientTransport;
   }[] = [];
-  return { transports };
+  return { clients, transports };
 });
 
 vi.mock("@modelcontextprotocol/client", async (importOriginal) => {
   const sdk = await importOriginal<typeof ClientModule>();
-  class CapturedTransport extends sdk.StreamableHTTPClientTransport {
-    constructor(...args: ConstructorParameters<typeof sdk.StreamableHTTPClientTransport>) {
-      super(...args);
-      captures.transports.push({ url: args[0], options: args[1], transport: this });
+  class CapturedClient extends sdk.Client {
+    constructor(
+      info: ConstructorParameters<typeof sdk.Client>[0],
+      options?: ConstructorParameters<typeof sdk.Client>[1],
+    ) {
+      super(info, options);
+      captures.clients.push(this);
     }
   }
-  return { ...sdk, StreamableHTTPClientTransport: CapturedTransport };
+  class CapturedTransport extends sdk.StreamableHTTPClientTransport {
+    constructor(
+      url: URL,
+      options?: ConstructorParameters<typeof sdk.StreamableHTTPClientTransport>[1],
+    ) {
+      super(url, options);
+      captures.transports.push({ url, options, transport: this });
+    }
+  }
+  return { ...sdk, Client: CapturedClient, StreamableHTTPClientTransport: CapturedTransport };
 });
 
 describe("McpServerManager HTTP bearer auth", () => {
@@ -40,6 +53,7 @@ describe("McpServerManager HTTP bearer auth", () => {
   const requests: { path: string | undefined; headers: IncomingHttpHeaders; method: string }[] = [];
 
   beforeEach(async () => {
+    captures.clients.length = 0;
     captures.transports.length = 0;
     requests.length = 0;
     manager = new McpServerManager();
@@ -179,6 +193,7 @@ describe("McpServerManager HTTP bearer auth", () => {
     await manager.connect("remote", { url, requestTimeoutMs: 5000 });
 
     expect(connect).toHaveBeenCalledTimes(1);
+    expect(captures.clients).toHaveLength(1);
     expect(captures.transports).toHaveLength(1);
     expect(connect).toHaveBeenCalledWith(transport().transport, { timeout: 5000 });
     expect(requests.map((request) => request.method)).toEqual(["server/discover", "tools/list"]);
