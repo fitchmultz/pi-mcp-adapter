@@ -87,10 +87,16 @@ export function getAuthEntryFilePath(serverName: unknown, options?: AuthStorageO
   return join(getServerDir(serverName, options), "tokens.json");
 }
 
+class InvalidOAuthCredentialRecordError extends Error {
+  override readonly name = "InvalidOAuthCredentialRecordError";
+}
+
 function parseAuthEntryPayload(serverName: string, payload: string, source: string): AuthEntry {
   const entry = parseJsonPayload(serverName, payload, source);
   if (!isAuthEntry(entry)) {
-    throw new Error(`Invalid OAuth credential record for ${serverName} at ${source}`);
+    throw new InvalidOAuthCredentialRecordError(
+      `Invalid OAuth credential record for ${serverName} at ${source}`,
+    );
   }
   return entry;
 }
@@ -255,8 +261,8 @@ export function getAuthForUrl(
 }
 
 /**
- * Inspect credentials for status-only UI paths without treating an unavailable
- * secure store as missing credentials. Authentication operations continue to
+ * Inspect credentials for status-only UI paths without treating unavailable
+ * or invalid credentials as missing. Authentication operations continue to
  * use getAuthForUrl() directly and therefore remain fail-closed.
  */
 export function inspectAuthForUrl(
@@ -275,10 +281,13 @@ export function inspectAuthForUrl(
     }
     return { status: "present", entry };
   } catch (error) {
-    if (!(error instanceof OAuthCredentialStoreError)) {
-      throw error;
+    if (error instanceof OAuthCredentialStoreError) {
+      return { status: "unavailable", message: formatOAuthCredentialStoreUnavailable(error) };
     }
-    return { status: "unavailable", message: formatOAuthCredentialStoreUnavailable(error) };
+    if (error instanceof InvalidOAuthCredentialRecordError) {
+      return { status: "unavailable", message: error.message };
+    }
+    throw error;
   }
 }
 
