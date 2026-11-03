@@ -61,21 +61,35 @@ function printHelp(log = console.log) {
 }
 
 // Init edits only imports and the discovery setting. Keep other config values
-// intact; full server validation belongs to the runtime config loader.
-const configSchema = z.looseObject({
-  settings: z.looseObject({ hostConfigDiscovery: z.unknown().optional() }).nullish(),
-});
+// intact; full server validation belongs to the runtime config loader. Object
+// schemas emit declared keys before the user's other keys, so user objects pass
+// through schemas without declared keys and settings is validated at its own path.
+const jsonObjectSchema = z.looseObject({});
+const settingsFieldSchema = z.object({ settings: jsonObjectSchema.nullish() });
 const serversSchema = z.record(z.string(), z.unknown());
 const importsSchema = z.array(z.unknown());
 
+/**
+ * @typedef {{
+ *   [key: string]: unknown;
+ *   mcpServers: Record<string, unknown>;
+ *   imports?: string[] | undefined;
+ *   settings?: Record<string, unknown> | null | undefined;
+ * }} PiConfig
+ */
+
+/** @returns {PiConfig} */
 function loadPiConfig() {
+  if (!fs.existsSync(PI_CONFIG_PATH)) {
+    return { mcpServers: {} };
+  }
+
   /** @type {unknown} */
-  const parsed = fs.existsSync(PI_CONFIG_PATH)
-    ? JSON.parse(
-        stripJsonComments(fs.readFileSync(PI_CONFIG_PATH, "utf-8"), { trailingCommas: true }),
-      )
-    : { mcpServers: {} };
-  const raw = configSchema.parse(parsed);
+  const parsed = JSON.parse(
+    stripJsonComments(fs.readFileSync(PI_CONFIG_PATH, "utf-8"), { trailingCommas: true }),
+  );
+  const raw = jsonObjectSchema.parse(parsed);
+  const { settings } = settingsFieldSchema.parse(raw);
   const servers = serversSchema.safeParse(raw.mcpServers ?? raw["mcp-servers"] ?? {});
   if (!servers.success) {
     throw new Error(
@@ -87,12 +101,14 @@ function loadPiConfig() {
   delete normalized["mcp-servers"];
 
   const imports = importsSchema.safeParse(raw.imports);
+  // Assigned last: an added settings key follows the existing keys and imports.
   return {
     ...normalized,
     mcpServers: servers.data,
     imports: imports.success
       ? imports.data.filter((value) => typeof value === "string")
       : undefined,
+    settings,
   };
 }
 
@@ -145,7 +161,7 @@ function writePiConfig(config) {
 }
 
 /**
- * @param {ReturnType<typeof loadPiConfig>} config
+ * @param {PiConfig} config
  * @param {string[]} importsToAdd
  * @param {boolean} discoverHostConfigs
  */

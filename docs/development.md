@@ -36,6 +36,7 @@ npm run lint:state-tests
 npm run lint:output-tests
 npm run lint:packaging-tests
 npm run lint:quality
+npm run lint:build-tooling
 npm run lint:ui-host-tests
 npm run lint:panel-tests
 npm run typecheck
@@ -55,6 +56,8 @@ The same command enforces the production profile for `scripts/release-candidate.
 The command also checks the native-contract launcher under the production profile and `scripts/native-compat/` under the test profile. That directory contains only native SDK and CLI contract assertions and their HTTP, provider and extension fixtures. Its checked consumer uses ordinary ESM imports of the selected package and host. The scenarios retain nested-call redaction, cancellation without replay, tree and reload selection, saved-output paging, pinning and tool restrictions. The launcher resolves symlinked entrypoints before dispatch and rejects failed consumer assertions.
 
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
+
+`lint:build-tooling` covers `cli.js`, `cli.d.ts`, `vitest.config.ts`, the build, native bridge generator, prepare, compiler launcher, all-project compiler and packed-consumer type scripts, plus the example's install, uninstall and shared local-config scripts. Their production profile preserves standalone installation, CLI and atomic build-publication behavior. The lint needs the build output because `cli.js` lazily imports the compiled `dist/legacy-migration.js`; CI runs it after `npm run build`. The CLI and example config writers validate only the containers they read or edit: the top-level document, the server map and, for the CLI, the settings container. They reject a malformed container before writing, keep the user's property order and preserve server definitions without validating them.
 
 `lint:core-runtime` enforces the production profile for cancellation, client-operation drains, process paths, legacy migration, onboarding storage, logging, panel keys, search ranking and Unix-socket transport. Rejections retain their original values. Transport cleanup failures reach the existing error callback.
 

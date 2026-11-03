@@ -192,6 +192,7 @@ jobs:
           console.log(JSON.stringify(selected));
           NODE
       - run: npm run build
+      - run: npm run lint:build-tooling
       - name: Published types resolve from the packed tarball
         run: |
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
