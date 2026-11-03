@@ -5,6 +5,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { findPackageJSON } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 
 const hostPackage = findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url);
 if (hostPackage === undefined) {
@@ -12,18 +13,20 @@ if (hostPackage === undefined) {
 }
 export const hostRoot = realpathSync(dirname(hostPackage));
 export const hostIndex = join(hostRoot, "dist/index.js");
-const manifest = JSON.parse(readFileSync(join(hostRoot, "package.json"), "utf8"));
+const manifest = z
+  .object({ version: z.string(), bin: z.object({ pi: z.string() }) })
+  .parse(JSON.parse(readFileSync(join(hostRoot, "package.json"), "utf8")));
 export const hostCli = realpathSync(join(hostRoot, manifest.bin.pi));
 
-const expectations = /** @type {[string, string][]} */ ([
-  ["PI_PACKAGE_DIR", hostRoot],
-  ["PI_COMPAT_EXPECTED_PACKAGE_DIR", hostRoot],
-  ["PI_HOST_INDEX", hostIndex],
-  ["PI_HOST_CLI", hostCli],
-]);
-for (const [name, actual] of expectations) {
+const expectations = {
+  PI_PACKAGE_DIR: hostRoot,
+  PI_COMPAT_EXPECTED_PACKAGE_DIR: hostRoot,
+  PI_HOST_INDEX: hostIndex,
+  PI_HOST_CLI: hostCli,
+};
+for (const [name, actual] of Object.entries(expectations)) {
   const configured = process.env[name];
-  if (configured) {
+  if (configured !== undefined && configured !== "") {
     assert.equal(
       realpathSync(configured),
       realpathSync(actual),
@@ -32,7 +35,10 @@ for (const [name, actual] of expectations) {
   }
 }
 
-if (process.env.PI_COMPAT_EXPECTED_VERSION) {
+if (
+  process.env.PI_COMPAT_EXPECTED_VERSION !== undefined &&
+  process.env.PI_COMPAT_EXPECTED_VERSION !== ""
+) {
   assert.equal(manifest.version, process.env.PI_COMPAT_EXPECTED_VERSION);
 }
 assert.equal(
