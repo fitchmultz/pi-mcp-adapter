@@ -243,8 +243,8 @@ export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string |
   return resolved;
 }
 
-export function resolveConfigPath(value: string | undefined): string | undefined {
-  if (value === undefined) {
+export function resolveConfigPath(value: string | null | undefined): string | undefined {
+  if (value === undefined || value === null) {
     return undefined;
   }
 

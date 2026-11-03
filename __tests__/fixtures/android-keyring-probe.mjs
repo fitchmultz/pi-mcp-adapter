@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createRequire, syncBuiltinESMExports } from "node:module";
+import { createRequire, registerHooks, syncBuiltinESMExports } from "node:module";
 import childProcess from "node:child_process";
 import http from "node:http";
 import https from "node:https";
@@ -14,14 +14,24 @@ import dgram from "node:dgram";
 const blocked = () => {
   throw new Error("External access forbidden in Android diagnostic probe");
 };
-const childProcessModule = /** @type {Record<string, unknown>} */ (childProcess);
-for (const name of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"]) {
-  childProcessModule[name] = blocked;
-}
-http.request = http.get = https.request = https.get = blocked;
-net.connect = net.createConnection = tls.connect = dgram.createSocket = blocked;
+childProcess.spawn = blocked;
+childProcess.spawnSync = blocked;
+childProcess.exec = Object.assign(blocked, { __promisify__: blocked });
+childProcess.execSync = blocked;
+childProcess.execFile = Object.assign(blocked, { __promisify__: blocked });
+childProcess.execFileSync = blocked;
+childProcess.fork = blocked;
+http.request = blocked;
+http.get = blocked;
+https.request = blocked;
+https.get = blocked;
+net.connect = blocked;
+net.createConnection = blocked;
+tls.connect = blocked;
+dgram.createSocket = blocked;
 net.Server.prototype.listen = blocked;
-globalThis.fetch = process.dlopen = blocked;
+globalThis.fetch = blocked;
+process.dlopen = blocked;
 syncBuiltinESMExports();
 Object.defineProperty(process, "platform", { value: "android", configurable: true });
 Object.defineProperty(process, "arch", { value: "arm64" });
@@ -35,7 +45,18 @@ const receipt = {
   execPath: process.execPath,
   version: process.version,
 };
-const auth = await import(pathToFileURL(join(home, "mcp-auth.ts")).href);
+// Resolve the typed literal import to the isolated copy prepared by the parent test.
+const authUrl = new URL("../../mcp-auth.ts", import.meta.url).href;
+const hooks = registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (new URL(specifier, context.parentURL).href === authUrl) {
+      return nextResolve(pathToFileURL(join(home, "mcp-auth.ts")).href, context);
+    }
+    return nextResolve(specifier, context);
+  },
+});
+const auth = await import("../../mcp-auth.ts");
+hooks.deregister();
 const url = "https://unreachable.invalid/mcp";
 const server = "android-diagnostic";
 const entry = { tokens: { accessToken: "synthetic-only" }, serverUrl: url };
@@ -54,11 +75,6 @@ const androidMessage = /Android\/Termux.*@napi-rs\/keyring.*native binding.*supp
 function asError(error) {
   assert(error instanceof Error);
   return error;
-}
-
-/** @param {unknown} error @returns {import("../../mcp-auth.js").OAuthCredentialStoreError} */
-function asStoreError(error) {
-  return /** @type {import("../../mcp-auth.js").OAuthCredentialStoreError} */ (error);
 }
 
 /**
@@ -82,11 +98,11 @@ function checkFailures(nativeFailure) {
   }));
   for (const { operation, error: caught } of errors) {
     assert(caught instanceof auth.OAuthCredentialStoreError);
-    const error = asStoreError(caught);
+    const error = caught;
     assert.equal(error.name, "OAuthCredentialStoreError");
     assert.equal(error.code, "OAUTH_CREDENTIAL_STORE_UNAVAILABLE");
     assert.equal(error.operation, operation);
-    if (nativeFailure) {
+    if (nativeFailure !== undefined) {
       assert.equal(error.cause, nativeFailure);
       assert.equal(
         error.message,
@@ -97,27 +113,24 @@ function checkFailures(nativeFailure) {
       const loaderError = asError(asError(error.cause).cause);
       assert.match(loaderError.message, /Failed to load @napi-rs\/keyring/);
       assert.match(asError(loaderError.cause).message, /Cannot find native binding/);
-      /** @type {unknown[]} */
+      /** @type {Error[]} */
       const loadErrors = [];
       let cause = asError(loaderError.cause).cause;
-      while (cause) {
+      while (cause instanceof Error) {
         loadErrors.push(cause);
-        cause = cause instanceof Error ? cause.cause : undefined;
+        cause = cause.cause;
       }
       assert(
-        loadErrors.some((cause) => {
-          if (!(cause instanceof Error)) {
-            return false;
-          }
+        loadErrors.some((loadError) => {
           return mode === "missing"
-            ? cause.message.includes("Cannot find module '@napi-rs/keyring-android-arm64'")
-            : cause.message === "synthetic binding cannot load";
+            ? loadError.message.includes("Cannot find module '@napi-rs/keyring-android-arm64'")
+            : loadError.message === "synthetic binding cannot load";
         }),
       );
     }
   }
   assert.equal(status.status, "unavailable");
-  if (nativeFailure) {
+  if (nativeFailure !== undefined) {
     assert.equal(status.message, genericStatus);
   } else {
     assert.match(status.message, androidMessage);
@@ -134,7 +147,9 @@ if (mode === "working") {
   assert.deepEqual(auth.inspectAuthForUrl(server, url), { status: "absent" });
   assert.equal(fs.existsSync(dirname(legacy)), false);
   const require = createRequire(join(home, "package.json"));
+  /** @type {unknown} */
   const binding = require("@napi-rs/keyring-android-arm64");
+  assert(typeof binding === "object" && binding !== null && "failure" in binding);
   binding.failure = new Error("Synthetic credential store locked");
   receipt.androidRuntimeFailure = checkFailures(binding.failure);
   Object.defineProperty(process, "platform", { value: "darwin" });
@@ -147,15 +162,16 @@ if (mode === "working") {
   const sentinel = "not credentials; must never be read, imported, replaced or removed";
   fs.writeFileSync(legacy, sentinel);
   const read = fs.readFileSync;
-  /**
-   * @param {unknown} path
-   * @param {...unknown} args
-   */
-  const guardedRead = (path, ...args) => {
-    assert.notEqual(String(path), legacy, "unavailable store must not read legacy credentials");
-    return Reflect.apply(read, fs, [path, ...args]);
-  };
-  /** @type {Record<string, unknown>} */ (fs).readFileSync = guardedRead;
+  fs.readFileSync = new Proxy(read, {
+    apply(target, receiver, args) {
+      /** @type {unknown} */
+      const path = args[0];
+      assert.notEqual(String(path), legacy, "unavailable store must not read legacy credentials");
+      /** @type {unknown} */
+      const result = Reflect.apply(target, receiver, args);
+      return result;
+    },
+  });
   syncBuiltinESMExports();
   receipt.unavailable = checkFailures();
   assert.equal(read(legacy, "utf8"), sentinel);
