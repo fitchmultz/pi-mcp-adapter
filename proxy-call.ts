@@ -407,7 +407,12 @@ async function dispatchApprovedCall(
   },
 ): Promise<ProxyToolResult> {
   const { args, identity, beforeDispatch, options, signal } = request;
-  const approval = await ensureToolCallApproved(state, serverName, toolMeta, args, ownedSignal);
+  const approval = await ensureToolCallApproved(state, {
+    serverName,
+    toolMeta,
+    args,
+    signal: ownedSignal,
+  });
   if (!approval.ok) {
     return approvalFailure(approval.reason, serverName, toolMeta);
   }

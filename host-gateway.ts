@@ -3,7 +3,11 @@ import type * as Proxy from "./proxy-modes.ts";
 import type { McpAdapterHost, HostToolArguments } from "./host-contract.ts";
 import type { McpAdapterOptions, McpOperationContext } from "./types.ts";
 import type { McpExtensionState } from "./state.ts";
-import { prepareGatewayArguments, type GatewayArguments } from "./gateway-arguments.ts";
+import {
+  parseGatewayArguments,
+  prepareGatewayArguments,
+  type GatewayArguments,
+} from "./gateway-arguments.ts";
 import {
   guardMcpOutput,
   guardedMcpDetails,
@@ -18,7 +22,7 @@ type Dispatch = {
   signal: AbortSignal | undefined;
   toolCallId: string;
   getPiTools: () => ReturnType<ExtensionAPI["getAllTools"]>;
-  beforeDispatch: Parameters<typeof Proxy.executeCall>[7];
+  beforeDispatch: Parameters<typeof Proxy.executeCall>[1]["beforeDispatch"];
   sync: () => void;
 };
 
@@ -71,24 +75,22 @@ async function dispatchGateway(
     case "auth-complete":
       return authComplete(context, params);
     case "call":
-      return proxy.executeCall(
-        ready,
-        tool(),
-        params.args,
-        params.server,
+      return proxy.executeCall(ready, {
+        toolName: tool(),
+        args: params.args,
+        serverOverride: params.server,
         getPiTools,
         signal,
-        { toolCallId },
+        identity: { toolCallId },
         beforeDispatch,
-      );
+      });
     case "connect": {
-      const result = await proxy.executeConnect(
-        ready,
-        server(),
+      const result = await proxy.executeConnect(ready, {
+        serverName: server(),
         signal,
-        params.limit,
-        params.offset,
-      );
+        limit: params.limit,
+        offset: params.offset,
+      });
       context.sync();
       return present(ready, result);
     }
@@ -99,14 +101,13 @@ async function dispatchGateway(
     case "search":
       return present(
         ready,
-        proxy.executeSearch(
-          ready,
-          required(params.query, params.action, "query"),
-          params.server,
-          params.includeSchemas,
-          params.limit,
-          params.offset,
-        ),
+        proxy.executeSearch(ready, {
+          query: required(params.query, params.action, "query"),
+          server: params.server,
+          includeSchemas: params.includeSchemas,
+          limit: params.limit,
+          offset: params.offset,
+        }),
       );
     case "list":
       return present(ready, proxy.executeList(ready, server(), params.limit, params.offset));
@@ -115,17 +116,21 @@ async function dispatchGateway(
         ready,
         await (
           await import("./resource-tools.ts")
-        ).executeResourceList(ready, server(), params.limit, params.offset, signal),
+        ).executeResourceList(ready, {
+          server: server(),
+          limit: params.limit,
+          offset: params.offset,
+          signal,
+        }),
       );
     case "read-resource":
-      return (await import("./resource-tools.ts")).executeResourceRead(
-        ready,
-        server(),
-        required(params.uri, params.action, "uri"),
+      return (await import("./resource-tools.ts")).executeResourceRead(ready, {
+        server: server(),
+        uri: required(params.uri, params.action, "uri"),
         signal,
-        { toolCallId },
+        identity: { toolCallId },
         beforeDispatch,
-      );
+      });
     case "read-result":
       return readResult(ready, params);
     case "status":
@@ -165,9 +170,9 @@ export async function executeGateway(
   pi: ExtensionAPI,
   host: McpAdapterHost,
   options: McpAdapterOptions,
-  [toolCallId, rawParams, signal, , ctx]: HostToolArguments<GatewayArguments>,
+  [toolCallId, rawParams, signal, , ctx]: HostToolArguments<Record<string, unknown>>,
 ): Promise<GatewayResult> {
-  const params = prepareGatewayArguments(rawParams);
+  const params = parseGatewayArguments(prepareGatewayArguments(rawParams));
   await beforeGateway(host, options.beforeExecute, { id: toolCallId, ctx, action: params.action });
   const ready = await host.getToolState(signal);
   if ("content" in ready) {
@@ -185,7 +190,7 @@ export async function executeGateway(
     ["list", "search", "describe", "instructions"].includes(params.action) &&
     !ready.toolMetadata.has(params.server)
   ) {
-    const discovery = await proxy.executeConnect(ready, params.server, signal);
+    const discovery = await proxy.executeConnect(ready, { serverName: params.server, signal });
     const failed = Boolean(discovery.details.error);
     if (failed) {
       return discovery;

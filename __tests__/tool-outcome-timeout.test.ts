@@ -28,7 +28,7 @@ async function cancelAfterWrite(
   controller: AbortController,
 ): Promise<void> {
   await expect
-    .poll(async () => (await executeCall(state, "local_readback", {})).content)
+    .poll(async () => (await executeCall(state, { toolName: "local_readback", args: {} })).content)
     .toEqual([{ type: "text", text: "1" }]);
   controller.abort(new Error("caller cancelled"));
 }

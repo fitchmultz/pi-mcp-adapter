@@ -54,13 +54,13 @@ export function applyServerMetadata(
 ): number {
   const prefix = state.config.settings?.toolPrefix ?? "server";
 
-  const { metadata, failedTools } = buildToolMetadata(
-    connection.tools,
-    connection.resources,
+  const { metadata, failedTools } = buildToolMetadata({
+    tools: connection.tools,
+    resources: connection.resources,
     definition,
     serverName,
     prefix,
-  );
+  });
   state.toolMetadata.set(serverName, metadata);
   state.resourceCounts.set(serverName, connection.resources.length);
   if (connection.promptDiscoveryFailed !== true) {

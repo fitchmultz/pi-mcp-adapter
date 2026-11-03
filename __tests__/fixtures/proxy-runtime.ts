@@ -155,7 +155,13 @@ export async function proxyRuntimeState({
   assert.ok(connection);
   state.toolMetadata.set(
     "demo",
-    buildToolMetadata(connection.tools, [], definition, "demo", "server").metadata,
+    buildToolMetadata({
+      tools: connection.tools,
+      resources: [],
+      definition,
+      serverName: "demo",
+      prefix: "server",
+    }).metadata,
   );
   return {
     state,

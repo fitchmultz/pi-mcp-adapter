@@ -106,13 +106,12 @@ export class UiToolProxy {
   ): Promise<ToolCallApprovalResult> {
     const options = this.options;
     if (options.state) {
-      return ensureToolCallApproved(
-        options.state,
-        options.serverName,
-        meta,
+      return ensureToolCallApproved(options.state, {
+        serverName: options.serverName,
+        toolMeta: meta,
         args,
-        options.state.owner.signal,
-      );
+        signal: options.state.owner.signal,
+      });
     }
     if (options.config && isToolCallApprovalRequired(options.config, options.serverName, meta)) {
       return { ok: false, reason: "approval_required_headless" };

@@ -28,7 +28,7 @@ export type ScriptDispatchOptions = {
   getPiTools: (() => ToolInfo[]) | undefined;
   signal: AbortSignal | undefined;
   toolCallId: string | undefined;
-  beforeDispatch: Parameters<typeof executeCall>[7];
+  beforeDispatch: Parameters<typeof executeCall>[1]["beforeDispatch"];
 };
 export class McpScriptCaptureError extends Error {
   readonly recovery: unknown;
@@ -186,17 +186,16 @@ export class ScriptOperations {
         });
       }
       const { state, getPiTools, signal, beforeDispatch } = this.options;
-      return executeCall(
-        state,
-        message.path,
+      return executeCall(state, {
+        toolName: message.path,
         args,
-        message.server,
+        serverOverride: message.server,
         getPiTools,
         signal,
-        this.callIdentity(message.id),
+        identity: this.callIdentity(message.id),
         beforeDispatch,
-        { raw: true },
-      );
+        options: { raw: true },
+      });
     });
   }
 
@@ -213,7 +212,7 @@ export class ScriptOperations {
     if (state.config.mcpServers[server] && state.toolMetadata.has(server)) {
       return;
     }
-    const result = await executeConnect(state, server, signal);
+    const result = await executeConnect(state, { serverName: server, signal });
     const failed = Boolean(result.details.error);
     return failed
       ? { code: result.details.error, message: textFromContent(result.content) }
@@ -361,13 +360,12 @@ export class ScriptOperations {
     }
     const { state, signal, beforeDispatch } = this.options;
     if (message.type === "resources") {
-      const result = await executeResourceList(
-        state,
-        input.server,
-        typeof input.limit === "number" ? input.limit : 12,
-        typeof input.offset === "number" ? input.offset : 0,
+      const result = await executeResourceList(state, {
+        server: input.server,
+        limit: typeof input.limit === "number" ? input.limit : 12,
+        offset: typeof input.offset === "number" ? input.offset : 0,
         signal,
-      );
+      });
       const failed = Boolean(result.details.error);
       return failed
         ? { error: { code: result.details.error, message: textFromContent(result.content) } }
@@ -383,15 +381,14 @@ export class ScriptOperations {
       };
     }
     return this.recordCall(`${server}:${uri}`, () =>
-      executeResourceRead(
-        state,
+      executeResourceRead(state, {
         server,
         uri,
         signal,
-        this.callIdentity(message.id),
+        identity: this.callIdentity(message.id),
         beforeDispatch,
-        true,
-      ),
+        raw: true,
+      }),
     );
   }
 

@@ -24,11 +24,7 @@ import type * as importProxy from "./proxy-modes.ts";
 import type { McpExtensionState } from "./state.ts";
 import { throwIfAborted } from "./abort.ts";
 import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS } from "./utils.ts";
-import {
-  gatewayParameters,
-  prepareGatewayArguments,
-  type GatewayArguments,
-} from "./gateway-arguments.ts";
+import { gatewayParameters, prepareGatewayArguments } from "./gateway-arguments.ts";
 import { executeGateway } from "./host-gateway.ts";
 
 type SearchParams = {
@@ -85,7 +81,7 @@ export class McpHostTools {
     }
     const proxy = await import("./proxy-modes.ts");
     if (params.server !== undefined && needsDiscovery(ready, params.server)) {
-      const discovery = await proxy.executeConnect(ready, params.server, signal);
+      const discovery = await proxy.executeConnect(ready, { serverName: params.server, signal });
       const failed = Boolean(discovery.details.error);
       if (failed) {
         return { ...discovery, tools: [] };
@@ -107,15 +103,14 @@ export class McpHostTools {
     const typedCount = tools.filter(
       (tool) => tool.name !== "mcp" && tool.name !== "mcp_script",
     ).length;
-    const result = proxy.executeSearch(
-      ready,
-      params.query,
-      params.server,
-      typedCount < page.items.length,
-      params.limit ?? 5,
-      params.offset,
-      "mcp_search",
-    );
+    const result = proxy.executeSearch(ready, {
+      query: params.query,
+      server: params.server,
+      includeSchemas: typedCount < page.items.length,
+      limit: params.limit ?? 5,
+      offset: params.offset,
+      caller: "mcp_search",
+    });
     const guarded = await guardMcpOutput(
       [
         ...result.content,
@@ -234,18 +229,18 @@ export class McpHostTools {
           return ready;
         }
         const { runMcpScript } = await import("./mcp-code.ts");
-        return runMcpScript(
-          ready,
-          params.code,
-          params.timeoutMs ?? options.defaultScriptTimeoutMs,
+        return runMcpScript({
+          state: ready,
+          code: params.code,
+          timeoutMs: params.timeoutMs ?? options.defaultScriptTimeoutMs,
           getPiTools,
           signal,
           toolCallId,
-          beforeExecute
+          beforeDispatch: beforeExecute
             ? (callSignal, operation) =>
                 beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)
             : undefined,
-        );
+        });
       };
     this.loader.registerFeature("script", {
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
@@ -279,7 +274,7 @@ export class McpHostTools {
   private registerProxyTool(description: string): void {
     const beforeExecute = this.options.beforeExecute;
     const { pi, host, options } = this;
-    const execute: HostToolExecute<GatewayArguments> =
+    const execute: HostToolExecute<Record<string, unknown>> =
       // oxlint-disable-next-line eslint/max-params -- QX-3004: preserve Pi's native five-position execute callback.
       async function executeMcpGateway(toolCallId, rawParams, signal, _onUpdate, ctx) {
         return executeGateway(pi, host, options, [toolCallId, rawParams, signal, _onUpdate, ctx]);
@@ -292,7 +287,7 @@ export class McpHostTools {
       promptSnippet:
         "MCP server operations, resources, saved result readback, and fallback tool calls",
       renderCall: renderMcpProxyToolCall,
-      parameters: gatewayParameters,
+      parameters: Type.Unsafe<Record<string, unknown>>(gatewayParameters),
       prepareArguments: prepareGatewayArguments,
       renderResult: renderMcpToolResult,
       execute,

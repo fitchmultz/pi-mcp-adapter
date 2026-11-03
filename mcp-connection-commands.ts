@@ -40,13 +40,13 @@ function applyConnectionMetadata(
   connection: ServerConnection,
 ): ReturnType<typeof buildToolMetadata>["failedTools"] {
   const prefix = state.config.settings?.toolPrefix ?? "server";
-  const { metadata, failedTools } = buildToolMetadata(
-    connection.tools,
-    connection.resources,
+  const { metadata, failedTools } = buildToolMetadata({
+    tools: connection.tools,
+    resources: connection.resources,
     definition,
-    name,
+    serverName: name,
     prefix,
-  );
+  });
   state.toolMetadata.set(name, metadata);
   if (connection.promptDiscoveryFailed !== true) {
     state.promptMetadata.set(
