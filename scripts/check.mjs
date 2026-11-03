@@ -11,6 +11,8 @@ const quality = [
   npmCheck("typecheck:all"),
   npmCheck("check:directives"),
   npmCheck("check:policy"),
+  npmCheck("check:cache-schema"),
+  npmCheck("check:browser"),
 ];
 const tests = [npmCheck("test:vitest"), npmCheck("test:oauth")];
 const mode = process.argv[2];

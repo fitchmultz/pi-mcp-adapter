@@ -341,7 +341,9 @@ function verifyAcceptanceScripts() {
     "test:oauth":
       "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --test --test-concurrency=1 mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
     "test:conformance": "bash conformance/run.sh",
-    build: "node ./scripts/build.mjs",
+    build: "npm run check:cache-schema && node ./scripts/build.mjs",
+    "check:cache-schema": "node scripts/generate-metadata-cache-schema.mts --check",
+    "check:browser": "node ./scripts/build-host-browser.mjs --check",
     typecheck: "node ./scripts/tsc.mjs --noEmit",
     "typecheck:all": "node ./scripts/typecheck-all.mjs",
     lint: "oxlint --deny-warnings .",
@@ -375,7 +377,7 @@ function verifyAcceptanceWorkflow() {
     ["run: npm run check:quality", "${{ !cancelled() && steps.host.outcome == 'success' }}"],
     ['npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"', build],
     [
-      "run: npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts",
+      "run: npm exec -- vitest run __tests__/interactive-visualizer-*.test.ts",
       "${{ !cancelled() && steps.build.outcome == 'success' && steps.example-build.outcome == 'success' }}",
     ],
     ["run: npm run test:conformance", "${{ !cancelled() && steps.host.outcome == 'success' }}"],

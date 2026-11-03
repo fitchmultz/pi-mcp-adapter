@@ -4,6 +4,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -47,6 +48,12 @@ function repository(): string {
     "scripts/run-checks.mjs",
     "scripts/typecheck-all.mjs",
     "scripts/tsc.mjs",
+    "scripts/generate-metadata-cache-schema.mts",
+    "metadata-cache-validator.ts",
+    "scripts/build-host-browser.mjs",
+    "host-browser.bundle.js",
+    "ui-stream-types.ts",
+    ...readdirSync(source).filter((name) => /^host-browser-.*\.ts$/u.test(name)),
   ]) {
     const destination = join(root, file);
     mkdirSync(dirname(destination), { recursive: true });
@@ -170,6 +177,8 @@ describe("quality policy", () => {
       expect(result.stdout).toContain(
         `[check] lint: exit ${fault === "lint" || fault === "semantic" ? 1 : 0}`,
       );
+      expect(result.stdout).toContain("[check] check:cache-schema: exit 0");
+      expect(result.stdout).toContain("[check] check:browser: exit 0");
     },
   );
 
