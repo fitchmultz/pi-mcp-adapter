@@ -1,49 +1,28 @@
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(__dirname, "..");
-const distServer = path.join(root, "dist", "server.js");
-const configuredAgentDir = process.env.PI_CODING_AGENT_DIR?.trim();
-const agentDir = !configuredAgentDir
-  ? path.join(homedir(), ".pi", "agent")
-  : configuredAgentDir === "~"
-    ? homedir()
-    : configuredAgentDir.startsWith("~/")
-      ? path.resolve(homedir(), configuredAgentDir.slice(2))
-      : path.resolve(configuredAgentDir);
-const configPath = path.join(agentDir, "fitch-mcp-adapter", "mcp.json");
-const serverName = "interactive-visualizer";
-
-function isInstalledExample(/** @type {Record<string, unknown> | null | undefined} */ entry) {
-  if (entry === null || entry === undefined) {
-    return false;
-  }
-  return (
-    entry.command === process.execPath && Array.isArray(entry.args) && entry.args[0] === distServer
-  );
-}
+import { writeFile } from "node:fs/promises";
+import { configPath, isInstalledExample, loadConfig, serverName } from "./local-config.mjs";
 
 try {
-  const raw = await readFile(configPath, "utf-8");
-  const config = JSON.parse(raw);
-  const entry = config?.mcpServers?.[serverName];
-
-  if (!entry) {
-    console.log(`${serverName} is not installed in ${configPath}`);
-  } else if (!isInstalledExample(entry)) {
-    console.log(
-      `Left ${serverName} unchanged because the existing entry does not match this local example install.`,
-    );
+  const config = await loadConfig();
+  if (config === undefined) {
+    console.log(`No MCP config found at ${configPath}`);
   } else {
-    delete config.mcpServers[serverName];
-    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
-    console.log(`Removed ${serverName} from ${configPath}`);
+    const servers = config.mcpServers;
+    const entry = servers?.[serverName];
+    const hasEntry = Boolean(entry);
+    if (!hasEntry || servers === null || servers === undefined) {
+      console.log(`${serverName} is not installed in ${configPath}`);
+    } else if (!isInstalledExample(entry)) {
+      console.log(
+        `Left ${serverName} unchanged because the existing entry does not match this local example install.`,
+      );
+    } else {
+      delete servers[serverName];
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+      console.log(`Removed ${serverName} from ${configPath}`);
+    }
   }
 } catch (error) {
-  if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+  if (error instanceof Error && "code" in error && error.code === "ENOENT") {
     console.log(`No MCP config found at ${configPath}`);
   } else {
     throw error;

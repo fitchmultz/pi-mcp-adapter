@@ -8,8 +8,12 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
-assert.ok(process.argv[2], "Usage: node scripts/check-consumer-types.mjs <production-install>");
-const installed = resolve(process.argv[2]);
+const installPath = process.argv[2];
+assert.ok(
+  installPath !== undefined && installPath !== "",
+  "Usage: node scripts/check-consumer-types.mjs <production-install>",
+);
+const installed = resolve(installPath);
 for (const name of ["typescript", "@types/cross-spawn", "typebox"]) {
   assert.ok(!existsSync(join(installed, "node_modules", name)), `${name} must be pruned`);
 }

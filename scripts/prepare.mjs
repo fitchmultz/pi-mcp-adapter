@@ -36,7 +36,7 @@ function hasBuildDependencies() {
 /** @param {string[]} args */
 async function runNpm(args) {
   const npmExecPath = process.env.npm_execpath;
-  if (!npmExecPath) {
+  if (npmExecPath === undefined || npmExecPath === "") {
     throw new Error(
       `npm_execpath is not set; run "npm ${args.join(" ")}" manually in ${process.cwd()} and retry.`,
     );
@@ -60,10 +60,10 @@ async function runBuild() {
   );
   // Forward build output on success too: install-time diagnostics such as the
   // concurrent-swap race-loss warning are otherwise swallowed.
-  if (stdout) {
+  if (stdout !== "") {
     process.stdout.write(stdout);
   }
-  if (stderr) {
+  if (stderr !== "") {
     process.stderr.write(stderr);
   }
 }
@@ -112,7 +112,7 @@ async function main() {
   await pruneDevDependencies();
 }
 
-main().catch((error) => {
+main().catch((/** @type {unknown} */ error) => {
   reportError(error);
   process.exitCode = 1;
 });
