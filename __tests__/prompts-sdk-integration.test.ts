@@ -161,7 +161,7 @@ describe("prompts capability negotiation", () => {
     // The stock elicitation fixture only advertises tools + resources, so
     // fetchAllPrompts short-circuits without hitting the wire.
     const elicitationFixture = fileURLToPath(
-      new URL("./fixtures/elicitation-server.mjs", import.meta.url),
+      new URL("./runtime/fixtures/elicitation-server.mjs", import.meta.url),
     );
     const manager = new McpServerManager();
     managers.push(manager);

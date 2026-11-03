@@ -51,6 +51,8 @@ The runtime scope also includes the real HTTP callback-lifetime suite and its se
 
 Manager configuration tests use real HTTP and stdio connections for capability advertisement, callback replies, cwd selection and native request options. A call-through native client records its actual constructor callbacks for the replaced-client and failed-refresh races.
 
+The runtime scope includes the stock-dialog elicitation and real stdio SDK suites. A typed three-method dialog fixture preserves selection/input order and notification history. Complete native extension contexts and state back the direct/proxy tool, resource and UI-resource cases. QX-007 covers only the initialized capability accessor in each of the two enumerated legacy stdio fixtures.
+
 `lint:sdk-http` enforces the test profile for the real HTTP SDK suite and its typed native capture extension fixture. Latest-host qualification supplies one consistent SDK graph for their static imports and Jiti-loaded factories.
 
 `lint:lifecycle-tests` enforces the test profile for the adapter's native SDK lifecycle tests, their extension fixture, and the shared complete SDK context fixture.
