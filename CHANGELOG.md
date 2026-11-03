@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.30 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce repository-wide strict quality acceptance (#204) ([4d53262](https://github.com/fitchmultz/pi-mcp-adapter/commit/4d532625e5c43b5b8eb4e5e544ccd0fb65b28490))
+
+### What's Changed
+
+- Enforce repository-wide strict quality acceptance by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/204
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.29...v8.0.30
+
 ## 8.0.29 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
