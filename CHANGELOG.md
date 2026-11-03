@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.17 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Validate and strictly check credential record reads (#178) ([91eef0c](https://github.com/fitchmultz/pi-mcp-adapter/commit/91eef0c778777592fca4b2faacdac65495ee4bbf))
+
+### What's Changed
+
+- Validate and strictly check credential record reads by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/178
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.16...v8.0.17
+
 ## 8.0.16 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
