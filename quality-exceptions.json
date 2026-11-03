@@ -198,5 +198,15 @@
     "nodeType": "VariableDeclaration",
     "operation": "const { z } = require(\"zod\") as typeof Zod;",
     "guards": []
+  },
+  {
+    "id": "QX-022",
+    "file": "tool-names.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "ExportNamedDeclaration", "name": "isToolAllowed" },
+    "path": [],
+    "nodeType": "ExportNamedDeclaration",
+    "operation": "export function isToolAllowed(\n  toolName: string,\n  serverName: string,\n  prefix: ToolPrefix,\n  includeTools?: unknown,\n  excludeTools?: unknown,\n): boolean {\n  return (\n    isToolIncluded(toolName, serverName, prefix, includeTools) &&\n    !isToolExcluded(toolName, serverName, prefix, excludeTools)\n  );\n}",
+    "guards": []
   }
 ]
