@@ -1,7 +1,7 @@
 // Offline native contracts run as an ordinary ESM consumer of the selected package.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { copyFile, cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -67,7 +67,10 @@ export async function verifyNativeTools(packageRoot) {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] !== undefined &&
+  (await realpath(process.argv[1])) === (await realpath(fileURLToPath(import.meta.url)))
+) {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
     console.log(
       "Usage: node scripts/compat-native-tools.mjs <package-root>\nOffline native SDK/MCP contract smoke. Example: node scripts/compat-native-tools.mjs .\nExit codes: 0 passed, 1 contract failure, 2 invalid arguments.",
