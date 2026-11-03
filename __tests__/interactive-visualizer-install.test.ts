@@ -94,6 +94,7 @@ describe("standalone interactive visualizer installation", () => {
 
     writeConfig(path, initial);
     chmodSync(path, 0o600);
+    const original = readFileSync(path, "utf8");
     expect(f.run("install")).toMatchObject({ status: 0, stderr: "" });
     expect(readConfig(path)).toEqual({
       ...initial,
@@ -106,6 +107,7 @@ describe("standalone interactive visualizer installation", () => {
 
     expect(f.run("uninstall")).toMatchObject({ status: 0, stderr: "" });
     expect(readConfig(path)).toEqual(initial);
+    expect(readFileSync(path, "utf8")).toBe(original);
     expect(statSync(path).mode & 0o777).toBe(0o600);
     const removed = readFileSync(path);
     expect(f.run("uninstall")).toMatchObject({
@@ -118,6 +120,81 @@ describe("standalone interactive visualizer installation", () => {
     rmSync(path);
     expect(f.run("install")).toMatchObject({ status: 0, stderr: "" });
     expect(readConfig(path)).toEqual({ mcpServers: { [serverName]: installedEntry } });
+  });
+
+  it("keeps own __proto__ keys, unknown settings and other server definitions byte for byte", () => {
+    const f = fixture("agent");
+    const path = join(f.cwd, "agent", "fitch-mcp-adapter", "mcp.json");
+    const start = [
+      "{",
+      '  "__proto__": {',
+      '    "mcpServers": {',
+      '      "fromProto": {',
+      '        "command": "proto"',
+      "      }",
+      "    }",
+      "  },",
+      '  "settings": {',
+      '    "__proto__": {',
+      '      "toolPrefix": "short"',
+      "    },",
+      '    "nested": {',
+      '      "__proto__": [',
+      "        null,",
+      "        true",
+      "      ]",
+      "    }",
+      "  },",
+      '  "mcpServers": {',
+      '    "__proto__": {',
+      '      "command": "proto-server"',
+      "    },",
+      '    "other": {',
+      '      "command": "retained",',
+      '      "__proto__": {',
+      '        "env": {',
+      '          "A": "1"',
+      "        }",
+      "      }",
+      "    }",
+    ];
+    const end = ["  },", '  "after": "✓"', "}", ""];
+    const original = [...start, ...end].join("\n");
+    const installed = [
+      ...start.slice(0, -1),
+      "    },",
+      `    "${serverName}": {`,
+      `      "command": ${JSON.stringify(process.execPath)},`,
+      '      "args": [',
+      `        ${JSON.stringify(server)}`,
+      "      ],",
+      '      "lifecycle": "lazy"',
+      "    }",
+      ...end,
+    ].join("\n");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, original);
+
+    expect(f.run("install")).toMatchObject({
+      status: 0,
+      stderr: "",
+      stdout: `Installed ${serverName} at ${path}\n`,
+    });
+    expect(readFileSync(path, "utf8")).toBe(installed);
+    expect(f.run("install")).toMatchObject({ status: 0, stderr: "" });
+    expect(readFileSync(path, "utf8")).toBe(installed);
+    expect(f.run("uninstall")).toMatchObject({
+      status: 0,
+      stderr: "",
+      stdout: `Removed ${serverName} from ${path}\n`,
+    });
+    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(f.run("uninstall")).toMatchObject({
+      status: 0,
+      stderr: "",
+      stdout: `${serverName} is not installed in ${path}\n`,
+    });
+    expect(readFileSync(path, "utf8")).toBe(original);
   });
 
   it.each([
