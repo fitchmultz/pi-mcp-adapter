@@ -17,7 +17,7 @@ export function getAuthRequiredMessage(
   defaultMessage = `Server "${serverName}" requires OAuth authentication. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
 ): string {
   const oauth = state.config.mcpServers[serverName]?.oauth;
-  if (typeof oauth === "object" && oauth.crossAppAccess !== undefined) {
+  if (typeof oauth === "object" && oauth !== null && oauth.crossAppAccess !== undefined) {
     return formatAuthRequiredMessage(
       state.config,
       serverName,
@@ -36,7 +36,7 @@ function getAuthFailedMessage(
   const oauth = state.config.mcpServers[serverName]?.oauth;
   if (
     (customGuidance ?? "").length > 0 ||
-    (typeof oauth === "object" && oauth.crossAppAccess !== undefined)
+    (typeof oauth === "object" && oauth !== null && oauth.crossAppAccess !== undefined)
   ) {
     return `OAuth authentication failed for "${serverName}": ${message}. ${getAuthRequiredMessage(state, serverName)}`;
   }

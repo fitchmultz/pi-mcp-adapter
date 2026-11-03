@@ -3,6 +3,7 @@ import { Visitor } from "oxc-parser";
 import { z } from "zod";
 
 const scopeSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("ExportNamedDeclaration"), name: z.string().min(1) }),
   z.strictObject({ type: z.literal("FunctionDeclaration"), name: z.string().min(1) }),
   z.strictObject({ type: z.literal("FunctionExpression"), name: z.string().min(1) }),
   z.strictObject({
@@ -53,6 +54,15 @@ function selectScope(program, selector) {
   /** @type {import("oxc-parser").Node[]} */
   const matches = [];
   new Visitor({
+    ExportNamedDeclaration(node) {
+      if (
+        selector.type === node.type &&
+        node.declaration?.type === "FunctionDeclaration" &&
+        node.declaration.id?.name === selector.name
+      ) {
+        matches.push(node);
+      }
+    },
     FunctionDeclaration(node) {
       if (selector.type === node.type && node.id?.name === selector.name) {
         matches.push(node);
