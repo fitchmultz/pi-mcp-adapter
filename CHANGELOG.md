@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.29 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce canonical plain-result reader ownership (#202) ([581fa0c](https://github.com/fitchmultz/pi-mcp-adapter/commit/581fa0cb0b6ad9e2fa61d2dff9d51991e2b4e8d6))
+
+### What's Changed
+
+- Enforce canonical plain-result reader ownership by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/202
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.28...v8.0.29
+
 ## 8.0.28 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
