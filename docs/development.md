@@ -20,9 +20,11 @@ npm run lint:prompts
 npm run lint:runtime-tests
 npm run lint:tracing
 npm run lint:core-runtime
+npm run lint:config-runtime
 npm run lint:sampling
 npm run lint:output-runtime
 npm run lint:credential-runtime
+npm run lint:auth-boundaries
 npm run lint:node-oauth
 npm run lint:sdk-http
 npm run lint:lifecycle-tests
@@ -59,11 +61,15 @@ The command also checks the native-contract launcher under the production profil
 
 `lint:core-runtime` enforces the production profile for cancellation, client-operation drains, process paths, legacy migration, onboarding storage, logging, panel keys, search ranking and Unix-socket transport. Rejections retain their original values. Transport cleanup failures reach the existing error callback.
 
+`lint:config-runtime` enforces the production profile for `config*.ts`, `types.ts`, `public-types.ts`, `tool-names.ts` and `ui-message-types.ts`. It also checks the config, OpenCode interpolation and executable negative OAuth configuration suites under the test profile. File parsing validates known fields without stripping server, settings or OAuth extension properties. Malformed known fields warn and invalidate a Pi or shared file; malformed standard host entries are omitted. Legacy null values remain valid for server `command`, `socket`, and `oauth`, and for `settings.trace.file`. Only literal `disabled: true` disables a server; string values remain enabled. Other known fields retain their declared validation. Authentication semantics and command secrets remain lazy. QX-022 permits only the published five-position `isToolAllowed` predicate. The CI extras job requires this scoped gate; repository-wide lint remains a migration target.
+
 `lint:sampling` enforces the production profile for the supported MCP sampling bridge. Its native model-registry and approval tests are covered by `lint:runtime-tests`. QX-017 permits only five deprecated MCP sampling types from their actual SDK package in these two files. Other deprecations and all other rules remain checked.
 
 `lint:output-runtime` enforces the production profile for `mcp-output-*.ts`: output guards, streaming previews, retained-result contracts, summaries and paged result reads. Raw MCP properties remain unknown until narrowed. The existing output suites verify artifact readback, private permissions, paging and UTF-8 boundaries.
 
 `lint:runtime-tests` includes native Pi gateway selection, reload, lazy startup and initialization tests, plus the standalone startup child. These tests use the installed Pi graph selected by qualification. The child installs module hooks before importing Pi, loads the source extension, and executes its first stdio call. Initialization tests use a real Pi context and public health-check timers.
+
+The runtime scope includes disabled-server, elicitation-policy, footer, stale-context and failure-state initialization tests. Complete native contexts and owned managers replace partial host objects. Real HTTP capability and callback delivery, a stdio cwd tool, config files and SDK context invalidation retain the initialization contracts. Footer assertions retain the deliberate JavaScript-host missing-theme fault. Failure-state tests cross the expiry timer and verify owner shutdown prevents publication.
 
 The runtime scope also includes the real HTTP callback-lifetime suite and its server fixture. It covers callback cancellation and reply drain, token reads and persistence, subscription refresh, URL completion and accepted-operation no-replay through native Pi contexts and MCP transports.
 
@@ -73,7 +79,9 @@ The runtime scope also includes manager reconnect, owner-shutdown and stderr tes
 
 The runtime scope includes the stock-dialog elicitation and real stdio SDK suites. A typed three-method dialog fixture preserves selection/input order and notification history. Complete native extension contexts and state back the direct/proxy tool, resource and UI-resource cases. QX-007 covers only the initialized capability accessor in each of the two enumerated legacy stdio fixtures.
 
-`lint:credential-runtime` enforces the production profile for native keyring loading, credential-store diagnostics, Linux recovery dispatch and `mcp-auth.ts`. Native declarations type the lazy synchronous module loads. QX-013 preserves the primary loader failure, and QX-018 covers only the two enumerated native module assertions. QX-020 preserves the supplied auth entry's URL update. QX-021 types only the installed lazy Zod load, preserving cached startup without Zod. Structural validation retains the original JSON property order. Canonical schemas validate persisted records before use or plaintext migration, preserve extension fields and leave legacy redirect validation with the OAuth flow. Malformed known fields fail before secure writes or plaintext deletion. The same scope includes the payload store for hashed accounts, manifest validation, chunk reads/writes and cleanup. The storage suite retains real child-process recovery, platform diagnostics, chunking and plaintext migration checks.
+`lint:credential-runtime` enforces the production profile for native keyring loading, credential-store diagnostics, Linux recovery dispatch, its standalone CommonJS helper and `mcp-auth.ts`. Native declarations type the lazy synchronous module loads. QX-013 preserves the primary loader failure, and QX-018 covers only the three enumerated native module assertions. QX-020 preserves the supplied auth entry's URL update. QX-021 types only the installed lazy Zod load, preserving cached startup without Zod. Structural validation retains the original JSON property order. Canonical schemas validate persisted records before use or plaintext migration, preserve extension fields and leave legacy redirect validation with the OAuth flow. Malformed known fields fail before secure writes or plaintext deletion. The same scope includes the payload store for hashed accounts, manifest validation, chunk reads/writes and cleanup. The storage suite retains real child-process recovery, platform diagnostics, chunking and plaintext migration checks.
+
+`lint:auth-boundaries` checks the real HTTP bearer-auth suite, the SDK OAuth compatibility suite and the isolated Android keyring probe. The first suite uses the native client and transport with received-header assertions. The OAuth suite retains PKCE, issuer, refresh, cancellation and no-replay checks. The Android probe blocks external access and uses the isolated implementation prepared by the storage suite. It tests loader diagnostics, not Android hardware.
 
 `lint:sdk-http` enforces the test profile for the real HTTP SDK suite and its typed native capture extension fixture. Latest-host qualification supplies one consistent SDK graph for their static imports and Jiti-loaded factories.
 

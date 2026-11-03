@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.27 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce configuration runtime checks (#198) ([45bf5a7](https://github.com/fitchmultz/pi-mcp-adapter/commit/45bf5a773e9bfe5a60191551b0c62e4819ad9244))
+
+### What's Changed
+
+- Enforce configuration runtime checks by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/198
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.26...v8.0.27
+
+## 8.0.26 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce native credential boundary checks (#196) ([f9181ff](https://github.com/fitchmultz/pi-mcp-adapter/commit/f9181ffda568266f2c6a8fd08f293f5ee5e5d8d1))
+
+### What's Changed
+
+- Enforce native credential boundary checks by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/196
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.25...v8.0.26
+
+## 8.0.25 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Strictly check native initialization contracts (#192) ([d2893f7](https://github.com/fitchmultz/pi-mcp-adapter/commit/d2893f772a37f3e000f0cd3da74aac65fd1ee819))
+
+### What's Changed
+
+- Strictly check native initialization contracts by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/192
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.24...v8.0.25
+
 ## 8.0.24 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
