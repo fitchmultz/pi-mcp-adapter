@@ -452,17 +452,19 @@ describe("native session replacement lifetime", () => {
         f.definition.requestTimeoutMs = 300;
       }
       const controller = new AbortController();
-      const first = executeCall(
-        f.state,
-        "local_trigger",
-        {},
-        "local",
-        undefined,
-        controller.signal,
-      );
+      const first = executeCall(f.state, {
+        toolName: "local_trigger",
+        args: {},
+        serverOverride: "local",
+        signal: controller.signal,
+      });
       await expect.poll(() => discovery).toBeDefined();
       f.definition.requestTimeoutMs = 2000;
-      const second = executeCall(f.state, "local_effect", {}, "local");
+      const second = executeCall(f.state, {
+        toolName: "local_effect",
+        args: {},
+        serverOverride: "local",
+      });
       if (cancellation === "abort") {
         controller.abort(new Error("caller stopped waiting"));
       }
@@ -691,12 +693,11 @@ describe("native session replacement lifetime", () => {
                 description: "effect",
               },
             )("call", {}, undefined, undefined, {} as any)
-          : executeCall(
-              f.state,
-              "local_effect",
-              {},
-              entry === "proxy-prefix" ? undefined : "local",
-            );
+          : executeCall(f.state, {
+              toolName: "local_effect",
+              args: {},
+              serverOverride: entry === "proxy-prefix" ? undefined : "local",
+            });
       const output = await pending;
       expect(output.details.error).toBe("connect_failed");
       expect(f.state.failureTracker.has("local")).toBe(true);
@@ -844,7 +845,7 @@ describe("native session replacement lifetime", () => {
       const fullClose = vi.spyOn(f.manager, "close");
       const call = (name: string) =>
         entry === "proxy"
-          ? executeCall(f.state, `local_${name}`, {}, "local")
+          ? executeCall(f.state, { toolName: `local_${name}`, args: {}, serverOverride: "local" })
           : createDirectToolExecutor(
               () => f.state,
               () => null,

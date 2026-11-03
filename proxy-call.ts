@@ -23,16 +23,20 @@ export interface ExecuteCallOptions {
   raw?: boolean;
 }
 
-interface CallRequest {
+interface ExecuteCallRequest {
   toolName: string;
-  args: Record<string, unknown> | undefined;
-  serverOverride: string | undefined;
-  getPiTools: (() => ToolInfo[]) | undefined;
-  signal: AbortSignal | undefined;
-  identity: McpToolCallIdentity;
-  beforeDispatch:
+  args?: Record<string, unknown> | undefined;
+  serverOverride?: string | undefined;
+  getPiTools?: (() => ToolInfo[]) | undefined;
+  signal?: AbortSignal | undefined;
+  identity?: McpToolCallIdentity | undefined;
+  beforeDispatch?:
     | ((signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>)
     | undefined;
+  options?: ExecuteCallOptions | undefined;
+}
+interface CallRequest extends ExecuteCallRequest {
+  identity: McpToolCallIdentity;
   options: ExecuteCallOptions;
 }
 function invalidCall(
@@ -63,27 +67,12 @@ function invalidCall(
 }
 export async function executeCall(
   state: McpExtensionState,
-  toolName: string,
-  args?: Record<string, unknown>,
-  serverOverride?: string,
-  getPiTools?: () => ToolInfo[],
-  signal?: AbortSignal,
-  identity: McpToolCallIdentity = {},
-  beforeDispatch?: (
-    signal: AbortSignal | undefined,
-    operation: McpOperationContext,
-  ) => Promise<void>,
-  options: ExecuteCallOptions = {},
+  request: ExecuteCallRequest,
 ): Promise<ProxyToolResult> {
   return executeResolvedCall(state, {
-    toolName,
-    args,
-    serverOverride,
-    getPiTools,
-    signal,
-    identity,
-    beforeDispatch,
-    options,
+    ...request,
+    identity: request.identity ?? {},
+    options: request.options ?? {},
   });
 }
 
@@ -422,21 +411,27 @@ async function dispatchApprovedCall(
   if (!approval.ok) {
     return approvalFailure(approval.reason, serverName, toolMeta);
   }
-  return runToolCall(state, serverName, toolMeta, args, {
-    ...identity,
-    ...(beforeDispatch ? { beforeDispatch } : {}),
-    ...(options.raw !== undefined ? { raw: options.raw } : {}),
-    detailsBase: {
-      mode: "call",
-      server: serverName,
-      ...((toolMeta.resourceUri ?? "").length > 0
-        ? { resourceUri: toolMeta.resourceUri }
-        : { tool: toolMeta.originalName }),
+  return runToolCall({
+    state,
+    serverName,
+    target: toolMeta,
+    args,
+    options: {
+      ...identity,
+      ...(beforeDispatch ? { beforeDispatch } : {}),
+      ...(options.raw !== undefined ? { raw: options.raw } : {}),
+      detailsBase: {
+        mode: "call",
+        server: serverName,
+        ...((toolMeta.resourceUri ?? "").length > 0
+          ? { resourceUri: toolMeta.resourceUri }
+          : { tool: toolMeta.originalName }),
+      },
+      ownedSignal,
+      signal,
+      recoverAuthConnection: prepared.recoverAuthConnection,
+      authRequiredMessage: () => getAuthRequiredMessage(state, serverName),
+      autoAuthAttempted: prepared.autoAuthAttempted,
     },
-    ownedSignal,
-    signal,
-    recoverAuthConnection: prepared.recoverAuthConnection,
-    authRequiredMessage: () => getAuthRequiredMessage(state, serverName),
-    autoAuthAttempted: prepared.autoAuthAttempted,
   });
 }

@@ -325,17 +325,16 @@ async function runMcpScriptOperation(
     server?: string,
   ) =>
     recordCall(path, () =>
-      executeCall(
-        state,
-        path,
+      executeCall(state, {
+        toolName: path,
         args,
-        server,
+        serverOverride: server,
         getPiTools,
-        callSignal,
-        callIdentity(innerCallId),
+        signal: callSignal,
+        identity: callIdentity(innerCallId),
         beforeDispatch,
-        { raw: true },
-      ),
+        options: { raw: true },
+      }),
     );
 
   const discoverServer = async (server?: string) => {
@@ -348,7 +347,7 @@ async function runMcpScriptOperation(
     if (state.config.mcpServers[server] && state.toolMetadata.has(server)) {
       return undefined;
     }
-    const result = await executeConnect(state, server, callSignal);
+    const result = await executeConnect(state, { serverName: server, signal: callSignal });
     return result.details.error
       ? { code: result.details.error, message: textFromContent(result.content) }
       : undefined;

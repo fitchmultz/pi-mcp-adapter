@@ -49,6 +49,7 @@
     "lint:core-runtime": "oxlint --deny-warnings abort.ts agent-dir.ts client-operations.ts error-signal.ts legacy-migration.ts logger.ts mcp-oauth-callback-config.ts onboarding-state.ts panel-keys.ts search-ranking.ts unix-socket-transport.ts",
     "lint:sampling": "oxlint --deny-warnings sampling-handler.ts",
     "lint:output-runtime": "oxlint --deny-warnings mcp-output-*.ts",
+    "lint:proxy-runtime": "oxlint --deny-warnings direct-tools.ts proxy-*.ts __tests__/proxy-modes-discovery.test.ts __tests__/proxy-modes-manual-auth.test.ts __tests__/proxy-modes-ui-messages.test.ts __tests__/fixtures/proxy-runtime.ts __tests__/test-state.ts __tests__/test-extension-context.ts __tests__/auth/direct-tools-auto-auth.test.ts __tests__/auth/proxy-modes-auto-auth.test.ts __tests__/discovery/direct-tools.test.ts __tests__/abort-signal.test.ts __tests__/tool-call-parity.test.ts __tests__/tool-approval.test.ts __tests__/structured-content-fallback-integration.test.ts __tests__/session-recovery-integration.test.ts __tests__/ui-viewer-none.test.ts",
     "lint:credential-runtime": "oxlint --deny-warnings mcp-auth.ts auth-record-types.ts credential-payloads.ts credential-store-errors.ts keyring-store.ts keyring-recovery.ts",
     "lint:node-oauth": "oxlint --deny-warnings mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts __tests__/fixtures/keyring-read-only.cts",
     "lint:sdk-http": "oxlint --deny-warnings __tests__/sdk-v2-http.test.ts __tests__/fixtures/native-capture-extension.ts",

@@ -138,7 +138,7 @@ describe("elicitation with the real MCP SDK", () => {
 
     const result =
       adapter === "proxy"
-        ? await executeCall(state, metadata.name, {}, "real")
+        ? await executeCall(state, { toolName: metadata.name, args: {}, serverOverride: "real" })
         : await createDirectToolExecutor(
             () => state,
             () => null,
@@ -148,7 +148,13 @@ describe("elicitation with the real MCP SDK", () => {
               description: metadata.description,
               ...spec,
             },
-          )("id", {}, undefined, undefined, native.context);
+          )(
+            "id",
+            {},
+            undefined,
+            undefined,
+            native.runner.createToolContext("id", state.owner.signal),
+          );
 
     expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });
     const retryMessage: unknown = expect.stringContaining("retry the tool");

@@ -75,7 +75,7 @@ describe("proxy discovery", () => {
       _meta: tool._meta,
     });
     expect(described).not.toHaveProperty("inputTypeScript");
-    const text = firstText(executeSearch(state, "unique lookup"));
+    const text = firstText(executeSearch(state, { query: "unique lookup" }));
     const searched = parsedRecord(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
     expect(searched.inputSchema).toEqual(tool.inputSchema);
     expect(searched.outputSchema).toEqual(tool.outputSchema);
@@ -92,7 +92,7 @@ describe("proxy discovery", () => {
       description: "Guide",
       resourceUri: "docs://guide",
     });
-    const search = executeSearch(state, "guide");
+    const search = executeSearch(state, { query: "guide" });
     expect(search.details).toMatchObject({
       count: 0,
       coverage: { complete: false, unknownServers: ["unknown"] },
@@ -103,14 +103,14 @@ describe("proxy discovery", () => {
   });
 
   it("searches MCP tools only", () => {
-    const result = executeSearch(createState(), "read");
+    const result = executeSearch(createState(), { query: "read" });
 
     expect(firstText(result)).toBe('No tools matching "read"');
     expect(result.details).toMatchObject({ count: 0, matches: [] });
   });
 
   it("treats a long query as plain text rather than a pattern", () => {
-    const result = executeSearch(createState(), ".*[unknown](terms)? ".repeat(40));
+    const result = executeSearch(createState(), { query: ".*[unknown](terms)? ".repeat(40) });
 
     expect(result.details).toMatchObject({ count: 0 });
   });
@@ -149,7 +149,12 @@ describe("proxy discovery", () => {
   });
 
   it("returns ranked paged search details", () => {
-    const result = executeSearch(createState(), "demo", undefined, false, 1, 0);
+    const result = executeSearch(createState(), {
+      query: "demo",
+      includeSchemas: false,
+      limit: 1,
+      offset: 0,
+    });
 
     expect(firstText(result)).toContain(
       '1-1 of 2 — mcp({ action: "search", query: "demo", includeSchemas: false, limit: 1, offset: 1 }) for more',
@@ -164,15 +169,27 @@ describe("proxy discovery", () => {
   });
 
   it("keeps the default schema mode implicit in search continuations", () => {
-    const result = executeSearch(createState(), "demo", undefined, undefined, 1, 0);
+    const result = executeSearch(createState(), { query: "demo", limit: 1, offset: 0 });
 
     expect(firstText(result)).not.toContain("includeSchemas");
   });
 
   it("preserves compact server-scoped search in continuation and retry calls", () => {
     const state = createState();
-    const page = executeSearch(state, "demo", "demo", false, 1, 0);
-    const retry = executeSearch(state, "demo", "demo", false, 1, 99);
+    const page = executeSearch(state, {
+      query: "demo",
+      server: "demo",
+      includeSchemas: false,
+      limit: 1,
+      offset: 0,
+    });
+    const retry = executeSearch(state, {
+      query: "demo",
+      server: "demo",
+      includeSchemas: false,
+      limit: 1,
+      offset: 99,
+    });
 
     expect(firstText(page)).toContain(
       'mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 1 })',
@@ -183,7 +200,12 @@ describe("proxy discovery", () => {
   });
 
   it("paginates search results without changing their order", () => {
-    const result = executeSearch(createState(), "demo", undefined, false, 1, 1);
+    const result = executeSearch(createState(), {
+      query: "demo",
+      includeSchemas: false,
+      limit: 1,
+      offset: 1,
+    });
 
     expect(firstText(result)).toContain("2-2 of 2 — end");
     expect(result.details).toMatchObject({
@@ -195,7 +217,12 @@ describe("proxy discovery", () => {
   });
 
   it("explains an out-of-range search offset", () => {
-    const result = executeSearch(createState(), "demo", undefined, false, 1, 99);
+    const result = executeSearch(createState(), {
+      query: "demo",
+      includeSchemas: false,
+      limit: 1,
+      offset: 99,
+    });
 
     expect(firstText(result)).toContain("No search results at offset 99; 2 tools match");
     expect(result.details).toMatchObject({ error: "offset_out_of_range", count: 2, matches: [] });
@@ -224,7 +251,7 @@ describe("proxy discovery", () => {
     const state = createState();
     const connect = vi.spyOn(state.manager, "connect");
 
-    const result = await executeCall(state, "demo_sear");
+    const result = await executeCall(state, { toolName: "demo_sear" });
 
     expect(connect).not.toHaveBeenCalled();
     expect(firstText(result)).toContain("Did you mean: demo_search");
@@ -232,7 +259,7 @@ describe("proxy discovery", () => {
     expect(firstText(result)).toContain('mcp({ action: "connect", server: "demo" })');
     expect(firstText(result).length).toBeLessThan(300);
 
-    const missing = await executeCall(state, "demo_new_tool");
+    const missing = await executeCall(state, { toolName: "demo_new_tool" });
     expect(firstText(missing)).toContain('mcp({ action: "connect", server: "demo" })');
     expect(connect).not.toHaveBeenCalled();
   });
@@ -251,7 +278,7 @@ describe("proxy discovery", () => {
     vi.spyOn(state.manager, "getConnection").mockImplementation((server) =>
       server === "demo" ? connection : undefined,
     );
-    const result = await executeCall(state, "search", undefined, "demo");
+    const result = await executeCall(state, { toolName: "search", serverOverride: "demo" });
 
     expect(result.details).toMatchObject({ server: "demo", tool: "search" });
     expect(callTool).toHaveBeenCalledOnce();
@@ -268,7 +295,7 @@ describe("proxy discovery", () => {
       { name: "list_issues", originalName: "list_issues", description: "List noise issues" },
     ]);
 
-    const result = await executeCall(state, "list-issues", undefined, "demo");
+    const result = await executeCall(state, { toolName: "list-issues", serverOverride: "demo" });
 
     expect(result.details).toMatchObject({ hintServer: "demo", suggestions: ["demo_list_issues"] });
     expect(firstText(result)).not.toContain('server "noise"');
@@ -283,7 +310,7 @@ describe("proxy discovery", () => {
       { name: "search", originalName: "search", description: "Search" },
     ]);
 
-    const result = await executeCall(state, "sear", undefined, "demo");
+    const result = await executeCall(state, { toolName: "sear", serverOverride: "demo" });
 
     expect(result.details).toMatchObject({ hintServer: "demo", suggestions: ["search"] });
   });
@@ -303,7 +330,10 @@ describe("proxy discovery", () => {
       ],
     ]);
 
-    const result = await executeCall(state, "gh_list_issues", undefined, "slack");
+    const result = await executeCall(state, {
+      toolName: "gh_list_issues",
+      serverOverride: "slack",
+    });
 
     expect(result.details).toMatchObject({
       hintServer: "slack",
@@ -314,7 +344,7 @@ describe("proxy discovery", () => {
       'Tool "gh_list_issues" is on server "gh", not "slack". Retry the same call with server: "gh" or omit server.',
     );
 
-    const alias = await executeCall(state, "gh-list-issues", undefined, "slack");
+    const alias = await executeCall(state, { toolName: "gh-list-issues", serverOverride: "slack" });
     expect(alias.details).toMatchObject({ suggestedServer: "gh" });
   });
 
@@ -340,7 +370,7 @@ describe("proxy discovery", () => {
       .spyOn(state.manager, "connect")
       .mockRejectedValue(new Error("stop after routing"));
 
-    await executeCall(state, "github_enterprise_search");
+    await executeCall(state, { toolName: "github_enterprise_search" });
 
     expect(connect).toHaveBeenCalledOnce();
     expect(connect.mock.calls[0]?.[0]).toBe("github");
@@ -355,7 +385,7 @@ describe("proxy discovery", () => {
       .spyOn(state.manager, "connect")
       .mockRejectedValue(new Error("stop after routing"));
 
-    await executeCall(state, "github_search");
+    await executeCall(state, { toolName: "github_search" });
 
     expect(connect).toHaveBeenCalledOnce();
     expect(connect.mock.calls[0]?.[0]).toBe("github");
@@ -381,7 +411,7 @@ describe("proxy discovery", () => {
     ]);
     const connect = vi.spyOn(state.manager, "connect");
 
-    const result = await executeCall(state, "github_enterprise_sear");
+    const result = await executeCall(state, { toolName: "github_enterprise_sear" });
 
     expect(connect).not.toHaveBeenCalled();
     expect(result.details).toMatchObject({
@@ -395,9 +425,10 @@ describe("proxy discovery", () => {
     let result;
     try {
       assert.ok(host.api.getAllTools().some((tool) => tool.name === "read"));
-      result = await executeCall(createState(), "read", undefined, undefined, () =>
-        host.api.getAllTools(),
-      );
+      result = await executeCall(createState(), {
+        toolName: "read",
+        getPiTools: () => host.api.getAllTools(),
+      });
     } finally {
       await host.dispose();
     }

@@ -58,15 +58,9 @@ interface CallRequest {
   args: Record<string, unknown> | undefined;
   options: ToolCallOptions;
 }
-export async function runToolCall(
-  state: McpExtensionState,
-  serverName: string,
-  target: ToolCallTarget,
-  args: Record<string, unknown> | undefined,
-  options: ToolCallOptions,
-): Promise<ProxyToolResult> {
+export async function runToolCall(request: CallRequest): Promise<ProxyToolResult> {
   const dependencies = await loadCallDependencies();
-  return new ToolCallRuntime({ state, serverName, target, args, options }, dependencies).run();
+  return new ToolCallRuntime(request, dependencies).run();
 }
 class ToolCallRuntime {
   private uiSession: UiSessionRuntime | null = null;

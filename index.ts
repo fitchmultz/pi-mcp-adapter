@@ -796,7 +796,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     }
     const proxy = await import("./proxy-modes.ts");
     if (params.server && !ready.toolMetadata.has(params.server)) {
-      const discovery = await proxy.executeConnect(ready, params.server, signal);
+      const discovery = await proxy.executeConnect(ready, { serverName: params.server, signal });
       if (discovery.details.error) {
         return { ...discovery, tools: [] };
       }
@@ -816,15 +816,14 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     const typedCount = tools.filter(
       (tool) => tool.name !== "mcp" && tool.name !== "mcp_script",
     ).length;
-    const result = proxy.executeSearch(
-      ready,
-      params.query,
-      params.server,
-      typedCount < page.items.length,
-      params.limit ?? 5,
-      params.offset,
-      "mcp_search",
-    );
+    const result = proxy.executeSearch(ready, {
+      query: params.query,
+      server: params.server,
+      includeSchemas: typedCount < page.items.length,
+      limit: params.limit ?? 5,
+      offset: params.offset,
+      caller: "mcp_search",
+    });
     const guarded = await guardMcpOutput(
       [
         ...result.content,
@@ -1020,7 +1019,10 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           ["list", "search", "describe", "instructions"].includes(params.action) &&
           !ready.toolMetadata.has(params.server)
         ) {
-          const discovery = await proxy.executeConnect(ready, params.server, signal);
+          const discovery = await proxy.executeConnect(ready, {
+            serverName: params.server,
+            signal,
+          });
           if (discovery.details.error) {
             return discovery;
           }
@@ -1039,24 +1041,22 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             return proxy.executeAuthComplete(ready, params.server!, input, signal);
           }
           case "call":
-            return proxy.executeCall(
-              ready,
-              params.tool!,
-              params.args,
-              params.server,
+            return proxy.executeCall(ready, {
+              toolName: params.tool!,
+              args: params.args,
+              serverOverride: params.server,
               getPiTools,
               signal,
-              { toolCallId },
+              identity: { toolCallId },
               beforeDispatch,
-            );
+            });
           case "connect": {
-            const result = await proxy.executeConnect(
-              ready,
-              params.server!,
+            const result = await proxy.executeConnect(ready, {
+              serverName: params.server!,
               signal,
-              params.limit,
-              params.offset,
-            );
+              limit: params.limit,
+              offset: params.offset,
+            });
             syncToolSurface(ctx);
             return present(result);
           }
@@ -1066,14 +1066,13 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             return present(proxy.executeInstructions(ready, params.server!));
           case "search":
             return present(
-              proxy.executeSearch(
-                ready,
-                params.query!,
-                params.server,
-                params.includeSchemas,
-                params.limit,
-                params.offset,
-              ),
+              proxy.executeSearch(ready, {
+                query: params.query!,
+                server: params.server,
+                includeSchemas: params.includeSchemas,
+                limit: params.limit,
+                offset: params.offset,
+              }),
             );
           case "list":
             return present(proxy.executeList(ready, params.server!, params.limit, params.offset));

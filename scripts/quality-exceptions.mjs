@@ -19,6 +19,7 @@ const siteSchema = z.strictObject({
   scope: scopeSchema,
   path: z.array(z.union([z.string(), z.number().int().nonnegative()])),
   nodeType: z.string().min(1),
+  part: z.literal("signature").optional(),
   operation: z.string().min(1),
   guards: z.array(z.string()),
 });
@@ -119,9 +120,16 @@ export function resolveExceptionSite(site, program, source) {
     selected = property(selected, key);
   }
   const node = nodeSchema.parse(selected);
+  let end = node.end;
+  if (site.part === "signature") {
+    if (node.type !== "FunctionExpression" && node.type !== "FunctionDeclaration") {
+      throw new Error(`Signature exception requires a function: ${site.id}`);
+    }
+    end = nodeSchema.parse(property(selected, "body")).start;
+  }
   if (
     node.type !== site.nodeType ||
-    source.slice(node.start, node.end) !== site.operation ||
+    source.slice(node.start, end) !== site.operation ||
     JSON.stringify(guards) !== JSON.stringify(site.guards)
   ) {
     throw new Error(`Authorized operation changed for ${site.id} ${site.file} ${site.rule}`);

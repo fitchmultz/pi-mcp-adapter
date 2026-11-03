@@ -103,14 +103,16 @@ describe("MCP execution redesign", () => {
   });
   it("only uses the no-file path for fully visible plain-text results", async () => {
     const { state, setResult, directory } = await fixture();
-    expect((await executeCall(state, "demo_echo", {})).details.resultRef).toBeUndefined();
+    expect(
+      (await executeCall(state, { toolName: "demo_echo", args: {} })).details.resultRef,
+    ).toBeUndefined();
     const raw: CallToolResult = {
       content: [{ type: "text", text: "done" }],
       _meta: { receipt: "saved-42" },
       vendorField: 3,
     };
     setResult(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     assert.ok(typeof result.details.resultRef === "string");
     const readback = await output.readMcpResult(
       { ref: result.details.resultRef, path: "/_meta/receipt" },
@@ -131,7 +133,7 @@ describe("MCP execution redesign", () => {
       ],
     };
     const { state, directory } = await fixture(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     expect(result.details.resultRef).toEqual(expect.any(String));
     assert.ok(typeof result.details.resultRef === "string");
     const readback = await output.readMcpResult(
@@ -162,7 +164,7 @@ describe("MCP execution redesign", () => {
       ],
     };
     const { state } = await fixture(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     const files = z.array(z.object({ path: z.string() })).parse(result.details.payloadFiles);
     expect(await Promise.all(files.map((file) => readFile(file.path, "utf8")))).toEqual([
       "audio bytes",
@@ -187,7 +189,7 @@ describe("MCP execution redesign", () => {
       },
     };
     const { state, directory } = await fixture(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     assert.ok(typeof result.details.resultRef === "string");
     const input = {
       ref: result.details.resultRef,
@@ -265,7 +267,9 @@ describe("MCP execution redesign", () => {
       ok: true,
       data: { contents: [{ uri: "test://notes", text: "notes" }] },
     });
-    expect((await executeCall(state, "demo_read_notes")).details.error).toBeUndefined();
+    expect(
+      (await executeCall(state, { toolName: "demo_read_notes" })).details.error,
+    ).toBeUndefined();
     for (const policy of [
       { exposeResources: false },
       { excludeTools: ["read_notes"] },
@@ -354,7 +358,9 @@ describe("MCP execution redesign", () => {
     state.toolMetadata.set("demo", [
       { name: "demo_a_b", originalName: "a.b", description: "stale single alias" },
     ]);
-    expect((await executeCall(state, "demo_a_b", {})).details.error).toBe("ambiguous_tool");
+    expect((await executeCall(state, { toolName: "demo_a_b", args: {} })).details.error).toBe(
+      "ambiguous_tool",
+    );
     expect(callTool).not.toHaveBeenCalled();
     const script = await runMcpScript(state, 'return await tools.call("a_b", {}, "demo");');
     expect(JSON.parse(firstText(script))).toMatchObject({ ok: true });
@@ -373,7 +379,9 @@ describe("MCP execution redesign", () => {
     expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({
       total: 2,
     });
-    expect((await executeCall(state, "demo_read_notes")).details.error).toBe("ambiguous_tool");
+    expect((await executeCall(state, { toolName: "demo_read_notes" })).details.error).toBe(
+      "ambiguous_tool",
+    );
     expect(
       (await resources.executeResourceRead(state, "demo", "test://two")).details.error,
     ).toBeUndefined();
@@ -398,7 +406,9 @@ describe("MCP execution redesign", () => {
     state.toolMetadata.set("other", [
       { name: "demo_echo", originalName: "different", description: "Other" },
     ]);
-    expect((await executeCall(state, "demo_echo", {})).details.error).toBe("ambiguous_tool");
+    expect((await executeCall(state, { toolName: "demo_echo", args: {} })).details.error).toBe(
+      "ambiguous_tool",
+    );
     expect(callTool).not.toHaveBeenCalled();
   });
 
@@ -410,9 +420,17 @@ describe("MCP execution redesign", () => {
       () => null,
       { serverName: "demo", prefixedName: "demo_echo", originalName: "echo", description: "Stale" },
     );
-    expect((await execute("id", {}, undefined, undefined, host.context)).details.error).toBe(
-      "tool_not_found",
-    );
+    expect(
+      (
+        await execute(
+          "id",
+          {},
+          undefined,
+          undefined,
+          host.runner.createToolContext("id", state.owner.signal),
+        )
+      ).details.error,
+    ).toBe("tool_not_found");
     expect(callTool).not.toHaveBeenCalled();
   });
 
@@ -438,7 +456,7 @@ describe("MCP execution redesign", () => {
       structuredContent: { rows: [{ id: 1, secret: "omit" }, { id: 2 }] },
     };
     const { state, callTool, directory } = await fixture(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     const ref = result.details.resultRef;
     expect(ref).toEqual(expect.any(String));
     assert.ok(typeof ref === "string");

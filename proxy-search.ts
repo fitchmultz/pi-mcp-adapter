@@ -123,12 +123,21 @@ function searchPageText(
 }
 export function executeSearch(
   state: McpExtensionState,
-  query: string,
-  server?: string,
-  includeSchemas?: boolean,
-  limit = 12,
-  offset = 0,
-  caller: "mcp" | "mcp_search" = "mcp",
+  {
+    query,
+    server,
+    includeSchemas,
+    limit = 12,
+    offset = 0,
+    caller = "mcp",
+  }: {
+    query: string;
+    server?: string | undefined;
+    includeSchemas?: boolean | undefined;
+    limit?: number | undefined;
+    offset?: number | undefined;
+    caller?: "mcp" | "mcp_search" | undefined;
+  },
 ): ProxyToolResult {
   const showSchemas = includeSchemas !== false;
   if (

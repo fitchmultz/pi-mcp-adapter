@@ -23,7 +23,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-025: Native tool callback\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -298,6 +298,35 @@ const capabilityFunctionSource = [
   "",
 ].join("\n");
 
+const directCallbackDirective =
+  "// oxlint-disable-next-line eslint/max-params -- QX-025: Pi supplies context fifth.";
+const directCallbackSignature =
+  "async function execute(toolCallId, params, signal, _onUpdate, ctx) ";
+const directCallbackSource = [
+  'import type { ToolDefinition } from "@earendil-works/pi-coding-agent";',
+  'import type { TUnsafe } from "typebox";',
+  'type Execute = ToolDefinition<TUnsafe<Record<string, unknown>>, Record<string, unknown>>["execute"];',
+  "export function createExecutor(): Execute {",
+  "return (",
+  directCallbackDirective,
+  `${directCallbackSignature}{`,
+  "return { content: [], details: { toolCallId, params, signal, _onUpdate, hasUI: ctx.hasUI } };",
+  "}",
+  ");",
+  "}",
+  "",
+].join("\n");
+const directCallbackSite = {
+  ...site,
+  id: "QX-025",
+  rule: "eslint/max-params",
+  scope: { type: "FunctionExpression", name: "execute" },
+  path: [],
+  nodeType: "FunctionExpression",
+  part: "signature",
+  operation: directCallbackSignature,
+};
+
 const keyringCases = [
   {
     name: "lazy native keyring module",
@@ -432,6 +461,13 @@ const functionCases = [
 describe("operation-bound exceptions", () => {
   it.each([
     ...functionCases,
+    {
+      name: "native tool execute callback",
+      source: directCallbackSource,
+      authorized: directCallbackSite,
+      neighbor: `${directCallbackSource}export function unrelated(a: string, b: string, c: string, d: string, e: string): string {\nreturn a + b + c + d + e;\n}\n`,
+      diagnostic: ["forward.ts:12:", "[Error/eslint(max-params)]"],
+    },
     {
       name: "stored failure",
       source: forward,
@@ -641,6 +677,66 @@ describe("operation-bound exceptions", () => {
     const result = checkSource("forward.ts", forward.replace(`${directive}\n`, ""), [site]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unused exception site QX-009");
+  });
+
+  it.each([
+    ["copied file", "copied.ts", directCallbackSource, "not authorized"],
+    [
+      "same-count replaced signature",
+      "forward.ts",
+      directCallbackSource.replace("signal, _onUpdate, ctx", "signal, ctx, _onUpdate"),
+      "Authorized operation changed",
+    ],
+    [
+      "wrong function",
+      "forward.ts",
+      directCallbackSource.replace("function execute(", "function unrelated("),
+      "scope is missing",
+    ],
+    [
+      "moved directive with the same count",
+      "forward.ts",
+      directCallbackSource
+        .replace(`${directCallbackDirective}\n`, "")
+        .concat(
+          `${directCallbackDirective}\nexport function unrelated(a: number, b: number, c: number, d: number, e: number): number { return a + b + c + d + e; }\n`,
+        ),
+      "not authorized",
+    ],
+    [
+      "duplicate callback",
+      "forward.ts",
+      directCallbackSource +
+        directCallbackSource
+          .slice(directCallbackSource.indexOf("export function"))
+          .replace("createExecutor", "anotherExecutor"),
+      "scope is missing or ambiguous",
+    ],
+    [
+      "missing directive",
+      "forward.ts",
+      directCallbackSource.replace(`${directCallbackDirective}\n`, ""),
+      "unused exception site QX-025",
+    ],
+  ])("rejects native callback %s", (_label, file, source, diagnostic) => {
+    const result = checkSource(file, source, [directCallbackSite]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(diagnostic);
+  });
+
+  it("reports a native unused callback directive when the callback no longer needs it", () => {
+    const source = directCallbackSource
+      .replace("toolCallId, params, signal, _onUpdate, ctx", "toolCallId, params")
+      .replace("toolCallId, params, signal, _onUpdate, hasUI: ctx.hasUI", "toolCallId, params");
+    const result = checkSource("forward.ts", source, [directCallbackSite]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Authorized operation changed");
+    const native = nativeLint(result.cwd);
+    expect(native.status).toBe(1);
+    expect(native.stdout + native.stderr).toContain("forward.ts:6:");
+    expect(native.stdout + native.stderr).toContain(
+      "Unused oxlint-disable directive (no problems were reported). [Error]",
+    );
   });
 
   it("rejects wrong-origin, replaced and duplicate named callback operations", () => {

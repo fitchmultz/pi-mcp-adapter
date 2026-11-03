@@ -529,16 +529,16 @@ describe("mcpAdapter session lifecycle", () => {
 
     await proxyTool.execute("call-1", { tool: "demo_search", args: { q: "hello", limit: 10 } });
 
-    expect(mocks.executeCall).toHaveBeenCalledWith(
-      state,
-      "demo_search",
-      { q: "hello", limit: 10 },
-      undefined,
-      expect.any(Function),
-      undefined,
-      { toolCallId: "call-1" },
-      undefined,
-    );
+    const getPiTools: unknown = expect.any(Function);
+    expect(mocks.executeCall).toHaveBeenCalledWith(state, {
+      toolName: "demo_search",
+      args: { q: "hello", limit: 10 },
+      serverOverride: undefined,
+      getPiTools,
+      signal: undefined,
+      identity: { toolCallId: "call-1" },
+      beforeDispatch: undefined,
+    });
   });
 
   it("forwards pagination into server listings", async () => {
@@ -645,16 +645,16 @@ describe("mcpAdapter session lifecycle", () => {
       controller.signal,
     );
 
-    expect(mocks.executeCall).toHaveBeenCalledWith(
-      state,
-      "demo_search",
-      { q: "hello" },
-      undefined,
-      expect.any(Function),
-      controller.signal,
-      { toolCallId: "call-1" },
-      undefined,
-    );
+    const getPiTools: unknown = expect.any(Function);
+    expect(mocks.executeCall).toHaveBeenCalledWith(state, {
+      toolName: "demo_search",
+      args: { q: "hello" },
+      serverOverride: undefined,
+      getPiTools,
+      signal: controller.signal,
+      identity: { toolCallId: "call-1" },
+      beforeDispatch: undefined,
+    });
   });
 
   it("exports createMcpAdapter while retaining the default adapter export", async () => {
@@ -910,7 +910,7 @@ describe("mcpAdapter session lifecycle", () => {
         { name: `${server}_search`, originalName: "search", description: "Search" },
       ]);
     }
-    mocks.executeConnect.mockImplementation(async (currentState, server) => {
+    mocks.executeConnect.mockImplementation(async (currentState, { serverName: server }) => {
       await requireValue(currentState.onToolMetadataUpdated)(server, "lazy-connect");
       return { content: [{ type: "text", text: `Connected ${server}` }], details: {} };
     });
@@ -940,9 +940,17 @@ describe("mcpAdapter session lifecycle", () => {
         details: {},
       });
       const invocation = requireValue(mocks.executeCall.mock.calls.at(-1));
-      expect(invocation.slice(0, 4)).toEqual([state, `${server}_search`, undefined, server]);
-      expect(invocation[4]).toBeTypeOf("function");
-      expect(invocation.slice(5)).toEqual([undefined, { toolCallId: `call-${server}` }, undefined]);
+      expect(invocation[0]).toBe(state);
+      const { getPiTools, ...request } = invocation[1];
+      expect(getPiTools).toBeTypeOf("function");
+      expect(request).toEqual({
+        toolName: `${server}_search`,
+        args: undefined,
+        serverOverride: server,
+        signal: undefined,
+        identity: { toolCallId: `call-${server}` },
+        beforeDispatch: undefined,
+      });
       expect(spies.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
         "mcp_search",
         "mcp",

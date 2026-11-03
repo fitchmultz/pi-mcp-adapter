@@ -171,5 +171,16 @@
     "nodeType": "VariableDeclaration",
     "operation": "const { z } = require(\"zod\") as typeof Zod;",
     "guards": []
+  },
+  {
+    "id": "QX-025",
+    "file": "direct-tools.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "FunctionExpression", "name": "execute" },
+    "path": [],
+    "nodeType": "FunctionExpression",
+    "part": "signature",
+    "operation": "async function execute(toolCallId, params, signal, _onUpdate, ctx) ",
+    "guards": []
   }
 ]

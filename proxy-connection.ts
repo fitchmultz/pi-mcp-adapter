@@ -235,10 +235,17 @@ async function discoveryConnection(
 }
 export async function executeConnect(
   state: McpExtensionState,
-  serverName: string,
-  signal?: AbortSignal,
-  limit?: number,
-  offset?: number,
+  {
+    serverName,
+    signal,
+    limit,
+    offset,
+  }: {
+    serverName: string;
+    signal?: AbortSignal | undefined;
+    limit?: number | undefined;
+    offset?: number | undefined;
+  },
 ): Promise<ProxyToolResult> {
   const ownedSignal = combineAbortSignals(state.owner.signal, signal);
   throwIfAborted(ownedSignal);

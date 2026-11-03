@@ -38,12 +38,12 @@ describe("cancellation while operation-only modules load", () => {
         });
         const ownedSignal = AbortSignal.any([controller.signal, owner.signal]);
         const reason = `${cancel} cancelled during lazy import`;
-        const pending = runToolCall(
+        const pending = runToolCall({
           state,
-          "fixture",
-          { originalName: "echo" },
-          { value: "must not run" },
-          {
+          serverName: "fixture",
+          target: { originalName: "echo" },
+          args: { value: "must not run" },
+          options: {
             detailsBase: { mode: "call", server: "fixture", tool: "echo" },
             ownedSignal,
             signal: controller.signal,
@@ -52,7 +52,7 @@ describe("cancellation while operation-only modules load", () => {
             authRequiredMessage: () => "Unexpected OAuth request",
             autoAuthAttempted: () => false,
           },
-        );
+        });
         // No timer or mocked loader: the function has reached its first await
         // import, which yields even when its native module is already cached.
         if (cancel === "caller") {

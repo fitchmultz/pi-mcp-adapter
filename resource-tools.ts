@@ -84,8 +84,16 @@ export async function executeResourceRead(
   ) => Promise<void>,
   raw = false,
 ) {
-  return executeCall(state, uri, {}, server, undefined, signal, identity, beforeDispatch, {
-    resourceUri: uri,
-    raw,
+  return executeCall(state, {
+    toolName: uri,
+    args: {},
+    serverOverride: server,
+    signal,
+    identity,
+    beforeDispatch,
+    options: {
+      resourceUri: uri,
+      raw,
+    },
   });
 }

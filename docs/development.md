@@ -22,6 +22,7 @@ npm run lint:tracing
 npm run lint:core-runtime
 npm run lint:sampling
 npm run lint:output-runtime
+npm run lint:proxy-runtime
 npm run lint:credential-runtime
 npm run lint:node-oauth
 npm run lint:sdk-http
@@ -59,6 +60,8 @@ The command also checks the native-contract launcher under the production profil
 `lint:sampling` enforces the production profile for the supported MCP sampling bridge. Its native model-registry and approval tests are covered by `lint:runtime-tests`. QX-017 permits only five deprecated MCP sampling types from their actual SDK package in these two files. Other deprecations and all other rules remain checked.
 
 `lint:output-runtime` enforces the production profile for `mcp-output-*.ts`: output guards, streaming previews, retained-result contracts, summaries and paged result reads. Raw MCP properties remain unknown until narrowed. The existing output suites verify artifact readback, private permissions, paging and UTF-8 boundaries.
+
+`lint:proxy-runtime` enforces the production profile for `direct-tools.ts` and `proxy-*.ts`. It also checks the three root proxy discovery, manual-auth and UI-message suites, their real SDK fixture, the shared state and native-context fixtures, and the direct/proxy auto-auth and direct-tool discovery suites. QX-025 covers only Pi's five-position direct-tool callback. Internal search, connection and call requests use object arguments. The command also checks the migrated abort-signal, tool-call-parity, tool-approval, structured-content fallback, session-recovery integration and UI-viewer suites. They use complete state and native contexts, real MCP transports, and isolated HTTP session-expiry fixtures. The focused suites preserve catalog paging, native request options, cancellation, hook forwarding, ordered history, private disk permissions and failed-delivery retention. `lint:quality` owns the exception inventory's implementation and control suites. Other internal callers remain under their existing gates.
 
 `lint:runtime-tests` includes native Pi gateway selection, reload, lazy startup and initialization tests, plus the standalone startup child. These tests use the installed Pi graph selected by qualification. The child installs module hooks before importing Pi, loads the source extension, and executes its first stdio call. Initialization tests use a real Pi context and public health-check timers.
 
