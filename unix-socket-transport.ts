@@ -48,7 +48,11 @@ export class UnixSocketClientTransport implements Transport {
         } catch (error) {
           const cause = error instanceof Error ? error : new Error(String(error));
           this.onerror?.(cause);
-          void this.close();
+          this.close().catch((closeError: unknown) => {
+            this.onerror?.(
+              closeError instanceof Error ? closeError : new Error(String(closeError)),
+            );
+          });
         }
       });
       socket.on("error", (error) => {

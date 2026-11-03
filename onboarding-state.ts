@@ -25,14 +25,14 @@ export function loadOnboardingState(): McpOnboardingState {
   }
 
   try {
-    const raw = JSON.parse(readFileSync(path, "utf-8")) as Partial<McpOnboardingState>;
-    if (!raw || typeof raw !== "object") {
+    const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    if (raw === null || typeof raw !== "object") {
       return { ...DEFAULT_STATE };
     }
     return {
       version: 1,
-      sharedConfigHintShown: raw.sharedConfigHintShown === true,
-      setupCompleted: raw.setupCompleted === true,
+      sharedConfigHintShown: "sharedConfigHintShown" in raw && raw.sharedConfigHintShown === true,
+      setupCompleted: "setupCompleted" in raw && raw.setupCompleted === true,
     };
   } catch {
     return { ...DEFAULT_STATE };

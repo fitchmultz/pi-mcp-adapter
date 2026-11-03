@@ -14,7 +14,10 @@ interface FileMigration {
 export function migrateLegacyState({
   cwd = process.cwd(),
   dryRun = false,
-}: { cwd?: string; dryRun?: boolean } = {}) {
+}: { cwd?: string; dryRun?: boolean } = {}): {
+  files: FileMigration[];
+  credentials: Array<{ server: string; status: ReturnType<typeof migrateLegacyAuthEntry> }>;
+} {
   const paths = ["mcp.json", "mcp-cache.json", "mcp-onboarding.json", "mcp-npx-cache.json"].map(
     (name) => ({ source: getAgentPath(name), destination: getAdapterPath(name) }),
   );
@@ -35,7 +38,12 @@ export function migrateLegacyState({
     try {
       writeFileSync(destination, contents, { flag: "wx", mode: 0o600 });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "EEXIST"
+      ) {
         return { source, destination, status: "existing" };
       }
       throw error;
@@ -46,20 +54,26 @@ export function migrateLegacyState({
     return { source, destination, status: "copied" };
   });
 
+  const credentials = dryRun ? [] : migrateLegacyCredentials(cwd);
+  return { files, credentials };
+}
+
+function migrateLegacyCredentials(
+  cwd: string,
+): Array<{ server: string; status: ReturnType<typeof migrateLegacyAuthEntry> }> {
   const credentials: Array<{ server: string; status: ReturnType<typeof migrateLegacyAuthEntry> }> =
     [];
-  if (!dryRun) {
-    const config = loadMcpConfig(undefined, cwd);
-    const legacyDirectory =
-      process.env.MCP_OAUTH_DIR?.trim() ||
-      resolveConfiguredOAuthDir(config.settings?.oauthDir, cwd) ||
-      getAgentPath("mcp-oauth");
-    for (const [server, definition] of Object.entries(config.mcpServers)) {
-      if (typeof definition.url !== "string") {
-        continue;
-      }
-      credentials.push({ server, status: migrateLegacyAuthEntry(server, legacyDirectory) });
+  const config = loadMcpConfig(undefined, cwd);
+  const envLegacyDirectory = process.env.MCP_OAUTH_DIR?.trim();
+  const legacyDirectory =
+    envLegacyDirectory !== undefined && envLegacyDirectory !== ""
+      ? envLegacyDirectory
+      : (resolveConfiguredOAuthDir(config.settings?.oauthDir, cwd) ?? getAgentPath("mcp-oauth"));
+  for (const [server, definition] of Object.entries(config.mcpServers)) {
+    if (typeof definition.url !== "string") {
+      continue;
     }
+    credentials.push({ server, status: migrateLegacyAuthEntry(server, legacyDirectory) });
   }
-  return { files, credentials };
+  return credentials;
 }
