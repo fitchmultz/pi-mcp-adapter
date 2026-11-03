@@ -94,6 +94,7 @@ describe("standalone interactive visualizer installation", () => {
 
     writeConfig(path, initial);
     chmodSync(path, 0o600);
+    const original = readFileSync(path, "utf8");
     expect(f.run("install")).toMatchObject({ status: 0, stderr: "" });
     expect(readConfig(path)).toEqual({
       ...initial,
@@ -106,6 +107,7 @@ describe("standalone interactive visualizer installation", () => {
 
     expect(f.run("uninstall")).toMatchObject({ status: 0, stderr: "" });
     expect(readConfig(path)).toEqual(initial);
+    expect(readFileSync(path, "utf8")).toBe(original);
     expect(statSync(path).mode & 0o777).toBe(0o600);
     const removed = readFileSync(path);
     expect(f.run("uninstall")).toMatchObject({

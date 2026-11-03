@@ -27,6 +27,8 @@ export const serverName = "interactive-visualizer";
 const configSchema = z.looseObject({
   mcpServers: z.record(z.string(), z.unknown()).nullish(),
 });
+// Zod objects emit declared keys first; a record keeps the document's key order for rewrites.
+const documentSchema = z.record(z.string(), z.unknown());
 const installedEntrySchema = z.looseObject({
   command: z.literal(process.execPath),
   args: z.tuple([z.literal(distServer)]).rest(z.unknown()),
@@ -43,7 +45,8 @@ export async function loadConfig() {
     const raw = await readFile(configPath, "utf-8");
     /** @type {unknown} */
     const parsed = JSON.parse(raw);
-    return configSchema.parse(parsed);
+    const config = configSchema.parse(parsed);
+    return { ...documentSchema.parse(parsed), ...config };
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return;
