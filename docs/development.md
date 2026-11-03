@@ -49,6 +49,8 @@ Strict lint is enforced for `conformance/`, the prompt tests and their shared fi
 
 The runtime scope also includes the real HTTP callback-lifetime suite and its server fixture. It covers callback cancellation and reply drain, token reads and persistence, subscription refresh, URL completion and accepted-operation no-replay through native Pi contexts and MCP transports.
 
+Manager configuration tests use real HTTP and stdio connections for capability advertisement, callback replies, cwd selection and native request options. A call-through native client records its actual constructor callbacks for the replaced-client and failed-refresh races.
+
 `lint:sdk-http` enforces the test profile for the real HTTP SDK suite and its typed native capture extension fixture. Latest-host qualification supplies one consistent SDK graph for their static imports and Jiti-loaded factories.
 
 `lint:lifecycle-tests` enforces the test profile for the adapter's native SDK lifecycle tests, their extension fixture, and the shared complete SDK context fixture.
