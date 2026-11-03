@@ -86,6 +86,7 @@ describe("OAuth credential-store diagnostics", () => {
         "types.ts",
         "ui-stream-types.ts",
         "utils.ts",
+        "mcp-output-values.ts",
       ]) {
         cpSync(resolve(file), join(home, file));
       }
