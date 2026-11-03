@@ -30,7 +30,7 @@ function bindPanelHost(native: Awaited<ReturnType<typeof createTestExtensionCont
       return completed.promise;
     });
   }
-  const context: ExtensionContext = {
+  const context = {
     ...native.context,
     hasUI: true,
     mode: "tui",
@@ -41,8 +41,9 @@ function bindPanelHost(native: Awaited<ReturnType<typeof createTestExtensionCont
       setStatus: vi.fn<typeof native.context.ui.setStatus>(),
       notify: vi.fn<typeof native.context.ui.notify>(),
     },
-  };
+  } satisfies ExtensionContext;
   return {
+    api: native.api,
     context,
     component: () => component,
     input(data: string): void {
