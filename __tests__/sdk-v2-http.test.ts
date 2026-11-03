@@ -283,7 +283,16 @@ async function fixture(
       manager,
       config: { mcpServers: { local: definition }, settings: {} },
       toolMetadata: new Map([
-        ["local", buildToolMetadata(connection.tools, [], definition, "local", "server").metadata],
+        [
+          "local",
+          buildToolMetadata({
+            tools: connection.tools,
+            resources: [],
+            definition,
+            serverName: "local",
+            prefix: "server",
+          }).metadata,
+        ],
       ]),
       failureTracker: new Map(),
       serverInstructions: new Map(),

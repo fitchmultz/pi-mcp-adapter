@@ -48,10 +48,17 @@ export function isToolCallApprovalRequired(
 
 export async function ensureToolCallApproved(
   state: ToolApprovalState,
-  serverName: string,
-  toolMeta: ToolMetadata,
-  args: Record<string, unknown> | undefined,
-  signal?: AbortSignal,
+  {
+    serverName,
+    toolMeta,
+    args,
+    signal,
+  }: {
+    serverName: string;
+    toolMeta: ToolMetadata;
+    args: Record<string, unknown> | undefined;
+    signal?: AbortSignal | undefined;
+  },
 ): Promise<ToolCallApprovalResult> {
   if (!isToolCallApprovalRequired(state.config, serverName, toolMeta)) {
     return { ok: true };

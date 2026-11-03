@@ -267,13 +267,13 @@ export function reconstructToolMetadata(
   if (Object.isFrozen(entry) && previous?.key === key) {
     return previous.metadata;
   }
-  const metadata = buildToolMetadata(
-    entry.tools.filter((tool) => tool.name !== "").map(restoreCachedTool),
-    entry.resources,
+  const metadata = buildToolMetadata({
+    tools: entry.tools.filter((tool) => tool.name !== "").map(restoreCachedTool),
+    resources: entry.resources,
     definition,
     serverName,
     prefix,
-  ).metadata;
+  }).metadata;
   if (Object.isFrozen(entry)) {
     toolProjections.set(entry, { key, metadata: freezeMetadata(metadata) });
   }

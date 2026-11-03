@@ -14,13 +14,19 @@ import {
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 
-export function buildToolMetadata(
-  tools: McpTool[],
-  resources: McpResource[],
-  definition: ServerEntry,
-  serverName: string,
-  prefix: ToolPrefix,
-): { metadata: ToolMetadata[]; failedTools: string[] } {
+export function buildToolMetadata({
+  tools,
+  resources,
+  definition,
+  serverName,
+  prefix,
+}: {
+  tools: McpTool[];
+  resources: McpResource[];
+  definition: ServerEntry;
+  serverName: string;
+  prefix: ToolPrefix;
+}): { metadata: ToolMetadata[]; failedTools: string[] } {
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
   if (isServerDisabled(definition)) {

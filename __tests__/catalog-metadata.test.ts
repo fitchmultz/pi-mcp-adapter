@@ -120,7 +120,13 @@ describe("canonical tool catalog", () => {
       } catch {
         invalid = true;
       }
-      const { metadata, failedTools } = buildToolMetadata([tool], [], {}, "demo", "server");
+      const { metadata, failedTools } = buildToolMetadata({
+        tools: [tool],
+        resources: [],
+        definition: {},
+        serverName: "demo",
+        prefix: "server",
+      });
       expect(metadata).toHaveLength(1);
       expect(metadata[0]?.uiResourceUri).toBe(expectedUri);
       expect(failedTools).toEqual(invalid ? ["ui_tool"] : []);
@@ -128,16 +134,16 @@ describe("canonical tool catalog", () => {
   );
 
   it("retains distinct identities even when their legacy aliases collide", () => {
-    const metadata = buildToolMetadata(
-      [{ name: "find.item" }, { name: "find_item" }],
-      [
+    const metadata = buildToolMetadata({
+      tools: [{ name: "find.item" }, { name: "find_item" }],
+      resources: [
         { name: "Guide", uri: "docs://one" },
         { name: "Guide", uri: "docs://two" },
       ],
-      {},
-      "demo",
-      "server",
-    ).metadata;
+      definition: {},
+      serverName: "demo",
+      prefix: "server",
+    }).metadata;
     expect(metadata.map((tool) => tool.originalName)).toEqual([
       "find.item",
       "find_item",
@@ -158,7 +164,13 @@ describe("canonical tool catalog", () => {
     expect(entry.tools).toEqual([descriptor]);
     expect(entry.tools[0]).not.toHaveProperty("uiResourceUri");
     const stored = JSON.parse(JSON.stringify(entry)) as ServerCacheEntry;
-    const live = buildToolMetadata([descriptor], [], definition, "linear", "server").metadata;
+    const live = buildToolMetadata({
+      tools: [descriptor],
+      resources: [],
+      definition,
+      serverName: "linear",
+      prefix: "server",
+    }).metadata;
     const cached = reconstructToolMetadata("linear", stored, "server", definition);
     expect(cached).toEqual(live);
     expect(live[0]).toMatchObject({
@@ -191,7 +203,13 @@ describe("canonical tool catalog", () => {
     ];
     const definition = { directTools: true, includeTools: ["demo_*"], excludeTools: ["excluded"] };
     const entry = cacheEntry(tools, definition);
-    const live = buildToolMetadata(tools, [], definition, "demo", "server").metadata;
+    const live = buildToolMetadata({
+      tools,
+      resources: [],
+      definition,
+      serverName: "demo",
+      prefix: "server",
+    }).metadata;
     expect(live.map((tool) => tool.originalName)).toEqual(["visible", "both"]);
     expect(reconstructToolMetadata("demo", entry, "server", definition)).toEqual(live);
     const state = {
@@ -295,13 +313,13 @@ describe("canonical tool catalog", () => {
   });
 
   it("finds issue listing from parameter guidance without changing exact identity lookup", () => {
-    const metadata = buildToolMetadata(
-      [descriptor, { name: "get_issue", description: "Get an issue" }],
-      [],
-      {},
-      "linear",
-      "server",
-    ).metadata;
+    const metadata = buildToolMetadata({
+      tools: [descriptor, { name: "get_issue", description: "Get an issue" }],
+      resources: [],
+      definition: {},
+      serverName: "linear",
+      prefix: "server",
+    }).metadata;
     const state = {
       config: { mcpServers: { linear: {} } },
       toolMetadata: new Map([["linear", metadata]]),

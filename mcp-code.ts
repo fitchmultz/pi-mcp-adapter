@@ -550,13 +550,12 @@ async function runMcpScriptOperation(
                 },
               };
             } else if (message.type === "resources") {
-              const result = await executeResourceList(
-                state,
-                input.server,
-                typeof input.limit === "number" ? input.limit : 12,
-                typeof input.offset === "number" ? input.offset : 0,
-                callSignal,
-              );
+              const result = await executeResourceList(state, {
+                server: input.server,
+                limit: typeof input.limit === "number" ? input.limit : 12,
+                offset: typeof input.offset === "number" ? input.offset : 0,
+                signal: callSignal,
+              });
               envelope = result.details.error
                 ? {
                     error: { code: result.details.error, message: textFromContent(result.content) },
@@ -566,15 +565,14 @@ async function runMcpScriptOperation(
               const server = input.server;
               const uri = input.uri as string;
               envelope = await recordCall(`${server}:${uri}`, () =>
-                executeResourceRead(
-                  state,
+                executeResourceRead(state, {
                   server,
                   uri,
-                  callSignal,
-                  callIdentity(message.id),
+                  signal: callSignal,
+                  identity: callIdentity(message.id),
                   beforeDispatch,
-                  true,
-                ),
+                  raw: true,
+                }),
               );
             }
           }

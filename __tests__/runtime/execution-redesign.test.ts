@@ -246,7 +246,7 @@ describe("MCP execution redesign", () => {
       icons: [{ src: "https://example.invalid/icon.svg" }],
     };
     connection.resources = [resource];
-    expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({
+    expect((await resources.executeResourceList(state, { server: "demo" })).details).toMatchObject({
       items: [resource],
     });
   });
@@ -254,7 +254,7 @@ describe("MCP execution redesign", () => {
   it("keeps resource policy and legacy aliases while exposing URI reads to scripts", async () => {
     const { state, connection, readResource } = await fixture();
     connection.resources = [{ name: "notes", uri: "test://notes" }];
-    expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({
+    expect((await resources.executeResourceList(state, { server: "demo" })).details).toMatchObject({
       items: [{ uri: "test://notes" }],
     });
     const script = await runMcpScript(
@@ -272,11 +272,14 @@ describe("MCP execution redesign", () => {
       { includeTools: ["echo"] },
     ]) {
       state.config.mcpServers.demo = { command: "fixture", ...policy };
-      expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({
+      expect(
+        (await resources.executeResourceList(state, { server: "demo" })).details,
+      ).toMatchObject({
         total: 0,
       });
       expect(
-        (await resources.executeResourceRead(state, "demo", "test://notes")).details.error,
+        (await resources.executeResourceRead(state, { server: "demo", uri: "test://notes" }))
+          .details.error,
       ).toBe("tool_not_found");
     }
     expect(readResource).toHaveBeenCalledTimes(2);
@@ -370,12 +373,13 @@ describe("MCP execution redesign", () => {
       { name: "notes", uri: "test://one" },
       { name: "notes", uri: "test://two" },
     ];
-    expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({
+    expect((await resources.executeResourceList(state, { server: "demo" })).details).toMatchObject({
       total: 2,
     });
     expect((await executeCall(state, "demo_read_notes")).details.error).toBe("ambiguous_tool");
     expect(
-      (await resources.executeResourceRead(state, "demo", "test://two")).details.error,
+      (await resources.executeResourceRead(state, { server: "demo", uri: "test://two" })).details
+        .error,
     ).toBeUndefined();
     expect(readResource).toHaveBeenCalledWith({ uri: "test://two" }, expect.anything());
   });
@@ -464,19 +468,18 @@ describe("MCP execution redesign", () => {
       // Capture only.
     });
     state.onToolCall = onToolCall;
-    const before = vi.fn<NonNullable<Parameters<typeof resources.executeResourceRead>[5]>>(
-      async () => {
-        // Record admission without changing it.
-      },
-    );
-    const result = await resources.executeResourceRead(
-      state,
-      "demo",
-      "test://notes",
-      undefined,
-      { toolCallId: "read-1" },
-      before,
-    );
+    const before = vi.fn<
+      NonNullable<Parameters<typeof resources.executeResourceRead>[1]["beforeDispatch"]>
+    >(async () => {
+      // Record admission without changing it.
+    });
+    const result = await resources.executeResourceRead(state, {
+      server: "demo",
+      uri: "test://notes",
+      signal: undefined,
+      identity: { toolCallId: "read-1" },
+      beforeDispatch: before,
+    });
     expect(text(result)).toContain("notes");
     expect(readResource).toHaveBeenCalledTimes(1);
     expect(before).toHaveBeenCalledWith(
@@ -485,9 +488,10 @@ describe("MCP execution redesign", () => {
     );
     expect(onToolCall.mock.calls.map((call) => call[0].phase)).toEqual(["before", "after"]);
     state.config.settings = { approveTools: ["read_notes"] };
-    expect((await resources.executeResourceRead(state, "demo", "test://notes")).details.error).toBe(
-      "approval_required",
-    );
+    expect(
+      (await resources.executeResourceRead(state, { server: "demo", uri: "test://notes" })).details
+        .error,
+    ).toBe("approval_required");
     expect(readResource).toHaveBeenCalledTimes(1);
   });
 });

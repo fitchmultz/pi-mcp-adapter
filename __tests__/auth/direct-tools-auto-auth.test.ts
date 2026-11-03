@@ -156,7 +156,13 @@ describe("direct tools auto auth", () => {
       ui: host.context.ui,
     });
 
-    const { metadata } = buildToolMetadata(connected.tools, [], definition, "demo", "server");
+    const { metadata } = buildToolMetadata({
+      tools: connected.tools,
+      resources: [],
+      definition,
+      serverName: "demo",
+      prefix: "server",
+    });
     const tool = metadata[0];
     assert.ok(tool);
     state.toolMetadata.set("demo", metadata);

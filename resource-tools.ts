@@ -17,10 +17,17 @@ import { combineAbortSignals } from "./runtime-owner.ts";
 
 export async function executeResourceList(
   state: McpExtensionState,
-  server: string,
-  limit = 12,
-  offset = 0,
-  signal?: AbortSignal,
+  {
+    server,
+    limit = 12,
+    offset = 0,
+    signal,
+  }: {
+    server: string;
+    limit?: number | undefined;
+    offset?: number | undefined;
+    signal?: AbortSignal | undefined;
+  },
 ): Promise<AgentToolResult<Record<string, unknown>>> {
   throwIfAborted(combineAbortSignals(state.owner.signal, signal));
   const definition = state.config.mcpServers[server];
@@ -101,15 +108,23 @@ function listAllowedResources(
 
 export async function executeResourceRead(
   state: McpExtensionState,
-  server: string,
-  uri: string,
-  signal?: AbortSignal,
-  identity: McpToolCallIdentity = {},
-  beforeDispatch?: (
-    signal: AbortSignal | undefined,
-    operation: McpOperationContext,
-  ) => Promise<void>,
-  raw = false,
+  {
+    server,
+    uri,
+    signal,
+    identity = {},
+    beforeDispatch,
+    raw = false,
+  }: {
+    server: string;
+    uri: string;
+    signal?: AbortSignal | undefined;
+    identity?: McpToolCallIdentity | undefined;
+    beforeDispatch?:
+      | ((signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>)
+      | undefined;
+    raw?: boolean | undefined;
+  },
 ): ReturnType<typeof executeCall> {
   return executeCall(state, uri, {}, server, undefined, signal, identity, beforeDispatch, {
     resourceUri: uri,

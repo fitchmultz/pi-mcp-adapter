@@ -93,7 +93,13 @@ it.each(["stdio", "unix"])(
         toolMetadata: new Map([
           [
             "local",
-            buildToolMetadata(connection.tools, [], definition, "local", "server").metadata,
+            buildToolMetadata({
+              tools: connection.tools,
+              resources: [],
+              definition,
+              serverName: "local",
+              prefix: "server",
+            }).metadata,
           ],
         ]),
         failureTracker: new Map(),
@@ -149,7 +155,13 @@ it.each([
         toolMetadata: new Map([
           [
             "local",
-            buildToolMetadata(connection.tools, [], definition, "local", "server").metadata,
+            buildToolMetadata({
+              tools: connection.tools,
+              resources: [],
+              definition,
+              serverName: "local",
+              prefix: "server",
+            }).metadata,
           ],
         ]),
         failureTracker: new Map(),
@@ -266,7 +278,13 @@ it.each([false, true])(
         toolMetadata: new Map([
           [
             "local",
-            buildToolMetadata(connection.tools, [], definition, "local", "server").metadata,
+            buildToolMetadata({
+              tools: connection.tools,
+              resources: [],
+              definition,
+              serverName: "local",
+              prefix: "server",
+            }).metadata,
           ],
         ]),
         failureTracker: new Map(),

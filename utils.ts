@@ -236,6 +236,7 @@ export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string |
 
   const resolved = interpolateEnvVars(configuredUrl);
   try {
+    // oxlint-disable-next-line eslint/no-new -- QX-026: preserve native URL errors without canonicalizing the returned bytes.
     new URL(resolved);
   } catch (error) {
     throw new Error(`Invalid MCP server URL after environment interpolation: ${resolved}`, {

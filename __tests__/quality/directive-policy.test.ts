@@ -23,7 +23,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-026: Native URL validation\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -390,8 +390,28 @@ const authEntrySource = [
   "}",
   "",
 ].join("\n");
+const urlValidationSource =
+  'export function resolveServerUrl(resolved: string): string {\ntry {\n// oxlint-disable-next-line eslint/no-new -- QX-026: preserve native URL errors without canonicalizing the returned bytes.\nnew URL(resolved);\n} catch (error) {\nthrow new Error("Invalid URL", { cause: error });\n}\nreturn resolved;\n}\n';
+
 const functionCases = [
   ...keyringCases,
+  {
+    name: "native URL validation",
+    source: urlValidationSource,
+    operation: "new URL(resolved);",
+    replacement: "new Date(resolved);",
+    neighbor: `${urlValidationSource}export function unrelated(): void {\nnew Date();\n}\n`,
+    diagnostic: ["forward.ts:11:", "[Error/eslint(no-new)]"],
+    authorized: {
+      ...site,
+      id: "QX-026",
+      rule: "eslint/no-new",
+      scope: { type: "FunctionDeclaration", name: "resolveServerUrl" },
+      path: ["body", "body", 0, "block", "body", 0],
+      nodeType: "ExpressionStatement",
+      operation: "new URL(resolved);",
+    },
+  },
   {
     name: "lazy declared Zod API",
     source: zodModuleSource,
@@ -641,6 +661,35 @@ describe("operation-bound exceptions", () => {
     const result = checkSource("forward.ts", forward.replace(`${directive}\n`, ""), [site]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unused exception site QX-009");
+  });
+
+  it("requires the URL directive to suppress a real finding at the authorized site", () => {
+    const entry = functionCases.find((candidate) => candidate.authorized.id === "QX-026");
+    expect(entry).toBeDefined();
+    if (!entry) {
+      throw new Error("Missing native URL exception control");
+    }
+    const withoutDirective = entry.source.replace(/\/\/ oxlint-disable-next-line[^\n]*\n/u, "");
+    const unsuppressed = checkSource("forward.ts", withoutDirective, [entry.authorized]);
+    const nativeUnsuppressed = nativeLint(unsuppressed.cwd);
+    expect(unsuppressed.status).toBe(1);
+    expect(unsuppressed.stderr).toContain("unused exception site QX-026");
+    expect(nativeUnsuppressed.status).toBe(1);
+    expect(nativeUnsuppressed.stdout + nativeUnsuppressed.stderr).toContain("forward.ts:3:1:");
+    expect(nativeUnsuppressed.stdout + nativeUnsuppressed.stderr).toContain(
+      "[Error/eslint(no-new)]",
+    );
+
+    const unused = checkSource(
+      "forward.ts",
+      entry.source.replace(entry.operation, "URL.parse(resolved);"),
+      [entry.authorized],
+    );
+    const nativeUnused = nativeLint(unused.cwd);
+    expect(unused.status).toBe(1);
+    expect(unused.stderr).toContain("Authorized operation changed");
+    expect(nativeUnused.status).toBe(1);
+    expect(nativeUnused.stdout + nativeUnused.stderr).toContain("Unused");
   });
 
   it("rejects wrong-origin, replaced and duplicate named callback operations", () => {

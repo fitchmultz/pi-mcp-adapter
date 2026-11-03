@@ -129,14 +129,14 @@ describe("tool approval", () => {
 
   it("caches only Allow for session decisions", async () => {
     const session = await createState({ approveTools: true, decision: "Allow for session" });
-    await ensureToolCallApproved(session.state, "demo", tool, {});
-    await ensureToolCallApproved(session.state, "demo", tool, {});
+    await ensureToolCallApproved(session.state, { serverName: "demo", toolMeta: tool, args: {} });
+    await ensureToolCallApproved(session.state, { serverName: "demo", toolMeta: tool, args: {} });
     expect(session.select).toHaveBeenCalledTimes(1);
     expect(session.state.approvedToolCalls.has("demo\u0000search-records")).toBe(true);
 
     const once = await createState({ approveTools: true, decision: "Allow once" });
-    await ensureToolCallApproved(once.state, "demo", tool, {});
-    await ensureToolCallApproved(once.state, "demo", tool, {});
+    await ensureToolCallApproved(once.state, { serverName: "demo", toolMeta: tool, args: {} });
+    await ensureToolCallApproved(once.state, { serverName: "demo", toolMeta: tool, args: {} });
     expect(once.select).toHaveBeenCalledTimes(2);
     expect(once.state.approvedToolCalls.size).toBe(0);
   });
@@ -153,7 +153,12 @@ describe("tool approval", () => {
     const reason = new Error("stopped");
     reason.name = "AbortError";
 
-    const pending = ensureToolCallApproved(state, "demo", tool, {}, controller.signal);
+    const pending = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: {},
+      signal: controller.signal,
+    });
     controller.abort(reason);
 
     await expect(pending).rejects.toBe(reason);

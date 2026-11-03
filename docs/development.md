@@ -14,6 +14,7 @@ npm run build
 npm run format:check
 npm run check:directives
 npm run check:policy
+npm run check:cache-schema
 npm run lint:conformance
 npm run lint:consumer-tooling
 npm run lint:prompts
@@ -33,6 +34,7 @@ npm run lint:discovery-tests
 npm run lint:state-tests
 npm run lint:output-tests
 npm run lint:packaging-tests
+npm run lint:resource-runtime
 npm run lint:quality
 npm run lint:ui-host-tests
 npm run lint:panel-tests
@@ -71,6 +73,12 @@ The runtime scope also includes manager reconnect, owner-shutdown and stderr tes
 The runtime scope includes the stock-dialog elicitation and real stdio SDK suites. A typed three-method dialog fixture preserves selection/input order and notification history. Complete native extension contexts and state back the direct/proxy tool, resource and UI-resource cases. QX-007 covers only the initialized capability accessor in each of the two enumerated legacy stdio fixtures.
 
 `lint:credential-runtime` enforces the production profile for native keyring loading, credential-store diagnostics, Linux recovery dispatch and `mcp-auth.ts`. Native declarations type the lazy synchronous module loads. QX-013 preserves the primary loader failure, and QX-018 covers only the two enumerated native module assertions. QX-020 preserves the supplied auth entry's URL update. QX-021 types only the installed lazy Zod load, preserving cached startup without Zod. Structural validation retains the original JSON property order. Canonical schemas validate persisted records before use or plaintext migration, preserve extension fields and leave legacy redirect validation with the OAuth flow. Malformed known fields fail before secure writes or plaintext deletion. The same scope includes the payload store for hashed accounts, manifest validation, chunk reads/writes and cleanup. The storage suite retains real child-process recovery, platform diagnostics, chunking and plaintext migration checks.
+
+`lint:resource-runtime` enforces the production profile for consent decisions, metadata cache reads and writes, npx invocation and resolution caches, prompt commands, resource dispatch, tool approval and metadata, result rendering, and shared utilities. It also checks the approval suite and its real stdio fixture, the cache lifetime suite, and native URL error and byte-contract tests. QX-026 covers only constructor-based URL validation. Internal request objects retain the real transport, callback and cancellation paths. Mechanical callers in other production modules and catalog suites retain their existing gates while their full source migration remains incomplete.
+
+The resource scope includes `scripts/generate-metadata-cache-schema.mts` and its generated `metadata-cache-validator.ts`. The generator derives native fields from the installed SDK schemas with Zod's JSON Schema API. It adds only cache-envelope fields and legacy tool UI fields, makes legacy tool input schemas optional, and selects the prompt fields that the cache persists. TypeBox validates the generated input schema without loading MCP or Zod, parsing outputs, stripping extensions, or replacing record references. The native predicate must satisfy the existing cache consumers' SDK-derived types.
+
+Run `npm run generate:cache-schema` after changing the cache contract or its dependencies. Oxfmt owns formatting of the generated TypeScript, which retains normal lint and compiler coverage. The artifact records installed SDK, Zod and formatter versions and a digest of both input and output contracts. TypeBox compiles the schema at runtime using the selected host graph. `check:cache-schema` compares fresh generation without writing files. Builds and CI require this check. The quality suite verifies valid, changed-input and restored-input controls.
 
 `lint:sdk-http` enforces the test profile for the real HTTP SDK suite and its typed native capture extension fixture. Latest-host qualification supplies one consistent SDK graph for their static imports and Jiti-loaded factories.
 

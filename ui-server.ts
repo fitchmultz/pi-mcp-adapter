@@ -489,13 +489,12 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServerH
           ...(uiVisibility !== undefined ? { uiVisibility } : {}),
         };
         const approval = options.state
-          ? await ensureToolCallApproved(
-              options.state,
-              options.serverName,
+          ? await ensureToolCallApproved(options.state, {
+              serverName: options.serverName,
               toolMeta,
-              callArgs.arguments,
-              options.state.owner?.signal,
-            )
+              args: callArgs.arguments,
+              signal: options.state.owner?.signal,
+            })
           : options.config &&
               isToolCallApprovalRequired(options.config, options.serverName, toolMeta)
             ? { ok: false as const, reason: "approval_required_headless" as const }

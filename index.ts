@@ -1081,17 +1081,21 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
             return present(
               await (
                 await import("./resource-tools.ts")
-              ).executeResourceList(ready, params.server!, params.limit, params.offset, signal),
+              ).executeResourceList(ready, {
+                server: params.server!,
+                limit: params.limit,
+                offset: params.offset,
+                signal,
+              }),
             );
           case "read-resource":
-            return (await import("./resource-tools.ts")).executeResourceRead(
-              ready,
-              params.server!,
-              params.uri!,
+            return (await import("./resource-tools.ts")).executeResourceRead(ready, {
+              server: params.server!,
+              uri: params.uri!,
               signal,
-              { toolCallId },
+              identity: { toolCallId },
               beforeDispatch,
-            );
+            });
           case "read-result":
             return readMcpResult(
               {
