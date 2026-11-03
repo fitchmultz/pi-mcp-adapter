@@ -5,6 +5,7 @@ import { parseSync } from "oxc-parser";
 import { loadExceptionSites, resolveExceptionSite } from "./quality-exceptions.mjs";
 
 const negativeTypeTests = new Set([
+  "__tests__/catalog-metadata.test-d.ts",
   "__tests__/fixtures/published-types-consumer.test-d.mts",
   "__tests__/oauth-config.test-d.ts",
 ]);

@@ -522,5 +522,27 @@
     "nodeType": "VariableDeclaration",
     "operation": "const echoText = String(request.params.arguments?.value ?? \"\");",
     "guards": []
+  },
+  {
+    "id": "QX-7001",
+    "file": "__tests__/catalog-metadata.test.ts",
+    "rule": "unicorn/no-thenable",
+    "scope": { "type": "VariableDeclarator", "name": "descriptor" },
+    "path": [
+      "init",
+      "properties",
+      3,
+      "value",
+      "properties",
+      7,
+      "value",
+      "elements",
+      0,
+      "properties",
+      1
+    ],
+    "nodeType": "Property",
+    "operation": "then: { required: [\"limit\"] }",
+    "guards": []
   }
 ]

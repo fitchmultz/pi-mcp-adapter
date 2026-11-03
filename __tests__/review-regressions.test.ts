@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,11 +14,8 @@ import { executeDescribe } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import type { McpExtensionState } from "../state.ts";
-import type { TextContent } from "@earendil-works/pi-ai";
+import { firstText } from "./fixtures/proxy-runtime.ts";
 import { createTestState } from "./test-state.ts";
-
-type ReadPage = Awaited<ReturnType<typeof readMcpResult>>;
-type ReadSuccess = ReadPage & { details: Extract<ReadPage["details"], { nextOffset: unknown }> };
 
 describe("review regressions: saved-result readback", () => {
   let outputDirectory: string;
@@ -52,6 +50,8 @@ describe("review regressions: saved-result readback", () => {
     "includes notices and consumed newlines in page caps ($maxBytes bytes, $maxLines lines, limit $limit)",
     async ({ maxBytes, maxLines, limit, rows }) => {
       const saved = await retainMcpResult({ structuredContent: { rows } }, { outputDirectory });
+      const ref = saved.resultRef;
+      assert.ok(ref !== undefined);
       const expected = JSON.stringify(
         rows.map(({ id }) => ({ id })),
         null,
@@ -60,23 +60,26 @@ describe("review regressions: saved-result readback", () => {
       let offset = 0;
       let reconstructed = "";
       for (let count = 0; count <= expected.length; count++) {
-        const page = (await readMcpResult(
-          { ref: saved.resultRef!, path: "/structuredContent/rows", fields: ["id"], offset, limit },
+        const page = await readMcpResult(
+          { ref, path: "/structuredContent/rows", fields: ["id"], offset, limit },
           { outputDirectory, maxBytes, maxLines },
-        )) as ReadSuccess;
+        );
         expect(page.details).not.toHaveProperty("error");
+        assert.ok(page.details.error === undefined, page.details.message);
         const visible = page.content.map((block) => block.text).join("\n");
         expect(Buffer.byteLength(visible)).toBeLessThanOrEqual(maxBytes);
         expect(visible.split("\n").length).toBeLessThanOrEqual(maxLines);
-        reconstructed += page.content[0]!.text;
+        const [textBlock] = page.content;
+        assert.ok(textBlock !== undefined);
+        reconstructed += textBlock.text;
         if (page.details.nextOffset === null) {
           break;
         }
         expect(page.details.nextOffset).toBeGreaterThan(offset);
-        expect(page.content[1]!.text).toContain(
+        expect(page.content[1]?.text).toContain(
           `Continue with offset: ${page.details.nextOffset}.`,
         );
-        offset = page.details.nextOffset!;
+        offset = page.details.nextOffset;
       }
       expect(reconstructed).toBe(expected);
     },
@@ -84,20 +87,19 @@ describe("review regressions: saved-result readback", () => {
 
   it("never splits surrogate pairs at the character limit", async () => {
     const saved = await retainMcpResult({ value: "😀Z" }, { outputDirectory });
-    const first = (await readMcpResult(
-      { ref: saved.resultRef!, path: "/value", limit: 2 },
-      { outputDirectory },
-    )) as ReadSuccess;
-    expect(first.content[0]!.text).toBe('"');
+    const ref = saved.resultRef;
+    assert.ok(ref !== undefined);
+    const first = await readMcpResult({ ref, path: "/value", limit: 2 }, { outputDirectory });
+    expect(first.content[0]?.text).toBe('"');
     expect(first.details.nextOffset).toBe(1);
-    const second = (await readMcpResult(
-      { ref: saved.resultRef!, path: "/value", offset: first.details.nextOffset!, limit: 2 },
+    const second = await readMcpResult(
+      { ref, path: "/value", offset: first.details.nextOffset, limit: 2 },
       { outputDirectory },
-    )) as ReadSuccess;
-    expect(second.content[0]!.text).toBe("😀");
+    );
+    expect(second.content[0]?.text).toBe("😀");
     expect(second.details.nextOffset).toBe(3);
     const splitOffset = await readMcpResult(
-      { ref: saved.resultRef!, path: "/value", offset: 2 },
+      { ref, path: "/value", offset: 2 },
       { outputDirectory },
     );
     expect(splitOffset.details).toMatchObject({
@@ -116,20 +118,25 @@ describe("review regressions: saved-result readback", () => {
       })(),
       outputDirectory,
     );
+    const ref = saved.path;
+    assert.ok(ref !== undefined);
     // With the default limit the line cap ends some pages; with the larger limit the default byte cap ends most.
     for (const limit of [undefined, 100_000]) {
       let offset = 0;
       let reconstructed = "";
       for (let count = 0; count <= expected.length; count++) {
-        const page = (await readMcpResult(
-          { ref: saved.path!, offset, ...(limit === undefined ? {} : { limit }) },
+        const page = await readMcpResult(
+          { ref, offset, ...(limit === undefined ? {} : { limit }) },
           { outputDirectory },
-        )) as ReadSuccess;
+        );
         expect(page.details).toMatchObject({ offset, totalCharacters: expected.length });
+        assert.ok(page.details.error === undefined, page.details.message);
         const visible = page.content.map((block) => block.text).join("\n");
         expect(Buffer.byteLength(visible)).toBeLessThanOrEqual(DEFAULT_MCP_OUTPUT_MAX_BYTES);
         expect(visible.split("\n").length).toBeLessThanOrEqual(DEFAULT_MCP_OUTPUT_MAX_LINES);
-        reconstructed += page.content[0]!.text;
+        const [textBlock] = page.content;
+        assert.ok(textBlock !== undefined);
+        reconstructed += textBlock.text;
         if (page.details.nextOffset === null) {
           break;
         }
@@ -140,26 +147,24 @@ describe("review regressions: saved-result readback", () => {
     }
 
     const late = expected.length - 8;
-    expect(
-      await readMcpResult({ ref: saved.path!, offset: late, limit: 4 }, { outputDirectory }),
-    ).toMatchObject({
-      content: [
-        { text: expected.slice(late, late + 4) },
-        { text: expect.stringContaining(`Continue with offset: ${late + 4}.`) },
-      ],
-      details: { nextOffset: late + 4, totalCharacters: expected.length },
-    });
+    const continuation: unknown = expect.stringContaining(`Continue with offset: ${late + 4}.`);
+    expect(await readMcpResult({ ref, offset: late, limit: 4 }, { outputDirectory })).toMatchObject(
+      {
+        content: [{ text: expected.slice(late, late + 4) }, { text: continuation }],
+        details: { nextOffset: late + 4, totalCharacters: expected.length },
+      },
+    );
     for (const split of [65_536, expected.length - 6]) {
       expect(expected.codePointAt(split - 1)).toBe(0x1f600);
       expect(
-        (await readMcpResult({ ref: saved.path!, offset: split }, { outputDirectory })).details,
+        (await readMcpResult({ ref, offset: split }, { outputDirectory })).details,
       ).toMatchObject({
         error: "result_read_failed",
         message: "offset must not split a Unicode surrogate pair",
       });
     }
     expect(
-      await readMcpResult({ ref: saved.path!, offset: expected.length + 1 }, { outputDirectory }),
+      await readMcpResult({ ref, offset: expected.length + 1 }, { outputDirectory }),
     ).toMatchObject({
       content: [{ text: "" }],
       details: { offset: expected.length + 1, nextOffset: null, totalCharacters: expected.length },
@@ -168,25 +173,31 @@ describe("review regressions: saved-result readback", () => {
 
   it("keeps tiny-cap pages progressing with complete characters and recovery notices", async () => {
     const saved = await retainMcpResult({ value: ["😀"] }, { outputDirectory });
+    const ref = saved.resultRef;
+    assert.ok(ref !== undefined);
     const expected = JSON.stringify(["😀"], null, 2);
     let offset = 0;
     let reconstructed = "";
     for (let count = 0; count < expected.length; count++) {
-      const page = (await readMcpResult(
-        { ref: saved.resultRef!, path: "/value", offset, limit: 1 },
+      const page = await readMcpResult(
+        { ref, path: "/value", offset, limit: 1 },
         { outputDirectory, maxBytes: 1, maxLines: 1 },
-      )) as ReadSuccess;
+      );
       expect(page.details).not.toHaveProperty("error");
-      const text = page.content[0]!.text;
-      expect([...text]).toHaveLength(1);
+      assert.ok(page.details.error === undefined, page.details.message);
+      const [textBlock] = page.content;
+      assert.ok(textBlock !== undefined);
+      const { text } = textBlock;
+      // One complete code point per page: `u` keeps a surrogate pair whole and `s` admits newlines.
+      expect(text).toMatch(/^.$/su);
       expect(Buffer.from(text).toString()).toBe(text);
       reconstructed += text;
       if (page.details.nextOffset === null) {
         break;
       }
       expect(page.details.nextOffset).toBeGreaterThan(offset);
-      expect(page.content[1]!.text).toContain(`Continue with offset: ${page.details.nextOffset}.`);
-      offset = page.details.nextOffset!;
+      expect(page.content[1]?.text).toContain(`Continue with offset: ${page.details.nextOffset}.`);
+      offset = page.details.nextOffset;
     }
     expect(reconstructed).toBe(expected);
   });
@@ -196,10 +207,12 @@ describe("review regressions: saved-result readback", () => {
       { rows: ["first"], object: { length: 7, "01": 8, "a/b~c": 9 } },
       { outputDirectory },
     );
+    const ref = saved.resultRef;
+    assert.ok(ref !== undefined);
     for (const path of ["/rows/length", "/rows/01", "/rows/-"]) {
-      expect(
-        (await readMcpResult({ ref: saved.resultRef!, path }, { outputDirectory })).details.error,
-      ).toBe("result_read_failed");
+      expect((await readMcpResult({ ref, path }, { outputDirectory })).details.error).toBe(
+        "result_read_failed",
+      );
     }
     for (const [path, expected] of [
       ["/rows/0", '"first"'],
@@ -207,10 +220,9 @@ describe("review regressions: saved-result readback", () => {
       ["/object/01", "8"],
       ["/object/a~1b~0c", "9"],
     ] as const) {
-      expect(
-        (await readMcpResult({ ref: saved.resultRef!, path }, { outputDirectory })).content[0]!
-          .text,
-      ).toBe(expected);
+      expect((await readMcpResult({ ref, path }, { outputDirectory })).content[0]?.text).toBe(
+        expected,
+      );
     }
   });
 
@@ -220,11 +232,14 @@ describe("review regressions: saved-result readback", () => {
       { content: [{ type: "audio", data: bytes.toString("base64"), mimeType: "audio/wav" }] },
       { outputDirectory },
     );
-    const file = saved.payloadFiles![0]!;
+    const [file] = saved.payloadFiles ?? [];
+    assert.ok(file !== undefined);
     expect(file).toMatchObject({ index: 0, kind: "audio", mimeType: "audio/wav" });
-    expect(await readFile(file.path!)).toEqual(bytes);
-    expect((await stat(file.path!)).mode & 0o777).toBe(0o600);
-    expect((await stat(dirname(file.path!))).mode & 0o777).toBe(0o700);
+    const { path } = file;
+    assert.ok(path !== undefined);
+    expect(await readFile(path)).toEqual(bytes);
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect((await stat(dirname(path))).mode & 0o777).toBe(0o700);
   });
 });
 
@@ -253,7 +268,7 @@ describe("review regressions: scoped original-name description", () => {
     for (const name of ["a.b", "a_b"]) {
       const result = executeDescribe(state, name, "demo");
       expect(result.details).not.toHaveProperty("error");
-      expect(JSON.parse((result.content[0] as TextContent).text)).toMatchObject({
+      expect(JSON.parse(firstText(result))).toMatchObject({
         server: "demo",
         name,
         inputSchema: { properties: { [name]: { type: "string" } } },
@@ -268,7 +283,7 @@ describe("review regressions: scoped original-name description", () => {
       code: 'return { dot: await tools.describe({ server: "demo", path: "a.b" }), underscore: await tools.describe({ server: "demo", path: "a_b" }), unscoped: await tools.describe({ path: "a_b" }) };',
     });
     expect(result.details).not.toHaveProperty("error");
-    expect(JSON.parse((result.content[0] as TextContent).text)).toMatchObject({
+    expect(JSON.parse(firstText(result))).toMatchObject({
       dot: {
         server: "demo",
         name: "a.b",
