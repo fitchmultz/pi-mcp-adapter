@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.15 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce strict lint for output storage tests (#132) ([18ec875](https://github.com/fitchmultz/pi-mcp-adapter/commit/18ec875b32ac5732665a96aa565d362be2d35025))
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.14...v8.0.15
+
 ## 8.0.14 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
