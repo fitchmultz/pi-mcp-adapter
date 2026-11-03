@@ -1,3 +1,7 @@
+import assert from "node:assert/strict";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { asObjectRecord } from "../mcp-output-values.ts";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -12,12 +16,38 @@ import { guardMcpOutput, resolveMcpOutputGuardOptions } from "../mcp-output-guar
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { McpSettings } from "../types.ts";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/mcp-code-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
 let manager: McpServerManager;
 let state: McpExtensionState;
 
+const anyNumber: unknown = expect.any(Number);
+const memoryReportSchema = Type.Object({
+  queuedGrowth: Type.Number(),
+  details: Type.Object({
+    outputGuard: Type.Object({
+      originalBytes: Type.Number(),
+      originalLines: Type.Number(),
+      returnedBytes: Type.Number(),
+    }),
+  }),
+  lines: Type.Object({ total: Type.Number(), expected: Type.Number() }),
+});
+function lastText(result: Awaited<ReturnType<typeof runMcpScript>>): string {
+  const text = textBlocks(result).at(-1);
+  assert.ok(text !== undefined, "Expected script text output");
+  return text;
+}
+async function verifySavedOutput(path: unknown, contents: string): Promise<void> {
+  assert.ok(typeof path === "string");
+  expect(await readFile(path, "utf8")).toBe(contents);
+}
+function verifyUnsavedOutput(path: unknown): void {
+  expect(path).toBeUndefined();
+}
 function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] {
   return result.content
     .filter(
@@ -28,38 +58,41 @@ function textBlocks(result: Awaited<ReturnType<typeof runMcpScript>>): string[] 
 }
 
 describe("runMcpScript", () => {
-  it("registers mcp_script by default", () => {
-    const registerTool = vi.fn();
-    createMcpAdapter({ config: { settings: {}, mcpServers: {} } })({
-      registerTool,
-      registerFlag: vi.fn(),
-      registerEntryRenderer: vi.fn(),
-      registerCommand: vi.fn(),
-      on: vi.fn(),
-      getAllTools: vi.fn(() => []),
-    } as any);
-
+  it("registers mcp_script by default", async () => {
+    const registerTool = vi.fn<(tool: unknown) => void>();
+    const native = await createTestExtensionContext("all", (pi) => {
+      const register = pi.registerTool.bind(pi);
+      vi.spyOn(pi, "registerTool").mockImplementation((tool) => {
+        register(tool);
+        registerTool(tool);
+      });
+      createMcpAdapter({ config: { settings: {}, mcpServers: {} } })(pi);
+    });
+    await native.dispose();
+    const description: unknown = expect.stringContaining(
+      "Compose MCP calls with trusted JavaScript",
+    );
     expect(registerTool).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "mcp_script",
-        description: expect.stringContaining("Compose MCP calls with trusted JavaScript"),
+        description,
         promptSnippet:
           "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
       }),
     );
   });
 
-  it("skips mcp_script when scriptMode is false", () => {
-    const registerTool = vi.fn();
-    createMcpAdapter({ config: { settings: { scriptMode: false }, mcpServers: {} } })({
-      registerTool,
-      registerFlag: vi.fn(),
-      registerEntryRenderer: vi.fn(),
-      registerCommand: vi.fn(),
-      on: vi.fn(),
-      getAllTools: vi.fn(() => []),
-    } as any);
-
+  it("skips mcp_script when scriptMode is false", async () => {
+    const registerTool = vi.fn<(tool: unknown) => void>();
+    const native = await createTestExtensionContext("all", (pi) => {
+      const register = pi.registerTool.bind(pi);
+      vi.spyOn(pi, "registerTool").mockImplementation((tool) => {
+        register(tool);
+        registerTool(tool);
+      });
+      createMcpAdapter({ config: { settings: { scriptMode: false }, mcpServers: {} } })(pi);
+    });
+    await native.dispose();
     expect(registerTool).toHaveBeenCalled();
     expect(registerTool).not.toHaveBeenCalledWith(expect.objectContaining({ name: "mcp_script" }));
   });
@@ -67,7 +100,7 @@ describe("runMcpScript", () => {
   beforeAll(async () => {
     manager = new McpServerManager();
     await manager.connect("fixture", definition);
-    state = {
+    state = createTestState({
       config: { settings: {}, mcpServers: { fixture: definition } },
       toolMetadata: new Map([
         [
@@ -82,7 +115,7 @@ describe("runMcpScript", () => {
       manager,
       failureTracker: new Map(),
       completedUiSessions: [],
-    } as unknown as McpExtensionState;
+    });
   });
 
   afterAll(async () => {
@@ -91,18 +124,22 @@ describe("runMcpScript", () => {
 
   it("uses script-local discovery guidance when a tool call misses", async () => {
     const result = await runMcpScript(state, 'return await tools.call("missing_tool", {});');
-    const payload = JSON.parse(textBlocks(result).at(-1)!);
+    const payload: unknown = JSON.parse(lastText(result));
 
+    const discoveryMessage: unknown = expect.stringContaining(
+      'Use await tools.search({ query: "..." }) inside mcp_script.',
+    );
     expect(payload).toMatchObject({
       ok: false,
       error: {
         code: "tool_not_found",
-        message: expect.stringContaining(
-          'Use await tools.search({ query: "..." }) inside mcp_script.',
-        ),
+        message: discoveryMessage,
       },
     });
-    expect(payload.error.message).not.toContain("mcp({ search:");
+    const payloadRecord = asObjectRecord(payload);
+    const error = asObjectRecord(payloadRecord?.error);
+    assert.ok(error);
+    expect(error.message).not.toContain("mcp({ search:");
   });
 
   it("searches the script-visible tool catalog with pagination and server filtering", async () => {
@@ -111,7 +148,7 @@ describe("runMcpScript", () => {
       'return { first: await tools.search({ query: "fixture", limit: 1 }), second: await tools.search({ query: "fixture", limit: 1, offset: 1, server: "fixture" }), empty: await tools.search({ query: "" }) };',
     );
 
-    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
+    expect(JSON.parse(lastText(result))).toEqual({
       first: {
         items: [
           {
@@ -119,7 +156,7 @@ describe("runMcpScript", () => {
             name: "echo",
             server: "fixture",
             description: "Echo a value",
-            score: expect.any(Number),
+            score: anyNumber,
           },
         ],
         total: 3,
@@ -134,7 +171,7 @@ describe("runMcpScript", () => {
             name: "fail",
             server: "fixture",
             description: "Return an MCP tool error",
-            score: expect.any(Number),
+            score: anyNumber,
           },
         ],
         total: 3,
@@ -158,7 +195,7 @@ describe("runMcpScript", () => {
       'return { found: await tools.describe({ path: "fixture_echo" }), missing: await tools.describe({ path: "fixture_ech" }) };',
     );
 
-    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({
+    expect(JSON.parse(lastText(result))).toEqual({
       found: {
         path: "fixture_echo",
         name: "echo",
@@ -184,16 +221,16 @@ describe("runMcpScript", () => {
 
     expect(result.details).toMatchObject({
       calls: [
-        { operation: "search", query: "fixture", ok: true, durationMs: expect.any(Number) },
-        { operation: "describe", path: "fixture_echo", ok: true, durationMs: expect.any(Number) },
+        { operation: "search", query: "fixture", ok: true, durationMs: anyNumber },
+        { operation: "describe", path: "fixture_echo", ok: true, durationMs: anyNumber },
         {
           operation: "describe",
           path: "fixture_missing",
           ok: false,
           error: "tool_not_found",
-          durationMs: expect.any(Number),
+          durationMs: anyNumber,
         },
-        { operation: "call", path: "fixture_echo", ok: true, durationMs: expect.any(Number) },
+        { operation: "call", path: "fixture_echo", ok: true, durationMs: anyNumber },
       ],
     });
   });
@@ -204,7 +241,7 @@ describe("runMcpScript", () => {
       'return { success: await tools.call("fixture_echo", { value: "canonical" }), invalid: await tools.call("", {}) };',
     );
 
-    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+    expect(JSON.parse(lastText(result))).toMatchObject({
       success: {
         ok: true,
         data: { structuredContent: { echoed: "canonical" } },
@@ -221,18 +258,18 @@ describe("runMcpScript", () => {
   });
 
   it("records approval-gate outcomes in the call trace", async () => {
-    const gatedState = {
+    const gatedState = createTestState({
       ...state,
       config: { settings: { approveTools: ["echo"] }, mcpServers: { fixture: definition } },
       approvedToolCalls: new Map(),
-    } as unknown as McpExtensionState;
+    });
 
     const result = await runMcpScript(
       gatedState,
       'return await tools.fixture_echo({ value: "blocked" });',
     );
 
-    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+    expect(JSON.parse(lastText(result))).toMatchObject({
       ok: false,
       error: { code: "approval_required" },
     });
@@ -247,7 +284,7 @@ describe("runMcpScript", () => {
       'return await tools.fixture_echo({ value: "round trip" });',
     );
 
-    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+    expect(JSON.parse(lastText(result))).toMatchObject({
       ok: true,
       data: {
         content: [{ type: "text", text: "round trip" }],
@@ -258,20 +295,20 @@ describe("runMcpScript", () => {
 
   it("lets scripts reduce raw MCP results larger than the model-facing details limit", async () => {
     const value = "x".repeat(1000);
-    const limitedState = {
+    const limitedState = createTestState({
       ...state,
       config: {
         settings: { outputGuard: { detailsMaxBytes: 100 } },
         mcpServers: { fixture: definition },
       },
-    } as unknown as McpExtensionState;
+    });
 
     const result = await runMcpScript(
       limitedState,
       `const result = await tools.fixture_echo({ value: ${JSON.stringify(value)} }); return { omitted: result.data.omitted === true, echoed: result.data.structuredContent?.echoed };`,
     );
 
-    expect(JSON.parse(textBlocks(result).at(-1)!)).toEqual({ omitted: false, echoed: value });
+    expect(JSON.parse(lastText(result))).toEqual({ omitted: false, echoed: value });
   });
 
   it("returns a failure envelope and lets the script continue", async () => {
@@ -280,11 +317,12 @@ describe("runMcpScript", () => {
       "const failure = await tools.fixture_fail({}); return { failure, continued: true };",
     );
 
-    expect(JSON.parse(textBlocks(result).at(-1)!)).toMatchObject({
+    const failureMessage: unknown = expect.stringContaining("fixture failure");
+    expect(JSON.parse(lastText(result))).toMatchObject({
       continued: true,
       failure: {
         ok: false,
-        error: { code: "tool_error", message: expect.stringContaining("fixture failure") },
+        error: { code: "tool_error", message: failureMessage },
       },
     });
     expect(result.details).toMatchObject({
@@ -404,7 +442,7 @@ describe("runMcpScript", () => {
       emit(value); console.log(new Map([["console", 2]])); return value;`,
     );
 
-    for (const block of [textBlocks(result)[0], textBlocks(result).at(-1)!]) {
+    for (const block of [textBlocks(result)[0], lastText(result)]) {
       expect(block).toContain("Map(1)");
       expect(block).toContain("Set(1)");
       expect(block).toContain("[Circular");
@@ -421,7 +459,7 @@ describe("runMcpScript", () => {
       'const shared = { id: "same" }; return { first: shared, second: shared };',
     );
 
-    const block = textBlocks(result).at(-1)!;
+    const block = lastText(result);
     expect(block).not.toContain("Circular");
     expect(JSON.parse(block)).toEqual({ first: { id: "same" }, second: { id: "same" } });
   });
@@ -434,7 +472,9 @@ describe("runMcpScript", () => {
       return { message, globals: [typeof require, typeof fetch, typeof process] };`,
     );
 
-    expect(JSON.parse(textBlocks(result)[0]!)).toEqual({
+    const first = textBlocks(result)[0];
+    assert.ok(first !== undefined);
+    expect(JSON.parse(first)).toEqual({
       message: "tools is not enumerable — use tools.search({ query })",
       globals: ["undefined", "undefined", "undefined"],
     });
@@ -443,13 +483,13 @@ describe("runMcpScript", () => {
 
 describe("runMcpScript output", () => {
   const scriptState = (settings: McpSettings, outputDirectory: string) =>
-    ({
+    createTestState({
       config: { mcpServers: {}, settings },
       toolMetadata: new Map(),
       failureTracker: new Map(),
       completedUiSessions: [],
       outputDirectory,
-    }) as unknown as McpExtensionState;
+    });
 
   it.each<McpSettings>([{ outputGuard: { maxBytes: 4096, maxLines: 40 } }, { outputGuard: false }])(
     "streams many emits into the same guarded result as the complete output (%j)",
@@ -477,23 +517,20 @@ describe("runMcpScript output", () => {
           blocks,
           resolveMcpOutputGuardOptions(settings, outputDirectory),
         );
-        const path = (result.details as { outputGuard?: { fullOutputPath?: string } }).outputGuard
-          ?.fullOutputPath;
-        const visible = (content: unknown, outputGuard: unknown, artifact?: string) => {
+        const path = asObjectRecord(result.details.outputGuard)?.fullOutputPath;
+        const visible = (content: unknown, outputGuard: unknown, artifact?: unknown): unknown => {
           const json = JSON.stringify({ content, outputGuard });
-          return JSON.parse(artifact ? json.replaceAll(artifact, "<artifact>") : json);
+          return JSON.parse(
+            typeof artifact === "string" ? json.replaceAll(artifact, "<artifact>") : json,
+          );
         };
 
-        expect(
-          visible(result.content, (result.details as { outputGuard?: unknown }).outputGuard, path),
-        ).toEqual(
+        expect(visible(result.content, result.details.outputGuard, path)).toEqual(
           visible(complete.content, complete.outputGuard, complete.outputGuard?.fullOutputPath),
         );
-        if (settings.outputGuard) {
-          expect(await readFile(path!, "utf8")).toBe(values.join("\n"));
-        } else {
-          expect(path).toBeUndefined();
-        }
+        const verifyArtifact =
+          settings.outputGuard === false ? verifyUnsavedOutput : verifySavedOutput;
+        await verifyArtifact(path, values.join("\n"));
       } finally {
         await rm(outputDirectory, { recursive: true, force: true });
       }
@@ -515,7 +552,8 @@ describe("runMcpScript output", () => {
         import { createReadStream } from "node:fs";
         import { createInterface } from "node:readline";
         import { runMcpScript } from ${JSON.stringify(new URL("../mcp-code.ts", import.meta.url).href)};
-        const state = { config: { mcpServers: {}, settings: {} }, toolMetadata: new Map(), failureTracker: new Map(), completedUiSessions: [], outputDirectory: ${JSON.stringify(outputDirectory)} };
+        import { createTestState } from ${JSON.stringify(new URL("./test-state.ts", import.meta.url).href)};
+        const state = createTestState({ outputDirectory: ${JSON.stringify(outputDirectory)} });
         const start = process.memoryUsage.rss();
         const pending = runMcpScript(state, "const line = 'x'.repeat(${length}); for (let i = 0; i < ${count}; i++) emit(line);", 60000);
         // Hold the host event loop so the worker's output can only queue.
@@ -537,7 +575,8 @@ describe("runMcpScript output", () => {
         });
 
         expect(child.status, child.stderr).toBe(0);
-        const report = JSON.parse(child.stdout);
+        const report: unknown = JSON.parse(child.stdout);
+        assert.ok(Value.Check(memoryReportSchema, report), "Invalid memory child report");
         expect(report.queuedGrowth).toBeLessThan(64 * 2 ** 20);
         expect(report.details).not.toHaveProperty("error");
         expect(report.details.outputGuard).toMatchObject({
@@ -561,11 +600,12 @@ describe("runMcpScript output", () => {
     });
     const messages: unknown[] = [];
     try {
-      await new Promise((resolve, reject) => {
-        worker.on("message", (message) => {
+      await new Promise<void>((resolve, reject) => {
+        worker.on("message", (message: unknown) => {
           messages.push(message);
-          if (message.type === "done" || message.type === "error") {
-            resolve(undefined);
+          const type = asObjectRecord(message)?.type;
+          if (type === "done" || type === "error") {
+            resolve();
           }
         });
         worker.on("error", reject);

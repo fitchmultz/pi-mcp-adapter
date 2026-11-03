@@ -8,16 +8,34 @@ import { McpServerManager } from "../server-manager.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
-import type { McpExtensionState } from "../state.ts";
+import { createTestState } from "./test-state.ts";
 
 // Self-contained so the same wire fixture runs in a real stdio child or on a Unix socket.
-function responder(send: (message: any) => void) {
+function responder(send: (message: unknown) => void) {
   let committed = 0;
-  return async (request: any) => {
-    if (request.id === undefined) {
+  function isWrite(value: unknown): value is { name: "write" } {
+    return typeof value === "object" && value !== null && "name" in value && value.name === "write";
+  }
+  function writeDelay(params: object): number {
+    const args = "arguments" in params ? params.arguments : undefined;
+    return typeof args === "object" &&
+      args !== null &&
+      "delayMs" in args &&
+      typeof args.delayMs === "number"
+      ? args.delayMs
+      : 160;
+  }
+  return async (request: unknown): Promise<void> => {
+    if (
+      typeof request !== "object" ||
+      request === null ||
+      !("id" in request) ||
+      request.id === undefined ||
+      !("method" in request)
+    ) {
       return;
     }
-    let result;
+    let result: unknown;
     if (request.method === "initialize") {
       result = {
         protocolVersion: "2025-11-25",
@@ -33,11 +51,12 @@ function responder(send: (message: any) => void) {
         })),
       };
     } else if (request.method === "tools/call") {
-      if (request.params.name === "write") {
+      const params = "params" in request ? request.params : undefined;
+      if (isWrite(params)) {
         committed++;
-        await new Promise((resolve) =>
-          setTimeout(resolve, request.params.arguments?.delayMs ?? 160),
-        );
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, writeDelay(params));
+        });
       }
       result = { content: [{ type: "text", text: String(committed) }] };
     } else {
@@ -46,6 +65,23 @@ function responder(send: (message: any) => void) {
     }
     send({ jsonrpc: "2.0", id: request.id, result });
   };
+}
+
+function assertNoScriptError(output: Awaited<ReturnType<typeof runMcpScript>>): void {
+  expect(output.details).not.toHaveProperty("error");
+}
+function assertScriptError(output: Awaited<ReturnType<typeof runMcpScript>>, error: unknown): void {
+  expect(output.details.error).toBe(error);
+}
+
+async function cancelAfterWrite(
+  state: Parameters<typeof executeCall>[0],
+  controller: AbortController,
+): Promise<void> {
+  await expect
+    .poll(async () => (await executeCall(state, "local_readback", {})).content)
+    .toEqual([{ type: "text", text: "1" }]);
+  controller.abort(new Error("caller cancelled"));
 }
 
 it.each(["stdio", "unix"])(
@@ -59,13 +95,18 @@ it.each(["stdio", "unix"])(
         ? createServer((socket) => {
             const handle = responder((message) => socket.write(JSON.stringify(message) + "\n"));
             createInterface({ input: socket }).on("line", (line) => {
-              void handle(JSON.parse(line));
+              const request: unknown = JSON.parse(line);
+              handle(request).catch((error: unknown) => {
+                socket.destroy(error instanceof Error ? error : new Error(String(error)));
+              });
             });
           })
         : undefined;
     try {
       if (server) {
-        await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+        await new Promise<void>((resolve) => {
+          server.listen(socketPath, resolve);
+        });
       }
       const definition = {
         ...(server
@@ -87,7 +128,7 @@ it.each(["stdio", "unix"])(
       };
       const connection = await manager.connect("local", definition);
       definition.requestTimeoutMs = 80;
-      const state = {
+      const state = createTestState({
         manager,
         config: { mcpServers: { local: definition }, settings: {} },
         toolMetadata: new Map([
@@ -99,7 +140,7 @@ it.each(["stdio", "unix"])(
         failureTracker: new Map(),
         serverInstructions: new Map(),
         completedUiSessions: [],
-      } as unknown as McpExtensionState;
+      });
       const output = await executeCall(state, "local_write", {});
       expect(output.details).toMatchObject({
         error: "ambiguous_outcome",
@@ -110,7 +151,9 @@ it.each(["stdio", "unix"])(
     } finally {
       await manager.closeAll();
       if (server) {
-        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await new Promise<void>((resolve) => {
+          server.close(() => resolve());
+        });
       }
       await rm(directory, { recursive: true, force: true });
     }
@@ -143,7 +186,7 @@ it.each([
         retryOnTransportFailure: true,
       };
       const connection = await manager.connect("local", definition);
-      const state = {
+      const state = createTestState({
         manager,
         config: { mcpServers: { local: definition }, settings: {} },
         toolMetadata: new Map([
@@ -155,9 +198,11 @@ it.each([
         failureTracker: new Map(),
         serverInstructions: new Map(),
         completedUiSessions: [],
-      } as unknown as McpExtensionState;
+      });
       if (capture) {
-        state.onToolCall = async () => {};
+        state.onToolCall = async () => {
+          /* A successful capture callback owns the cancellation receipt. */
+        };
       }
       const pending = runMcpScript(
         state,
@@ -172,50 +217,48 @@ it.each([
         controller.signal,
         "script-write",
         async (_signal, operation) => {
-          if (operation.args.blocked) {
-            await new Promise(() => {});
+          if (operation.args.blocked === true) {
+            await new Promise(() => {
+              /* Hold this pre-dispatch gate until script cancellation. */
+            });
           }
         },
       );
       if (ending === "abort") {
-        await expect
-          .poll(async () => (await executeCall(state, "local_readback", {})).content)
-          .toEqual([{ type: "text", text: "1" }]);
-        controller.abort(new Error("caller cancelled"));
+        await cancelAfterWrite(state, controller);
       }
       const output = await pending;
-      if (ending === "early return") {
-        expect(output.details).not.toHaveProperty("error");
-      } else {
-        expect(output.details.error).toBe(ending === "timeout" ? "timeout" : "aborted");
-      }
+      const errors = { "early return": undefined, timeout: "timeout", abort: "aborted" };
+      const assertEnding = ending === "early return" ? assertNoScriptError : assertScriptError;
+      assertEnding(output, errors[ending]);
+      const capturedError: unknown = expect.any(Error);
+      const recovery: unknown = expect.objectContaining({
+        server: "local",
+        tool: "write",
+        toolCallId: "script-write",
+        innerCallId: 2,
+        ...(capture
+          ? { phase: "after", args: { delayMs: 5000 }, error: capturedError }
+          : { action: "readback" }),
+      });
       expect(output.details.calls).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "local_readback", ok: true }),
           expect.objectContaining({
             path: "local_write",
             error: capture ? "aborted" : "ambiguous_outcome",
-            recovery: expect.objectContaining({
-              server: "local",
-              tool: "write",
-              toolCallId: "script-write",
-              innerCallId: 2,
-              ...(capture
-                ? { phase: "after", args: { delayMs: 5000 }, error: expect.any(Error) }
-                : { action: "readback" }),
-            }),
+            recovery,
           }),
           expect.objectContaining({ path: "local_write", error: "aborted" }),
         ]),
       );
+      const recoveryNotice: unknown = expect.stringContaining(
+        capture ? "do not repeat a completed call or rerun the script" : "Do not blindly repeat",
+      );
       expect(output.content).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            text: expect.stringContaining(
-              capture
-                ? "do not repeat a completed call or rerun the script"
-                : "Do not blindly repeat",
-            ),
+            text: recoveryNotice,
           }),
         ]),
       );
@@ -260,7 +303,7 @@ it.each([false, true])(
         retryOnTransportFailure: true,
       };
       const connection = await manager.connect("local", definition);
-      const state = {
+      const state = createTestState({
         manager,
         config: { mcpServers: { local: definition }, settings: {} },
         toolMetadata: new Map([
@@ -272,7 +315,7 @@ it.each([false, true])(
         failureTracker: new Map(),
         serverInstructions: new Map(),
         completedUiSessions: [],
-      } as unknown as McpExtensionState;
+      });
       const output = await executeCall(state, "local_write", {});
       expect(await readFile(marker, "utf8")).toBe("committed\n");
       expect(output.details).toMatchObject({
