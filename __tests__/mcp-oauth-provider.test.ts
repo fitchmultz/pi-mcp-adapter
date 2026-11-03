@@ -8,23 +8,31 @@ import { getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
 
 describe("McpOAuthProvider clientMetadata scope", () => {
   it("includes configured scope in authorization_code client metadata", () => {
-    const provider = new McpOAuthProvider(
-      "scope-test",
-      "https://api.example.com/mcp",
-      { scope: "api://resource/.default openid" },
-      { onRedirect: async () => {} },
-    );
+    const provider = new McpOAuthProvider({
+      serverName: "scope-test",
+      serverUrl: "https://api.example.com/mcp",
+      config: { scope: "api://resource/.default openid" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
 
     expect(provider.clientMetadata.scope).toBe("api://resource/.default openid");
   });
 
   it("omits scope from client metadata when not configured", () => {
-    const provider = new McpOAuthProvider(
-      "no-scope-test",
-      "https://api.example.com/mcp",
-      {},
-      { onRedirect: async () => {} },
-    );
+    const provider = new McpOAuthProvider({
+      serverName: "no-scope-test",
+      serverUrl: "https://api.example.com/mcp",
+      config: {},
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
 
     expect(provider.clientMetadata).not.toHaveProperty("scope");
   });
@@ -50,12 +58,16 @@ describe("McpOAuthProvider addClientAuthentication", () => {
   });
 
   it("adds configured scope to authorization_code token params", async () => {
-    const provider = new McpOAuthProvider(
-      "auth-scope",
+    const provider = new McpOAuthProvider({
+      serverName: "auth-scope",
       serverUrl,
-      { clientId: "my-client", scope: "api://res/.default" },
-      { onRedirect: async () => {} },
-    );
+      config: { clientId: "my-client", scope: "api://res/.default" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     const params = new URLSearchParams({ grant_type: "authorization_code", code: "abc" });
 
     await provider.addClientAuthentication(
@@ -69,12 +81,16 @@ describe("McpOAuthProvider addClientAuthentication", () => {
   });
 
   it("uses client_secret_basic when the token endpoint only supports basic auth", async () => {
-    const provider = new McpOAuthProvider(
-      "auth-basic",
+    const provider = new McpOAuthProvider({
+      serverName: "auth-basic",
       serverUrl,
-      { clientId: "my-client", clientSecret: "my-secret", scope: "api://res/.default" },
-      { onRedirect: async () => {} },
-    );
+      config: { clientId: "my-client", clientSecret: "my-secret", scope: "api://res/.default" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     const headers = new Headers();
     const params = new URLSearchParams({ grant_type: "authorization_code", code: "abc" });
 
@@ -101,12 +117,16 @@ describe("McpOAuthProvider addClientAuthentication", () => {
   });
 
   it("uses client_secret_post when metadata is absent", async () => {
-    const provider = new McpOAuthProvider(
-      "auth-post",
+    const provider = new McpOAuthProvider({
+      serverName: "auth-post",
       serverUrl,
-      { clientId: "my-client", clientSecret: "my-secret" },
-      { onRedirect: async () => {} },
-    );
+      config: { clientId: "my-client", clientSecret: "my-secret" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     const headers = new Headers();
     const params = new URLSearchParams({ grant_type: "authorization_code", code: "abc" });
 
@@ -122,12 +142,16 @@ describe("McpOAuthProvider addClientAuthentication", () => {
   });
 
   it("does not overwrite token params that are already present", async () => {
-    const provider = new McpOAuthProvider(
-      "auth-no-overwrite",
+    const provider = new McpOAuthProvider({
+      serverName: "auth-no-overwrite",
       serverUrl,
-      { clientId: "my-client", clientSecret: "my-secret", scope: "api://res/.default" },
-      { onRedirect: async () => {} },
-    );
+      config: { clientId: "my-client", clientSecret: "my-secret", scope: "api://res/.default" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     const params = new URLSearchParams({
       grant_type: "authorization_code",
       scope: "already-set",
@@ -147,12 +171,16 @@ describe("McpOAuthProvider addClientAuthentication", () => {
   });
 
   it("does not add scope to refresh token requests", async () => {
-    const provider = new McpOAuthProvider(
-      "auth-refresh",
+    const provider = new McpOAuthProvider({
+      serverName: "auth-refresh",
       serverUrl,
-      { clientId: "my-client", scope: "api://res/.default" },
-      { onRedirect: async () => {} },
-    );
+      config: { clientId: "my-client", scope: "api://res/.default" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     const params = new URLSearchParams({ grant_type: "refresh_token", refresh_token: "refresh" });
 
     await provider.addClientAuthentication(
@@ -166,12 +194,16 @@ describe("McpOAuthProvider addClientAuthentication", () => {
   });
 
   it("does not mutate token request credentials after deactivation", async () => {
-    const provider = new McpOAuthProvider(
-      "auth-inactive",
+    const provider = new McpOAuthProvider({
+      serverName: "auth-inactive",
       serverUrl,
-      { clientId: "my-client", clientSecret: "my-secret", scope: "api://res/.default" },
-      { onRedirect: async () => {} },
-    );
+      config: { clientId: "my-client", clientSecret: "my-secret", scope: "api://res/.default" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     const headers = new Headers();
     const params = new URLSearchParams({ grant_type: "authorization_code" });
     provider.deactivate();
@@ -184,12 +216,16 @@ describe("McpOAuthProvider addClientAuthentication", () => {
   });
 
   it("does not persist a pre-registered issuer stub after deactivation", async () => {
-    const provider = new McpOAuthProvider(
-      "inactive-client-info",
+    const provider = new McpOAuthProvider({
+      serverName: "inactive-client-info",
       serverUrl,
-      { clientId: "my-client", clientSecret: "my-secret" },
-      { onRedirect: async () => {} },
-    );
+      config: { clientId: "my-client", clientSecret: "my-secret" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     provider.deactivate();
 
     await expect(
@@ -199,7 +235,6 @@ describe("McpOAuthProvider addClientAuthentication", () => {
       }),
     ).rejects.toThrow("OAuth flow is no longer active");
 
-    const { getAuthForUrl } = await import("../mcp-auth.ts");
     expect(getAuthForUrl("inactive-client-info", serverUrl)).toBeUndefined();
   });
 });
@@ -240,12 +275,16 @@ describe("McpOAuthProvider discovery state", () => {
       },
       serverUrl,
     );
-    const provider = new McpOAuthProvider(
-      "legacy-binding",
+    const provider = new McpOAuthProvider({
+      serverName: "legacy-binding",
       serverUrl,
-      {},
-      { onRedirect: async () => {} },
-    );
+      config: {},
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
 
     await provider.saveDiscoveryState({
       authorizationServerUrl: "https://auth.example.com",
@@ -290,12 +329,16 @@ describe("McpOAuthProvider discovery state", () => {
       },
       serverUrl,
     );
-    const provider = new McpOAuthProvider(
-      "changed-issuer",
+    const provider = new McpOAuthProvider({
+      serverName: "changed-issuer",
       serverUrl,
-      {},
-      { onRedirect: async () => {} },
-    );
+      config: {},
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
 
     await provider.saveDiscoveryState({
       authorizationServerUrl: "https://new-auth.example.com",
@@ -330,12 +373,16 @@ describe("McpOAuthProvider discovery state", () => {
       },
       serverUrl,
     );
-    const provider = new McpOAuthProvider(
-      "partial-client-binding",
+    const provider = new McpOAuthProvider({
+      serverName: "partial-client-binding",
       serverUrl,
-      {},
-      { onRedirect: async () => {} },
-    );
+      config: {},
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     await provider.saveDiscoveryState({ authorizationServerUrl: "https://new-auth.example.com" });
 
     await expect(provider.tokens()).rejects.toThrow(
@@ -362,12 +409,16 @@ describe("McpOAuthProvider discovery state", () => {
       },
       serverUrl,
     );
-    const provider = new McpOAuthProvider(
-      "partial-token-binding",
+    const provider = new McpOAuthProvider({
+      serverName: "partial-token-binding",
       serverUrl,
-      {},
-      { onRedirect: async () => {} },
-    );
+      config: {},
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     await provider.saveDiscoveryState({ authorizationServerUrl: "https://new-auth.example.com" });
 
     await expect(provider.clientInformation()).rejects.toThrow(
@@ -377,12 +428,16 @@ describe("McpOAuthProvider discovery state", () => {
   });
 
   it("persists a pre-registered issuer binding without the config secret", async () => {
-    const provider = new McpOAuthProvider(
-      "pre-registered-binding",
+    const provider = new McpOAuthProvider({
+      serverName: "pre-registered-binding",
       serverUrl,
-      { clientId: "config-client", clientSecret: "config-secret" },
-      { onRedirect: async () => {} },
-    );
+      config: { clientId: "config-client", clientSecret: "config-secret" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     await provider.saveDiscoveryState({
       authorizationServerUrl: "https://auth.example.com",
       authorizationServerMetadata: {
@@ -418,12 +473,16 @@ describe("McpOAuthProvider discovery state", () => {
       },
       serverUrl,
     );
-    const provider = new McpOAuthProvider(
-      "pre-registered-issuer-change",
+    const provider = new McpOAuthProvider({
+      serverName: "pre-registered-issuer-change",
       serverUrl,
-      { clientId: "config-client", clientSecret: "config-secret" },
-      { onRedirect: async () => {} },
-    );
+      config: { clientId: "config-client", clientSecret: "config-secret" },
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     await provider.saveDiscoveryState({
       authorizationServerUrl: "https://new-auth.example.com",
       authorizationServerMetadata: {
@@ -443,12 +502,16 @@ describe("McpOAuthProvider discovery state", () => {
   });
 
   it("round-trips callback-leg discovery state and invalidates it independently", async () => {
-    const provider = new McpOAuthProvider(
-      "discovery-state",
+    const provider = new McpOAuthProvider({
+      serverName: "discovery-state",
       serverUrl,
-      {},
-      { onRedirect: async () => {} },
-    );
+      config: {},
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     const discoveryState = {
       authorizationServerUrl: "https://auth.example.com",
       resourceMetadataUrl: "https://api.example.com/.well-known/oauth-protected-resource/mcp",
@@ -463,12 +526,16 @@ describe("McpOAuthProvider discovery state", () => {
     await provider.saveDiscoveryState(discoveryState);
     expect(await provider.discoveryState()).toEqual(discoveryState);
 
-    const otherRuntimeProvider = new McpOAuthProvider(
-      "discovery-state",
+    const otherRuntimeProvider = new McpOAuthProvider({
+      serverName: "discovery-state",
       serverUrl,
-      {},
-      { onRedirect: async () => {} },
-    );
+      config: {},
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
     expect(await otherRuntimeProvider.discoveryState()).toBeUndefined();
 
     await provider.saveTokens({
@@ -506,12 +573,16 @@ describe("McpOAuthProvider authorization fallback", () => {
   });
 
   it("throws UnauthorizedError when state is requested outside a user-initiated flow", async () => {
-    const provider = new McpOAuthProvider(
-      "state-missing",
+    const provider = new McpOAuthProvider({
+      serverName: "state-missing",
       serverUrl,
-      {},
-      { onRedirect: async () => {} },
-    );
+      config: {},
+      callbacks: {
+        onRedirect: async () => {
+          // These provider-only checks do not open a browser.
+        },
+      },
+    });
 
     await expect(provider.state()).rejects.toBeInstanceOf(UnauthorizedError);
     await expect(provider.state()).rejects.toThrow(/Re-authentication required/);
@@ -519,16 +590,16 @@ describe("McpOAuthProvider authorization fallback", () => {
 
   it("throws UnauthorizedError before redirecting when no OAuth flow is in progress", async () => {
     let redirected = false;
-    const provider = new McpOAuthProvider(
-      "redirect-missing",
+    const provider = new McpOAuthProvider({
+      serverName: "redirect-missing",
       serverUrl,
-      {},
-      {
+      config: {},
+      callbacks: {
         onRedirect: async () => {
           redirected = true;
         },
       },
-    );
+    });
 
     await expect(
       provider.redirectToAuthorization(new URL("https://auth.example.com/authorize")),
@@ -539,19 +610,19 @@ describe("McpOAuthProvider authorization fallback", () => {
   it("redirects when the active provider owns OAuth state", async () => {
     const authUrl = new URL("https://auth.example.com/authorize");
     let redirected: URL | undefined;
-    const provider = new McpOAuthProvider(
-      "redirect-active",
+    const provider = new McpOAuthProvider({
+      serverName: "redirect-active",
       serverUrl,
-      {},
-      {
+      config: {},
+      callbacks: {
         onRedirect: async (url) => {
           redirected = url;
         },
       },
-      {},
-      undefined,
-      "state-abc",
-    );
+      storageOptions: {},
+      runtimeSignal: undefined,
+      initialState: "state-abc",
+    });
 
     await provider.redirectToAuthorization(authUrl);
 
@@ -568,16 +639,16 @@ describe("McpOAuthProvider authorization fallback", () => {
       },
       "https://old.example.com/mcp",
     );
-    const provider = new McpOAuthProvider(
-      "redirect-stale-url",
+    const provider = new McpOAuthProvider({
+      serverName: "redirect-stale-url",
       serverUrl,
-      {},
-      {
+      config: {},
+      callbacks: {
         onRedirect: async () => {
           redirected = true;
         },
       },
-    );
+    });
 
     await expect(
       provider.redirectToAuthorization(new URL("https://auth.example.com/authorize")),

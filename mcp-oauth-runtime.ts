@@ -68,7 +68,7 @@ const activeRuntimes = new Set<McpOAuthRuntime>();
 export function createOAuthRuntime(signal?: AbortSignal): McpOAuthRuntime {
   const controller = new AbortController();
   const runtime = {
-    signal: combineAbortSignals(signal, controller.signal)!,
+    signal: combineAbortSignals(signal, controller.signal) ?? controller.signal,
   } satisfies McpOAuthRuntime;
   runtimeStates.set(runtime, {
     controller,
@@ -83,8 +83,12 @@ export function createOAuthRuntime(signal?: AbortSignal): McpOAuthRuntime {
   return runtime;
 }
 
-export let legacyRuntime = createOAuthRuntime();
+let legacyRuntime = createOAuthRuntime();
 activeRuntimes.delete(legacyRuntime);
+
+export function getLegacyRuntime(): McpOAuthRuntime {
+  return legacyRuntime;
+}
 
 export function getRuntime(options?: AuthenticateOptions): McpOAuthRuntime {
   if (options?.runtime) {
@@ -144,7 +148,7 @@ export async function clearPendingAuth(
   const pendingAuth = state.pendingAuths.get(key);
   const authStorageOptions = pendingAuth?.authStorageOptions ?? fallbackStorageOptions;
   const pendingState = state.pendingAuthStates.get(key);
-  if (oauthState && pendingState && pendingState !== oauthState) {
+  if (isDifferentPendingState(oauthState, pendingState)) {
     return;
   }
 
@@ -158,12 +162,28 @@ export async function clearPendingAuth(
   state.pendingAuths.delete(key);
   state.pendingAuthStates.delete(key);
   const stateToRelease = pendingState ?? oauthState;
-  if (stateToRelease) {
+  if (stateToRelease !== undefined && stateToRelease !== "") {
     cancelPendingCallback(stateToRelease);
-    const storedState = await getOAuthState(serverName, authStorageOptions);
-    if (storedState === stateToRelease) {
-      await clearOAuthState(serverName, authStorageOptions);
-    }
+    await clearMatchingStoredState(serverName, stateToRelease, authStorageOptions);
+  }
+}
+
+function isDifferentPendingState(
+  oauthState: string | undefined,
+  pendingState: string | undefined,
+): boolean {
+  return (oauthState ?? "") !== "" && (pendingState ?? "") !== "" && pendingState !== oauthState;
+}
+
+async function clearMatchingStoredState(
+  serverName: string,
+  state: string,
+  options: AuthStorageOptions,
+): Promise<void> {
+  const stored = await Promise.resolve(getOAuthState(serverName, options));
+  if (stored === state) {
+    clearOAuthState(serverName, options);
+    await Promise.resolve();
   }
 }
 
@@ -176,7 +196,7 @@ export async function clearPendingAuth(
  */
 export function supportsOAuth(definition: ServerEntry): boolean {
   // OAuth requires a URL
-  if (!definition.url) {
+  if (definition.url === undefined || definition.url === "") {
     return false;
   }
 
@@ -237,9 +257,13 @@ export async function shutdownOAuth(runtime: McpOAuthRuntime = legacyRuntime): P
       clearPendingAuth(runtime, pendingAuth.serverName, undefined, pendingAuth.authStorageOptions),
     ),
   );
-  const failures = results.flatMap((result) =>
-    result.status === "rejected" ? [result.reason] : [],
-  );
+  const failures: unknown[] = [];
+  for (const result of results) {
+    if (result.status === "rejected") {
+      const reason: unknown = result.reason;
+      failures.push(reason);
+    }
+  }
   state.pendingAuthentications.clear();
   state.requests.clear();
   activeRuntimes.delete(runtime);
@@ -251,7 +275,7 @@ export async function shutdownOAuth(runtime: McpOAuthRuntime = legacyRuntime): P
       failures.push(error);
     }
   }
-  if (failures.length) {
+  if (failures.length > 0) {
     throw new AggregateError(failures, "MCP OAuth cleanup failed");
   }
 }

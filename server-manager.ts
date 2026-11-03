@@ -1022,24 +1022,24 @@ export class McpServerManager {
     // Create request init with headers (Authorization now included for bearer auth)
     const requestInit = Object.keys(headers).length > 0 ? { headers } : undefined;
     const createAuthProvider = (): McpOAuthProvider =>
-      new McpOAuthProvider(
+      new McpOAuthProvider({
         serverName,
         serverUrl,
-        extractOAuthConfig(definition),
-        {
+        config: extractOAuthConfig(definition),
+        callbacks: {
           onRedirect: async (_authUrl) => {
             // URL is captured by startAuth, no need to log
           },
           onDiscoveryState: (state) => {
             issuer = state.authorizationServerMetadata?.issuer ?? state.authorizationServerUrl;
             if (active()) {
-              bindOAuthRequestIssuer(serverName, serverUrl, storageBase, issuer, runtime);
+              bindOAuthRequestIssuer({ serverName, serverUrl, storageBase, runtime }, issuer);
             }
           },
         },
-        this.authStorageOptions,
-        this.oauthRuntime?.signal,
-      );
+        storageOptions: this.authStorageOptions,
+        runtimeSignal: this.oauthRuntime?.signal,
+      });
 
     const authProvider =
       supportsOAuth(definition) && (definition.auth === "oauth" || implicitOAuth)
@@ -1180,7 +1180,7 @@ export class McpServerManager {
         ) {
           return;
         }
-        recordOAuthChallenge(serverName, serverUrl, storageBase, error, runtime);
+        recordOAuthChallenge({ serverName, serverUrl, storageBase, runtime }, error);
         // A known issuer was validated by the native discovery hook, never inferred from the challenge.
         if (issuer) {
           const request = getOAuthRequest(serverName, serverUrl, storageBase, runtime);
