@@ -387,19 +387,19 @@ async function fixture(config: SigningFixtureConfig = {}, pair = key()) {
     stored,
     start,
     provider: (signal?: AbortSignal) =>
-      new McpOAuthProvider(
-        name,
-        definition.url,
-        extractOAuthConfig(definition),
-        {
+      new McpOAuthProvider({
+        serverName: name,
+        serverUrl: definition.url,
+        config: extractOAuthConfig(definition),
+        callbacks: {
           onRedirect: () => {
             browser.open();
           },
         },
-        {},
-        signal,
-        "fixture-state",
-      ),
+        storageOptions: {},
+        runtimeSignal: signal,
+        initialState: "fixture-state",
+      }),
     rotate: (next: ReturnType<typeof key>) => {
       verificationKey = next.publicJwk;
     },

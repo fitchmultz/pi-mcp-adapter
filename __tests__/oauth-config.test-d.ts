@@ -29,17 +29,17 @@ it("rejects bad CAA shapes and contradictory grants without disclosing or resolv
         return extractOAuthConfig({ oauth: config });
       },
       () =>
-        new McpOAuthProvider(
-          "bad",
-          "https://resource.example",
+        new McpOAuthProvider({
+          serverName: "bad",
+          serverUrl: "https://resource.example",
           // @ts-expect-error Untrusted OAuth values are rejected by the typed provider API.
           config,
-          {
+          callbacks: {
             onRedirect() {
               throw new Error("Invalid configuration must not redirect");
             },
           },
-        ),
+        }),
     ]) {
       let error: unknown;
       try {
@@ -56,7 +56,7 @@ it("rejects bad CAA shapes and contradictory grants without disclosing or resolv
   }
 });
 
-it("validates private-key configuration and identity conflicts at both public boundaries without disclosure", () => {
+it("validates private-key configuration and identity conflicts at extraction and provider boundaries without disclosure", () => {
   const valid = { privateKey: "PRIVATE_KEY_SENTINEL", algorithm: "ES256" };
   const invalid: unknown[] = [
     null,
@@ -92,17 +92,17 @@ it("validates private-key configuration and identity conflicts at both public bo
         return extractOAuthConfig({ oauth: config });
       },
       () =>
-        new McpOAuthProvider(
-          "validation",
-          "https://server.example/mcp",
+        new McpOAuthProvider({
+          serverName: "validation",
+          serverUrl: "https://server.example/mcp",
           // @ts-expect-error Untrusted OAuth values are rejected by the typed provider API.
           config,
-          {
+          callbacks: {
             onRedirect() {
               throw new Error("Invalid configuration must not redirect");
             },
           },
-        ),
+        }),
     ]) {
       let error: unknown;
       try {
@@ -147,17 +147,17 @@ it("validates document URLs at extraction and direct-provider boundaries without
     }).toThrow(/clientMetadataUrl/);
     expect(
       () =>
-        new McpOAuthProvider(
-          "validation",
-          "https://server.example/mcp",
+        new McpOAuthProvider({
+          serverName: "validation",
+          serverUrl: "https://server.example/mcp",
           // @ts-expect-error Unknown client metadata values are rejected by the typed provider API.
           config,
-          {
+          callbacks: {
             onRedirect() {
               throw new Error("Invalid client metadata must not redirect");
             },
           },
-        ),
+        }),
     ).toThrow(/clientMetadataUrl/);
   }
   process.env.CIMD_DOCUMENT_URL = "https://example.com/client.json?version=1";
@@ -174,16 +174,16 @@ it("validates document URLs at extraction and direct-provider boundaries without
   for (const build of [
     () => extractOAuthConfig({ oauth: { clientMetadataUrl: credentialUrl } }),
     () =>
-      new McpOAuthProvider(
-        "validation",
-        "https://server.example/mcp",
-        { clientMetadataUrl: credentialUrl },
-        {
+      new McpOAuthProvider({
+        serverName: "validation",
+        serverUrl: "https://server.example/mcp",
+        config: { clientMetadataUrl: credentialUrl },
+        callbacks: {
           onRedirect() {
             throw new Error("Invalid client metadata must not redirect");
           },
         },
-      ),
+      }),
   ]) {
     let message = "";
     try {

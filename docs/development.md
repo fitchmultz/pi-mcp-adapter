@@ -23,6 +23,7 @@ npm run lint:core-runtime
 npm run lint:config-runtime
 npm run lint:sampling
 npm run lint:output-runtime
+npm run lint:oauth-runtime
 npm run lint:credential-runtime
 npm run lint:auth-boundaries
 npm run lint:node-oauth
@@ -88,6 +89,8 @@ The runtime scope also includes manager reconnect, owner-shutdown and stderr tes
 
 The runtime scope includes the stock-dialog elicitation and real stdio SDK suites. A typed three-method dialog fixture preserves selection/input order and notification history. Complete native extension contexts and state back the direct/proxy tool, resource and UI-resource cases. QX-007 covers only the initialized capability accessor in each of the two enumerated legacy stdio fixtures.
 
+`lint:oauth-runtime` enforces the production profile for `mcp-auth-flow.ts`, `mcp-callback-server.ts`, the nine `mcp-oauth-{provider,runtime,config,discovery,request,response,start,registration,client-auth}.ts` owners, and `elicitation-{handler,form-dialog,form-values,form-schema}.ts`. OAuth configuration and registration mappings retain the canonical persisted-record schemas and native SDK provider methods. Internal provider construction uses named options; request challenge and issuer updates share a binding context. QX-023 preserves the four enumerated ordered cleanup aggregates without adding a cause. The source-only legacy runtime getter is internal, not a package export. Manager caller alignment does not qualify the manager's remaining strict-lint migration.
+
 `lint:credential-runtime` enforces the production profile for native keyring loading, credential-store diagnostics, Linux recovery dispatch, its standalone CommonJS helper and `mcp-auth.ts`. Native declarations type the lazy synchronous module loads. QX-013 preserves the primary loader failure, and QX-018 covers only the three enumerated native module assertions. QX-020 preserves the supplied auth entry's URL update. QX-021 types only the installed lazy Zod load, preserving cached startup without Zod. Structural validation retains the original JSON property order. Canonical schemas validate persisted records before use or plaintext migration, preserve extension fields and leave legacy redirect validation with the OAuth flow. Malformed known fields fail before secure writes or plaintext deletion. The same scope includes the payload store for hashed accounts, manifest validation, chunk reads/writes and cleanup. The storage suite retains real child-process recovery, platform diagnostics, chunking and plaintext migration checks.
 
 `lint:auth-boundaries` checks the real HTTP bearer-auth suite, the SDK OAuth compatibility suite and the isolated Android keyring probe. The first suite uses the native client and transport with received-header assertions. The OAuth suite retains PKCE, issuer, refresh, cancellation and no-replay checks. The Android probe blocks external access and uses the isolated implementation prepared by the storage suite. It tests loader diagnostics, not Android hardware.
@@ -100,7 +103,7 @@ The runtime scope includes the stock-dialog elicitation and real stdio SDK suite
 
 `lint:oauth-recovery` enforces the test profile for the real HTTP OAuth recovery suite and its native Pi and HTTP fixtures. The suite covers callback validation, scope recovery, cancellation, accepted-operation no-replay, and interactive and headless callers.
 
-`lint:oauth-flows` enforces the test profile for client-credentials, private-key JWT, cross-app authorization and client-metadata document suites, their shared HTTP and wire fixtures, and their standalone stdio and shutdown fixtures. The OAuth configuration suite runs as both executable runtime validation and a dedicated negative type test: the compiler verifies described invalid API arguments, and Vitest verifies their real rejection and redaction. All HTTP, PKCE, refresh, signing, cancellation, storage and source-laziness assertions remain active. Malformed stored client-metadata callbacks enter through raw legacy JSON in an isolated credential directory, not an unsafe typed API call.
+`lint:oauth-flows` enforces the test profile for the provider, client-credentials, private-key JWT, cross-app authorization and client-metadata document suites, their shared HTTP and wire fixtures, and their standalone stdio and shutdown fixtures. The OAuth configuration suite runs as both executable runtime validation and a dedicated negative type test: the compiler verifies described invalid API arguments, and Vitest verifies their real rejection and redaction. All HTTP, PKCE, refresh, signing, cancellation, storage and source-laziness assertions remain active. Malformed stored client-metadata callbacks enter through raw legacy JSON in an isolated credential directory, not an unsafe typed API call.
 
 The auth, runtime and panel scopes include the command authentication, status, onboarding and credential-storage suites. They use complete native Pi contexts and real panel components. They verify URL notifications, failure diagnostics, pending authorization cancellation and the disk writes that preserve inherited server definitions.
 
