@@ -1,4 +1,8 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  RegisteredCommand,
+} from "@earendil-works/pi-coding-agent";
 import type { GetPromptResult, PromptMessage } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type McpConfig, type PromptMetadata } from "./types.ts";
@@ -17,7 +21,7 @@ import { truncateAtWord } from "./utils.ts";
  */
 export function resolveCachedPrompts(config: McpConfig, cacheEnabled = true): PromptMetadata[] {
   const cache = loadMetadataCache(cacheEnabled);
-  if (!cache?.servers) {
+  if (!cache) {
     return [];
   }
 
@@ -29,7 +33,7 @@ export function resolveCachedPrompts(config: McpConfig, cacheEnabled = true): Pr
     if (!definition || isServerDisabled(definition)) {
       continue;
     }
-    if (!entry?.prompts?.length || !isServerCacheValid(entry, definition)) {
+    if (entry.prompts === undefined || !isServerCacheValid(entry, definition)) {
       continue;
     }
     specs.push(...reconstructPromptMetadata(serverName, entry.prompts, prefix, definition));
@@ -59,7 +63,7 @@ export function parsePromptArgs(input: string): {
     if (eq > 0) {
       const key = token.slice(0, eq).trim();
       const value = stripQuotes(token.slice(eq + 1).trim());
-      if (key) {
+      if (key !== "") {
         named[key] = value;
         continue;
       }
@@ -86,39 +90,45 @@ function tokenizeArgs(input: string): string[] {
       escaped = true;
       continue;
     }
-    if (quote) {
+    if (quote !== null) {
       current += char;
       if (char === quote) {
         quote = null;
       }
       continue;
     }
-    if (char === '"' || char === "'") {
+    if (isQuote(char)) {
       quote = char;
       current += char;
       continue;
     }
     if (/\s/.test(char)) {
-      if (current.length > 0) {
-        tokens.push(current);
-        current = "";
-      }
+      appendToken(tokens, current);
+      current = "";
       continue;
     }
     current += char;
   }
 
-  if (current.length > 0) {
-    tokens.push(current);
-  }
+  appendToken(tokens, current);
   return tokens;
+}
+
+function appendToken(tokens: string[], token: string): void {
+  if (token.length > 0) {
+    tokens.push(token);
+  }
+}
+
+function isQuote(value: string): value is "'" | '"' {
+  return value === "'" || value === '"';
 }
 
 function findUnquotedEquals(token: string): number {
   let quote: '"' | "'" | null = null;
   for (let i = 0; i < token.length; i++) {
     const ch = token[i];
-    if (quote) {
+    if (quote !== null) {
       if (ch === quote) {
         quote = null;
       }
@@ -183,7 +193,7 @@ export function resolvePromptArgs(
   }
 
   const missing = declared.filter(
-    (a) => a.required && (args[a.name] === undefined || args[a.name] === ""),
+    (a) => a.required === true && (args[a.name] === undefined || args[a.name] === ""),
   );
   if (missing.length > 0) {
     return { ok: false, error: buildUsageMessage(metadata, missing) };
@@ -194,7 +204,7 @@ export function resolvePromptArgs(
 
 function buildUsageMessage(metadata: PromptMetadata, missing: PromptMetadata["arguments"]): string {
   const usage = metadata.arguments
-    .map((a) => (a.required ? `<${a.name}>` : `[${a.name}]`))
+    .map((a) => (a.required === true ? `<${a.name}>` : `[${a.name}]`))
     .join(" ");
   const missingList = missing.map((a) => a.name).join(", ");
   return `Missing required argument${missing.length > 1 ? "s" : ""}: ${missingList}.\nUsage: /${metadata.commandName} ${usage}`.trim();
@@ -211,7 +221,7 @@ export function formatPromptResult(result: GetPromptResult): string {
   const lines: string[] = [];
   for (const message of result.messages) {
     const text = extractMessageText(message);
-    if (!text) {
+    if (text === "") {
       continue;
     }
     if (message.role === "user" && result.messages.length === 1) {
@@ -225,28 +235,22 @@ export function formatPromptResult(result: GetPromptResult): string {
 
 function extractMessageText(message: PromptMessage): string {
   const content = message.content;
-  if (!content || typeof content !== "object") {
-    return "";
-  }
   switch (content.type) {
     case "text":
-      return content.text ?? "";
+      return content.text;
     case "resource": {
       const resource = content.resource;
-      if (!resource) {
-        return "";
-      }
       if ("text" in resource && typeof resource.text === "string") {
         return `[resource ${resource.uri}]\n${resource.text}`;
       }
       return `[resource ${resource.uri}]`;
     }
     case "resource_link":
-      return `[resource_link ${content.uri ?? ""}${content.name ? ` — ${content.name}` : ""}]`;
+      return `[resource_link ${content.uri}${content.name !== "" ? ` — ${content.name}` : ""}]`;
     case "image":
-      return `[image ${content.mimeType ?? "unknown"}${content.data ? " (embedded)" : ""}]`;
+      return `[image ${content.mimeType}${content.data !== "" ? " (embedded)" : ""}]`;
     case "audio":
-      return `[audio ${content.mimeType ?? "unknown"}]`;
+      return `[audio ${content.mimeType}]`;
     default:
       return "";
   }
@@ -261,110 +265,129 @@ export function createPromptCommand(
   pi: ExtensionAPI,
   getState: () => McpExtensionState | null,
   metadata: PromptMetadata,
-) {
-  const description = buildCommandDescription(metadata);
-
+): Pick<RegisteredCommand, "handler"> & { description: string } {
   return {
-    description,
-    handler: async (args: string, ctx: ExtensionCommandContext) => {
+    description: buildCommandDescription(metadata),
+    handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
       const state = getState();
       if (!state) {
-        if (ctx.hasUI) {
-          ctx.ui.notify("MCP not initialized", "error");
-        }
+        notifyPromptError(ctx, "MCP not initialized");
         return;
       }
-
-      const liveMetadata = findLivePromptMetadata(
-        state,
-        metadata.serverName,
-        metadata.originalName,
-      );
-      if (state.promptMetadataLive?.has(metadata.serverName) && !liveMetadata) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(
-            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp reconnect to refresh.`,
-            "error",
-          );
-        }
+      const prepared = preparePromptArguments(state, metadata, args, ctx);
+      if (!prepared) {
         return;
       }
-      const live = liveMetadata ?? metadata;
-      const parsed = parsePromptArgs(args ?? "");
-      const resolved = resolvePromptArgs(live, parsed);
-      if (!resolved.ok) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(resolved.error ?? "Invalid prompt arguments", "error");
-        }
-        return;
-      }
-      const promptArgs = resolved.args ?? {};
-
-      if (!state.config.mcpServers[metadata.serverName]) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(
-            `MCP prompt "${live.originalName}" is no longer configured. Run /mcp reconnect to refresh.`,
-            "error",
-          );
-        }
-        return;
-      }
-
       const { lazyConnect } = await import("./init.ts");
       const connected = await lazyConnect(state, metadata.serverName, ctx.signal);
       if (!connected) {
-        if (ctx.hasUI) {
-          const conn = state.manager.getConnection(metadata.serverName);
-          const message =
-            conn?.status === "needs-auth"
-              ? `MCP server "${metadata.serverName}" needs authentication. Run /mcp-auth ${metadata.serverName}.`
-              : `MCP server "${metadata.serverName}" is not available. Run /mcp reconnect ${metadata.serverName}.`;
-          ctx.ui.notify(message, "error");
-        }
+        notifyUnavailablePrompt(state, metadata.serverName, ctx);
         return;
       }
-
-      const refreshed = findLivePromptMetadata(state, metadata.serverName, metadata.originalName);
-      if (state.promptMetadataLive?.has(metadata.serverName) && !refreshed) {
+      const refreshed = advertisedPrompt(state, prepared.live, ctx);
+      if (!refreshed) {
+        return;
+      }
+      const result = await fetchPrompt(state, refreshed, prepared.args, ctx);
+      if (!result) {
+        return;
+      }
+      const text = formatPromptResult(result);
+      if (text === "") {
         if (ctx.hasUI) {
           ctx.ui.notify(
-            `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp reconnect to refresh.`,
-            "error",
+            `MCP prompt "${prepared.live.originalName}" returned no text content.`,
+            "warning",
           );
         }
         return;
       }
-      const dispatchMetadata = refreshed ?? live;
-      let result: GetPromptResult;
-      try {
-        result = await state.manager.getPrompt(
-          metadata.serverName,
-          dispatchMetadata.originalName,
-          Object.keys(promptArgs).length > 0 ? promptArgs : undefined,
-          ctx.signal,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.debug(
-          `MCP prompt "${live.originalName}" on ${metadata.serverName} failed: ${message}`,
-        );
-        if (ctx.hasUI) {
-          ctx.ui.notify(`MCP prompt "${live.originalName}" failed: ${message}`, "error");
-        }
-        return;
-      }
-
-      const text = formatPromptResult(result);
-      if (!text) {
-        if (ctx.hasUI) {
-          ctx.ui.notify(`MCP prompt "${live.originalName}" returned no text content.`, "warning");
-        }
-        return;
-      }
-
       pi.sendUserMessage(text);
     },
   };
+}
+
+function notifyPromptError(ctx: ExtensionCommandContext, message: string): void {
+  if (ctx.hasUI) {
+    ctx.ui.notify(message, "error");
+  }
+}
+
+function advertisedPrompt(
+  state: McpExtensionState,
+  metadata: PromptMetadata,
+  ctx: ExtensionCommandContext,
+): PromptMetadata | undefined {
+  const live = findLivePromptMetadata(state, metadata.serverName, metadata.originalName);
+  if (state.promptMetadataLive.has(metadata.serverName) && !live) {
+    notifyPromptError(
+      ctx,
+      `MCP prompt "${metadata.originalName}" is no longer advertised by server "${metadata.serverName}". Run /mcp reconnect to refresh.`,
+    );
+    return undefined;
+  }
+  return live ?? metadata;
+}
+
+function preparePromptArguments(
+  state: McpExtensionState,
+  metadata: PromptMetadata,
+  args: string,
+  ctx: ExtensionCommandContext,
+): { live: PromptMetadata; args: Record<string, string> } | undefined {
+  const live = advertisedPrompt(state, metadata, ctx);
+  if (!live) {
+    return undefined;
+  }
+  const resolved = resolvePromptArgs(live, parsePromptArgs(args));
+  if (!resolved.ok) {
+    notifyPromptError(ctx, resolved.error ?? "Invalid prompt arguments");
+    return undefined;
+  }
+  if (!state.config.mcpServers[metadata.serverName]) {
+    notifyPromptError(
+      ctx,
+      `MCP prompt "${live.originalName}" is no longer configured. Run /mcp reconnect to refresh.`,
+    );
+    return undefined;
+  }
+  return { live, args: resolved.args ?? {} };
+}
+
+function notifyUnavailablePrompt(
+  state: McpExtensionState,
+  serverName: string,
+  ctx: ExtensionCommandContext,
+): void {
+  const conn = state.manager.getConnection(serverName);
+  const message =
+    conn?.status === "needs-auth"
+      ? `MCP server "${serverName}" needs authentication. Run /mcp-auth ${serverName}.`
+      : `MCP server "${serverName}" is not available. Run /mcp reconnect ${serverName}.`;
+  notifyPromptError(ctx, message);
+}
+
+async function fetchPrompt(
+  state: McpExtensionState,
+  metadata: PromptMetadata,
+  args: Record<string, string>,
+  ctx: ExtensionCommandContext,
+): Promise<GetPromptResult | undefined> {
+  try {
+    return await state.manager.getPrompt(
+      metadata.serverName,
+      metadata.originalName,
+      Object.keys(args).length > 0 ? args : undefined,
+      ctx.signal,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.debug(
+      `MCP prompt "${metadata.originalName}" on ${metadata.serverName} failed: ${message}`,
+    );
+    notifyPromptError(ctx, `MCP prompt "${metadata.originalName}" failed: ${message}`);
+    return undefined;
+  }
 }
 
 function findLivePromptMetadata(
@@ -372,10 +395,15 @@ function findLivePromptMetadata(
   serverName: string,
   originalName: string,
 ): PromptMetadata | undefined {
-  return state.promptMetadata?.get(serverName)?.find((p) => p.originalName === originalName);
+  return state.promptMetadata.get(serverName)?.find((p) => p.originalName === originalName);
 }
 
 function buildCommandDescription(metadata: PromptMetadata): string {
-  const base = metadata.description || metadata.title || `MCP prompt from ${metadata.serverName}`;
-  return truncateAtWord(`MCP: ${base}`, 120) || `MCP prompt from ${metadata.serverName}`;
+  const fallback = `MCP prompt from ${metadata.serverName}`;
+  const base = metadata.description !== "" ? metadata.description : metadata.title;
+  const description = truncateAtWord(
+    `MCP: ${base === undefined || base === "" ? fallback : base}`,
+    120,
+  );
+  return description !== "" ? description : fallback;
 }

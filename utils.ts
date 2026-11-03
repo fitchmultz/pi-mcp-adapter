@@ -4,16 +4,20 @@ import { readFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import type { McpConfig, ServerEntry } from "./types.ts";
+import { asObjectRecord } from "./mcp-output-values.ts";
 
 function readAdapterVersion(): string {
   // Source modules sit beside package.json; compiled modules sit one level down in dist/.
   for (const path of ["./package.json", "../package.json"]) {
     try {
-      const manifest = JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8"));
-      if (manifest.name === "@fitchmultz/pi-mcp-adapter" && typeof manifest.version === "string") {
+      const raw: unknown = JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8"));
+      const manifest = asObjectRecord(raw);
+      if (manifest?.name === "@fitchmultz/pi-mcp-adapter" && typeof manifest.version === "string") {
         return manifest.version;
       }
-    } catch {}
+    } catch {
+      // Continue from source to the compiled-layout manifest, then use the fallback version.
+    }
   }
   return "0.0.0";
 }
@@ -30,21 +34,20 @@ export function normalizeRequestTimeoutMs(timeoutMs: number | undefined): number
 }
 
 async function execOpen(pi: ExtensionAPI, target: string, browser?: string, signal?: AbortSignal) {
+  const options = signal ? { signal } : {};
+  const hasBrowser = browser !== undefined && browser !== "";
   const os = platform();
-
   if (os === "darwin") {
-    return browser
-      ? pi.exec("open", ["-a", browser, target], signal ? { signal } : {})
-      : pi.exec("open", [target], signal ? { signal } : {});
+    return pi.exec("open", hasBrowser ? ["-a", browser, target] : [target], options);
   }
   if (os === "win32") {
-    return browser
-      ? pi.exec("cmd", ["/c", "start", "", browser, target], signal ? { signal } : {})
-      : pi.exec("cmd", ["/c", "start", "", target], signal ? { signal } : {});
+    return pi.exec(
+      "cmd",
+      hasBrowser ? ["/c", "start", "", browser, target] : ["/c", "start", "", target],
+      options,
+    );
   }
-  return browser
-    ? pi.exec(browser, [target], signal ? { signal } : {})
-    : pi.exec("xdg-open", [target], signal ? { signal } : {});
+  return pi.exec(hasBrowser ? browser : "xdg-open", [target], options);
 }
 
 export async function openUrl(
@@ -55,14 +58,18 @@ export async function openUrl(
 ): Promise<void> {
   const result = await execOpen(pi, url, browser, signal);
   if (result.code !== 0) {
-    throw new Error(result.stderr || `Failed to open browser (exit code ${result.code})`);
+    throw new Error(
+      result.stderr !== "" ? result.stderr : `Failed to open browser (exit code ${result.code})`,
+    );
   }
 }
 
 export async function openPath(pi: ExtensionAPI, targetPath: string): Promise<void> {
   const result = await execOpen(pi, targetPath);
   if (result.code !== 0) {
-    throw new Error(result.stderr || `Failed to open path (exit code ${result.code})`);
+    throw new Error(
+      result.stderr !== "" ? result.stderr : `Failed to open path (exit code ${result.code})`,
+    );
   }
 }
 
@@ -77,7 +84,7 @@ export async function parallelLimit<T, R>(
   async function worker() {
     while (true) {
       const next = iterator.next();
-      if (next.done) {
+      if (next.done === true) {
         return;
       }
       const [index, item] = next.value;
@@ -94,16 +101,16 @@ export async function parallelLimit<T, R>(
 
 export function interpolateEnvVars(value: string): string {
   return value
-    .replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "")
-    .replace(/\$env:(\w+)/g, (_, name) => process.env[name] ?? "")
-    .replace(/\{env:(\w+)\}/g, (_, name) => process.env[name] ?? "");
+    .replace(/\$\{(\w+)\}/g, (_match: string, name: string) => process.env[name] ?? "")
+    .replace(/\$env:(\w+)/g, (_match: string, name: string) => process.env[name] ?? "")
+    .replace(/\{env:(\w+)\}/g, (_match: string, name: string) => process.env[name] ?? "");
 }
 
 function getMissingEnvVars(value: string): string[] {
   const missing = new Set<string>();
   for (const match of value.matchAll(/\$\{(\w+)\}|\$env:(\w+)|\{env:(\w+)\}/g)) {
     const name = match[1] ?? match[2] ?? match[3];
-    if (name && process.env[name] === undefined) {
+    if (name !== undefined && name !== "" && process.env[name] === undefined) {
       missing.add(name);
     }
   }
@@ -111,7 +118,7 @@ function getMissingEnvVars(value: string): string[] {
 }
 
 export function toStringRecord(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
 
@@ -181,13 +188,7 @@ export function resolveCommandSecret(
     throw new Error(`Failed to resolve ${context}: command failed to start`);
   }
   if (result.error) {
-    const code = (result.error as NodeJS.ErrnoException).code;
-    const reason =
-      code === "ETIMEDOUT"
-        ? "command timed out after 10 seconds"
-        : code === "ENOBUFS"
-          ? "command output exceeded 1 MiB"
-          : "command failed to start";
+    const reason = commandFailureReason(result.error);
     throw new Error(`Failed to resolve ${context}: ${reason}`);
   }
   if (result.status !== 0) {
@@ -197,7 +198,7 @@ export function resolveCommandSecret(
   }
 
   const resolved = result.stdout.trim();
-  if (!resolved) {
+  if (resolved === "") {
     throw new Error(`Failed to resolve ${context}: command returned empty output`);
   }
   return resolved;
@@ -218,21 +219,22 @@ export function resolveCommandSecretsRecord(
 }
 
 export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string | undefined {
-  if (definition.url == null) {
+  const configuredUrl: unknown = definition.url;
+  if (configuredUrl === null || configuredUrl === undefined) {
     return undefined;
   }
-  if (typeof definition.url !== "string") {
+  if (typeof configuredUrl !== "string") {
     throw new Error("MCP server URL must be a string");
   }
 
-  const missing = getMissingEnvVars(definition.url);
+  const missing = getMissingEnvVars(configuredUrl);
   if (missing.length > 0) {
     throw new Error(
       `Missing environment variable${missing.length === 1 ? "" : "s"} in MCP server URL: ${missing.join(", ")}`,
     );
   }
 
-  const resolved = interpolateEnvVars(definition.url);
+  const resolved = interpolateEnvVars(configuredUrl);
   try {
     new URL(resolved);
   } catch (error) {
@@ -264,7 +266,9 @@ export function resolveBearerToken(
   if (definition.bearerToken !== undefined) {
     return interpolateSecretExpression(definition.bearerToken);
   }
-  return definition.bearerTokenEnv ? process.env[definition.bearerTokenEnv] : undefined;
+  return definition.bearerTokenEnv !== undefined && definition.bearerTokenEnv !== ""
+    ? process.env[definition.bearerTokenEnv]
+    : undefined;
 }
 
 /** Remove OSC control strings, including payloads that have no terminator. */
@@ -275,23 +279,41 @@ export function stripOscSequences(text: string): string {
     const isEscOsc = text.charCodeAt(index) === 0x1b && text[index + 1] === "]";
     const isC1Osc = text.charCodeAt(index) === 0x9d;
     if (!isEscOsc && !isC1Osc) {
-      result += text[index++];
+      result += text.charAt(index++);
       continue;
     }
 
     index += isEscOsc ? 2 : 1;
-    while (index < text.length) {
-      const code = text.charCodeAt(index++);
-      if (code === 0x07 || code === 0x9c) {
-        break;
-      }
-      if (code === 0x1b && text[index] === "\\") {
-        index++;
-        break;
-      }
-    }
+    index = oscEnd(text, index);
   }
   return result;
+}
+
+function oscEnd(text: string, start: number): number {
+  let index = start;
+  while (index < text.length) {
+    const code = text.charCodeAt(index++);
+    if (code === 0x07 || code === 0x9c) {
+      break;
+    }
+    if (code === 0x1b && text[index] === "\\") {
+      index++;
+      break;
+    }
+  }
+  return index;
+}
+
+function commandFailureReason(error: Error): string {
+  const code = "code" in error ? error.code : undefined;
+  switch (code) {
+    case "ETIMEDOUT":
+      return "command timed out after 10 seconds";
+    case "ENOBUFS":
+      return "command output exceeded 1 MiB";
+    default:
+      return "command failed to start";
+  }
 }
 
 export function sanitizeTerminalText(text: string): string {
@@ -314,20 +336,11 @@ export function formatTerminalError(error: unknown): string {
     }
 
     if (value instanceof AggregateError) {
-      const countBefore = messages.length;
-      for (const nested of value.errors) {
-        collect(nested);
-      }
-      if (value.cause !== undefined) {
-        collect(value.cause);
-      }
-      if (messages.length === countBefore && value.message) {
-        messages.push(value.message);
-      }
+      collectAggregateMessages(value, collect, messages);
       return;
     }
     if (value instanceof Error) {
-      if (value.message) {
+      if (value.message !== "") {
         messages.push(value.message);
       }
       if (value.cause !== undefined) {
@@ -342,8 +355,25 @@ export function formatTerminalError(error: unknown): string {
   return sanitizeTerminalText([...new Set(messages)].join(": "));
 }
 
+function collectAggregateMessages(
+  value: AggregateError,
+  collect: (value: unknown) => void,
+  messages: string[],
+): void {
+  const countBefore = messages.length;
+  for (const nested of value.errors) {
+    collect(nested);
+  }
+  if (value.cause !== undefined) {
+    collect(value.cause);
+  }
+  if (messages.length === countBefore && value.message !== "") {
+    messages.push(value.message);
+  }
+}
+
 export function truncateAtWord(text: string, target: number): string {
-  if (!text || text.length <= target) {
+  if (text.length <= target) {
     return text;
   }
 
@@ -358,8 +388,9 @@ export function truncateAtWord(text: string, target: number): string {
 }
 
 export function normalizeDirectToolInputSchema(schema: unknown): Record<string, unknown> {
-  return schema && typeof schema === "object" && !Array.isArray(schema)
-    ? (structuredClone(schema) as Record<string, unknown>)
+  const record = asObjectRecord(schema);
+  return record !== undefined && !Array.isArray(schema)
+    ? structuredClone(record)
     : { type: "object", properties: {} };
 }
 
@@ -369,7 +400,9 @@ export function formatAuthRequiredMessage(
   defaultMessage: string,
 ): string {
   const template = config.settings?.authRequiredMessage;
-  return template ? template.replaceAll("${server}", serverName) : defaultMessage;
+  return template !== undefined && template !== ""
+    ? template.replaceAll("${server}", serverName)
+    : defaultMessage;
 }
 
 export function formatMcpStatus(
@@ -389,10 +422,11 @@ export function extractToolUiStreamMode(
   toolMeta: Record<string, unknown> | undefined,
 ): "eager" | "stream-first" | undefined {
   const uiMeta = toolMeta?.ui;
-  if (!uiMeta || typeof uiMeta !== "object") {
+  const record = asObjectRecord(uiMeta);
+  if (!record) {
     return undefined;
   }
-  const streamMode = (uiMeta as Record<string, unknown>)["pi-mcp-adapter.streamMode"];
+  const streamMode = record["pi-mcp-adapter.streamMode"];
   if (streamMode === "eager" || streamMode === "stream-first") {
     return streamMode;
   }
