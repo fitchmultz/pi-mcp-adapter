@@ -118,3 +118,82 @@ it("validates private-key configuration and identity conflicts at both public bo
     }
   }
 });
+
+it("validates document URLs at extraction and direct-provider boundaries without leaking userinfo", () => {
+  const invalid: unknown[] = [
+    true,
+    null,
+    12,
+    "",
+    "https://example.com/",
+    "http://example.com/client.json",
+    "/client.json",
+    "https://user:secret@example.com/client.json",
+    "https://@example.com/client.json",
+    "https://example.com/client.json#",
+    "https://example.com/client.json#fragment",
+    "https://example.com/a/../client.json",
+    "https://example.com/./client.json",
+    "https://example.com/%2e/client.json",
+    "https://example.com/a/.%2E/client.json",
+    "https://example.com/a/%2e%2e/client.json",
+    "https://example.com/a\\..\\client.json",
+  ];
+  for (const clientMetadataUrl of invalid) {
+    const config = { clientMetadataUrl };
+    expect(() => {
+      // @ts-expect-error Unknown client metadata values are rejected by the typed extraction API.
+      return extractOAuthConfig({ oauth: config });
+    }).toThrow(/clientMetadataUrl/);
+    expect(
+      () =>
+        new McpOAuthProvider(
+          "validation",
+          "https://server.example/mcp",
+          // @ts-expect-error Unknown client metadata values are rejected by the typed provider API.
+          config,
+          {
+            onRedirect() {
+              throw new Error("Invalid client metadata must not redirect");
+            },
+          },
+        ),
+    ).toThrow(/clientMetadataUrl/);
+  }
+  process.env.CIMD_DOCUMENT_URL = "https://example.com/client.json?version=1";
+  try {
+    expect(
+      extractOAuthConfig({ oauth: { clientMetadataUrl: "${CIMD_DOCUMENT_URL}" } })
+        .clientMetadataUrl,
+    ).toBe(process.env.CIMD_DOCUMENT_URL);
+  } finally {
+    delete process.env.CIMD_DOCUMENT_URL;
+  }
+  expect(extractOAuthConfig({ oauth: { clientMetadataUrl: false } }).clientMetadataUrl).toBe(false);
+  const credentialUrl = "https://alice:USERINFO_SECRET_SENTINEL@example.com/client.json";
+  for (const build of [
+    () => extractOAuthConfig({ oauth: { clientMetadataUrl: credentialUrl } }),
+    () =>
+      new McpOAuthProvider(
+        "validation",
+        "https://server.example/mcp",
+        { clientMetadataUrl: credentialUrl },
+        {
+          onRedirect() {
+            throw new Error("Invalid client metadata must not redirect");
+          },
+        },
+      ),
+  ]) {
+    let message = "";
+    try {
+      build();
+    } catch (error) {
+      message = String(error);
+    }
+    expect(message).toContain("OAuth clientMetadataUrl must be an HTTPS URL");
+    expect(message).not.toContain("alice");
+    expect(message).not.toContain("USERINFO_SECRET_SENTINEL");
+    expect(message).not.toContain("example.com");
+  }
+});

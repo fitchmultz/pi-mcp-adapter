@@ -48,7 +48,7 @@
     "lint:sdk-http": "oxlint --deny-warnings __tests__/sdk-v2-http.test.ts __tests__/fixtures/native-capture-extension.ts",
     "lint:lifecycle-tests": "oxlint --deny-warnings __tests__/index-lifecycle.test.ts __tests__/fixtures/extension-lifecycle.ts __tests__/test-extension-context.ts",
     "lint:oauth-recovery": "oxlint --deny-warnings __tests__/oauth-recovery-integration.test.ts __tests__/fixtures/oauth-recovery-http.ts __tests__/fixtures/oauth-recovery.ts __tests__/fixtures/panel-host.ts",
-    "lint:oauth-flows": "oxlint --deny-warnings __tests__/mcp-auth-flow-client-credentials.test.ts __tests__/oauth-cross-app.test.ts __tests__/oauth-private-key-jwt.test.ts __tests__/oauth-config.test-d.ts __tests__/fixtures/oauth-machine-wire.ts __tests__/fixtures/oauth-cross-app-stdio.ts __tests__/fixtures/oauth-cross-app-shutdown.ts",
+    "lint:oauth-flows": "oxlint --deny-warnings __tests__/mcp-auth-flow-client-credentials.test.ts __tests__/oauth-cross-app.test.ts __tests__/oauth-private-key-jwt.test.ts __tests__/oauth-config.test-d.ts __tests__/fixtures/oauth-machine-wire.ts __tests__/fixtures/oauth-cross-app-stdio.ts __tests__/fixtures/oauth-cross-app-shutdown.ts __tests__/oauth-cimd.test.ts __tests__/fixtures/oauth-cimd.ts",
     "lint:auth-tests": "oxlint --deny-warnings __tests__/auth",
     "lint:discovery-tests": "oxlint --deny-warnings __tests__/discovery __tests__/fixtures/pinned-tools.ts",
     "lint:state-tests": "oxlint --deny-warnings __tests__/state",
