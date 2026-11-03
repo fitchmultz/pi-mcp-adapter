@@ -1,0 +1,73 @@
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { openMcpAuthPanel, openMcpPanel } from "../../commands.ts";
+import { createPanelHost } from "../fixtures/panel-host.ts";
+import { requireValue } from "../fixtures/extension-lifecycle.ts";
+import { createTestState } from "../test-state.ts";
+
+const hosts: Awaited<ReturnType<typeof createPanelHost>>[] = [];
+beforeAll(() => initTheme());
+afterEach(async () => {
+  for (const host of hosts.splice(0)) {
+    await host.dispose();
+  }
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+function stripAnsi(input: string): string {
+  return input.replace(/\x1b\[[0-9;]*m/gu, "");
+}
+
+function createState() {
+  return createTestState({
+    programmaticConfig: false,
+    config: { mcpServers: { oauth: { url: "https://example.test/mcp", auth: "oauth" } } },
+  });
+}
+
+const panels = [
+  ["/mcp", openMcpPanel],
+  ["/mcp-auth", (state, _pi, context) => openMcpAuthPanel(state, context)],
+] satisfies [string, typeof openMcpPanel][];
+
+describe("MCP panels with unavailable OAuth credential storage", () => {
+  it.each(panels)(
+    "does not inspect browser credentials for CAA status in %s",
+    async (_command, openPanel) => {
+      vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "unavailable");
+      const state = createState();
+      const oauth = requireValue(state.config.mcpServers.oauth);
+      oauth.oauth = {
+        crossAppAccess: { idpUrl: "https://idp.example", clientId: "idp", idToken: "!exit 99" },
+      };
+      const host = await createPanelHost();
+      hosts.push(host);
+      const opening = openPanel(state, host.api, { ...host.context, cwd: "/tmp" });
+      await expect.poll(host.component).toBeDefined();
+      const rendered = stripAnsi(requireValue(host.component()).render(100).join("\n"));
+      host.input("\x03");
+      await expect(opening).resolves.toEqual({ configChanged: false });
+      expect(rendered).not.toContain("needs auth");
+      expect(rendered).not.toContain("OAuth credential store unavailable");
+      expect(rendered).not.toContain("failed");
+    },
+  );
+
+  it.each(panels)(
+    "opens %s without throwing and presents the failure reason",
+    async (_command, openPanel) => {
+      vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "unavailable");
+      const host = await createPanelHost();
+      hosts.push(host);
+      const opening = openPanel(createState(), host.api, { ...host.context, cwd: "/tmp" });
+      await expect.poll(host.component).toBeDefined();
+      const rendered = stripAnsi(requireValue(host.component()).render(100).join("\n"));
+      host.input("\x03");
+      await expect(opening).resolves.toEqual({ configChanged: false });
+      expect(rendered).toContain("failed");
+      expect(rendered).not.toContain("needs auth");
+      expect(rendered).toContain("OAuth credential store unavailable");
+    },
+  );
+});
