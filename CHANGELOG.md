@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 
 - Enforce strict lint on HTTP callback lifetimes by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/163
+- Enforce strict lint on native command panels by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/165
 
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.11...v8.0.12
 
