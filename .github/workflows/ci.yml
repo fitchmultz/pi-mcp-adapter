@@ -24,13 +24,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PI_AUTOMATION_REF: 7e9290a015cdff291bc447b9f5dac6c6d1cf51a0 # main
+  PI_AUTOMATION_REF: 98d15dcb7bd607a43ef874464306e7c2f7ce3ff8 # main
 
 jobs:
   resolve:
-    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@7e9290a015cdff291bc447b9f5dac6c6d1cf51a0 # main
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@98d15dcb7bd607a43ef874464306e7c2f7ce3ff8 # main
     with:
-      automation-ref: 7e9290a015cdff291bc447b9f5dac6c6d1cf51a0 # main
+      automation-ref: 98d15dcb7bd607a43ef874464306e7c2f7ce3ff8 # main
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
@@ -175,14 +175,8 @@ jobs:
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          node --input-type=module <<'NODE'
-          import { prepareHost, selectDevelopmentHost } from '../automation/scripts/hosts.mjs';
-          import { writeJson } from '../automation/scripts/common.mjs';
-          const host = await prepareHost(`${process.env.RUNNER_TEMP}/extras-host`, 'official', process.env.OFFICIAL_VERSION, process.env);
-          const selected = selectDevelopmentHost(process.cwd(), host, process.env);
-          writeJson(`${process.env.RUNNER_TEMP}/extras-host/host.json`, { provenance: host.provenance, ...selected });
-          console.log(JSON.stringify(selected));
-          NODE
+          node ../automation/scripts/select-development-host.mjs \
+            --source "$PWD" --directory "$RUNNER_TEMP/extras-host" --version "$OFFICIAL_VERSION"
       - name: Install interactive visualizer
         id: example-install
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
