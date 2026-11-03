@@ -21,6 +21,7 @@ npm run lint:tracing
 npm run lint:sdk-http
 npm run lint:lifecycle-tests
 npm run lint:oauth-recovery
+npm run lint:oauth-flows
 npm run lint:auth-tests
 npm run lint:discovery-tests
 npm run lint:state-tests
@@ -47,7 +48,9 @@ Strict lint is enforced for `conformance/`, the prompt tests and their shared fi
 
 `lint:oauth-recovery` enforces the test profile for the real HTTP OAuth recovery suite and its native Pi and HTTP fixtures. The suite covers callback validation, scope recovery, cancellation, accepted-operation no-replay, and interactive and headless callers.
 
-`check:directives` accepts only the operation-bound lint exceptions in `quality-exceptions.json`, documented in [quality exceptions](quality-exceptions.md). It rejects copied, replaced, duplicated, stale and incorrectly attached directives. The packed-consumer type fixture is the only approved negative type test; its `@ts-expect-error` comments require a description. Other TypeScript error suppressions, file-wide and range disables remain prohibited.
+`lint:oauth-flows` enforces the test profile for client-credentials, private-key JWT and cross-app authorization suites, their shared wire fixture, and their standalone stdio and shutdown fixtures. The OAuth configuration suite runs as both executable runtime validation and a dedicated negative type test: the compiler verifies described invalid API arguments, and Vitest verifies their real rejection and redaction. All HTTP, signing, cancellation, storage and source-laziness assertions remain active.
+
+`check:directives` accepts only the operation-bound lint exceptions in `quality-exceptions.json`, documented in [quality exceptions](quality-exceptions.md). It rejects copied, replaced, duplicated, stale and incorrectly attached directives. The packed-consumer type fixture and executable OAuth configuration suite are approved negative type tests. Their `@ts-expect-error` comments require a description. Other TypeScript error suppressions, file-wide and range disables remain prohibited.
 
 `check:policy` compares the root lint and formatter configurations with the adopted standard and declared profiles, rejects nested quality configs, and checks resolved compiler settings and membership for maintained source and handwritten declarations. It does not yet verify all source classifications or acceptance wiring.
 

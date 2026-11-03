@@ -7,7 +7,7 @@ export default defineConfig({
     env: {
       PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory",
     },
-    include: ["__tests__/**/*.test.ts"],
+    include: ["__tests__/**/*.test.ts", "__tests__/**/*.test-d.ts"],
     coverage: {
       provider: "v8",
       include: ["*.ts"],

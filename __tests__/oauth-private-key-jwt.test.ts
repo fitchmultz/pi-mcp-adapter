@@ -1,12 +1,7 @@
-import { createServer, type Server } from "node:http";
-import {
-  constants,
-  createHash,
-  createPublicKey,
-  generateKeyPairSync,
-  verify,
-  type JsonWebKey,
-} from "node:crypto";
+import assert from "node:assert/strict";
+import type { ServerResponse } from "node:http";
+import { z } from "zod";
+import { constants, createHash, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
@@ -37,8 +32,21 @@ import { getOAuthCallbackPort, McpOAuthProvider } from "../mcp-oauth-provider.ts
 import { McpServerManager } from "../server-manager.ts";
 import sharedDocument from "../docs/client-metadata.json" with { type: "json" };
 import type { OAuthConfig, ServerEntry } from "../types.ts";
+import {
+  clientCapabilities,
+  decodeJwt,
+  machineDocumentSchema,
+  machineMessageSchema,
+  machineResult,
+  MachineHttpServer,
+  machineJson,
+  privateKeyClaimsSchema,
+  readMachineBody,
+  requiredFormValue,
+  type MachineMessage,
+} from "./fixtures/oauth-machine-wire.ts";
 
-const browser = vi.hoisted(() => ({ open: vi.fn() }));
+const browser = vi.hoisted(() => ({ open: vi.fn<() => void>() }));
 vi.mock("open", () => ({ default: browser.open }));
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -48,24 +56,15 @@ afterEach(async () => {
   cleanups.length = 0;
   browser.open.mockReset();
 });
-async function listen(server: Server) {
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Fixture did not bind");
-  }
-  return address.port;
-}
-async function close(server: Server) {
-  server.closeAllConnections();
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-}
 function key(algorithm = "ES256") {
-  const pair = algorithm.startsWith("Ed")
-    ? generateKeyPairSync("ed25519")
-    : algorithm.startsWith("ES")
-      ? generateKeyPairSync("ec", { namedCurve: "P-256" })
-      : generateKeyPairSync("rsa", { modulusLength: 2048 });
+  let pair: ReturnType<typeof generateKeyPairSync>;
+  if (algorithm.startsWith("Ed")) {
+    pair = generateKeyPairSync("ed25519");
+  } else if (algorithm.startsWith("ES")) {
+    pair = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  } else {
+    pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  }
   return {
     pem: pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
     jwk: pair.privateKey.export({ format: "jwk" }),
@@ -79,16 +78,11 @@ function scratch() {
   return dir;
 }
 
-type Claims = {
-  iss: string;
-  sub: string;
-  aud: string;
-  iat: number;
-  exp: number;
-  jti: string;
-  [key: string]: unknown;
+type Claims = z.infer<typeof privateKeyClaimsSchema>;
+type SigningFixtureConfig = Omit<OAuthConfig, "privateKeyJwt"> & {
+  privateKeyJwt?: OAuthConfig["privateKeyJwt"];
 };
-async function fixture(config: OAuthConfig = {}, pair = key()) {
+async function fixture(config: SigningFixtureConfig = {}, pair = key()) {
   const name = `jwt-${crypto.randomUUID()}`;
   const runtime = createOAuthRuntime();
   const manager = new McpServerManager();
@@ -98,13 +92,20 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
     (typeof config.clientMetadataUrl === "string"
       ? config.clientMetadataUrl
       : "configured-jwt-client");
+  const { privateKeyJwt, ...options } = config;
+  const signing =
+    "privateKeyJwt" in config ? privateKeyJwt : { privateKey: pair.pem, algorithm: pair.algorithm };
   const oauth: OAuthConfig = {
     clientId: id,
     grantType: "client_credentials",
-    privateKeyJwt: { privateKey: pair.pem, algorithm: pair.algorithm },
-    ...config,
+    ...options,
+    ...(signing === undefined ? {} : { privateKeyJwt: signing }),
   };
-  if (config.clientMetadataUrl && config.clientId === undefined) {
+  if (
+    typeof config.clientMetadataUrl === "string" &&
+    config.clientMetadataUrl !== "" &&
+    config.clientId === undefined
+  ) {
     delete oauth.clientId;
   }
   let origin = "";
@@ -117,26 +118,24 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
     claims?: Claims;
     header?: Record<string, unknown>;
   }> = [];
-  const requests: Array<{ method: string; params: any }> = [];
+  const requests: MachineMessage[] = [];
   const authorizations: URL[] = [];
   const documentFetches: string[] = [];
   const registrations: object[] = [];
   const codes = new Map<string, URL>();
   const refreshes = new Set<string>();
   const tokens = new Set<string>();
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url!, origin);
-    const json = (body: unknown, status = 200) =>
-      res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
+  function metadata(url: URL, res: ServerResponse): boolean {
     if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
-      return void json({
+      machineJson(res, {
         resource: `${origin}/mcp`,
         authorization_servers: [origin],
         scopes_supported: ["tools"],
       });
+      return true;
     }
     if (url.pathname.startsWith("/.well-known/oauth-authorization-server")) {
-      return void json({
+      machineJson(res, {
         issuer: issuer ?? origin,
         authorization_endpoint: `${origin}/authorize`,
         token_endpoint: `${origin}/token`,
@@ -149,148 +148,173 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
         authorization_response_iss_parameter_supported: true,
         client_id_metadata_document_supported: true,
       });
+      return true;
     }
-    // AS-only local document hosting; the adapter uses the real HTTPS client_id and never fetches it.
+    // The AS hosts this document. The adapter never fetches the HTTPS client_id.
     if (url.pathname === "/document") {
-      documentFetches.push(url.searchParams.get("id")!);
-      return void json({
+      documentFetches.push(requiredFormValue(url.searchParams, "id"));
+      machineJson(res, {
         client_id: id,
         token_endpoint_auth_method: "private_key_jwt",
         jwks: { keys: [verificationKey] },
       });
+      return true;
     }
-    if (url.pathname === "/authorize") {
-      authorizations.push(url);
-      const callback = new URL(url.searchParams.get("redirect_uri")!);
-      const code = `code-${authorizations.length}`;
-      codes.set(code, url);
-      callback.searchParams.set("state", url.searchParams.get("state")!);
-      callback.searchParams.set("iss", origin);
-      callback.searchParams.set("code", code);
-      res.writeHead(302, { location: callback.href }).end();
+    if (url.pathname !== "/authorize") {
+      return false;
+    }
+    authorizations.push(url);
+    const callback = new URL(requiredFormValue(url.searchParams, "redirect_uri"));
+    const code = `code-${authorizations.length}`;
+    codes.set(code, url);
+    callback.searchParams.set("state", requiredFormValue(url.searchParams, "state"));
+    callback.searchParams.set("iss", origin);
+    callback.searchParams.set("code", code);
+    res.writeHead(302, { location: callback.href }).end();
+    return true;
+  }
+  async function publicKey(params: URLSearchParams) {
+    if (!id.startsWith("https:")) {
+      return createPublicKey({ key: verificationKey, format: "jwk" });
+    }
+    const doc = machineDocumentSchema.parse(
+      await (
+        await fetch(
+          `${origin}/document?id=${encodeURIComponent(requiredFormValue(params, "client_id"))}`,
+        )
+      ).json(),
+    );
+    assert.equal(doc.client_id, params.get("client_id"));
+    assert.equal(doc.token_endpoint_auth_method, "private_key_jwt");
+    const first = doc.jwks.keys[0];
+    assert(first !== undefined);
+    return createPublicKey({ key: first, format: "jwk" });
+  }
+  async function recordAndValidateAssertion(
+    params: URLSearchParams,
+    authorization: string | undefined,
+  ) {
+    const exchange: (typeof exchanges)[number] = { params, authorization };
+    exchanges.push(exchange);
+    if (!oauth.privateKeyJwt) {
+      assert.deepEqual(
+        {
+          id: params.get("client_id"),
+          assertion: params.has("client_assertion"),
+          secret: params.has("client_secret"),
+        },
+        { id, assertion: false, secret: false },
+      );
       return;
     }
-    let data = "";
-    for await (const chunk of req) {
-      data += chunk;
+    const decoded = decodeJwt(requiredFormValue(params, "client_assertion"));
+    const header = decoded.header;
+    const claims = privateKeyClaimsSchema.parse(decoded.payload);
+    exchange.header = header;
+    exchange.claims = claims;
+    const valid = verify(
+      pair.algorithm.startsWith("Ed") ? null : "sha256",
+      decoded.input,
+      {
+        key: await publicKey(params),
+        dsaEncoding: "ieee-p1363",
+        ...(pair.algorithm.startsWith("PS")
+          ? { padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 }
+          : {}),
+      },
+      decoded.signature,
+    );
+    assert(valid, "fixture JWT signature");
+    assert(claims.exp > Date.now() / 1000, "fixture JWT expiry");
+    assert.deepEqual(
+      {
+        algorithm: header.alg,
+        type: header.typ,
+        kid: header.kid,
+        issuer: claims.iss,
+        subject: claims.sub,
+        audience: claims.aud,
+        client: params.get("client_id"),
+        resource: params.get("resource"),
+        secret: params.has("client_secret"),
+        authorization,
+        assertionType: params.get("client_assertion_type"),
+      },
+      {
+        algorithm: pair.algorithm,
+        type: "JWT",
+        kid: undefined,
+        issuer: id,
+        subject: id,
+        audience: oauth.privateKeyJwt.audience ?? origin,
+        client: id,
+        resource: `${origin}/mcp`,
+        secret: false,
+        authorization: undefined,
+        assertionType: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      },
+    );
+  }
+  function validateGrant(params: URLSearchParams) {
+    const grant = params.get("grant_type");
+    if (grant === "authorization_code") {
+      const authorization = codes.get(requiredFormValue(params, "code"));
+      assert(authorization !== undefined, "fixture authorization code");
+      assert.equal(authorization.searchParams.get("client_id"), id);
+      assert.equal(
+        authorization.searchParams.get("code_challenge"),
+        createHash("sha256").update(requiredFormValue(params, "code_verifier")).digest("base64url"),
+      );
+      assert.equal(authorization.searchParams.get("redirect_uri"), params.get("redirect_uri"));
+    } else if (grant === "refresh_token") {
+      assert(refreshes.has(requiredFormValue(params, "refresh_token")), "fixture refresh token");
+    } else {
+      assert.equal(grant, "client_credentials");
     }
+  }
+  const server = new MachineHttpServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", origin);
+    if (metadata(url, res)) {
+      return;
+    }
+    const data = await readMachineBody(req);
     if (url.pathname === "/register") {
-      registrations.push(JSON.parse(data));
-      return void json({ error: "registration_not_supported" }, 400);
+      registrations.push(z.record(z.string(), z.unknown()).parse(JSON.parse(data)));
+      machineJson(res, { error: "registration_not_supported" }, 400);
+      return;
     }
     if (url.pathname === "/token") {
       const params = new URLSearchParams(data);
-      const exchange: (typeof exchanges)[number] = {
-        params,
-        authorization: req.headers.authorization,
-      };
-      exchanges.push(exchange);
       try {
-        if (oauth.privateKeyJwt) {
-          const assertion = params.get("client_assertion")!;
-          const [encodedHeader, encodedClaims, signature] = assertion.split(".") as [
-            string,
-            string,
-            string,
-          ];
-          const header = JSON.parse(Buffer.from(encodedHeader, "base64url").toString());
-          const claims: Claims = JSON.parse(Buffer.from(encodedClaims, "base64url").toString());
-          exchange.header = header;
-          exchange.claims = claims;
-          let publicJwk = verificationKey;
-          if (id.startsWith("https:")) {
-            const doc = await (
-              await fetch(`${origin}/document?id=${encodeURIComponent(params.get("client_id")!)}`)
-            ).json();
-            if (
-              doc.client_id !== params.get("client_id") ||
-              doc.token_endpoint_auth_method !== "private_key_jwt"
-            ) {
-              throw new Error("document");
-            }
-            publicJwk = doc.jwks.keys[0];
-          }
-          const publicKey = createPublicKey({ key: publicJwk, format: "jwk" });
-          const valid = verify(
-            pair.algorithm.startsWith("Ed") ? null : "sha256",
-            Buffer.from(`${encodedHeader}.${encodedClaims}`),
-            {
-              key: publicKey,
-              dsaEncoding: "ieee-p1363",
-              ...(pair.algorithm.startsWith("PS")
-                ? { padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 }
-                : {}),
-            },
-            Buffer.from(signature, "base64url"),
-          );
-          if (
-            !valid ||
-            header.alg !== pair.algorithm ||
-            header.typ !== "JWT" ||
-            header.kid !== undefined ||
-            claims.iss !== id ||
-            claims.sub !== id ||
-            claims.aud !== (oauth.privateKeyJwt.audience ?? origin) ||
-            claims.exp <= Date.now() / 1000 ||
-            params.get("client_id") !== id ||
-            params.get("resource") !== `${origin}/mcp` ||
-            params.has("client_secret") ||
-            req.headers.authorization ||
-            params.get("client_assertion_type") !==
-              "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-          ) {
-            throw new Error("assertion");
-          }
-        } else if (
-          params.get("client_id") !== id ||
-          params.has("client_assertion") ||
-          params.has("client_secret")
-        ) {
-          throw new Error("public client");
-        }
-        const grant = params.get("grant_type");
-        if (grant === "authorization_code") {
-          const authorization = codes.get(params.get("code")!);
-          if (
-            !authorization ||
-            authorization.searchParams.get("client_id") !== id ||
-            authorization.searchParams.get("code_challenge") !==
-              createHash("sha256").update(params.get("code_verifier")!).digest("base64url") ||
-            authorization.searchParams.get("redirect_uri") !== params.get("redirect_uri")
-          ) {
-            throw new Error("code");
-          }
-        } else if (grant === "refresh_token") {
-          if (!refreshes.has(params.get("refresh_token")!)) {
-            throw new Error("refresh");
-          }
-        } else if (grant !== "client_credentials") {
-          throw new Error("grant");
-        }
+        await recordAndValidateAssertion(params, req.headers.authorization);
+        validateGrant(params);
       } catch {
-        return void json(
+        machineJson(
+          res,
           { error: "invalid_request", error_description: "fixture rejected client assertion" },
           400,
         );
+        return;
       }
       const accessToken = `access-${exchanges.length}`;
       const refreshToken = `refresh-${exchanges.length}`;
       tokens.add(accessToken);
       refreshes.add(refreshToken);
-      return void json({
+      machineJson(res, {
         access_token: accessToken,
         refresh_token: refreshToken,
         token_type: "Bearer",
         expires_in: 3600,
         scope: "tools",
       });
+      return;
     }
     if (req.method !== "POST") {
       res.writeHead(405).end();
       return;
     }
-    const body = JSON.parse(data);
-    requests.push(body);
+    const message = machineMessageSchema.parse(JSON.parse(data));
+    requests.push(message);
     if (!publicMcp && !tokens.has(req.headers.authorization?.replace(/^Bearer /, "") ?? "")) {
       res
         .writeHead(401, {
@@ -299,42 +323,28 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
         .end();
       return;
     }
-    if (body.method === "notifications/initialized") {
+    if (message.method === "notifications/initialized") {
       res.writeHead(202).end();
       return;
     }
-    const result =
-      body.method === "initialize"
-        ? {
-            protocolVersion: "2025-11-25",
-            capabilities: { tools: {} },
-            serverInfo: { name: "jwt", version: "1" },
-          }
-        : body.method === "server/discover"
-          ? { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } }
-          : body.method === "tools/list"
-            ? {
-                ttlMs: 10000,
-                cacheScope: "private",
-                tools: [{ name: "echo", inputSchema: { type: "object" } }],
-              }
-            : { content: [{ type: "text", text: "signed tool" }] };
-    return void json({
+    assert("id" in message, "Expected an MCP request");
+    machineJson(res, {
       jsonrpc: "2.0",
-      id: body.id,
-      result: { resultType: "complete", ...result },
+      id: message.id,
+      result: machineResult(message.method, "jwt", "signed tool"),
     });
   });
-  origin = `http://127.0.0.1:${await listen(server)}`;
-  const definition: ServerEntry = { url: `${origin}/mcp`, auth: "oauth", oauth };
-  const start = () => startAuth(name, definition.url!, definition, { runtime });
-  const stored = () => getAuthForUrl(name, definition.url!);
+  origin = await server.listen();
+  const definition: ServerEntry & { url: string } = { url: `${origin}/mcp`, auth: "oauth", oauth };
+  const start = () => startAuth(name, definition.url, definition, { runtime });
+  const stored = () => getAuthForUrl(name, definition.url);
   cleanups.push(async () => {
-    if (process.env.JWT_PROOF_FILE) {
+    const testName = expect.getState().currentTestName;
+    if (process.env.JWT_PROOF_FILE !== undefined) {
       appendFileSync(
         process.env.JWT_PROOF_FILE,
         `${JSON.stringify({
-          test: expect.getState().currentTestName,
+          test: testName,
           node: process.version,
           execPath: process.execPath,
           exchanges: exchanges.map((e) => ({
@@ -342,7 +352,7 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
             claims: e.claims,
             header: e.header,
             hasSecret: e.params.has("client_secret"),
-            hasBasic: !!e.authorization,
+            hasBasic: e.authorization !== undefined,
           })),
           requests,
           authorizations: authorizations.length,
@@ -354,7 +364,7 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
     await manager.closeAll();
     await shutdownOAuth(runtime);
     clearAllCredentials(name);
-    await close(server);
+    await server.close();
   });
   if (oauth.grantType === "authorization_code" && oauth.redirectUri === undefined) {
     await ensureCallbackServer({ callbackHost: "127.0.0.1", callbackPath: "/callback" });
@@ -379,7 +389,7 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
     provider: (signal?: AbortSignal) =>
       new McpOAuthProvider(
         name,
-        definition.url!,
+        definition.url,
         extractOAuthConfig(definition),
         {
           onRedirect: () => {
@@ -405,7 +415,8 @@ async function fixture(config: OAuthConfig = {}, pair = key()) {
       const { authorizationUrl } = await start();
       const location = (await fetch(authorizationUrl, { redirect: "manual" })).headers.get(
         "location",
-      )!;
+      );
+      assert(location !== null);
       expect((await fetch(location)).status).toBe(200);
       expect(await completeAuthFromInput(name, location, { runtime })).toBe("authenticated");
     },
@@ -434,16 +445,19 @@ function holdNativeSigning(
     return signature;
   });
   const send = transport.send;
-  const sender = vi.spyOn(transport, "send").mockImplementation(function (this: unknown, ...args) {
+  const sender = vi.spyOn(transport, "send").mockImplementation(async function (
+    this: StreamableHTTPClientTransport,
+    ...args
+  ) {
     events.push("native-send-start");
     const pending = send.apply(this, args);
     sends.add(pending);
-    const settled = () => {
+    try {
+      await pending;
+    } finally {
       sends.delete(pending);
       events.push("native-send-settled");
-    };
-    void pending.then(settled, settled);
-    return pending;
+    }
   });
   return {
     started,
@@ -452,8 +466,8 @@ function holdNativeSigning(
     finish: async () => {
       release();
       // Public connect/call promises may reject before the detached native auth exchange finishes.
-      while (sends.size) {
-        await Promise.allSettled([...sends]);
+      while (sends.size > 0) {
+        await Promise.allSettled(sends);
       }
     },
     restore: () => {
@@ -479,10 +493,12 @@ it.each(["ES256", "RS256", "PS256", "EdDSA", "Ed25519"])(
     expect(await (await f.connect()).client.callTool({ name: "echo" })).toMatchObject({
       content: [{ text: "signed tool" }],
     });
-    const { claims, params } = f.exchanges[0]!;
+    const first = f.exchanges[0];
+    assert(first?.claims !== undefined);
+    const { claims, params } = first;
     expect(claims).toMatchObject({ iss: f.id, sub: f.id, aud: f.origin });
-    expect(claims!.exp - claims!.iat).toBe(300);
-    expect(claims!.jti).toBeTruthy();
+    expect(claims.exp - claims.iat).toBe(300);
+    expect(claims.jti).toBeTruthy();
     expect(params.get("scope")).toBe("tools");
     expect(f.registrations).toHaveLength(0);
     expect(f.authorizations).toHaveLength(0);
@@ -535,14 +551,15 @@ it.each(["PEM", "JWK"])(
     writeFileSync(file, format === "PEM" ? next.pem : JSON.stringify(next.jwk));
     expect(await f.start()).toEqual({ authorizationUrl: "" });
     expect(readFileSync(counter, "utf8")).toBe("xx");
-    expect(f.exchanges[0]!.params.get("client_assertion")).not.toBe(
-      f.exchanges[1]!.params.get("client_assertion"),
-    );
+    const [first, second] = f.exchanges;
+    assert(first !== undefined && second !== undefined);
+    expect(first.params.get("client_assertion")).not.toBe(second.params.get("client_assertion"));
     for (const { claims } of f.exchanges) {
       expect(claims).toMatchObject({ iss: f.id, sub: f.id, aud: "urn:jwt-audience", role: "test" });
-      expect(claims!.exp - claims!.iat).toBe(90);
-      expect(claims!.jti).not.toBe("wrong");
-      expect(claims!.iat).toBeGreaterThan(2);
+      assert(claims !== undefined);
+      expect(claims.exp - claims.iat).toBe(90);
+      expect(claims.jti).not.toBe("wrong");
+      expect(claims.iat).toBeGreaterThan(2);
     }
   },
 );
@@ -559,7 +576,7 @@ it.each(["${JWT_TEST_KEY}", "$env:JWT_TEST_KEY", "{env:JWT_TEST_KEY}"])(
     expect(extractOAuthConfig(f.definition).privateKeyJwt?.privateKey).toBe(source);
     process.env.JWT_TEST_KEY = JSON.stringify(pair.jwk);
     try {
-      expect(await auth(provider, { serverUrl: f.definition.url! })).toBe("AUTHORIZED");
+      expect(await auth(provider, { serverUrl: f.definition.url })).toBe("AUTHORIZED");
     } finally {
       delete process.env.JWT_TEST_KEY;
     }
@@ -577,7 +594,7 @@ it.each([false, true])("signs browser PKCE and refresh with custom document=%s",
     "authorization_code",
     "refresh_token",
   ]);
-  expect(f.exchanges.every((e) => e.claims?.iss === f.id && e.claims?.sub === f.id)).toBe(true);
+  expect(f.exchanges.every((e) => e.claims?.iss === f.id && e.claims.sub === f.id)).toBe(true);
   expect(f.authorizations).toHaveLength(1);
   expect(f.registrations).toHaveLength(0);
   expect(f.documentFetches).toHaveLength(custom ? 2 : 0);
@@ -602,31 +619,32 @@ it("round-trips private-key custom CIMD client_credentials without the shared do
 });
 
 it.each([
-  "!printf 'COMMAND_SECRET_SENTINEL' >&2; exit 7",
-  "!true",
-  "!printf '{PRIVATE_KEY_SENTINEL}'",
-  "!printf 'PRIVATE_KEY_SENTINEL'",
-  "!printf '[]'",
-  "!printf 'COMMAND_SECRET_SENTINEL'\0",
-])(
+  [
+    "!printf 'COMMAND_SECRET_SENTINEL' >&2; exit 7",
+    ["privateKeyJwt", "command exited with code 7"],
+  ],
+  ["!true", ["privateKeyJwt", "command returned empty output"]],
+  ["!printf '{PRIVATE_KEY_SENTINEL}'", ["privateKeyJwt"]],
+  ["!printf 'PRIVATE_KEY_SENTINEL'", ["privateKeyJwt"]],
+  ["!printf '[]'", ["privateKeyJwt"]],
+  ["!printf 'COMMAND_SECRET_SENTINEL'\0", ["privateKeyJwt"]],
+] as const)(
   "fails refresh privately without token request, consent or invalidation: case %#",
-  async (source) => {
+  async (source, messages) => {
     const f = await fixture({ grantType: "authorization_code" });
     await f.login();
     const before = f.stored();
-    f.oauth.privateKeyJwt!.privateKey = source;
-    const error = await f.start().catch((error) => error);
+    assert(f.oauth.privateKeyJwt !== undefined);
+    f.oauth.privateKeyJwt.privateKey = source;
+    const error = await f.start().catch((cause: unknown) => cause);
+    assert(error instanceof OAuthError);
     expect(error).toBeInstanceOf(OAuthError);
     expect(error.code).toBe(OAuthErrorCode.InvalidRequest);
-    expect(error.message).toContain("privateKeyJwt");
+    for (const message of messages) {
+      expect(error.message).toContain(message);
+    }
     expect(String(error)).not.toContain("SENTINEL");
     expect(error.cause).toBeUndefined();
-    if (source.includes("exit 7")) {
-      expect(error.message).toContain("command exited with code 7");
-    }
-    if (source === "!true") {
-      expect(error.message).toContain("command returned empty output");
-    }
     expect(f.exchanges).toHaveLength(1);
     expect(f.authorizations).toHaveLength(1);
     expect(f.stored()).toEqual(before);
@@ -699,7 +717,9 @@ it.each(["abort", "deactivate"])(
       return original(...args);
     });
     try {
-      const pending = auth(provider, { serverUrl: f.definition.url! }).catch((error) => error);
+      const pending = auth(provider, { serverUrl: f.definition.url }).catch(
+        (error: unknown) => error,
+      );
       await started;
       const before = f.stored();
       if (stop === "abort") {
@@ -709,6 +729,7 @@ it.each(["abort", "deactivate"])(
       }
       release();
       const error = await pending;
+      assert(error instanceof Error);
       expect(error).toBeInstanceOf(Error);
       expect(f.exchanges).toHaveLength(0);
       expect(f.stored()).toEqual(before);
@@ -734,11 +755,9 @@ it.each(["auto", "legacy"] as const)(
     );
     expect(handshakes.length).toBeGreaterThanOrEqual(2);
     for (const r of handshakes) {
-      const caps =
-        protocolVersion === "auto"
-          ? r.params._meta["io.modelcontextprotocol/clientCapabilities"]
-          : r.params.capabilities;
-      expect(caps.extensions).toEqual({ "io.modelcontextprotocol/oauth-client-credentials": {} });
+      expect(clientCapabilities(r, protocolVersion)?.extensions).toEqual({
+        "io.modelcontextprotocol/oauth-client-credentials": {},
+      });
     }
   },
 );
@@ -754,11 +773,20 @@ it.each([
   async (authMode, headers, enabled) => {
     const f = await fixture();
     f.publicMcp();
-    f.definition.auth = authMode as NonNullable<typeof authMode>;
-    f.definition.headers = headers as NonNullable<typeof headers>;
+    if (authMode === undefined) {
+      delete f.definition.auth;
+    } else {
+      f.definition.auth = authMode;
+    }
+    if (headers === undefined) {
+      delete f.definition.headers;
+    } else {
+      f.definition.headers = headers;
+    }
     expect((await f.connect()).status).toBe("connected");
-    const discover = f.requests.find((r) => r.method === "server/discover")!;
-    expect(discover.params._meta["io.modelcontextprotocol/clientCapabilities"]?.extensions).toEqual(
+    const discover = f.requests.find((r) => r.method === "server/discover");
+    assert(discover !== undefined);
+    expect(clientCapabilities(discover)?.extensions).toEqual(
       enabled ? { "io.modelcontextprotocol/oauth-client-credentials": {} } : undefined,
     );
     expect(f.exchanges).toHaveLength(0);
@@ -779,9 +807,7 @@ it("does not resolve commands during discovery or declare machine auth for brows
   expect((await f.connect()).status).toBe("connected");
   expect(existsSync(marker)).toBe(false);
   for (const r of f.requests) {
-    expect(
-      r.params?._meta?.["io.modelcontextprotocol/clientCapabilities"]?.extensions,
-    ).toBeUndefined();
+    expect(clientCapabilities(r)?.extensions).toBeUndefined();
   }
 });
 
@@ -790,11 +816,11 @@ it("keeps native ordinary-versus-explicit scope precedence without changing step
   expect(await (await ordinary.connect()).client.callTool({ name: "echo" })).toMatchObject({
     content: [{ text: "signed tool" }],
   });
-  expect(ordinary.exchanges[0]!.params.get("scope")).toBe("tools");
-  expect(ordinary.exchanges[0]!.params.get("resource")).toBe(`${ordinary.origin}/mcp`);
+  expect(ordinary.exchanges[0]?.params.get("scope")).toBe("tools");
+  expect(ordinary.exchanges[0]?.params.get("resource")).toBe(`${ordinary.origin}/mcp`);
   const explicit = await fixture({ scope: "configured-scope" });
   await explicit.start();
-  expect(explicit.exchanges[0]!.params.get("scope")).toBe("configured-scope");
+  expect(explicit.exchanges[0]?.params.get("scope")).toBe("configured-scope");
 });
 
 it("stops failed signing during ordinary browser refresh without consent or credential invalidation", async () => {
@@ -803,7 +829,8 @@ it("stops failed signing during ordinary browser refresh without consent or cred
   const connection = await f.connect();
   const before = f.stored();
   f.expire();
-  f.oauth.privateKeyJwt!.privateKey = key("RS256").pem; // Real incompatible key, not a mocked signer.
+  assert(f.oauth.privateKeyJwt !== undefined);
+  f.oauth.privateKeyJwt.privateKey = key("RS256").pem; // Real incompatible key, not a mocked signer.
   await expect(connection.client.callTool({ name: "echo" })).rejects.toThrow(/privateKeyJwt/);
   expect(f.exchanges).toHaveLength(1);
   expect(f.authorizations).toHaveLength(1);
@@ -832,7 +859,7 @@ it.each([
       const pending = f.manager
         .connect(f.name, f.definition, mode === "signal" ? controller.signal : undefined)
         .then((c) => c.client.callTool({ name: "echo" }))
-        .catch((error) => error);
+        .catch((cause: unknown) => cause);
       await signing.started;
       before = structuredClone(f.stored());
       if (mode === "close") {
@@ -843,12 +870,16 @@ it.each([
         await shutdownOAuth(f.runtime);
       }
       signing.events.push("cancel-returned");
+      const cancellations: unknown[] = [];
       if (mode !== "shutdown") {
-        expect(await pending).toBeInstanceOf(Error);
+        cancellations.push(await pending);
       }
       expect(signing.pending()).toBeGreaterThan(0);
       await signing.finish();
-      expect(await pending).toBeInstanceOf(Error);
+      cancellations.push(await pending);
+      for (const cancellation of cancellations) {
+        expect(cancellation).toBeInstanceOf(Error);
+      }
       expect(signing.pending()).toBe(0);
       expect(signing.events.at(-1)).toBe("native-send-settled");
       expect(f.exchanges).toHaveLength(0);
@@ -856,21 +887,28 @@ it.each([
       expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(0);
       expect(f.manager.getConnection(f.name)).toBeUndefined();
       expect(f.runtime.signal.aborted).toBe(mode === "shutdown");
+      const survivors = [];
       if (mode !== "shutdown") {
         other.expire();
-        expect(await sibling.client.callTool({ name: "echo" })).toMatchObject({
-          content: [{ text: "signed tool" }],
+        survivors.push({
+          result: await sibling.client.callTool({ name: "echo" }),
+          exchanges: other.exchanges.length,
         });
-        expect(other.exchanges).toHaveLength(2); // A sibling on the same runtime can still sign and save fresh tokens.
+      }
+      expect(survivors).toHaveLength(mode === "shutdown" ? 0 : 1);
+      for (const survivor of survivors) {
+        expect(survivor.result).toMatchObject({ content: [{ text: "signed tool" }] });
+        expect(survivor.exchanges).toBe(2);
       }
     } finally {
       await signing.finish();
       signing.restore();
-      if (process.env.JWT_PROOF_FILE) {
+      const testName = expect.getState().currentTestName;
+      if (process.env.JWT_PROOF_FILE !== undefined) {
         appendFileSync(
           process.env.JWT_PROOF_FILE,
           `${JSON.stringify({
-            test: expect.getState().currentTestName,
+            test: testName,
             cancellation: mode,
             protocolVersion,
             nativeEvents: signing.events,
@@ -891,7 +929,7 @@ it("stops detached refresh after closing an established connection without repla
   f.expire();
   const signing = holdNativeSigning(connection.transport);
   try {
-    const pending = connection.client.callTool({ name: "echo" }).catch((error) => error);
+    const pending = connection.client.callTool({ name: "echo" }).catch((cause: unknown) => cause);
     await signing.started;
     const before = structuredClone(f.stored());
     const requests = f.requests.length;
@@ -899,10 +937,12 @@ it("stops detached refresh after closing an established connection without repla
     expect(await pending).toBeInstanceOf(Error);
     expect(signing.pending()).toBeGreaterThan(0);
     let stopped = false;
-    const stopping = f.manager.closeAll().then(() => {
+    const stopping = f.manager.closeAll().finally(() => {
       stopped = true;
     });
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
     expect(stopped).toBe(false);
     await signing.finish();
     await stopping;
@@ -938,7 +978,7 @@ it("keeps native auth alive for the surviving shared reconnect caller", async ()
   try {
     const first = f.manager
       .reconnect(f.name, f.definition, stale, controller.signal)
-      .catch((error) => error);
+      .catch((cause: unknown) => cause);
     await signing.started;
     controller.abort(new Error("stop waiting"));
     expect(await first).toBeInstanceOf(Error);
@@ -998,63 +1038,12 @@ it("drains accepted native authentication before retiring its transport, leaving
   }
 });
 
-it("validates private-key configuration and identity conflicts at both public boundaries without disclosure", () => {
-  const valid = { privateKey: "PRIVATE_KEY_SENTINEL", algorithm: "ES256" };
-  const invalid: unknown[] = [
-    null,
-    false,
-    [],
-    "PRIVATE_KEY_SENTINEL",
-    {},
-    { ...valid, privateKey: null },
-    { ...valid, privateKey: [] },
-    { ...valid, privateKey: "" },
-    { ...valid, algorithm: "HS256" },
-    { ...valid, algorithm: "none" },
-    { ...valid, algorithm: 42 },
-    { ...valid, algorithm: "" },
-    { ...valid, audience: "" },
-    { ...valid, audience: [] },
-    { ...valid, lifetimeSeconds: 0 },
-    { ...valid, lifetimeSeconds: 1.5 },
-    { ...valid, lifetimeSeconds: Infinity },
-    { ...valid, claims: [] },
-    { ...valid, claims: null },
-  ];
-  const configs: unknown[] = invalid.map((privateKeyJwt) => ({ clientId: "id", privateKeyJwt }));
-  configs.push(
-    { privateKeyJwt: valid },
-    { clientId: "id", clientSecret: "SECRET_SENTINEL", privateKeyJwt: valid },
-    { clientMetadataUrl: sharedDocument.client_id, privateKeyJwt: valid },
-  );
-  for (const config of configs) {
-    for (const build of [
-      () => extractOAuthConfig({ oauth: config as OAuthConfig }),
-      () =>
-        new McpOAuthProvider("validation", "https://server.example/mcp", config as OAuthConfig, {
-          onRedirect: () => {},
-        }),
-    ]) {
-      let error: unknown;
-      try {
-        build();
-      } catch (caught) {
-        error = caught;
-      }
-      expect(error).toBeInstanceOf(Error);
-      expect(String(error)).toContain("privateKeyJwt");
-      expect(String(error)).not.toContain("SENTINEL");
-      expect((error as Error).cause).toBeUndefined();
-    }
-  }
-});
-
 it("does not migrate a real saved shared browser login into private-key auth after a custom URL change", async () => {
   const f = await fixture({
     grantType: "authorization_code",
     clientMetadataUrl: sharedDocument.client_id,
     privateKeyJwt: undefined,
-  } as unknown as OAuthConfig);
+  });
   await f.login();
   const before = f.stored();
   expect(before?.clientInfo).toMatchObject({
@@ -1065,7 +1054,8 @@ it("does not migrate a real saved shared browser login into private-key auth aft
     marker = join(dir, "ran");
   f.oauth.clientMetadataUrl = "https://jwt.example/replacement.json";
   f.oauth.privateKeyJwt = { privateKey: `!touch '${marker}'; printf sentinel`, algorithm: "ES256" };
-  const error = await f.start().catch((error) => error);
+  const error = await f.start().catch((cause: unknown) => cause);
+  assert(error instanceof OAuthError);
   expect(error).toBeInstanceOf(OAuthError);
   expect(error.code).toBe(OAuthErrorCode.InvalidRequest);
   expect(existsSync(marker)).toBe(false);
@@ -1079,11 +1069,12 @@ it("refuses keyless machine authentication with a real saved shared browser regi
     grantType: "authorization_code",
     clientMetadataUrl: sharedDocument.client_id,
     privateKeyJwt: undefined,
-  } as unknown as OAuthConfig);
+  });
   await f.login();
   const before = f.stored();
   f.oauth.grantType = "client_credentials";
-  const error = await f.start().catch((error) => error);
+  const error = await f.start().catch((cause: unknown) => cause);
+  assert(error instanceof OAuthError);
   expect(error).toBeInstanceOf(OAuthError);
   expect(error.code).toBe(OAuthErrorCode.InvalidRequest);
   expect(error.message).toContain("shared browser registration");
@@ -1111,7 +1102,7 @@ it.each(["configured", "opaque-dcr"])(
       );
     }
     expect(await f.start()).toEqual({ authorizationUrl: "" });
-    expect(f.exchanges[0]!.claims).toMatchObject({ iss: f.id, sub: f.id });
+    expect(f.exchanges[0]?.claims).toMatchObject({ iss: f.id, sub: f.id });
     expect(f.stored()?.clientInfo?.registrationType).toBeUndefined();
   },
 );
@@ -1134,7 +1125,7 @@ it.each(["shared", "secret"])(
           redirectUris: [],
           ...(kind === "secret"
             ? { clientSecret: "SECRET_SENTINEL" }
-            : { registrationType: "cimd" as const }),
+            : { registrationType: "cimd" }),
         },
         tokens: { accessToken: "old", issuer: f.origin },
       },
