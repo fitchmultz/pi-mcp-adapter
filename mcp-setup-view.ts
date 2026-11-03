@@ -115,11 +115,7 @@ export class SetupView {
     lines.push(this.padLine("", innerW));
 
     const preview = this.previewOrError(
-      (width) =>
-        this.preview.getActionPreview(
-          getSetupActions(this.state.discovery, this.state.screen)[this.state.actionCursor],
-          width,
-        ),
+      (width) => this.preview.getActionPreview(actions[this.state.actionCursor], width),
       innerW,
     );
     for (const line of preview) {
