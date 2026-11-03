@@ -950,7 +950,7 @@ Record the repository and adopted version; supported runtimes and package manage
 **pi-mcp-adapter adoption:**
 
 - Standard: 5.1.2. Node.js 24 or newer; official Pi 1.5.0 or newer and the maintained Pi fork. The package manager is npm 12.2.0.
-- Locked tools: Oxlint 1.90.0, oxlint-tsgolint 7.0.2005, Oxfmt 0.75.0, and TypeScript 7.0.2. Host qualification selects the latest official release and maintained fork separately from the locked development graph.
+- Locked tools: Oxlint 1.90.0, oxlint-tsgolint 7.0.2005, Oxfmt 0.76.0, and TypeScript 7.0.2. Host qualification selects the latest official release and maintained fork separately from the locked development graph.
 - Policy and coverage: `.oxlintrc.json`, `.oxfmtrc.json`, `tsconfig.json`, `tsconfig.declarations.json`, `tsconfig.build.json`, and `examples/interactive-visualizer/tsconfig.json`. The local check list is in [development and release rules](development.md); `.github/workflows/ci.yml` owns hosted acceptance.
 - Formatter ownership: Oxfmt checks maintained supported files. `scripts/build-app-bridge.mjs` generates `app-bridge.bundle.js`; `scripts/build.mjs` generates `dist/`; the interactive visualizer owns its `dist/` output.
 - Migration status: the documented scoped lint gates are required. Repository-wide strict lint, exception enforcement, and coverage-integrity checks remain incomplete.
