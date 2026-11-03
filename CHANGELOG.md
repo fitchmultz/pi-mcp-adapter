@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.22 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Type and enforce search ranking contracts (#188) ([93f23b7](https://github.com/fitchmultz/pi-mcp-adapter/commit/93f23b7c3b06628cfc73c1cae871095d99ef092c))
+
+### What's Changed
+
+- Type and enforce search ranking contracts by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/188
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.21...v8.0.22
+
 ## 8.0.21 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
