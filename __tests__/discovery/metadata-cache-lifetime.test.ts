@@ -12,6 +12,7 @@ import {
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { z } from "zod";
 import { PromptSchema, ResourceSchema, ToolSchema } from "@modelcontextprotocol/core";
@@ -97,12 +98,8 @@ describe("metadata cache lifetime", () => {
     const child = spawnSync(
       process.execPath,
       [
-        "--input-type=module",
-        "-e",
-        `
-      import { saveMetadataCache } from ${JSON.stringify(new URL("../../metadata-cache.ts", import.meta.url).href)};
-      saveMetadataCache(${JSON.stringify({ version: 2, servers: { external: entry() } })});
-    `,
+        fileURLToPath(new URL("../fixtures/metadata-cache-writer.ts", import.meta.url)),
+        JSON.stringify({ version: 2, servers: { external: entry() } }),
       ],
       { encoding: "utf8", env: process.env },
     );

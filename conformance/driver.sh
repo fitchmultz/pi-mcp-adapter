@@ -16,9 +16,9 @@ export PI_MCP_ADAPTER_TEST_AUTH_STORE=memory
 
 # Pre-registered browser clients require an exact callback port. Allocate one
 # per process. The full runner is sequential, avoiding the race between probing
-# a free port and binding it.
-export MCP_OAUTH_CALLBACK_PORT="$(
-  node -e 'const s=require("node:net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close();})'
-)"
+# a free port and binding it. Assign before exporting so an allocation failure
+# stops this wrapper instead of silently selecting the default port.
+MCP_OAUTH_CALLBACK_PORT="$(node conformance/callback-port.ts)"
+export MCP_OAUTH_CALLBACK_PORT
 
 node conformance/driver.ts "$@"

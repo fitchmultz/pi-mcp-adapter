@@ -15,6 +15,11 @@ import {
   setOAuthCallbackPort,
 } from "./mcp-oauth-callback-config.ts";
 
+/** Runs only as the success page's inline browser script, so it may use only browser globals. */
+function closeAuthorizationWindow() {
+  setTimeout(() => window.close(), 2000);
+}
+
 // HTML templates for callback responses
 const HTML_SUCCESS = `<!DOCTYPE html>
 <html>
@@ -32,7 +37,7 @@ const HTML_SUCCESS = `<!DOCTYPE html>
     <h1>Authorization Successful</h1>
     <p>You can close this window and return to Pi.</p>
   </div>
-  <script>setTimeout(() => window.close(), 2000);</script>
+  <script>(${closeAuthorizationWindow.toString()})();</script>
 </body>
 </html>`;
 
