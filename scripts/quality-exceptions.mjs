@@ -3,6 +3,11 @@ import { Visitor } from "oxc-parser";
 import { z } from "zod";
 
 const scopeSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("ExportNamedDeclaration"),
+    source: z.string().min(1).optional(),
+    name: z.string().min(1),
+  }),
   z.strictObject({ type: z.literal("FunctionDeclaration"), name: z.string().min(1) }),
   z.strictObject({ type: z.literal("FunctionExpression"), name: z.string().min(1) }),
   z.strictObject({
@@ -11,11 +16,6 @@ const scopeSchema = z.discriminatedUnion("type", [
     name: z.string().min(1),
   }),
   z.strictObject({ type: z.literal("VariableDeclarator"), name: z.string().min(1) }),
-  z.strictObject({
-    type: z.literal("ExportNamedDeclaration"),
-    source: z.string().min(1),
-    name: z.string().min(1),
-  }),
 ]);
 const siteSchema = z.strictObject({
   id: z.string().regex(/^QX-\d+$/u),
@@ -57,6 +57,24 @@ function selectScope(program, selector) {
   /** @type {import("oxc-parser").Node[]} */
   const matches = [];
   new Visitor({
+    ExportNamedDeclaration(node) {
+      if (selector.type !== node.type) {
+        return;
+      }
+      const selected =
+        selector.source === undefined
+          ? node.declaration?.type === "FunctionDeclaration" &&
+            node.declaration.id?.name === selector.name
+          : node.source?.value === selector.source &&
+            node.specifiers.some(
+              (specifier) =>
+                specifier.exported.type === "Identifier" &&
+                specifier.exported.name === selector.name,
+            );
+      if (selected) {
+        matches.push(node);
+      }
+    },
     FunctionDeclaration(node) {
       if (selector.type === node.type && node.id?.name === selector.name) {
         matches.push(node);
@@ -86,18 +104,6 @@ function selectScope(program, selector) {
         selector.type === node.type &&
         node.id.type === "Identifier" &&
         node.id.name === selector.name
-      ) {
-        matches.push(node);
-      }
-    },
-    ExportNamedDeclaration(node) {
-      if (
-        selector.type === node.type &&
-        node.source?.value === selector.source &&
-        node.specifiers.some(
-          (specifier) =>
-            specifier.exported.type === "Identifier" && specifier.exported.name === selector.name,
-        )
       ) {
         matches.push(node);
       }
