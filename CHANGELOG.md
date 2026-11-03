@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.18 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce strict checks for MCP output handling (#180) ([5335c2c](https://github.com/fitchmultz/pi-mcp-adapter/commit/5335c2c1172bca5824483d908f972db872a4d944))
+
+### What's Changed
+
+- Enforce strict checks for MCP output handling by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/180
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.17...v8.0.18
+
 ## 8.0.17 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
