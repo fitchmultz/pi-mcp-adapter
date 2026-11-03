@@ -1,6 +1,6 @@
 {
   "name": "@fitchmultz/pi-mcp-adapter",
-  "version": "8.0.24",
+  "version": "8.0.25",
   "description": "Token-efficient MCP adapter for the Pi coding agent",
   "type": "module",
   "types": "./dist/index.d.ts",
@@ -50,7 +50,8 @@
     "lint:config-runtime": "oxlint --deny-warnings config*.ts types.ts public-types.ts tool-names.ts ui-message-types.ts __tests__/config.test.ts __tests__/opencode-interpolation.test.ts __tests__/oauth-config.test-d.ts",
     "lint:sampling": "oxlint --deny-warnings sampling-handler.ts",
     "lint:output-runtime": "oxlint --deny-warnings mcp-output-*.ts",
-    "lint:credential-runtime": "oxlint --deny-warnings mcp-auth.ts auth-record-types.ts credential-payloads.ts credential-store-errors.ts keyring-store.ts keyring-recovery.ts",
+    "lint:credential-runtime": "oxlint --deny-warnings mcp-auth.ts auth-record-types.ts credential-payloads.ts credential-store-errors.ts keyring-store.ts keyring-recovery.ts mcp-keyring-helper.cjs",
+    "lint:auth-boundaries": "oxlint --deny-warnings __tests__/server-manager-http-auth.test.ts __tests__/sdk-v2-oauth.test.ts __tests__/fixtures/android-keyring-probe.mjs",
     "lint:node-oauth": "oxlint --deny-warnings mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts __tests__/fixtures/keyring-read-only.cts",
     "lint:sdk-http": "oxlint --deny-warnings __tests__/sdk-v2-http.test.ts __tests__/fixtures/native-capture-extension.ts",
     "lint:lifecycle-tests": "oxlint --deny-warnings __tests__/index-lifecycle.test.ts __tests__/fixtures/extension-lifecycle.ts __tests__/test-extension-context.ts",
