@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
-- Enforce strict lint for auto-auth tests (#128) ([e091769](https://github.com/fitchmultz/pi-mcp-adapter/commit/e091769856520687e786a379fe92d976c3f6f535))
-
 ### What's Changed
 
 - Enforce strict lint on native lazy startup tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/160
