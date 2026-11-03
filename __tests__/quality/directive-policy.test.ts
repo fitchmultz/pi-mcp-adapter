@@ -33,7 +33,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -479,8 +479,53 @@ const authEntrySource = [
   "}",
   "",
 ].join("\n");
+const aggregateCases = [
+  {
+    name: "cleanupFailedCompletion",
+    primary: "primary",
+    message: "OAuth completion cleanup failed",
+  },
+  {
+    name: "authenticateOnce",
+    primary: "error",
+    message: "OAuth cancellation cleanup failed",
+  },
+  { name: "reserveCallback", primary: "error", message: "OAuth startup cleanup failed" },
+  { name: "startInteractive", primary: "error", message: "OAuth startup cleanup failed" },
+].map(({ name, primary, message }) => {
+  const operation = `throw new AggregateError([${primary}, cleanupError], "${message}");`;
+  const source = [
+    `export function ${name}(${primary}: Error, cleanup: Error): never {`,
+    "try {",
+    "throw cleanup;",
+    "} catch (cleanupError) {",
+    "// oxlint-disable-next-line eslint/preserve-caught-error -- QX-023: preserve ordered failures without adding cause.",
+    operation,
+    "}",
+    "}",
+    "",
+  ].join("\n");
+  return {
+    name: `ordered aggregate in ${name}`,
+    source,
+    operation,
+    replacement: `throw new AggregateError([cleanupError, ${primary}], "${message}");`,
+    neighbor: `${source}export function dropsCaughtError(): never {\ntry { throw new Error("original"); } catch (error) {\nthrow new Error(String(error));\n}\n}\n`,
+    diagnostic: ["forward.ts:11:", "[Error/eslint(preserve-caught-error)]"],
+    authorized: {
+      ...site,
+      id: "QX-023",
+      rule: "eslint/preserve-caught-error",
+      scope: { type: "FunctionDeclaration", name },
+      path: ["body", "body", 0, "handler", "body", "body", 0],
+      nodeType: "ThrowStatement",
+      operation,
+    },
+  };
+});
 const functionCases = [
   ...keyringCases,
+  ...aggregateCases,
   {
     name: "lazy declared Zod API",
     source: zodModuleSource,
@@ -840,6 +885,18 @@ describe("operation-bound exceptions", () => {
     const result = checkSource("forward.ts", forward.replace(`${directive}\n`, ""), [site]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unused exception site QX-009");
+  });
+
+  it.each(aggregateCases)("rejects an unused $name directive natively", (entry) => {
+    const source = entry.source.replace(entry.operation, "throw cleanupError;");
+    const result = checkSource("forward.ts", source, [entry.authorized]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Authorized operation changed");
+    const native = nativeLint(result.cwd);
+    expect(native.status).toBe(1);
+    expect(native.stdout + native.stderr).toContain(
+      "forward.ts:5:1: Unused oxlint-disable directive (no problems were reported). [Error]",
+    );
   });
 
   it("rejects wrong-origin, replaced and duplicate named callback operations", () => {

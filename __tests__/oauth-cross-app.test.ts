@@ -521,18 +521,18 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     start: (signal?: AbortSignal) =>
       startAuth(name, definition.url, definition, { runtime, ...(signal ? { signal } : {}) }),
     provider: () =>
-      new McpOAuthProvider(
-        name,
-        definition.url,
-        extractOAuthConfig(definition),
-        {
+      new McpOAuthProvider({
+        serverName: name,
+        serverUrl: definition.url,
+        config: extractOAuthConfig(definition),
+        callbacks: {
           onRedirect: () => {
             browser.open();
           },
         },
-        {},
-        runtime.signal,
-      ),
+        storageOptions: {},
+        runtimeSignal: runtime.signal,
+      }),
     hold: (stage: Stage) => {
       const hold = gate();
       holds.set(stage, hold);
