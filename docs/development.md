@@ -20,6 +20,7 @@ npm run lint:prompts
 npm run lint:runtime-tests
 npm run lint:tracing
 npm run lint:core-runtime
+npm run lint:config-runtime
 npm run lint:sampling
 npm run lint:output-runtime
 npm run lint:credential-runtime
@@ -53,6 +54,8 @@ The same command checks the native-contract launcher under the production profil
 `lint:tracing` enforces the production profile for `mcp-trace.ts`. Its disk, redaction and SDK transport tests are covered by `lint:runtime-tests`.
 
 `lint:core-runtime` enforces the production profile for cancellation, client-operation drains, process paths, legacy migration, onboarding storage, logging, panel keys, search ranking and Unix-socket transport. Rejections retain their original values. Transport cleanup failures reach the existing error callback.
+
+`lint:config-runtime` enforces the production profile for `config*.ts`, `types.ts`, `public-types.ts`, `tool-names.ts` and `ui-message-types.ts`. It also checks the config, OpenCode interpolation and executable negative OAuth configuration suites under the test profile. File parsing validates known fields without stripping server, settings or OAuth extension properties. Malformed known fields warn and invalidate a Pi or shared file; malformed standard host entries are omitted. Authentication semantics and command secrets remain lazy. QX-022 permits only the published five-position `isToolAllowed` predicate. The CI extras job requires this scoped gate; repository-wide lint remains a migration target.
 
 `lint:sampling` enforces the production profile for the supported MCP sampling bridge. Its native model-registry and approval tests are covered by `lint:runtime-tests`. QX-017 permits only five deprecated MCP sampling types from their actual SDK package in these two files. Other deprecations and all other rules remain checked.
 

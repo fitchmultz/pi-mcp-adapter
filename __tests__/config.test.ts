@@ -113,6 +113,109 @@ describe("config discovery", () => {
     });
   });
 
+  it.each([
+    { mcpServers: { invalid: { command: 42 } } },
+    { mcpServers: { invalid: { args: ["node", 42] } } },
+    { mcpServers: { invalid: { headers: { Authorization: false } } } },
+    { mcpServers: { invalid: { directTools: [false] } } },
+    { mcpServers: { invalid: { oauth: { clientId: 42 } } } },
+    { mcpServers: { invalid: { oauth: { privateKeyJwt: { privateKey: "key" } } } } },
+    { mcpServers: { invalid: { oauth: { crossAppAccess: { idpUrl: "https://idp.test" } } } } },
+    { settings: { toolPrefix: "unknown" } },
+    { settings: { autoAuth: "true" } },
+    { settings: { outputGuard: { maxBytes: "100" } } },
+    { settings: { trace: { enabled: "true" } } },
+  ])("warns and ignores a complete file with malformed known fields: %j", async (invalid) => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-project-"));
+    process.env.HOME = home;
+    const file = join(project, ".mcp.json");
+    writeJson(file, {
+      ...invalid,
+      mcpServers: {
+        valid: { command: "node" },
+        ...("mcpServers" in invalid ? invalid.mcpServers : {}),
+      },
+    });
+    const before = readFileSync(file, "utf-8");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {
+      // Delivery and file identity are asserted below.
+    });
+    try {
+      const { loadMcpConfig } = await import("../config.ts");
+      expect(loadMcpConfig(undefined, project)).toEqual({ mcpServers: {} });
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(file), expect.any(Error));
+      expect(readFileSync(file, "utf-8")).toBe(before);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("omits malformed imported entries without dropping valid neighbors or rewriting disk", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-import-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-import-project-"));
+    process.env.HOME = home;
+    const imported = join(home, ".cursor", "mcp.json");
+    const entry = { command: "node", extension: { retained: true } };
+    writeJson(imported, {
+      mcpServers: { valid: entry, invalid: { args: [42] }, primitive: "node" },
+    });
+    writeJson(join(project, ".mcp.json"), { imports: ["cursor"], mcpServers: {} });
+    const before = readFileSync(imported, "utf-8");
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, project).mcpServers).toEqual({ valid: entry });
+    expect(readFileSync(imported, "utf-8")).toBe(before);
+  });
+
+  it("preserves extension fields on disk and isolates clones without losing explicit undefined", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-extensions-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-extensions-project-"));
+    process.env.HOME = home;
+    const file = join(project, ".mcp.json");
+    const original = {
+      extension: { retained: [false, null, 4] },
+      settings: { toolPrefix: "none", extension: { retained: true } },
+      mcpServers: {
+        remote: {
+          url: "https://example.test/mcp",
+          oauth: { clientId: "id", extension: { retained: true } },
+          extension: { retained: [1, "two"] },
+        },
+      },
+    };
+    writeJson(file, original);
+    chmodSync(file, 0o600);
+    const { loadMcpConfig, cloneMcpConfig, writeDirectToolsConfig, getServerProvenance } =
+      await import("../config.ts");
+    const loaded = loadMcpConfig(undefined, project);
+    expect(loaded.mcpServers).toEqual(original.mcpServers);
+    expect(loaded.settings).toEqual(original.settings);
+    writeDirectToolsConfig(new Map([["remote", true]]), getServerProvenance(undefined, project));
+    expect(JSON.parse(readFileSync(file, "utf-8"))).toEqual({
+      ...original,
+      mcpServers: { remote: { ...original.mcpServers.remote, directTools: true } },
+    });
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+
+    const supplied = {
+      ...loaded,
+      explicitUndefined: undefined,
+      extension: { nested: [1] },
+      mcpServers: {
+        remote: { ...original.mcpServers.remote, explicitUndefined: undefined },
+      },
+    };
+    const clone = cloneMcpConfig(supplied);
+    expect(clone).toEqual(supplied);
+    expect(Object.hasOwn(clone, "explicitUndefined")).toBe(true);
+    expect(Object.hasOwn(clone, "absent")).toBe(false);
+    expect(Object.hasOwn(clone.mcpServers.remote ?? {}, "explicitUndefined")).toBe(true);
+    assert(clone.mcpServers.remote?.oauth !== undefined);
+    expect(clone.mcpServers.remote.oauth).not.toBe(supplied.mcpServers.remote.oauth);
+    clone.mcpServers.remote.url = "https://changed.test/mcp";
+    expect(supplied.mcpServers.remote.url).toBe("https://example.test/mcp");
+  });
+
   it("excludes project config and project-local host imports when project trust is denied", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));

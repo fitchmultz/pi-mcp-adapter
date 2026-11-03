@@ -23,7 +23,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -429,7 +429,111 @@ const functionCases = [
   },
 ];
 
+const positionalDirective =
+  "// oxlint-disable-next-line eslint/max-params -- QX-022: retain the published five-position filtering API.";
+const positionalOperation = `export function isToolAllowed(
+  toolName: string,
+  serverName: string,
+  prefix: ToolPrefix,
+  includeTools?: unknown,
+  excludeTools?: unknown,
+): boolean {
+  return (
+    isToolIncluded(toolName, serverName, prefix, includeTools) &&
+    !isToolExcluded(toolName, serverName, prefix, excludeTools)
+  );
+}`;
+const positionalSource = [
+  'import { isToolIncluded, isToolExcluded, type ToolPrefix } from "./adapter/types.ts";',
+  positionalDirective,
+  positionalOperation,
+  "",
+].join("\n");
+const positionalSite = {
+  ...site,
+  id: "QX-022",
+  rule: "eslint/max-params",
+  scope: { type: "ExportNamedDeclaration", name: "isToolAllowed" },
+  path: [],
+  nodeType: "ExportNamedDeclaration",
+  operation: positionalOperation,
+};
+
 describe("operation-bound exceptions", () => {
+  it("qualifies the published predicate directive and retains native parameter and unused checks", () => {
+    const accepted = checkSource("forward.ts", positionalSource, [positionalSite]);
+    expect(accepted.status, accepted.stderr).toBe(0);
+    const acceptedLint = nativeLint(accepted.cwd);
+    expect(acceptedLint.status, acceptedLint.stdout + acceptedLint.stderr).toBe(0);
+
+    const unguarded = checkSource(
+      "forward.ts",
+      positionalSource.replace(`${positionalDirective}\n`, ""),
+    );
+    const unguardedLint = nativeLint(unguarded.cwd);
+    expect(unguardedLint.status).toBe(1);
+    expect(unguardedLint.stdout + unguardedLint.stderr).toContain(
+      "forward.ts:2:30: Function 'isToolAllowed' has too many parameters (5). Maximum allowed is 4.",
+    );
+    expect(unguardedLint.stdout + unguardedLint.stderr).toContain("[Error/eslint(max-params)]");
+
+    const neighbor = checkSource(
+      "forward.ts",
+      `${positionalSource}export function neighbor(a: number, b: number, c: number, d: number, e: number): number { return a + b + c + d + e; }\n`,
+      [positionalSite],
+    );
+    expect(neighbor.status, neighbor.stderr).toBe(0);
+    const neighborLint = nativeLint(neighbor.cwd);
+    expect(neighborLint.status).toBe(1);
+    expect(neighborLint.stdout + neighborLint.stderr).toContain(
+      "forward.ts:15:25: Function 'neighbor' has too many parameters (5). Maximum allowed is 4.",
+    );
+    expect(neighborLint.stdout + neighborLint.stderr).toContain("[Error/eslint(max-params)]");
+
+    const unused = checkSource(
+      "forward.ts",
+      positionalSource
+        .replace("  excludeTools?: unknown,\n", "")
+        .replace(
+          "!isToolExcluded(toolName, serverName, prefix, excludeTools)",
+          "!isToolExcluded(toolName, serverName, prefix)",
+        ),
+    );
+    const unusedLint = nativeLint(unused.cwd);
+    expect(unusedLint.status).toBe(1);
+    expect(unusedLint.stdout + unusedLint.stderr).toContain(
+      "forward.ts:2:1: Unused oxlint-disable directive (no problems were reported). [Error]",
+    );
+  });
+
+  it.each([
+    ["copied file", "copied.ts", positionalSource],
+    [
+      "wrong function",
+      "forward.ts",
+      positionalSource.replace("function isToolAllowed", "function other"),
+    ],
+    [
+      "same-count replacement",
+      "forward.ts",
+      positionalSource.replace("includeTools?: unknown", "includeTools?: string[]"),
+    ],
+    ["wrong rule", "forward.ts", positionalSource.replace("eslint/max-params", "eslint/max-depth")],
+    ["wrong decision", "forward.ts", positionalSource.replace("QX-022:", "QX-099:")],
+    [
+      "duplicate function",
+      "forward.ts",
+      `${positionalSource}${positionalDirective}\n${positionalOperation.replace("function isToolAllowed", "function other")}\n`,
+    ],
+    ["unused inventory", "forward.ts", positionalSource.replace(`${positionalDirective}\n`, "")],
+  ])("rejects the positional API's %s", (_name, file, source) => {
+    const result = checkSource(file, source, [positionalSite]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(
+      /not authorized|scope is missing|operation changed|unused exception/u,
+    );
+  });
+
   it.each([
     ...functionCases,
     {

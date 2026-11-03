@@ -124,6 +124,7 @@ export function isToolExcluded(
   return matchesToolPattern(getToolNameCandidates(toolName, serverName, prefix), excludeTools);
 }
 
+// oxlint-disable-next-line eslint/max-params -- QX-022: retain the published five-position filtering API.
 export function isToolAllowed(
   toolName: string,
   serverName: string,

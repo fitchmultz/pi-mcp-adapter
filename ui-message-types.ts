@@ -92,7 +92,7 @@ export interface UiMessageParams {
  */
 export function extractUiPromptText(params: UiMessageParams): string | undefined {
   if (params.type === "prompt" || (params.prompt !== undefined && params.prompt !== "")) {
-    const prompt = params.prompt ?? params.message ?? "";
+    const prompt = params.prompt ?? textFromUiValue(params.message);
     return prompt === "" ? undefined : prompt;
   }
 
@@ -214,7 +214,10 @@ function textFromUiBlock(block: unknown): string {
   if (typeof block !== "object" || block === null || !("text" in block)) {
     return "";
   }
-  const value: unknown = block.text;
+  return textFromUiValue(block.text);
+}
+
+function textFromUiValue(value: unknown): string {
   const text = String(value);
   return value === null || value === undefined ? "" : text;
 }

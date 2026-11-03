@@ -229,3 +229,29 @@ With `configured: true`, the reply contains `result.content` equal to `{ type: "
 - **Adjustment and type flow:** One next-line directive on the exact namespace declaration. The assertion supplies the installed module's published type, as a static import would. It does not assert a credential value. Structural schemas validate parsed JSON before it becomes `AuthEntry`; no coercions, defaults or transforms establish a different output shape. The guard retains the original object so explicit migration preserves serialized property order.
 - **Verification:** The directive-policy suite checks accepted attachment and an adjacent unknown-to-Zod assertion that must fail native lint. Copied, changed-module and duplicate operations fail inventory verification. The native startup test exercises source loading, cached surfaces and the first real stdio call. Storage tests reject malformed records before migration and retain raw redirect recovery. Run `npm run lint:credential-runtime`, `npm run check:directives`, `npm run typecheck` and the startup, auth and directive-policy suites.
 - **Remaining protection and review:** Runtime validation of the installed Zod module's exports is not added. The assumption is that the fixed dependency honors its declarations, as for ordinary imports; arbitrary substituted loaders are not established safe. Exact operation identity, dependency locks, native startup and real credential cases constrain this boundary. Every other unsafe assertion remains checked. Revisit on Zod declaration, export, schema-transform, loader or synchronous storage-contract changes.
+
+## QX-022: Preserve the published positional filtering API
+
+- **Finding:** Oxlint 1.90.0 reports `eslint/max-params` on `tool-names.ts:isToolAllowed`. The production maximum is four parameters; the function has five. The installed `configuration_schema.json:13153-13194` exposes the maximum and `this` counting options, not a public-API allowance. The unsuppressed native invocation exits 1 with this diagnostic at the function name.
+- **Scope and contract:** `public-types.ts` exports `types.ts`, which exports `tool-names.ts`. The package's `/types` export therefore exposes `isToolAllowed(toolName, serverName, prefix, includeTools?, excludeTools?)`. `search-ranking.ts`, `resource-tools.ts`, `tool-metadata.ts` and `ui-server.ts` pass both positional filters. The fifth argument must continue to exclude matching tools. No claim is made that an external consumer relies on `Function.length`, but this change also preserves its value of five.
+- **Comparison:** The straightforward compliant alternative groups the filters:
+
+  ```ts
+  export function optionsAlternative(
+    toolName: string,
+    serverName: string,
+    prefix: ToolPrefix,
+    filters?: { includeTools?: unknown; excludeTools?: unknown },
+  ): boolean {
+    return (
+      isToolIncluded(toolName, serverName, prefix, filters?.includeTools) &&
+      !isToolExcluded(toolName, serverName, prefix, filters?.excludeTools)
+    );
+  }
+  ```
+
+  This implementation has four parameters and uses the same filtering owners. The canonical compiler accepts the current public call and the alternative's object call, but reports TS2554 for an unchanged five-position call to the alternative. An actual JavaScript call with the old positions also changes behavior: `("write", "docs", "server", ["write"], ["write"])` returns false now and true with the options implementation. Migrating internal callers alone does not preserve the exported package contract. A rest tuple preserves TypeScript call syntax but hides the same five conceptual parameters and changes native arity. It is not the chosen alternative.
+
+- **Adjustment:** One next-line directive for `eslint/max-params` on the exported `isToolAllowed` declaration. `quality-exceptions.json` inventories only this complete declaration, including its exact signature and filtering body. The existing AST checker selects its `ExportNamedDeclaration`, so the directive attaches before `export` without widening the allowed comment-to-operation gap. No other function or signature is authorized.
+- **Verification:** `npm run lint:config-runtime`, `npm run check:directives`, `npm run lint:quality`, `npm run typecheck`, `npm run typecheck:all`, the focused config and filtering suites, and `vitest run __tests__/quality/directive-policy.test.ts` qualify the selected implementation. The policy suite checks native accepted and unsuppressed cases, an unapproved five-parameter neighbor, native unused-disable detection, wrong file, wrong function, same-count signature replacement, wrong rule, wrong decision, duplication and a missing directive. The packed consumer verifies the public entrypoints; the adoption evidence additionally executes the packed predicate with all five positions and compiles valid and invalid positional consumers.
+- **Remaining protection and review:** The parameter-count diagnostic is lost only for this inventoried declaration. Other structural and safety rules remain active, as does `max-params` on every neighbor. The compiler checks the public signature, and runtime tests retain include/exclude outcomes. The AST inventory establishes operation identity, not API compatibility by itself. Revisit on a public API change, a native rule change, or a supported migration that can preserve existing positional consumers without hiding arity.
