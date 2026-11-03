@@ -1,41 +1,52 @@
-/** OAuth token storage format */
-export interface StoredTokens {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt?: number; // Unix timestamp in seconds
-  scope?: string;
-  /** SEP-2352 authorization-server issuer binding */
-  issuer?: string;
+import { createRequire } from "node:module";
+import type * as Zod from "zod";
+
+const require = createRequire(import.meta.url);
+
+function createAuthRecordSchemas() {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-021: load the declared Zod API only when credentials are read.
+  const { z } = require("zod") as typeof Zod;
+  const tokens = z.looseObject({
+    accessToken: z.string(),
+    refreshToken: z.string().exactOptional(),
+    expiresAt: z.number().exactOptional(), // Unix timestamp in seconds
+    scope: z.string().exactOptional(),
+    issuer: z.string().exactOptional(),
+  });
+  const clientInfo = z.looseObject({
+    clientId: z.string(),
+    clientSecret: z.string().exactOptional(),
+    clientIdIssuedAt: z.number().exactOptional(),
+    clientSecretExpiresAt: z.number().exactOptional(),
+    // The OAuth flow validates legacy redirect metadata before reusing a registration.
+    redirectUris: z.unknown().exactOptional(),
+    // Only a positively identified CIMD registration permits loopback port changes.
+    registrationType: z.literal("cimd").exactOptional(),
+    issuer: z.string().exactOptional(),
+    // Secretless issuer stubs require the matching configured client identity.
+    configPreRegistered: z.boolean().exactOptional(),
+  });
+  const entry = z.looseObject({
+    tokens: tokens.exactOptional(),
+    clientInfo: clientInfo.exactOptional(),
+    codeVerifier: z.string().exactOptional(),
+    oauthState: z.string().exactOptional(),
+    serverUrl: z.string().exactOptional(),
+  });
+  return { tokens, clientInfo, entry };
 }
 
-/** OAuth client information from dynamic or static registration */
-export interface StoredClientInfo {
-  clientId: string;
-  clientSecret?: string;
-  clientIdIssuedAt?: number;
-  clientSecretExpiresAt?: number;
-  redirectUris?: string[];
-  /** Positively identified native CIMD registration; permits loopback port changes. */
-  registrationType?: "cimd";
-  /** SEP-2352 authorization-server issuer binding */
-  issuer?: string;
-  /**
-   * True when this entry is a secretless SEP-2352 issuer stub persisted for a
-   * config-pre-registered client (written by the config-clientId path of
-   * saveClientInformation). Such a stub is only usable when paired with the
-   * config that supplies the client secret; it must never be served as
-   * standalone client information.
-   */
-  configPreRegistered?: boolean;
-}
+type AuthRecordSchemas = ReturnType<typeof createAuthRecordSchemas>;
+let schemas: AuthRecordSchemas | undefined;
 
-/** Complete auth entry for a server */
-export interface AuthEntry {
-  tokens?: StoredTokens;
-  clientInfo?: StoredClientInfo;
-  codeVerifier?: string;
-  oauthState?: string;
-  serverUrl?: string; // Track the URL these credentials are for
+export type StoredTokens = Zod.infer<AuthRecordSchemas["tokens"]>;
+export type StoredClientInfo = Zod.infer<AuthRecordSchemas["clientInfo"]>;
+export type AuthEntry = Zod.infer<AuthRecordSchemas["entry"]>;
+
+/** Structural validation leaves parsed records untouched, preserving legacy JSON property order. */
+export function isAuthEntry(value: unknown): value is AuthEntry {
+  schemas ??= createAuthRecordSchemas();
+  return schemas.entry.safeParse(value).success;
 }
 
 export interface AuthStorageOptions {

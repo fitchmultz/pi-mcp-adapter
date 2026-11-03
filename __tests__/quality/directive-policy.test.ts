@@ -23,7 +23,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -378,9 +378,60 @@ const keyringCases = [
   }),
 );
 
+const zodModuleSource =
+  'import type * as Zod from "zod";\nimport { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\nexport function createAuthRecordSchemas(): Zod.ZodString {\n// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-021: keep Zod outside cached startup.\nconst { z } = require("zod") as typeof Zod;\nreturn z.string();\n}\n';
+const authEntrySource = [
+  'import type { AuthEntry } from "./adapter/auth-record-types.ts";',
+  "export function saveAuthEntry(entry: AuthEntry, serverUrl?: string): void {",
+  "if (serverUrl !== undefined && serverUrl.length > 0) {",
+  "// oxlint-disable-next-line eslint/no-param-reassign -- QX-020: preserve the supplied entry's URL update.",
+  "entry.serverUrl = serverUrl;",
+  "}",
+  "}",
+  "",
+].join("\n");
+const functionCases = [
+  ...keyringCases,
+  {
+    name: "lazy declared Zod API",
+    source: zodModuleSource,
+    operation: 'const { z } = require("zod") as typeof Zod;',
+    replacement: 'const { z } = require("node:fs") as typeof Zod;',
+    neighbor: `${zodModuleSource}export function untrusted(value: unknown): typeof Zod {\nreturn value as typeof Zod;\n}\n`,
+    diagnostic: ["forward.ts:10:", "[Error/typescript(no-unsafe-type-assertion)]"],
+    authorized: {
+      ...site,
+      id: "QX-021",
+      rule: "typescript/no-unsafe-type-assertion",
+      scope: { type: "FunctionDeclaration", name: "createAuthRecordSchemas" },
+      path: ["body", "body", 0],
+      nodeType: "VariableDeclaration",
+      operation: 'const { z } = require("zod") as typeof Zod;',
+    },
+  },
+  {
+    name: "supplied auth-entry URL update",
+    source: authEntrySource,
+    operation: "entry.serverUrl",
+    replacement: "entry.oauthState",
+    neighbor: `${authEntrySource}export function unrelated(entry: AuthEntry): void {\nentry.codeVerifier = "neighbor";\n}\n`,
+    diagnostic: ["forward.ts:9:", "[Error/eslint(no-param-reassign)]"],
+    authorized: {
+      ...site,
+      id: "QX-020",
+      rule: "eslint/no-param-reassign",
+      scope: { type: "FunctionDeclaration", name: "saveAuthEntry" },
+      path: ["body", "body", 0, "consequent", "body", 0, "expression", "left"],
+      nodeType: "MemberExpression",
+      operation: "entry.serverUrl",
+      guards: ["consequent: serverUrl !== undefined && serverUrl.length > 0"],
+    },
+  },
+];
+
 describe("operation-bound exceptions", () => {
   it.each([
-    ...keyringCases,
+    ...functionCases,
     {
       name: "stored failure",
       source: forward,
@@ -565,7 +616,7 @@ describe("operation-bound exceptions", () => {
     expect(result.stderr).toMatch(/not authorized|scope is missing|operation changed/u);
   });
 
-  it.each(keyringCases)("rejects copied, replaced and duplicate $name operations", (entry) => {
+  it.each(functionCases)("rejects copied, replaced and duplicate $name operations", (entry) => {
     const copied = checkSource("copied.ts", entry.source, [entry.authorized]);
     const replaced = checkSource(
       "forward.ts",

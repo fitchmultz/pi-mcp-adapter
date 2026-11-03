@@ -151,5 +151,25 @@
     "nodeType": "ReturnStatement",
     "operation": "return require(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;",
     "guards": []
+  },
+  {
+    "id": "QX-020",
+    "file": "mcp-auth.ts",
+    "rule": "eslint/no-param-reassign",
+    "scope": { "type": "FunctionDeclaration", "name": "saveAuthEntry" },
+    "path": ["body", "body", 0, "consequent", "body", 0, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "entry.serverUrl",
+    "guards": ["consequent: serverUrl !== undefined && serverUrl.length > 0"]
+  },
+  {
+    "id": "QX-021",
+    "file": "auth-record-types.ts",
+    "rule": "typescript/no-unsafe-type-assertion",
+    "scope": { "type": "FunctionDeclaration", "name": "createAuthRecordSchemas" },
+    "path": ["body", "body", 0],
+    "nodeType": "VariableDeclaration",
+    "operation": "const { z } = require(\"zod\") as typeof Zod;",
+    "guards": []
   }
 ]

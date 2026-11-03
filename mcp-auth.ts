@@ -28,12 +28,13 @@ export {
   OAuthCredentialStoreError,
   formatOAuthCredentialStoreUnavailable,
 } from "./credential-store-errors.ts";
-import type {
-  AuthEntry,
-  AuthStorageOptions,
-  OAuthCredentialStatus,
-  StoredClientInfo,
-  StoredTokens,
+import {
+  isAuthEntry,
+  type AuthEntry,
+  type AuthStorageOptions,
+  type OAuthCredentialStatus,
+  type StoredClientInfo,
+  type StoredTokens,
 } from "./auth-record-types.ts";
 import {
   getAuthEntryAccount,
@@ -55,12 +56,14 @@ const LEGACY_AUTH_SECRET_SERVICE = "pi-mcp-adapter.oauth";
 
 export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): AuthStorageOptions {
   const baseDir = resolveConfiguredOAuthDir(oauthDir, cwd);
-  return baseDir ? { baseDir: join(baseDir, "fitch-mcp-adapter") } : {};
+  return baseDir !== undefined && baseDir.length > 0
+    ? { baseDir: join(baseDir, "fitch-mcp-adapter") }
+    : {};
 }
 
 export function getAuthBaseDir(options: AuthStorageOptions = {}): string {
   const override = process.env.FITCH_MCP_OAUTH_DIR?.trim();
-  if (override) {
+  if (override !== undefined && override.length > 0) {
     return override;
   }
   return options.baseDir ?? getAdapterPath("mcp-oauth");
@@ -85,7 +88,11 @@ export function getAuthEntryFilePath(serverName: unknown, options?: AuthStorageO
 }
 
 function parseAuthEntryPayload(serverName: string, payload: string, source: string): AuthEntry {
-  return parseJsonPayload(serverName, payload, source) as AuthEntry;
+  const entry = parseJsonPayload(serverName, payload, source);
+  if (!isAuthEntry(entry)) {
+    throw new Error(`Invalid OAuth credential record for ${serverName} at ${source}`);
+  }
+  return entry;
 }
 
 function readLegacyAuthEntry(
@@ -174,7 +181,7 @@ function readAuthEntry(
     return entry;
   }
   const legacyEntry = readLegacyAuthEntry(serverName, options);
-  if (!legacyEntry || behavior.migrateLegacy === false) {
+  if (legacyEntry === undefined || behavior.migrateLegacy === false) {
     return legacyEntry;
   }
   writeSecureAuthEntry(serverName, legacyEntry);
@@ -182,10 +189,15 @@ function readAuthEntry(
   return legacyEntry;
 }
 
+function getLegacyAuthBaseDir(): string {
+  const override = process.env.MCP_OAUTH_DIR?.trim();
+  return override !== undefined && override.length > 0 ? override : getAgentPath("mcp-oauth");
+}
+
 /** Explicit copy-only upgrade. Normal reads and logout never access the old service. */
 export function migrateLegacyAuthEntry(
   serverName: string,
-  legacyDirectory = process.env.MCP_OAUTH_DIR?.trim() || getAgentPath("mcp-oauth"),
+  legacyDirectory = getLegacyAuthBaseDir(),
 ): "copied" | "existing" | "absent" {
   if (readSecureAuthEntry(serverName) !== undefined) {
     return "existing";
@@ -197,9 +209,6 @@ export function migrateLegacyAuthEntry(
       return "absent";
     }
     entry = parseAuthEntryPayload(serverName, readFileSync(path, "utf8"), path);
-  }
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-    throw new Error(`Invalid legacy OAuth entry for ${serverName}`);
   }
   writeSecureAuthEntry(serverName, entry);
   if (JSON.stringify(readSecureAuthEntry(serverName)) !== JSON.stringify(entry)) {
@@ -228,12 +237,12 @@ export function getAuthForUrl(
   options?: AuthStorageOptions,
 ): AuthEntry | undefined {
   const entry = getAuthEntry(serverName, options);
-  if (!entry) {
+  if (entry === undefined) {
     return undefined;
   }
 
   // If no serverUrl is stored, this is from an old version - consider it invalid
-  if (!entry.serverUrl) {
+  if (entry.serverUrl === undefined || entry.serverUrl.length === 0) {
     return undefined;
   }
 
@@ -257,7 +266,11 @@ export function inspectAuthForUrl(
 ): OAuthCredentialStatus {
   try {
     const entry = readAuthEntry(serverName, options, { migrateLegacy: false });
-    if (!entry?.serverUrl || entry.serverUrl !== serverUrl) {
+    if (
+      entry?.serverUrl === undefined ||
+      entry.serverUrl.length === 0 ||
+      entry.serverUrl !== serverUrl
+    ) {
       return { status: "absent" };
     }
     return { status: "present", entry };
@@ -270,7 +283,7 @@ export function inspectAuthForUrl(
 }
 
 /**
- * Save auth entry for a server.
+ * Save an auth entry. A non-empty serverUrl also updates the supplied entry.
  */
 export function saveAuthEntry(
   serverName: string,
@@ -278,8 +291,8 @@ export function saveAuthEntry(
   serverUrl?: string,
   options?: AuthStorageOptions,
 ): void {
-  // Always update serverUrl if provided
-  if (serverUrl) {
+  if (serverUrl !== undefined && serverUrl.length > 0) {
+    // oxlint-disable-next-line eslint/no-param-reassign -- QX-020: preserve the supplied entry's URL update.
     entry.serverUrl = serverUrl;
   }
   writeSecureAuthEntry(serverName, entry);
@@ -311,7 +324,7 @@ export function updateTokens(
   options?: AuthStorageOptions,
 ): void {
   const entry = getAuthEntry(serverName, options) ?? {};
-  if (serverUrl && entry.serverUrl !== serverUrl) {
+  if (serverUrl !== undefined && serverUrl.length > 0 && entry.serverUrl !== serverUrl) {
     delete entry.clientInfo;
     delete entry.codeVerifier;
     delete entry.oauthState;
@@ -330,7 +343,7 @@ export function updateClientInfo(
   options?: AuthStorageOptions,
 ): void {
   const entry = getAuthEntry(serverName, options) ?? {};
-  if (serverUrl && entry.serverUrl !== serverUrl) {
+  if (serverUrl !== undefined && serverUrl.length > 0 && entry.serverUrl !== serverUrl) {
     delete entry.tokens;
     delete entry.codeVerifier;
     delete entry.oauthState;
