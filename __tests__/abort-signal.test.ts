@@ -1,64 +1,54 @@
-import type { TextContent } from "@earendil-works/pi-ai";
-import { describe, expect, it, vi } from "vitest";
+import assert from "node:assert/strict";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { abortable } from "../abort.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeConnect } from "../proxy-modes.ts";
 import { lazyConnect } from "../init.ts";
-import { McpServerManager } from "../server-manager.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
+import { createTestState } from "./test-state.ts";
+import { firstText, proxyRuntimeState } from "./fixtures/proxy-runtime.ts";
 
-function connectedState(client: Record<string, unknown>) {
+let host: Awaited<ReturnType<typeof createTestExtensionContext>>;
+beforeAll(async () => {
+  host = await createTestExtensionContext();
+});
+afterAll(async () => {
+  await host.dispose();
+});
+
+async function connectedState() {
+  const { state, connection } = await proxyRuntimeState({ name: "slow", description: "Slow tool" });
+  const ready = await connection.client.callTool({ name: "slow", arguments: {} });
+  expect(ready.content).toEqual([{ type: "text", text: "called" }]);
   return {
-    config: {
-      settings: { toolPrefix: "server" },
-      mcpServers: { demo: { command: "node", args: ["server.js"] } },
-    },
-    manager: {
-      getConnection: vi.fn(() => ({
-        status: "connected",
-        client,
-        tools: [{ name: "slow", description: "Slow tool" }],
-        resources: [],
-      })),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-      close: vi.fn(async () => {}),
-      getRequestOptions: vi.fn((_server: string, signal?: AbortSignal) =>
-        signal ? { signal } : undefined,
-      ),
-    },
-    toolMetadata: new Map([
-      [
-        "demo",
-        [
-          {
-            name: "demo_slow",
-            originalName: "slow",
-            description: "Slow tool",
-          },
-        ],
-      ],
-    ]),
-    serverInstructions: new Map(),
-    failureTracker: new Map(),
-    ui: undefined,
-  } as any;
+    state,
+    callTool: vi.spyOn(connection.client, "callTool"),
+    decrement: vi.spyOn(state.manager, "decrementInFlight"),
+  };
 }
 
 describe("AbortSignal propagation", () => {
   it("abortable rejects promptly when the host signal aborts", async () => {
     const controller = new AbortController();
-    const inFlight = abortable(new Promise<never>(() => {}), controller.signal);
-
+    const inFlight = abortable(
+      new Promise<never>(() => {
+        /* Deliberately hold the SDK result until caller cancellation. */
+      }),
+      controller.signal,
+    );
     controller.abort(new Error("user cancelled"));
-
     await expect(inFlight).rejects.toThrow("user cancelled");
   });
 
   it("direct tools pass AbortSignal to MCP callTool and settle if the MCP SDK promise hangs", async () => {
     const controller = new AbortController();
-    const callTool = vi.fn(() => new Promise<never>(() => {}));
-    const state = connectedState({ callTool });
+    const { state, callTool, decrement } = await connectedState();
+    callTool.mockImplementation(
+      () =>
+        new Promise<never>(() => {
+          /* Deliberately hold the SDK result until caller cancellation. */
+        }),
+    );
     const execute = createDirectToolExecutor(
       () => state,
       () => null,
@@ -69,144 +59,136 @@ describe("AbortSignal propagation", () => {
         description: "Slow tool",
       },
     );
-
-    const inFlight = execute("call-1", {}, controller.signal, undefined, {} as any);
+    const inFlight = execute(
+      "call-1",
+      {},
+      controller.signal,
+      undefined,
+      host.runner.createToolContext("call-1", controller.signal),
+    );
     await vi.waitFor(() => expect(callTool).toHaveBeenCalledTimes(1));
     controller.abort(new Error("user cancelled"));
-
     const result = await inFlight;
-    expect((result.content[0] as TextContent).text).toContain(
-      "Failed to call tool: user cancelled",
-    );
+    expect(firstText(result)).toContain("Failed to call tool: user cancelled");
     expect(result.details.error).toBe("aborted");
+    const anySignal: unknown = expect.any(AbortSignal);
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },
-      { signal: expect.any(AbortSignal) },
+      { signal: anySignal },
     );
-    expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
+    expect(decrement).toHaveBeenCalledWith("demo");
   });
 
   it("proxy tool calls pass AbortSignal to MCP callTool and settle if the MCP SDK promise hangs", async () => {
     const controller = new AbortController();
-    const callTool = vi.fn(() => new Promise<never>(() => {}));
-    const state = connectedState({ callTool });
-
-    const inFlight = executeCall(state, "demo_slow", {}, undefined, undefined, controller.signal);
+    const { state, callTool, decrement } = await connectedState();
+    callTool.mockImplementation(
+      () =>
+        new Promise<never>(() => {
+          /* Deliberately hold the SDK result until caller cancellation. */
+        }),
+    );
+    const inFlight = executeCall(state, {
+      toolName: "demo_slow",
+      args: {},
+      signal: controller.signal,
+    });
     await vi.waitFor(() => expect(callTool).toHaveBeenCalledTimes(1));
     controller.abort(new Error("user cancelled"));
-
     const result = await inFlight;
-    expect((result.content[0] as TextContent).text).toContain(
-      "Failed to call tool: user cancelled",
-    );
+    expect(firstText(result)).toContain("Failed to call tool: user cancelled");
     expect(result.details.error).toBe("aborted");
+    const anySignal: unknown = expect.any(AbortSignal);
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },
-      { signal: expect.any(AbortSignal) },
+      { signal: anySignal },
     );
-    expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
+    expect(decrement).toHaveBeenCalledWith("demo");
   });
 
   it("proxy cancellation during call capture prevents dispatch", async () => {
     const controller = new AbortController();
-    const callTool = vi.fn();
-    const state = connectedState({ callTool });
-    const capture = vi.fn(() => new Promise<void>(() => {}));
+    const { state, callTool, decrement } = await connectedState();
+    const captured = Promise.withResolvers<null>();
+    const capture = vi.fn<() => Promise<void>>(async () => {
+      await captured.promise;
+    });
     state.onToolCall = capture;
-
-    const inFlight = executeCall(state, "demo_slow", {}, undefined, undefined, controller.signal);
-    await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
-    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ phase: "before" }));
-    controller.abort(new Error("user cancelled"));
-
-    const result = await inFlight;
-    expect(result.details.error).toBe("aborted");
-    expect(callTool).not.toHaveBeenCalled();
-    expect(state.manager.decrementInFlight).toHaveBeenCalledWith("demo");
+    try {
+      const inFlight = executeCall(state, {
+        toolName: "demo_slow",
+        args: {},
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+      expect(capture).toHaveBeenCalledWith(expect.objectContaining({ phase: "before" }));
+      controller.abort(new Error("user cancelled"));
+      const result = await inFlight;
+      expect(result.details.error).toBe("aborted");
+      expect(callTool).not.toHaveBeenCalled();
+      expect(decrement).toHaveBeenCalledWith("demo");
+    } finally {
+      captured.resolve(null);
+    }
   });
 
   it("proxy connect passes AbortSignal to manager.connect and does not record aborts as server failures", async () => {
     const controller = new AbortController();
-    const state = {
-      config: { mcpServers: { demo: { command: "node", args: ["server.js"] } } },
-      manager: {
-        getConnection: vi.fn(() => {}),
-        connect: vi.fn(async (_name, _definition, signal?: AbortSignal) => {
-          controller.abort(new Error("user cancelled"));
-          signal?.throwIfAborted();
-          return { status: "connected", tools: [], resources: [] };
-        }),
-        getAllConnections: vi.fn(() => new Map()),
-      },
-      toolMetadata: new Map(),
-      failureTracker: new Map(),
-      ui: undefined,
-    } as any;
-
-    const result = await executeConnect(state, "demo", controller.signal);
-
-    expect(result.details.error).toBe("aborted");
-    expect(state.manager.connect).toHaveBeenCalledWith(
-      "demo",
-      state.config.mcpServers.demo,
-      controller.signal,
-    );
-    expect(state.failureTracker.size).toBe(0);
+    const definition = { command: "node", args: ["server.js"] };
+    const state = createTestState({ config: { mcpServers: { demo: definition } } });
+    const reason = new Error("user cancelled");
+    const connect = vi
+      .spyOn(state.manager, "connect")
+      .mockImplementation((_name, _definition, signal) => {
+        controller.abort(reason);
+        const failure: unknown = signal?.reason;
+        return Promise.reject(failure);
+      });
+    try {
+      const result = await executeConnect(state, { serverName: "demo", signal: controller.signal });
+      expect(result.details.error).toBe("aborted");
+      expect(connect).toHaveBeenCalledWith("demo", definition, expect.any(AbortSignal));
+      const signal = connect.mock.calls[0]?.[2];
+      assert.ok(signal);
+      expect(signal.aborted).toBe(true);
+      expect(signal.reason).toBe(controller.signal.reason);
+      expect(state.failureTracker.size).toBe(0);
+    } finally {
+      connect.mockRestore();
+      await state.owner.stop();
+    }
   });
 
   it("lazyConnect rethrows host aborts without updating the failure backoff", async () => {
     const controller = new AbortController();
-    const state = {
+    const state = createTestState({
       config: { mcpServers: { demo: { command: "node", args: ["server.js"] } } },
-      manager: {
-        getConnection: vi.fn(() => {}),
-        connect: vi.fn(async (_name, _definition, signal?: AbortSignal) => {
-          signal?.throwIfAborted();
-          return { status: "connected", tools: [], resources: [] };
-        }),
-      },
-      toolMetadata: new Map(),
-      failureTracker: new Map(),
-      ui: { setStatus: vi.fn() },
-    } as any;
-
+    });
     controller.abort(new Error("user cancelled"));
-
     await expect(lazyConnect(state, "demo", controller.signal)).rejects.toThrow("user cancelled");
     expect(state.failureTracker.size).toBe(0);
+    await state.owner.stop();
   });
 
   it("server-manager resource discovery does not swallow host aborts", async () => {
     const controller = new AbortController();
-    const client = {
-      // Resource discovery is capability-gated, so the abort path is only
-      // reachable for a server that advertises `resources`.
-      getServerCapabilities: () => ({ resources: {} }),
-      listResources: vi.fn(async (_params, options?: { signal?: AbortSignal }) => {
-        options?.signal?.throwIfAborted();
-        return { resources: [] };
-      }),
-    };
-    const manager = new McpServerManager({} as any);
-
-    controller.abort(new Error("user cancelled"));
-
-    await expect(
-      (manager as any).fetchAllResources(client, { signal: controller.signal }),
-    ).rejects.toThrow("user cancelled");
+    const listResources = vi.fn<() => { resources: [] }>(() => {
+      controller.abort(new Error("user cancelled"));
+      return { resources: [] };
+    });
+    await expect(proxyRuntimeState({ listResources, signal: controller.signal })).rejects.toThrow(
+      "user cancelled",
+    );
+    expect(listResources).toHaveBeenCalledOnce();
   });
 
   it("server-manager readResource passes AbortSignal through the MCP SDK request options", async () => {
     const controller = new AbortController();
-    const readResource = vi.fn(async () => ({ contents: [] }));
-    const manager = new McpServerManager({} as any);
-    (manager as any).connections.set("demo", {
-      status: "connected",
-      client: { readResource },
+    const { state, connection } = await proxyRuntimeState({
+      readResource: () => ({ contents: [] }),
     });
-
-    await manager.readResource("demo", "resource://demo", controller.signal);
-
+    const readResource = vi.spyOn(connection.client, "readResource");
+    await state.manager.readResource("demo", "resource://demo", controller.signal);
     expect(readResource).toHaveBeenCalledWith(
       { uri: "resource://demo" },
       { signal: controller.signal },

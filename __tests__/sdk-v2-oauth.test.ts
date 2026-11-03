@@ -175,7 +175,7 @@ async function oauthFixture() {
       failureTracker: new Map(),
       completedUiSessions: [],
     });
-    return () => executeCall(state, "echo", {}, name);
+    return () => executeCall(state, { toolName: "echo", args: {}, serverOverride: name });
   };
   return {
     name,

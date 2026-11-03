@@ -343,8 +343,14 @@ async function call(state: McpExtensionState, entry: string, signal?: AbortSigna
             prefixedName: "local_echo",
             description: "Echo",
           },
-        )("call-id", { value: "test" }, signal, undefined, requireValue(context).context)
-      : await executeCall(state, "local_echo", { value: "test" }, undefined, undefined, signal);
+        )(
+          "call-id",
+          { value: "test" },
+          signal,
+          undefined,
+          requireValue(context).runner.createToolContext("call-id", signal),
+        )
+      : await executeCall(state, { toolName: "local_echo", args: { value: "test" }, signal });
   return {
     ok: output.details.error === undefined,
     error: undefined,
@@ -791,7 +797,10 @@ describe("published SDK v2 over real local HTTP", () => {
               },
             ],
       );
-      const readback = await executeCall(state, "local_readback", { value: "test" });
+      const readback = await executeCall(state, {
+        toolName: "local_readback",
+        args: { value: "test" },
+      });
       expect(readback.details.mcpResult).toMatchObject({
         structuredContent: { id: "original-resource", version: 1 },
       });
@@ -884,7 +893,13 @@ describe("published SDK v2 over real local HTTP", () => {
         description: "Echo",
         annotations: { readOnlyHint: true },
       },
-    )("outer-id", { secret: "not-in-error-text" }, undefined, undefined, context.context);
+    )(
+      "outer-id",
+      { secret: "not-in-error-text" },
+      undefined,
+      undefined,
+      context.runner.createToolContext("outer-id", state.owner.signal),
+    );
     const safe = annotations?.readOnlyHint === true || annotations?.idempotentHint === true;
     expect(f.calls()).toHaveLength(safe ? 2 : 1);
     expect(output.details.error).toBe(safe ? undefined : "ambiguous_outcome");
@@ -2421,7 +2436,7 @@ describe("published SDK v2 over real local HTTP", () => {
       return true;
     });
     const { state, connection } = await f.connect({ retryOnTransportFailure: true });
-    const sibling = executeCall(state, "local_echo", { sibling: true });
+    const sibling = executeCall(state, { toolName: "local_echo", args: { sibling: true } });
     await expect.poll(() => accepted !== undefined).toBe(true);
     expect((await call(state, "proxy")).ok).toBe(true);
     expect(requireValue(accepted).res.destroyed).toBe(false);

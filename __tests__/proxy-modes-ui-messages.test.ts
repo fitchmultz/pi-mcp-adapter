@@ -1,3 +1,6 @@
+import assert from "node:assert/strict";
+import { createTestState } from "./test-state.ts";
+import { firstText } from "./fixtures/proxy-runtime.ts";
 import { describe, expect, it } from "vitest";
 import { executeUiMessages } from "../proxy-modes.ts";
 import type { McpExtensionState } from "../state.ts";
@@ -7,8 +10,18 @@ import { join } from "node:path";
 import { createUiMessageHistory } from "../ui-message-history.ts";
 import { readMcpResult } from "../mcp-output-guard.ts";
 
+function completedSession(state: McpExtensionState) {
+  const session = state.completedUiSessions[0];
+  assert.ok(session);
+  return session;
+}
+function resultRef(value: unknown): string {
+  assert.ok(typeof value === "string");
+  return value;
+}
+
 function createState(prompts: string[]): McpExtensionState {
-  return {
+  return createTestState({
     completedUiSessions: [
       {
         serverName: "interactive-visualizer",
@@ -23,7 +36,7 @@ function createState(prompts: string[]): McpExtensionState {
         },
       },
     ],
-  } as unknown as McpExtensionState;
+  });
 }
 
 describe("executeUiMessages", () => {
@@ -38,17 +51,19 @@ describe("executeUiMessages", () => {
       const history = createUiMessageHistory(root);
       history.append("prompts", "accepted first");
       history.append("prompts", "accepted second");
-      const original = await readFile(history.messages.historyRef!, "utf8");
+      const historyRef = history.messages.historyRef;
+      assert.ok(historyRef !== undefined && historyRef.length > 0);
+      const original = await readFile(historyRef, "utf8");
       const state = createState([]);
       state.outputDirectory = root;
       state.config = {
         mcpServers: {},
         settings: { outputGuard: mode === "paged" ? { maxBytes: 1000, detailsMaxBytes: 1 } : {} },
       };
-      state.completedUiSessions[0]!.messages = history.messages;
+      completedSession(state).messages = history.messages;
       await writeFile(
-        history.messages.historyRef!,
-        truncation === "empty" ? "" : original.split("\n")[0] + "\n",
+        historyRef,
+        truncation === "empty" ? "" : String(original.split("\n")[0]) + "\n",
       );
       const failed = await executeUiMessages(state);
       expect(failed).toMatchObject({
@@ -56,15 +71,16 @@ describe("executeUiMessages", () => {
         details: { error: "ui_history_delivery_failed", cleared: false },
       });
       expect(state.completedUiSessions).toHaveLength(1);
-      await writeFile(history.messages.historyRef!, original);
+      await writeFile(historyRef, original);
       const recovered = await executeUiMessages(state);
       expect(recovered.details.cleared).toBe(true);
-      const delivered = recovered.details.resultRef
-        ? await readFile(recovered.details.resultRef as string, "utf8")
-        : recovered.content
-            .filter((block) => block.type === "text")
-            .map((block) => block.text)
-            .join("\n");
+      const delivered =
+        typeof recovered.details.resultRef === "string" && recovered.details.resultRef.length > 0
+          ? await readFile(resultRef(recovered.details.resultRef), "utf8")
+          : recovered.content
+              .filter((block) => block.type === "text")
+              .map((block) => block.text)
+              .join("\n");
       expect(delivered).toContain("accepted first");
       expect(delivered).toContain("accepted second");
       expect(state.completedUiSessions).toEqual([]);
@@ -81,20 +97,21 @@ describe("executeUiMessages", () => {
       history.append("notifications", "notice");
       history.append("intents", { intent: "navigate", params: { to: "/home" } });
       history.append("prompts", "second");
+      const historyRef = history.messages.historyRef;
+      assert.ok(historyRef !== undefined && historyRef.length > 0);
       const state = createState([]);
       state.outputDirectory = root;
-      state.completedUiSessions[0]!.messages = history.messages;
+      completedSession(state).messages = history.messages;
       const result = await executeUiMessages(state);
       expect(result.details).toMatchObject({
         prompts: ["first", "second"],
         intents: [{ intent: "navigate", params: { to: "/home" } }],
         cleared: true,
       });
-      const block = result.content[0]!;
-      const text = block.type === "text" ? block.text : "";
+      const text = firstText(result);
       expect(text.indexOf("### Prompts")).toBeLessThan(text.indexOf("### Intents"));
       expect(text.indexOf("### Intents")).toBeLessThan(text.indexOf("### Notifications"));
-      expect((await stat(history.messages.historyRef!)).mode & 0o777).toBe(0o600);
+      expect((await stat(historyRef)).mode & 0o777).toBe(0o600);
       expect(history.messages.prompts).toEqual([]);
       expect(state.completedUiSessions).toEqual([]);
     } finally {
@@ -115,7 +132,7 @@ describe("executeUiMessages", () => {
         expect(history.messages.prompts).toHaveLength(0);
         expect(history.messages.historyBytes).toBeGreaterThan(1_000_000);
         const state = createState([]);
-        state.completedUiSessions[0]!.messages = history.messages;
+        completedSession(state).messages = history.messages;
         const blocked = join(root, "not-a-directory");
         await writeFile(blocked, "blocked");
         state.outputDirectory = blocked;
@@ -126,7 +143,7 @@ describe("executeUiMessages", () => {
         const delivered = await executeUiMessages(state);
         expect(delivered.details.cleared).toBe(true);
         expect(state.completedUiSessions).toEqual([]);
-        const ref = delivered.details.resultRef as string;
+        const ref = resultRef(delivered.details.resultRef);
         const full = await readFile(ref, "utf8");
         expect(full.match(/\n- event-/g)).toHaveLength(10_000);
         expect(full).toContain("event-9999 ");
@@ -151,12 +168,10 @@ describe("executeUiMessages", () => {
       expect(history.append("prompts", "recover me")).toContain("remain in memory");
       expect(history.append("notifications", "also recover")).toContain("remain in memory");
       const state = createState([]);
-      state.completedUiSessions[0]!.messages = history.messages;
+      completedSession(state).messages = history.messages;
       const recovered = await executeUiMessages(state);
       expect(recovered.details.prompts).toEqual(["recover me"]);
-      expect(recovered.content[0]).toMatchObject({
-        text: expect.stringContaining("History persistence warning"),
-      });
+      expect(firstText(recovered)).toContain("History persistence warning");
       expect(state.completedUiSessions).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -169,13 +184,8 @@ describe("executeUiMessages", () => {
     ]);
 
     const result = await executeUiMessages(state);
-    expect(result.content[0]).toMatchObject({
-      type: "text",
-      text: expect.stringContaining("visualization_annotations_submitted"),
-    });
-    expect(result.content[0]).toMatchObject({
-      text: expect.not.stringContaining("### Prompts:\n- visualization_annotations_submitted"),
-    });
+    expect(firstText(result)).toContain("visualization_annotations_submitted");
+    expect(firstText(result)).not.toContain("### Prompts:\n- visualization_annotations_submitted");
     expect(result.details).toMatchObject({
       intents: [
         {
@@ -203,9 +213,7 @@ describe("executeUiMessages", () => {
   it("preserves ordinary prompts as prompts", async () => {
     const state = createState(["Please analyze this flow"]);
     const result = await executeUiMessages(state);
-    expect(result.content[0]).toMatchObject({
-      text: expect.stringContaining("### Prompts:\n- Please analyze this flow"),
-    });
+    expect(firstText(result)).toContain("### Prompts:\n- Please analyze this flow");
     expect(result.details).toMatchObject({
       prompts: ["Please analyze this flow"],
       intents: [],
@@ -214,7 +222,7 @@ describe("executeUiMessages", () => {
 
   it("returns submitted model context updates", async () => {
     const state = createState([]);
-    state.completedUiSessions[0]!.messages.contexts.push({
+    completedSession(state).messages.contexts.push({
       payload: { content: [{ type: "text", text: "Selected node A" }] },
       summary: '{"content":[{"type":"text","text":"Selected node A"}]}',
       truncated: false,
@@ -222,11 +230,9 @@ describe("executeUiMessages", () => {
 
     const result = await executeUiMessages(state);
 
-    expect(result.content[0]).toMatchObject({
-      text: expect.stringContaining(
-        '### Context updates:\n- {"content":[{"type":"text","text":"Selected node A"}]}',
-      ),
-    });
+    expect(firstText(result)).toContain(
+      '### Context updates:\n- {"content":[{"type":"text","text":"Selected node A"}]}',
+    );
     expect(result.details).toMatchObject({
       contexts: [
         {

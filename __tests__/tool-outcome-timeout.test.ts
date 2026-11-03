@@ -8,7 +8,7 @@ import { McpServerManager } from "../server-manager.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
-import type { McpExtensionState } from "../state.ts";
+import { createTestState } from "./test-state.ts";
 
 // Self-contained so the same wire fixture runs in a real stdio child or on a Unix socket.
 function responder(send: (message: any) => void) {
@@ -87,7 +87,7 @@ it.each(["stdio", "unix"])(
       };
       const connection = await manager.connect("local", definition);
       definition.requestTimeoutMs = 80;
-      const state = {
+      const state = createTestState({
         manager,
         config: { mcpServers: { local: definition }, settings: {} },
         toolMetadata: new Map([
@@ -105,13 +105,13 @@ it.each(["stdio", "unix"])(
         failureTracker: new Map(),
         serverInstructions: new Map(),
         completedUiSessions: [],
-      } as unknown as McpExtensionState;
-      const output = await executeCall(state, "local_write", {});
+      });
+      const output = await executeCall(state, { toolName: "local_write", args: {} });
       expect(output.details).toMatchObject({
         error: "ambiguous_outcome",
         recovery: { action: "readback" },
       });
-      const readback = await executeCall(state, "local_readback", {});
+      const readback = await executeCall(state, { toolName: "local_readback", args: {} });
       expect(readback.content).toEqual([{ type: "text", text: "1" }]);
     } finally {
       await manager.closeAll();
@@ -149,7 +149,7 @@ it.each([
         retryOnTransportFailure: true,
       };
       const connection = await manager.connect("local", definition);
-      const state = {
+      const state = createTestState({
         manager,
         config: { mcpServers: { local: definition }, settings: {} },
         toolMetadata: new Map([
@@ -167,7 +167,7 @@ it.each([
         failureTracker: new Map(),
         serverInstructions: new Map(),
         completedUiSessions: [],
-      } as unknown as McpExtensionState;
+      });
       if (capture) {
         state.onToolCall = async () => {};
       }
@@ -191,7 +191,10 @@ it.each([
       );
       if (ending === "abort") {
         await expect
-          .poll(async () => (await executeCall(state, "local_readback", {})).content)
+          .poll(
+            async () =>
+              (await executeCall(state, { toolName: "local_readback", args: {} })).content,
+          )
           .toEqual([{ type: "text", text: "1" }]);
         controller.abort(new Error("caller cancelled"));
       }
@@ -231,7 +234,7 @@ it.each([
           }),
         ]),
       );
-      expect((await executeCall(state, "local_readback", {})).content).toEqual([
+      expect((await executeCall(state, { toolName: "local_readback", args: {} })).content).toEqual([
         { type: "text", text: "1" },
       ]);
       expect(connection.inFlight).toBe(0);
@@ -272,7 +275,7 @@ it.each([false, true])(
         retryOnTransportFailure: true,
       };
       const connection = await manager.connect("local", definition);
-      const state = {
+      const state = createTestState({
         manager,
         config: { mcpServers: { local: definition }, settings: {} },
         toolMetadata: new Map([
@@ -290,8 +293,8 @@ it.each([false, true])(
         failureTracker: new Map(),
         serverInstructions: new Map(),
         completedUiSessions: [],
-      } as unknown as McpExtensionState;
-      const output = await executeCall(state, "local_write", {});
+      });
+      const output = await executeCall(state, { toolName: "local_write", args: {} });
       expect(await readFile(marker, "utf8")).toBe("committed\n");
       expect(output.details).toMatchObject({
         error: "ambiguous_outcome",

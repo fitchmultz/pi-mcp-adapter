@@ -62,12 +62,18 @@ describe("MCP output schema validation", () => {
 
     const result =
       path === "proxy"
-        ? await executeCall(state, `real_${name}`, {})
+        ? await executeCall(state, { toolName: `real_${name}`, args: {} })
         : await createDirectToolExecutor(
             () => state,
             () => null,
             directSpec(name),
-          )("id", {}, undefined, undefined, host.context);
+          )(
+            "id",
+            {},
+            undefined,
+            undefined,
+            host.runner.createToolContext("id", state.owner.signal),
+          );
 
     expect(result.details).not.toMatchObject({ error: "call_failed" });
     expect(result.content[0]).toEqual({ type: "text", text: name });
@@ -95,12 +101,18 @@ describe("MCP output schema validation", () => {
 
     const result =
       path === "proxy"
-        ? await executeCall(state, `real_${name}`, {})
+        ? await executeCall(state, { toolName: `real_${name}`, args: {} })
         : await createDirectToolExecutor(
             () => state,
             () => null,
             directSpec(name),
-          )("id", {}, undefined, undefined, host.context);
+          )(
+            "id",
+            {},
+            undefined,
+            undefined,
+            host.runner.createToolContext("id", state.owner.signal),
+          );
 
     expect(result.details).toMatchObject({ error: "call_failed" });
     const block = result.content[0];

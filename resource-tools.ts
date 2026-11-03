@@ -126,8 +126,16 @@ export async function executeResourceRead(
     raw?: boolean | undefined;
   },
 ): ReturnType<typeof executeCall> {
-  return executeCall(state, uri, {}, server, undefined, signal, identity, beforeDispatch, {
-    resourceUri: uri,
-    raw,
+  return executeCall(state, {
+    toolName: uri,
+    args: {},
+    serverOverride: server,
+    signal,
+    identity,
+    beforeDispatch,
+    options: {
+      resourceUri: uri,
+      raw,
+    },
   });
 }

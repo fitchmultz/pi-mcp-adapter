@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createTestState } from "./test-state.ts";
 import { createTestExtensionContext } from "./test-extension-context.ts";
+import { firstText, parsedRecord } from "./fixtures/proxy-runtime.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeDescribe, executeSearch } from "../proxy-modes.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "../tool-approval.ts";
@@ -22,12 +22,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await host.dispose();
 });
-
-function firstText(result: Pick<AgentToolResult<unknown>, "content">): string {
-  const block = result.content[0];
-  assert.ok(block?.type === "text");
-  return block.text;
-}
 
 async function createState(
   options: {
@@ -91,7 +85,7 @@ describe("tool approval", () => {
   it("fails closed headlessly with a structured approval_required result", async () => {
     const { state, callTool } = await createState({ approveTools: true, interactive: false });
 
-    const result = await executeCall(state, tool.name, { query: "private" });
+    const result = await executeCall(state, { toolName: tool.name, args: { query: "private" } });
 
     expect(result.details).toEqual({
       mode: "call",
@@ -105,7 +99,9 @@ describe("tool approval", () => {
 
   it("returns approval_denied without throwing or invoking proxy or direct tools", async () => {
     const proxy = await createState({ approveTools: true, decision: "Deny" });
-    await expect(executeCall(proxy.state, tool.name, {})).resolves.toMatchObject({
+    await expect(
+      executeCall(proxy.state, { toolName: tool.name, args: {} }),
+    ).resolves.toMatchObject({
       details: { error: "approval_denied", server: "demo", tool: "search-records" },
     });
     expect(proxy.callTool).not.toHaveBeenCalled();
@@ -121,7 +117,15 @@ describe("tool approval", () => {
         description: "Search records",
       },
     );
-    await expect(execute("call-1", {}, undefined, undefined, host.context)).resolves.toMatchObject({
+    await expect(
+      execute(
+        "call-1",
+        {},
+        undefined,
+        undefined,
+        host.runner.createToolContext("call-1", direct.state.owner.signal),
+      ),
+    ).resolves.toMatchObject({
       details: { error: "approval_denied", server: "demo", tool: "search-records" },
     });
     expect(direct.callTool).not.toHaveBeenCalled();
@@ -167,11 +171,11 @@ describe("tool approval", () => {
   it("marks gated tools in describe and search output without hiding them", async () => {
     const { state } = await createState({ approveTools: true });
 
-    expect(JSON.parse(firstText(executeDescribe(state, tool.name)))).toMatchObject({
+    expect(parsedRecord(firstText(executeDescribe(state, tool.name)))).toMatchObject({
       name: "search-records",
       approvalRequired: true,
     });
-    expect(firstText(executeSearch(state, "search", undefined, false))).toContain(
+    expect(firstText(executeSearch(state, { query: "search", includeSchemas: false }))).toContain(
       "(requires approval)",
     );
   });

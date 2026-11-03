@@ -215,7 +215,11 @@ describe("lazy-keep-alive lifecycle", () => {
       ]),
     });
 
-    const result = await executeCall(state, "srv_noop", {}, "srv");
+    const result = await executeCall(state, {
+      toolName: "srv_noop",
+      args: {},
+      serverOverride: "srv",
+    });
     expect(result.content).toEqual([{ type: "text", text: "ok" }]);
     await reconnectAfterClose(manager, lifecycle);
   });

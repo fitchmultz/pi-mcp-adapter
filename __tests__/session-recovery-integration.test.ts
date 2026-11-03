@@ -1,575 +1,230 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import assert from "node:assert/strict";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+  type MockInstance,
+} from "vitest";
+import type { Client } from "@modelcontextprotocol/client";
+import type { ServerConnection } from "../server-manager.ts";
+import { executeCall } from "../proxy-modes.ts";
+import { createDirectToolExecutor } from "../direct-tools.ts";
+import { withSessionRecovery } from "../session-recovery.ts";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
+import { firstText } from "./fixtures/proxy-runtime.ts";
+import {
+  MachineHttpServer,
+  machineJson,
+  machineMessageSchema,
+  machineResult,
+  readMachineBody,
+} from "./fixtures/oauth-machine-wire.ts";
 
-// direct-tools.ts calls lazyConnect() before touching the connection; mock
-// it the same way __tests__/direct-tools-auto-auth.test.ts does so we can
-// drive the "already connected" path directly.
-const mocks = vi.hoisted(() => ({
-  lazyConnect: vi.fn(),
-}));
+let host: Awaited<ReturnType<typeof createTestExtensionContext>>;
+beforeAll(async () => {
+  host = await createTestExtensionContext();
+});
+afterAll(async () => {
+  await host.dispose();
+});
 
-vi.mock("../init.ts", () => ({
-  lazyConnect: mocks.lazyConnect,
-  getFailureAgeSeconds: vi.fn(() => null),
-  markKeepAliveAfterConnect: vi.fn(),
-}));
-
-describe("session recovery — Streamable HTTP wire path", () => {
-  it("recovers a JSON-RPC server-not-initialized response from the SDK transport", async () => {
-    const { createServer } = await import("node:http");
-    const { McpServerManager } = await import("../server-manager.ts");
-    const { withSessionRecovery } = await import("../session-recovery.ts");
-
-    let sessionCount = 0;
-    let toolCalls = 0;
-    const toolCallSessionIds: string[] = [];
-    const server = createServer(async (req, res) => {
-      if (req.method === "GET") {
-        res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
-        return;
-      }
-      if (req.method === "DELETE") {
-        res.writeHead(200).end();
-        return;
-      }
-      if (req.method !== "POST") {
-        res.writeHead(405, { Allow: "POST" }).end("Method Not Allowed");
-        return;
-      }
-
-      let body = "";
-      for await (const chunk of req) {
-        body += chunk;
-      }
-      const message = JSON.parse(body) as { id?: string | number; method?: string };
-
-      if (message.method === "initialize") {
-        res
-          .writeHead(200, {
-            "content-type": "application/json",
-            "mcp-session-id": `session-${++sessionCount}`,
-          })
-          .end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: message.id,
-              result: {
-                protocolVersion: "2025-06-18",
-                capabilities: { tools: {}, resources: {} },
-                serverInfo: { name: "stale-session", version: "1.0.0" },
-              },
-            }),
-          );
-        return;
-      }
-
-      if (message.method === "notifications/initialized") {
-        res.writeHead(202).end();
-        return;
-      }
-
-      if (message.method === "tools/list") {
-        res.writeHead(200, { "content-type": "application/json" }).end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: message.id,
-            result: {
-              tools: [{ name: "search", inputSchema: { type: "object", properties: {} } }],
-            },
-          }),
-        );
-        return;
-      }
-
-      if (message.method === "resources/list") {
-        res.writeHead(200, { "content-type": "application/json" }).end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: message.id,
-            result: { resources: [] },
-          }),
-        );
-        return;
-      }
-
-      if (message.method === "tools/call") {
-        toolCalls += 1;
-        const sessionId = req.headers["mcp-session-id"];
-        toolCallSessionIds.push(Array.isArray(sessionId) ? sessionId[0]! : (sessionId ?? ""));
-        if (toolCalls === 1) {
-          res.writeHead(400, { "content-type": "application/json" }).end(
-            JSON.stringify({
+async function recoveryFixture(kind: "terminated" | "uninitialized", repeat = false) {
+  let sessions = 0;
+  const toolCallSessionIds: string[] = [];
+  const http = new MachineHttpServer(async (request, response) => {
+    if (request.method !== "POST") {
+      response.writeHead(request.method === "DELETE" ? 200 : 405).end();
+      return;
+    }
+    const message = machineMessageSchema.parse(JSON.parse(await readMachineBody(request)));
+    if (!("id" in message)) {
+      response.writeHead(202).end();
+      return;
+    }
+    if (message.method === "initialize") {
+      response.setHeader("Mcp-Session-Id", `session-${++sessions}`);
+    }
+    if (message.method === "tools/call") {
+      const session = request.headers["mcp-session-id"];
+      toolCallSessionIds.push(Array.isArray(session) ? (session[0] ?? "") : (session ?? ""));
+      if (toolCallSessionIds.length === 1 || repeat) {
+        if (kind === "terminated") {
+          machineJson(response, { error: "Session not found" }, 404);
+        } else {
+          machineJson(
+            response,
+            {
               jsonrpc: "2.0",
               id: null,
               error: { code: -32000, message: "Bad Request: Server not initialized" },
-            }),
+            },
+            400,
           );
-          return;
         }
-        res.writeHead(200, { "content-type": "application/json" }).end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: message.id,
-            result: { content: [{ type: "text", text: "ok" }] },
-          }),
-        );
         return;
       }
-
-      res.writeHead(500).end(`unexpected method: ${message.method}`);
+      machineJson(response, {
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { isError: false, content: [{ type: "text", text: "ok" }] },
+      });
+      return;
+    }
+    const result =
+      message.method === "tools/list"
+        ? { tools: [{ name: "search", description: "Search", inputSchema: { type: "object" } }] }
+        : machineResult(message.method, "stale-session", "ok");
+    machineJson(response, { jsonrpc: "2.0", id: message.id, result });
+  });
+  const origin = await http.listen();
+  const definition = { url: `${origin}/mcp`, protocolVersion: "legacy" as const };
+  const state = createTestState({ config: { settings: {}, mcpServers: { demo: definition } } });
+  onTestFinished(async () => {
+    await state.owner.stop();
+    await state.manager.closeAll();
+    await http.close();
+    vi.restoreAllMocks();
+  });
+  const stale = await state.manager.connect("demo", definition);
+  const staleCall = vi.spyOn(stale.client, "callTool");
+  let freshCall: MockInstance<Client["callTool"]> | undefined;
+  const original = state.manager.reconnect.bind(state.manager);
+  const reconnect = vi
+    .spyOn(state.manager, "reconnect")
+    .mockImplementation(async (name, entry, previous, signal) => {
+      const fresh = await original(name, entry, previous, signal);
+      freshCall = vi.spyOn(fresh.client, "callTool");
+      return fresh;
     });
+  return {
+    state,
+    toolCallSessionIds,
+    stale,
+    staleCall,
+    reconnect,
+    freshCall: () => {
+      assert.ok(freshCall);
+      return freshCall;
+    },
+  };
+}
 
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("server did not bind to a TCP port");
-    }
+async function directCall(
+  state: ReturnType<typeof createTestState>,
+  args: Record<string, unknown>,
+) {
+  return createDirectToolExecutor(
+    () => state,
+    () => null,
+    {
+      serverName: "demo",
+      originalName: "search",
+      prefixedName: "demo_search",
+      description: "Search",
+    },
+  )("id", args, undefined, undefined, host.runner.createToolContext("id", state.owner.signal));
+}
+function assertOneRecovery(fixture: Awaited<ReturnType<typeof recoveryFixture>>): void {
+  expect(fixture.staleCall).toHaveBeenCalledTimes(1);
+  expect(fixture.freshCall()).toHaveBeenCalledTimes(1);
+  expect(fixture.reconnect).toHaveBeenCalledTimes(1);
+}
+function assertRecoveryArguments(fixture: Awaited<ReturnType<typeof recoveryFixture>>): void {
+  const signal: unknown = expect.any(AbortSignal);
+  expect(fixture.reconnect).toHaveBeenCalledWith(
+    "demo",
+    fixture.state.config.mcpServers.demo,
+    fixture.stale,
+    signal,
+  );
+}
 
-    const manager = new McpServerManager();
-    const definition = {
-      url: `http://127.0.0.1:${address.port}/mcp`,
-      protocolVersion: "legacy" as const,
-    };
-    try {
-      await manager.connect("demo", definition);
-      const result = await withSessionRecovery(
-        { manager, config: { mcpServers: { demo: definition } } },
-        "demo",
-        (connection) => connection.client.callTool({ name: "search", arguments: {} }),
-      );
-
-      expect(result.content[0]).toMatchObject({ type: "text", text: "ok" });
-      expect(toolCalls).toBe(2);
-      expect(toolCallSessionIds).toHaveLength(2);
-      expect(toolCallSessionIds[0]).not.toBe(toolCallSessionIds[1]);
-    } finally {
-      await manager.close("demo").catch(() => {});
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
+describe("session recovery — Streamable HTTP wire path", () => {
+  it("recovers a JSON-RPC server-not-initialized response from the SDK transport", async () => {
+    const fixture = await recoveryFixture("uninitialized");
+    const result = await withSessionRecovery(
+      { manager: fixture.state.manager, config: fixture.state.config },
+      "demo",
+      (connection: ServerConnection) =>
+        connection.client.callTool({ name: "search", arguments: {} }),
+    );
+    expect(result.content[0]).toMatchObject({ type: "text", text: "ok" });
+    expect(fixture.toolCallSessionIds.length).toBe(2);
+    expect(fixture.toolCallSessionIds).toHaveLength(2);
+    expect(fixture.toolCallSessionIds[0]).not.toBe(fixture.toolCallSessionIds[1]);
   });
 });
 
 describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
-  it("recovers a terminated Streamable HTTP session transparently mid tool-call", async () => {
-    const { executeCall } = await import("../proxy-modes.ts");
-    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
-
-    const stale = {
-      status: "connected" as const,
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi.fn().mockRejectedValueOnce(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-    };
-    const fresh = {
-      status: "connected" as const,
-      transport: { sessionId: "session-2" },
-      client: {
-        callTool: vi
-          .fn()
-          .mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
-      },
-    };
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => {}),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-    };
-
-    const state = {
-      config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
-      manager,
-      toolMetadata: new Map([
-        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
-      ]),
-      failureTracker: new Map(),
-      completedUiSessions: [],
-    } as any;
-
-    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo");
-
-    expect(stale.client.callTool).toHaveBeenCalledTimes(1);
-    expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith(
-      "demo",
-      state.config.mcpServers.demo,
-      stale,
-      expect.any(AbortSignal),
-    );
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
-    expect((result.content[0] as { text: string }).text).toContain("ok");
+  it.each([
+    {
+      label: "recovers a terminated Streamable HTTP session transparently mid tool-call",
+      kind: "terminated" as const,
+    },
+    {
+      label: "recovers a server-not-initialized MCP error transparently mid tool-call",
+      kind: "uninitialized" as const,
+    },
+  ])("$label", async ({ kind }) => {
+    const fixture = await recoveryFixture(kind);
+    const result = await executeCall(fixture.state, {
+      toolName: "demo_search",
+      args: { q: "hello" },
+      serverOverride: "demo",
+    });
+    assertOneRecovery(fixture);
+    assertRecoveryArguments(fixture);
+    expect(firstText(result)).toContain("ok");
   });
-
-  it("recovers a server-not-initialized MCP error transparently mid tool-call", async () => {
-    const { executeCall } = await import("../proxy-modes.ts");
-    const { ProtocolError } = await import("@modelcontextprotocol/client");
-
-    const stale = {
-      status: "connected" as const,
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValueOnce(new ProtocolError(-32000, "Server not initialized")),
-      },
-    };
-    const fresh = {
-      status: "connected" as const,
-      transport: { sessionId: "session-2" },
-      client: {
-        callTool: vi
-          .fn()
-          .mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
-      },
-    };
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => {}),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-    };
-
-    const state = {
-      config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
-      manager,
-      toolMetadata: new Map([
-        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
-      ]),
-      failureTracker: new Map(),
-      completedUiSessions: [],
-    } as any;
-
-    const result = await executeCall(state, "demo_search", { q: "hello" }, "demo");
-
-    expect(stale.client.callTool).toHaveBeenCalledTimes(1);
-    expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith(
-      "demo",
-      state.config.mcpServers.demo,
-      stale,
-      expect.any(AbortSignal),
-    );
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
-    expect((result.content[0] as { text: string }).text).toContain("ok");
-  });
-
-  it("gives up after one reconnect attempt: a second server-not-initialized MCP error propagates as call_failed", async () => {
-    const { executeCall } = await import("../proxy-modes.ts");
-    const { ProtocolError } = await import("@modelcontextprotocol/client");
-
-    const stale = {
-      status: "connected" as const,
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi.fn().mockRejectedValue(new ProtocolError(-32000, "Server not initialized")),
-      },
-    };
-    const fresh = {
-      status: "connected" as const,
-      transport: { sessionId: "session-2" },
-      client: {
-        callTool: vi.fn().mockRejectedValue(new ProtocolError(-32000, "Server not initialized")),
-      },
-    };
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => {}),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-    };
-
-    const state = {
-      config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
-      manager,
-      toolMetadata: new Map([
-        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
-      ]),
-      failureTracker: new Map(),
-      completedUiSessions: [],
-    } as any;
-
-    const result = await executeCall(state, "demo_search", {}, "demo");
-
-    expect(stale.client.callTool).toHaveBeenCalledTimes(1);
-    expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
-    expect(result.details).toMatchObject({ mode: "call", error: "call_failed" });
-  });
-
-  it("gives up after one reconnect attempt: a second terminated session propagates as call_failed", async () => {
-    const { executeCall } = await import("../proxy-modes.ts");
-    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
-
-    const stale = {
-      status: "connected" as const,
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi.fn().mockRejectedValue(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-    };
-    const fresh = {
-      status: "connected" as const,
-      transport: { sessionId: "session-2" },
-      client: {
-        callTool: vi.fn().mockRejectedValue(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-    };
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => {}),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-    };
-
-    const state = {
-      config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
-      manager,
-      toolMetadata: new Map([
-        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
-      ]),
-      failureTracker: new Map(),
-      completedUiSessions: [],
-    } as any;
-
-    const result = await executeCall(state, "demo_search", {}, "demo");
-
-    expect(stale.client.callTool).toHaveBeenCalledTimes(1);
-    expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
+  it.each([
+    {
+      label:
+        "gives up after one reconnect attempt: a second server-not-initialized MCP error propagates as call_failed",
+      kind: "uninitialized" as const,
+    },
+    {
+      label:
+        "gives up after one reconnect attempt: a second terminated session propagates as call_failed",
+      kind: "terminated" as const,
+    },
+  ])("$label", async ({ kind }) => {
+    const fixture = await recoveryFixture(kind, true);
+    const result = await executeCall(fixture.state, {
+      toolName: "demo_search",
+      args: {},
+      serverOverride: "demo",
+    });
+    assertOneRecovery(fixture);
     expect(result.details).toMatchObject({ mode: "call", error: "call_failed" });
   });
 });
 
 describe("session recovery — direct-tools path (direct-tools.ts createDirectToolExecutor)", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    mocks.lazyConnect.mockReset().mockResolvedValue(true);
+  it.each([
+    {
+      label: "recovers a terminated Streamable HTTP session transparently for a direct tool call",
+      kind: "terminated" as const,
+    },
+    {
+      label: "recovers a server-not-initialized MCP error transparently for a direct tool call",
+      kind: "uninitialized" as const,
+    },
+  ])("$label", async ({ kind }) => {
+    const fixture = await recoveryFixture(kind);
+    const result = await directCall(fixture.state, { q: "hello" });
+    assertOneRecovery(fixture);
+    assertRecoveryArguments(fixture);
+    expect(firstText(result)).toContain("ok");
   });
-
-  it("recovers a terminated Streamable HTTP session transparently for a direct tool call", async () => {
-    const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
-
-    const stale = {
-      status: "connected" as const,
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi.fn().mockRejectedValueOnce(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-    };
-    const fresh = {
-      status: "connected" as const,
-      transport: { sessionId: "session-2" },
-      client: {
-        callTool: vi
-          .fn()
-          .mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
-      },
-    };
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => {}),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-    };
-
-    const state = {
-      config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
-      manager,
-      toolMetadata: new Map([
-        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
-      ]),
-      failureTracker: new Map(),
-      completedUiSessions: [],
-    } as any;
-
-    const executor = createDirectToolExecutor(
-      () => state,
-      () => null,
-      {
-        serverName: "demo",
-        originalName: "search",
-        prefixedName: "demo_search",
-        description: "Search",
-      },
-    );
-
-    const result = await executor("id", { q: "hello" }, undefined, undefined, undefined as any);
-
-    expect(stale.client.callTool).toHaveBeenCalledTimes(1);
-    expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith(
-      "demo",
-      state.config.mcpServers.demo,
-      stale,
-      expect.any(AbortSignal),
-    );
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
-    expect((result.content[0] as { text: string }).text).toContain("ok");
-  });
-
-  it("recovers a server-not-initialized MCP error transparently for a direct tool call", async () => {
-    const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const { ProtocolError } = await import("@modelcontextprotocol/client");
-
-    const stale = {
-      status: "connected" as const,
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi
-          .fn()
-          .mockRejectedValueOnce(new ProtocolError(-32000, "Server not initialized")),
-      },
-    };
-    const fresh = {
-      status: "connected" as const,
-      transport: { sessionId: "session-2" },
-      client: {
-        callTool: vi
-          .fn()
-          .mockResolvedValue({ isError: false, content: [{ type: "text", text: "ok" }] }),
-      },
-    };
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => {}),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-    };
-
-    const state = {
-      config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
-      manager,
-      toolMetadata: new Map([
-        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
-      ]),
-      failureTracker: new Map(),
-      completedUiSessions: [],
-    } as any;
-
-    const executor = createDirectToolExecutor(
-      () => state,
-      () => null,
-      {
-        serverName: "demo",
-        originalName: "search",
-        prefixedName: "demo_search",
-        description: "Search",
-      },
-    );
-
-    const result = await executor("id", { q: "hello" }, undefined, undefined, undefined as any);
-
-    expect(stale.client.callTool).toHaveBeenCalledTimes(1);
-    expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith(
-      "demo",
-      state.config.mcpServers.demo,
-      stale,
-      expect.any(AbortSignal),
-    );
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
-    expect((result.content[0] as { text: string }).text).toContain("ok");
-  });
-
   it("gives up after one reconnect attempt: a second terminated session propagates as call_failed", async () => {
-    const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
-
-    const stale = {
-      status: "connected" as const,
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi.fn().mockRejectedValue(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-    };
-    const fresh = {
-      status: "connected" as const,
-      transport: { sessionId: "session-2" },
-      client: {
-        callTool: vi.fn().mockRejectedValue(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-    };
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => fresh),
-      getRequestOptions: vi.fn(() => {}),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-    };
-
-    const state = {
-      config: { settings: {}, mcpServers: { demo: { url: "https://api.example.com/mcp" } } },
-      manager,
-      toolMetadata: new Map([
-        ["demo", [{ name: "demo_search", originalName: "search", description: "Search" }]],
-      ]),
-      failureTracker: new Map(),
-      completedUiSessions: [],
-    } as any;
-
-    const executor = createDirectToolExecutor(
-      () => state,
-      () => null,
-      {
-        serverName: "demo",
-        originalName: "search",
-        prefixedName: "demo_search",
-        description: "Search",
-      },
-    );
-
-    const result = await executor("id", {}, undefined, undefined, undefined as any);
-
-    expect(stale.client.callTool).toHaveBeenCalledTimes(1);
-    expect(fresh.client.callTool).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledTimes(1);
+    const fixture = await recoveryFixture("terminated", true);
+    const result = await directCall(fixture.state, {});
+    assertOneRecovery(fixture);
     expect(result.details).toMatchObject({ error: "call_failed", server: "demo" });
   });
 });
