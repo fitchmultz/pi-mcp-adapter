@@ -85,6 +85,8 @@ describe("OAuth credential-store diagnostics", () => {
       writeFileSync(join(home, "package.json"), '{"type":"module"}');
       for (const file of [
         "mcp-auth.ts",
+        "auth-record-types.ts",
+        "credential-payloads.ts",
         "credential-store-errors.ts",
         "keyring-store.ts",
         "keyring-recovery.ts",

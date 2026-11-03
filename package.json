@@ -46,7 +46,7 @@
     "lint:runtime-tests": "oxlint --deny-warnings __tests__/runtime",
     "lint:tracing": "oxlint --deny-warnings mcp-trace.ts",
     "lint:sampling": "oxlint --deny-warnings sampling-handler.ts",
-    "lint:credential-runtime": "oxlint --deny-warnings credential-store-errors.ts keyring-store.ts keyring-recovery.ts",
+    "lint:credential-runtime": "oxlint --deny-warnings auth-record-types.ts credential-payloads.ts credential-store-errors.ts keyring-store.ts keyring-recovery.ts",
     "lint:sdk-http": "oxlint --deny-warnings __tests__/sdk-v2-http.test.ts __tests__/fixtures/native-capture-extension.ts",
     "lint:lifecycle-tests": "oxlint --deny-warnings __tests__/index-lifecycle.test.ts __tests__/fixtures/extension-lifecycle.ts __tests__/test-extension-context.ts",
     "lint:oauth-recovery": "oxlint --deny-warnings __tests__/oauth-recovery-integration.test.ts __tests__/fixtures/oauth-recovery-http.ts __tests__/fixtures/oauth-recovery.ts __tests__/fixtures/panel-host.ts",
