@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
-- Enforce strict lint for state and callback tests (#131) ([b077f3e](https://github.com/fitchmultz/pi-mcp-adapter/commit/b077f3ece3af59d7d206c1bfa1cea19f54289c36))
-
 ### What's Changed
 
 - Enforce strict lint on native elicitation tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/169
