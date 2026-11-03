@@ -23,6 +23,13 @@ const historyRecordSchema = z.discriminatedUnion("category", [
   z.object({ category: z.literal("notifications"), value: z.string() }),
   z.object({ category: z.literal("intents"), value: intentSchema }),
 ]);
+type HistoryRecord = z.input<typeof historyRecordSchema>;
+
+// Validate the persisted original, keeping the native parse error, so arbitrary
+// intent parameter keys and their order survive readback.
+function assertHistoryRecord(value: unknown): asserts value is HistoryRecord {
+  historyRecordSchema.parse(value);
+}
 
 interface UiMessageHistory {
   messages: UiSessionMessages;
@@ -90,9 +97,7 @@ export function createUiMessageHistory(outputDirectory?: string): UiMessageHisto
   return new MessageHistory(outputDirectory);
 }
 
-async function* diskMessages(
-  messages: UiSessionMessages,
-): AsyncGenerator<z.infer<typeof historyRecordSchema>> {
+async function* diskMessages(messages: UiSessionMessages): AsyncGenerator<HistoryRecord> {
   if (
     messages.historyRef === undefined ||
     messages.historyRef === "" ||
@@ -115,8 +120,8 @@ async function* diskMessages(
   const lines = createInterface({ input, crlfDelay: Infinity });
   try {
     for await (const line of lines) {
-      const raw: unknown = JSON.parse(line);
-      const record = historyRecordSchema.parse(raw);
+      const record: unknown = JSON.parse(line);
+      assertHistoryRecord(record);
       count++;
       yield record;
     }

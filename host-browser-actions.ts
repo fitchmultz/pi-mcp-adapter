@@ -14,6 +14,12 @@ const rawMessageSchema = z.looseObject({
   jsonrpc: z.unknown().optional(),
   method: z.unknown().optional(),
 });
+type RawMessage = z.input<typeof rawMessageSchema>;
+
+// Forward the validated original: app fields keep their keys and order.
+function isRawMessage(value: unknown): value is RawMessage {
+  return rawMessageSchema.safeParse(value).success;
+}
 
 function payloadFields(value: unknown): object {
   if (typeof value === "object" && value !== null) {
@@ -26,7 +32,7 @@ function payloadFields(value: unknown): object {
   return {};
 }
 
-function isBridgeMessage({ jsonrpc, method }: z.infer<typeof rawMessageSchema>): boolean {
+function isBridgeMessage({ jsonrpc, method }: RawMessage): boolean {
   const hasJsonRpc = Boolean(jsonrpc);
   return (
     hasJsonRpc ||
@@ -106,14 +112,11 @@ export class HostBrowserActions {
     if (event.source !== this.view.iframe.contentWindow) {
       return;
     }
-    const parsed = rawMessageSchema.safeParse(event.data);
-    if (!parsed.success) {
+    const message = event.data;
+    if (!isRawMessage(message) || isBridgeMessage(message)) {
       return;
     }
-    const { type, payload, ...directFields } = parsed.data;
-    if (isBridgeMessage(parsed.data)) {
-      return;
-    }
+    const { type, payload, ...directFields } = message;
     switch (type) {
       case "notify":
       case "prompt":

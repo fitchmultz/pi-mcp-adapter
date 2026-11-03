@@ -1,8 +1,7 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { UiHostContext, UiResourceContent, UiResourceCsp } from "./types.ts";
 
-// Use locally bundled AppBridge to avoid CDN Zod bundling issues
-const DEFAULT_APP_BRIDGE_MODULE_URL = "/app-bridge.bundle.js";
 const APP_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-downloads";
 
 const HOST_STYLE = `
@@ -89,10 +88,19 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     allowAttribute: input.allowAttribute,
     requireToolConsent: input.requireToolConsent,
   });
+  // Use the locally bundled native SDK to avoid CDN Zod bundling issues. The
+  // server caches it for a year, so its content digest versions the URL: a browser
+  // never links this host against an earlier cached asset lacking its imports.
+  const sdkBundle = readFileSync(new URL("./app-bridge.bundle.js", import.meta.url));
+  const sdkUrl = `/app-bridge.bundle.js?v=${createHash("sha256").update(sdkBundle).digest("base64url")}`;
   const importMap = safeInlineJSON({
     imports: {
-      "@modelcontextprotocol/ext-apps/app-bridge":
-        input.appBridgeModuleUrl ?? DEFAULT_APP_BRIDGE_MODULE_URL,
+      // A custom bridge replaces only AppBridge and PostMessageTransport.
+      "@modelcontextprotocol/ext-apps/app-bridge": input.appBridgeModuleUrl ?? sdkUrl,
+      // The host's native schemas and Zod come from the cached local SDK asset.
+      "@modelcontextprotocol/ext-apps": sdkUrl,
+      "@modelcontextprotocol/core": sdkUrl,
+      zod: sdkUrl,
     },
   });
   // Canonical browser source: host-browser-entry.ts. The build must generate and
