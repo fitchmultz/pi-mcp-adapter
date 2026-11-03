@@ -1,14 +1,30 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { updateStatusBar } from "../init.ts";
 import { formatMcpStatus } from "../utils.ts";
 import type { McpSettings } from "../types.ts";
+import { createActivationFixture } from "./fixtures/strict-activation-boundaries.ts";
 
-function createState(ui: unknown, settings: Partial<McpSettings> = {}) {
-  return {
-    ui,
+let host: Awaited<ReturnType<typeof createActivationFixture>>;
+beforeEach(async () => {
+  host = await createActivationFixture();
+});
+afterEach(async () => {
+  await host.dispose();
+});
+
+function createState(settings: Partial<McpSettings> = {}) {
+  return host.state({
+    ui: host.ui,
     config: { settings, mcpServers: { demo: { command: "demo" } } },
-    manager: { getAllConnections: vi.fn(() => new Map()) },
-  } as any;
+  });
+}
+
+async function connectedState(settings: Partial<McpSettings> = {}) {
+  const wire = await host.wire();
+  const state = createState(settings);
+  state.config.mcpServers.demo = wire.definition;
+  const connection = await state.manager.connect("demo", wire.definition);
+  return { state, connection };
 }
 
 describe("formatMcpStatus", () => {
@@ -21,90 +37,66 @@ describe("formatMcpStatus", () => {
 
 describe("updateStatusBar", () => {
   it("shows enabled servers instead of active connections as the primary count", () => {
-    const setStatus = vi.fn();
-    const state = createState({ setStatus }, { mcpFooterStatus: "full" });
+    updateStatusBar(createState({ mcpFooterStatus: "full" }));
 
-    updateStatusBar(state);
-
-    expect(setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled");
+    expect(host.ui.setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled");
   });
 
-  it("does not count a needs-auth connection as connected", () => {
-    const setStatus = vi.fn();
-    const state = createState({ setStatus }, { mcpFooterStatus: "full" });
-    state.manager.getAllConnections.mockReturnValue(new Map([["demo", { status: "needs-auth" }]]));
+  it("does not count a needs-auth connection as connected", async () => {
+    const { state, connection } = await connectedState({ mcpFooterStatus: "full" });
+    connection.status = "needs-auth";
 
     updateStatusBar(state);
 
-    expect(setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled");
+    expect(host.ui.setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled");
   });
 
-  it("shows connected servers as secondary state", () => {
-    const setStatus = vi.fn();
-    const state = createState({ setStatus }, { mcpFooterStatus: "full" });
-    state.manager.getAllConnections.mockReturnValue(new Map([["demo", { status: "connected" }]]));
+  it("shows connected servers as secondary state", async () => {
+    const { state } = await connectedState({ mcpFooterStatus: "full" });
 
     updateStatusBar(state);
 
-    expect(setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled (1 connected)");
+    expect(host.ui.setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled (1 connected)");
   });
 
   it("keeps themed status text when a theme is available", () => {
-    const setStatus = vi.fn();
-    const state = createState(
-      {
-        setStatus,
-        theme: { fg: vi.fn((_name: string, text: string) => `styled:${text}`) },
-      },
-      { mcpFooterStatus: "full" },
-    );
+    host.foreground.mockImplementation((_color, text) => `styled:${text}`);
 
-    updateStatusBar(state);
+    updateStatusBar(createState({ mcpFooterStatus: "full" }));
 
-    expect(setStatus).toHaveBeenCalledWith("mcp", "styled:🔌 MCP: 1 server enabled");
+    expect(host.ui.setStatus).toHaveBeenCalledWith("mcp", "styled:🔌 MCP: 1 server enabled");
   });
 
   it("keeps the icon when explicitly enabled", () => {
-    const setStatus = vi.fn();
-    updateStatusBar(createState({ setStatus }, { showStatusIcon: true, mcpFooterStatus: "full" }));
+    updateStatusBar(createState({ showStatusIcon: true, mcpFooterStatus: "full" }));
 
-    expect(setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled");
+    expect(host.ui.setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled");
   });
 
-  it("removes the icon while preserving themed connected and disabled suffixes", () => {
-    const setStatus = vi.fn();
-    const state = createState(
-      {
-        setStatus,
-        theme: { fg: vi.fn((_name: string, text: string) => `styled:${text}`) },
-      },
-      { showStatusIcon: false, mcpFooterStatus: "full" },
-    );
+  it("removes the icon while preserving themed connected and disabled suffixes", async () => {
+    host.foreground.mockImplementation((_color, text) => `styled:${text}`);
+    const { state } = await connectedState({ showStatusIcon: false, mcpFooterStatus: "full" });
     state.config.mcpServers.disabled = { command: "disabled", disabled: true };
-    state.manager.getAllConnections.mockReturnValue(new Map([["demo", { status: "connected" }]]));
 
     updateStatusBar(state);
 
-    expect(setStatus).toHaveBeenCalledWith(
+    expect(host.ui.setStatus).toHaveBeenCalledWith(
       "mcp",
       "styled:MCP: 1 server enabled (1 connected) (1 disabled)",
     );
   });
 
-  it("shows a compact connected/enabled footer by default", () => {
-    const setStatus = vi.fn();
-    const state = createState({ setStatus });
-    state.manager.getAllConnections.mockReturnValue(new Map([["demo", { status: "connected" }]]));
+  it("shows a compact connected/enabled footer by default", async () => {
+    const { state } = await connectedState();
 
     updateStatusBar(state);
 
-    expect(setStatus).toHaveBeenCalledWith("mcp", "MCP 1/1");
+    expect(host.ui.setStatus).toHaveBeenCalledWith("mcp", "MCP 1/1");
   });
 
   it("can clear the MCP footer status", () => {
-    const setStatus = vi.fn();
-    updateStatusBar(createState({ setStatus }, { mcpFooterStatus: "off" }));
+    updateStatusBar(createState({ mcpFooterStatus: "off" }));
 
-    expect(setStatus).toHaveBeenCalledWith("mcp", undefined);
+    expect(host.ui.setStatus).toHaveBeenCalledWith("mcp", undefined);
   });
 });
