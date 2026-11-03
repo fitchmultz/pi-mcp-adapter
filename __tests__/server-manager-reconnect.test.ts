@@ -1,261 +1,165 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/client";
+import { McpServerManager } from "../server-manager.ts";
+import { requireValue } from "./fixtures/extension-lifecycle.ts";
+import { createManagerBoundaryHttp } from "./fixtures/strict-manager-boundaries-http.ts";
+import { observeNativeConnections } from "./fixtures/strict-manager-boundaries-sdk.ts";
 
-type TransportOptions = {
-  requestInit?: { headers?: Record<string, string> };
-};
+vi.mock("@modelcontextprotocol/client", async () =>
+  (await import("./fixtures/strict-manager-boundaries-sdk.ts")).nativeClientModule(),
+);
 
-type HttpTransportMock = {
-  url: URL;
-  options: TransportOptions;
-  close: () => Promise<void>;
-};
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  try {
+    for (const cleanup of cleanups.splice(0).reverse()) {
+      await cleanup();
+    }
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
 
-const mocks = vi.hoisted(() => ({
-  clients: [] as any[],
-  connectGate: undefined as Promise<void> | undefined,
-  connectStarted: null as { promise: Promise<void>; resolve(): void } | null,
-  httpTransports: [] as HttpTransportMock[],
-}));
-
-vi.mock("@modelcontextprotocol/client", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  Client: vi.fn().mockImplementation(function (info: unknown, options: unknown) {
-    const client: any = {
-      info,
-      options,
-      onclose: undefined,
-      setRequestHandler: vi.fn(),
-      setNotificationHandler: vi.fn(),
-      connect: vi.fn(async () => {
-        mocks.connectStarted?.resolve();
-        await mocks.connectGate;
-      }),
-      listTools: vi.fn(async () => ({ tools: [] })),
-      listResources: vi.fn(async () => ({ resources: [] })),
-      close: vi.fn(async () => {}),
-    };
-    mocks.clients.push(client);
-    return client;
-  }),
-  StreamableHTTPClientTransport: vi.fn().mockImplementation(function (
-    url: URL,
-    options: TransportOptions,
-  ) {
-    const transport = { url, options, send: vi.fn(async () => {}), close: vi.fn(async () => {}) };
-    mocks.httpTransports.push(transport);
-    return transport;
-  }),
-  SSEClientTransport: vi.fn(),
-}));
-
-vi.mock("@modelcontextprotocol/client/stdio", () => ({
-  StdioClientTransport: vi.fn(),
-}));
-
-vi.mock("../npx-resolver.ts", () => ({
-  resolveNpxBinary: vi.fn(async () => null),
-}));
+async function setup(holdInitialize = false) {
+  const fixture = await createManagerBoundaryHttp({ holdInitialize });
+  cleanups.push(fixture.close);
+  const manager = new McpServerManager();
+  cleanups.push(() => manager.closeAll());
+  return { fixture, manager, def: fixture.definition };
+}
 
 describe("McpServerManager connections", () => {
-  beforeEach(() => {
-    mocks.clients.length = 0;
-    mocks.httpTransports.length = 0;
-    mocks.connectGate = undefined;
-    let resolve!: () => void;
-    const promise = new Promise<void>((entered) => {
-      resolve = entered;
-    });
-    mocks.connectStarted = { promise, resolve };
-  });
-
-  const def = { url: "https://example.test/mcp" };
-
   it("rejects a connection closed during optional discovery and allows a fresh attempt", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-    let releaseConnect!: () => void;
-    mocks.connectGate = new Promise<void>((resolve) => {
-      releaseConnect = resolve;
+    const observed = observeNativeConnections();
+    vi.spyOn(Client.prototype, "listResources").mockImplementationOnce(async function (
+      this: Client,
+    ) {
+      // Finish required discovery before closing during the optional catalog.
+      await this.listTools();
+      await this.close();
+      throw new Error("Connection closed");
     });
-    const connecting = manager.connect("remote", def);
-
-    try {
-      await vi.waitFor(() => expect(mocks.clients).toHaveLength(1));
-      const client = mocks.clients[0];
-      client.getServerCapabilities = () => ({ resources: {} });
-      client.listResources.mockImplementation(async () => {
-        client.onclose();
-        throw new Error("Connection closed");
-      });
-      releaseConnect();
-
-      await expect(connecting).rejects.toThrow("closed while connecting");
-      expect(manager.getConnection("remote")).toBeUndefined();
-      expect((await manager.connect("remote", def)).status).toBe("connected");
-      expect(mocks.clients).toHaveLength(2);
-    } finally {
-      releaseConnect();
-      await manager.closeAll();
-    }
+    const { manager, def } = await setup();
+    await expect(manager.connect("remote", def)).rejects.toThrow("closed while connecting");
+    expect(manager.getConnection("remote")).toBeUndefined();
+    expect((await manager.connect("remote", def)).status).toBe("connected");
+    expect(observed.records).toHaveLength(2);
   });
 
   it("keeps a shared initial connection alive when its first caller cancels", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-    let releaseConnect!: () => void;
-    mocks.connectGate = new Promise<void>((resolve) => {
-      releaseConnect = resolve;
-    });
+    const observed = observeNativeConnections();
+    const { fixture, manager, def } = await setup(true);
     const controller = new AbortController();
     const reason = new Error("stop waiting");
-
     const first = manager.connect("remote", def, controller.signal);
-    const second = manager.connect("remote", def).catch((error) => error);
+    const second = manager.connect("remote", def);
     try {
-      // Cancel an actual native connect wait, not the preceding lazy import.
-      await mocks.connectStarted!.promise;
+      await fixture.initializeStarted;
       controller.abort(reason);
       await expect(first).rejects.toBe(reason);
-      const third = manager.connect("remote", def).catch((error) => error);
-      expect(mocks.clients).toHaveLength(1);
-
-      releaseConnect();
+      const third = manager.connect("remote", def);
+      expect(observed.records).toHaveLength(1);
+      fixture.release();
       const connection = await second;
       expect(connection).toBe(await third);
       expect(connection).toBe(manager.getConnection("remote"));
       expect(connection.status).toBe("connected");
+      expect(fixture.initializes()).toBe(1);
     } finally {
-      releaseConnect();
-      await manager.closeAll();
+      fixture.release();
     }
   });
 
   it("lets a new caller connect after the sole waiter cancels", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-    let releaseConnect!: () => void;
-    mocks.connectGate = new Promise<void>((resolve) => {
-      releaseConnect = resolve;
-    });
+    const observed = observeNativeConnections();
+    const { fixture, manager, def } = await setup(true);
     const controller = new AbortController();
     const first = manager.connect("remote", def, controller.signal);
-
     try {
-      // A client must exist before the sole waiter cancels: the next caller
-      // then proves cleanup/replacement of that client, not import cancellation.
-      await mocks.connectStarted!.promise;
+      await fixture.initializeStarted;
       controller.abort(new Error("stop waiting"));
       await expect(first).rejects.toThrow("stop waiting");
       const next = manager.connect("remote", def);
-      releaseConnect();
+      fixture.release();
       expect((await next).status).toBe("connected");
-      expect(mocks.clients).toHaveLength(2);
+      expect(observed.records).toHaveLength(2);
+      expect(fixture.initializes()).toBe(2);
     } finally {
-      releaseConnect();
-      await manager.closeAll();
+      fixture.release();
     }
   });
 
   it("is single-flight: concurrent reconnects for the same server share one underlying reconnect", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-
+    const observed = observeNativeConnections();
+    const { fixture, manager, def } = await setup();
     const stale = await manager.connect("remote", def);
-    mocks.clients.length = 0;
-    mocks.httpTransports.length = 0;
-
     const [c1, c2] = await Promise.all([
       manager.reconnect("remote", def, stale),
       manager.reconnect("remote", def, stale),
     ]);
-
     expect(c1).toBe(c2);
-    expect(mocks.clients.length).toBe(1);
+    expect(observed.records).toHaveLength(2);
+    expect(fixture.initializes()).toBe(2);
     expect(manager.getConnection("remote")).toBe(c1);
   });
 
   it("identity guard: never tears down a connection it did not prove stale", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-
+    const observed = observeNativeConnections();
+    const { manager, def } = await setup();
     const stale = await manager.connect("remote", def);
     await manager.close("remote");
     const fresh = await manager.connect("remote", def);
-
-    mocks.clients.length = 0;
-    mocks.httpTransports.length = 0;
-
-    // A caller that captured `stale` before the close/reconnect cycle above
-    // (e.g. a concurrent tool call that lost the race) asks to reconnect
-    // from that now-superseded connection.
+    const close = vi.spyOn(fresh.client, "close");
     const result = await manager.reconnect("remote", def, stale);
-
     expect(result).toBe(fresh);
-    expect(fresh.client.close).not.toHaveBeenCalled();
-    expect(mocks.clients.length).toBe(0); // no new connection attempted
+    expect(close).not.toHaveBeenCalled();
+    expect(observed.records).toHaveLength(2);
     expect(manager.getConnection("remote")).toBe(fresh);
   });
 
   it("keeps a shared reconnect alive when one caller aborts waiting", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-
+    const { fixture, manager, def } = await setup();
     const stale = await manager.connect("remote", def);
-    let releaseConnect!: () => void;
-    mocks.connectGate = new Promise<void>((resolve) => {
-      releaseConnect = resolve;
-    });
     const reason = new Error("stop waiting");
     const controller = new AbortController();
-
-    const first = manager.reconnect("remote", def, stale, controller.signal);
-    controller.abort(reason);
-    await expect(first).rejects.toBe(reason);
-
-    const second = manager.reconnect("remote", def, stale);
-    releaseConnect();
-    const fresh = await second;
-    expect(fresh).not.toBe(stale);
-    expect(manager.getConnection("remote")).toBe(fresh);
+    const gate = Promise.withResolvers<null>();
+    observeNativeConnections(gate.promise);
+    try {
+      const first = manager.reconnect("remote", def, stale, controller.signal);
+      controller.abort(reason);
+      await expect(first).rejects.toBe(reason);
+      const second = manager.reconnect("remote", def, stale);
+      gate.resolve(null);
+      const fresh = await second;
+      expect(fresh).not.toBe(stale);
+      expect(manager.getConnection("remote")).toBe(fresh);
+      expect(fixture.initializes()).toBe(2);
+    } finally {
+      gate.resolve(null);
+    }
   });
 
   it("carries in-flight work from the stale connection to the fresh connection", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-
+    const { manager, def } = await setup();
     const stale = await manager.connect("remote", def);
     stale.inFlight = 2;
-
     const fresh = await manager.reconnect("remote", def, stale);
-
     expect(fresh).not.toBe(stale);
     expect(fresh.inFlight).toBe(2);
     expect(manager.getConnection("remote")).toBe(fresh);
   });
 
   it("identity guard: a stale connection's late onclose does not clobber the fresh connection's status", async () => {
-    const { McpServerManager } = await import("../server-manager.ts");
-    const manager = new McpServerManager();
-
+    const { manager, def } = await setup();
     const stale = await manager.connect("remote", def);
-    const staleClient = mocks.clients[0];
-
-    mocks.clients.length = 0;
-    mocks.httpTransports.length = 0;
-
+    const staleClose = requireValue(stale.client.onclose);
     const fresh = await manager.reconnect("remote", def, stale);
-    const freshClient = mocks.clients[0];
-
     expect(fresh).not.toBe(stale);
     expect(manager.getConnection("remote")).toBe(fresh);
-
-    // Late close event from the old (already-replaced) client/transport.
-    staleClient.onclose?.();
+    staleClose();
     expect(fresh.status).toBe("connected");
     expect(manager.getConnection("remote")).toBe(fresh);
-
-    // A close on the current connection's own client still works normally.
-    freshClient.onclose?.();
+    await fresh.transport.close();
     expect(fresh.status).toBe("closed");
   });
 });
