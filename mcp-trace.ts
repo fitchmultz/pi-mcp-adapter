@@ -2,6 +2,8 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { Transport, JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
+import type { McpTraceSettings, ServerEntry } from "./config-types.ts";
+export type { McpTraceSettings } from "./config-types.ts";
 
 export const MCP_TRACE_SCHEMA_VERSION = 1;
 export const DEFAULT_MCP_TRACE_MAX_BYTES = 256 * 1024;
@@ -10,17 +12,6 @@ export const DEFAULT_MCP_TRACE_MAX_EVENTS = 10_000;
 export type McpTraceDirection = "outbound" | "inbound";
 export type McpTraceTransport = "stdio" | "unix-socket" | "sse" | "streamable-http" | "unknown";
 export type McpTraceMessageKind = "request" | "response" | "notification";
-
-export interface McpTraceSettings {
-  /** Enable metadata-only protocol tracing for all servers unless overridden. */
-  enabled?: boolean;
-  /** JSONL destination. Relative paths are resolved from the session cwd. */
-  file?: string;
-  /** Maximum bytes retained in the per-session JSONL file. */
-  maxBytes?: number;
-  /** Maximum events retained in the per-session JSONL file. */
-  maxEvents?: number;
-}
 
 export interface McpTraceEvent {
   version: typeof MCP_TRACE_SCHEMA_VERSION;
@@ -383,7 +374,7 @@ export function wrapTransportWithMcpTrace(
 }
 
 export function traceTransportKind(
-  definition: { command?: string; url?: string; socket?: string },
+  definition: Pick<ServerEntry, "command" | "url" | "socket">,
   transport: Transport,
 ): McpTraceTransport {
   if (typeof definition.command === "string" && definition.command !== "") {
