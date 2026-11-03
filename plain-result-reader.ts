@@ -5,10 +5,11 @@ import { open, type FileHandle } from "node:fs/promises";
 import { byteLength } from "./mcp-output-preview.ts";
 
 type Point = { bytes: number; characters: number };
-type ReadWindow = { offset: number; limit: number; maxBytes: number; maxLines: number };
+/** Validated UTF-16 offset/limit and the guard's byte/line caps for one plain-output page. */
+export type PlainReadWindow = { offset: number; limit: number; maxBytes: number; maxLines: number };
 type ReadPage = { page: string; total: number };
 const indexes = new Map<string, SparseIndex>();
-const readers = new Map<string, Set<SparseIndex>>();
+const readers = new Map<string, Set<AppendProgress>>();
 const MAX_INDEXES = 8;
 const MAX_POINTS = 1024;
 
@@ -51,7 +52,6 @@ class SparseIndex {
   stride: number;
   digest = "";
   hasher: Hash;
-  cacheable = true;
 
   constructor(
     revision: BigIntStats,
@@ -72,6 +72,7 @@ class SparseIndex {
     }
     this.points.push(point);
     if (this.points.length > MAX_POINTS) {
+      // Keep the origin and every second later checkpoint: the previous even indices.
       const [origin, ...rest] = this.points;
       this.points = [origin, ...rest.filter((_, i) => i % 2 === 1)];
       this.stride *= 2;
@@ -94,7 +95,6 @@ class SparseIndex {
     next.total = this.total;
     next.points = [...this.points];
     next.digest = this.digest;
-    next.cacheable = this.cacheable;
     return next;
   }
 
@@ -133,6 +133,11 @@ class SparseIndex {
   }
 }
 
+/** Native appends certified while one snapshot is open. Replacement characters prevent caching. */
+class AppendProgress extends SparseIndex {
+  cacheable = true;
+}
+
 function remember(ref: string, index: SparseIndex): void {
   indexes.delete(ref);
   indexes.set(ref, index);
@@ -144,25 +149,22 @@ function remember(ref: string, index: SparseIndex): void {
   }
 }
 
-function prepareAppend(ref: string): {
-  key: string;
-  cached: SparseIndex | undefined;
-  before: BigIntStats | undefined;
-} {
-  let key = ref;
-  let cached: SparseIndex | undefined;
-  let before: BigIntStats | undefined;
+type PendingAppend = { key: string; cached: SparseIndex | undefined; before: BigIntStats };
+
+/** Removes the cached index before the write; returns undefined when nothing can be certified. */
+function prepareAppend(ref: string): PendingAppend | undefined {
   try {
-    key = indexes.size > 0 || readers.size > 0 ? realpathSync(ref) : ref;
-    cached = indexes.get(key);
+    const key = indexes.size > 0 || readers.size > 0 ? realpathSync(ref) : ref;
+    const cached = indexes.get(key);
     indexes.delete(key);
-    if (cached !== undefined || readers.has(key)) {
-      before = statSync(ref, { bigint: true });
+    if (cached === undefined && !readers.has(key)) {
+      return undefined;
     }
+    return { key, cached, before: statSync(ref, { bigint: true }) };
   } catch {
     /* Cache bookkeeping must not change write acceptance. */
+    return undefined;
   }
-  return { key, cached, before };
 }
 
 function isAppend(before: BigIntStats, after: BigIntStats, text: string): boolean {
@@ -173,13 +175,9 @@ function isAppend(before: BigIntStats, after: BigIntStats, text: string): boolea
   );
 }
 
-function certifyAppend(
-  pending: ReturnType<typeof prepareAppend>,
-  after: BigIntStats,
-  text: string,
-): void {
+function certifyAppend(pending: PendingAppend, after: BigIntStats, text: string): void {
   const { key, cached, before } = pending;
-  if (before === undefined || !isAppend(before, after, text)) {
+  if (!isAppend(before, after, text)) {
     return;
   }
   if (cached !== undefined && sameRevision(cached.revision, before) && !text.includes("\ufffd")) {
@@ -202,7 +200,7 @@ function certifyAppend(
 export function appendPlainOutput(ref: string, text: string): void {
   const pending = prepareAppend(ref);
   appendFileSync(ref, text, { flush: true });
-  if (pending.before === undefined) {
+  if (pending === undefined) {
     return;
   }
   try {
@@ -218,9 +216,9 @@ class PlainPage {
   finished = false;
   private bytes = 0;
   private lines = 1;
-  private readonly window: ReadWindow;
+  private readonly window: PlainReadWindow;
 
-  constructor(window: ReadWindow) {
+  constructor(window: PlainReadWindow) {
     this.window = window;
   }
 
@@ -266,8 +264,8 @@ class SnapshotRead {
   private readonly revision: BigIntStats;
   private readonly fresh: SparseIndex;
   private index: SparseIndex;
-  private readonly progress: SparseIndex;
-  private readonly active: Set<SparseIndex>;
+  private readonly progress: AppendProgress;
+  private readonly active: Set<AppendProgress>;
   private valid: boolean;
   private total = 0;
   private position = 0;
@@ -284,32 +282,33 @@ class SnapshotRead {
     this.valid = matched;
     this.index = matched ? cached : this.fresh;
     // Append characters stay relative until the cold scan knows the opened prefix's total.
-    this.progress = new SparseIndex(
+    this.progress = new AppendProgress(
       this.revision,
       { bytes: Number(this.revision.size), characters: 0 },
       this.index.stride,
       this.index.hasher.copy(),
     );
-    this.active = readers.get(ref) ?? new Set<SparseIndex>();
+    this.active = readers.get(ref) ?? new Set<AppendProgress>();
     this.active.add(this.progress);
     readers.set(ref, this.active);
   }
 
-  private async validate(): Promise<void> {
-    // Matching stat fields are not an immutability proof. Registration above pairs live appends
-    // even while this full-content verification is awaiting disk reads.
-    if (this.index.digest !== (await digestOf(this.file, Number(this.revision.size)))) {
-      indexes.delete(this.ref);
-      this.valid = false;
-      this.index = this.fresh;
-      this.progress.hasher = createHash("sha256");
-      this.progress.stride = this.fresh.stride;
-    }
+  /** Discards a cached index whose digest no longer matches the opened bytes. */
+  private invalidate(): void {
+    indexes.delete(this.ref);
+    this.valid = false;
+    this.index = this.fresh;
+    this.progress.hasher = createHash("sha256");
+    this.progress.stride = this.fresh.stride;
   }
 
-  async scan(window: ReadWindow): Promise<ReadPage | undefined> {
-    if (this.valid) {
-      await this.validate();
+  /** Reads one page of the opened prefix; a cold scan also indexes and hashes that prefix. */
+  async scan(window: PlainReadWindow): Promise<string> {
+    const size = Number(this.revision.size);
+    // Matching stat fields are not an immutability proof. Registration above pairs live appends
+    // even while this full-content verification is awaiting disk reads.
+    if (this.valid && this.index.digest !== (await digestOf(this.file, size))) {
+      this.invalidate();
     }
     const point = this.valid ? this.index.pointAt(window.offset) : this.index.points[0];
     this.total = point.characters;
@@ -318,7 +317,6 @@ class SnapshotRead {
     const decoder = new StringDecoder("utf8");
     const buffer = Buffer.allocUnsafe(64 * 1024);
     let readPosition = point.bytes;
-    const size = Number(this.revision.size);
     // Bound each attempt to its opened snapshot, including while native history appends.
     while (readPosition < size) {
       const { bytesRead } = await this.file.read(
@@ -340,7 +338,7 @@ class SnapshotRead {
         break;
       }
     }
-    return this.complete(page.text);
+    return page.text;
   }
 
   private recordChunk(raw: Buffer, chunk: string): void {
@@ -356,7 +354,8 @@ class SnapshotRead {
     this.position += byteLength(chunk);
   }
 
-  private complete(page: string): ReadPage | undefined {
+  /** Publishes the read synchronously with its release; undefined means the snapshot changed. */
+  complete(page: string): ReadPage | undefined {
     // Only verified native appends may advance this snapshot. External edits still invalidate.
     if (!sameRevision(this.progress.revision, statSync(this.ref, { bigint: true }))) {
       return undefined;
@@ -380,13 +379,13 @@ class SnapshotRead {
 }
 
 /** Sparse byte/UTF16 checkpoints, never retained file contents. Changed/uncacheable files scan afresh. */
-export async function readPlainResult(ref: string, window: ReadWindow): Promise<ReadPage> {
+export async function readPlainResult(ref: string, window: PlainReadWindow): Promise<ReadPage> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const file = await open(ref, "r");
     let snapshot: SnapshotRead | undefined;
     try {
       snapshot = new SnapshotRead(ref, file);
-      const result = await snapshot.scan(window);
+      const result = snapshot.complete(await snapshot.scan(window));
       if (result !== undefined) {
         return result;
       }

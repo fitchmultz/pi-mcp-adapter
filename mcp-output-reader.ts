@@ -1,6 +1,6 @@
 // mcp-output-reader.ts - Paged reads over retained MCP output artifacts.
 import { readFile, realpath } from "node:fs/promises";
-import { readPlainResult } from "./plain-result-reader.ts";
+import { readPlainResult, type PlainReadWindow } from "./plain-result-reader.ts";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { byteLength } from "./mcp-output-preview.ts";
@@ -108,7 +108,7 @@ async function readPlainOutputPage(
 function plainReadBounds(
   input: ReadMcpResultInput,
   options: McpOutputGuardOptions,
-): { offset: number; limit: number; maxBytes: number; maxLines: number } {
+): PlainReadWindow {
   const { offset, limit } = validateReadWindow(input);
   const maxBytes = Math.max(1, (options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES) - 256);
   const maxLines = Math.max(1, (options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES) - 1);
