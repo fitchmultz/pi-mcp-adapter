@@ -37,6 +37,7 @@ function repository(): string {
     "tsconfig.declarations.json",
     "examples/interactive-visualizer/tsconfig.json",
     "docs/strict-quality-standard.md",
+    "docs/quality-exceptions.md",
     "scripts/check-policy.mjs",
     "scripts/tsc.mjs",
   ]) {
@@ -76,7 +77,7 @@ function check(root: string) {
 function lint(root: string, file: string) {
   return spawnSync(
     process.execPath,
-    [join(root, "node_modules/oxlint/bin/oxlint"), "--deny-warnings", file],
+    [join(root, "node_modules/oxlint/bin/oxlint"), "--deny-warnings", "--format=agent", file],
     { cwd: root, encoding: "utf8" },
   );
 }
@@ -203,6 +204,19 @@ describe("quality policy", () => {
       (root: string) => write(root, "other.d.ts", "export {};\n"),
       "Declaration is absent from the declaration project",
     ],
+    [
+      "missing sampling exception record",
+      (root: string) =>
+        write(
+          root,
+          "docs/quality-exceptions.md",
+          readFileSync(join(root, "docs/quality-exceptions.md"), "utf8").replace(
+            "## QX-017:",
+            "## Unrecorded:",
+          ),
+        ),
+      "Missing quality exception record: QX-017",
+    ],
   ])("rejects %s", (_name, mutate, diagnostic) => {
     const root = repository();
     mutate(root);
@@ -267,6 +281,88 @@ describe("quality policy", () => {
     );
     const result = lint(root, file);
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each(["sampling-handler.ts", "__tests__/runtime/sampling-handler.test.ts"])(
+    "allows the supported native sampling types in %s",
+    (file) => {
+      const root = repository();
+      write(
+        root,
+        file,
+        'import type { CreateMessageRequest, CreateMessageResult, ModelPreferences, SamplingMessage, SamplingMessageContentBlock } from "@modelcontextprotocol/client";\nexport type SamplingBridge = [CreateMessageRequest, CreateMessageResult, ModelPreferences, SamplingMessage, SamplingMessageContentBlock];\n',
+      );
+      const result = lint(root, file);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    },
+  );
+
+  it.each([
+    ["sampling-handler.ts", "./other.ts", "ModelPreferences"],
+    ["__tests__/runtime/sampling-handler.test.ts", "../../other.ts", "ModelPreferences"],
+    ["sampling-handler.ts", "@modelcontextprotocol/client", "ModelHint"],
+    ["__tests__/runtime/sampling-handler.test.ts", "@modelcontextprotocol/client", "ModelHint"],
+    ["probe.ts", "@modelcontextprotocol/client", "ModelPreferences"],
+  ])("rejects deprecated %s imports from %s named %s", (file, origin, name) => {
+    const root = repository();
+    write(
+      root,
+      "other.ts",
+      "/** @deprecated Native SDK types only. */\nexport type ModelPreferences = string;\n",
+    );
+    write(root, file, `import type { ${name} } from "${origin}";\nexport type Probe = ${name};\n`);
+    const result = lint(root, file);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+    expect(result.stdout).toContain(`${file}:2:`);
+    expect(result.stdout).toContain("typescript(no-deprecated)");
+  });
+
+  it.each(["scope", "symbol"])("rejects an expanded sampling %s allowance", (change) => {
+    const root = repository();
+    updateJson(root, ".oxlintrc.json", (config) => {
+      const profiles = z.array(recordSchema).parse(config.overrides);
+      const index = profiles.findIndex((profile) =>
+        z.array(z.string()).parse(profile.files).includes("sampling-handler.ts"),
+      );
+      const profile = profiles[index];
+      if (profile === undefined) {
+        throw new Error("Missing sampling profile");
+      }
+      const files = z.array(z.string()).parse(profile.files);
+      const rules = recordSchema.parse(profile.rules);
+      profiles[index] =
+        change === "scope"
+          ? { ...profile, files: [...files, "probe.ts"] }
+          : {
+              ...profile,
+              rules: {
+                ...rules,
+                "typescript/no-deprecated": [
+                  "error",
+                  {
+                    allow: [
+                      {
+                        from: "package",
+                        package: "@modelcontextprotocol/client",
+                        name: [
+                          "CreateMessageRequest",
+                          "CreateMessageResult",
+                          "ModelPreferences",
+                          "SamplingMessage",
+                          "SamplingMessageContentBlock",
+                          "ModelHint",
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              },
+            };
+      return { ...config, overrides: profiles };
+    });
+    const result = check(root);
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("Oxlint overrides");
   });
 
   it("accepts safe typed code in the base profile", () => {

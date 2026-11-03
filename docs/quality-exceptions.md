@@ -1,6 +1,6 @@
 # Quality exceptions
 
-`quality-exceptions.json` binds each site to its file, native rule, named AST scope, child path, node kind, operation text and enclosing conditions. A changed selector requires review with the affected implementation. The inventory verifies scope, not the quality argument. `check:directives` checks attachment and rejects copied, replaced, duplicated and stale directives. Native Oxlint still checks every unaffected operation and reports unused directives.
+`quality-exceptions.json` binds each site-based exception to its file, native rule, named AST scope, child path, node kind, operation text and enclosing conditions. A changed selector requires review with the affected implementation. The inventory verifies scope, not the quality argument. `check:directives` checks attachment and rejects copied, replaced, duplicated and stale directives. Native Oxlint still checks every unaffected operation and reports unused directives.
 
 ## QX-001: Observe the native transport in place
 
@@ -154,3 +154,31 @@ The native transport reaches classic initialization and `tools/list`, using two 
 - **Adjustment:** One next-line directive at each inventoried original-method capture. No unbound invocation or other capture is allowed. Each original remains local to the test and is called only with the explicitly typed native receiver.
 - **Evidence:** `vitest run __tests__/runtime/callback-http-lifetime.test.ts` passes all 20 cases. The disposable compliant comparison runs the same 20 cases with the substitutions above and also passes. Both variants pass root typecheck and native lint. The tests assert that close waits for delayed work, no call is replayed, and actual token persistence has the expected result. The directive-policy suite checks each native capture and requires adjacent unapproved captures to fail at their own source line. Copied, changed and duplicate variable-initializer sites are rejected.
 - **Remaining protection and review:** Other method references retain the native rule. Compiler checks retain each original method's signature and each spy's receiver. Real HTTP and stored-token assertions verify forwarding. The inventory authorizes the capture, not arbitrary later calls, so review must retain the explicit receiver at every use. Revisit if Vitest exposes an original-method call API that preserves the receiver without resetting shared mock state, or the rule recognizes this local capture-and-call flow.
+
+## QX-017: Preserve the supported MCP sampling bridge
+
+- **Finding:** Oxlint 1.90.0 with oxlint-tsgolint 7.0.2005 reports `typescript/no-deprecated` for the SDK's `CreateMessageRequest`, `CreateMessageResult`, `ModelPreferences`, `SamplingMessage` and `SamplingMessageContentBlock` types. MCP client 2.4.0 marks these declarations deprecated under SEP-2577 in `dist/index-BCNZS4Ap.d.mts:600-646`. This is an intentional protocol deprecation, not a checker false positive.
+- **Contract:** The same SDK declarations retain sampling in the specification for at least twelve months after protocol version 2026-07-28. The adapter already advertises and handles remote `sampling/createMessage` callbacks through the host's model registry, with model selection, request and response approval, cancellation and unsupported-feature errors. Removing this bridge changes supported MCP behavior. The MCP server does not own the host's configured provider credentials, model selection or approval UI.
+- **Comparison:** The SDK recommends migrating the caller to direct provider APIs. That migration changes the external MCP server; it is not a replacement operation available to this adapter for an unchanged remote sampling callback. A disposable real HTTP comparison sends the same callback with and without the configured bridge. The configured native client returns the actual model-registry response. The client without the bridge returns JSON-RPC `-32601`. Disabling sampling therefore does not preserve the existing operation. Deriving the same types from the SDK's schemas is not a compliant alternative: `@modelcontextprotocol/core/dist/schemas-DBHuY3cl.d.mts:3923-3929` marks `CreateMessageRequestSchema` deprecated for the same reason. Reconstructing the shape through aliases, unions or removed annotations would hide the same deprecated feature instead of assessing it.
+- **Adjustment:** The native `no-deprecated` rule remains an error. Its `allow` option permits only the five named types above, with declaration origin `@modelcontextprotocol/client`, in `sampling-handler.ts` and `__tests__/runtime/sampling-handler.test.ts`. There are no site directives or allowances for SDK methods, schemas, other symbols, other packages or other files. `check:policy` verifies the exact scope, names and package qualifier and requires this record.
+- **Evidence:** The 13 model-selection, approval, conversion and unsupported-feature cases use a real isolated Pi `ModelRegistry`, with typed spies only for provider output and controlled model/auth availability. The disposable comparison uses `createCallbackHttpFixture`, a native `McpServerManager`, real HTTP/SSE delivery and that same registry. Both comparison cases pass. The existing callback-lifetime suite owns native sampling cancellation and drain. Native qualification controls in `__tests__/quality/policy.test.ts` exercise all five accepted types in both scopes, same-named wrong-origin types, an unlisted SDK deprecation, a copied use outside the two-file scope and policy expansion.
+- **Remaining protection and review:** The allowance loses deprecation diagnostics for these five native types at any use within the two named files. It does not permit unchecked values or disable typing, async safety, complexity, framework or unrelated deprecation rules. Compiler checks retain the actual native request, response and registry contracts. Runtime tests retain the supported callback behavior. Review must reject unrelated uses of the permitted sampling types. Revisit when the supported sampling contract changes, a shared nondeprecated SDK replacement becomes available, or the dependency changes its declarations.
+
+### HTTP compatibility comparison
+
+The disposable comparison creates an isolated native Pi context, takes a real model from its registry, and spies on provider completion to return synthetic text. It uses the maintained callback HTTP fixture with `legacy: true` and `inbound: true`. The compared connection setup is:
+
+```ts
+if (configured) {
+  manager.setSamplingConfig({
+    autoApprove: true,
+    modelRegistry: native.context.modelRegistry,
+    getCurrentModel: () => model,
+    getSignal,
+  });
+}
+await manager.connect(fixture.name, fixture.definition);
+const response = await fixture.callback("sampling/createMessage", samplingRequest).response;
+```
+
+With `configured: true`, the reply contains `result.content` equal to `{ type: "text", text: "Synthetic compatibility response" }`. With `configured: false`, the same wire callback returns `error.code: -32601`. No external provider API is called, and this comparison does not claim that migrating an external MCP server to direct provider APIs preserves the old callback contract.
