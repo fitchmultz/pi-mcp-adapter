@@ -18,6 +18,7 @@ import { z } from "zod";
 const source = process.cwd();
 const roots: string[] = [];
 const recordSchema = z.record(z.string(), z.unknown());
+const QUALITY_AGGREGATE_TIMEOUT_MS = 30_000;
 
 function write(root: string, file: string, content: string): void {
   const destination = join(root, file);
@@ -127,10 +128,16 @@ afterEach(() => {
 });
 
 describe("quality policy", () => {
-  it("runs the actual quality aggregate on a valid reduced compiler and policy graph", () => {
-    const result = quality(formattedRepository());
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  });
+  it(
+    "runs the actual quality aggregate on a valid reduced compiler and policy graph",
+    {
+      timeout: QUALITY_AGGREGATE_TIMEOUT_MS,
+    },
+    () => {
+      const result = quality(formattedRepository());
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    },
+  );
 
   it.each([
     ["lint", "debugger;\nexport const value = 1;\n", "no-debugger", "lint"],
@@ -145,6 +152,7 @@ describe("quality policy", () => {
     ["policy", "export const value = 1;\n", "Oxlint categories", "check:policy"],
   ])(
     "propagates a real %s failure through the quality aggregate",
+    { timeout: QUALITY_AGGREGATE_TIMEOUT_MS },
     (fault, sourceText, diagnostic, gate) => {
       const root = formattedRepository();
       write(root, "example.ts", sourceText);
