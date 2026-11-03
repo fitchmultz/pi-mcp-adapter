@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
-- perf: parallelize independent awaits in hot paths (#129) ([9365be0](https://github.com/fitchmultz/pi-mcp-adapter/commit/9365be08b3fe6ce432af4561a93d323f997ca6aa))
+- Enforce strict lint on MCP sampling bridge (#166) ([bb87eb1](https://github.com/fitchmultz/pi-mcp-adapter/commit/bb87eb14405d9231fb404dc8c50743b3c3757620))
 
 ### What's Changed
 
