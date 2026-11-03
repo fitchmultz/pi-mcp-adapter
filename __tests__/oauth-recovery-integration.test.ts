@@ -970,6 +970,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       await f.connect();
       browser.open.mockImplementation(async (url: string) => {
         f.controls.holdCatalog = true;
+        f.definition.requestTimeoutMs = 3000;
         await fetch(await f.authorize(url));
       });
       if (cancellation === "deadline") {
@@ -978,7 +979,6 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const controller = new AbortController();
       const first = f.call("write", controller.signal);
       await expect.poll(() => f.controls.catalogHeld).toBe(true);
-      f.definition.requestTimeoutMs = 3000;
       const second = f.call("effect");
       if (cancellation === "abort") {
         controller.abort(new Error("caller cancelled"));

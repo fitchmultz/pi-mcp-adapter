@@ -6,7 +6,7 @@ import type {
   GuardedMcpOutput,
   McpOutputGuardDetails,
   McpOutputGuardOptions,
-} from "./mcp-output-guard.ts";
+} from "./mcp-output-contracts.ts";
 import type { ContentBlock } from "./types.ts";
 
 // mcp-code.ts is imported on first use. A Pi process that loaded an older mcp-output-guard.ts
@@ -20,151 +20,209 @@ const SPOOL_WRITE_CHUNK = 1024 * 1024;
  * one private output artifact and only the preview head and image blocks are kept. Writes are
  * synchronous, so a producer may be released as soon as push() returns.
  */
-export function createMcpOutputSpool(
-  options: Pick<McpOutputGuardOptions, "enabled" | "outputDirectory"> &
-    Required<Pick<McpOutputGuardOptions, "maxBytes" | "maxLines">>,
-) {
-  const { maxBytes, maxLines } = options;
-  let retained: ContentBlock[] | undefined = [];
-  const images: ContentBlock[] = [];
-  let pushed = 0,
-    textBlocks = 0,
-    bytes = 0,
-    newlines = 0,
-    written = 0;
-  let head = "",
-    headBytes = 0;
-  let artifact: { path?: string; error?: string } = {};
-  let fd: number | undefined;
-  let pending: string[] = [],
-    pendingLength = 0;
-  const lines = () => (bytes === 0 ? 0 : newlines + 1);
+type OutputSpoolOptions = Pick<McpOutputGuardOptions, "enabled" | "outputDirectory"> &
+  Required<Pick<McpOutputGuardOptions, "maxBytes" | "maxLines">>;
 
-  const fail = (error: unknown) => {
-    artifact = { error: error instanceof Error ? error.message : String(error) };
-    if (fd !== undefined) {
+interface McpOutputSpool {
+  readonly empty: boolean;
+  push: (block: ContentBlock) => void;
+  finish: () => GuardedMcpOutput;
+}
+
+export function createMcpOutputSpool(options: OutputSpoolOptions): McpOutputSpool {
+  const spool = new OutputSpoolState(options);
+  return {
+    get empty() {
+      return spool.empty;
+    },
+    push: spool.push,
+    finish: spool.finish,
+  };
+}
+
+class OutputSpoolState {
+  private readonly options: OutputSpoolOptions;
+  private readonly maxBytes: number;
+  private readonly maxLines: number;
+  private retained: ContentBlock[] | undefined = [];
+  private readonly images: ContentBlock[] = [];
+  private pushed = 0;
+  private textBlocks = 0;
+  private bytes = 0;
+  private newlines = 0;
+  private written = 0;
+  private head = "";
+  private headBytes = 0;
+  private artifact: { path?: string; error?: string } = {};
+  private fd: number | undefined;
+  private pending: string[] = [];
+  private pendingLength = 0;
+
+  constructor(options: OutputSpoolOptions) {
+    this.options = options;
+    this.maxBytes = options.maxBytes;
+    this.maxLines = options.maxLines;
+  }
+
+  get empty(): boolean {
+    return this.pushed === 0;
+  }
+
+  private get lines(): number {
+    return this.bytes === 0 ? 0 : this.newlines + 1;
+  }
+
+  private fail(error: unknown): void {
+    this.artifact = { error: error instanceof Error ? error.message : String(error) };
+    if (this.fd !== undefined) {
       try {
-        closeSync(fd);
+        closeSync(this.fd);
       } catch {
         /* the write error is the reported failure */
       }
     }
-    fd = undefined;
-  };
-  const flush = () => {
-    if (fd !== undefined && pending.length > 0) {
+    this.fd = undefined;
+  }
+
+  private flush(): void {
+    if (this.fd !== undefined && this.pending.length > 0) {
       try {
-        writeFileSync(fd, pending.length === 1 ? pending[0]! : pending.join(""));
+        writeFileSync(
+          this.fd,
+          this.pending.length === 1 ? (this.pending[0] ?? "") : this.pending.join(""),
+        );
       } catch (error) {
-        fail(error);
+        this.fail(error);
       }
     }
-    pending = [];
-    pendingLength = 0;
-  };
-  const append = (piece: string) => {
-    if (headBytes <= maxBytes) {
+    this.pending = [];
+    this.pendingLength = 0;
+  }
+
+  private append(piece: string): void {
+    const maxBytes = this.maxBytes;
+    if (this.headBytes <= maxBytes) {
       // Each UTF-16 unit is at least one UTF-8 byte, so the head exceeds every preview budget.
-      let end = Math.min(piece.length, maxBytes + 1 - headBytes);
+      let end = Math.min(piece.length, maxBytes + 1 - this.headBytes);
       const last = piece.charCodeAt(end - 1);
       if (end < piece.length && last >= 0xd800 && last <= 0xdbff) {
         end++;
       }
       const part = piece.slice(0, end);
-      head += part;
-      headBytes += byteLength(part);
+      this.head += part;
+      this.headBytes += byteLength(part);
     }
-    if (fd === undefined) {
+    if (this.fd === undefined) {
       return;
     }
-    if (pendingLength + piece.length > SPOOL_WRITE_CHUNK) {
-      flush();
+    if (this.pendingLength + piece.length > SPOOL_WRITE_CHUNK) {
+      this.flush();
     }
-    pending.push(piece);
-    pendingLength += piece.length;
-  };
-  const appendText = (text: string) => {
-    if (written++ > 0) {
-      append("\n");
+    this.pending.push(piece);
+    this.pendingLength += piece.length;
+  }
+
+  private appendText(text: string): void {
+    if (this.written++ > 0) {
+      this.append("\n");
     }
-    append(text);
-  };
-  const spill = (blocks: ContentBlock[]) => {
+    this.append(text);
+  }
+
+  private spill(blocks: ContentBlock[]): void {
     try {
       const parent =
-        options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory);
-      if (options.outputDirectory !== undefined) {
+        this.options.outputDirectory === undefined
+          ? tmpdir()
+          : resolve(this.options.outputDirectory);
+      if (this.options.outputDirectory !== undefined) {
         mkdirSync(parent, { recursive: true, mode: 0o700 });
       }
       const path = join(
         mkdtempSync(join(parent, "pi-mcp-output-")),
         `output-${randomBytes(4).toString("hex")}.txt`,
       );
-      fd = openSync(path, "wx", 0o600);
-      artifact = { path };
+      this.fd = openSync(path, "wx", 0o600);
+      this.artifact = { path };
     } catch (error) {
-      fail(error);
+      this.fail(error);
     }
     for (const block of blocks) {
       if (block.type === "image") {
-        images.push(block);
+        this.images.push(block);
       } else {
-        appendText(block.text);
+        this.appendText(block.text);
       }
+    }
+  }
+
+  readonly push = (block: ContentBlock): void => {
+    this.pushed++;
+    if (block.type === "image") {
+      (this.retained ?? this.images).push(...sanitizeContent([block]));
+      return;
+    }
+    const separator = this.textBlocks++ > 0 ? 1 : 0;
+    this.bytes += separator + byteLength(block.text);
+    this.newlines += separator + countNewlines(block.text);
+    if (this.retained === undefined) {
+      this.appendText(block.text);
+      return;
+    }
+    this.retained.push(block);
+    if (
+      this.options.enabled !== false &&
+      (this.bytes > this.maxBytes || this.lines > this.maxLines)
+    ) {
+      const blocks = this.retained;
+      this.retained = undefined;
+      this.spill(blocks);
     }
   };
 
-  return {
-    get empty() {
-      return pushed === 0;
-    },
-    push(block: ContentBlock): void {
-      pushed++;
-      if (block.type === "image") {
-        (retained ?? images).push(...sanitizeContent([block]));
-        return;
+  readonly finish = (): GuardedMcpOutput => {
+    if (this.retained !== undefined) {
+      return { content: this.retained };
+    }
+    this.flush();
+    if (this.fd !== undefined) {
+      try {
+        closeSync(this.fd);
+      } catch (error) {
+        this.artifact = { error: error instanceof Error ? error.message : String(error) };
       }
-      const separator = textBlocks++ > 0 ? 1 : 0;
-      bytes += separator + byteLength(block.text);
-      newlines += separator + countNewlines(block.text);
-      if (!retained) {
-        appendText(block.text);
-      } else {
-        retained.push(block);
-        if (options.enabled !== false && (bytes > maxBytes || lines() > maxLines)) {
-          const blocks = retained;
-          retained = undefined;
-          spill(blocks);
-        }
-      }
-    },
-    finish(): GuardedMcpOutput {
-      if (retained) {
-        return { content: retained };
-      }
-      flush();
-      if (fd !== undefined) {
-        try {
-          closeSync(fd);
-        } catch (error) {
-          artifact = { error: error instanceof Error ? error.message : String(error) };
-        }
-        fd = undefined;
-      }
-      return truncatedOutput(head, { bytes, lines: lines() }, artifact, images, maxBytes, maxLines);
-    },
+      this.fd = undefined;
+    }
+    return truncatedOutput({
+      text: this.head,
+      stats: { bytes: this.bytes, lines: this.lines },
+      artifact: this.artifact,
+      imageBlocks: this.images,
+      maxBytes: this.maxBytes,
+      maxLines: this.maxLines,
+    });
   };
 }
 
-export function truncatedOutput(
-  text: string,
-  stats: { bytes: number; lines: number },
-  { path: fullOutputPath, error: writeError }: { path?: string; error?: string },
-  imageBlocks: ContentBlock[],
-  maxBytes: number,
-  maxLines: number,
+interface TruncatedOutputInput {
+  text: string;
+  stats: { bytes: number; lines: number };
+  artifact: { path?: string; error?: string };
+  imageBlocks: ContentBlock[];
+  maxBytes: number;
+  maxLines: number;
+  referenceSuffix?: string;
+}
+
+export function truncatedOutput({
+  text,
+  stats,
+  artifact: { path: fullOutputPath, error: writeError },
+  imageBlocks,
+  maxBytes,
+  maxLines,
   referenceSuffix = "",
-): { content: ContentBlock[]; outputGuard: McpOutputGuardDetails } {
+}: TruncatedOutputInput): { content: ContentBlock[]; outputGuard: McpOutputGuardDetails } {
   const notice = formatTruncationNotice(stats, fullOutputPath, writeError);
   const previewBudget = reserveBudget(maxBytes, maxLines, notice + referenceSuffix);
   const preview = truncateHead(text, previewBudget.maxBytes, previewBudget.maxLines);
@@ -199,7 +257,7 @@ export function sanitizeContent(content: ContentBlock[]): ContentBlock[] {
       return block;
     }
     const mimeType =
-      typeof block.mimeType === "string" && block.mimeType.trim()
+      typeof block.mimeType === "string" && block.mimeType.trim() !== ""
         ? block.mimeType.trim().slice(0, 100)
         : "image/png";
     return { ...block, mimeType };
@@ -267,7 +325,7 @@ function formatTruncationNotice(
   writeError: string | undefined,
 ): string {
   const base = `[MCP text output truncated: original ${stats.lines.toLocaleString()} lines / ${formatSize(stats.bytes)}.`;
-  if (fullOutputPath) {
+  if (fullOutputPath !== undefined && fullOutputPath !== "") {
     return `${base} Full text saved to: ${fullOutputPath} — use read with offset/limit or grep to inspect.]`;
   }
   return `${base} Full output could not be saved: ${writeError ?? "unknown error"}]`;
