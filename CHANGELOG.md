@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.15 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Update Vitest and native keyring dependencies (#174) ([19ff2ff](https://github.com/fitchmultz/pi-mcp-adapter/commit/19ff2fff97a919b4447bb8599a121dc17243b6f7))
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.14...v8.0.15
+
 ## 8.0.14 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
