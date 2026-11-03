@@ -213,11 +213,11 @@ class RecoveryAttempt<T> {
     failed: ServerConnection,
     error: Error,
   ): Promise<
-    { kind: "result"; value: T } | { kind: "challenge"; connection: ServerConnection; error: Error }
+    { kind: "result"; value: T } | { kind: "challenge"; challenge: AuthChallengeContext }
   > {
     const definition = this.deps.config.mcpServers[this.serverName];
     if (!definition || failed.oauthProvider !== false) {
-      return { kind: "challenge", connection: failed, error };
+      return { kind: "challenge", challenge: { connection: failed, error } };
     }
     // One anonymous rejection may activate the provider without prompting.
     const activated = await this.deps.manager.reconnect(
@@ -228,7 +228,7 @@ class RecoveryAttempt<T> {
     );
     throwIfAborted(this.deps.signal);
     if (activated.status !== "connected") {
-      return { kind: "challenge", connection: activated, error };
+      return { kind: "challenge", challenge: { connection: activated, error } };
     }
     try {
       return { kind: "result", value: await this.dispatch(activated) };
@@ -237,7 +237,7 @@ class RecoveryAttempt<T> {
       if (!this.isRecoverableAuth(providerError, activated, true)) {
         throw providerError;
       }
-      return { kind: "challenge", connection: activated, error: providerError };
+      return { kind: "challenge", challenge: { connection: activated, error: providerError } };
     }
   }
 
@@ -253,7 +253,7 @@ class RecoveryAttempt<T> {
     if (activation.kind === "result") {
       return activation.value;
     }
-    return this.requestConsent(definition?.oauth, activation);
+    return this.requestConsent(definition?.oauth, activation.challenge);
   }
 
   private async requestConsent(
