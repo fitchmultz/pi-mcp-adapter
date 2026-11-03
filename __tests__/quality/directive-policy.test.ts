@@ -13,7 +13,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadExceptionSites } from "../../scripts/quality-exceptions.mjs";
+import { parseSync } from "oxc-parser";
+import { loadExceptionSites, resolveExceptionSite } from "../../scripts/quality-exceptions.mjs";
 
 const checker = fileURLToPath(new URL("../../scripts/check-directives.mjs", import.meta.url));
 const lintConfig = fileURLToPath(new URL("../../.oxlintrc.json", import.meta.url));
@@ -33,7 +34,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-3003: Missing host theme\n## QX-030: Standalone bridge callback contracts\n## QX-031: Native raw echo coercion\n## QX-7001: JSON Schema conditional keyword\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -75,7 +76,11 @@ describe("directive policy", () => {
         "/** @ts-ignore\n * not a TypeScript directive */",
       ].join("\n"),
     );
-    const negatives = [negativeTest, "__tests__/oauth-config.test-d.ts"].map((file) =>
+    const negatives = [
+      negativeTest,
+      "__tests__/oauth-config.test-d.ts",
+      "__tests__/catalog-metadata.test-d.ts",
+    ].map((file) =>
       checkSource(
         file,
         '// @ts-expect-error A string is not assignable to a number.\nconst number: number = "x";\n',
@@ -163,6 +168,113 @@ describe("directive policy", () => {
     const result = checkSource("broken.ts", "const = ;");
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("broken.ts: parse error:");
+  });
+});
+
+const managerFiles = [
+  "connection-factory.ts",
+  "connection-http.ts",
+  "connection-runtime.ts",
+  "connection-oauth-ownership.ts",
+  "connection-handshake.ts",
+  "tool-transport.ts",
+];
+const managerSites = loadExceptionSites().filter((entry) => managerFiles.includes(entry.file));
+
+describe("manager operation inventory", () => {
+  it.each(managerFiles)("accepts the actual native operations in %s", (file) => {
+    const source = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8").replaceAll(
+      '"./',
+      '"./adapter/',
+    );
+    const entries = managerSites
+      .filter((entry) => entry.file === file)
+      .map((entry) => Object.assign({}, entry, { file: "forward.ts" }));
+    expect(entries.length).toBeGreaterThan(0);
+    const result = checkSource("forward.ts", source, entries);
+    expect(result.status, result.stderr).toBe(0);
+    const native = nativeLint(result.cwd);
+    expect(native.status, native.stdout + native.stderr).toBe(0);
+  });
+
+  it.each(managerSites)("rejects unauthorized uses of $file $operation", (entry) => {
+    const source = readFileSync(new URL(`../../${entry.file}`, import.meta.url), "utf8").replaceAll(
+      '"./',
+      '"./adapter/',
+    );
+    const entries = managerSites
+      .filter((siteEntry) => siteEntry.file === entry.file)
+      .map((siteEntry) => Object.assign({}, siteEntry, { file: "forward.ts" }));
+    const operation = resolveExceptionSite(
+      entry,
+      parseSync("forward.ts", source).program,
+      source,
+    ).start;
+    const offset = source.lastIndexOf("// oxlint-disable-next-line", operation);
+    expect(offset).toBeGreaterThanOrEqual(0);
+    const end = source.indexOf("\n", offset);
+    const comment = source.slice(offset, end);
+    const withoutDirective = source.slice(0, offset) + source.slice(end + 1);
+    const copied = checkSource("copied.ts", source, entries);
+    const missing = checkSource("forward.ts", withoutDirective, entries);
+    const duplicate = checkSource(
+      "forward.ts",
+      source.slice(0, offset) + comment + "\n" + source.slice(offset),
+      entries,
+    );
+    const misplaced = checkSource(
+      "forward.ts",
+      source.slice(0, end) + "\n" + source.slice(end),
+      entries,
+    );
+    const replacement = checkSource(
+      "forward.ts",
+      source.slice(0, operation) +
+        entry.operation.replace(
+          /onclose|onerror|onmessage|SSEClientTransport|setLoggingLevel|saveAuthorizationServerUrl|cleanupError/u,
+          "unauthorized",
+        ) +
+        source.slice(operation + entry.operation.length),
+      entries,
+    );
+    for (const result of [copied, missing, duplicate, misplaced, replacement]) {
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toMatch(
+        /not authorized|unused exception site|operation changed|scope is missing/u,
+      );
+    }
+    const nativeMissing = nativeLint(missing.cwd);
+    expect(nativeMissing.status).toBe(1);
+    const line = withoutDirective.slice(0, offset).split("\n").length;
+    const rule = entry.rule.replace("/", "(") + ")";
+    expect(nativeMissing.stdout + nativeMissing.stderr).toContain(`forward.ts:${line}:`);
+    expect(nativeMissing.stdout + nativeMissing.stderr).toContain(`[Error/${rule}]`);
+    const unused = checkSource(
+      "forward.ts",
+      `${withoutDirective}\n${comment}\nexport const qxUnused = 1;\n`,
+      entries,
+    );
+    expect(unused.status).toBe(1);
+    expect(unused.stderr).toContain("lint directive is not authorized");
+    const nativeUnused = nativeLint(unused.cwd);
+    expect(nativeUnused.status).toBe(1);
+    expect(nativeUnused.stdout + nativeUnused.stderr).toContain("Unused");
+  });
+
+  it("rejects a same-named SSE export from a different declaration origin", () => {
+    const file = "connection-runtime.ts";
+    const source = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8")
+      .replaceAll('"./', '"./adapter/')
+      .replace(
+        'UnauthorizedError,\n} from "@modelcontextprotocol/client";',
+        'UnauthorizedError,\n} from "node:events";',
+      );
+    const entries = managerSites
+      .filter((entry) => entry.file === file)
+      .map((entry) => Object.assign({}, entry, { file: "forward.ts" }));
+    const result = checkSource("forward.ts", source, entries);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Exception scope is missing or ambiguous");
   });
 });
 
@@ -303,6 +415,35 @@ const capabilityFunctionSource = [
   'mcp.registerTool("caps", {}, reportClientCapabilities);',
   "",
 ].join("\n");
+
+const directCallbackDirective =
+  "// oxlint-disable-next-line eslint/max-params -- QX-025: Pi supplies context fifth.";
+const directCallbackSignature =
+  "async function execute(toolCallId, params, signal, _onUpdate, ctx) ";
+const directCallbackSource = [
+  'import type { ToolDefinition } from "@earendil-works/pi-coding-agent";',
+  'import type { TUnsafe } from "typebox";',
+  'type Execute = ToolDefinition<TUnsafe<Record<string, unknown>>, Record<string, unknown>>["execute"];',
+  "export function createExecutor(): Execute {",
+  "return (",
+  directCallbackDirective,
+  `${directCallbackSignature}{`,
+  "return { content: [], details: { toolCallId, params, signal, _onUpdate, hasUI: ctx.hasUI } };",
+  "}",
+  ");",
+  "}",
+  "",
+].join("\n");
+const directCallbackSite = {
+  ...site,
+  id: "QX-025",
+  rule: "eslint/max-params",
+  scope: { type: "FunctionExpression", name: "execute" },
+  path: [],
+  nodeType: "FunctionExpression",
+  part: "signature",
+  operation: directCallbackSignature,
+};
 
 const helperFile = "mcp-keyring-helper.cjs";
 const helperSource = readFileSync(new URL(`../../${helperFile}`, import.meta.url), "utf8");
@@ -523,9 +664,137 @@ const aggregateCases = [
     },
   };
 });
+const urlValidationSource =
+  'export function resolveServerUrl(resolved: string): string {\ntry {\n// oxlint-disable-next-line eslint/no-new -- QX-026: preserve native URL errors without canonicalizing the returned bytes.\nnew URL(resolved);\n} catch (error) {\nthrow new Error("Invalid URL", { cause: error });\n}\nreturn resolved;\n}\n';
+
+const residualCases = [
+  {
+    name: "standalone bridge request callback",
+    id: "QX-030",
+    rule: "unicorn/prefer-add-event-listener",
+    operation: "bridge.onmessage = callback;",
+    replacement: "bridge.onopenlink = callback;",
+    neighborSuffix:
+      'export function unrelated(): void {\nconst signal = new AbortController().signal;\nsignal.onabort = () => console.log("aborted");\n}\n',
+    diagnosticOffset: 2,
+    diagnosticRule: "[Error/unicorn(prefer-add-event-listener)]",
+  },
+  ...["oninitialized", "onsizechange"].flatMap((name) => [
+    {
+      name: `standalone bridge ${name} setter`,
+      id: "QX-030",
+      rule: "typescript/no-deprecated",
+      operation: `bridge.${name} = callback;`,
+      replacement: "bridge.onopenlink = callback;",
+      neighborSuffix:
+        'export const unrelated = new AppBridge(null, {name:"fixture",version:"1"}, {}).onsandboxready;\n',
+      diagnosticOffset: 0,
+      diagnosticRule: "[Error/typescript(no-deprecated)]",
+    },
+    {
+      name: `standalone bridge ${name} getter`,
+      id: "QX-030",
+      rule: "typescript/no-deprecated",
+      operation: `console.log(bridge.${name});`,
+      replacement: "console.log(bridge.onopenlink);",
+      neighborSuffix:
+        'export const unrelated = new AppBridge(null, {name:"fixture",version:"1"}, {}).onsandboxready;\n',
+      diagnosticOffset: 0,
+      diagnosticRule: "[Error/typescript(no-deprecated)]",
+    },
+  ]),
+].map(
+  ({
+    name,
+    id,
+    rule,
+    operation,
+    replacement,
+    neighborSuffix,
+    diagnosticOffset,
+    diagnosticRule,
+  }) => {
+    const needsCallback = operation.startsWith("bridge.");
+    const source = [
+      'import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";',
+      "export function probeBridge(): void {",
+      'const bridge = new AppBridge(null, {name:"fixture",version:"1"}, {});',
+      ...(needsCallback
+        ? [
+            `const callback = ${rule === "unicorn/prefer-add-event-listener" ? "async " : ""}() => ({});`,
+          ]
+        : []),
+      `// oxlint-disable-next-line ${rule} -- ${id}: retain the original callback contract.`,
+      operation,
+      "}",
+      "",
+    ].join("\n");
+    return {
+      name,
+      source,
+      operation,
+      replacement,
+      neighbor: source + neighborSuffix,
+      diagnostic: [`forward.ts:${source.split("\n").length + diagnosticOffset}:`, diagnosticRule],
+      authorized: {
+        ...site,
+        id,
+        rule,
+        scope: { type: "FunctionDeclaration", name: "probeBridge" },
+        path: ["body", "body", needsCallback ? 2 : 1],
+        nodeType: "ExpressionStatement",
+        operation,
+      },
+    };
+  },
+);
+const echoSource = [
+  'import type { CallToolRequest } from "@modelcontextprotocol/server";',
+  "export function callTool(request: CallToolRequest): string {",
+  "// oxlint-disable-next-line typescript/no-base-to-string -- QX-031: preserve native echo coercion.",
+  'const echoText = String(request.params.arguments?.value ?? "");',
+  "return echoText;",
+  "}",
+  "",
+].join("\n");
 const functionCases = [
   ...keyringCases,
   ...aggregateCases,
+  {
+    name: "native URL validation",
+    source: urlValidationSource,
+    operation: "new URL(resolved);",
+    replacement: "new Date(resolved);",
+    neighbor: `${urlValidationSource}export function unrelated(): void {\nnew Date();\n}\n`,
+    diagnostic: ["forward.ts:11:", "[Error/eslint(no-new)]"],
+    authorized: {
+      ...site,
+      id: "QX-026",
+      rule: "eslint/no-new",
+      scope: { type: "FunctionDeclaration", name: "resolveServerUrl" },
+      path: ["body", "body", 0, "block", "body", 0],
+      nodeType: "ExpressionStatement",
+      operation: "new URL(resolved);",
+    },
+  },
+  ...residualCases,
+  {
+    name: "raw echo coercion",
+    source: echoSource,
+    operation: 'const echoText = String(request.params.arguments?.value ?? "");',
+    replacement: "const echoText = String({});",
+    neighbor: echoSource + "export const unrelated = String({});\n",
+    diagnostic: ["forward.ts:7:", "[Error/typescript(no-base-to-string)]"],
+    authorized: {
+      ...site,
+      id: "QX-031",
+      rule: "typescript/no-base-to-string",
+      scope: { type: "FunctionDeclaration", name: "callTool" },
+      path: ["body", "body", 0],
+      nodeType: "VariableDeclaration",
+      operation: 'const echoText = String(request.params.arguments?.value ?? "");',
+    },
+  },
   {
     name: "lazy declared Zod API",
     source: zodModuleSource,
@@ -591,6 +860,118 @@ const positionalSite = {
   path: [],
   nodeType: "ExportNamedDeclaration",
   operation: positionalOperation,
+};
+
+const themeDirective =
+  "// oxlint-disable-next-line typescript/no-unnecessary-condition -- QX-3003: JavaScript hosts can omit the theme.";
+const themeOperation = 'if (ui.theme === undefined) {\nreturn "status";\n}';
+const themeSource = [
+  'import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";',
+  "export function forward(ui: ExtensionUIContext): string {",
+  themeDirective,
+  themeOperation,
+  'return ui.theme.fg("accent", "status");',
+  "}",
+  "",
+].join("\n");
+const executeDirective =
+  "// oxlint-disable-next-line eslint/max-params -- QX-025: preserve Pi's five native callback positions.";
+const executeOperation = [
+  "async function nativeExecute(toolCallId, params, signal, _onUpdate, ctx) {",
+  'return { content: [{ type: "text", text: `${toolCallId}:${params.text}:${ctx.cwd}:${signal?.aborted === true}` }], details: {} };',
+  "}",
+].join("\n");
+const executeSource = [
+  'import type { HostToolExecute } from "./adapter/host-contract.ts";',
+  "export const execute: HostToolExecute<{ text: string }> =",
+  executeDirective,
+  `${executeOperation};`,
+  "",
+].join("\n");
+const hostCases = [
+  {
+    name: "missing native theme",
+    source: themeSource,
+    directive: themeDirective,
+    operation: themeOperation,
+    replacement: themeOperation.replace("=== undefined", "!== undefined"),
+    authorized: {
+      ...site,
+      id: "QX-3003",
+      rule: "typescript/no-unnecessary-condition",
+      nodeType: "IfStatement",
+      path: ["body", "body", 0],
+      operation: themeOperation,
+    },
+    neighbor: `${themeSource}export function unrelated(ui: ExtensionUIContext): boolean {\nreturn ui.theme === undefined;\n}\n`,
+    diagnostic: ["forward.ts:10:", "[Error/typescript(no-unnecessary-condition)]"],
+  },
+  {
+    name: "native Pi execute callback",
+    source: executeSource,
+    directive: executeDirective,
+    operation: executeOperation,
+    replacement: executeOperation.replace("nativeExecute", "localExecute"),
+    authorized: {
+      ...site,
+      id: "QX-025",
+      rule: "eslint/max-params",
+      scope: { type: "FunctionExpression", name: "nativeExecute" },
+      nodeType: "FunctionExpression",
+      path: [],
+      operation: executeOperation,
+    },
+    neighbor: `${executeSource}export function unrelated(a: number, b: number, c: number, d: number, e: number): number {\nreturn a + b + c + d + e;\n}\n`,
+    diagnostic: ["forward.ts:7:", "[Error/eslint(max-params)]"],
+  },
+];
+const descriptorDirective =
+  "// oxlint-disable-next-line unicorn/no-thenable -- QX-7001: JSON Schema conditional keyword, not a Promise thenable.";
+const descriptorOperation = 'then: { required: ["limit"] }';
+const descriptorSource = [
+  "export const descriptor = {",
+  "inputSchema: {",
+  'type: "object" as const,',
+  "allOf: [",
+  "{",
+  'if: { required: ["state"] },',
+  descriptorDirective,
+  `${descriptorOperation},`,
+  "},",
+  "],",
+  "},",
+  "};",
+  "",
+].join("\n");
+const descriptorCase = {
+  name: "JSON Schema conditional keyword",
+  source: descriptorSource,
+  directive: descriptorDirective,
+  operation: descriptorOperation,
+  replacement: 'then: () => ({ required: ["limit"] })',
+  authorized: {
+    ...site,
+    id: "QX-7001",
+    rule: "unicorn/no-thenable",
+    scope: { type: "VariableDeclarator", name: "descriptor" },
+    path: [
+      "init",
+      "properties",
+      0,
+      "value",
+      "properties",
+      1,
+      "value",
+      "elements",
+      0,
+      "properties",
+      1,
+    ],
+    nodeType: "Property",
+    operation: descriptorOperation,
+  },
+  neighbor: `${descriptorSource}export const unrelated = { if: { required: ["limit"] }, then: { required: ["state"] } };\n`,
+  diagnostic: ["forward.ts:13:", "[Error/unicorn(no-thenable)]"],
 };
 
 describe("operation-bound exceptions", () => {
@@ -676,6 +1057,15 @@ describe("operation-bound exceptions", () => {
 
   it.each([
     ...functionCases,
+    ...hostCases,
+    descriptorCase,
+    {
+      name: "native tool execute callback",
+      source: directCallbackSource,
+      authorized: directCallbackSite,
+      neighbor: `${directCallbackSource}export function unrelated(a: string, b: string, c: string, d: string, e: string): string {\nreturn a + b + c + d + e;\n}\n`,
+      diagnostic: ["forward.ts:12:", "[Error/eslint(max-params)]"],
+    },
     {
       name: "stored failure",
       source: forward,
@@ -896,6 +1286,151 @@ describe("operation-bound exceptions", () => {
     expect(native.status).toBe(1);
     expect(native.stdout + native.stderr).toContain(
       "forward.ts:5:1: Unused oxlint-disable directive (no problems were reported). [Error]",
+    );
+  });
+
+  it("requires the URL directive to suppress a real finding at the authorized site", () => {
+    const entry = functionCases.find((candidate) => candidate.authorized.id === "QX-026");
+    expect(entry).toBeDefined();
+    if (!entry) {
+      throw new Error("Missing native URL exception control");
+    }
+    const withoutDirective = entry.source.replace(/\/\/ oxlint-disable-next-line[^\n]*\n/u, "");
+    const unsuppressed = checkSource("forward.ts", withoutDirective, [entry.authorized]);
+    const nativeUnsuppressed = nativeLint(unsuppressed.cwd);
+    expect(unsuppressed.status).toBe(1);
+    expect(unsuppressed.stderr).toContain("unused exception site QX-026");
+    expect(nativeUnsuppressed.status).toBe(1);
+    expect(nativeUnsuppressed.stdout + nativeUnsuppressed.stderr).toContain("forward.ts:3:1:");
+    expect(nativeUnsuppressed.stdout + nativeUnsuppressed.stderr).toContain(
+      "[Error/eslint(no-new)]",
+    );
+
+    const unused = checkSource(
+      "forward.ts",
+      entry.source.replace(entry.operation, "URL.parse(resolved);"),
+      [entry.authorized],
+    );
+    const nativeUnused = nativeLint(unused.cwd);
+    expect(unused.status).toBe(1);
+    expect(unused.stderr).toContain("Authorized operation changed");
+    expect(nativeUnused.status).toBe(1);
+    expect(nativeUnused.stdout + nativeUnused.stderr).toContain("Unused");
+  });
+
+  it.each([
+    ["copied file", "copied.ts", directCallbackSource, "not authorized"],
+    [
+      "same-count replaced signature",
+      "forward.ts",
+      directCallbackSource.replace("signal, _onUpdate, ctx", "signal, ctx, _onUpdate"),
+      "Authorized operation changed",
+    ],
+    [
+      "wrong function",
+      "forward.ts",
+      directCallbackSource.replace("function execute(", "function unrelated("),
+      "scope is missing",
+    ],
+    [
+      "moved directive with the same count",
+      "forward.ts",
+      directCallbackSource
+        .replace(`${directCallbackDirective}\n`, "")
+        .concat(
+          `${directCallbackDirective}\nexport function unrelated(a: number, b: number, c: number, d: number, e: number): number { return a + b + c + d + e; }\n`,
+        ),
+      "not authorized",
+    ],
+    [
+      "duplicate callback",
+      "forward.ts",
+      directCallbackSource +
+        directCallbackSource
+          .slice(directCallbackSource.indexOf("export function"))
+          .replace("createExecutor", "anotherExecutor"),
+      "scope is missing or ambiguous",
+    ],
+    [
+      "missing directive",
+      "forward.ts",
+      directCallbackSource.replace(`${directCallbackDirective}\n`, ""),
+      "unused exception site QX-025",
+    ],
+  ])("rejects native callback %s", (_label, file, source, diagnostic) => {
+    const result = checkSource(file, source, [directCallbackSite]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(diagnostic);
+  });
+
+  it("reports a native unused callback directive when the callback no longer needs it", () => {
+    const source = directCallbackSource
+      .replace("toolCallId, params, signal, _onUpdate, ctx", "toolCallId, params")
+      .replace("toolCallId, params, signal, _onUpdate, hasUI: ctx.hasUI", "toolCallId, params");
+    const result = checkSource("forward.ts", source, [directCallbackSite]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Authorized operation changed");
+    const native = nativeLint(result.cwd);
+    expect(native.status).toBe(1);
+    expect(native.stdout + native.stderr).toContain("forward.ts:6:");
+    expect(native.stdout + native.stderr).toContain(
+      "Unused oxlint-disable directive (no problems were reported). [Error]",
+    );
+  });
+
+  it.each([...hostCases, descriptorCase])(
+    "rejects copied, replaced, duplicate and stale $name directives",
+    (entry) => {
+      const copied = checkSource("copied.ts", entry.source, [entry.authorized]);
+      const replaced = checkSource(
+        "forward.ts",
+        entry.source.replace(entry.operation, entry.replacement),
+        [entry.authorized],
+      );
+      const duplicate = checkSource(
+        "forward.ts",
+        entry.source.replace(entry.operation, `${entry.directive}\n${entry.operation}`),
+        [entry.authorized],
+      );
+      const stale = checkSource("forward.ts", entry.source.replace(`${entry.directive}\n`, ""), [
+        entry.authorized,
+      ]);
+      expect(copied.status, copied.stderr).toBe(1);
+      expect(copied.stderr).toContain("lint directive is not authorized");
+      expect(replaced.status, replaced.stderr).toBe(1);
+      expect(replaced.stderr).toMatch(/Authorized operation changed|scope is missing/u);
+      expect(duplicate.status, duplicate.stderr).toBe(1);
+      expect(duplicate.stderr).toContain("lint directive is not authorized");
+      expect(stale.status, stale.stderr).toBe(1);
+      expect(stale.stderr).toContain("unused exception site");
+    },
+  );
+
+  it("requires the descriptor directive to suppress a real no-thenable finding at its site", () => {
+    const unsuppressed = checkSource(
+      "forward.ts",
+      descriptorSource.replace(`${descriptorDirective}\n`, ""),
+      [descriptorCase.authorized],
+    );
+    const nativeUnsuppressed = nativeLint(unsuppressed.cwd);
+    expect(unsuppressed.status).toBe(1);
+    expect(unsuppressed.stderr).toContain("unused exception site QX-7001");
+    expect(nativeUnsuppressed.status).toBe(1);
+    expect(nativeUnsuppressed.stdout + nativeUnsuppressed.stderr).toContain(
+      "forward.ts:7:1: Do not add `then` to an object. [Error/unicorn(no-thenable)]",
+    );
+
+    const unused = checkSource(
+      "forward.ts",
+      descriptorSource.replace(descriptorOperation, 'else: { required: ["limit"] }'),
+      [descriptorCase.authorized],
+    );
+    const nativeUnused = nativeLint(unused.cwd);
+    expect(unused.status).toBe(1);
+    expect(unused.stderr).toContain("Authorized operation changed");
+    expect(nativeUnused.status).toBe(1);
+    expect(nativeUnused.stdout + nativeUnused.stderr).toContain(
+      "forward.ts:7:1: Unused oxlint-disable directive (no problems were reported). [Error]",
     );
   });
 

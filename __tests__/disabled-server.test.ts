@@ -128,7 +128,13 @@ describe("disabled MCP servers", () => {
       },
     );
 
-    const result = await execute("call", {}, undefined, undefined, host.context);
+    const result = await execute(
+      "call",
+      {},
+      undefined,
+      undefined,
+      host.runner.createToolContext("call", state.owner.signal),
+    );
     expect(result.details).toMatchObject({ error: "server_disabled", server: "disabled" });
     const content = result.content[0];
     assert(content?.type === "text");
@@ -155,17 +161,27 @@ describe("disabled MCP servers", () => {
     expect(executeDescribe(state, "disabled_search").details).toMatchObject({
       error: "server_disabled",
     });
-    expect(executeSearch(state, "cached").details).toMatchObject({ count: 0 });
-    expect(executeSearch(state, "cached", "disabled").details).toMatchObject({
+    expect(executeSearch(state, { query: "cached" }).details).toMatchObject({ count: 0 });
+    expect(executeSearch(state, { query: "cached", server: "disabled" }).details).toMatchObject({
       error: "server_disabled",
     });
-    expect((await executeCall(state, "disabled_search", {})).details).toMatchObject({
+    expect(
+      (await executeCall(state, { toolName: "disabled_search", args: {} })).details,
+    ).toMatchObject({
       error: "server_disabled",
     });
-    expect((await executeCall(state, "disabled_search", {}, "disabled")).details).toMatchObject({
+    expect(
+      (
+        await executeCall(state, {
+          toolName: "disabled_search",
+          args: {},
+          serverOverride: "disabled",
+        })
+      ).details,
+    ).toMatchObject({
       error: "server_disabled",
     });
-    expect((await executeConnect(state, "disabled")).details).toMatchObject({
+    expect((await executeConnect(state, { serverName: "disabled" })).details).toMatchObject({
       error: "server_disabled",
     });
     expect((await executeAuthStart(state, "disabled")).details).toMatchObject({

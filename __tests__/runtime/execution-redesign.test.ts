@@ -103,14 +103,16 @@ describe("MCP execution redesign", () => {
   });
   it("only uses the no-file path for fully visible plain-text results", async () => {
     const { state, setResult, directory } = await fixture();
-    expect((await executeCall(state, "demo_echo", {})).details.resultRef).toBeUndefined();
+    expect(
+      (await executeCall(state, { toolName: "demo_echo", args: {} })).details.resultRef,
+    ).toBeUndefined();
     const raw: CallToolResult = {
       content: [{ type: "text", text: "done" }],
       _meta: { receipt: "saved-42" },
       vendorField: 3,
     };
     setResult(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     assert.ok(typeof result.details.resultRef === "string");
     const readback = await output.readMcpResult(
       { ref: result.details.resultRef, path: "/_meta/receipt" },
@@ -131,7 +133,7 @@ describe("MCP execution redesign", () => {
       ],
     };
     const { state, directory } = await fixture(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     expect(result.details.resultRef).toEqual(expect.any(String));
     assert.ok(typeof result.details.resultRef === "string");
     const readback = await output.readMcpResult(
@@ -162,7 +164,7 @@ describe("MCP execution redesign", () => {
       ],
     };
     const { state } = await fixture(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     const files = z.array(z.object({ path: z.string() })).parse(result.details.payloadFiles);
     expect(await Promise.all(files.map((file) => readFile(file.path, "utf8")))).toEqual([
       "audio bytes",
@@ -171,7 +173,10 @@ describe("MCP execution redesign", () => {
     expect(text(result)).toContain("not rendered");
     expect(text(result)).toContain("test://receipt");
     expect(result.content).toContainEqual(raw.content[2]);
-    const script = await runMcpScript(state, "const r = await tools.demo_echo({}); return r.ok;");
+    const script = await runMcpScript({
+      state,
+      code: "const r = await tools.demo_echo({}); return r.ok;",
+    });
     expect(text(script)).toContain("MCP audio: audio/wav; not rendered. Saved file:");
     expect(text(script)).toContain(
       "MCP binary resource (test://file): application/octet-stream; not rendered. Saved file:",
@@ -187,7 +192,7 @@ describe("MCP execution redesign", () => {
       },
     };
     const { state, directory } = await fixture(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     assert.ok(typeof result.details.resultRef === "string");
     const input = {
       ref: result.details.resultRef,
@@ -246,7 +251,7 @@ describe("MCP execution redesign", () => {
       icons: [{ src: "https://example.invalid/icon.svg" }],
     };
     connection.resources = [resource];
-    expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({
+    expect((await resources.executeResourceList(state, { server: "demo" })).details).toMatchObject({
       items: [resource],
     });
   });
@@ -254,29 +259,34 @@ describe("MCP execution redesign", () => {
   it("keeps resource policy and legacy aliases while exposing URI reads to scripts", async () => {
     const { state, connection, readResource } = await fixture();
     connection.resources = [{ name: "notes", uri: "test://notes" }];
-    expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({
+    expect((await resources.executeResourceList(state, { server: "demo" })).details).toMatchObject({
       items: [{ uri: "test://notes" }],
     });
-    const script = await runMcpScript(
+    const script = await runMcpScript({
       state,
-      'const list = await tools.resources({ server: "demo" }); const read = await tools.readResource({ server: "demo", uri: list.items[0].uri }); return read;',
-    );
+      code: 'const list = await tools.resources({ server: "demo" }); const read = await tools.readResource({ server: "demo", uri: list.items[0].uri }); return read;',
+    });
     expect(JSON.parse(firstText(script))).toMatchObject({
       ok: true,
       data: { contents: [{ uri: "test://notes", text: "notes" }] },
     });
-    expect((await executeCall(state, "demo_read_notes")).details.error).toBeUndefined();
+    expect(
+      (await executeCall(state, { toolName: "demo_read_notes" })).details.error,
+    ).toBeUndefined();
     for (const policy of [
       { exposeResources: false },
       { excludeTools: ["read_notes"] },
       { includeTools: ["echo"] },
     ]) {
       state.config.mcpServers.demo = { command: "fixture", ...policy };
-      expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({
+      expect(
+        (await resources.executeResourceList(state, { server: "demo" })).details,
+      ).toMatchObject({
         total: 0,
       });
       expect(
-        (await resources.executeResourceRead(state, "demo", "test://notes")).details.error,
+        (await resources.executeResourceRead(state, { server: "demo", uri: "test://notes" }))
+          .details.error,
       ).toBe("tool_not_found");
     }
     expect(readResource).toHaveBeenCalledTimes(2);
@@ -300,10 +310,10 @@ describe("MCP execution redesign", () => {
     };
     state.toolMetadata.set("demo", [descriptor]);
     state.config.mcpServers.unknown = { command: "not contacted" };
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'return { found: await tools.describe({ path: "demo_echo" }), search: await tools.search({ query: "Echo" }) };',
-    );
+      code: 'return { found: await tools.describe({ path: "demo_echo" }), search: await tools.search({ query: "Echo" }) };',
+    });
     const parsed = z
       .object({ found: z.unknown(), search: z.object({ coverage: z.unknown() }) })
       .parse(JSON.parse(firstText(result)));
@@ -321,10 +331,10 @@ describe("MCP execution redesign", () => {
     state.config.mcpServers.cold = { command: "fixture" };
     state.config.mcpServers.other = { command: "must not connect" };
     const connect = vi.spyOn(state.manager, "connect").mockResolvedValue(connection);
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'return await tools.search({ query: "Echo", server: "cold" });',
-    );
+      code: 'return await tools.search({ query: "Echo", server: "cold" });',
+    });
     expect(JSON.parse(firstText(result))).toMatchObject({
       items: [{ path: "cold_echo" }],
       coverage: { complete: true, knownServers: ["cold"], unknownServers: [] },
@@ -332,10 +342,10 @@ describe("MCP execution redesign", () => {
     expect(connect.mock.calls.map((call) => call[0])).toEqual(["cold"]);
     state.toolMetadata.delete("cold");
     connect.mockResolvedValue({ ...connection, status: "needs-auth" });
-    const failed = await runMcpScript(
+    const failed = await runMcpScript({
       state,
-      'return await tools.search({ query: "Echo", server: "cold" });',
-    );
+      code: 'return await tools.search({ query: "Echo", server: "cold" });',
+    });
     expect(JSON.parse(firstText(failed))).toMatchObject({
       error: { code: "auth_required" },
       coverage: { complete: false, unknownServers: ["cold"] },
@@ -354,9 +364,14 @@ describe("MCP execution redesign", () => {
     state.toolMetadata.set("demo", [
       { name: "demo_a_b", originalName: "a.b", description: "stale single alias" },
     ]);
-    expect((await executeCall(state, "demo_a_b", {})).details.error).toBe("ambiguous_tool");
+    expect((await executeCall(state, { toolName: "demo_a_b", args: {} })).details.error).toBe(
+      "ambiguous_tool",
+    );
     expect(callTool).not.toHaveBeenCalled();
-    const script = await runMcpScript(state, 'return await tools.call("a_b", {}, "demo");');
+    const script = await runMcpScript({
+      state,
+      code: 'return await tools.call("a_b", {}, "demo");',
+    });
     expect(JSON.parse(firstText(script))).toMatchObject({ ok: true });
     expect(callTool).toHaveBeenCalledWith(
       expect.objectContaining({ name: "a_b" }),
@@ -370,12 +385,15 @@ describe("MCP execution redesign", () => {
       { name: "notes", uri: "test://one" },
       { name: "notes", uri: "test://two" },
     ];
-    expect((await resources.executeResourceList(state, "demo")).details).toMatchObject({
+    expect((await resources.executeResourceList(state, { server: "demo" })).details).toMatchObject({
       total: 2,
     });
-    expect((await executeCall(state, "demo_read_notes")).details.error).toBe("ambiguous_tool");
+    expect((await executeCall(state, { toolName: "demo_read_notes" })).details.error).toBe(
+      "ambiguous_tool",
+    );
     expect(
-      (await resources.executeResourceRead(state, "demo", "test://two")).details.error,
+      (await resources.executeResourceRead(state, { server: "demo", uri: "test://two" })).details
+        .error,
     ).toBeUndefined();
     expect(readResource).toHaveBeenCalledWith({ uri: "test://two" }, expect.anything());
   });
@@ -398,7 +416,9 @@ describe("MCP execution redesign", () => {
     state.toolMetadata.set("other", [
       { name: "demo_echo", originalName: "different", description: "Other" },
     ]);
-    expect((await executeCall(state, "demo_echo", {})).details.error).toBe("ambiguous_tool");
+    expect((await executeCall(state, { toolName: "demo_echo", args: {} })).details.error).toBe(
+      "ambiguous_tool",
+    );
     expect(callTool).not.toHaveBeenCalled();
   });
 
@@ -410,9 +430,17 @@ describe("MCP execution redesign", () => {
       () => null,
       { serverName: "demo", prefixedName: "demo_echo", originalName: "echo", description: "Stale" },
     );
-    expect((await execute("id", {}, undefined, undefined, host.context)).details.error).toBe(
-      "tool_not_found",
-    );
+    expect(
+      (
+        await execute(
+          "id",
+          {},
+          undefined,
+          undefined,
+          host.runner.createToolContext("id", state.owner.signal),
+        )
+      ).details.error,
+    ).toBe("tool_not_found");
     expect(callTool).not.toHaveBeenCalled();
   });
 
@@ -423,7 +451,7 @@ describe("MCP execution redesign", () => {
       structuredContent: { reason: "quota", remaining: 0 },
     };
     const { state, callTool } = await fixture(raw);
-    const result = await runMcpScript(state, "return await tools.demo_echo({});");
+    const result = await runMcpScript({ state, code: "return await tools.demo_echo({});" });
     expect(JSON.parse(firstText(result))).toMatchObject({
       ok: false,
       data: raw,
@@ -438,7 +466,7 @@ describe("MCP execution redesign", () => {
       structuredContent: { rows: [{ id: 1, secret: "omit" }, { id: 2 }] },
     };
     const { state, callTool, directory } = await fixture(raw);
-    const result = await executeCall(state, "demo_echo", {});
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
     const ref = result.details.resultRef;
     expect(ref).toEqual(expect.any(String));
     assert.ok(typeof ref === "string");
@@ -449,10 +477,10 @@ describe("MCP execution redesign", () => {
       { outputDirectory: directory },
     );
     expect(JSON.parse(text(page))).toEqual([{ id: 1 }, { id: 2 }]);
-    const script = await runMcpScript(
+    const script = await runMcpScript({
       state,
-      `return await tools.readResult({ ref: ${JSON.stringify(ref)}, path: "/structuredContent/rows/1" });`,
-    );
+      code: `return await tools.readResult({ ref: ${JSON.stringify(ref)}, path: "/structuredContent/rows/1" });`,
+    });
     expect(text(script)).toContain('\\"id\\": 2');
     expect(callTool).toHaveBeenCalledTimes(1);
   });
@@ -464,19 +492,18 @@ describe("MCP execution redesign", () => {
       // Capture only.
     });
     state.onToolCall = onToolCall;
-    const before = vi.fn<NonNullable<Parameters<typeof resources.executeResourceRead>[5]>>(
-      async () => {
-        // Record admission without changing it.
-      },
-    );
-    const result = await resources.executeResourceRead(
-      state,
-      "demo",
-      "test://notes",
-      undefined,
-      { toolCallId: "read-1" },
-      before,
-    );
+    const before = vi.fn<
+      NonNullable<Parameters<typeof resources.executeResourceRead>[1]["beforeDispatch"]>
+    >(async () => {
+      // Record admission without changing it.
+    });
+    const result = await resources.executeResourceRead(state, {
+      server: "demo",
+      uri: "test://notes",
+      signal: undefined,
+      identity: { toolCallId: "read-1" },
+      beforeDispatch: before,
+    });
     expect(text(result)).toContain("notes");
     expect(readResource).toHaveBeenCalledTimes(1);
     expect(before).toHaveBeenCalledWith(
@@ -485,9 +512,10 @@ describe("MCP execution redesign", () => {
     );
     expect(onToolCall.mock.calls.map((call) => call[0].phase)).toEqual(["before", "after"]);
     state.config.settings = { approveTools: ["read_notes"] };
-    expect((await resources.executeResourceRead(state, "demo", "test://notes")).details.error).toBe(
-      "approval_required",
-    );
+    expect(
+      (await resources.executeResourceRead(state, { server: "demo", uri: "test://notes" })).details
+        .error,
+    ).toBe("approval_required");
     expect(readResource).toHaveBeenCalledTimes(1);
   });
 });

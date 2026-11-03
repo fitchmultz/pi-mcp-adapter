@@ -132,20 +132,24 @@ function bindRecoveryFixture(
     authorize,
     connect: () => manager.connect(name, definition),
     call: (tool = "write", signal?: AbortSignal) =>
-      executeCall(state, toolName(tool), {}, name, undefined, signal),
+      executeCall(state, { toolName: toolName(tool), args: {}, serverOverride: name, signal }),
     callHost: async (host: "proxy" | "direct" | "script"): Promise<unknown> => {
       if (host === "script") {
-        const result = await runMcpScript(
+        const result = await runMcpScript({
           state,
-          `emit(await tools.call(${JSON.stringify(toolName("write"))}, {}));`,
-        );
+          code: `emit(await tools.call(${JSON.stringify(toolName("write"))}, {}));`,
+        });
         expect(result.details.error).toBeUndefined();
         const output: unknown = JSON.parse(resultText(result));
         return output;
       }
       const result =
         host === "proxy"
-          ? await executeCall(state, toolName("write"), {}, name)
+          ? await executeCall(state, {
+              toolName: toolName("write"),
+              args: {},
+              serverOverride: name,
+            })
           : await createDirectToolExecutor(
               () => state,
               () => null,
@@ -155,7 +159,13 @@ function bindRecoveryFixture(
                 prefixedName: toolName("write"),
                 description: "write",
               },
-            )("call", {}, undefined, undefined, native.context);
+            )(
+              "call",
+              {},
+              undefined,
+              undefined,
+              native.runner.createToolContext("call", state.owner.signal),
+            );
       return result.details.error !== undefined
         ? { ok: false, error: { code: result.details.error } }
         : { ok: true, data: { content: result.content } };

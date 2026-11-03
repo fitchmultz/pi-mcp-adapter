@@ -1,42 +1,10 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { UiHostContext, UiResourceContent, UiResourceCsp } from "./types.ts";
 
-// Use locally bundled AppBridge to avoid CDN Zod bundling issues
-const DEFAULT_APP_BRIDGE_MODULE_URL = "/app-bridge.bundle.js";
 const APP_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-downloads";
 
-export interface HostHtmlTemplateInput {
-  sessionToken: string;
-  uiResourceToken: string;
-  serverName: string;
-  toolName: string;
-  toolArgs: Record<string, unknown>;
-  resource: UiResourceContent;
-  allowAttribute: string;
-  requireToolConsent: boolean;
-  hostContext?: UiHostContext;
-  appBridgeModuleUrl?: string;
-}
-
-export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
-  const hostContext = input.hostContext ?? {};
-
-  const sessionToken = safeInlineJSON(input.sessionToken);
-  const uiResourceToken = safeInlineJSON(input.uiResourceToken);
-  const toolArgs = safeInlineJSON(input.toolArgs);
-  const serverName = safeInlineJSON(input.serverName);
-  const toolName = safeInlineJSON(input.toolName);
-  const hostContextJson = safeInlineJSON(hostContext);
-  const allowAttribute = safeInlineJSON(input.allowAttribute);
-  const requireToolConsent = safeInlineJSON(input.requireToolConsent);
-  const moduleUrl = safeInlineJSON(input.appBridgeModuleUrl ?? DEFAULT_APP_BRIDGE_MODULE_URL);
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MCP UI - ${escapeHtml(input.serverName)} / ${escapeHtml(input.toolName)}</title>
-  <style>
+const HOST_STYLE = `
     :root {
       color-scheme: light dark;
       --bg: #0f1115;
@@ -94,7 +62,57 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
       iframe { border-radius: 6px; }
       .panel { width: 100%; }
     }
-  </style>
+  `;
+
+export interface HostHtmlTemplateInput {
+  sessionToken: string;
+  uiResourceToken: string;
+  serverName: string;
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+  resource: UiResourceContent;
+  allowAttribute: string;
+  requireToolConsent: boolean;
+  hostContext?: UiHostContext;
+  appBridgeModuleUrl?: string;
+}
+
+export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
+  const config = safeInlineJSON({
+    sessionToken: input.sessionToken,
+    uiResourceToken: input.uiResourceToken,
+    serverName: input.serverName,
+    toolName: input.toolName,
+    toolArgs: input.toolArgs,
+    hostContext: input.hostContext ?? {},
+    allowAttribute: input.allowAttribute,
+    requireToolConsent: input.requireToolConsent,
+  });
+  // Use the locally bundled native SDK to avoid CDN Zod bundling issues. The
+  // server caches it for a year, so its content digest versions the URL: a browser
+  // never links this host against an earlier cached asset lacking its imports.
+  const sdkBundle = readFileSync(new URL("./app-bridge.bundle.js", import.meta.url));
+  const sdkUrl = `/app-bridge.bundle.js?v=${createHash("sha256").update(sdkBundle).digest("base64url")}`;
+  const importMap = safeInlineJSON({
+    imports: {
+      // A custom bridge replaces only AppBridge and PostMessageTransport.
+      "@modelcontextprotocol/ext-apps/app-bridge": input.appBridgeModuleUrl ?? sdkUrl,
+      // The host's native schemas and Zod come from the cached local SDK asset.
+      "@modelcontextprotocol/ext-apps": sdkUrl,
+      "@modelcontextprotocol/core": sdkUrl,
+      zod: sdkUrl,
+    },
+  });
+  // Canonical browser source: host-browser-entry.ts. The build must generate and
+  // freshness-check this asset, then copy it beside the emitted host template.
+  const browserSource = readFileSync(new URL("./host-browser.bundle.js", import.meta.url), "utf8");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCP UI - ${escapeHtml(input.serverName)} / ${escapeHtml(input.toolName)}</title>
+  <style>${HOST_STYLE}</style>
 </head>
 <body>
   <header>
@@ -124,281 +142,9 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
       <p>MCP UI session finished. You can close this page and return to Pi.</p>
     </div>
   </div>
-  <script type="module">
-    import { AppBridge, PostMessageTransport } from ${moduleUrl};
-
-    const SESSION_TOKEN = ${sessionToken};
-    const UI_RESOURCE_TOKEN = ${uiResourceToken};
-    const SERVER_NAME = ${serverName};
-    const TOOL_NAME = ${toolName};
-    const TOOL_ARGS = ${toolArgs};
-    const HOST_CONTEXT = ${hostContextJson};
-    const ALLOW_ATTRIBUTE = ${allowAttribute};
-    const REQUIRE_TOOL_CONSENT = ${requireToolConsent};
-    const STREAM_CONTEXT_KEY = "pi-mcp-adapter/stream";
-    const STREAM_PATCH_METHOD = "notifications/pi-mcp-adapter/ui-result-patch";
-
-    const iframe = document.getElementById("mcp-app");
-    const statusNode = document.getElementById("status");
-    const doneBtn = document.getElementById("done-btn");
-    const cancelBtn = document.getElementById("cancel-btn");
-    const errorOverlay = document.getElementById("error-overlay");
-    const completionOverlay = document.getElementById("completion-overlay");
-    const errorMessage = document.getElementById("error-message");
-
-    document.getElementById("server-name").textContent = SERVER_NAME;
-    document.getElementById("tool-name").textContent = TOOL_NAME;
-
-    const setStatus = (text, isError = false) => {
-      statusNode.textContent = text;
-      statusNode.style.color = isError ? "var(--bad)" : "var(--muted)";
-    };
-
-    const showError = (message) => {
-      errorMessage.textContent = message;
-      errorOverlay.classList.add("visible");
-      setStatus("Error", true);
-    };
-
-    let completionPending = false;
-    const showCompletion = () => {
-      completionOverlay.classList.add("visible");
-      setStatus("Complete");
-    };
-    const closeOrShowDone = () => {
-      completionPending = true;
-      window.close();
-      setTimeout(() => {
-        if (!document.hidden) {
-          showCompletion();
-        }
-      }, 1000);
-    };
-    document.addEventListener("visibilitychange", () => {
-      if (completionPending && !document.hidden) {
-        showCompletion();
-      }
-    });
-
-    const post = async (endpoint, params) => {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: SESSION_TOKEN, params }),
-      });
-
-      const body = await response.json().catch(() => ({ ok: false, error: "Invalid JSON response" }));
-      if (!response.ok || !body.ok) {
-        const message = body.error || ("HTTP " + response.status);
-        throw new Error(message);
-      }
-      return body.result ?? {};
-    };
-
-    let consentGranted = !REQUIRE_TOOL_CONSENT;
-    const initialStreamContext = HOST_CONTEXT?.[STREAM_CONTEXT_KEY];
-    const streamMode = initialStreamContext?.mode === "stream-first" ? "stream-first" : "eager";
-
-    const bridge = new AppBridge(
-      null,
-      { name: "pi", version: "1.0.0" },
-      { serverTools: {}, openLinks: {}, logging: {}, updateModelContext: {}, message: {} },
-      { hostContext: HOST_CONTEXT }
-    );
-
-    bridge.oncalltool = async (params) => {
-      if (!consentGranted) {
-        const accepted = window.confirm("Allow this UI to call server tools for this session?");
-        if (!accepted) {
-          await post("/proxy/ui/consent", { approved: false }).catch(() => {});
-          return {
-            isError: true,
-            content: [{ type: "text", text: "Tool call denied by user." }],
-          };
-        }
-        await post("/proxy/ui/consent", { approved: true });
-        consentGranted = true;
-      }
-      const result = await post("/proxy/tools/call", params);
-      // Notify agent about the tool call
-      await post("/proxy/ui/message", {
-        type: "intent",
-        intent: "call_tool",
-        params: { tool: params.name, arguments: params.arguments, isError: result.isError }
-      }).catch(() => {});
-      return result;
-    };
-
-    bridge.onmessage = async (params) => post("/proxy/ui/message", params);
-    bridge.onupdatemodelcontext = async (params) => post("/proxy/ui/context", params);
-    
-    // Also listen for raw postMessage events with custom types (notify, prompt, intent, etc.)
-    // These bypass the AppBridge protocol but are used by some MCP UI implementations
-    window.addEventListener("message", async (event) => {
-      if (event.source !== iframe.contentWindow) return;
-      const data = event.data;
-      if (!data || typeof data !== "object") return;
-      
-      // Skip AppBridge protocol messages (handled by bridge)
-      if (data.jsonrpc || (typeof data.method === "string" && (data.method.startsWith("app/") || data.method.startsWith("host/")))) return;
-      
-      // Handle raw UI action messages
-      const msgType = data.type;
-      if (typeof msgType !== "string") return;
-      
-      if (msgType === "notify" || msgType === "prompt" || msgType === "intent" || msgType === "message") {
-        // Standard MCP-UI types - preserve their semantics
-        // Support both { type, payload: {...} } and { type, field: value } formats
-        const { type: _, payload, ...directFields } = data;
-        await post("/proxy/ui/message", { type: msgType, ...directFields, ...(payload || {}) }).catch(() => {});
-      } else if (!msgType.startsWith("ui-lifecycle-") && !msgType.startsWith("ui-message-")) {
-        // Any other custom type - forward as intent with type as intent name
-        // (Skip internal lifecycle/ack messages)
-        const payload = data.payload || {};
-        await post("/proxy/ui/message", {
-          type: "intent",
-          intent: msgType,
-          params: payload,
-        }).catch(() => {});
-      }
-    });
-    bridge.ondownloadfile = async (params) => post("/proxy/ui/download-file", params);
-    bridge.onrequestdisplaymode = async (params) => post("/proxy/ui/request-display-mode", params);
-    bridge.onopenlink = async (params) => {
-      const result = await post("/proxy/ui/open-link", params);
-      if (!result.isError) {
-        window.open(params.url, "_blank", "noopener,noreferrer");
-        // Notify agent about the link open
-        await post("/proxy/ui/message", {
-          type: "intent",
-          intent: "open_link",
-          params: { url: params.url }
-        }).catch(() => {});
-      }
-      return result;
-    };
-
-    bridge.oninitialized = () => {
-      if (streamMode !== "stream-first") {
-        bridge.sendToolInput({ arguments: TOOL_ARGS });
-      }
-      setStatus(streamMode === "stream-first" ? "Streaming…" : "Connected");
-    };
-
-    bridge.onsizechange = ({ width, height }) => {
-      if (typeof width === "number" && width > 0) {
-        iframe.style.minWidth = Math.min(width, window.innerWidth - 24) + "px";
-      }
-      if (typeof height === "number" && height > 0) {
-        iframe.style.height = Math.max(height, 320) + "px";
-      }
-    };
-
-    if (ALLOW_ATTRIBUTE) {
-      iframe.setAttribute("allow", ALLOW_ATTRIBUTE);
-    }
-
-    // Connect bridge BEFORE loading iframe to ensure we're listening when the app sends ui/initialize
-    try {
-      const transport = new PostMessageTransport(iframe.contentWindow, iframe.contentWindow);
-      await bridge.connect(transport);
-    } catch (error) {
-      console.error("[host] Bridge connection failed:", error);
-      showError("Failed to initialize AppBridge: " + String(error));
-    }
-
-    const iframeLoaded = new Promise((resolve) => {
-      iframe.onload = resolve;
-    });
-    iframe.src = "/ui-app?resource=" + encodeURIComponent(UI_RESOURCE_TOKEN);
-    await iframeLoaded;
-
-    const eventSource = new EventSource("/events?session=" + encodeURIComponent(SESSION_TOKEN));
-    eventSource.addEventListener("tool-input", (event) => {
-      try {
-        bridge.sendToolInput(JSON.parse(event.data));
-      } catch (error) {
-        showError("Failed to forward tool input: " + String(error));
-      }
-    });
-    eventSource.addEventListener("tool-result", (event) => {
-      try {
-        bridge.sendToolResult(JSON.parse(event.data));
-      } catch (error) {
-        showError("Failed to forward tool result: " + String(error));
-      }
-    });
-    eventSource.addEventListener("tool-cancelled", (event) => {
-      try {
-        bridge.sendToolCancelled(JSON.parse(event.data));
-      } catch (error) {
-        showError("Failed to forward cancellation: " + String(error));
-      }
-    });
-    eventSource.addEventListener("result-patch", async (event) => {
-      try {
-        await bridge.notification({
-          method: STREAM_PATCH_METHOD,
-          params: JSON.parse(event.data),
-        });
-      } catch (error) {
-        showError("Failed to forward stream patch: " + String(error));
-      }
-    });
-    eventSource.addEventListener("host-context", (event) => {
-      try {
-        bridge.setHostContext(JSON.parse(event.data));
-      } catch {}
-    });
-    eventSource.onerror = () => {
-      setStatus("Connection lost", true);
-    };
-
-    const heartbeat = setInterval(() => {
-      post("/proxy/ui/heartbeat", {}).catch(() => {});
-    }, 10000);
-
-    let completionRequested = false;
-    let finished = false;
-    const finish = async () => {
-      if (finished) return;
-      finished = true;
-      clearInterval(heartbeat);
-      eventSource.close();
-
-      try {
-        await bridge.teardownResource({});
-      } catch (error) {
-        // Apps may omit the optional teardown handler.
-        if (error?.code !== -32601) console.error("[host] Resource teardown failed:", error);
-      }
-      closeOrShowDone();
-    };
-
-    const complete = async (reason) => {
-      if (completionRequested || finished) return;
-      completionRequested = true;
-      try {
-        await post("/proxy/ui/complete", { reason });
-      } catch (error) {
-        console.error("[host] Session completion failed:", error);
-      }
-      await finish();
-    };
-
-    eventSource.addEventListener("session-complete", finish);
-    doneBtn.addEventListener("click", () => complete("done"));
-    cancelBtn.addEventListener("click", () => complete("cancel"));
-    window.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        complete("cancel");
-      } else if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-        event.preventDefault();
-        complete("done");
-      }
-    });
-  </script>
+  <script type="importmap">${importMap}</script>
+  <script type="application/json" id="host-configuration">${config}</script>
+  <script type="module">${browserSource}</script>
 </body>
 </html>`;
 }

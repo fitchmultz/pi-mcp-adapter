@@ -1,63 +1,32 @@
-import type { TextContent } from "@earendil-works/pi-ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createDirectToolExecutor } from "../direct-tools.ts";
+import { executeCall } from "../proxy-modes.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
+import { firstText, proxyRuntimeState } from "./fixtures/proxy-runtime.ts";
 
-// End-to-end coverage for the structuredContent fallback.
+let host: Awaited<ReturnType<typeof createTestExtensionContext>>;
+beforeAll(async () => {
+  host = await createTestExtensionContext();
+});
+afterAll(async () => {
+  await host.dispose();
+});
 
-const mocks = vi.hoisted(() => ({
-  lazyConnect: vi.fn(),
-  getFailureAgeSeconds: vi.fn(),
-}));
-
-vi.mock("../init.ts", () => ({
-  lazyConnect: mocks.lazyConnect,
-  getFailureAgeSeconds: mocks.getFailureAgeSeconds,
-  updateServerMetadata: vi.fn(),
-  updateMetadataCache: vi.fn(),
-  updateStatusBar: vi.fn(),
-  markKeepAliveAfterConnect: vi.fn(),
-}));
-
-function textOf(result: any): string {
-  return result.content.map((c: any) => c.text ?? "").join("\n");
-}
-
-function makeState(callToolResult: unknown, toolName = "tool") {
-  const connection = {
-    status: "connected",
-    client: { callTool: vi.fn(async () => callToolResult) },
-  };
-  return {
-    config: { settings: {}, mcpServers: { demo: { command: "demo" } } },
-    toolMetadata: new Map([
-      ["demo", [{ name: `demo_${toolName}`, originalName: toolName, description: toolName }]],
-    ]),
-    manager: {
-      getConnection: vi.fn(() => connection),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-    },
-    failureTracker: new Map(),
-    ui: undefined,
-    completedUiSessions: [],
-  } as any;
+function textOf(result: Pick<AgentToolResult<unknown>, "content">): string {
+  return result.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
 }
 
 describe("structuredContent fallback — direct tool executor", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    mocks.lazyConnect.mockReset().mockResolvedValue(true);
-    mocks.getFailureAgeSeconds.mockReset().mockReturnValue(null);
-  });
-
   it("surfaces structuredContent to the model when content is empty", async () => {
-    const { createDirectToolExecutor } = await import("../direct-tools.ts");
     const structured = { status: "available", summary: "## Notes" };
-    const state = makeState(
-      { isError: false, content: [], structuredContent: structured },
-      "get-summary",
-    );
-
+    const { state } = await proxyRuntimeState({
+      result: { isError: false, content: [], structuredContent: structured },
+      name: "get-summary",
+    });
     const executor = createDirectToolExecutor(
       () => state,
       () => null,
@@ -69,22 +38,27 @@ describe("structuredContent fallback — direct tool executor", () => {
         outputSchema: { type: "object" },
       },
     );
-
-    const result = await executor("id", {}, undefined, () => {}, undefined as any);
-
-    expect((result.content[0] as TextContent).text).toBe(JSON.stringify(structured, null, 2));
+    const result = await executor(
+      "id",
+      {},
+      undefined,
+      undefined,
+      host.runner.createToolContext("id", state.owner.signal),
+    );
+    expect(firstText(result)).toBe(JSON.stringify(structured, null, 2));
     expect(textOf(result)).toContain(result.details.resultRef);
     expect(textOf(result)).not.toContain("(empty result)");
     expect(result.structuredContent).toEqual(structured);
   });
 
   it("returns native failure and bounded receipts without copying private protocol metadata", async () => {
-    const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const state = makeState({
-      isError: true,
-      content: [{ type: "text", text: "human failure" }],
-      structuredContent: { failed: true },
-      _meta: { private: "secret" },
+    const { state, setResult } = await proxyRuntimeState({
+      result: {
+        isError: true,
+        content: [{ type: "text", text: "human failure" }],
+        structuredContent: { failed: true },
+        _meta: { private: "secret" },
+      },
     });
     const executor = createDirectToolExecutor(
       () => state,
@@ -97,17 +71,26 @@ describe("structuredContent fallback — direct tool executor", () => {
         outputSchema: { type: "object" },
       },
     );
-    const failed = await executor("failed", {}, undefined, undefined, undefined as any);
+    const failed = await executor(
+      "failed",
+      {},
+      undefined,
+      undefined,
+      host.runner.createToolContext("failed", state.owner.signal),
+    );
     expect(failed.isError).toBe(true);
     expect(failed.structuredContent).toEqual({ failed: true });
     expect(textOf(failed)).toContain("human failure");
     expect(JSON.stringify(failed.structuredContent)).not.toContain("secret");
-    state.config.settings.outputGuard = { maxBytes: 1000, detailsMaxBytes: 100 };
-    state.manager.getConnection().client.callTool.mockResolvedValue({
-      content: [],
-      structuredContent: { large: "x".repeat(5000) },
-    });
-    const large = await executor("large", {}, undefined, undefined, undefined as any);
+    state.config.settings = { outputGuard: { maxBytes: 1000, detailsMaxBytes: 100 } };
+    setResult({ content: [], structuredContent: { large: "x".repeat(5000) } });
+    const large = await executor(
+      "large",
+      {},
+      undefined,
+      undefined,
+      host.runner.createToolContext("large", state.owner.signal),
+    );
     expect(large.structuredContent).toEqual({
       mcpAdapter: { omitted: true, resultRef: large.details.resultRef },
     });
@@ -115,48 +98,52 @@ describe("structuredContent fallback — direct tool executor", () => {
   });
 
   it("still shows (empty result) when both content and structuredContent are empty", async () => {
-    const { createDirectToolExecutor } = await import("../direct-tools.ts");
-    const state = makeState({ isError: false, content: [] }, "noop");
-
+    const { state } = await proxyRuntimeState({
+      result: { isError: false, content: [] },
+      name: "noop",
+    });
     const executor = createDirectToolExecutor(
       () => state,
       () => null,
       { serverName: "demo", originalName: "noop", prefixedName: "demo_noop", description: "Noop" },
     );
-
-    const result = await executor("id", {}, undefined, () => {}, undefined as any);
-
+    const result = await executor(
+      "id",
+      {},
+      undefined,
+      undefined,
+      host.runner.createToolContext("id", state.owner.signal),
+    );
     expect(textOf(result)).toBe("(empty result)");
   });
 });
 
 describe("structuredContent fallback — proxy executeCall", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    mocks.lazyConnect.mockReset().mockResolvedValue(true);
-    mocks.getFailureAgeSeconds.mockReset().mockReturnValue(null);
-  });
-
   it("surfaces structuredContent to the model when content is empty", async () => {
-    const { executeCall } = await import("../proxy-modes.ts");
     const structured = { status: "available", summary: "## Notes" };
-    const state = makeState(
-      { isError: false, content: [], structuredContent: structured },
-      "get-summary",
-    );
-
-    const result = await executeCall(state, "demo_get-summary", {}, "demo");
-
+    const { state } = await proxyRuntimeState({
+      result: { isError: false, content: [], structuredContent: structured },
+      name: "get-summary",
+    });
+    const result = await executeCall(state, {
+      toolName: "demo_get-summary",
+      args: {},
+      serverOverride: "demo",
+    });
     expect(textOf(result)).toContain(JSON.stringify(structured, null, 2));
     expect(textOf(result)).not.toContain("(empty result)");
   });
 
   it("still shows (empty result) when both content and structuredContent are empty", async () => {
-    const { executeCall } = await import("../proxy-modes.ts");
-    const state = makeState({ isError: false, content: [] }, "noop");
-
-    const result = await executeCall(state, "demo_noop", {}, "demo");
-
+    const { state } = await proxyRuntimeState({
+      result: { isError: false, content: [] },
+      name: "noop",
+    });
+    const result = await executeCall(state, {
+      toolName: "demo_noop",
+      args: {},
+      serverOverride: "demo",
+    });
     expect(textOf(result)).toContain("(empty result)");
   });
 });

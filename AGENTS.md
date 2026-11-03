@@ -9,7 +9,7 @@
 
 ## Quality standard
 
-- Follow [the strict quality standard](docs/strict-quality-standard.md) and its evidence requirements for quality exceptions.
+- Follow [the strict quality standard](docs/strict-quality-standard.md) and its evidence requirements for quality exceptions. Normal acceptance is `npm run check` after both clean installs; scoped lint commands do not replace full native lint.
 - Run the checks in [development and release rules](docs/development.md) and the [CI contract](.github/workflows/ci.yml).
 
 ## Local validation

@@ -342,16 +342,16 @@ describe("excludeTools filtering", () => {
       excludeTools: ["figma_get_screenshot", "read_figjam"],
     };
 
-    const { metadata } = buildToolMetadata(
-      [
+    const { metadata } = buildToolMetadata({
+      tools: [
         { name: "get_screenshot", description: "Screenshot" },
         { name: "get_nodes", description: "Nodes" },
       ],
-      [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }],
+      resources: [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }],
       definition,
-      "figma",
-      "server",
-    );
+      serverName: "figma",
+      prefix: "server",
+    });
 
     expect(metadata.map((tool) => tool.name)).toEqual(["figma_get_nodes"]);
 
@@ -388,7 +388,13 @@ describe("excludeTools filtering", () => {
     ];
     const resources = [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }];
 
-    const { metadata } = buildToolMetadata(tools, resources, definition, "figma", "server");
+    const { metadata } = buildToolMetadata({
+      tools,
+      resources,
+      definition,
+      serverName: "figma",
+      prefix: "server",
+    });
 
     expect(metadata.map((tool) => tool.name)).toEqual(["figma_get_nodes", "figma_read_figjam"]);
 
@@ -411,25 +417,25 @@ describe("excludeTools filtering", () => {
   });
 
   it("honors per-server toolPrefix while building live metadata", () => {
-    const { metadata } = buildToolMetadata(
-      [{ name: "search", description: "Search" }],
-      [],
-      { command: "npx", args: ["-y", "github"], toolPrefix: "none" },
-      "github",
-      "server",
-    );
+    const { metadata } = buildToolMetadata({
+      tools: [{ name: "search", description: "Search" }],
+      resources: [],
+      definition: { command: "npx", args: ["-y", "github"], toolPrefix: "none" },
+      serverName: "github",
+      prefix: "server",
+    });
 
     expect(metadata.map((tool) => tool.name)).toEqual(["search"]);
   });
 
   it("sanitizes registered names while preserving raw MCP names", () => {
-    const { metadata } = buildToolMetadata(
-      [{ name: "namespace.tool", description: "Namespaced tool" }],
-      [],
-      { command: "npx", args: ["-y", "demo"] },
-      "demo",
-      "server",
-    );
+    const { metadata } = buildToolMetadata({
+      tools: [{ name: "namespace.tool", description: "Namespaced tool" }],
+      resources: [],
+      definition: { command: "npx", args: ["-y", "demo"] },
+      serverName: "demo",
+      prefix: "server",
+    });
 
     expect(metadata).toEqual([
       expect.objectContaining({
@@ -440,17 +446,17 @@ describe("excludeTools filtering", () => {
   });
 
   it("retains distinct raw identities when live metadata aliases collide", () => {
-    const { metadata } = buildToolMetadata(
-      [
+    const { metadata } = buildToolMetadata({
+      tools: [
         { name: "namespace.tool", description: "Dotted" },
         { name: "namespace_tool", description: "Underscored" },
         { name: "read_namespace.tool", description: "Tool before colliding resource" },
       ],
-      [{ name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" }],
-      { command: "npx", args: ["-y", "demo"] },
-      "demo",
-      "server",
-    );
+      resources: [{ name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" }],
+      definition: { command: "npx", args: ["-y", "demo"] },
+      serverName: "demo",
+      prefix: "server",
+    });
 
     expect(metadata.map((tool) => [tool.name, tool.originalName, tool.description])).toEqual([
       ["demo_namespace_tool", "namespace.tool", "Dotted"],

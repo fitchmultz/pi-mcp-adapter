@@ -1,3 +1,6 @@
+import assert from "node:assert/strict";
+import { setImmediate } from "node:timers/promises";
+import { z } from "zod";
 import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
@@ -32,7 +35,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) {
     const entries = await readdir(root);
     const evidenceDir = process.env.PI_COMPAT_EVIDENCE_DIR;
-    if (evidenceDir && entries.includes("sessions")) {
+    if (evidenceDir !== undefined && evidenceDir.length > 0 && entries.includes("sessions")) {
       await cp(
         join(root, "sessions"),
         join(evidenceDir, "session-cache-journals", basename(root)),
@@ -159,7 +162,7 @@ async function harness(
   session.extensionRunner.setFlagValue("mcp-config", configPath);
   const errors: string[] = [];
   await session.bindExtensions({ mode: "print", onError: (error) => errors.push(error.error) });
-  await new Promise((resolve) => setImmediate(resolve));
+  await setImmediate();
   return { root, session, first, second, errors, cachePath, cache, configPath, definition };
 }
 
@@ -195,13 +198,17 @@ async function liveCatalogHarness() {
     if (!tool) {
       throw new Error(`Pi tool ${name} is not active`);
     }
-    return tool.execute(`catalog-${++id}`, params);
+    const output = await tool.execute(`catalog-${++id}`, params);
+    return { ...output, details: z.record(z.string(), z.unknown()).parse(output.details) };
   };
   return { ...h, callsPath, definition, configure, run };
 }
 
 function matchedTools(result: { details: Record<string, unknown> }): string[] {
-  return (result.details.matches as Array<{ tool: string }>).map((match) => match.tool);
+  return z
+    .object({ matches: z.array(z.object({ tool: z.string() })) })
+    .parse(result.details)
+    .matches.map((match) => match.tool);
 }
 
 function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -212,7 +219,29 @@ function resultText(result: { content: Array<{ type: string; text?: string }> })
 }
 
 function resourceUris(result: { details: Record<string, unknown> }): string[] {
-  return (result.details.items as Array<{ uri: string }>).map((item) => item.uri);
+  return z
+    .object({ items: z.array(z.object({ uri: z.string() })) })
+    .parse(result.details)
+    .items.map((item) => item.uri);
+}
+
+const cachedNames = z.array(
+  z.looseObject({ name: z.string(), description: z.string().optional() }),
+);
+const storedCacheSchema = z.object({
+  version: z.number(),
+  servers: z.record(
+    z.string(),
+    z.looseObject({
+      tools: cachedNames.optional(),
+      prompts: cachedNames.optional(),
+      resources: z.array(z.unknown()).optional(),
+    }),
+  ),
+});
+
+async function readStoredCache(path: string) {
+  return storedCacheSchema.parse(JSON.parse(await readFile(path, "utf8")));
 }
 
 function liveServers(lifecycle: "eager" | "lazy") {
@@ -243,7 +272,7 @@ describe("cached tool surface through Pi SessionManager", () => {
       await writeFile(`${h.cachePath}.replacement`, JSON.stringify(h.cache("updated")));
       await rename(`${h.cachePath}.replacement`, h.cachePath);
       await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
-      await new Promise((resolve) => setImmediate(resolve));
+      await setImmediate();
       expect(active()).toEqual(["demo_search", "mcp_search"]);
       const search = h.session.getAllTools().find((tool) => tool.name === "demo_search");
       expect(search?.description).toBe("updated");
@@ -255,14 +284,14 @@ describe("cached tool surface through Pi SessionManager", () => {
         JSON.stringify({ mcpServers: { demo: { ...h.definition, disabled: true } } }),
       );
       await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
-      await new Promise((resolve) => setImmediate(resolve));
+      await setImmediate();
       expect(active()).toEqual(["mcp_search"]);
       expect(h.errors).toEqual([]);
     } finally {
       await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
       h.session.dispose();
     }
-    expect(JSON.parse(await readFile(h.cachePath, "utf8")).servers.demo.tools[1].description).toBe(
+    expect((await readStoredCache(h.cachePath)).servers.demo?.tools?.[1]?.description).toBe(
       "updated",
     );
   });
@@ -303,14 +332,13 @@ describe("cached tool surface through Pi SessionManager", () => {
         }),
       );
       await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
-      await new Promise((resolve) => setImmediate(resolve));
+      await setImmediate();
       const proxy = h.session.agent.state.tools.find((tool) => tool.name === "mcp");
       expect(proxy).toBeDefined();
-      await proxy!.execute("connect-for-cache-save", { action: "connect", server: "demo" });
-      const stored = JSON.parse(await readFile(h.cachePath, "utf8"));
-      expect(stored.servers.demo.tools.map((tool: { name: string }) => tool.name)).toEqual([
-        "reload_identity",
-      ]);
+      assert(proxy !== undefined);
+      await proxy.execute("connect-for-cache-save", { action: "connect", server: "demo" });
+      const stored = await readStoredCache(h.cachePath);
+      expect(stored.servers.demo?.tools?.map((tool) => tool.name)).toEqual(["reload_identity"]);
       expect(stored.servers.protected).toEqual(stale);
       expect(stored.servers.unknown).toEqual(unknown);
       expect(stored.servers["recovery-old"]).toBeUndefined();
@@ -343,22 +371,23 @@ describe("cached tool surface through Pi SessionManager", () => {
     let h: Awaited<ReturnType<typeof harness>> | undefined;
     try {
       h = await harness(Date.now(), resolve("dist/index.js"), servers);
+      const cachePath = h.cachePath;
       await expect
         .poll(
           async () => {
-            const stored = JSON.parse(await readFile(h!.cachePath, "utf8"));
+            const stored = await readStoredCache(cachePath);
             return names.map((name) => stored.servers[name]?.tools?.[0]?.name);
           },
           { timeout: 15_000 },
         )
         .toEqual(["reload_identity", "noop", "echo"]);
       track = false;
-      const stored = JSON.parse(await readFile(h.cachePath, "utf8"));
-      expect(stored.servers.second.prompts.map((prompt: { name: string }) => prompt.name)).toEqual([
+      const stored = await readStoredCache(h.cachePath);
+      expect(stored.servers.second?.prompts?.map((prompt) => prompt.name)).toEqual([
         "brief",
         "haiku",
       ]);
-      expect(stored.servers.third.resources).toMatchObject([
+      expect(stored.servers.third?.resources).toMatchObject([
         { name: "large", uri: "test://large" },
       ]);
       expect(h.errors).toEqual([]);
@@ -389,18 +418,23 @@ describe("cached tool surface through Pi SessionManager", () => {
         }),
       );
       await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
-      await new Promise((resolve) => setImmediate(resolve));
+      await setImmediate();
       const proxy = h.session.agent.state.tools.find((tool) => tool.name === "mcp");
       expect(proxy).toBeDefined();
+      assert(proxy !== undefined);
       for (const name of names) {
-        const result = await proxy!.execute(`connect-${name}`, { action: "connect", server: name });
-        expect(result.details?.error).toBeUndefined();
+        const result = await proxy.execute(`connect-${name}`, { action: "connect", server: name });
+        expect(z.record(z.string(), z.unknown()).parse(result.details).error).toBeUndefined();
       }
 
-      const cache = JSON.parse(await readFile(h.cachePath, "utf8"));
+      const cache = await readStoredCache(h.cachePath);
       for (const name of names) {
-        cache.servers[name].tools = [{ name: "stale" }];
+        const entry = cache.servers[name];
+        assert(entry !== undefined);
+        entry.tools = [{ name: "stale" }];
       }
+      assert(cache.servers.second !== undefined);
+      assert(cache.servers.third !== undefined);
       cache.servers.second.prompts = [{ name: "stale" }];
       cache.servers.third.resources = [{ name: "stale", uri: "test://stale" }];
       cache.servers.external = { futureFormat: true };
@@ -424,17 +458,15 @@ describe("cached tool surface through Pi SessionManager", () => {
         syncBuiltinESMExports();
       }
 
-      const stored = JSON.parse(await readFile(h.cachePath, "utf8"));
+      const stored = await readStoredCache(h.cachePath);
       for (const [name, expectedTool] of Object.entries(expectedTools)) {
-        expect(stored.servers[name].tools.map((tool: { name: string }) => tool.name)).toEqual([
-          expectedTool,
-        ]);
+        expect(stored.servers[name]?.tools?.map((tool) => tool.name)).toEqual([expectedTool]);
       }
-      expect(stored.servers.second.prompts.map((prompt: { name: string }) => prompt.name)).toEqual([
+      expect(stored.servers.second?.prompts?.map((prompt) => prompt.name)).toEqual([
         "brief",
         "haiku",
       ]);
-      expect(stored.servers.third.resources).toMatchObject([
+      expect(stored.servers.third?.resources).toMatchObject([
         { name: "large", uri: "test://large" },
       ]);
       expect(stored.servers.external).toEqual({ futureFormat: true });

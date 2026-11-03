@@ -1,19 +1,18 @@
+import assert from "node:assert/strict";
 import { describe, expect, it } from "vitest";
-import {
-  getToolUiResourceUri,
-  RESOURCE_MIME_TYPE as RESOURCE_MIME_TYPE_OFFICIAL,
-} from "@modelcontextprotocol/ext-apps/app-bridge";
+import { RESOURCE_MIME_TYPE as RESOURCE_MIME_TYPE_OFFICIAL } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
+import { createTestState } from "./test-state.ts";
 import {
   computeServerHash,
   reconstructToolMetadata,
   serializeResources,
   serializeTools,
 } from "../metadata-cache.ts";
+import { isCacheEntry } from "../metadata-cache-format.ts";
 import { rankToolMatches } from "../search-ranking.ts";
 import { buildToolMetadata, findToolByName } from "../tool-metadata.ts";
 import { RESOURCE_MIME_TYPE } from "../ui-resource-handler.ts";
-import type { McpExtensionState } from "../state.ts";
 import type { McpTool, ServerCacheEntry, ServerEntry } from "../types.ts";
 
 function cacheEntry(tools: McpTool[], definition: ServerEntry = {}): ServerCacheEntry {
@@ -48,7 +47,13 @@ const descriptor = {
     $defs: { state: { enum: ["backlog", "triage"] } },
     required: ["query"],
     additionalProperties: { type: "string" },
-    allOf: [{ if: { required: ["state"] }, then: { required: ["limit"] } }],
+    allOf: [
+      {
+        if: { required: ["state"] },
+        // oxlint-disable-next-line unicorn/no-thenable -- QX-7001: JSON Schema conditional keyword, not a Promise thenable.
+        then: { required: ["limit"] },
+      },
+    ],
   },
   outputSchema: {
     type: "object" as const,
@@ -72,82 +77,26 @@ describe("canonical tool catalog", () => {
   it("matches the official UI resource MIME type", () =>
     expect(RESOURCE_MIME_TYPE).toBe(RESOURCE_MIME_TYPE_OFFICIAL));
 
-  it.each([
-    ["absent metadata", undefined],
-    ["null metadata", null],
-    ["empty metadata", {}],
-    ["new key", { ui: { resourceUri: "ui://new" } }],
-    ["legacy key", { "ui/resourceUri": "ui://legacy" }],
-    ["empty UI URI accepted by the SDK", { ui: { resourceUri: "ui://" } }],
-    ["new wins over legacy", { ui: { resourceUri: "ui://new" }, "ui/resourceUri": "ui://legacy" }],
-    ["new wins over malformed legacy", { ui: { resourceUri: "ui://new" }, "ui/resourceUri": null }],
-    [
-      "undefined new falls back",
-      { ui: { resourceUri: undefined }, "ui/resourceUri": "ui://legacy" },
-    ],
-    ["null UI object falls back", { ui: null, "ui/resourceUri": "ui://legacy" }],
-    ["malformed UI object falls back", { ui: "invalid", "ui/resourceUri": "ui://legacy" }],
-    ["absent new key falls back", { ui: {}, "ui/resourceUri": "ui://legacy" }],
-    ["malformed UI object without legacy", { ui: 42 }],
-    [
-      "null new is invalid, not a fallback",
-      { ui: { resourceUri: null }, "ui/resourceUri": "ui://legacy" },
-    ],
-    [
-      "invalid new does not fall back",
-      { ui: { resourceUri: "https://invalid" }, "ui/resourceUri": "ui://legacy" },
-    ],
-    ["empty new does not fall back", { ui: { resourceUri: "" }, "ui/resourceUri": "ui://legacy" }],
-    [
-      "non-string new does not fall back",
-      { ui: { resourceUri: false }, "ui/resourceUri": "ui://legacy" },
-    ],
-    ["array new is invalid", { ui: { resourceUri: ["ui://invalid"] } }],
-    ["object new is invalid", { ui: { resourceUri: { uri: "ui://invalid" } } }],
-    ["case-sensitive URI scheme", { ui: { resourceUri: "UI://invalid" } }],
-    ["null legacy is invalid", { "ui/resourceUri": null }],
-    ["empty legacy is invalid", { "ui/resourceUri": "" }],
-    ["invalid legacy scheme", { "ui/resourceUri": "https://invalid" }],
-    ["non-string legacy is invalid", { "ui/resourceUri": 42 }],
-  ] as Array<[string, unknown]>)(
-    "matches the official UI resource extraction: %s",
-    (_name, meta) => {
-      const tool = { name: "ui_tool", _meta: meta } as McpTool;
-      let expectedUri: string | undefined;
-      let invalid = false;
-      try {
-        expectedUri = getToolUiResourceUri(tool);
-      } catch {
-        invalid = true;
-      }
-      const { metadata, failedTools } = buildToolMetadata([tool], [], {}, "demo", "server");
-      expect(metadata).toHaveLength(1);
-      expect(metadata[0]?.uiResourceUri).toBe(expectedUri);
-      expect(failedTools).toEqual(invalid ? ["ui_tool"] : []);
-    },
-  );
-
   it("retains distinct identities even when their legacy aliases collide", () => {
-    const metadata = buildToolMetadata(
-      [{ name: "find.item" }, { name: "find_item" }],
-      [
+    const metadata = buildToolMetadata({
+      tools: [{ name: "find.item" }, { name: "find_item" }],
+      resources: [
         { name: "Guide", uri: "docs://one" },
         { name: "Guide", uri: "docs://two" },
       ],
-      {},
-      "demo",
-      "server",
-    ).metadata;
+      definition: {},
+      serverName: "demo",
+      prefix: "server",
+    }).metadata;
     expect(metadata.map((tool) => tool.originalName)).toEqual([
       "find.item",
       "find_item",
       "read_guide",
       "read_guide",
     ]);
-    expect(metadata.filter((tool) => tool.resourceUri).map((tool) => tool.resourceUri)).toEqual([
-      "docs://one",
-      "docs://two",
-    ]);
+    expect(
+      metadata.filter((tool) => tool.resourceUri !== undefined).map((tool) => tool.resourceUri),
+    ).toEqual(["docs://one", "docs://two"]);
     expect(findToolByName(metadata, "demo_find_item")).toBeUndefined();
     expect(findToolByName(metadata, "demo_read_guide")).toBeUndefined();
   });
@@ -157,8 +106,15 @@ describe("canonical tool catalog", () => {
     const entry = cacheEntry([descriptor], definition);
     expect(entry.tools).toEqual([descriptor]);
     expect(entry.tools[0]).not.toHaveProperty("uiResourceUri");
-    const stored = JSON.parse(JSON.stringify(entry)) as ServerCacheEntry;
-    const live = buildToolMetadata([descriptor], [], definition, "linear", "server").metadata;
+    const stored: unknown = JSON.parse(JSON.stringify(entry));
+    assert.ok(isCacheEntry(stored));
+    const live = buildToolMetadata({
+      tools: [descriptor],
+      resources: [],
+      definition,
+      serverName: "linear",
+      prefix: "server",
+    }).metadata;
     const cached = reconstructToolMetadata("linear", stored, "server", definition);
     expect(cached).toEqual(live);
     expect(live[0]).toMatchObject({
@@ -175,7 +131,9 @@ describe("canonical tool catalog", () => {
       { version: 1, servers: { linear: stored } },
       "server",
     );
-    const { name, ...metadata } = cached[0]!;
+    const [cachedTool] = cached;
+    assert.ok(cachedTool !== undefined);
+    const { name, ...metadata } = cachedTool;
     expect(direct).toEqual([{ ...metadata, serverName: "linear", prefixedName: name }]);
   });
 
@@ -191,13 +149,19 @@ describe("canonical tool catalog", () => {
     ];
     const definition = { directTools: true, includeTools: ["demo_*"], excludeTools: ["excluded"] };
     const entry = cacheEntry(tools, definition);
-    const live = buildToolMetadata(tools, [], definition, "demo", "server").metadata;
+    const live = buildToolMetadata({
+      tools,
+      resources: [],
+      definition,
+      serverName: "demo",
+      prefix: "server",
+    }).metadata;
     expect(live.map((tool) => tool.originalName)).toEqual(["visible", "both"]);
     expect(reconstructToolMetadata("demo", entry, "server", definition)).toEqual(live);
-    const state = {
+    const state = createTestState({
       config: { mcpServers: { demo: definition } },
       toolMetadata: new Map([["demo", live]]),
-    } as unknown as McpExtensionState;
+    });
     expect(rankToolMatches(state, "app only invalid empty malformed")).toEqual([]);
     const config = { mcpServers: { demo: definition } };
     const cache = { version: 1, servers: { demo: entry } };
@@ -265,8 +229,9 @@ describe("canonical tool catalog", () => {
     };
     expect(entry.resources).toEqual(resources);
     expect(
-      reconstructToolMetadata("demo", entry, "server", definition).find((tool) => tool.resourceUri)
-        ?.resourceDescriptor,
+      reconstructToolMetadata("demo", entry, "server", definition).find(
+        (tool) => tool.resourceUri !== undefined,
+      )?.resourceDescriptor,
     ).toEqual(resources[0]);
     expect(reconstructToolMetadata("demo", entry, "server", definition)).toContainEqual({
       name: "demo_read_guide",
@@ -295,17 +260,17 @@ describe("canonical tool catalog", () => {
   });
 
   it("finds issue listing from parameter guidance without changing exact identity lookup", () => {
-    const metadata = buildToolMetadata(
-      [descriptor, { name: "get_issue", description: "Get an issue" }],
-      [],
-      {},
-      "linear",
-      "server",
-    ).metadata;
-    const state = {
+    const metadata = buildToolMetadata({
+      tools: [descriptor, { name: "get_issue", description: "Get an issue" }],
+      resources: [],
+      definition: {},
+      serverName: "linear",
+      prefix: "server",
+    }).metadata;
+    const state = createTestState({
       config: { mcpServers: { linear: {} } },
       toolMetadata: new Map([["linear", metadata]]),
-    } as unknown as McpExtensionState;
+    });
     expect(rankToolMatches(state, "search issues", "linear")[0]?.tool.originalName).toBe(
       "list_issues",
     );

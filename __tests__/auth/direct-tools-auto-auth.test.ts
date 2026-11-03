@@ -156,7 +156,13 @@ describe("direct tools auto auth", () => {
       ui: host.context.ui,
     });
 
-    const { metadata } = buildToolMetadata(connected.tools, [], definition, "demo", "server");
+    const { metadata } = buildToolMetadata({
+      tools: connected.tools,
+      resources: [],
+      definition,
+      serverName: "demo",
+      prefix: "server",
+    });
     const tool = metadata[0];
     assert.ok(tool);
     state.toolMetadata.set("demo", metadata);
@@ -171,7 +177,13 @@ describe("direct tools auto auth", () => {
       },
     );
     const controller = new AbortController();
-    const result = await executor("id", { q: "hello" }, controller.signal, undefined, host.context);
+    const result = await executor(
+      "id",
+      { q: "hello" },
+      controller.signal,
+      undefined,
+      host.runner.createToolContext("id", controller.signal),
+    );
 
     const authCall = mocks.authenticate.mock.calls[0];
     assert.ok(authCall);
@@ -234,7 +246,13 @@ describe("direct tools auto auth", () => {
       },
     );
 
-    const inFlight = executor("id", {}, controller.signal, undefined, host.context);
+    const inFlight = executor(
+      "id",
+      {},
+      controller.signal,
+      undefined,
+      host.runner.createToolContext("id", controller.signal),
+    );
     await vi.waitFor(() => expect(callTool).toHaveBeenCalledTimes(1));
     const reason = new Error("request aborted");
     controller.abort(reason);
@@ -277,9 +295,15 @@ describe("direct tools auto auth", () => {
       },
     );
 
-    await expect(executor("id", {}, controller.signal, undefined, host.context)).rejects.toBe(
-      reason,
-    );
+    await expect(
+      executor(
+        "id",
+        {},
+        controller.signal,
+        undefined,
+        host.runner.createToolContext("id", controller.signal),
+      ),
+    ).rejects.toBe(reason);
     const authCall = mocks.authenticate.mock.calls[0];
     assert.ok(authCall);
     expect(authCall.slice(0, 3)).toEqual(["demo", definition.url, definition]);
@@ -312,7 +336,13 @@ describe("direct tools auto auth", () => {
         description: "Search",
       },
     );
-    const result = await executor("id", {}, undefined, undefined, host.context);
+    const result = await executor(
+      "id",
+      {},
+      undefined,
+      undefined,
+      host.runner.createToolContext("id", state.owner.signal),
+    );
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
     expect(firstText(result)).toContain("auth-start");
@@ -349,7 +379,13 @@ describe("direct tools auto auth", () => {
         description: "Search",
       },
     );
-    const result = await executor("id", {}, undefined, undefined, host.context);
+    const result = await executor(
+      "id",
+      {},
+      undefined,
+      undefined,
+      host.runner.createToolContext("id", state.owner.signal),
+    );
 
     expect(handle).toHaveBeenCalledWith("demo", error);
     expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });
@@ -377,7 +413,13 @@ describe("direct tools auto auth", () => {
         description: "Search",
       },
     );
-    const result = await executor("id", {}, undefined, undefined, host.context);
+    const result = await executor(
+      "id",
+      {},
+      undefined,
+      undefined,
+      host.runner.createToolContext("id", state.owner.signal),
+    );
 
     expect(mocks.authenticate).not.toHaveBeenCalled();
     expect(firstText(result)).toBe("Reconnect demo from the host app.");

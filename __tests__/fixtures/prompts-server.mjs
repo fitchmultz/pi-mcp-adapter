@@ -1,44 +1,46 @@
-import { Server } from "@modelcontextprotocol/server";
+import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import {} from "@modelcontextprotocol/core";
 
 // A minimal MCP server that advertises the `prompts` capability and returns
 // deterministic content, used by prompts-sdk-integration.test.ts to exercise
 // the adapter's prompts pipeline against real SDK dispatch.
-const server = new Server(
-  { name: "prompts-integration-server", version: "1.0.0" },
-  { capabilities: { tools: {}, resources: {}, prompts: { listChanged: false } } },
-);
+const server = new McpServer({ name: "prompts-integration-server", version: "1.0.0" });
+server.server.registerCapabilities({ tools: {}, resources: {}, prompts: { listChanged: false } });
 
-server.setRequestHandler("tools/list", async () => ({
+server.server.setRequestHandler("tools/list", async () => ({
   tools: [{ name: "noop", inputSchema: { type: "object", properties: {} } }],
 }));
 
-server.setRequestHandler("resources/list", async () => ({ resources: [] }));
+server.server.setRequestHandler("resources/list", async () => ({ resources: [] }));
 
-server.setRequestHandler("tools/call", async () => ({
+server.server.setRequestHandler("tools/call", async () => ({
   content: [{ type: "text", text: "ok" }],
 }));
 
-server.setRequestHandler("prompts/list", async () => ({
-  prompts: [
-    {
-      name: "brief",
-      description: "Daily brief on a topic",
-      arguments: [
-        { name: "topic", description: "Topic to summarize", required: true },
-        { name: "date", description: "Optional ISO date", required: false },
-      ],
-    },
-    {
-      name: "haiku",
-      description: "Compose a haiku",
-      arguments: [],
-    },
-  ],
-}));
+server.server.setRequestHandler("prompts/list", async () => {
+  if (process.env.MCP_TEST_PROMPTS_LIST_FAILURE === "1") {
+    throw new Error("Prompt discovery unavailable");
+  }
+  return {
+    prompts: [
+      {
+        name: "brief",
+        description: "Daily brief on a topic",
+        arguments: [
+          { name: "topic", description: "Topic to summarize", required: true },
+          { name: "date", description: "Optional ISO date", required: false },
+        ],
+      },
+      {
+        name: "haiku",
+        description: "Compose a haiku",
+        arguments: [],
+      },
+    ],
+  };
+});
 
-server.setRequestHandler("prompts/get", async (request) => {
+server.server.setRequestHandler("prompts/get", async (request) => {
   const { name, arguments: args = {} } = request.params;
   if (name === "brief") {
     const topic = typeof args.topic === "string" ? args.topic : "(missing)";

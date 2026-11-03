@@ -1,6 +1,11 @@
 import type { McpUiResourcePermissions } from "@modelcontextprotocol/ext-apps";
 import { isConfigObject } from "./config-validation.ts";
 import type { ContentBlock as McpContentBlock } from "@modelcontextprotocol/client";
+import type { UiMessageParams } from "./ui-message-schema.ts";
+
+// The schema owner loads Zod; this type-only re-export keeps extension startup free of it.
+export type { UiMessageParams } from "./ui-message-schema.ts";
+
 export interface UiResourceMeta {
   csp?: UiResourceCsp;
   permissions?: UiResourcePermissions;
@@ -75,17 +80,6 @@ export type {
   ServerStreamResultPatchNotification,
   UiStreamSummary,
 } from "./ui-stream-types.ts";
-
-export interface UiMessageParams {
-  role?: string;
-  content?: unknown[];
-  type?: "prompt" | "notify" | "intent" | "message";
-  message?: string;
-  prompt?: string;
-  intent?: string;
-  params?: Record<string, unknown>;
-  [key: string]: unknown;
-}
 
 /**
  * Extract prompt text from either legacy MCP UI message shapes or native AppBridge user messages.

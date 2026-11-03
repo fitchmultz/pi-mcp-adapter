@@ -5,6 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
 import stripJsonComments from "strip-json-comments";
+import { z } from "zod";
 
 const HOME = os.homedir();
 
@@ -19,9 +20,9 @@ function expandHome(input) {
   return path.resolve(input);
 }
 
-const AGENT_DIR = process.env.PI_CODING_AGENT_DIR?.trim()
-  ? expandHome(process.env.PI_CODING_AGENT_DIR.trim())
-  : path.join(HOME, ".pi", "agent");
+const configuredAgentDir = process.env.PI_CODING_AGENT_DIR?.trim() ?? "";
+const AGENT_DIR =
+  configuredAgentDir !== "" ? expandHome(configuredAgentDir) : path.join(HOME, ".pi", "agent");
 const PI_CONFIG_PATH = path.join(AGENT_DIR, "fitch-mcp-adapter", "mcp.json");
 const GENERIC_GLOBAL_CONFIG_PATH = path.join(HOME, ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATH = path.join(HOME, ".agents", "mcp.json");
@@ -59,21 +60,47 @@ function printHelp(log = console.log) {
   log("  fitch-mcp-adapter migrate [--dry-run]  Copy pre-v5 state without changing its sources");
 }
 
-/** @param {string} filePath */
-function readJsonFile(filePath) {
-  return JSON.parse(
-    stripJsonComments(fs.readFileSync(filePath, "utf-8"), { trailingCommas: true }),
-  );
+// Init edits only imports and the discovery setting. Keep other config values
+// intact; full server validation belongs to the runtime config loader. Object
+// schemas return a copy that omits an own "__proto__" key, so init rewrites the
+// parsed objects themselves. The schemas report a malformed document or settings
+// container at its path.
+const jsonObjectSchema = z.looseObject({});
+const settingsFieldSchema = z.object({ settings: jsonObjectSchema.nullish() });
+const importsSchema = z.array(z.unknown());
+
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isJsonObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * @typedef {{
+ *   [key: string]: unknown;
+ *   mcpServers: Record<string, unknown>;
+ *   imports?: string[] | undefined;
+ *   settings?: Record<string, unknown> | null | undefined;
+ * }} PiConfig
+ */
+
+/** @returns {PiConfig} */
 function loadPiConfig() {
   if (!fs.existsSync(PI_CONFIG_PATH)) {
     return { mcpServers: {} };
   }
 
-  const raw = readJsonFile(PI_CONFIG_PATH);
-  const mcpServers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-  if (!mcpServers || typeof mcpServers !== "object" || Array.isArray(mcpServers)) {
+  /** @type {unknown} */
+  const parsed = JSON.parse(
+    stripJsonComments(fs.readFileSync(PI_CONFIG_PATH, "utf-8"), { trailingCommas: true }),
+  );
+  const raw = isJsonObject(parsed) ? parsed : jsonObjectSchema.parse(parsed);
+  const { settings: rawSettings } = raw;
+  const settings =
+    rawSettings === undefined || rawSettings === null || isJsonObject(rawSettings)
+      ? rawSettings
+      : settingsFieldSchema.parse(raw).settings;
+  const servers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
+  if (!isJsonObject(servers)) {
     throw new Error(
       `Invalid MCP config at ${PI_CONFIG_PATH}: expected "mcpServers" to be an object`,
     );
@@ -82,13 +109,15 @@ function loadPiConfig() {
   const normalized = { ...raw };
   delete normalized["mcp-servers"];
 
-  const imports = Array.isArray(raw.imports)
-    ? raw.imports.filter((/** @type {unknown} */ value) => typeof value === "string")
-    : undefined;
+  const imports = importsSchema.safeParse(raw.imports);
+  // Assigned last: an added settings key follows the existing keys and imports.
   return {
     ...normalized,
-    mcpServers,
-    imports,
+    mcpServers: servers,
+    imports: imports.success
+      ? imports.data.filter((value) => typeof value === "string")
+      : undefined,
+    settings,
   };
 }
 
@@ -97,7 +126,7 @@ function findAvailableImports() {
 
   for (const [kind, candidates] of Object.entries(IMPORT_PATHS)) {
     const existing = candidates.find((candidate) => fs.existsSync(candidate));
-    if (existing) {
+    if (existing !== undefined) {
       found.push({ kind, path: existing });
     }
   }
@@ -109,19 +138,16 @@ function findAvailableImports() {
 function printDiscovery(log, imports) {
   log("Config discovery:\n");
 
-  const paths = [
-    ["User-global standard MCP", GENERIC_GLOBAL_CONFIG_PATH],
-    ["User-global .agents MCP", AGENTS_GLOBAL_CONFIG_PATH],
-    ["User-global .agents nested MCP", AGENTS_NESTED_GLOBAL_CONFIG_PATH],
-    ["Pi global override", PI_CONFIG_PATH],
-    ["Project standard MCP", PROJECT_CONFIG_PATH],
-    ["Project Pi override", PROJECT_PI_CONFIG_PATH],
-  ];
+  const paths = {
+    "User-global standard MCP": GENERIC_GLOBAL_CONFIG_PATH,
+    "User-global .agents MCP": AGENTS_GLOBAL_CONFIG_PATH,
+    "User-global .agents nested MCP": AGENTS_NESTED_GLOBAL_CONFIG_PATH,
+    "Pi global override": PI_CONFIG_PATH,
+    "Project standard MCP": PROJECT_CONFIG_PATH,
+    "Project Pi override": PROJECT_PI_CONFIG_PATH,
+  };
 
-  for (const [label, filePath] of paths) {
-    if (filePath === undefined) {
-      continue;
-    }
+  for (const [label, filePath] of Object.entries(paths)) {
     const prefix = fs.existsSync(filePath) ? "✓" : "-";
     log(`${prefix} ${label}: ${filePath}`);
   }
@@ -143,13 +169,26 @@ function writePiConfig(config) {
   fs.writeFileSync(PI_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
 }
 
+/**
+ * @param {PiConfig} config
+ * @param {string[]} importsToAdd
+ * @param {boolean} discoverHostConfigs
+ */
+function extendPiConfig(config, importsToAdd, discoverHostConfigs) {
+  return {
+    ...config,
+    ...(discoverHostConfigs ? { settings: { ...config.settings, hostConfigDiscovery: "on" } } : {}),
+    ...(importsToAdd.length > 0 ? { imports: [...new Set(config.imports), ...importsToAdd] } : {}),
+  };
+}
+
 /** @param {string[]} argv @param {(line: string) => void} [log] */
 async function runInit(argv, log = console.log) {
   const dryRun = argv.includes("--dry-run");
   const discoverHostConfigs = argv.includes("--discover-host-configs");
   const foundImports = findAvailableImports();
   const existingConfig = loadPiConfig();
-  const existingImports = new Set(existingConfig.imports ?? []);
+  const existingImports = new Set(existingConfig.imports);
   const importsToAdd = foundImports
     .map((entry) => entry.kind)
     .filter((kind) => !existingImports.has(kind));
@@ -166,14 +205,7 @@ async function runInit(argv, log = console.log) {
     return 0;
   }
 
-  const nextConfig = {
-    ...existingConfig,
-    ...(discoverySettingChanged
-      ? { settings: { ...existingConfig.settings, hostConfigDiscovery: "on" } }
-      : {}),
-    ...(importsToAdd.length > 0 ? { imports: [...existingImports, ...importsToAdd] } : {}),
-    mcpServers: existingConfig.mcpServers ?? {},
-  };
+  const nextConfig = extendPiConfig(existingConfig, importsToAdd, discoverySettingChanged);
 
   if (importsToAdd.length > 0) {
     log(`\nDetected host configs to import into Pi: ${importsToAdd.join(", ")}`);
@@ -202,59 +234,69 @@ async function runInit(argv, log = console.log) {
   return 0;
 }
 
-export async function main(argv = process.argv.slice(2), log = console.log, error = console.error) {
-  const [command, ...rest] = argv;
-
-  if (!command || command === "help" || command === "--help" || command === "-h") {
-    printHelp(log);
-    return 0;
+/** @param {string[]} argv @param {(line: string) => void} log */
+async function runMigration(argv, log) {
+  const { migrateLegacyState } = await import("./dist/legacy-migration.js");
+  const dryRun = argv.includes("--dry-run");
+  const result = migrateLegacyState({ dryRun });
+  for (const file of result.files) {
+    log(`${file.status}: ${file.source} -> ${file.destination}`);
   }
-
-  if (command === "install") {
-    error("The custom downloader has been retired.");
-    error(
-      "Use `pi install npm:@fitchmultz/pi-mcp-adapter` instead, then optionally run `fitch-mcp-adapter init`.",
-    );
-    return 1;
+  for (const credential of result.credentials) {
+    log(`OAuth ${credential.server}: ${credential.status}`);
   }
-
-  if (command === "init") {
-    return runInit(rest, log);
-  }
-
-  if (command === "migrate") {
-    const { migrateLegacyState } = await import("./dist/legacy-migration.js");
-    const dryRun = rest.includes("--dry-run");
-    const result = migrateLegacyState({ dryRun });
-    for (const file of result.files) {
-      log(`${file.status}: ${file.source} -> ${file.destination}`);
-    }
-    for (const credential of result.credentials) {
-      log(`OAuth ${credential.server}: ${credential.status}`);
-    }
-    log(
-      dryRun
-        ? "Dry run: no files changed and no credential store accessed."
-        : "Migration complete. Existing destinations and all source files/credentials were left intact. Restart Pi to use the independent adapter.",
-    );
-    return 0;
-  }
-
-  error(`Unknown command: ${command}`);
-  printHelp(log);
-  return 1;
+  log(
+    dryRun
+      ? "Dry run: no files changed and no credential store accessed."
+      : "Migration complete. Existing destinations and all source files/credentials were left intact. Restart Pi to use the independent adapter.",
+  );
+  return 0;
 }
 
-const resolvedEntrypoint = process.argv[1] ? fs.realpathSync(process.argv[1]) : undefined;
+/**
+ * @param {string[]} [argv]
+ * @param {(line: string) => void} [log]
+ * @param {(line: string) => void} [error]
+ * @returns {Promise<number>}
+ */
+export async function main(argv = process.argv.slice(2), log = console.log, error = console.error) {
+  const [command = "", ...rest] = argv;
+
+  switch (command) {
+    case "":
+    case "help":
+    case "--help":
+    case "-h":
+      printHelp(log);
+      return 0;
+    case "install":
+      error("The custom downloader has been retired.");
+      error(
+        "Use `pi install npm:@fitchmultz/pi-mcp-adapter` instead, then optionally run `fitch-mcp-adapter init`.",
+      );
+      return 1;
+    case "init":
+      return runInit(rest, log);
+    case "migrate":
+      return runMigration(rest, log);
+    default:
+      error(`Unknown command: ${command}`);
+      printHelp(log);
+      return 1;
+  }
+}
+
+const entrypoint = process.argv[1] ?? "";
+const resolvedEntrypoint = entrypoint !== "" ? fs.realpathSync(entrypoint) : undefined;
 const isEntrypoint =
-  resolvedEntrypoint && import.meta.url === pathToFileURL(resolvedEntrypoint).href;
+  resolvedEntrypoint !== undefined && import.meta.url === pathToFileURL(resolvedEntrypoint).href;
 
 if (isEntrypoint) {
   main()
     .then((code) => {
       process.exitCode = code;
     })
-    .catch((err) => {
+    .catch((/** @type {unknown} */ err) => {
       console.error(`\nHelper failed: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     });

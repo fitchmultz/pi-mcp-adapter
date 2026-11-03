@@ -1,4 +1,20 @@
-import { describe, it, expect } from "vitest";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
+import { z } from "zod";
+import {
+  LATEST_PROTOCOL_VERSION,
+  McpUiInitializeResultSchema,
+} from "@modelcontextprotocol/ext-apps";
+import { materializeUiMessages } from "../../ui-message-history.ts";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { hostConfiguration } from "../fixtures/host-document.ts";
+import { closeHosts, openHost } from "../fixtures/host-runtime.ts";
+import { readToolResult } from "../../host-browser-contracts.ts";
+import type { UiServerOptions } from "../../ui-server-options.ts";
+
+afterEach(closeHosts);
 import { buildHostHtmlTemplate, type HostHtmlTemplateInput } from "../../host-html-template.ts";
 
 function createMinimalInput(overrides: Partial<HostHtmlTemplateInput> = {}): HostHtmlTemplateInput {
@@ -60,14 +76,54 @@ describe("buildHostHtmlTemplate", () => {
       expect(html).toContain('referrerpolicy="no-referrer"');
     });
 
-    it("rejects nested-frame protocol and raw messages by binding to the sandboxed app frame", () => {
-      const html = buildHostHtmlTemplate(createMinimalInput());
-
-      expect(html).toContain(
-        "new PostMessageTransport(iframe.contentWindow, iframe.contentWindow)",
+    it("rejects nested-frame protocol and raw messages by binding to the sandboxed app frame", async () => {
+      const host = await openHost();
+      const child = host.document.createElement("iframe");
+      host.document.body.append(child);
+      assert(child.contentWindow !== null);
+      const ping = { jsonrpc: "2.0", id: "nested", method: "ping" };
+      host.dispatchWindow(ping, child.contentWindow);
+      host.dispatchWindow(
+        { type: "prompt", prompt: "nested must not forward" },
+        child.contentWindow,
       );
-      expect(html).toContain("if (event.source !== iframe.contentWindow) return;");
-      expect(html).not.toContain("new PostMessageTransport(iframe.contentWindow, null)");
+      host.dispatchWindow({ ...ping, id: "app" });
+      host.dispatchWindow({ type: "prompt", prompt: "direct app message" });
+      await vi.waitFor(() =>
+        expect(host.appMessages).toContainEqual({ jsonrpc: "2.0", id: "app", result: {} }),
+      );
+      await host.settleRequests();
+      expect(host.appMessages).not.toContainEqual(expect.objectContaining({ id: "nested" }));
+      expect((await materializeUiMessages(host.handle.getSessionMessages())).prompts).toEqual([
+        "direct app message",
+      ]);
+    });
+
+    it("forwards raw app messages with their original fields", async () => {
+      const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
+      const host = await openHost({ onMessage });
+      const params = { node: "雪😀", ["__proto__"]: { own: "intent parameter" } };
+      host.dispatchWindow({
+        vendor: { opaque: ["raw extension"] },
+        ["__proto__"]: { own: "top-level key" },
+        method: "vendor/raw",
+        type: "intent",
+        payload: { intent: "inspect", params },
+      });
+      await vi.waitFor(() => expect(onMessage).toHaveBeenCalledOnce());
+      const forwarded = {
+        type: "intent",
+        vendor: { opaque: ["raw extension"] },
+        ["__proto__"]: { own: "top-level key" },
+        method: "vendor/raw",
+        intent: "inspect",
+        params,
+      };
+      expect(onMessage).toHaveBeenCalledExactlyOnceWith(forwarded);
+      // Serialized text also proves key order, which deep equality ignores.
+      expect(JSON.stringify(onMessage.mock.calls[0]?.[0])).toBe(JSON.stringify(forwarded));
+      const { intents } = await materializeUiMessages(host.handle.getSessionMessages());
+      expect(JSON.stringify(intents)).toBe(JSON.stringify([{ intent: "inspect", params }]));
     });
 
     it("includes control buttons", () => {
@@ -84,26 +140,35 @@ describe("buildHostHtmlTemplate", () => {
       expect(html).toContain("env(safe-area-inset-top");
       expect(html).toContain("@media (max-width: 640px)");
       expect(html).toContain('id="completion-overlay"');
-      expect(html).toContain("closeOrShowDone");
-      expect(html).toContain("visibilitychange");
+      // Close fallback and visibility recovery are exercised by the lifecycle owner.
+      const dom = new JSDOM(html);
+      expect(
+        dom.window.document.getElementById("completion-overlay")?.classList.contains("visible"),
+      ).toBe(false);
+      dom.window.close();
     });
   });
 
   describe("data injection", () => {
-    it("keeps the session token out of the sandboxed app URL", () => {
+    it("keeps the session token out of the sandboxed app URL", async () => {
       const html = buildHostHtmlTemplate(
         createMinimalInput({
           sessionToken: "secret-session-token",
           uiResourceToken: "app-resource-token",
         }),
       );
-
-      expect(html).toContain('const SESSION_TOKEN = "secret-session-token"');
-      expect(html).toContain('const UI_RESOURCE_TOKEN = "app-resource-token"');
-      expect(html).toContain(
-        'iframe.src = "/ui-app?resource=" + encodeURIComponent(UI_RESOURCE_TOKEN)',
+      expect(hostConfiguration(html)).toMatchObject({
+        sessionToken: "secret-session-token",
+        uiResourceToken: "app-resource-token",
+      });
+      const host = await openHost();
+      const url = new URL(host.iframe.src);
+      expect(url.pathname).toBe("/ui-app");
+      expect([...url.searchParams.keys()]).toEqual(["resource"]);
+      expect(url.searchParams.get("resource")).toBe(
+        hostConfiguration(await (await fetch(host.handle.url)).text()).uiResourceToken,
       );
-      expect(html).not.toContain('iframe.src = "/ui-app?session="');
+      expect(host.iframe.src).not.toContain(host.handle.sessionToken);
     });
 
     it("injects tool arguments", () => {
@@ -150,32 +215,49 @@ describe("buildHostHtmlTemplate", () => {
     it("injects requireToolConsent=false", () => {
       const html = buildHostHtmlTemplate(createMinimalInput({ requireToolConsent: false }));
 
-      expect(html).toContain("const REQUIRE_TOOL_CONSENT = false");
+      expect(hostConfiguration(html).requireToolConsent).toBe(false);
     });
 
     it("injects requireToolConsent=true", () => {
       const html = buildHostHtmlTemplate(createMinimalInput({ requireToolConsent: true }));
 
-      expect(html).toContain("const REQUIRE_TOOL_CONSENT = true");
+      expect(hostConfiguration(html).requireToolConsent).toBe(true);
     });
 
-    it("records explicit consent denials", () => {
-      const html = buildHostHtmlTemplate(createMinimalInput({ requireToolConsent: true }));
-
-      expect(html).toContain(
-        'await post("/proxy/ui/consent", { approved: false }).catch(() => {});',
+    it("records explicit consent denials", async () => {
+      const host = await openHost({ confirm: false });
+      host.dispatchWindow({
+        jsonrpc: "2.0",
+        id: "denied",
+        method: "tools/call",
+        params: { name: "echo", arguments: {} },
+      });
+      await vi.waitFor(() =>
+        expect(host.appMessages).toContainEqual(
+          expect.objectContaining({
+            id: "denied",
+            result: {
+              isError: true,
+              content: [{ type: "text", text: "Tool call denied by user." }],
+            },
+          }),
+        ),
       );
-      expect(html).toContain("Tool call denied by user.");
+      await host.settleRequests();
+      expect(host.requests("/proxy/ui/consent").map((request) => request.status)).toEqual([200]);
+      expect(host.requests("/proxy/tools/call")).toHaveLength(0);
     });
   });
 
   describe("iframe permissions", () => {
-    it("sets allow attribute when provided", () => {
+    it("sets allow attribute when provided", async () => {
       const html = buildHostHtmlTemplate(
         createMinimalInput({ allowAttribute: "camera; microphone" }),
       );
 
-      expect(html).toContain('const ALLOW_ATTRIBUTE = "camera; microphone"');
+      expect(hostConfiguration(html).allowAttribute).toBe("camera; microphone");
+      const host = await openHost({ permissions: { camera: {}, microphone: {} } });
+      expect(host.iframe.getAttribute("allow")).toBe("camera; microphone");
     });
   });
 
@@ -321,10 +403,27 @@ describe("buildHostHtmlTemplate", () => {
   });
 
   describe("module loading", () => {
+    const importMap = (html: string): unknown =>
+      JSON.parse(html.match(/<script type="importmap">([\s\S]*?)<\/script>/)?.[1] ?? "null");
+    // The year-long cached asset is content-addressed, so an upgraded host never
+    // links against an earlier cached copy that lacks its imports.
+    const sdkUrl = `/app-bridge.bundle.js?v=${createHash("sha256")
+      .update(readFileSync(new URL("../../app-bridge.bundle.js", import.meta.url)))
+      .digest("base64url")}`;
+
     it("uses default AppBridge module URL", () => {
       const html = buildHostHtmlTemplate(createMinimalInput());
 
       expect(html).toContain("/app-bridge.bundle.js");
+      // The host shares the cached native SDK asset for its bridge, schemas and Zod.
+      expect(importMap(html)).toEqual({
+        imports: {
+          "@modelcontextprotocol/ext-apps/app-bridge": sdkUrl,
+          "@modelcontextprotocol/ext-apps": sdkUrl,
+          "@modelcontextprotocol/core": sdkUrl,
+          zod: sdkUrl,
+        },
+      });
     });
 
     it("uses custom AppBridge module URL when provided", () => {
@@ -335,40 +434,139 @@ describe("buildHostHtmlTemplate", () => {
       );
 
       expect(html).toContain("https://cdn.example.com/app-bridge.js");
+      // A custom bridge supplies only AppBridge and PostMessageTransport; shared schemas stay local.
+      expect(importMap(html)).toEqual({
+        imports: {
+          "@modelcontextprotocol/ext-apps/app-bridge": "https://cdn.example.com/app-bridge.js",
+          "@modelcontextprotocol/ext-apps": sdkUrl,
+          "@modelcontextprotocol/core": sdkUrl,
+          zod: sdkUrl,
+        },
+      });
     });
   });
 
   describe("stream mode", () => {
-    it("registers the stream patch notification method", () => {
-      const html = buildHostHtmlTemplate(createMinimalInput());
-
-      expect(html).toContain(
-        'const STREAM_PATCH_METHOD = "notifications/pi-mcp-adapter/ui-result-patch"',
+    it("honors the native tool-result content default without dropping opaque fields", () => {
+      expect(
+        readToolResult({
+          structuredContent: ["opaque", { nested: true }],
+          vendor: { extension: "retained" },
+        }),
+      ).toEqual({
+        content: [],
+        structuredContent: ["opaque", { nested: true }],
+        vendor: { extension: "retained" },
+      });
+      expect(
+        readToolResult({
+          content: [{ type: "text", text: "known", vendor: { opaque: "nested" } }],
+        }),
+      ).toEqual({
+        content: [{ type: "text", text: "known", vendor: { opaque: "nested" } }],
+      });
+      expect(() => readToolResult({ content: "not native content" })).toThrow(
+        "Invalid tool result",
       );
-      expect(html).toContain('eventSource.addEventListener("result-patch"');
-      expect(html).toContain("bridge.notification({");
     });
 
-    it("skips initial tool input in stream-first mode", () => {
-      const html = buildHostHtmlTemplate(
-        createMinimalInput({
+    it("registers the stream patch notification method", async () => {
+      const host = await openHost();
+      // A valid JSON result may use an own "__proto__" key; the app receives the original.
+      const patch = {
+        ["__proto__"]: { own: "result key" },
+        content: [],
+        structuredContent: { extension: { values: [1, "unknown"] } },
+      };
+      host.handle.sendResultPatch(patch);
+      await vi.waitFor(() =>
+        expect(host.appMessages).toContainEqual({
+          jsonrpc: "2.0",
+          method: "notifications/pi-mcp-adapter/ui-result-patch",
+          params: patch,
+        }),
+      );
+      const delivered = host.appMessages
+        .map(
+          (message) =>
+            z
+              .object({
+                method: z.literal("notifications/pi-mcp-adapter/ui-result-patch"),
+                params: z.unknown(),
+              })
+              .safeParse(message).data?.params,
+        )
+        .filter((params) => params !== undefined);
+      expect(JSON.stringify(delivered)).toBe(JSON.stringify([patch]));
+    });
+
+    it.each(["stream-first", "eager"] as const)(
+      "delivers initial tool input only in eager mode (%s)",
+      async (mode) => {
+        const toolArgs = { marker: "initial tool input" };
+        const host = await openHost({
+          toolArgs,
           hostContext: {
             "pi-mcp-adapter/stream": {
-              mode: "stream-first",
+              mode,
               streamId: "stream-1",
               intermediateResultPatches: true,
               partialInput: false,
             },
           },
-        }),
-      );
-
-      expect(html).toContain(
-        'const streamMode = initialStreamContext?.mode === "stream-first" ? "stream-first" : "eager";',
-      );
-      expect(html).toContain('if (streamMode !== "stream-first") {');
-      expect(html).toContain("bridge.sendToolInput({ arguments: TOOL_ARGS });");
-    });
+        });
+        host.dispatchWindow({
+          jsonrpc: "2.0",
+          id: "initialize",
+          method: "ui/initialize",
+          params: {
+            protocolVersion: LATEST_PROTOCOL_VERSION,
+            appInfo: { name: "native-test-peer", version: "1" },
+            appCapabilities: {},
+          },
+        });
+        await vi.waitFor(() =>
+          expect(
+            host.appMessages.some(
+              (message) =>
+                z
+                  .object({
+                    id: z.literal("initialize"),
+                    result: McpUiInitializeResultSchema,
+                  })
+                  .safeParse(message).success,
+            ),
+          ).toBe(true),
+        );
+        host.dispatchWindow({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+        await vi.waitFor(() =>
+          expect(host.element("status").textContent).toBe(
+            mode === "stream-first" ? "Streaming…" : "Connected",
+          ),
+        );
+        const initial = {
+          jsonrpc: "2.0",
+          method: "ui/notifications/tool-input",
+          params: { arguments: toolArgs },
+        };
+        const inputs = host.appMessages.filter(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            "method" in message &&
+            message.method === "ui/notifications/tool-input",
+        );
+        expect(inputs).toEqual(mode === "eager" ? [initial] : []);
+        host.handle.sendToolInput({ marker: "subsequent input" });
+        await vi.waitFor(() =>
+          expect(host.appMessages).toContainEqual({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-input",
+            params: { arguments: { marker: "subsequent input" } },
+          }),
+        );
+      },
+    );
   });
 
   describe("XSS prevention", () => {

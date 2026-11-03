@@ -200,7 +200,7 @@ describe("proxy auto auth", () => {
     const reconnect = vi.spyOn(manager, "reconnect").mockResolvedValue(fresh);
     const state = createTestState({ config: { mcpServers: { demo: server } }, manager });
 
-    const result = await executeConnect(state, "demo");
+    const result = await executeConnect(state, { serverName: "demo" });
     expect(reconnect).toHaveBeenCalledWith("demo", server, stale, expect.any(AbortSignal));
     expect(connect).not.toHaveBeenCalled();
     expect(result.details).toMatchObject({ mode: "list", server: "demo", count: 13 });
@@ -244,7 +244,7 @@ describe("proxy auto auth", () => {
       manager,
       ui: host.context.ui,
     });
-    const result = await executeConnect(state, "demo");
+    const result = await executeConnect(state, { serverName: "demo" });
 
     expect(statuses).toContain("MCP: connecting to demo...");
     expectAuthentication(state);
@@ -267,7 +267,7 @@ describe("proxy auto auth", () => {
       config: { settings: { autoAuth: true }, mcpServers: { demo: definition } },
       manager,
     });
-    const result = await executeConnect(state, "demo");
+    const result = await executeConnect(state, { serverName: "demo" });
     expect(mocks.authenticate).not.toHaveBeenCalled();
     expect(firstText(result)).toContain("auth-start");
     expect(firstText(result)).toContain("/mcp-auth demo");
@@ -285,7 +285,7 @@ describe("proxy auto auth", () => {
       },
       manager,
     });
-    const result = await executeConnect(state, "demo");
+    const result = await executeConnect(state, { serverName: "demo" });
     expect(mocks.authenticate).not.toHaveBeenCalled();
     expect(firstText(result)).toBe("Reconnect demo from the host app.");
   });
@@ -312,7 +312,11 @@ describe("proxy auto auth", () => {
       manager,
       toolMetadata: new Map([["demo", searchMetadata]]),
     });
-    const result = await executeCall(state, "demo_search", {}, "demo");
+    const result = await executeCall(state, {
+      toolName: "demo_search",
+      args: {},
+      serverOverride: "demo",
+    });
     expect(handle).toHaveBeenCalledWith("demo", error);
     expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });
   });
@@ -350,14 +354,12 @@ describe("proxy auto auth", () => {
       toolMetadata: new Map([["demo", searchMetadata]]),
     });
     const controller = new AbortController();
-    const result = await executeCall(
-      state,
-      "demo_search",
-      { q: "hello" },
-      "demo",
-      undefined,
-      controller.signal,
-    );
+    const result = await executeCall(state, {
+      toolName: "demo_search",
+      args: { q: "hello" },
+      serverOverride: "demo",
+      signal: controller.signal,
+    });
 
     expect(statuses).toContain("MCP: connecting to demo...");
     const authSignal = expectAuthentication(state);
@@ -396,7 +398,12 @@ describe("proxy auto auth", () => {
       toolMetadata: new Map([["demo", searchMetadata]]),
     });
     await expect(
-      executeCall(state, "demo_search", {}, "demo", undefined, controller.signal),
+      executeCall(state, {
+        toolName: "demo_search",
+        args: {},
+        serverOverride: "demo",
+        signal: controller.signal,
+      }),
     ).rejects.toBe(reason);
     const authSignal = expectAuthentication(state);
     controller.abort(reason);
@@ -420,7 +427,12 @@ describe("proxy auto auth", () => {
       manager,
       toolMetadata: new Map([["demo", searchMetadata]]),
     });
-    const inFlight = executeCall(state, "demo_search", {}, "demo", undefined, controller.signal);
+    const inFlight = executeCall(state, {
+      toolName: "demo_search",
+      args: {},
+      serverOverride: "demo",
+      signal: controller.signal,
+    });
     await vi.waitFor(() => expect(callTool).toHaveBeenCalledTimes(1));
     const reason = new Error("request aborted");
     controller.abort(reason);
@@ -456,7 +468,11 @@ describe("proxy auto auth", () => {
       manager,
       toolMetadata: new Map([["demo", searchMetadata]]),
     });
-    const inFlight = executeCall(state, "demo_search", {}, "demo");
+    const inFlight = executeCall(state, {
+      toolName: "demo_search",
+      args: {},
+      serverOverride: "demo",
+    });
     await started.promise;
     expect(callTool).toHaveBeenCalledOnce();
     await state.owner.stop("owner stopped");
@@ -508,8 +524,8 @@ describe("proxy auto auth", () => {
       manager,
     });
     const [first, second] = await Promise.all([
-      executeCall(state, "mcp__demo_echo", { text: "one" }),
-      executeCall(state, "mcp__demo_echo", { text: "two" }),
+      executeCall(state, { toolName: "mcp__demo_echo", args: { text: "one" } }),
+      executeCall(state, { toolName: "mcp__demo_echo", args: { text: "two" } }),
     ]);
 
     expect(connect).toHaveBeenCalledTimes(1);

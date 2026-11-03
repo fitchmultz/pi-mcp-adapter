@@ -3,7 +3,11 @@ import { Visitor } from "oxc-parser";
 import { z } from "zod";
 
 const scopeSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("ExportNamedDeclaration"), name: z.string().min(1) }),
+  z.strictObject({
+    type: z.literal("ExportNamedDeclaration"),
+    source: z.string().min(1).optional(),
+    name: z.string().min(1),
+  }),
   z.strictObject({ type: z.literal("FunctionDeclaration"), name: z.string().min(1) }),
   z.strictObject({ type: z.literal("FunctionExpression"), name: z.string().min(1) }),
   z.strictObject({
@@ -20,6 +24,7 @@ const siteSchema = z.strictObject({
   scope: scopeSchema,
   path: z.array(z.union([z.string(), z.number().int().nonnegative()])),
   nodeType: z.string().min(1),
+  part: z.literal("signature").optional(),
   operation: z.string().min(1),
   guards: z.array(z.string()),
 });
@@ -54,11 +59,20 @@ function selectScope(program, selector) {
   const matches = [];
   new Visitor({
     ExportNamedDeclaration(node) {
-      if (
-        selector.type === node.type &&
-        node.declaration?.type === "FunctionDeclaration" &&
-        node.declaration.id?.name === selector.name
-      ) {
+      if (selector.type !== node.type) {
+        return;
+      }
+      const selected =
+        selector.source === undefined
+          ? node.declaration?.type === "FunctionDeclaration" &&
+            node.declaration.id?.name === selector.name
+          : node.source?.value === selector.source &&
+            node.specifiers.some(
+              (specifier) =>
+                specifier.exported.type === "Identifier" &&
+                specifier.exported.name === selector.name,
+            );
+      if (selected) {
         matches.push(node);
       }
     },
@@ -129,9 +143,16 @@ export function resolveExceptionSite(site, program, source) {
     selected = property(selected, key);
   }
   const node = nodeSchema.parse(selected);
+  let end = node.end;
+  if (site.part === "signature") {
+    if (node.type !== "FunctionExpression" && node.type !== "FunctionDeclaration") {
+      throw new Error(`Signature exception requires a function: ${site.id}`);
+    }
+    end = nodeSchema.parse(property(selected, "body")).start;
+  }
   if (
     node.type !== site.nodeType ||
-    source.slice(node.start, node.end) !== site.operation ||
+    source.slice(node.start, end) !== site.operation ||
     JSON.stringify(guards) !== JSON.stringify(site.guards)
   ) {
     throw new Error(`Authorized operation changed for ${site.id} ${site.file} ${site.rule}`);

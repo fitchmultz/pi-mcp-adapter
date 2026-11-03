@@ -1,5 +1,15 @@
 [
   {
+    "id": "QX-026",
+    "file": "utils.ts",
+    "rule": "eslint/no-new",
+    "scope": { "type": "FunctionDeclaration", "name": "resolveServerUrl" },
+    "path": ["body", "body", 6, "block", "body", 0],
+    "nodeType": "ExpressionStatement",
+    "operation": "new URL(resolved);",
+    "guards": []
+  },
+  {
     "id": "QX-001",
     "file": "mcp-trace.ts",
     "rule": "eslint/no-param-reassign",
@@ -259,6 +269,280 @@
     "path": [],
     "nodeType": "ExportNamedDeclaration",
     "operation": "export function isToolAllowed(\n  toolName: string,\n  serverName: string,\n  prefix: ToolPrefix,\n  includeTools?: unknown,\n  excludeTools?: unknown,\n): boolean {\n  return (\n    isToolIncluded(toolName, serverName, prefix, includeTools) &&\n    !isToolExcluded(toolName, serverName, prefix, excludeTools)\n  );\n}",
+    "guards": []
+  },
+  {
+    "id": "QX-025",
+    "file": "direct-tools.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "FunctionExpression", "name": "execute" },
+    "path": [],
+    "nodeType": "FunctionExpression",
+    "part": "signature",
+    "operation": "async function execute(toolCallId, params, signal, _onUpdate, ctx) ",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "connection-factory.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ConnectionSetup",
+      "name": "discover"
+    },
+    "path": ["value", "body", "body", 5, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.client.onclose",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "connection-http.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "HttpConnection",
+      "name": "observeChallenge"
+    },
+    "path": ["value", "body", "body", 3, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.transport.onerror",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "tool-transport.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ToolTransportObserver",
+      "name": "attach"
+    },
+    "path": ["value", "body", "body", 1, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.transport.onmessage",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
+    "file": "tool-transport.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ToolTransportObserver",
+      "name": "attach"
+    },
+    "path": ["value", "body", "body", 3, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "this.transport.onerror",
+    "guards": []
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-http.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "HttpConnection",
+      "name": "constructor"
+    },
+    "path": ["value", "body", "body", 12, "consequent", "body", 0],
+    "nodeType": "ExpressionStatement",
+    "operation": "this.transport = new runtime.SSEClientTransport(url, transportOptions);",
+    "guards": ["consequent: legacySse"]
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-runtime.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ManagedClient",
+      "name": "setLoggingLevel"
+    },
+    "path": ["value", "body", "body", 0, "argument", "arguments", 0],
+    "nodeType": "ArrowFunctionExpression",
+    "operation": "(signal) => super.setLoggingLevel(args[0], { ...args[1], ...(signal ? { signal } : {}) })",
+    "guards": []
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-runtime.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "ExportNamedDeclaration",
+      "source": "@modelcontextprotocol/client",
+      "name": "SSEClientTransport"
+    },
+    "path": ["specifiers", 2],
+    "nodeType": "ExportSpecifier",
+    "operation": "SSEClientTransport",
+    "guards": []
+  },
+  {
+    "id": "QX-024",
+    "file": "connection-oauth-ownership.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "ownOAuthProvider"
+    },
+    "path": ["body", "body", 1, "argument", "properties", 12],
+    "nodeType": "Property",
+    "operation": "saveAuthorizationServerUrl: (...args) =>\n      own(() => provider.saveAuthorizationServerUrl(...args))",
+    "guards": []
+  },
+  {
+    "id": "QX-023",
+    "file": "connection-handshake.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "MethodDefinition",
+      "class": "ConnectionHandshake",
+      "name": "run"
+    },
+    "path": [
+      "value",
+      "body",
+      "body",
+      7,
+      "handler",
+      "body",
+      "body",
+      0,
+      "consequent",
+      "body",
+      0,
+      "handler",
+      "body",
+      "body",
+      0
+    ],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([error, cleanupError], \"MCP connection abort cleanup failed\");",
+    "guards": ["consequent: abortCleanup"]
+  },
+  {
+    "id": "QX-025",
+    "file": "host-tools.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "FunctionExpression", "name": "executeMcpSearch" },
+    "path": [],
+    "nodeType": "FunctionExpression",
+    "operation": "async function executeMcpSearch(toolCallId, params, signal, _onUpdate, ctx) {\n        if (beforeExecute) {\n          if (host.owner) {\n            await host.owner.runCallback(\"beforeExecute\", () => beforeExecute(toolCallId, ctx));\n          } else {\n            await beforeExecute(toolCallId, ctx);\n          }\n        }\n        return searchAndLoad(params, signal);\n      }",
+    "guards": []
+  },
+  {
+    "id": "QX-025",
+    "file": "host-tools.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "FunctionExpression", "name": "executeMcpScript" },
+    "path": [],
+    "nodeType": "FunctionExpression",
+    "operation": "async function executeMcpScript(toolCallId, params, signal, _onUpdate, ctx) {\n        const ready = await getToolState(signal);\n        if (\"content\" in ready) {\n          return ready;\n        }\n        const { runMcpScript } = await import(\"./mcp-code.ts\");\n        return runMcpScript({\n          state: ready,\n          code: params.code,\n          timeoutMs: params.timeoutMs ?? options.defaultScriptTimeoutMs,\n          getPiTools,\n          signal,\n          toolCallId,\n          beforeDispatch: beforeExecute\n            ? (callSignal, operation) =>\n                beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)\n            : undefined,\n        });\n      }",
+    "guards": []
+  },
+  {
+    "id": "QX-025",
+    "file": "host-tools.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "FunctionExpression", "name": "executeMcpGateway" },
+    "path": [],
+    "nodeType": "FunctionExpression",
+    "operation": "async function executeMcpGateway(toolCallId, rawParams, signal, _onUpdate, ctx) {\n        return executeGateway(pi, host, options, [toolCallId, rawParams, signal, _onUpdate, ctx]);\n      }",
+    "guards": []
+  },
+  {
+    "id": "QX-3003",
+    "file": "init-status.ts",
+    "rule": "typescript/no-unnecessary-condition",
+    "scope": { "type": "FunctionDeclaration", "name": "updateStatusBar" },
+    "path": ["body", "body", 13],
+    "nodeType": "IfStatement",
+    "operation": "if (ui.theme === undefined) {\n    ui.setStatus(\"mcp\", formattedStatus);\n    return;\n  }",
+    "guards": []
+  },
+  {
+    "id": "QX-030",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 7],
+    "nodeType": "ExpressionStatement",
+    "operation": "bridge.onmessage = onmessage;",
+    "guards": []
+  },
+  {
+    "id": "QX-030",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 22],
+    "nodeType": "ExpressionStatement",
+    "operation": "bridge.oninitialized = oninitialized;",
+    "guards": []
+  },
+  {
+    "id": "QX-030",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 23],
+    "nodeType": "ExpressionStatement",
+    "operation": "assert.equal(bridge.oninitialized, oninitialized, \"oninitialized\");",
+    "guards": []
+  },
+  {
+    "id": "QX-030",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 25],
+    "nodeType": "ExpressionStatement",
+    "operation": "bridge.onsizechange = onsizechange;",
+    "guards": []
+  },
+  {
+    "id": "QX-030",
+    "file": "__tests__/fixtures/app-bridge-bundle-probe.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionDeclaration", "name": "probeBridge" },
+    "path": ["body", "body", 26],
+    "nodeType": "ExpressionStatement",
+    "operation": "assert.equal(bridge.onsizechange, onsizechange, \"onsizechange\");",
+    "guards": []
+  },
+  {
+    "id": "QX-031",
+    "file": "__tests__/fixtures/mcp-code-server.mjs",
+    "rule": "typescript/no-base-to-string",
+    "scope": { "type": "FunctionExpression", "name": "callTool" },
+    "path": ["body", "body", 2],
+    "nodeType": "VariableDeclaration",
+    "operation": "const echoText = String(request.params.arguments?.value ?? \"\");",
+    "guards": []
+  },
+  {
+    "id": "QX-7001",
+    "file": "__tests__/catalog-metadata.test.ts",
+    "rule": "unicorn/no-thenable",
+    "scope": { "type": "VariableDeclarator", "name": "descriptor" },
+    "path": [
+      "init",
+      "properties",
+      3,
+      "value",
+      "properties",
+      7,
+      "value",
+      "elements",
+      0,
+      "properties",
+      1
+    ],
+    "nodeType": "Property",
+    "operation": "then: { required: [\"limit\"] }",
     "guards": []
   }
 ]

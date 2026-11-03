@@ -307,7 +307,12 @@ it.each(["sampling", "elicitation"] as const)(
       });
     }
     const controller = new AbortController();
-    const call = executeCall(state, "echo", {}, f.name, undefined, controller.signal);
+    const call = executeCall(state, {
+      toolName: "echo",
+      args: {},
+      serverOverride: f.name,
+      signal: controller.signal,
+    });
     await entered.promise;
     controller.abort(new Error("synthetic modern cancellation"));
     expect((await call).details.error).toBe("aborted");
@@ -315,7 +320,10 @@ it.each(["sampling", "elicitation"] as const)(
     await state.manager.close(f.name);
     expect(f.calls()).toBe(1); // cancelled input continuation was not dispatched after the late answer
     f.finishInput();
-    expect((await executeCall(state, "echo", {}, f.name)).details.error).toBeUndefined();
+    expect(
+      (await executeCall(state, { toolName: "echo", args: {}, serverOverride: f.name })).details
+        .error,
+    ).toBeUndefined();
     expect(f.calls()).toBe(2);
   },
 );

@@ -283,7 +283,16 @@ async function fixture(
       manager,
       config: { mcpServers: { local: definition }, settings: {} },
       toolMetadata: new Map([
-        ["local", buildToolMetadata(connection.tools, [], definition, "local", "server").metadata],
+        [
+          "local",
+          buildToolMetadata({
+            tools: connection.tools,
+            resources: [],
+            definition,
+            serverName: "local",
+            prefix: "server",
+          }).metadata,
+        ],
       ]),
       failureTracker: new Map(),
       serverInstructions: new Map(),
@@ -296,13 +305,12 @@ async function fixture(
 
 async function call(state: McpExtensionState, entry: string, signal?: AbortSignal) {
   if (entry === "script") {
-    const output = await runMcpScript(
+    const output = await runMcpScript({
       state,
-      'return await tools.local_echo({ value: "test" });',
-      2000,
-      undefined,
-      signal,
-    );
+      code: 'return await tools.local_echo({ value: "test" });',
+      timeoutMs: 2000,
+      signal: signal,
+    });
     const text = output.content.findLast(
       (c) => c.type === "text" && !c.text.startsWith("[MCP result saved:"),
     );
@@ -334,8 +342,14 @@ async function call(state: McpExtensionState, entry: string, signal?: AbortSigna
             prefixedName: "local_echo",
             description: "Echo",
           },
-        )("call-id", { value: "test" }, signal, undefined, requireValue(context).context)
-      : await executeCall(state, "local_echo", { value: "test" }, undefined, undefined, signal);
+        )(
+          "call-id",
+          { value: "test" },
+          signal,
+          undefined,
+          requireValue(context).runner.createToolContext("call-id", signal),
+        )
+      : await executeCall(state, { toolName: "local_echo", args: { value: "test" }, signal });
   return {
     ok: output.details.error === undefined,
     error: undefined,
@@ -782,7 +796,10 @@ describe("published SDK v2 over real local HTTP", () => {
               },
             ],
       );
-      const readback = await executeCall(state, "local_readback", { value: "test" });
+      const readback = await executeCall(state, {
+        toolName: "local_readback",
+        args: { value: "test" },
+      });
       expect(readback.details.mcpResult).toMatchObject({
         structuredContent: { id: "original-resource", version: 1 },
       });
@@ -875,7 +892,13 @@ describe("published SDK v2 over real local HTTP", () => {
         description: "Echo",
         annotations: { readOnlyHint: true },
       },
-    )("outer-id", { secret: "not-in-error-text" }, undefined, undefined, context.context);
+    )(
+      "outer-id",
+      { secret: "not-in-error-text" },
+      undefined,
+      undefined,
+      context.runner.createToolContext("outer-id", state.owner.signal),
+    );
     const safe = annotations?.readOnlyHint === true || annotations?.idempotentHint === true;
     expect(f.calls()).toHaveLength(safe ? 2 : 1);
     expect(output.details.error).toBe(safe ? undefined : "ambiguous_outcome");
@@ -921,14 +944,14 @@ describe("published SDK v2 over real local HTTP", () => {
       return true;
     });
     const { state } = await f.connect();
-    const script = await runMcpScript(
+    const script = await runMcpScript({
       state,
-      `
+      code: `
       const native = await tools.describe({ path: "local_echo" });
       const compact = await tools.describe({ path: "local_compact" });
       return { native, compact, called: await tools.call(native.path, { value: "test" }) };
     `,
-    );
+    });
     expect(script.details).not.toHaveProperty("error");
     const described = z
       .object({
@@ -1018,7 +1041,10 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(JSON.parse(textBlock(executeDescribe(state, "local_echo").content[0]))).toMatchObject({
       annotations: { readOnlyHint: true },
     });
-    const script = await runMcpScript(state, 'return tools.describe({ path: "local_echo" });');
+    const script = await runMcpScript({
+      state,
+      code: 'return tools.describe({ path: "local_echo" });',
+    });
     const described = z
       .object({ annotations: z.unknown() })
       .parse(JSON.parse(textBlock(script.content[0])));
@@ -2412,7 +2438,7 @@ describe("published SDK v2 over real local HTTP", () => {
       return true;
     });
     const { state, connection } = await f.connect({ retryOnTransportFailure: true });
-    const sibling = executeCall(state, "local_echo", { sibling: true });
+    const sibling = executeCall(state, { toolName: "local_echo", args: { sibling: true } });
     await expect.poll(() => accepted !== undefined).toBe(true);
     expect((await call(state, "proxy")).ok).toBe(true);
     expect(requireValue(accepted).res.destroyed).toBe(false);

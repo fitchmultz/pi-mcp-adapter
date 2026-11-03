@@ -49,14 +49,15 @@ type ReadMcpResultFailure = {
 };
 
 export async function readMcpResult(
-  input: ReadMcpResultInput | null | undefined,
+  value: unknown,
   options: McpOutputGuardOptions = {},
 ): Promise<ReadMcpResultSuccess | ReadMcpResultFailure> {
   try {
-    if (input === null || input === undefined || typeof input.ref !== "string") {
+    const input = asObjectRecord(value);
+    if (input === undefined || typeof input.ref !== "string") {
       throw new Error("ref must be a retained MCP result path");
     }
-    const ref = await resolveReadRef(input, options);
+    const ref = await resolveReadRef(input.ref, options);
     // Plain output pages without flattening a complete UI history into memory.
     if (
       basename(ref).startsWith("output-") &&
@@ -80,7 +81,7 @@ export async function readMcpResult(
 /** Page a plain output artifact directly through the paged reader. */
 async function readPlainOutputPage(
   ref: string,
-  input: ReadMcpResultInput,
+  input: Record<string, unknown>,
   options: McpOutputGuardOptions,
 ): Promise<ReadMcpResultSuccess> {
   const window = plainReadBounds(input, options);
@@ -106,7 +107,7 @@ async function readPlainOutputPage(
 
 /** Validated offset/limit for a plain output page, tightened under the guard caps. */
 function plainReadBounds(
-  input: ReadMcpResultInput,
+  input: Record<string, unknown>,
   options: McpOutputGuardOptions,
 ): PlainReadWindow {
   const { offset, limit } = validateReadWindow(input);
@@ -117,7 +118,7 @@ function plainReadBounds(
 
 /** Validated offset/limit that also refuses splitting a surrogate pair. */
 function renderedReadWindow(
-  input: ReadMcpResultInput,
+  input: Record<string, unknown>,
   rendered: string,
 ): { offset: number; limit: number } {
   const window = validateReadWindow(input);
@@ -128,10 +129,17 @@ function renderedReadWindow(
   return window;
 }
 
-function validateReadWindow(input: ReadMcpResultInput): { offset: number; limit: number } {
+function validateReadWindow(input: Record<string, unknown>): { offset: number; limit: number } {
   const offset = input.offset ?? 0;
   const limit = input.limit ?? 12_000;
-  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) {
+  if (
+    typeof offset !== "number" ||
+    typeof limit !== "number" ||
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    !Number.isSafeInteger(limit) ||
+    limit < 1
+  ) {
     throw new Error("offset must be a non-negative integer and limit a positive integer");
   }
   return { offset, limit };
@@ -141,7 +149,7 @@ function validateReadWindow(input: ReadMcpResultInput): { offset: number; limit:
 function pageRenderedResult(
   ref: string,
   rendered: string,
-  input: ReadMcpResultInput,
+  input: Record<string, unknown>,
   options: McpOutputGuardOptions,
 ): ReadMcpResultSuccess {
   const { offset, limit } = renderedReadWindow(input, rendered);
@@ -171,7 +179,7 @@ function pageRenderedResult(
       offset,
       nextOffset,
       totalCharacters: rendered.length,
-      ...(input.path !== undefined ? { path: input.path } : {}),
+      ...(typeof input.path === "string" ? { path: input.path } : {}),
     },
   };
 }
@@ -205,7 +213,7 @@ function renderedPageEnd(
 }
 
 /** Read the artifact and apply any JSON Pointer/fields selection as pretty JSON. */
-async function selectRenderedValue(ref: string, input: ReadMcpResultInput): Promise<string> {
+async function selectRenderedValue(ref: string, input: Record<string, unknown>): Promise<string> {
   const rendered = await readFile(ref, "utf8");
   if (
     input.path === undefined &&
@@ -225,7 +233,7 @@ async function selectRenderedValue(ref: string, input: ReadMcpResultInput): Prom
 }
 
 /** Resolve an RFC 6901 JSON Pointer against a parsed value. */
-function applyJsonPointer(value: unknown, path: string): unknown {
+function applyJsonPointer(value: unknown, path: unknown): unknown {
   if (typeof path !== "string" || !path.startsWith("/") || /~(?:[^01]|$)/.test(path)) {
     throw new Error("path must be an RFC 6901 JSON Pointer");
   }
@@ -248,8 +256,8 @@ function applyJsonPointer(value: unknown, path: string): unknown {
 }
 
 /** Project the selected keys off an object or array of objects. */
-function applyFieldSelection(value: unknown, fields: string[]): unknown {
-  if (!Array.isArray(fields) || fields.some((field) => typeof field !== "string")) {
+function applyFieldSelection(value: unknown, fields: unknown): unknown {
+  if (!isUnknownArray(fields) || !fields.every((field) => typeof field === "string")) {
     throw new Error("fields must be an array of keys");
   }
   const select = (item: unknown): Record<string, unknown> => {
@@ -265,14 +273,11 @@ function applyFieldSelection(value: unknown, fields: string[]): unknown {
 }
 
 /** Validate the ref as an MCP output artifact inside this host's output root. */
-async function resolveReadRef(
-  input: ReadMcpResultInput,
-  options: McpOutputGuardOptions,
-): Promise<string> {
+async function resolveReadRef(inputRef: string, options: McpOutputGuardOptions): Promise<string> {
   // Script-only hosts deliberately have no general filesystem capability.
   const [root, ref] = await Promise.all([
     realpath(options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory)),
-    realpath(resolve(input.ref)),
+    realpath(resolve(inputRef)),
   ]);
   if (
     dirname(dirname(ref)) !== root ||

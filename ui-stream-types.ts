@@ -54,7 +54,7 @@ export const uiStreamCallToolResultSchema = z
     isError: z.boolean().optional(),
     _meta: looseRecordSchema.optional(),
   })
-  .passthrough();
+  .loose();
 export type UiStreamCallToolResult = z.infer<typeof uiStreamCallToolResultSchema>;
 
 export const uiStreamResultPatchNotificationSchema = z.object({
@@ -95,15 +95,14 @@ export function getVisualizationStreamEnvelope(
   structuredContent: unknown,
 ): VisualizationStreamEnvelope | undefined {
   if (
-    !structuredContent ||
+    structuredContent === null ||
     typeof structuredContent !== "object" ||
-    Array.isArray(structuredContent)
+    Array.isArray(structuredContent) ||
+    !(UI_STREAM_STRUCTURED_CONTENT_KEY in structuredContent)
   ) {
     return undefined;
   }
-  const candidate = (structuredContent as Record<string, unknown>)[
-    UI_STREAM_STRUCTURED_CONTENT_KEY
-  ];
+  const candidate = structuredContent[UI_STREAM_STRUCTURED_CONTENT_KEY];
   const parsed = visualizationStreamEnvelopeSchema.safeParse(candidate);
   return parsed.success ? parsed.data : undefined;
 }

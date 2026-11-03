@@ -35,5 +35,5 @@
     "scripts/**/*",
     "conformance/**/*.ts"
   ],
-  "exclude": ["app-bridge.bundle.js", "dist", "node_modules", "examples"]
+  "exclude": ["app-bridge.bundle.js", "host-browser.bundle.js", "dist", "node_modules", "examples"]
 }

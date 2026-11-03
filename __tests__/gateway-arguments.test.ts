@@ -1,6 +1,11 @@
 import { expect, it } from "vitest";
 import { Value } from "typebox/value";
-import { gatewayParameters, prepareGatewayArguments } from "../gateway-arguments.ts";
+import { parseToolCallArguments, validateToolArguments } from "@earendil-works/pi-ai";
+import {
+  gatewayParameters,
+  prepareGatewayArguments,
+  parseGatewayArguments,
+} from "../gateway-arguments.ts";
 
 it("advertises explicit actions and validates each action's required fields", () => {
   expect(Value.Check(gatewayParameters, { action: "status" })).toBe(true);
@@ -38,4 +43,43 @@ it("prepares stored v5 calls without advertising the old precedence schema", () 
   });
   expect(() => prepareGatewayArguments({ action: "read-resource", server: "demo" })).toThrow("uri");
   expect(() => prepareGatewayArguments({ tool: "demo", args: "[]" })).toThrow("JSON object");
+  expect(() => prepareGatewayArguments({ action: 5 })).toThrow("Unknown MCP action: 5");
+  expect(() => prepareGatewayArguments({ action: "missing" })).toThrow(
+    "Unknown MCP action: missing",
+  );
+});
+
+it("preserves native schema coercion after gateway preparation", () => {
+  const tool = { name: "mcp", description: "MCP gateway", parameters: gatewayParameters };
+  const prepared = prepareGatewayArguments({
+    action: "status",
+    limit: "5",
+    offset: "0",
+    includeSchemas: "true",
+    fields: "id",
+    path: null,
+  });
+  const validated: unknown = validateToolArguments(tool, {
+    type: "toolCall",
+    id: "coercion",
+    name: "mcp",
+    ...parseToolCallArguments(JSON.stringify(prepared)),
+  });
+  expect(parseGatewayArguments(validated)).toEqual({
+    action: "status",
+    limit: 5,
+    offset: 0,
+    includeSchemas: true,
+    fields: ["id"],
+  });
+  expect(() => {
+    validateToolArguments(tool, {
+      type: "toolCall",
+      id: "invalid",
+      name: "mcp",
+      ...parseToolCallArguments(
+        JSON.stringify(prepareGatewayArguments({ action: "status", limit: "invalid" })),
+      ),
+    });
+  }).toThrow('Validation failed for tool "mcp"');
 });

@@ -3,11 +3,11 @@ import { formatTerminalError } from "./utils.ts";
 
 export interface McpRuntimeOwner {
   readonly signal: AbortSignal;
-  isActive(): boolean;
-  addCleanup(cleanup: () => void | Promise<void>): void;
-  stop(reason?: string): Promise<void>;
-  throwIfInactive(): void;
-  runCallback<T>(kind: "beforeExecute" | "onToolCall", run: () => Promise<T>): Promise<T>;
+  isActive: () => boolean;
+  addCleanup: (cleanup: () => void | Promise<void>) => void;
+  stop: (reason?: string) => Promise<void>;
+  throwIfInactive: () => void;
+  runCallback: <T>(kind: "beforeExecute" | "onToolCall", run: () => Promise<T>) => Promise<T>;
 }
 
 export function createMcpRuntimeOwner(): McpRuntimeOwner {
@@ -18,10 +18,10 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
   // promises through settlement, without cancelling, serializing, or replaying callback work.
   const callbacks = { beforeExecute: 0, onToolCall: 0 };
   const pendingCallback = () => {
-    if (callbacks.beforeExecute) {
+    if (callbacks.beforeExecute > 0) {
       return "MCP beforeExecute callback is pending";
     }
-    if (callbacks.onToolCall) {
+    if (callbacks.onToolCall > 0) {
       return "MCP onToolCall callback is pending";
     }
     return;
@@ -48,9 +48,9 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
     isActive: () => !controller.signal.aborted,
     addCleanup: (cleanup) => {
       if (controller.signal.aborted) {
-        void Promise.resolve()
+        Promise.resolve()
           .then(cleanup)
-          .catch((error) => reportCleanupFailure(error, true));
+          .catch((error: unknown) => reportCleanupFailure(error, true));
         return;
       }
       cleanups.push(cleanup);
@@ -65,11 +65,11 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
         .reverse()
         .map((cleanup) => Promise.resolve().then(cleanup));
       stopPromise = Promise.allSettled(pendingCleanups).then((results) => {
-        const failures = results.flatMap((result) =>
+        const failures: unknown[] = results.flatMap((result): unknown[] =>
           result.status === "rejected" ? [result.reason] : [],
         );
         const callback = pendingCallback();
-        if (callback) {
+        if (callback !== undefined) {
           failures.push(new Error(callback));
         }
         if (failures.length > 0) {
@@ -77,6 +77,7 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
           console.error(`MCP: runtime cleanup failed: ${formatTerminalError(aggregate)}`);
           throw aggregate;
         }
+        return;
       });
       return stopPromise;
     },
@@ -102,41 +103,42 @@ export function combineAbortSignals(
 /** Fence session-bound UI calls after the owning extension runtime stops. */
 export function createOwnedUi(ui: ExtensionUIContext, owner: McpRuntimeOwner): ExtensionUIContext {
   const proxies = new WeakMap<object, object>();
+  const handler: ProxyHandler<object> = {
+    get(target, property) {
+      if (!owner.isActive()) {
+        return;
+      }
+      const member: unknown = Reflect.get(target, property, target);
+      if (typeof member === "function") {
+        return (...args: unknown[]): unknown => {
+          if (!owner.isActive()) {
+            return;
+          }
+          return Reflect.apply(member, target, args);
+        };
+      }
+      return owner.isActive() ? wrap(member) : undefined;
+    },
+  };
   const wrap = (value: unknown): unknown => {
     if ((typeof value !== "object" || value === null) && typeof value !== "function") {
       return value;
     }
-    const object = value;
-    const existing = proxies.get(object);
+    const existing = proxies.get(value);
     if (existing) {
       return existing;
     }
-
-    const proxy = new Proxy(object, {
-      get(target, property, receiver) {
-        if (!owner.isActive()) {
-          return undefined;
-        }
-        const member = Reflect.get(target, property, receiver);
-        if (typeof member === "function") {
-          return (...args: unknown[]) => {
-            if (!owner.isActive()) {
-              return undefined;
-            }
-            return Reflect.apply(member, target, args);
-          };
-        }
-        return owner.isActive() ? wrap(member) : undefined;
-      },
-    });
-    proxies.set(object, proxy);
+    const proxy = new Proxy(value, handler);
+    proxies.set(value, proxy);
     return proxy;
   };
-  return wrap(ui) as ExtensionUIContext;
+  const owned = new Proxy<ExtensionUIContext>(ui, handler);
+  proxies.set(ui, owned);
+  return owned;
 }
 
 export function isAbortError(error: unknown, signal?: AbortSignal): boolean {
-  if (signal?.aborted) {
+  if (signal?.aborted === true) {
     return true;
   }
   return (

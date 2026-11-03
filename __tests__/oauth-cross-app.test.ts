@@ -1334,10 +1334,13 @@ async function callHost(
   host: string,
 ) {
   if (host === "proxy") {
-    return executeCall(state, `${f.name}_echo`, {}, f.name);
+    return executeCall(state, { toolName: `${f.name}_echo`, args: {}, serverOverride: f.name });
   }
   if (host === "script") {
-    return runMcpScript(state, `emit(await tools.call(${JSON.stringify(`${f.name}_echo`)}, {}));`);
+    return runMcpScript({
+      state,
+      code: `emit(await tools.call(${JSON.stringify(`${f.name}_echo`)}, {}));`,
+    });
   }
   const execute = createDirectToolExecutor(
     () => state,
@@ -1351,7 +1354,13 @@ async function callHost(
   );
   const native = await createTestExtensionContext();
   try {
-    return await execute("call", {}, undefined, undefined, native.context);
+    return await execute(
+      "call",
+      {},
+      undefined,
+      undefined,
+      native.runner.createToolContext("call", state.owner.signal),
+    );
   } finally {
     await native.dispose();
   }

@@ -1,305 +1,135 @@
+import assert from "node:assert/strict";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import http from "node:http";
 import { startUiServer, type UiServerHandle, type UiServerOptions } from "../ui-server.ts";
-import type { McpServerManager, ServerConnection } from "../server-manager.ts";
-import type { ConsentManager } from "../consent-manager.ts";
-import type { UiResourceContent, UiResourcePermissions, McpConfig } from "../types.ts";
+import { createOAuthRecoveryFixture } from "./fixtures/oauth-recovery.ts";
+import { request } from "./fixtures/strict-ui-boundaries-http.ts";
+import { createMockConsentManager } from "./fixtures/strict-ui-boundaries-manager.ts";
+import { UiBoundaryWire, connectUiBoundaryWire } from "./fixtures/strict-ui-boundaries-wire.ts";
 
-// Same HTTP helper as __tests__/ui-server.test.ts.
-async function request(
-  url: string,
-  options: { method?: string; body?: unknown } = {},
-): Promise<{ status: number; body: unknown }> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const req = http.request(
-      {
-        hostname: parsed.hostname,
-        port: parsed.port,
-        path: parsed.pathname + parsed.search,
-        method: options.method ?? "GET",
-        headers: { "Content-Type": "application/json" },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf-8");
-          let body: unknown;
-          try {
-            body = JSON.parse(text);
-          } catch {
-            body = text;
-          }
-          resolve({ status: res.statusCode ?? 0, body });
-        });
-      },
-    );
-    req.on("error", reject);
-    if (options.body) {
-      req.write(JSON.stringify(options.body));
-    }
-    req.end();
-  });
-}
+const cleanups: Array<() => Promise<void>> = [];
+let handle: UiServerHandle | undefined;
+afterEach(async () => {
+  handle?.close("test-cleanup");
+  handle = undefined;
+  for (const cleanup of cleanups.reverse()) {
+    await cleanup();
+  }
+  cleanups.length = 0;
+});
 
-function createMockConsentManager(): ConsentManager {
-  return {
-    requiresPrompt: vi.fn().mockReturnValue(false),
-    ensureApproved: vi.fn(),
-    registerDecision: vi.fn(),
-  } as unknown as ConsentManager;
-}
-
-function createMockResource(): UiResourceContent {
-  return {
-    uri: "ui://test/widget",
-    html: "<h1>Test App</h1>",
-    mimeType: "text/html",
-    meta: { permissions: [] as unknown as UiResourcePermissions },
+async function setup() {
+  const wire = new UiBoundaryWire();
+  const manager = await connectUiBoundaryWire(wire);
+  cleanups.push(
+    () => wire.close(),
+    () => manager.closeAll(),
+  );
+  const stale = manager.getConnection("test-server");
+  assert(stale);
+  const callTool = vi.spyOn(stale.client, "callTool");
+  const reconnect = vi.spyOn(manager, "reconnect");
+  const config = { mcpServers: { "test-server": wire.definition() } };
+  const options: UiServerOptions = {
+    serverName: "test-server",
+    toolName: "test_tool",
+    toolArgs: {},
+    resource: {
+      uri: "ui://test/widget",
+      html: "<h1>Test App</h1>",
+      mimeType: "text/html",
+      meta: { permissions: {} },
+    },
+    manager,
+    config,
+    consentManager: createMockConsentManager(),
   };
+  wire.expired = true;
+  return { wire, manager, stale, callTool, reconnect, config, options };
+}
+
+async function requestTool(server: UiServerHandle) {
+  return request(`http://localhost:${server.port}/proxy/tools/call`, {
+    method: "POST",
+    body: { token: server.sessionToken, params: { name: "some_tool", arguments: {} } },
+  });
 }
 
 describe("UiServer /proxy/tools/call session recovery", () => {
-  let handle: UiServerHandle | null = null;
-
-  afterEach(() => {
-    if (handle) {
-      handle.close("test-cleanup");
-      handle = null;
-    }
-  });
-
   it("recovers a terminated Streamable HTTP session transparently, when config is supplied", async () => {
-    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
-
-    const stale = {
-      status: "connected",
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi.fn().mockRejectedValueOnce(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-      tools: [{ name: "some_tool" }],
-    } as unknown as ServerConnection;
-    const fresh = {
-      status: "connected",
-      transport: { sessionId: "session-2" },
-      client: {
-        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }),
-      },
-      tools: [{ name: "some_tool" }],
-    } as unknown as ServerConnection;
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => fresh),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => {}),
-    } as unknown as McpServerManager;
-
-    const config: McpConfig = {
-      mcpServers: { "test-server": { url: "https://api.example.com/mcp" } },
-    };
-
-    const options: UiServerOptions = {
-      serverName: "test-server",
-      toolName: "test_tool",
-      toolArgs: {},
-      resource: createMockResource(),
-      manager,
-      config,
-      consentManager: createMockConsentManager(),
-    };
-
-    handle = await startUiServer(options);
-
-    const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
-      method: "POST",
-      body: { token: handle.sessionToken, params: { name: "some_tool", arguments: {} } },
-    });
-
+    const fixture = await setup();
+    handle = await startUiServer(fixture.options);
+    const res = await requestTool(handle);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       ok: true,
       result: { content: [{ type: "text", text: "tool result" }] },
     });
-    expect(stale.client.callTool as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
-    expect(fresh.client.callTool as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
-    expect(manager.reconnect).toHaveBeenCalledWith(
+    expect(fixture.callTool).toHaveBeenCalledTimes(1);
+    expect(fixture.wire.calls.filter((call) => call.method === "tools/call")).toEqual([
+      { method: "tools/call", session: "session-1" },
+      { method: "tools/call", session: "session-2" },
+    ]);
+    expect(fixture.reconnect).toHaveBeenCalledWith(
       "test-server",
-      config.mcpServers["test-server"],
-      stale,
+      fixture.config.mcpServers["test-server"],
+      fixture.stale,
     );
   });
 
   it("returns auth guidance when recovery reconnect needs auth and no callback can refresh it", async () => {
-    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
+    const fixture = await setup();
+    const auth = await createOAuthRecoveryFixture("legacy", "test-server");
+    cleanups.push(auth.dispose);
+    auth.controls.protectedMethod = "initialize";
+    fixture.manager.setOAuthRuntime(auth.runtime);
+    fixture.config.mcpServers["test-server"] = auth.definition;
 
-    const stale = {
-      status: "connected",
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi.fn().mockRejectedValueOnce(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-      tools: [{ name: "some_tool" }],
-    } as unknown as ServerConnection;
-    const needsAuth = {
-      status: "needs-auth",
-      transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn() },
-      tools: [{ name: "some_tool" }],
-    } as unknown as ServerConnection;
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => needsAuth),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => {}),
-    } as unknown as McpServerManager;
-
-    handle = await startUiServer({
-      serverName: "test-server",
-      toolName: "test_tool",
-      toolArgs: {},
-      resource: createMockResource(),
-      manager,
-      config: { mcpServers: { "test-server": { url: "https://api.example.com/mcp" } } },
-      consentManager: createMockConsentManager(),
-    });
-
-    const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
-      method: "POST",
-      body: { token: handle.sessionToken, params: { name: "some_tool", arguments: {} } },
-    });
-
+    handle = await startUiServer(fixture.options);
+    const res = await requestTool(handle);
     expect(res.status).toBe(401);
-    expect(res.body).toEqual({
-      ok: false,
-      error: expect.stringContaining('mcp({ action: "auth-start", server: "test-server" })'),
-    });
+    const guidance: unknown = expect.stringContaining(
+      'mcp({ action: "auth-start", server: "test-server" })',
+    );
+    expect(res.body).toEqual({ ok: false, error: guidance });
   });
 
   it("uses the supplied auth callback when recovery reconnect returns needs-auth", async () => {
-    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
+    const fixture = await setup();
+    const auth = await createOAuthRecoveryFixture("legacy", "test-server");
+    cleanups.push(auth.dispose);
+    auth.controls.protectedMethod = "initialize";
+    fixture.manager.setOAuthRuntime(auth.runtime);
+    fixture.config.mcpServers["test-server"] = auth.definition;
 
-    const stale = {
-      status: "connected",
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi.fn().mockRejectedValueOnce(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-      tools: [{ name: "some_tool" }],
-    } as unknown as ServerConnection;
-    const needsAuth = {
-      status: "needs-auth",
-      transport: { sessionId: "session-2" },
-      client: { callTool: vi.fn() },
-      tools: [{ name: "some_tool" }],
-    } as unknown as ServerConnection;
-    const fresh = {
-      status: "connected",
-      transport: { sessionId: "session-3" },
-      client: {
-        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "after auth" }] }),
-      },
-      tools: [{ name: "some_tool" }],
-    } as unknown as ServerConnection;
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(async () => needsAuth),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => {}),
-    } as unknown as McpServerManager;
-    const onNeedsAuth = vi.fn(async () => fresh);
-
-    handle = await startUiServer({
-      serverName: "test-server",
-      toolName: "test_tool",
-      toolArgs: {},
-      resource: createMockResource(),
-      manager,
-      config: { mcpServers: { "test-server": { url: "https://api.example.com/mcp" } } },
-      onNeedsAuth,
-      consentManager: createMockConsentManager(),
+    const onNeedsAuth = vi.fn<NonNullable<UiServerOptions["onNeedsAuth"]>>(async () => {
+      fixture.config.mcpServers["test-server"] = fixture.wire.definition();
+      fixture.wire.resultText = "after auth";
+      const needsAuth = fixture.manager.getConnection("test-server");
+      assert(needsAuth);
+      return fixture.manager.reconnect("test-server", fixture.wire.definition(), needsAuth);
     });
-
-    const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
-      method: "POST",
-      body: { token: handle.sessionToken, params: { name: "some_tool", arguments: {} } },
-    });
-
+    handle = await startUiServer({ ...fixture.options, onNeedsAuth });
+    const res = await requestTool(handle);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       ok: true,
       result: { content: [{ type: "text", text: "after auth" }] },
     });
     expect(onNeedsAuth).toHaveBeenCalledWith("test-server", undefined);
-    expect(fresh.client.callTool as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    expect(
+      fixture.wire.calls.filter(
+        (call) => call.method === "tools/call" && call.session === "session-2",
+      ),
+    ).toHaveLength(1);
   });
 
   it("runs without recovery (unchanged pre-existing behavior) when config is not supplied", async () => {
-    const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
-
-    const stale = {
-      status: "connected",
-      transport: { sessionId: "session-1" },
-      client: {
-        callTool: vi.fn().mockRejectedValue(
-          new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-            status: 404,
-          }),
-        ),
-      },
-      tools: [{ name: "some_tool" }],
-    } as unknown as ServerConnection;
-
-    const manager = {
-      getConnection: vi.fn(() => stale),
-      reconnect: vi.fn(),
-      touch: vi.fn(),
-      incrementInFlight: vi.fn(),
-      decrementInFlight: vi.fn(),
-      getRequestOptions: vi.fn(() => {}),
-    } as unknown as McpServerManager;
-
-    const options: UiServerOptions = {
-      serverName: "test-server",
-      toolName: "test_tool",
-      toolArgs: {},
-      resource: createMockResource(),
-      manager,
-      // no `config` — recovery must not be attempted
-      consentManager: createMockConsentManager(),
-    };
-
+    const fixture = await setup();
+    const { config: _config, ...options } = fixture.options;
     handle = await startUiServer(options);
-
-    const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
-      method: "POST",
-      body: { token: handle.sessionToken, params: { name: "some_tool", arguments: {} } },
-    });
-
+    const res = await requestTool(handle);
     expect(res.status).toBe(500);
-    expect(manager.reconnect).not.toHaveBeenCalled();
-    expect(stale.client.callTool as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    expect(fixture.reconnect).not.toHaveBeenCalled();
+    expect(fixture.callTool).toHaveBeenCalledTimes(1);
   });
 });

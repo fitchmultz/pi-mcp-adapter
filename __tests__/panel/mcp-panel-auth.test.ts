@@ -63,7 +63,14 @@ describe("mcp-panel auth actions", () => {
     };
     const callbacks = createCallbacks("needs-auth");
     const tui = { requestRender: vi.fn<() => void>() };
-    const panel = createMcpPanel(config, createCache(config), new Map(), callbacks, tui, noop);
+    const panel = createMcpPanel({
+      config,
+      cache: createCache(config),
+      provenance: new Map(),
+      callbacks,
+      tui,
+      done: noop,
+    });
 
     panel.handleInput("\r");
     await Promise.resolve();
@@ -81,14 +88,14 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("idle");
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map(),
+      cache: createCache(config),
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\x01");
     await Promise.resolve();
@@ -104,14 +111,14 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("disabled");
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map(),
+      cache: createCache(config),
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\x01");
     await Promise.resolve();
@@ -127,7 +134,14 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("needs-auth");
-    const panel = createMcpPanel(config, null, new Map(), callbacks, { requestRender: noop }, noop);
+    const panel = createMcpPanel({
+      config,
+      cache: null,
+      provenance: new Map(),
+      callbacks,
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\r");
     await Promise.resolve();
@@ -150,7 +164,14 @@ describe("mcp-panel auth actions", () => {
     const callbacks = createCallbacks("needs-auth");
     callbacks.reconnect = vi.fn<McpPanelCallbacks["reconnect"]>(async () => false);
     callbacks.getConnectionStatus = () => "needs-auth";
-    const panel = createMcpPanel(config, null, new Map(), callbacks, { requestRender: noop }, noop);
+    const panel = createMcpPanel({
+      config,
+      cache: null,
+      provenance: new Map(),
+      callbacks,
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\r");
     await Promise.resolve();
@@ -172,14 +193,14 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("idle");
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map(),
+      cache: createCache(config),
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\x12");
     await Promise.resolve();
@@ -200,14 +221,14 @@ describe("mcp-panel auth actions", () => {
       ok: false,
       message: "browser launch failed",
     }));
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map(),
+      cache: createCache(config),
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\r");
     await Promise.resolve();
@@ -232,7 +253,14 @@ describe("mcp-panel auth actions", () => {
       message: "browser \x9d8;;https://example.invalid/error\x1b\\launch\x9d8;;\x1b\\ failed",
     }));
     callbacks.getConnectionStatus = () => "needs-auth";
-    const panel = createMcpPanel(config, null, new Map(), callbacks, { requestRender: noop }, noop);
+    const panel = createMcpPanel({
+      config,
+      cache: null,
+      provenance: new Map(),
+      callbacks,
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\r");
     await Promise.resolve();
@@ -255,14 +283,14 @@ describe("mcp-panel auth actions", () => {
     const callbacks = createCallbacks("needs-auth");
     const auth = deferred<{ ok: boolean }>();
     callbacks.authenticate = vi.fn<McpPanelCallbacks["authenticate"]>(() => auth.promise);
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      createCache(config),
-      new Map(),
+      cache: createCache(config),
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-    );
+      tui: { requestRender: noop },
+      done: noop,
+    });
 
     panel.handleInput("\r");
     panel.handleInput("\r");
@@ -282,18 +310,18 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("needs-auth");
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      null,
-      new Map(),
+      cache: null,
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-      {
+      tui: { requestRender: noop },
+      done: noop,
+      options: {
         authOnly: true,
         noticeLines: ["Select an OAuth MCP server"],
       },
-    );
+    });
 
     const output = stripAnsi(panel.render(100).join("\n"));
     expect(output).toContain("MCP OAuth");
@@ -309,17 +337,17 @@ describe("mcp-panel auth actions", () => {
       },
     };
     const callbacks = createCallbacks("needs-auth");
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      null,
-      new Map(),
+      cache: null,
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-      {
+      tui: { requestRender: noop },
+      done: noop,
+      options: {
         authOnly: true,
       },
-    );
+    });
 
     panel.handleInput(" ");
 
@@ -336,17 +364,17 @@ describe("mcp-panel auth actions", () => {
     };
     const callbacks = createCallbacks("needs-auth");
     callbacks.canAuthenticate = () => true;
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      null,
-      new Map(),
+      cache: null,
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-      {
+      tui: { requestRender: noop },
+      done: noop,
+      options: {
         authOnly: true,
       },
-    );
+    });
 
     panel.handleInput("l");
     panel.handleInput("a");
@@ -367,17 +395,17 @@ describe("mcp-panel auth actions", () => {
     };
     const callbacks = createCallbacks("needs-auth");
     callbacks.canAuthenticate = () => true;
-    const panel = createMcpPanel(
+    const panel = createMcpPanel({
       config,
-      null,
-      new Map(),
+      cache: null,
+      provenance: new Map(),
       callbacks,
-      { requestRender: noop },
-      noop,
-      {
+      tui: { requestRender: noop },
+      done: noop,
+      options: {
         authOnly: true,
       },
-    );
+    });
 
     panel.handleInput("?");
     panel.handleInput("l");

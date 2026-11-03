@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,29 +50,7 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
     const keyctl = join(root, "keyctl");
     const helper = join(root, "keyring.cjs");
     writeFileSync(keyctl, '#!/bin/sh\nshift 2\nexec "$@"\n', { mode: 0o755 });
-    writeFileSync(
-      helper,
-      `
-const { readFileSync, writeFileSync } = require("node:fs");
-const request = JSON.parse(readFileSync(0, "utf8"));
-const path = process.env.FITCH_TEST_KEYRING;
-const entries = JSON.parse(readFileSync(path, "utf8"));
-const key = request.service + "\\0" + request.account;
-if (request.operation === "read") {
-  const value = entries[key];
-  process.stdout.write(JSON.stringify(value === undefined ? { ok: true, found: false } : { ok: true, found: true, value }));
-} else {
-  if (request.operation === "write") {
-    if (process.env.FITCH_TEST_FAIL_WRITE === "1") throw new Error("Fixture write failure");
-    entries[key] = request.payload;
-  }
-  else if (request.operation === "remove") delete entries[key];
-  else throw new Error("Unexpected keyring operation");
-  writeFileSync(path, JSON.stringify(entries));
-  process.stdout.write(JSON.stringify({ ok: true }));
-}
-`,
-    );
+    copyFileSync(new URL("../fixtures/file-keyring.cjs", import.meta.url), helper);
     writeFileSync(storePath, JSON.stringify({ [legacyKey]: JSON.stringify(legacyEntry) }));
     vi.stubEnv("PI_CODING_AGENT_DIR", root);
     vi.stubEnv("FITCH_TEST_KEYRING", storePath);
