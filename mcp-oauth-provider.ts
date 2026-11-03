@@ -10,10 +10,7 @@ import {
   UnauthorizedError,
   OAuthError,
   OAuthErrorCode,
-  createPrivateKeyJwtAuth,
-  discoverAndRequestJwtAuthGrant,
   type FetchLike,
-  validateClientMetadataUrl,
   type AddClientAuthentication,
   type OAuthClientProvider,
   type OAuthClientInformationContext,
@@ -35,196 +32,39 @@ import {
   type StoredTokens,
   type StoredClientInfo,
 } from "./mcp-auth.ts";
-import { resolveCommandSecret } from "./utils.ts";
 import {
-  isNonInteractiveOAuth,
-  type OAuthPrivateKeyJwtConfig,
-  type OAuthCrossAppAccessConfig,
-} from "./types.ts";
+  privateKeyAuthentication,
+  secretAuthentication,
+  requestCrossAppGrant,
+} from "./mcp-oauth-client-auth.ts";
+import { resolveCommandSecret } from "./utils.ts";
+import { isNonInteractiveOAuth } from "./types.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { getOAuthCallbackPath, getOAuthCallbackPort } from "./mcp-oauth-callback-config.ts";
-import sharedClientMetadata from "./docs/client-metadata.json" with { type: "json" };
-
-/** Validate explicit document URLs without echoing possible credentials in errors. */
-export function validateOAuthClientMetadataUrl(value: string | false | undefined): void {
-  if (value === undefined || value === false) {
-    return;
-  }
-  try {
-    if (typeof value !== "string" || !value) {
-      throw new Error();
-    }
-    validateClientMetadataUrl(value);
-    const url = new URL(value);
-    const raw = value.match(/^[^:]+:[/\\]*([^/\\?#]*)([^?#]*)/);
-    if (
-      url.username ||
-      url.password ||
-      raw?.[1]?.includes("@") ||
-      value.includes("#") ||
-      /[/\\](?:\.|%2e){1,2}(?=[/\\]|$)/i.test(raw?.[2] ?? "")
-    ) {
-      throw new Error();
-    }
-  } catch {
-    throw new Error(
-      "OAuth clientMetadataUrl must be an HTTPS URL with a non-root path and no userinfo, fragment or dot segments",
-    );
-  }
-}
-
-/** Only the port may differ; keep raw host, path and query spelling exact. */
-export function loopbackRedirectsMatch(first: string, second: unknown): boolean {
-  if (typeof second !== "string") {
-    return false;
-  }
-  const port = /^([^:/?#]+:\/\/[^/\\?#@]+):\d+(?=[/\\?#]|$)/;
-  if (!port.test(first) || !port.test(second) || first.includes("#") || second.includes("#")) {
-    return false;
-  }
-  try {
-    return (
-      [new URL(first), new URL(second)].every(
-        (url) =>
-          url.protocol === "http:" &&
-          ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
-          Number(url.port) > 0,
-      ) && first.replace(port, "$1") === second.replace(port, "$1")
-    );
-  } catch {
-    return false;
-  }
-}
-
-export function issuersMatch(first: string, second: string): boolean {
-  return (
-    first === second ||
-    (first.endsWith("/") && first.slice(0, -1) === second) ||
-    (second.endsWith("/") && second.slice(0, -1) === first)
-  );
-}
-
-/** Configuration options for OAuth */
-export interface McpOAuthConfig {
-  skipIssuerMetadataValidation?: boolean;
-  grantType?: "authorization_code" | "client_credentials";
-  clientId?: string;
-  clientSecret?: string;
-  privateKeyJwt?: OAuthPrivateKeyJwtConfig;
-  crossAppAccess?: OAuthCrossAppAccessConfig;
-  scope?: string;
-  authorizationParams?: Record<string, string>;
-  redirectUri?: string;
-  clientName?: string;
-  clientUri?: string;
-  /** Custom client document URL; false disables automatic CIMD for new registrations. */
-  clientMetadataUrl?: string | false;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-/** Validate shapes and method conflicts without resolving or disclosing key sources. */
-export function validateOAuthPrivateKeyJwt(config: McpOAuthConfig): void {
-  const jwt = config.privateKeyJwt;
-  if (jwt === undefined) {
-    return;
-  }
-  if (!isRecord(jwt)) {
-    throw new Error("OAuth privateKeyJwt must be an object");
-  }
-  if (!(typeof jwt.privateKey === "string" ? jwt.privateKey.trim() : isRecord(jwt.privateKey))) {
-    throw new Error("OAuth privateKeyJwt.privateKey must be a nonempty string or JWK object");
-  }
-  if (
-    typeof jwt.algorithm !== "string" ||
-    !jwt.algorithm.trim() ||
-    /^(?:HS|none$)/i.test(jwt.algorithm)
-  ) {
-    throw new Error("OAuth privateKeyJwt.algorithm must be an asymmetric JOSE algorithm");
-  }
-  if (jwt.audience !== undefined && (typeof jwt.audience !== "string" || !jwt.audience.trim())) {
-    throw new Error("OAuth privateKeyJwt.audience must be a nonempty string");
-  }
-  if (
-    jwt.lifetimeSeconds !== undefined &&
-    (!Number.isSafeInteger(jwt.lifetimeSeconds) || jwt.lifetimeSeconds <= 0)
-  ) {
-    throw new Error("OAuth privateKeyJwt.lifetimeSeconds must be a positive integer");
-  }
-  if (jwt.claims !== undefined && !isRecord(jwt.claims)) {
-    throw new Error("OAuth privateKeyJwt.claims must be an object");
-  }
-  if (config.clientSecret !== undefined) {
-    throw new Error("OAuth privateKeyJwt cannot be combined with clientSecret");
-  }
-  if (
-    !config.clientId &&
-    (typeof config.clientMetadataUrl !== "string" ||
-      config.clientMetadataUrl === sharedClientMetadata.client_id)
-  ) {
-    throw new Error(
-      "OAuth privateKeyJwt requires a configured clientId or custom clientMetadataUrl, not the shared browser identity",
-    );
-  }
-}
-
-export function validateOAuthCrossAppAccess(config: McpOAuthConfig): void {
-  const crossApp = config.crossAppAccess;
-  if (crossApp === undefined) {
-    return;
-  }
-  if (!isRecord(crossApp)) {
-    throw new Error("OAuth crossAppAccess must be an object");
-  }
-  for (const field of ["idpUrl", "clientId", "idToken", "clientSecret"] as const) {
-    if (field === "clientSecret" && crossApp[field] === undefined) {
-      continue;
-    }
-    if (typeof crossApp[field] !== "string" || !crossApp[field].trim()) {
-      throw new Error(`OAuth crossAppAccess.${field} must be a nonempty string`);
-    }
-  }
-  if (config.grantType !== undefined) {
-    throw new Error("OAuth crossAppAccess selects the JWT-bearer grant; omit grantType");
-  }
-  if ("audience" in crossApp || "resource" in crossApp) {
-    throw new Error(
-      "OAuth crossAppAccess uses the discovered MCP issuer and resource; overrides are not supported",
-    );
-  }
-}
-
-const reservedAuthorizationParams = new Set([
-  "client_id",
-  "code_challenge",
-  "code_challenge_method",
-  "redirect_uri",
-  "resource",
-  "response_type",
-  "scope",
-  "state",
-]);
-
-function addAuthorizationParams(
-  authorizationUrl: URL,
-  params: Record<string, string> | undefined,
-): URL {
-  if (!params) {
-    return authorizationUrl;
-  }
-  const nextUrl = new URL(authorizationUrl.toString());
-  for (const [key, value] of Object.entries(params)) {
-    if (reservedAuthorizationParams.has(key) || nextUrl.searchParams.has(key)) {
-      throw new Error(
-        `OAuth authorizationParams.${key} cannot override an authorization flow parameter`,
-      );
-    }
-    nextUrl.searchParams.set(key, value);
-  }
-  return nextUrl;
-}
+import {
+  validateOAuthClientMetadataUrl,
+  validateOAuthPrivateKeyJwt,
+  validateOAuthCrossAppAccess,
+  issuersMatch,
+  selectClientMetadataUrl,
+  configuredClientMetadata,
+  addAuthorizationParams,
+  type McpOAuthConfig,
+} from "./mcp-oauth-config.ts";
+export {
+  validateOAuthClientMetadataUrl,
+  validateOAuthPrivateKeyJwt,
+  validateOAuthCrossAppAccess,
+  issuersMatch,
+  loopbackRedirectsMatch,
+  type McpOAuthConfig,
+} from "./mcp-oauth-config.ts";
+import {
+  canUseStoredClient,
+  storedClientInformation,
+  clientRegistration,
+  storedTokenInformation,
+} from "./mcp-oauth-registration.ts";
 
 /** Callbacks for OAuth flow interactions */
 export interface McpOAuthCallbacks {
@@ -273,27 +113,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
     validateOAuthClientMetadataUrl(config.clientMetadataUrl);
     validateOAuthPrivateKeyJwt(config);
     validateOAuthCrossAppAccess(config);
-    this.lifetimeSignal = combineAbortSignals(runtimeSignal, this.controller.signal)!;
+    this.lifetimeSignal =
+      combineAbortSignals(runtimeSignal, this.controller.signal) ?? this.controller.signal;
     this.flowState = initialState;
     this.redirectUrlSnapshot = isNonInteractiveOAuth(config)
       ? undefined
       : (config.redirectUri ??
         `http://localhost:${getOAuthCallbackPort()}${getOAuthCallbackPath()}`);
-    if (config.clientMetadataUrl !== false && config.clientSecret === undefined) {
-      if (config.clientMetadataUrl && config.clientMetadataUrl !== sharedClientMetadata.client_id) {
-        this.clientMetadataUrl = config.clientMetadataUrl;
-      } else if (
-        !this.isNonInteractive &&
-        !config.privateKeyJwt &&
-        (config.clientName === undefined ||
-          config.clientName === sharedClientMetadata.client_name) &&
-        (config.clientUri === undefined || config.clientUri === sharedClientMetadata.client_uri) &&
-        sharedClientMetadata.redirect_uris.some((uri) =>
-          loopbackRedirectsMatch(uri, this.redirectUrl),
-        )
-      ) {
-        this.clientMetadataUrl = sharedClientMetadata.client_id;
-      }
+    const metadataUrl = selectClientMetadataUrl(config, this.redirectUrl);
+    if (metadataUrl !== undefined) {
+      this.clientMetadataUrl = metadataUrl;
     }
   }
 
@@ -309,7 +138,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   get signal(): AbortSignal {
-    return combineAbortSignals(this.lifetimeSignal, this.requestSignals.getStore())!;
+    return (
+      combineAbortSignals(this.lifetimeSignal, this.requestSignals.getStore()) ??
+      this.lifetimeSignal
+    );
   }
 
   runWithSignal<T>(signal: AbortSignal | undefined, operation: () => T): T {
@@ -334,7 +166,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
         `OAuth authorization server issuer changed for ${this.serverName}; clear credentials before authenticating again`,
       );
     }
-    if (!entry || !issuer) {
+    if (!entry || issuer === undefined || issuer === "") {
       return;
     }
 
@@ -366,42 +198,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Describes this client to the OAuth authorization server.
    */
   get clientMetadata(): OAuthClientMetadata {
-    if (this.isNonInteractive) {
-      return {
-        client_name: this.config.clientName ?? "Pi Coding Agent",
-        client_uri: this.config.clientUri ?? "https://github.com/fitchmultz/pi-mcp-adapter",
-        redirect_uris: [],
-        grant_types: [
-          this.config.crossAppAccess
-            ? "urn:ietf:params:oauth:grant-type:jwt-bearer"
-            : "client_credentials",
-        ],
-        token_endpoint_auth_method: this.config.privateKeyJwt
-          ? "private_key_jwt"
-          : this.config.clientSecret
-            ? "client_secret_post"
-            : "none",
-      };
-    }
-
-    const redirectUrl = this.redirectUrl;
-    if (!redirectUrl) {
-      throw new Error("redirectUrl is required for authorization_code flow");
-    }
-
-    return {
-      redirect_uris: [redirectUrl],
-      client_name: this.config.clientName ?? "Pi Coding Agent",
-      client_uri: this.config.clientUri ?? "https://github.com/fitchmultz/pi-mcp-adapter",
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: this.config.privateKeyJwt
-        ? "private_key_jwt"
-        : this.config.clientSecret
-          ? "client_secret_post"
-          : "none",
-      ...(this.config.scope !== undefined ? { scope: this.config.scope } : {}),
-    };
+    return configuredClientMetadata(this.config, this.redirectUrl);
   }
 
   /**
@@ -412,7 +209,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
     context?: OAuthClientInformationContext,
   ): Promise<StoredOAuthClientInformation | undefined> {
     const issuer = context?.issuer ?? this.discoveredIssuer;
-    const stored = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions);
+    const stored = await Promise.resolve(
+      getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions),
+    );
     this.assertStoredIssuerBindings(stored, issuer);
     // Rejected discovery must not become the runtime's issuer binding.
     if (this.flowDiscoveryState) {
@@ -421,99 +220,76 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
     // Check config first (pre-registered client). Store only its issuer binding.
     // The configured secret stays in config and never enters the credential store.
-    if (this.config.clientId) {
-      const storedClient =
-        stored?.clientInfo?.clientId === this.config.clientId ? stored.clientInfo : undefined;
-      if (
-        issuer &&
-        (storedClient?.issuer !== issuer || storedClient.configPreRegistered !== true)
-      ) {
-        updateClientInfo(
-          this.serverName,
-          { clientId: this.config.clientId, issuer, configPreRegistered: true },
-          this.serverUrl,
-          this.storageOptions,
-        );
-      }
-      const clientSecret = this.config.clientSecret?.startsWith("!")
-        ? resolveCommandSecret(
-            this.config.clientSecret,
-            `MCP server "${this.serverName}" OAuth clientSecret`,
-          )
-        : this.config.clientSecret;
-      return {
-        client_id: this.config.clientId,
-        client_secret: clientSecret,
-        ...(issuer !== undefined ? { issuer } : {}),
-      };
+    if (this.config.clientId !== undefined && this.config.clientId !== "") {
+      return this.configuredClientInformation(this.config.clientId, issuer, stored);
     }
 
+    return this.savedClientInformation(stored, issuer);
+  }
+
+  private savedClientInformation(
+    stored: AuthEntry | undefined,
+    issuer: string | undefined,
+  ): StoredOAuthClientInformation | undefined {
     // Keep client registration associated with this in-flight flow even if
     // another runtime writes the shared persistent entry for the same name.
     const clientInfo = this.flowClientInfo ?? stored?.clientInfo;
     if (clientInfo) {
-      // A stored SEP-2352 issuer stub for a config-pre-registered client
-      // (identified by the explicit marker, or by the legacy stub shape of
-      // {clientId, issuer} with no registration metadata) is only meaningful
-      // when the config supplies the matching client secret. Since we reach
-      // this branch only when config.clientId is absent, serving the stub
-      // would let a token refresh go out with a client_id but no secret,
-      // causing invalid_client and credential invalidation. Return undefined
-      // so callers treat this as "no client info".
-      const isConfigStub =
-        clientInfo.configPreRegistered === true ||
-        (clientInfo.clientSecret === undefined &&
-          clientInfo.clientIdIssuedAt === undefined &&
-          clientInfo.clientSecretExpiresAt === undefined &&
-          clientInfo.redirectUris === undefined);
-      if (isConfigStub) {
+      if (!canUseStoredClient(clientInfo, this.config, issuer)) {
         return undefined;
       }
-      if (
-        (this.config.privateKeyJwt || this.isNonInteractive) &&
-        clientInfo.registrationType === "cimd" &&
-        clientInfo.clientId === sharedClientMetadata.client_id
-      ) {
-        throw new OAuthError(
-          OAuthErrorCode.InvalidRequest,
-          `OAuth ${this.config.privateKeyJwt ? "privateKeyJwt" : this.config.crossAppAccess ? "crossAppAccess" : "client_credentials"} cannot use the saved shared browser registration; configure its own clientId or replace that login`,
-        );
-      }
-      // Check if client secret has expired
-      if (
-        clientInfo.clientSecretExpiresAt &&
-        clientInfo.clientSecretExpiresAt < Date.now() / 1000
-      ) {
-        return undefined;
-      }
-      if (issuer && clientInfo.issuer && !issuersMatch(clientInfo.issuer, issuer)) {
-        return undefined;
-      }
-      if (issuer && clientInfo.issuer === undefined) {
+      if (issuer !== undefined && issuer !== "" && clientInfo.issuer === undefined) {
         clientInfo.issuer = issuer;
         this.flowClientInfo = clientInfo;
         updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions);
       }
       // Return all registration metadata and the local issuer extension.
       // Keep the SDK's view and the stored issuer binding consistent.
-      return {
-        client_id: clientInfo.clientId,
-        client_secret: clientInfo.clientSecret,
-        ...(clientInfo.clientIdIssuedAt !== undefined
-          ? { client_id_issued_at: clientInfo.clientIdIssuedAt }
-          : {}),
-        ...(clientInfo.clientSecretExpiresAt !== undefined
-          ? { client_secret_expires_at: clientInfo.clientSecretExpiresAt }
-          : {}),
-        ...(clientInfo.redirectUris !== undefined
-          ? { redirect_uris: clientInfo.redirectUris }
-          : {}),
-        ...(clientInfo.issuer !== undefined ? { issuer: clientInfo.issuer } : {}),
-      };
+      return storedClientInformation(clientInfo);
     }
 
     // No client info or URL changed - will trigger dynamic registration
     return undefined;
+  }
+
+  private configuredClientInformation(
+    clientId: string,
+    issuer: string | undefined,
+    stored: AuthEntry | undefined,
+  ): StoredOAuthClientInformation {
+    this.bindConfiguredClient(clientId, issuer, stored);
+    const clientSecret =
+      this.config.clientSecret?.startsWith("!") === true
+        ? resolveCommandSecret(
+            this.config.clientSecret,
+            `MCP server "${this.serverName}" OAuth clientSecret`,
+          )
+        : this.config.clientSecret;
+    return {
+      client_id: clientId,
+      client_secret: clientSecret,
+      ...(issuer !== undefined ? { issuer } : {}),
+    };
+  }
+
+  private bindConfiguredClient(
+    clientId: string,
+    issuer: string | undefined,
+    stored: AuthEntry | undefined,
+  ): void {
+    const storedClient = stored?.clientInfo?.clientId === clientId ? stored.clientInfo : undefined;
+    if (
+      issuer !== undefined &&
+      issuer !== "" &&
+      (storedClient?.issuer !== issuer || storedClient.configPreRegistered !== true)
+    ) {
+      updateClientInfo(
+        this.serverName,
+        { clientId: clientId, issuer, configPreRegistered: true },
+        this.serverUrl,
+        this.storageOptions,
+      );
+    }
   }
 
   /**
@@ -525,7 +301,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
   ): Promise<void> {
     this.throwIfInactive();
     const issuer = context?.issuer ?? this.discoveredIssuer ?? info.issuer;
-    if (this.config.clientId && info.client_id === this.config.clientId) {
+    if (
+      this.config.clientId !== undefined &&
+      this.config.clientId !== "" &&
+      info.client_id === this.config.clientId
+    ) {
       updateClientInfo(
         this.serverName,
         {
@@ -539,28 +319,14 @@ export class McpOAuthProvider implements OAuthClientProvider {
       return;
     }
 
-    const redirectUris =
-      ("redirect_uris" in info ? info.redirect_uris : undefined) ??
-      (this.redirectUrl ? [this.redirectUrl] : []);
-    const clientInfo: StoredClientInfo = {
-      clientId: info.client_id,
-      ...(info.client_secret !== undefined ? { clientSecret: info.client_secret } : {}),
-      ...(info.client_id_issued_at !== undefined
-        ? { clientIdIssuedAt: info.client_id_issued_at }
-        : {}),
-      ...(info.client_secret_expires_at !== undefined
-        ? { clientSecretExpiresAt: info.client_secret_expires_at }
-        : {}),
-      redirectUris,
-      // Native CIMD saves only client_id + issuer; DCR's full schema requires redirect_uris.
-      ...(info.client_id === this.clientMetadataUrl &&
-      !("redirect_uris" in info) &&
-      this.flowDiscoveryState?.authorizationServerMetadata
-        ?.client_id_metadata_document_supported === true
-        ? { registrationType: "cimd" as const }
-        : {}),
-      ...(issuer !== undefined ? { issuer } : {}),
-    };
+    const clientInfo = clientRegistration(info, {
+      issuer,
+      redirectUrl: this.redirectUrl,
+      clientMetadataUrl: this.clientMetadataUrl,
+      documentSupported:
+        this.flowDiscoveryState?.authorizationServerMetadata
+          ?.client_id_metadata_document_supported === true,
+    });
     this.flowClientInfo = clientInfo;
     updateClientInfo(this.serverName, clientInfo, this.serverUrl, this.storageOptions);
   }
@@ -571,27 +337,20 @@ export class McpOAuthProvider implements OAuthClientProvider {
    */
   async tokens(context?: OAuthClientInformationContext): Promise<StoredOAuthTokens | undefined> {
     // Use getAuthForUrl to validate tokens are for the current server URL.
-    const entry = await getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions);
+    const entry = await Promise.resolve(
+      getAuthForUrl(this.serverName, this.serverUrl, this.storageOptions),
+    );
     if (!entry?.tokens) {
       return undefined;
     }
     const issuer = context?.issuer ?? this.discoveredIssuer;
     this.assertStoredIssuerBindings(entry, issuer);
-    if (issuer && entry.tokens.issuer === undefined) {
+    if (issuer !== undefined && issuer !== "" && entry.tokens.issuer === undefined) {
       entry.tokens.issuer = issuer;
       updateTokens(this.serverName, entry.tokens, this.serverUrl, this.storageOptions);
     }
 
-    return {
-      access_token: entry.tokens.accessToken,
-      token_type: "Bearer",
-      refresh_token: entry.tokens.refreshToken,
-      expires_in: entry.tokens.expiresAt
-        ? Math.max(0, Math.floor(entry.tokens.expiresAt - Date.now() / 1000))
-        : undefined,
-      scope: entry.tokens.scope,
-      ...(entry.tokens.issuer !== undefined ? { issuer: entry.tokens.issuer } : {}),
-    };
+    return storedTokenInformation(entry.tokens);
   }
 
   /**
@@ -640,7 +399,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     }
     // No flow-local state means we're on the post-refresh authorize fallback.
     this.throwIfInactive();
-    if (!this.flowState) {
+    if (this.flowState === undefined || this.flowState === "") {
       throw new UnauthorizedError(`Re-authentication required for MCP server: ${this.serverName}`);
     }
     // URL is passed to callback, not logged (may contain sensitive params)
@@ -666,7 +425,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       throw new Error("codeVerifier is not used for noninteractive OAuth flows");
     }
     this.throwIfInactive();
-    if (!this.flowCodeVerifier) {
+    if (this.flowCodeVerifier === undefined || this.flowCodeVerifier === "") {
       throw new Error(`No code verifier saved for MCP server: ${this.serverName}`);
     }
     return this.flowCodeVerifier;
@@ -696,7 +455,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   readonly fetch: FetchLike = (input, init) =>
     fetch(input, {
       ...init,
-      signal: combineAbortSignals(init?.signal ?? undefined, this.signal)!,
+      signal: combineAbortSignals(init?.signal ?? undefined, this.signal) ?? this.signal,
     });
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
@@ -721,7 +480,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       throw new Error("state is not used for noninteractive OAuth flows");
     }
     this.throwIfInactive();
-    if (!this.flowState) {
+    if (this.flowState === undefined || this.flowState === "") {
       throw new UnauthorizedError(`Re-authentication required for MCP server: ${this.serverName}`);
     }
     return this.flowState;
@@ -769,16 +528,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
    */
   addClientAuthentication: AddClientAuthentication = async (headers, params, url, metadata) => {
     this.throwIfInactive();
-    if (
-      params.get("grant_type") === "authorization_code" &&
-      !params.has("scope") &&
-      this.config.scope
-    ) {
-      params.set("scope", this.config.scope);
-    }
+    addConfiguredScope(params, this.config);
 
     const clientInfo = await this.clientInformation(
-      this.config.privateKeyJwt && metadata?.issuer ? { issuer: metadata.issuer } : undefined,
+      this.config.privateKeyJwt && metadata?.issuer !== undefined && metadata.issuer !== ""
+        ? { issuer: metadata.issuer }
+        : undefined,
     );
     this.throwIfInactive();
     if (!clientInfo) {
@@ -787,119 +542,36 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
     const jwt = this.config.privateKeyJwt;
     if (jwt) {
-      if (clientInfo.client_secret !== undefined) {
-        throw new OAuthError(
-          OAuthErrorCode.InvalidRequest,
-          "OAuth privateKeyJwt cannot use a shared-secret client",
-        );
-      }
-      let privateKey = jwt.privateKey;
-      if (typeof privateKey === "string") {
-        try {
-          privateKey = resolveCommandSecret(privateKey, "OAuth privateKeyJwt.privateKey");
-        } catch (error) {
-          // This primitive's errors contain only the outcome, never command text or output.
-          throw new OAuthError(OAuthErrorCode.InvalidRequest, (error as Error).message);
-        }
-      }
-      try {
-        if (typeof privateKey === "string" && privateKey.trimStart().startsWith("{")) {
-          privateKey = JSON.parse(privateKey);
-        }
-        const { algorithm, ...options } = jwt;
-        await createPrivateKeyJwtAuth({
-          ...options,
-          privateKey,
-          alg: algorithm,
-          issuer: clientInfo.client_id,
-          subject: clientInfo.client_id,
-        })(headers, params, url, metadata);
-      } catch {
-        // Ordinary errors fall through into browser consent on native refresh; invalid_client erases credentials.
-        throw new OAuthError(
-          OAuthErrorCode.InvalidRequest,
-          "OAuth privateKeyJwt could not sign an assertion; check the private key and algorithm",
-        );
-      }
+      await privateKeyAuthentication(jwt, clientInfo)(headers, params, url, metadata);
       this.throwIfInactive();
       params.set("client_id", clientInfo.client_id);
       return;
     }
-
-    const supportedMethods = metadata?.token_endpoint_auth_methods_supported ?? [];
-    const hasClientSecret = clientInfo.client_secret !== undefined;
-    let authMethod: "client_secret_basic" | "client_secret_post" | "none";
-
-    if (supportedMethods.length === 0) {
-      authMethod = hasClientSecret ? "client_secret_post" : "none";
-    } else if (hasClientSecret && supportedMethods.includes("client_secret_basic")) {
-      authMethod = "client_secret_basic";
-    } else if (hasClientSecret && supportedMethods.includes("client_secret_post")) {
-      authMethod = "client_secret_post";
-    } else if (supportedMethods.includes("none")) {
-      authMethod = "none";
-    } else {
-      authMethod = hasClientSecret ? "client_secret_post" : "none";
-    }
-
-    if (authMethod === "client_secret_basic") {
-      if (!clientInfo.client_secret) {
-        throw new Error("client_secret_basic authentication requires a client_secret");
-      }
-      headers.set(
-        "Authorization",
-        `Basic ${Buffer.from(`${clientInfo.client_id}:${clientInfo.client_secret}`).toString("base64")}`,
-      );
-      return;
-    }
-
-    if (!params.has("client_id")) {
-      params.set("client_id", clientInfo.client_id);
-    }
-    if (
-      authMethod === "client_secret_post" &&
-      clientInfo.client_secret &&
-      !params.has("client_secret")
-    ) {
-      params.set("client_secret", clientInfo.client_secret);
-    }
+    await secretAuthentication(clientInfo, metadata)(headers, params, url, metadata);
   };
 
   private async prepareCrossAppRequest(scope?: string): Promise<URLSearchParams> {
     this.throwIfInactive();
     const audience = this.flowAuthorizationServerUrl;
     const resource = this.flowResourceUrl;
-    if (!audience || !resource) {
+    if (audience === undefined || audience === "" || resource === undefined || resource === "") {
       throw new OAuthError(
         OAuthErrorCode.InvalidRequest,
         "OAuth crossAppAccess requires discovered MCP authorization server and protected resource metadata",
       );
     }
-    const config = this.config.crossAppAccess!;
+    const config = this.config.crossAppAccess;
+    if (config === undefined) {
+      throw new Error("OAuth crossAppAccess is not configured");
+    }
     try {
-      const result = await discoverAndRequestJwtAuthGrant({
-        idpUrl: resolveCommandSecret(config.idpUrl, "OAuth crossAppAccess.idpUrl"),
-        clientId: resolveCommandSecret(config.clientId, "OAuth crossAppAccess.clientId"),
-        idToken: resolveCommandSecret(config.idToken, "OAuth crossAppAccess.idToken"),
-        ...(config.clientSecret !== undefined
-          ? {
-              clientSecret: resolveCommandSecret(
-                config.clientSecret,
-                "OAuth crossAppAccess.clientSecret",
-              ),
-            }
-          : {}),
-        audience,
-        resource,
-        ...(scope ? { scope } : {}),
-        fetchFn: this.fetch,
-      });
+      const result = await requestCrossAppGrant(config, { audience, resource, scope }, this.fetch);
       this.throwIfInactive();
       const params = new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
         assertion: result.jwtAuthGrant,
       });
-      if (scope) {
+      if (scope !== undefined && scope !== "") {
         params.set("scope", scope);
       }
       return params;
@@ -923,10 +595,21 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
     const params = new URLSearchParams({ grant_type: "client_credentials" });
     const requestedScope = scope ?? this.config.scope;
-    if (requestedScope) {
+    if (requestedScope !== undefined && requestedScope !== "") {
       params.set("scope", requestedScope);
     }
     return params;
+  }
+}
+
+function addConfiguredScope(params: URLSearchParams, config: McpOAuthConfig): void {
+  if (
+    params.get("grant_type") === "authorization_code" &&
+    !params.has("scope") &&
+    config.scope !== undefined &&
+    config.scope !== ""
+  ) {
+    params.set("scope", config.scope);
   }
 }
 
