@@ -44,7 +44,7 @@
     "lint:conformance": "oxlint --deny-warnings conformance",
     "lint:consumer-tooling": "oxlint --deny-warnings scripts/compat-host.mjs scripts/compat-package-smoke.mjs scripts/compat-consumer-results.mjs scripts/compat-cli-observer.ts scripts/compat-native-tools.mjs scripts/native-compat",
     "lint:prompts": "oxlint --deny-warnings __tests__/prompts.test.ts __tests__/prompts-sdk-integration.test.ts __tests__/test-state.ts __tests__/test-extension-context.ts",
-    "lint:runtime-tests": "oxlint --deny-warnings __tests__/runtime",
+    "lint:runtime-tests": "oxlint --deny-warnings __tests__/runtime __tests__/server-manager-stderr-capture.test.ts __tests__/server-manager-runtime-owner.test.ts __tests__/server-manager-reconnect.test.ts __tests__/fixtures/strict-manager-boundaries-http.ts __tests__/fixtures/strict-manager-boundaries-sdk.ts __tests__/fixtures/strict-manager-boundaries-stdio.ts",
     "lint:tracing": "oxlint --deny-warnings mcp-trace.ts",
     "lint:core-runtime": "oxlint --deny-warnings abort.ts agent-dir.ts client-operations.ts error-signal.ts legacy-migration.ts logger.ts mcp-oauth-callback-config.ts onboarding-state.ts panel-keys.ts search-ranking.ts unix-socket-transport.ts",
     "lint:sampling": "oxlint --deny-warnings sampling-handler.ts",
