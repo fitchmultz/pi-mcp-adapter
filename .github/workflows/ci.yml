@@ -219,7 +219,7 @@ jobs:
           retention-days: 3
       - name: Interactive visualizer
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.example-build.outcome == 'success' }}
-        run: npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts
+        run: npm exec -- vitest run __tests__/interactive-visualizer-*.test.ts
       - name: Protocol conformance
         if: ${{ !cancelled() && steps.host.outcome == 'success' }}
         run: npm run test:conformance

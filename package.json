@@ -82,6 +82,7 @@
     "lint:ui-host-tests": "oxlint --deny-warnings __tests__/ui-host __tests__/ui-host-lifecycle.test.ts __tests__/ui-integration.test.ts __tests__/ui-resource-handler.test.ts __tests__/ui-server-session-recovery.test.ts __tests__/ui-server.test.ts __tests__/ui-streaming.test.ts __tests__/ui-viewer-none.test.ts __tests__/fixtures/strict-ui-boundaries*.ts __tests__/fixtures/host-*.ts",
     "lint:panel-tests": "oxlint --deny-warnings __tests__/panel",
     "lint:panel-runtime": "oxlint --deny-warnings commands.ts mcp-*-commands.ts mcp-panel*.ts mcp-setup-*.ts mcp-status*.ts __tests__/mcp-status.test.ts __tests__/panel __tests__/auth/commands-auth.test.ts __tests__/index-lifecycle.test.ts __tests__/fixtures/panel-host.ts __tests__/fixtures/panel-native-lifecycle.ts __tests__/fixtures/extension-lifecycle.ts __tests__/test-state.ts __tests__/test-extension-context.ts",
+    "lint:example-runtime": "oxlint --deny-warnings examples/interactive-visualizer __tests__/interactive-visualizer-*.test.ts __tests__/fixtures/interactive-visualizer-*.mjs",
     "lint:agent": "oxlint --deny-warnings --format=agent .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt --write .",
