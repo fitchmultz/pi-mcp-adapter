@@ -34,7 +34,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-3003: Missing host theme\n## QX-3004: Native execute callback\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -750,6 +750,70 @@ const positionalSite = {
   operation: positionalOperation,
 };
 
+const themeDirective =
+  "// oxlint-disable-next-line typescript/no-unnecessary-condition -- QX-3003: JavaScript hosts can omit the theme.";
+const themeOperation = 'if (ui.theme === undefined) {\nreturn "status";\n}';
+const themeSource = [
+  'import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";',
+  "export function forward(ui: ExtensionUIContext): string {",
+  themeDirective,
+  themeOperation,
+  'return ui.theme.fg("accent", "status");',
+  "}",
+  "",
+].join("\n");
+const executeDirective =
+  "// oxlint-disable-next-line eslint/max-params -- QX-3004: preserve Pi's five native callback positions.";
+const executeOperation = [
+  "async function nativeExecute(toolCallId, params, signal, _onUpdate, ctx) {",
+  'return { content: [{ type: "text", text: `${toolCallId}:${params.text}:${ctx.cwd}:${signal?.aborted === true}` }], details: {} };',
+  "}",
+].join("\n");
+const executeSource = [
+  'import type { HostToolExecute } from "./adapter/host-contract.ts";',
+  "export const execute: HostToolExecute<{ text: string }> =",
+  executeDirective,
+  `${executeOperation};`,
+  "",
+].join("\n");
+const hostCases = [
+  {
+    name: "missing native theme",
+    source: themeSource,
+    directive: themeDirective,
+    operation: themeOperation,
+    replacement: themeOperation.replace("=== undefined", "!== undefined"),
+    authorized: {
+      ...site,
+      id: "QX-3003",
+      rule: "typescript/no-unnecessary-condition",
+      nodeType: "IfStatement",
+      path: ["body", "body", 0],
+      operation: themeOperation,
+    },
+    neighbor: `${themeSource}export function unrelated(ui: ExtensionUIContext): boolean {\nreturn ui.theme === undefined;\n}\n`,
+    diagnostic: ["forward.ts:10:", "[Error/typescript(no-unnecessary-condition)]"],
+  },
+  {
+    name: "native Pi execute callback",
+    source: executeSource,
+    directive: executeDirective,
+    operation: executeOperation,
+    replacement: executeOperation.replace("nativeExecute", "localExecute"),
+    authorized: {
+      ...site,
+      id: "QX-3004",
+      rule: "eslint/max-params",
+      scope: { type: "FunctionExpression", name: "nativeExecute" },
+      nodeType: "FunctionExpression",
+      path: [],
+      operation: executeOperation,
+    },
+    neighbor: `${executeSource}export function unrelated(a: number, b: number, c: number, d: number, e: number): number {\nreturn a + b + c + d + e;\n}\n`,
+    diagnostic: ["forward.ts:7:", "[Error/eslint(max-params)]"],
+  },
+];
+
 describe("operation-bound exceptions", () => {
   it("accepts the exact published predicate directive", () => {
     const accepted = checkSource("forward.ts", positionalSource, [positionalSite]);
@@ -833,6 +897,7 @@ describe("operation-bound exceptions", () => {
 
   it.each([
     ...functionCases,
+    ...hostCases,
     {
       name: "native tool execute callback",
       source: directCallbackSource,
@@ -1150,6 +1215,31 @@ describe("operation-bound exceptions", () => {
     expect(native.stdout + native.stderr).toContain(
       "Unused oxlint-disable directive (no problems were reported). [Error]",
     );
+  });
+
+  it.each(hostCases)("rejects copied, replaced, duplicate and stale $name directives", (entry) => {
+    const copied = checkSource("copied.ts", entry.source, [entry.authorized]);
+    const replaced = checkSource(
+      "forward.ts",
+      entry.source.replace(entry.operation, entry.replacement),
+      [entry.authorized],
+    );
+    const duplicate = checkSource(
+      "forward.ts",
+      entry.source.replace(entry.operation, `${entry.directive}\n${entry.operation}`),
+      [entry.authorized],
+    );
+    const stale = checkSource("forward.ts", entry.source.replace(`${entry.directive}\n`, ""), [
+      entry.authorized,
+    ]);
+    expect(copied.status, copied.stderr).toBe(1);
+    expect(copied.stderr).toContain("lint directive is not authorized");
+    expect(replaced.status, replaced.stderr).toBe(1);
+    expect(replaced.stderr).toMatch(/Authorized operation changed|scope is missing/u);
+    expect(duplicate.status, duplicate.stderr).toBe(1);
+    expect(duplicate.stderr).toContain("lint directive is not authorized");
+    expect(stale.status, stale.stderr).toBe(1);
+    expect(stale.stderr).toContain("unused exception site");
   });
 
   it("rejects wrong-origin, replaced and duplicate named callback operations", () => {

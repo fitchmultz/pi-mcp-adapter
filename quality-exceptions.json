@@ -422,5 +422,45 @@
     "nodeType": "ThrowStatement",
     "operation": "throw new AggregateError([error, cleanupError], \"MCP connection abort cleanup failed\");",
     "guards": ["consequent: abortCleanup"]
+  },
+  {
+    "id": "QX-3004",
+    "file": "host-tools.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "FunctionExpression", "name": "executeMcpSearch" },
+    "path": [],
+    "nodeType": "FunctionExpression",
+    "operation": "async function executeMcpSearch(toolCallId, params, signal, _onUpdate, ctx) {\n        if (beforeExecute) {\n          if (host.owner) {\n            await host.owner.runCallback(\"beforeExecute\", () => beforeExecute(toolCallId, ctx));\n          } else {\n            await beforeExecute(toolCallId, ctx);\n          }\n        }\n        return searchAndLoad(params, signal);\n      }",
+    "guards": []
+  },
+  {
+    "id": "QX-3004",
+    "file": "host-tools.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "FunctionExpression", "name": "executeMcpScript" },
+    "path": [],
+    "nodeType": "FunctionExpression",
+    "operation": "async function executeMcpScript(toolCallId, params, signal, _onUpdate, ctx) {\n        const ready = await getToolState(signal);\n        if (\"content\" in ready) {\n          return ready;\n        }\n        const { runMcpScript } = await import(\"./mcp-code.ts\");\n        return runMcpScript(\n          ready,\n          params.code,\n          params.timeoutMs ?? options.defaultScriptTimeoutMs,\n          getPiTools,\n          signal,\n          toolCallId,\n          beforeExecute\n            ? (callSignal, operation) =>\n                beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)\n            : undefined,\n        );\n      }",
+    "guards": []
+  },
+  {
+    "id": "QX-3004",
+    "file": "host-tools.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "FunctionExpression", "name": "executeMcpGateway" },
+    "path": [],
+    "nodeType": "FunctionExpression",
+    "operation": "async function executeMcpGateway(toolCallId, rawParams, signal, _onUpdate, ctx) {\n        return executeGateway(pi, host, options, [toolCallId, rawParams, signal, _onUpdate, ctx]);\n      }",
+    "guards": []
+  },
+  {
+    "id": "QX-3003",
+    "file": "init-status.ts",
+    "rule": "typescript/no-unnecessary-condition",
+    "scope": { "type": "FunctionDeclaration", "name": "updateStatusBar" },
+    "path": ["body", "body", 13],
+    "nodeType": "IfStatement",
+    "operation": "if (ui.theme === undefined) {\n    ui.setStatus(\"mcp\", formattedStatus);\n    return;\n  }",
+    "guards": []
   }
 ]

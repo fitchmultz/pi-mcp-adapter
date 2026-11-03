@@ -30,10 +30,10 @@ vi.mock(import("../../mcp-panel.ts"), async (importOriginal) => {
   const panels = await importOriginal();
   return {
     ...panels,
-    createMcpPanel: mocks.createMcpPanel.mockImplementation((...args) => {
-      const panel = panels.createMcpPanel(...args);
+    createMcpPanel: mocks.createMcpPanel.mockImplementation((input) => {
+      const panel = panels.createMcpPanel(input);
       panel.dispose();
-      args[5](panelResult);
+      input.done(panelResult);
       return panel;
     }),
   };
@@ -42,10 +42,10 @@ vi.mock(import("../../mcp-setup-panel.ts"), async (importOriginal) => {
   const setup = await importOriginal();
   return {
     ...setup,
-    createMcpSetupPanel: mocks.createMcpSetupPanel.mockImplementation((...args) => {
-      const panel = setup.createMcpSetupPanel(...args);
+    createMcpSetupPanel: mocks.createMcpSetupPanel.mockImplementation((input) => {
+      const panel = setup.createMcpSetupPanel(input);
       panel.dispose();
-      args[4]();
+      input.done();
       return panel;
     }),
   };
@@ -97,7 +97,11 @@ describe("commands onboarding", () => {
   it("opens setup mode when no MCP servers are configured", async () => {
     vi.stubEnv("HOME", temporaryDirectory("pi-mcp-commands-home-"));
     const { openMcpPanel } = await import("../../commands.ts");
-    await openMcpPanel(await createState(), host.api, { ...host.context, cwd: process.cwd() });
+    await openMcpPanel({
+      state: await createState(),
+      pi: host.api,
+      ctx: { ...host.context, cwd: process.cwd() },
+    });
     expect(mocks.createMcpSetupPanel).toHaveBeenCalled();
     expect(mocks.createMcpPanel).not.toHaveBeenCalled();
   });
@@ -107,8 +111,8 @@ describe("commands onboarding", () => {
     const { openMcpAuthPanel, openMcpPanel, openMcpSetup } = await import("../../commands.ts");
     const state = await createState();
     const ctx = { ...host.context, cwd: process.cwd(), mode: "rpc" as const };
-    await openMcpSetup(state, host.api, ctx);
-    await openMcpPanel(state, host.api, ctx);
+    await openMcpSetup({ state, pi: host.api, ctx });
+    await openMcpPanel({ state, pi: host.api, ctx });
     await openMcpAuthPanel(state, ctx);
     expect(custom).not.toHaveBeenCalled();
     expect(host.context.ui.notify).toHaveBeenCalledWith(
@@ -133,7 +137,7 @@ describe("commands onboarding", () => {
     });
     const ctx = { ...host.context, cwd: "/project" };
     const { openMcpAuthPanel, openMcpPanel } = await import("../../commands.ts");
-    await openMcpPanel(state, host.api, ctx, "/factory/mcp.json");
+    await openMcpPanel({ state, pi: host.api, ctx, configOverridePath: "/factory/mcp.json" });
     await openMcpAuthPanel(state, ctx, "/factory/mcp.json");
     expect(getFlag).not.toHaveBeenCalled();
     expect(mocks.createMcpPanel).toHaveBeenCalledTimes(2);
@@ -150,12 +154,16 @@ describe("commands onboarding", () => {
     const { loadMcpConfig } = await import("../../config.ts");
     const { openMcpPanel } = await import("../../commands.ts");
     const { loadOnboardingState } = await import("../../onboarding-state.ts");
-    await openMcpPanel(await createState({ config: loadMcpConfig() }), host.api, {
-      ...host.context,
-      cwd: project,
+    await openMcpPanel({
+      state: await createState({ config: loadMcpConfig() }),
+      pi: host.api,
+      ctx: {
+        ...host.context,
+        cwd: project,
+      },
     });
     expect(mocks.createMcpPanel).toHaveBeenCalled();
-    const options = requireValue(mocks.createMcpPanel.mock.calls[0])[6];
+    const options = requireValue(mocks.createMcpPanel.mock.calls[0])[0].options;
     expect(options?.noticeLines?.[0]).toContain("Using standard MCP config");
     expect(loadOnboardingState().sharedConfigHintShown).toBe(true);
   });
@@ -206,7 +214,8 @@ describe("commands onboarding", () => {
       const sourceText = readFileSync(sourcePath, "utf-8");
       const { loadMcpConfig } = await import("../../config.ts");
       const { openMcpPanel } = await import("../../commands.ts");
-      const refreshed = vi.fn<NonNullable<Parameters<typeof openMcpPanel>[4]>>();
+      const refreshed =
+        vi.fn<NonNullable<Parameters<typeof openMcpPanel>[0]["onDirectToolsConfigChanged"]>>();
       const changes: McpPanelResult["changes"] = new Map<string, boolean | string[]>([
         ["inherited", true],
         ["customized", false],
@@ -216,13 +225,13 @@ describe("commands onboarding", () => {
       ]);
       panelResult = { cancelled: false, changes };
       const save = async () =>
-        openMcpPanel(
-          await createState({ config: loadMcpConfig() }),
-          host.api,
-          { ...host.context, cwd: project },
-          undefined,
-          refreshed,
-        );
+        openMcpPanel({
+          state: await createState({ config: loadMcpConfig() }),
+          pi: host.api,
+          ctx: { ...host.context, cwd: project },
+          configOverridePath: undefined,
+          onDirectToolsConfigChanged: refreshed,
+        });
       await expect(save()).resolves.toEqual({ configChanged: false });
       expect(readJson(piPath)).toEqual({
         ...destination,
@@ -277,6 +286,68 @@ describe("commands onboarding", () => {
     },
   );
 
+  it.each([false, true])(
+    "keeps the native panel open until live pin refresh finishes (failure=%s)",
+    async (failure) => {
+      const home = temporaryDirectory("pi-mcp-refresh-home-");
+      const project = temporaryDirectory("pi-mcp-refresh-project-");
+      vi.stubEnv("HOME", home);
+      const projectConfig = join(project, ".mcp.json");
+      writeJson(projectConfig, { mcpServers: { demo: { command: "node" } } });
+      const { loadMcpConfig } = await import("../../config.ts");
+      const { openMcpPanel } = await import("../../commands.ts");
+      const state = await createState({ config: loadMcpConfig(undefined, project) });
+      const started = Promise.withResolvers<null>();
+      const release = Promise.withResolvers<null>();
+      const events: string[] = [];
+      const expectedMessage = failure
+        ? "Direct tools updated, but live refresh failed: held refresh failed"
+        : "Direct tools updated for this session.";
+      const expectedTone = failure ? "error" : "info";
+      let notificationAtClose: Parameters<typeof host.context.ui.notify> | undefined;
+      const nativeCustom = host.context.ui.custom.bind(host.context.ui);
+      function observeCompletion<T>(
+        factory: Parameters<typeof host.context.ui.custom<T>>[0],
+      ): Promise<T> {
+        return nativeCustom<T>((tui, theme, keybindings, done) =>
+          factory(tui, theme, keybindings, (result) => {
+            notificationAtClose = vi.mocked(host.context.ui.notify).mock.calls.at(-1);
+            events.push("closed");
+            done(result);
+          }),
+        );
+      }
+      vi.spyOn(host.context.ui, "custom").mockImplementation(observeCompletion);
+      panelResult = { cancelled: false, changes: new Map([["demo", true]]) };
+      const opening = openMcpPanel({
+        state,
+        pi: host.api,
+        ctx: { ...host.context, cwd: project },
+        configOverridePath: undefined,
+        onDirectToolsConfigChanged: async () => {
+          events.push("refresh");
+          started.resolve(null);
+          await release.promise;
+          if (failure) {
+            throw new Error("held refresh failed");
+          }
+        },
+      });
+      try {
+        await started.promise;
+        expect(readJson(projectConfig)).toEqual({
+          mcpServers: { demo: { command: "node", directTools: true } },
+        });
+        expect(events).toEqual(["refresh"]);
+      } finally {
+        release.resolve(null);
+        expect(await opening).toEqual({ configChanged: failure });
+      }
+      expect(events).toEqual(["refresh", "closed"]);
+      expect(notificationAtClose).toEqual([expectedMessage, expectedTone]);
+    },
+  );
+
   it("clears OAuth credentials, cancels pending auth, and closes the server on logout", async () => {
     vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-commands-logout-"));
     const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");
@@ -311,8 +382,8 @@ describe("commands onboarding", () => {
     const { openMcpPanel } = await import("../../commands.ts");
     updateTokens("legacy", { accessToken: "legacy-token" });
     updateTokens("stale", { accessToken: "stale-token" }, "https://old.example.com/mcp");
-    await openMcpPanel(
-      await createState({
+    await openMcpPanel({
+      state: await createState({
         config: {
           mcpServers: {
             legacy: { url: "https://new.example.com/mcp", auth: "oauth" },
@@ -320,10 +391,10 @@ describe("commands onboarding", () => {
           },
         },
       }),
-      host.api,
-      { ...host.context, cwd: process.cwd() },
-    );
-    const callbacks = requireValue(mocks.createMcpPanel.mock.calls[0])[3];
+      pi: host.api,
+      ctx: { ...host.context, cwd: process.cwd() },
+    });
+    const callbacks = requireValue(mocks.createMcpPanel.mock.calls[0])[0].callbacks;
     expect(callbacks.getConnectionStatus("legacy")).toBe("needs-auth");
     expect(callbacks.getConnectionStatus("stale")).toBe("needs-auth");
   });
@@ -374,8 +445,8 @@ describe("commands onboarding", () => {
       failureTracker: new Map([["notion", Date.now()]]),
     });
     const { openMcpPanel } = await import("../../commands.ts");
-    await openMcpPanel(state, host.api, { ...host.context, cwd: process.cwd() });
-    const callbacks = requireValue(mocks.createMcpPanel.mock.calls[0])[3];
+    await openMcpPanel({ state, pi: host.api, ctx: { ...host.context, cwd: process.cwd() } });
+    const callbacks = requireValue(mocks.createMcpPanel.mock.calls[0])[0].callbacks;
     await expect(callbacks.reconnect("notion")).resolves.toBe(true);
     expect(close).toHaveBeenCalledWith("notion");
     const signal: unknown = expect.any(AbortSignal);
