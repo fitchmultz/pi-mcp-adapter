@@ -20,6 +20,16 @@
     "guards": []
   },
   {
+    "id": "QX-007",
+    "file": "__tests__/runtime/fixtures/elicitation-server.mjs",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionDeclaration", "name": "reportClientCapabilities" },
+    "path": ["body", "body", 0],
+    "nodeType": "VariableDeclaration",
+    "operation": "const capabilities = server.getClientCapabilities();",
+    "guards": []
+  },
+  {
     "id": "QX-009",
     "file": "mcp-trace.ts",
     "rule": "typescript/only-throw-error",

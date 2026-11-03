@@ -285,6 +285,18 @@ const capabilitySource = [
   "});",
   "",
 ].join("\n");
+const capabilityFunctionSource = [
+  'import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";',
+  'const mcp = new McpServer({ name: "fixture", version: "1" });',
+  "const server = mcp.server;",
+  "function reportClientCapabilities(): CallToolResult {",
+  "// oxlint-disable-next-line typescript/no-deprecated -- QX-007: observe legacy initialized capabilities.",
+  "const capabilities = server.getClientCapabilities();",
+  'return { content: [{ type: "text", text: JSON.stringify(capabilities) }] };',
+  "}",
+  'mcp.registerTool("caps", {}, reportClientCapabilities);',
+  "",
+].join("\n");
 
 describe("operation-bound exceptions", () => {
   it.each([
@@ -397,6 +409,27 @@ describe("operation-bound exceptions", () => {
       ),
       diagnostic:
         "forward.ts:7:1: Assignment to property of function parameter 'config'. [Error/eslint(no-param-reassign)]",
+    },
+    {
+      name: "legacy elicitation initialized capabilities",
+      source: capabilityFunctionSource,
+      authorized: {
+        ...site,
+        id: "QX-007",
+        rule: "typescript/no-deprecated",
+        scope: { type: "FunctionDeclaration", name: "reportClientCapabilities" },
+        path: ["body", "body", 0],
+        nodeType: "VariableDeclaration",
+        operation: "const capabilities = server.getClientCapabilities();",
+      },
+      neighbor: capabilityFunctionSource.replace(
+        "return { content:",
+        "server.getClientVersion();\nreturn { content:",
+      ),
+      diagnostic: [
+        "forward.ts:7:8: `getClientVersion` is deprecated.",
+        "[Error/typescript(no-deprecated)]",
+      ],
     },
   ])(
     "qualifies $name attachment and neighboring native protection",

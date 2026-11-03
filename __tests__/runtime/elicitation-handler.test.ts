@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ChildProcess } from "node:child_process";
 import type { ElicitRequest } from "@modelcontextprotocol/client";
+import type open from "open";
+import { createElicitationUi } from "./fixtures/elicitation-ui.ts";
 
 const mocks = vi.hoisted(() => ({
-  open: vi.fn(async () => {}),
+  open: vi.fn<typeof open>(),
 }));
 
 vi.mock("open", () => ({ default: mocks.open }));
@@ -14,23 +17,15 @@ function request(params: ElicitRequest["params"]): ElicitRequest {
 describe("MCP elicitation", () => {
   beforeEach(() => {
     mocks.open.mockReset();
-    mocks.open.mockResolvedValue(undefined);
+    mocks.open.mockResolvedValue(new ChildProcess());
   });
 
   it("collects a form with stock Pi dialogs and lets the user review it before sending", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
-    const ui = {
-      select: vi
-        .fn()
-        .mockResolvedValueOnce("Continue")
-        .mockResolvedValueOnce("Enter value")
-        .mockResolvedValueOnce("Submit"),
-      input: vi.fn().mockResolvedValueOnce("octocat"),
-      notify: vi.fn(),
-    };
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const ui = createElicitationUi(["Continue", "Enter value", "Submit"], ["octocat"]);
 
     const result = await handleElicitationRequest(
-      { serverName: "github", ui: ui as any, allowUrl: true },
+      { serverName: "github", ui, allowUrl: true },
       request({
         mode: "form",
         message: "Please provide your GitHub username",
@@ -49,27 +44,19 @@ describe("MCP elicitation", () => {
       ["Continue", "Decline"],
     ]);
     expect(ui.input).toHaveBeenCalledWith("GitHub username (required)", undefined);
-    expect(ui.select.mock.calls[2]![0]).toContain("GitHub username: octocat");
+    expect(ui.select.mock.calls[2]?.[0]).toContain("GitHub username: octocat");
     expect(result).toEqual({ action: "accept", content: { username: "octocat" } });
   });
 
   it("lets the user edit a value from the review screen", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
-    const ui = {
-      select: vi
-        .fn()
-        .mockResolvedValueOnce("Continue")
-        .mockResolvedValueOnce("Enter value")
-        .mockResolvedValueOnce("Edit")
-        .mockResolvedValueOnce("Name (name)")
-        .mockResolvedValueOnce("Enter value")
-        .mockResolvedValueOnce("Submit"),
-      input: vi.fn().mockResolvedValueOnce("Old").mockResolvedValueOnce("New"),
-      notify: vi.fn(),
-    };
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const ui = createElicitationUi(
+      ["Continue", "Enter value", "Edit", "Name (name)", "Enter value", "Submit"],
+      ["Old", "New"],
+    );
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui: ui as any, allowUrl: true },
+      { serverName: "demo", ui, allowUrl: true },
       request({
         mode: "form",
         message: "Choose a name",
@@ -85,23 +72,14 @@ describe("MCP elicitation", () => {
   });
 
   it("validates form values and lets the user correct invalid input", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
-    const ui = {
-      select: vi
-        .fn()
-        .mockResolvedValueOnce("Continue")
-        .mockResolvedValueOnce("Enter value")
-        .mockResolvedValueOnce("Enter value")
-        .mockResolvedValueOnce("Submit"),
-      input: vi
-        .fn()
-        .mockResolvedValueOnce("not-an-email")
-        .mockResolvedValueOnce("octocat@example.com"),
-      notify: vi.fn(),
-    };
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const ui = createElicitationUi(
+      ["Continue", "Enter value", "Enter value", "Submit"],
+      ["not-an-email", "octocat@example.com"],
+    );
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui: ui as any, allowUrl: true },
+      { serverName: "demo", ui, allowUrl: true },
       request({
         mode: "form",
         message: "Contact details",
@@ -125,20 +103,14 @@ describe("MCP elicitation", () => {
     ["integer", false],
     ["integer", true],
   ] as const)("rejects blank %s input and reprompts when required=%s", async (type, required) => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
-    const ui = {
-      select: vi
-        .fn()
-        .mockResolvedValueOnce("Continue")
-        .mockResolvedValueOnce("Enter value")
-        .mockResolvedValueOnce("Enter value")
-        .mockResolvedValueOnce("Submit"),
-      input: vi.fn().mockResolvedValueOnce("   ").mockResolvedValueOnce("7"),
-      notify: vi.fn(),
-    };
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const ui = createElicitationUi(
+      ["Continue", "Enter value", "Enter value", "Submit"],
+      ["   ", "7"],
+    );
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui: ui as any, allowUrl: false },
+      { serverName: "demo", ui, allowUrl: false },
       request({
         mode: "form",
         message: "Choose a quantity",
@@ -156,7 +128,7 @@ describe("MCP elicitation", () => {
   });
 
   it("maps explicit refusal and dialog dismissal to decline and cancel", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
     const params = request({
       mode: "form",
       message: "Provide a value",
@@ -167,7 +139,7 @@ describe("MCP elicitation", () => {
       handleElicitationRequest(
         {
           serverName: "demo",
-          ui: { select: vi.fn().mockResolvedValue("Decline") } as any,
+          ui: createElicitationUi(["Decline"]),
           allowUrl: true,
         },
         params,
@@ -177,7 +149,7 @@ describe("MCP elicitation", () => {
       handleElicitationRequest(
         {
           serverName: "demo",
-          ui: { select: vi.fn().mockResolvedValue(undefined) } as any,
+          ui: createElicitationUi(),
           allowUrl: true,
         },
         params,
@@ -186,7 +158,7 @@ describe("MCP elicitation", () => {
   });
 
   it("does not open URL elicitations that are declined or dismissed", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
     const params = request({
       mode: "url",
       message: "Authorize",
@@ -198,7 +170,7 @@ describe("MCP elicitation", () => {
       handleElicitationRequest(
         {
           serverName: "demo",
-          ui: { select: vi.fn().mockResolvedValue("Decline") } as any,
+          ui: createElicitationUi(["Decline"]),
           allowUrl: true,
         },
         params,
@@ -208,7 +180,7 @@ describe("MCP elicitation", () => {
       handleElicitationRequest(
         {
           serverName: "demo",
-          ui: { select: vi.fn().mockResolvedValue(undefined) } as any,
+          ui: createElicitationUi(),
           allowUrl: true,
         },
         params,
@@ -218,17 +190,13 @@ describe("MCP elicitation", () => {
   });
 
   it("shows the server, host, and full URL before opening an accepted URL elicitation", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
-    const onUrlAccepted = vi.fn();
-    const ui = {
-      select: vi.fn().mockResolvedValueOnce("Open"),
-      input: vi.fn(),
-      notify: vi.fn(),
-    };
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const onUrlAccepted = vi.fn<(elicitationId: string) => void>();
+    const ui = createElicitationUi(["Open"]);
     const url = "https://checkout.example.com/authorize?state=a%2Fb";
 
     const result = await handleElicitationRequest(
-      { serverName: "payments", ui: ui as any, allowUrl: true, onUrlAccepted },
+      { serverName: "payments", ui, allowUrl: true, onUrlAccepted },
       request({
         mode: "url",
         message: "Authorize the payment provider",
@@ -257,12 +225,12 @@ describe("MCP elicitation", () => {
   });
 
   it("rejects URL mode when the client advertised form-only support", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
-    const ui = { select: vi.fn(), input: vi.fn(), notify: vi.fn() };
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const ui = createElicitationUi();
 
     await expect(
       handleElicitationRequest(
-        { serverName: "demo", ui: ui as any, allowUrl: false },
+        { serverName: "demo", ui, allowUrl: false },
         request({
           mode: "url",
           message: "Authorize",
@@ -275,12 +243,12 @@ describe("MCP elicitation", () => {
   });
 
   it("rejects URL schemes that cannot be opened safely in a browser", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
-    const ui = { select: vi.fn(), input: vi.fn(), notify: vi.fn() };
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const ui = createElicitationUi();
 
     await expect(
       handleElicitationRequest(
-        { serverName: "demo", ui: ui as any, allowUrl: true },
+        { serverName: "demo", ui, allowUrl: true },
         request({
           mode: "url",
           message: "Open a file",
@@ -294,16 +262,12 @@ describe("MCP elicitation", () => {
   });
 
   it("cancels URL elicitation when the browser cannot be opened", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
     mocks.open.mockRejectedValueOnce(new Error("no browser"));
-    const ui = {
-      select: vi.fn().mockResolvedValueOnce("Open"),
-      input: vi.fn(),
-      notify: vi.fn(),
-    };
+    const ui = createElicitationUi(["Open"]);
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui: ui as any, allowUrl: true },
+      { serverName: "demo", ui, allowUrl: true },
       request({
         mode: "url",
         message: "Authorize",
@@ -317,26 +281,25 @@ describe("MCP elicitation", () => {
   });
 
   it("supports every primitive form field, defaults, and omission", async () => {
-    const { handleElicitationRequest } = await import("../elicitation-handler.ts");
-    const ui = {
-      select: vi
-        .fn()
-        .mockResolvedValueOnce("Continue")
-        .mockResolvedValueOnce("Use default")
-        .mockResolvedValueOnce("Medium (medium)")
-        .mockResolvedValueOnce("No")
-        .mockResolvedValueOnce("Enter value")
-        .mockResolvedValueOnce("Choose values")
-        .mockResolvedValueOnce("Red")
-        .mockResolvedValueOnce("Done")
-        .mockResolvedValueOnce("Omit")
-        .mockResolvedValueOnce("Submit"),
-      input: vi.fn().mockResolvedValueOnce("42"),
-      notify: vi.fn(),
-    };
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const ui = createElicitationUi(
+      [
+        "Continue",
+        "Use default",
+        "Medium (medium)",
+        "No",
+        "Enter value",
+        "Choose values",
+        "Red",
+        "Done",
+        "Omit",
+        "Submit",
+      ],
+      ["42"],
+    );
 
     const result = await handleElicitationRequest(
-      { serverName: "demo", ui: ui as any, allowUrl: true },
+      { serverName: "demo", ui, allowUrl: true },
       request({
         mode: "form",
         message: "Configure the operation",

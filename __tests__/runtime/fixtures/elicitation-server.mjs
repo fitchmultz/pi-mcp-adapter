@@ -1,11 +1,24 @@
-import { Server } from "@modelcontextprotocol/server";
+import assert from "node:assert/strict";
+import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { UrlElicitationRequiredError } from "@modelcontextprotocol/client";
+/** @import { CallToolResult } from "@modelcontextprotocol/server" */
 
-const server = new Server(
+const mcp = new McpServer(
   { name: "elicitation-integration-server", version: "1.0.0" },
   { capabilities: { tools: {}, resources: {} } },
 );
+const server = mcp.server;
+
+/** @returns {CallToolResult} */
+function reportClientCapabilities() {
+  // oxlint-disable-next-line typescript/no-deprecated -- QX-007: legacy stdio capabilities belong to initialize, not a request envelope.
+  const capabilities = server.getClientCapabilities();
+  assert(capabilities !== undefined, "Expected the native client's initialized capabilities");
+  return {
+    content: [{ type: "text", text: JSON.stringify(capabilities.elicitation ?? null) }],
+  };
+}
 
 function urlRequiredError() {
   return new UrlElicitationRequiredError([
@@ -48,11 +61,7 @@ server.setRequestHandler("resources/read", async (request) => {
 
 server.setRequestHandler("tools/call", async (request) => {
   if (request.params.name === "capabilities") {
-    return {
-      content: [
-        { type: "text", text: JSON.stringify(server.getClientCapabilities()?.elicitation ?? null) },
-      ],
-    };
+    return reportClientCapabilities();
   }
 
   if (request.params.name === "url-required") {

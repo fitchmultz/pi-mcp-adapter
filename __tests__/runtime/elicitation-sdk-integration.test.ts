@@ -1,62 +1,69 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import type { ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { createDirectToolExecutor } from "../direct-tools.ts";
-import { executeCall } from "../proxy-modes.ts";
-import { McpServerManager } from "../server-manager.ts";
-import type { McpExtensionState } from "../state.ts";
-import type { DirectToolSpec, ToolMetadata } from "../types.ts";
-import { UiResourceHandler } from "../ui-resource-handler.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Client } from "@modelcontextprotocol/client";
+import type open from "open";
+import { createDirectToolExecutor } from "../../direct-tools.ts";
+import { executeCall } from "../../proxy-modes.ts";
+import { McpServerManager } from "../../server-manager.ts";
+import type { McpExtensionState } from "../../state.ts";
+import type { ToolMetadata } from "../../types.ts";
+import { createTestExtensionContext } from "../test-extension-context.ts";
+import { createTestState } from "../test-state.ts";
+import { requireValue } from "../fixtures/extension-lifecycle.ts";
+import { createElicitationUi } from "./fixtures/elicitation-ui.ts";
 
-const mocks = vi.hoisted(() => ({ open: vi.fn(async () => {}) }));
+const mocks = vi.hoisted(() => ({ open: vi.fn<typeof open>() }));
 vi.mock("open", () => ({ default: mocks.open }));
 
 const fixture = fileURLToPath(new URL("./fixtures/elicitation-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
 const managers: McpServerManager[] = [];
+const states: McpExtensionState[] = [];
+let native: Awaited<ReturnType<typeof createTestExtensionContext>>;
 
-function createUi(answers: string[] = []): ExtensionUIContext {
-  return {
-    select: vi.fn(async () => answers.shift()),
-    input: vi.fn(async () => "stock-pi-user"),
-    notify: vi.fn(),
-  } as unknown as ExtensionUIContext;
-}
-
-async function createConnectedManager(mode: ExtensionContext["mode"], answers: string[] = []) {
-  const ui = createUi(answers);
+async function createConnectedManager(
+  mode: ExtensionContext["mode"],
+  answers: readonly string[] = [],
+) {
+  const ui = createElicitationUi(answers, ["stock-pi-user"]);
   const manager = new McpServerManager();
-  manager.setElicitationConfig({
-    ui,
-    allowUrl: mode === "tui",
-  });
-  await manager.connect("real", definition);
+  manager.setElicitationConfig({ ui, allowUrl: mode === "tui" });
   managers.push(manager);
+  await manager.connect("real", definition);
   return { manager, ui };
 }
 
-function createState(manager: McpServerManager, metadata: ToolMetadata[]): McpExtensionState {
-  return {
+function createState(
+  manager: McpServerManager,
+  metadata: readonly ToolMetadata[],
+): McpExtensionState {
+  const state = createTestState({
     manager,
     config: { settings: {}, mcpServers: { real: definition } },
-    toolMetadata: new Map([["real", metadata]]),
-    serverInstructions: new Map(),
-    failureTracker: new Map(),
-    uiResourceHandler: new UiResourceHandler(manager),
-    completedUiSessions: [],
-    uiServer: null,
-  } as unknown as McpExtensionState;
+    toolMetadata: new Map([["real", [...metadata]]]),
+  });
+  states.push(state);
+  return state;
 }
 
-function resultText(result: { content?: Array<{ type: string; text?: string }> }): string {
-  return result.content?.find((item) => item.type === "text")?.text ?? "";
+function resultValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
+  const text = result.content.find((item) => item.type === "text")?.text ?? "";
+  const value: unknown = JSON.parse(text);
+  return value;
 }
 
 describe("elicitation with the real MCP SDK", () => {
-  beforeEach(() => mocks.open.mockClear());
+  beforeEach(async () => {
+    mocks.open.mockReset().mockResolvedValue(new ChildProcess());
+    native = await createTestExtensionContext();
+  });
 
   afterEach(async () => {
+    await Promise.all(states.splice(0).map((state) => state.owner.stop()));
     await Promise.all(managers.splice(0).map((manager) => manager.closeAll()));
+    await native.dispose();
   });
 
   it.each([
@@ -66,16 +73,15 @@ describe("elicitation with the real MCP SDK", () => {
     "advertises stock Pi %s capabilities and completes form elicitation",
     async (mode, capabilities) => {
       const { manager } = await createConnectedManager(mode, ["Continue", "Enter value", "Submit"]);
-      const connection = manager.getConnection("real")!;
-
+      const connection = requireValue(manager.getConnection("real"));
       const capabilityResult = await connection.client.callTool({
         name: "capabilities",
         arguments: {},
       });
-      expect(JSON.parse(resultText(capabilityResult))).toEqual(capabilities);
+      expect(resultValue(capabilityResult)).toEqual(capabilities);
 
       const formResult = await connection.client.callTool({ name: "form", arguments: {} });
-      expect(JSON.parse(resultText(formResult))).toEqual({
+      expect(resultValue(formResult)).toEqual({
         action: "accept",
         content: { name: "stock-pi-user" },
       });
@@ -84,7 +90,7 @@ describe("elicitation with the real MCP SDK", () => {
 
   it("rejects URL elicitation over real SDK dispatch in stock Pi RPC mode", async () => {
     const { manager } = await createConnectedManager("rpc");
-    const connection = manager.getConnection("real")!;
+    const connection = requireValue(manager.getConnection("real"));
 
     await expect(connection.client.callTool({ name: "url", arguments: {} })).rejects.toThrow(
       /does not support (?:URL-mode|url) elicitation/,
@@ -94,11 +100,10 @@ describe("elicitation with the real MCP SDK", () => {
 
   it("dispatches URL elicitation and its completion notification over the real SDK", async () => {
     const { manager, ui } = await createConnectedManager("tui", ["Open"]);
-    const connection = manager.getConnection("real")!;
-
+    const connection = requireValue(manager.getConnection("real"));
     const result = await connection.client.callTool({ name: "url", arguments: {} });
 
-    expect(JSON.parse(resultText(result))).toEqual({ action: "accept" });
+    expect(resultValue(result)).toEqual({ action: "accept" });
     expect(mocks.open).toHaveBeenCalledWith("https://example.com/authorize");
     expect(ui.notify).toHaveBeenCalledWith(
       "MCP browser interaction for real completed. You can retry the tool now.",
@@ -143,13 +148,11 @@ describe("elicitation with the real MCP SDK", () => {
               description: metadata.description,
               ...spec,
             },
-          )("id", {}, undefined, undefined, undefined as unknown as ExtensionContext);
+          )("id", {}, undefined, undefined, native.context);
 
     expect(result.details).toMatchObject({ error: "url_elicitation_required", action: "accept" });
-    expect(result.content[0]).toMatchObject({
-      type: "text",
-      text: expect.stringContaining("retry the tool"),
-    });
+    const retryMessage: unknown = expect.stringContaining("retry the tool");
+    expect(result.content[0]).toMatchObject({ type: "text", text: retryMessage });
     expect(mocks.open).toHaveBeenCalledWith("https://example.com/connect");
   });
 });
