@@ -353,13 +353,13 @@ export async function initializeMcp(
         continue;
       }
 
-      const { metadata, failedTools } = buildToolMetadata(
-        connection.tools,
-        connection.resources,
+      const { metadata, failedTools } = buildToolMetadata({
+        tools: connection.tools,
+        resources: connection.resources,
         definition,
-        name,
+        serverName: name,
         prefix,
-      );
+      });
       toolMetadata.set(name, metadata);
       resourceCounts.set(name, connection.resources.length);
       if (!connection.promptDiscoveryFailed) {
@@ -525,13 +525,13 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
 
   const prefix = state.config.settings?.toolPrefix ?? "server";
 
-  const { metadata } = buildToolMetadata(
-    connection.tools,
-    connection.resources,
+  const { metadata } = buildToolMetadata({
+    tools: connection.tools,
+    resources: connection.resources,
     definition,
     serverName,
     prefix,
-  );
+  });
   state.toolMetadata.set(serverName, metadata);
   state.resourceCounts?.set(serverName, connection.resources.length);
   if (!connection.promptDiscoveryFailed) {

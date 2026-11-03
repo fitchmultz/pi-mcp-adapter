@@ -1134,13 +1134,13 @@ export async function executeConnect(
       }
     }
     const prefix = state.config.settings?.toolPrefix ?? "server";
-    const { metadata } = buildToolMetadata(
-      connection.tools,
-      connection.resources,
+    const { metadata } = buildToolMetadata({
+      tools: connection.tools,
+      resources: connection.resources,
       definition,
       serverName,
       prefix,
-    );
+    });
     state.toolMetadata.set(serverName, metadata);
     state.resourceCounts?.set(serverName, connection.resources.length);
     if (!connection.promptDiscoveryFailed) {
@@ -1621,13 +1621,13 @@ export async function prepareMcpConnection(
     }
     // Use the live descriptor for visibility, filtering, approval, schema and UI hints.
     if (connection.tools) {
-      const { metadata } = buildToolMetadata(
-        connection.tools,
-        connection.resources ?? [],
+      const { metadata } = buildToolMetadata({
+        tools: connection.tools,
+        resources: connection.resources ?? [],
         definition,
         serverName,
-        state.config.settings?.toolPrefix ?? "server",
-      );
+        prefix: state.config.settings?.toolPrefix ?? "server",
+      });
       // Search indexes by metadata-array identity, so retain it for unchanged projections.
       if (!isDeepStrictEqual(state.toolMetadata.get(serverName), metadata)) {
         state.toolMetadata.set(serverName, metadata);
@@ -1897,7 +1897,12 @@ export async function executeCall(
   if (isServerDisabled(state.config.mcpServers[serverName])) {
     return disabledResult("call", serverName);
   }
-  const approval = await ensureToolCallApproved(state, serverName, toolMeta, args, ownedSignal);
+  const approval = await ensureToolCallApproved(state, {
+    serverName,
+    toolMeta,
+    args,
+    signal: ownedSignal,
+  });
   if (!approval.ok) {
     const denied = approval.reason === "denied";
     return {

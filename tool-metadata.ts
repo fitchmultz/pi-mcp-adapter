@@ -1,4 +1,5 @@
 import type { McpExtensionState } from "./state.ts";
+import { asObjectRecord } from "./mcp-output-values.ts";
 import {
   type ToolMetadata,
   type McpTool,
@@ -13,99 +14,120 @@ import {
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
 
-export function buildToolMetadata(
-  tools: McpTool[],
-  resources: McpResource[],
-  definition: ServerEntry,
-  serverName: string,
-  prefix: ToolPrefix,
-): { metadata: ToolMetadata[]; failedTools: string[] } {
+export function buildToolMetadata({
+  tools,
+  resources,
+  definition,
+  serverName,
+  prefix,
+}: {
+  tools: McpTool[];
+  resources: McpResource[];
+  definition: ServerEntry;
+  serverName: string;
+  prefix: ToolPrefix;
+}): { metadata: ToolMetadata[]; failedTools: string[] } {
   const metadata: ToolMetadata[] = [];
   const failedTools: string[] = [];
   if (isServerDisabled(definition)) {
     return { metadata, failedTools };
   }
-  const effectivePrefix = resolveToolPrefix(definition, prefix);
-
+  const context: MetadataContext = {
+    definition,
+    serverName,
+    prefix: resolveToolPrefix(definition, prefix),
+  };
   for (const tool of tools) {
-    if (!tool?.name) {
+    if (tool.name === "") {
       failedTools.push("(unnamed)");
       continue;
     }
-    if (
-      !isToolAllowed(
-        tool.name,
-        serverName,
-        effectivePrefix,
-        definition.includeTools,
-        definition.excludeTools,
-      )
-    ) {
+    if (!allowsTool(context, tool.name)) {
       continue;
     }
-
-    const name = formatToolName(tool.name, serverName, effectivePrefix);
-
     const uiVisibility = extractUiToolVisibility(tool._meta);
     if (!isUiToolVisibleToModel(uiVisibility)) {
       continue;
     }
-    let uiResourceUri: string | undefined;
-    try {
-      // MCP Apps metadata must also be readable from the cache before loading the SDK.
-      const uri = (tool._meta?.ui as { resourceUri?: unknown } | undefined)?.resourceUri;
-      const resourceUri = uri === undefined ? tool._meta?.["ui/resourceUri"] : uri;
-      if (typeof resourceUri === "string" && resourceUri.startsWith("ui://")) {
-        uiResourceUri = resourceUri;
-      } else if (resourceUri !== undefined) {
-        failedTools.push(tool.name);
-      }
-    } catch {
+    metadata.push(describeTool(tool, context, failedTools, uiVisibility));
+  }
+  if (definition.exposeResources !== false) {
+    metadata.push(...resourceMetadata(resources, context));
+  }
+  return { metadata, failedTools };
+}
+
+interface MetadataContext {
+  definition: ServerEntry;
+  serverName: string;
+  prefix: ToolPrefix;
+}
+
+function describeTool(
+  tool: McpTool,
+  context: MetadataContext,
+  failedTools: string[],
+  uiVisibility: ReturnType<typeof extractUiToolVisibility>,
+): ToolMetadata {
+  const uiResourceUri = readUiResourceUri(tool, failedTools);
+  const uiStreamMode = extractToolUiStreamMode(tool._meta);
+  return {
+    ...tool,
+    name: formatToolName(tool.name, context.serverName, context.prefix),
+    originalName: tool.name,
+    description: tool.description ?? "",
+    ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
+    ...(uiVisibility !== undefined ? { uiVisibility } : {}),
+    ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
+  };
+}
+
+function allowsTool(context: MetadataContext, name: string): boolean {
+  return isToolAllowed(
+    name,
+    context.serverName,
+    context.prefix,
+    context.definition.includeTools,
+    context.definition.excludeTools,
+  );
+}
+
+function readUiResourceUri(tool: McpTool, failedTools: string[]): string | undefined {
+  try {
+    // Read cached MCP Apps metadata without loading the SDK client.
+    const uri = asObjectRecord(tool._meta?.ui)?.resourceUri;
+    const resourceUri = uri === undefined ? tool._meta?.["ui/resourceUri"] : uri;
+    if (typeof resourceUri === "string" && resourceUri.startsWith("ui://")) {
+      return resourceUri;
+    }
+    if (resourceUri !== undefined) {
       failedTools.push(tool.name);
     }
-    const uiStreamMode = extractToolUiStreamMode(tool._meta);
+  } catch {
+    failedTools.push(tool.name);
+  }
+  return undefined;
+}
+
+function resourceMetadata(resources: McpResource[], context: MetadataContext): ToolMetadata[] {
+  const metadata: ToolMetadata[] = [];
+  for (const resource of resources) {
+    if (resource.name === "" || resource.uri === "") {
+      continue;
+    }
+    const baseName = `read_${resourceNameToToolName(resource.name)}`;
+    if (!allowsTool(context, baseName)) {
+      continue;
+    }
     metadata.push({
-      ...tool,
-      name,
-      originalName: tool.name,
-      description: tool.description ?? "",
-      ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
-      ...(uiVisibility !== undefined ? { uiVisibility } : {}),
-      ...(uiStreamMode !== undefined ? { uiStreamMode } : {}),
+      name: formatToolName(baseName, context.serverName, context.prefix),
+      originalName: baseName,
+      description: resource.description ?? `Read resource: ${resource.uri}`,
+      resourceUri: resource.uri,
+      resourceDescriptor: resource,
     });
   }
-
-  if (definition.exposeResources !== false) {
-    for (const resource of resources) {
-      if (!resource?.name || !resource?.uri) {
-        continue;
-      }
-      const baseName = `read_${resourceNameToToolName(resource.name)}`;
-      if (
-        !isToolAllowed(
-          baseName,
-          serverName,
-          effectivePrefix,
-          definition.includeTools,
-          definition.excludeTools,
-        )
-      ) {
-        continue;
-      }
-
-      const name = formatToolName(baseName, serverName, effectivePrefix);
-
-      metadata.push({
-        name,
-        originalName: baseName,
-        description: resource.description ?? `Read resource: ${resource.uri}`,
-        resourceUri: resource.uri,
-        resourceDescriptor: resource,
-      });
-    }
-  }
-
-  return { metadata, failedTools };
+  return metadata;
 }
 
 export function totalToolCount(state: McpExtensionState): number {
@@ -116,7 +138,19 @@ export function totalToolCount(state: McpExtensionState): number {
   return count;
 }
 
-export function toToolDescriptor(server: string, tool: ToolMetadata) {
+export function toToolDescriptor(
+  server: string,
+  tool: ToolMetadata,
+): Omit<
+  ToolMetadata,
+  | "name"
+  | "originalName"
+  | "resourceUri"
+  | "resourceDescriptor"
+  | "uiResourceUri"
+  | "uiVisibility"
+  | "uiStreamMode"
+> & { server: string; path: string; name: string } {
   const {
     name: path,
     originalName: name,
@@ -130,9 +164,18 @@ export function toToolDescriptor(server: string, tool: ToolMetadata) {
   return { ...descriptor, server, path, name };
 }
 
-export function catalogCoverage(state: McpExtensionState, server?: string) {
+export function catalogCoverage(
+  state: McpExtensionState,
+  server?: string,
+): {
+  complete: boolean;
+  knownServers: string[];
+  unknownServers: string[];
+} {
   const servers = Object.keys(state.config.mcpServers).filter(
-    (name) => (!server || name === server) && !isServerDisabled(state.config.mcpServers[name]),
+    (name) =>
+      (server === undefined || server === "" || name === server) &&
+      !isServerDisabled(state.config.mcpServers[name]),
   );
   const knownServers = servers.filter((name) => state.toolMetadata.has(name));
   const unknownServers = servers.filter((name) => !state.toolMetadata.has(name));
@@ -156,32 +199,14 @@ export function findToolByName(
 }
 
 export function formatSchema(schema: unknown, indent = "  "): string {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+  const s = asObjectRecord(schema);
+  if (!s || Array.isArray(schema)) {
     return `${indent}(no schema)`;
   }
 
-  const s = schema as Record<string, unknown>;
-
-  if (
-    s.type === "object" &&
-    s.properties &&
-    typeof s.properties === "object" &&
-    !Array.isArray(s.properties)
-  ) {
-    const props = s.properties as Record<string, unknown>;
-    const required = Array.isArray(s.required)
-      ? s.required.filter((name): name is string => typeof name === "string")
-      : [];
-
-    if (Object.keys(props).length === 0) {
-      return `${indent}(no parameters)`;
-    }
-
-    const lines: string[] = [];
-    for (const [name, propSchema] of Object.entries(props)) {
-      lines.push(...formatProperty(name, propSchema, required.includes(name), indent));
-    }
-    return lines.join("\n");
+  const props = asObjectRecord(s.properties);
+  if (s.type === "object" && props && !Array.isArray(s.properties)) {
+    return formatObjectParameters(props, s.required, indent);
   }
 
   const lines = formatNestedSchema(s, indent);
@@ -190,11 +215,29 @@ export function formatSchema(schema: unknown, indent = "  "): string {
   }
 
   const typeStr = formatType(s);
-  if (typeStr) {
+  if (typeStr !== "") {
     return `${indent}(${typeStr})`;
   }
 
   return `${indent}(complex schema)`;
+}
+
+function formatObjectParameters(
+  props: Record<string, unknown>,
+  requiredValue: unknown,
+  indent: string,
+): string {
+  const required = Array.isArray(requiredValue)
+    ? requiredValue.filter((name): name is string => typeof name === "string")
+    : [];
+  if (Object.keys(props).length === 0) {
+    return `${indent}(no parameters)`;
+  }
+  const lines: string[] = [];
+  for (const [name, propSchema] of Object.entries(props)) {
+    lines.push(...formatProperty(name, propSchema, required.includes(name), indent));
+  }
+  return lines.join("\n");
 }
 
 function formatProperty(
@@ -203,14 +246,14 @@ function formatProperty(
   required: boolean,
   indent: string,
 ): string[] {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+  const s = asObjectRecord(schema);
+  if (!s || Array.isArray(schema)) {
     return [`${indent}${name}${required ? " *required*" : ""}`];
   }
 
-  const s = schema as Record<string, unknown>;
   const parts = [`${indent}${name}`];
   const typeStr = formatType(s);
-  if (typeStr) {
+  if (typeStr !== "") {
     parts.push(`(${typeStr})`);
   }
   if (required) {
@@ -233,15 +276,12 @@ function formatNestedSchema(schema: Record<string, unknown>, indent: string): st
   if (schema.items !== undefined) {
     lines.push(...formatProperty("items", schema.items, false, indent));
   }
-  if (
-    schema.properties &&
-    typeof schema.properties === "object" &&
-    !Array.isArray(schema.properties)
-  ) {
+  const properties = asObjectRecord(schema.properties);
+  if (properties && !Array.isArray(schema.properties)) {
     const required = Array.isArray(schema.required)
       ? schema.required.filter((name): name is string => typeof name === "string")
       : [];
-    for (const [name, propSchema] of Object.entries(schema.properties as Record<string, unknown>)) {
+    for (const [name, propSchema] of Object.entries(properties)) {
       lines.push(...formatProperty(name, propSchema, required.includes(name), indent));
     }
   }
@@ -253,13 +293,14 @@ function formatVariants(keyword: "anyOf" | "oneOf", variants: unknown[], indent:
   const lines = [`${indent}${keyword}:`];
 
   for (const variant of variants) {
-    if (!variant || typeof variant !== "object" || Array.isArray(variant)) {
+    const s = asObjectRecord(variant);
+    if (!s || Array.isArray(variant)) {
       lines.push(`${indent}  - ${JSON.stringify(variant)}`);
       continue;
     }
 
-    const s = variant as Record<string, unknown>;
-    const typeStr = formatType(s) || "schema";
+    const formatted = formatType(s);
+    const typeStr = formatted === "" ? "schema" : formatted;
     const parts = [`${indent}  - ${typeStr}`];
     appendSchemaAnnotations(parts, s);
     lines.push(parts.join(" "));
@@ -282,15 +323,14 @@ function formatType(schema: Record<string, unknown>): string {
     return schema.type.map((type) => String(type)).join(" | ");
   }
 
-  if (schema.type) {
-    return String(schema.type);
+  const type: unknown = schema.type;
+  const hasType = Boolean(type);
+  if (hasType) {
+    return String(type);
   }
 
-  if (
-    schema.properties &&
-    typeof schema.properties === "object" &&
-    !Array.isArray(schema.properties)
-  ) {
+  const properties = asObjectRecord(schema.properties);
+  if (properties && !Array.isArray(schema.properties)) {
     return "object";
   }
 
@@ -302,7 +342,7 @@ function formatType(schema: Record<string, unknown>): string {
 }
 
 function appendSchemaAnnotations(parts: string[], schema: Record<string, unknown>): void {
-  if (schema.description && typeof schema.description === "string") {
+  if (typeof schema.description === "string" && schema.description !== "") {
     parts.push(`- ${schema.description}`);
   }
 
@@ -335,8 +375,8 @@ function resourceNameToToolName(name: string): string {
     .toLowerCase();
 
   // Ensure we have a valid name
-  if (!result || /^\d/.test(result)) {
-    result = "resource" + (result ? "_" + result : "");
+  if (result === "" || /^\d/.test(result)) {
+    result = "resource" + (result !== "" ? "_" + result : "");
   }
 
   return result;

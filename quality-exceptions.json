@@ -1,5 +1,15 @@
 [
   {
+    "id": "QX-026",
+    "file": "utils.ts",
+    "rule": "eslint/no-new",
+    "scope": { "type": "FunctionDeclaration", "name": "resolveServerUrl" },
+    "path": ["body", "body", 6, "block", "body", 0],
+    "nodeType": "ExpressionStatement",
+    "operation": "new URL(resolved);",
+    "guards": []
+  },
+  {
     "id": "QX-001",
     "file": "mcp-trace.ts",
     "rule": "eslint/no-param-reassign",

@@ -5,33 +5,21 @@ import {
   realpathSync,
   readdirSync,
   statSync,
-  writeFileSync,
-  renameSync,
-  mkdirSync,
   openSync,
   readSync,
   closeSync,
 } from "node:fs";
-import { join, dirname, extname, resolve, sep } from "node:path";
-import { getAdapterPath } from "./agent-dir.ts";
+import { join, extname, resolve, sep } from "node:path";
+import { asObjectRecord } from "./mcp-output-values.ts";
+import { parseInvocation, parsePackageSpec } from "./npx-invocation.ts";
+import { loadCacheEntry, saveCacheEntry, type NpxCacheEntry } from "./npx-resolution-cache.ts";
 import { throwIfAborted } from "./abort.ts";
 import crossSpawn from "cross-spawn";
 
-const CACHE_VERSION = 1;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const EXACT_PACKAGE_VERSION_RE =
-  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
-
-interface NpxCacheEntry {
-  resolvedBin: string;
-  resolvedAt: number;
-  packageVersion?: string;
-  isJs: boolean;
-}
-
-interface NpxCache {
-  version: number;
-  entries: Record<string, NpxCacheEntry>;
+interface PackageManifest {
+  bin: string | Record<string, string>;
+  version?: string;
 }
 
 export interface NpxResolution {
@@ -40,25 +28,13 @@ export interface NpxResolution {
   isJs: boolean;
 }
 
-interface ParsedInvocation {
-  packageSpec: string;
-  binName?: string;
-  extraArgs: string[];
-}
-
-interface ParsedPackageSpec {
-  packageName: string;
-  exactVersion?: string;
-}
-
 export async function resolveNpxBinary(
   command: string,
   args: string[],
   signal?: AbortSignal,
 ): Promise<NpxResolution | null> {
   throwIfAborted(signal);
-  const parsed =
-    command === "npx" ? parseNpxArgs(args) : command === "npm" ? parseNpmExecArgs(args) : null;
+  const parsed = parseInvocation(command, args);
 
   if (!parsed) {
     return null;
@@ -69,14 +45,13 @@ export async function resolveNpxBinary(
     return null;
   }
   const cacheKey = JSON.stringify([command, ...args]);
-  const cache = loadCache();
-  const cached = cache?.entries?.[cacheKey];
+  const cached = loadCacheEntry(cacheKey);
 
   if (
     cached &&
     Date.now() - cached.resolvedAt < CACHE_TTL_MS &&
     existsSync(cached.resolvedBin) &&
-    (!packageSpec.exactVersion || cached.packageVersion === packageSpec.exactVersion)
+    (packageSpec.exactVersion === undefined || cached.packageVersion === packageSpec.exactVersion)
   ) {
     return { binPath: cached.resolvedBin, extraArgs: parsed.extraArgs, isJs: cached.isJs };
   }
@@ -102,136 +77,9 @@ export async function resolveNpxBinary(
   return null;
 }
 
-function parseNpxArgs(args: string[]): ParsedInvocation | null {
-  const separatorIndex = args.indexOf("--");
-  const before = separatorIndex >= 0 ? args.slice(0, separatorIndex) : args;
-  const after = separatorIndex >= 0 ? args.slice(separatorIndex + 1) : [];
-
-  const positionals: string[] = [];
-  let packageSpec: string | undefined;
-  let sawPackageFlag = false;
-  let foundFirstPositional = false;
-
-  for (let i = 0; i < before.length; i++) {
-    const arg = before[i];
-    if (arg === undefined) {
-      return null;
-    }
-    if (foundFirstPositional) {
-      positionals.push(arg);
-      continue;
-    }
-    if (arg === "-y" || arg === "--yes") {
-      continue;
-    }
-    if (arg === "-p" || arg === "--package") {
-      const value = before[i + 1];
-      if (!value || value.startsWith("-")) {
-        return null;
-      }
-      if (!packageSpec) {
-        packageSpec = value;
-      }
-      sawPackageFlag = true;
-      i++;
-      continue;
-    }
-    if (arg.startsWith("--package=")) {
-      const value = arg.slice("--package=".length);
-      if (!value) {
-        return null;
-      }
-      if (!packageSpec) {
-        packageSpec = value;
-      }
-      sawPackageFlag = true;
-      continue;
-    }
-    if (arg.startsWith("-")) {
-      return null;
-    }
-    positionals.push(arg);
-    foundFirstPositional = true;
-  }
-
-  const separatedAfter = separatorIndex >= 0 && after.length > 0 ? ["--", ...after] : after;
-
-  if (sawPackageFlag) {
-    const binName = positionals[0];
-    if (!packageSpec || !binName) {
-      return null;
-    }
-    const extraArgs = positionals.slice(1).concat(separatedAfter);
-    return { packageSpec, binName, extraArgs };
-  }
-
-  const packagePositional = positionals[0];
-  if (!packagePositional) {
-    return null;
-  }
-  const extraArgs = positionals.slice(1).concat(separatedAfter);
-  return { packageSpec: packagePositional, extraArgs };
-}
-
-function parseNpmExecArgs(args: string[]): ParsedInvocation | null {
-  if (args[0] !== "exec") {
-    return null;
-  }
-  const execArgs = args.slice(1);
-  const separatorIndex = execArgs.indexOf("--");
-  if (separatorIndex < 0) {
-    return null;
-  }
-
-  const before = execArgs.slice(0, separatorIndex);
-  const after = execArgs.slice(separatorIndex + 1);
-
-  let packageSpec: string | undefined;
-  for (let i = 0; i < before.length; i++) {
-    const arg = before[i];
-    if (arg === undefined) {
-      return null;
-    }
-    if (arg === "-y" || arg === "--yes") {
-      continue;
-    }
-    if (arg === "--package") {
-      const value = before[i + 1];
-      if (!value || value.startsWith("-")) {
-        return null;
-      }
-      if (!packageSpec) {
-        packageSpec = value;
-      }
-      i++;
-      continue;
-    }
-    if (arg.startsWith("--package=")) {
-      const value = arg.slice("--package=".length);
-      if (!value) {
-        return null;
-      }
-      if (!packageSpec) {
-        packageSpec = value;
-      }
-      continue;
-    }
-    if (arg.startsWith("-")) {
-      return null;
-    }
-  }
-
-  const binName = after[0];
-  if (!packageSpec || !binName) {
-    return null;
-  }
-  const extraArgs = after.slice(1);
-  return { packageSpec, binName, extraArgs };
-}
-
 function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEntry | null {
   const cacheDir = getNpmCacheDir();
-  if (!cacheDir) {
+  if (cacheDir === null) {
     return null;
   }
 
@@ -242,83 +90,104 @@ function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEnt
 
   const { packageName, exactVersion } = parsedSpec;
   const packageDir = findCachedPackageDir(cacheDir, packageName, exactVersion);
-  if (!packageDir) {
+  if (packageDir === null) {
     return null;
   }
 
-  const packageJsonPath = join(packageDir, "package.json");
-  if (!existsSync(packageJsonPath)) {
+  const pkg = readPackage(packageDir);
+  if (!pkg) {
     return null;
   }
-
-  let pkg: { bin?: string | Record<string, string>; version?: string } | null = null;
-  try {
-    pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-      bin?: string | Record<string, string>;
-      version?: string;
-    };
-  } catch {
+  const bin = chooseBin(pkg.bin, packageName, binName);
+  if (!bin || bin.relativePath === "") {
     return null;
   }
-
-  const binField = pkg?.bin;
-  if (!binField) {
+  const resolvedBin = resolveBinPath(packageDir, bin);
+  if (resolvedBin === null) {
     return null;
   }
-
-  const candidates = buildBinCandidates(packageName, binName);
-  let chosenBinName: string | undefined;
-  let binRel: string | undefined;
-
-  if (typeof binField === "string") {
-    chosenBinName = defaultBinName(packageName);
-    binRel = binField;
-  } else {
-    for (const candidate of candidates) {
-      if (binField[candidate]) {
-        chosenBinName = candidate;
-        binRel = binField[candidate];
-        break;
-      }
-    }
-    if (!binRel) {
-      const firstEntry = Object.entries(binField)[0];
-      if (firstEntry) {
-        chosenBinName = firstEntry[0];
-        binRel = firstEntry[1];
-      }
-    }
-  }
-
-  if (!binRel) {
-    return null;
-  }
-
-  const nodeModulesDir = findNodeModulesDir(packageDir);
-  const binLink = chosenBinName ? join(nodeModulesDir, ".bin", chosenBinName) : null;
-  let resolvedBin = binLink && existsSync(binLink) ? safeRealpath(binLink) : "";
-  if (!resolvedBin) {
-    resolvedBin = resolve(packageDir, binRel);
-    if (!existsSync(resolvedBin)) {
-      return null;
-    }
-  }
-
   const isJs = detectJsBinary(resolvedBin);
   return {
     resolvedBin,
     resolvedAt: Date.now(),
-    ...(pkg?.version !== undefined ? { packageVersion: pkg.version } : {}),
+    ...(pkg.version !== undefined ? { packageVersion: pkg.version } : {}),
     isJs,
   };
 }
 
 const FORCE_CACHE_TIMEOUT_MS = 30_000;
 
+function readPackage(packageDir: string): PackageManifest | null {
+  const path = join(packageDir, "package.json");
+  try {
+    const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    const pkg = asObjectRecord(raw);
+    if (!pkg || (pkg.version !== undefined && typeof pkg.version !== "string")) {
+      return null;
+    }
+    const bin = readBinField(pkg.bin);
+    return bin === null
+      ? null
+      : { bin, ...(pkg.version !== undefined ? { version: pkg.version } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+function readBinField(value: unknown): string | Record<string, string> | null {
+  if (typeof value === "string") {
+    return value;
+  }
+  const record = asObjectRecord(value);
+  if (!record || Array.isArray(value)) {
+    return null;
+  }
+  const bin: Array<[string, string]> = [];
+  for (const [name, path] of Object.entries(record)) {
+    if (typeof path !== "string") {
+      return null;
+    }
+    bin.push([name, path]);
+  }
+  return Object.fromEntries(bin);
+}
+
+interface BinChoice {
+  name: string;
+  relativePath: string;
+}
+function chooseBin(
+  bin: string | Record<string, string>,
+  packageName: string,
+  explicitBin?: string,
+): BinChoice | null {
+  if (typeof bin === "string") {
+    return { name: defaultBinName(packageName), relativePath: bin };
+  }
+  for (const candidate of buildBinCandidates(packageName, explicitBin)) {
+    const path = bin[candidate];
+    if (path !== undefined && path !== "") {
+      return { name: candidate, relativePath: path };
+    }
+  }
+  const first = Object.entries(bin)[0];
+  return first ? { name: first[0], relativePath: first[1] } : null;
+}
+
+function resolveBinPath(packageDir: string, bin: BinChoice): string | null {
+  const binLink = bin.name !== "" ? join(findNodeModulesDir(packageDir), ".bin", bin.name) : null;
+  const linked = binLink !== null && existsSync(binLink) ? safeRealpath(binLink) : "";
+  if (linked !== "") {
+    return linked;
+  }
+  const path = resolve(packageDir, bin.relativePath);
+  return existsSync(path) ? path : null;
+}
+
 async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise<void> {
   throwIfAborted(signal);
   try {
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((complete, reject) => {
       const proc = crossSpawn(
         "npm",
         ["exec", "--yes", "--package", packageSpec, "--", "node", "-e", "1"],
@@ -337,7 +206,7 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
       proc.on("close", () => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", abort);
-        resolve();
+        complete();
       });
       proc.on("error", (err) => {
         clearTimeout(timer);
@@ -345,8 +214,8 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
         reject(err);
       });
     });
-  } catch (error) {
-    if (signal?.aborted) {
+  } catch {
+    if (signal?.aborted === true) {
       throwIfAborted(signal);
     }
     // Ignore failures, resolution will fall back to original command
@@ -356,17 +225,17 @@ async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise
 
 function buildBinCandidates(packageName: string, explicitBin?: string): string[] {
   const candidates: string[] = [];
-  if (explicitBin) {
+  if (explicitBin !== undefined && explicitBin !== "") {
     candidates.push(explicitBin);
   }
 
   if (packageName.startsWith("@")) {
     const namePart = packageName.split("/")[1] ?? "";
     const scopePart = packageName.split("/")[0]?.replace("@", "") ?? "";
-    if (namePart) {
+    if (namePart !== "") {
       candidates.push(namePart);
     }
-    if (scopePart && namePart) {
+    if (scopePart !== "" && namePart !== "") {
       candidates.push(`${scopePart}-${namePart}`);
     }
   } else {
@@ -374,53 +243,6 @@ function buildBinCandidates(packageName: string, explicitBin?: string): string[]
   }
 
   return [...new Set(candidates.filter(Boolean))];
-}
-
-function parsePackageSpec(spec: string): ParsedPackageSpec | null {
-  const trimmed = spec.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  let packageName: string;
-  let requestedVersion: string | undefined;
-  if (trimmed.startsWith("@")) {
-    const slashIndex = trimmed.indexOf("/");
-    if (slashIndex < 0) {
-      return null;
-    }
-    const atIndex = trimmed.lastIndexOf("@");
-    if (atIndex > slashIndex) {
-      packageName = trimmed.slice(0, atIndex);
-      requestedVersion = trimmed.slice(atIndex + 1);
-    } else {
-      packageName = trimmed;
-    }
-  } else {
-    const atIndex = trimmed.indexOf("@");
-    if (atIndex >= 0) {
-      packageName = trimmed.slice(0, atIndex);
-      requestedVersion = trimmed.slice(atIndex + 1);
-    } else {
-      packageName = trimmed;
-    }
-  }
-
-  if (!packageName) {
-    return null;
-  }
-  const normalizedVersion = requestedVersion?.replace(/^=/, "").replace(/^v/i, "");
-  // Let npm resolve ranges and tags rather than choosing an arbitrary cached version.
-  if (
-    requestedVersion !== undefined &&
-    (!normalizedVersion || !EXACT_PACKAGE_VERSION_RE.test(normalizedVersion))
-  ) {
-    return null;
-  }
-  return {
-    packageName,
-    ...(normalizedVersion ? { exactVersion: normalizedVersion } : {}),
-  };
 }
 
 function defaultBinName(packageName: string): string {
@@ -458,20 +280,26 @@ function findCachedPackageDir(
     if (!existsSync(packageJsonPath)) {
       continue;
     }
-    if (exactVersion) {
-      try {
-        const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version?: unknown };
-        if (pkg.version !== exactVersion) {
-          continue;
-        }
-      } catch {
-        continue;
-      }
+    if (
+      exactVersion !== undefined &&
+      exactVersion !== "" &&
+      !matchesPackageVersion(packageJsonPath, exactVersion)
+    ) {
+      continue;
     }
     return pkgDir;
   }
 
   return null;
+}
+
+function matchesPackageVersion(path: string, exactVersion: string): boolean {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    return asObjectRecord(raw)?.version === exactVersion;
+  } catch {
+    return false;
+  }
 }
 
 function findNodeModulesDir(packageDir: string): string {
@@ -509,15 +337,15 @@ function getNpmCacheDir(): string | null {
   if (npmCacheDirCached !== undefined) {
     return npmCacheDirCached;
   }
-  if (process.env.NPM_CONFIG_CACHE) {
+  if (process.env.NPM_CONFIG_CACHE !== undefined && process.env.NPM_CONFIG_CACHE !== "") {
     npmCacheDirCached = process.env.NPM_CONFIG_CACHE;
     return npmCacheDirCached;
   }
   try {
     const result = crossSpawn.sync("npm", ["config", "get", "cache"], { encoding: "utf-8" });
     if (result.status === 0) {
-      const path = String(result.stdout).trim();
-      npmCacheDirCached = path || null;
+      const path = result.stdout.trim();
+      npmCacheDirCached = path !== "" ? path : null;
       return npmCacheDirCached;
     }
   } catch {
@@ -526,55 +354,6 @@ function getNpmCacheDir(): string | null {
   }
   npmCacheDirCached = null;
   return null;
-}
-
-function getNpxCachePath(): string {
-  return getAdapterPath("mcp-npx-cache.json");
-}
-
-function loadCache(): NpxCache | null {
-  const cachePath = getNpxCachePath();
-  if (!existsSync(cachePath)) {
-    return null;
-  }
-  try {
-    const raw = JSON.parse(readFileSync(cachePath, "utf-8"));
-    if (!raw || typeof raw !== "object") {
-      return null;
-    }
-    if (raw.version !== CACHE_VERSION) {
-      return null;
-    }
-    if (!raw.entries || typeof raw.entries !== "object") {
-      return null;
-    }
-    return raw as NpxCache;
-  } catch {
-    return null;
-  }
-}
-
-function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
-  const cachePath = getNpxCachePath();
-  const dir = dirname(cachePath);
-  mkdirSync(dir, { recursive: true });
-
-  const merged: NpxCache = { version: CACHE_VERSION, entries: {} };
-  try {
-    if (existsSync(cachePath)) {
-      const existing = JSON.parse(readFileSync(cachePath, "utf-8")) as NpxCache;
-      if (existing && existing.version === CACHE_VERSION && existing.entries) {
-        merged.entries = { ...existing.entries };
-      }
-    }
-  } catch {
-    // Ignore parse errors
-  }
-
-  merged.entries[key] = entry;
-  const tmpPath = `${cachePath}.${process.pid}.tmp`;
-  writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
-  renameSync(tmpPath, cachePath);
 }
 
 function safeRealpath(path: string): string {

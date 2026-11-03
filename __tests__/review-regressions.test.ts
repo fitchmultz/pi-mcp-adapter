@@ -237,7 +237,11 @@ function collisionState(): McpExtensionState {
   return {
     config: { settings: { toolPrefix: "none" }, mcpServers: { demo: definition } },
     toolMetadata: new Map([
-      ["demo", buildToolMetadata(tools, [], definition, "demo", "none").metadata],
+      [
+        "demo",
+        buildToolMetadata({ tools, resources: [], definition, serverName: "demo", prefix: "none" })
+          .metadata,
+      ],
     ]),
   } as unknown as McpExtensionState;
 }

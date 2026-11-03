@@ -28,7 +28,9 @@
     "fitch-mcp-adapter": "cli.js"
   },
   "scripts": {
-    "build": "node ./scripts/build.mjs",
+    "build": "npm run check:cache-schema && node ./scripts/build.mjs",
+    "generate:cache-schema": "node scripts/generate-metadata-cache-schema.mts",
+    "check:cache-schema": "node scripts/generate-metadata-cache-schema.mts --check",
     "build:bridge": "node ./scripts/build-app-bridge.mjs",
     "prepare": "node ./scripts/prepare.mjs",
     "check": "node scripts/check.mjs all",
@@ -67,6 +69,7 @@
     "lint:state-tests": "oxlint --deny-warnings __tests__/state",
     "lint:output-tests": "oxlint --deny-warnings __tests__/output",
     "lint:packaging-tests": "oxlint --deny-warnings __tests__/packaging",
+    "lint:resource-runtime": "oxlint --deny-warnings consent-manager.ts metadata-cache.ts metadata-cache-format.ts metadata-cache-validator.ts scripts/generate-metadata-cache-schema.mts npx-resolver.ts npx-invocation.ts npx-resolution-cache.ts prompts.ts resource-tools.ts tool-approval.ts tool-metadata.ts tool-result-renderer.ts utils.ts __tests__/tool-approval.test.ts __tests__/fixtures/strict-resource-runtime-approval.ts __tests__/discovery/metadata-cache-lifetime.test.ts __tests__/utils-url.test.ts",
     "lint:quality": "oxlint --deny-warnings scripts/check-directives.mjs scripts/check-policy.mjs scripts/quality-exceptions.mjs scripts/check.mjs scripts/run-checks.mjs scripts/typecheck-all.mjs __tests__/quality",
     "lint:ui-host-tests": "oxlint --deny-warnings __tests__/ui-host",
     "lint:panel-tests": "oxlint --deny-warnings __tests__/panel",

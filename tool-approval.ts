@@ -1,6 +1,6 @@
 import { abortable } from "./abort.ts";
-import { combineAbortSignals } from "./runtime-owner.ts";
-import type { McpExtensionState } from "./state.ts";
+import { combineAbortSignals, type McpRuntimeOwner } from "./runtime-owner.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   getToolNameCandidates,
   matchesToolPattern,
@@ -9,6 +9,13 @@ import {
   type ToolMetadata,
 } from "./types.ts";
 import { sanitizeTerminalText } from "./utils.ts";
+
+interface ToolApprovalState {
+  owner: McpRuntimeOwner;
+  config: McpConfig;
+  approvedToolCalls: Map<string, true>;
+  ui?: ExtensionContext["ui"];
+}
 
 export type ToolCallApprovalResult =
   | { ok: true }
@@ -40,11 +47,18 @@ export function isToolCallApprovalRequired(
 }
 
 export async function ensureToolCallApproved(
-  state: McpExtensionState,
-  serverName: string,
-  toolMeta: ToolMetadata,
-  args: Record<string, unknown> | undefined,
-  signal?: AbortSignal,
+  state: ToolApprovalState,
+  {
+    serverName,
+    toolMeta,
+    args,
+    signal,
+  }: {
+    serverName: string;
+    toolMeta: ToolMetadata;
+    args: Record<string, unknown> | undefined;
+    signal?: AbortSignal | undefined;
+  },
 ): Promise<ToolCallApprovalResult> {
   if (!isToolCallApprovalRequired(state.config, serverName, toolMeta)) {
     return { ok: true };
@@ -63,7 +77,7 @@ export async function ensureToolCallApproved(
   const sanitized = sanitizeTerminalText(json);
   const preview = sanitized.length > 500 ? `${sanitized.slice(0, 500)}...` : sanitized;
   const title = `MCP: ${sanitizeTerminalText(serverName)} wants to run ${sanitizeTerminalText(toolMeta.originalName)}`;
-  const ownedSignal = combineAbortSignals(state.owner?.signal, signal);
+  const ownedSignal = combineAbortSignals(state.owner.signal, signal);
   const decision = await abortable(
     state.ui.select(`${title}\n\nArguments:\n${preview}`, [
       "Allow once",

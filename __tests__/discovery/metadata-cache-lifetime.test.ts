@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { z } from "zod";
+import { PromptSchema, ResourceSchema, ToolSchema } from "@modelcontextprotocol/core";
+import { projectMetadataCache } from "../../metadata-cache-format.ts";
 import {
   computeServerHash,
   getMetadataCachePath,
@@ -165,5 +167,128 @@ describe("metadata cache lifetime", () => {
   it("rejects recognized records with malformed descriptor collections", () => {
     expect(isServerCacheValid({ ...entry(), tools: "bad" }, definition)).toBe(false);
     expect(isServerCacheValid({ ...entry(), resources: {} }, definition)).toBe(false);
+  });
+
+  it.each([
+    { tools: [{ name: 4 }] },
+    { tools: [{ name: "search", inputSchema: { type: "array" } }] },
+    { tools: [{ name: "search", inputSchema: { type: "object", required: [4] } }] },
+    { tools: [{ name: "search", outputSchema: { $schema: 4 } }] },
+    { tools: [{ name: "search", annotations: { readOnlyHint: "yes" } }] },
+    { tools: [{ name: "search", execution: { taskSupport: "sometimes" } }] },
+    { tools: [{ name: "search", icons: [{ src: "icon", theme: "other" }] }] },
+    { tools: [{ name: "search", _meta: [] }] },
+    { tools: [{ name: "search", uiVisibility: ["unknown"] }] },
+    { resources: [{ name: "guide", uri: 4 }] },
+    { resources: [{ name: "guide", uri: "docs://guide", annotations: { audience: ["app"] } }] },
+    { prompts: [{ name: "brief", arguments: [{ name: "topic", required: "yes" }] }] },
+  ])("omits malformed typed descriptors from reads but preserves them on disk: %j", (fields) => {
+    const malformed = { ...entry(Date.now() - week - 1000), ...fields };
+    writeFileSync(
+      getMetadataCachePath(),
+      JSON.stringify({ version: 2, servers: { malformed, valid: entry() } }),
+    );
+    expect(Object.keys(loadMetadataCache()?.servers ?? {})).toEqual(["valid"]);
+    expect(isServerCacheValid(malformed, definition)).toBe(false);
+    saveMetadataCache({ version: 2, servers: { current: entry() } });
+    const stored = z
+      .object({ servers: z.record(z.string(), z.unknown()) })
+      .parse(JSON.parse(readFileSync(getMetadataCachePath(), "utf8")));
+    expect(stored.servers.malformed).toEqual(malformed);
+  });
+
+  it("retains raw schemas, reference fields and extensions through disk validation", () => {
+    const raw = {
+      ...entry(),
+      tools: [
+        {
+          name: "search",
+          inputSchema: {
+            type: "object",
+            properties: { query: { $ref: "#/$defs/query" } },
+            $defs: { query: { type: "string" } },
+            additionalProperties: false,
+          },
+          outputSchema: { "vendor/future-keyword": { arbitrary: [1, null, false] } },
+          _meta: { ui: { resourceUri: "ui://search", visibility: ["model", "app"] } },
+          "vendor/tool": { retained: true },
+        },
+      ],
+      resources: [{ name: "guide", uri: "docs://guide", "vendor/resource": [1, 2] }],
+      "vendor/cache": { retained: true },
+    };
+    writeFileSync(getMetadataCachePath(), JSON.stringify({ version: 2, servers: { raw } }));
+    const loaded = loadMetadataCache();
+    assert.ok(loaded?.servers.raw);
+    expect(loaded.servers.raw).toEqual(raw);
+    expect(isServerCacheValid(loaded.servers.raw, definition)).toBe(true);
+    saveMetadataCache(loaded);
+    const stored: unknown = JSON.parse(readFileSync(getMetadataCachePath(), "utf8"));
+    expect(stored).toEqual({ version: 2, servers: { raw } });
+  });
+
+  it.each([
+    { priority: 0, lastModified: "2024-02-29T23:59:59.123456Z", valid: true },
+    { priority: 1, lastModified: "2026-01-01T00:00:00+23:59", valid: true },
+    { priority: -0.1, lastModified: "2026-01-01T00:00:00Z", valid: false },
+    { priority: 1.1, lastModified: "2026-01-01T00:00:00Z", valid: false },
+    { priority: 0.5, lastModified: "2026-02-29T00:00:00Z", valid: false },
+    { priority: 0.5, lastModified: "not-a-date", valid: false },
+    { priority: 0.5, lastModified: "2026-01-01T00:00:60Z", valid: false },
+  ])("uses canonical resource annotation constraints on disk: %j", ({ valid, ...annotations }) => {
+    const resource = { name: "guide", uri: "docs://guide", annotations };
+    expect(ResourceSchema.safeParse(resource).success).toBe(valid);
+    const raw = { ...entry(Date.now() - week - 1000), resources: [resource] };
+    writeFileSync(getMetadataCachePath(), JSON.stringify({ version: 2, servers: { raw } }));
+    expect(loadMetadataCache()?.servers.raw).toEqual(valid ? raw : undefined);
+    saveMetadataCache({ version: 2, servers: { current: entry() } });
+    const stored = z
+      .object({ servers: z.record(z.string(), z.unknown()) })
+      .parse(JSON.parse(readFileSync(getMetadataCachePath(), "utf8")));
+    expect(stored.servers.raw).toEqual(valid ? undefined : raw);
+  });
+
+  it("validates native recursive inputs and persisted prompt projections without parsing away raw records", () => {
+    const tool = {
+      name: "search",
+      inputSchema: {
+        type: "object",
+        properties: { query: { nested: [1, null, { $ref: "#/$defs/query" }] } },
+        $defs: { query: { type: "string" } },
+        "vendor/schema": [false, { future: true }],
+      },
+      annotations: { readOnlyHint: true, "vendor/annotation": "retained" },
+      icons: [{ src: "data:image/png;base64,aA==", "vendor/icon": true }],
+      "vendor/tool": { retained: true },
+    };
+    const prompt = {
+      name: "brief",
+      arguments: [{ name: "topic", required: true, "vendor/argument": [1, 2] }],
+      // Not a CachedPrompt field; consumers use only its native field projection.
+      icons: "opaque legacy extension",
+      "vendor/prompt": { retained: true },
+    };
+    const nativeTool = ToolSchema.safeParse(tool);
+    assert.ok(nativeTool.success);
+    expect(nativeTool.data.inputSchema).toEqual(tool.inputSchema);
+    expect(nativeTool.data).not.toEqual(tool);
+    expect(
+      PromptSchema.pick({ name: true, title: true, description: true, arguments: true }).safeParse(
+        prompt,
+      ).success,
+    ).toBe(true);
+    expect(PromptSchema.safeParse(prompt).success).toBe(false);
+    const raw = { ...entry(), tools: [tool], prompts: [prompt] };
+    const projected = projectMetadataCache({ version: 2, servers: { raw } });
+    expect(projected?.servers.raw).toBe(raw);
+    expect(projected?.servers.raw?.tools[0]).toBe(tool);
+    expect(projected?.servers.raw?.prompts?.[0]).toBe(prompt);
+    writeFileSync(getMetadataCachePath(), JSON.stringify({ version: 2, servers: { raw } }));
+    const loaded = loadMetadataCache();
+    assert.ok(loaded);
+    expect(loaded.servers.raw).toEqual(raw);
+    saveMetadataCache(loaded);
+    const stored: unknown = JSON.parse(readFileSync(getMetadataCachePath(), "utf8"));
+    expect(stored).toEqual({ version: 2, servers: { raw } });
   });
 });

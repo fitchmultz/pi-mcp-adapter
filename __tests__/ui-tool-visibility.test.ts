@@ -16,7 +16,13 @@ const tools: McpTool[] = [
 
 describe("MCP Apps tool visibility", () => {
   it("omits app-only tools from live model metadata", () => {
-    const { metadata } = buildToolMetadata(tools, [], {}, "demo", "server");
+    const { metadata } = buildToolMetadata({
+      tools,
+      resources: [],
+      definition: {},
+      serverName: "demo",
+      prefix: "server",
+    });
 
     expect(metadata.map((tool) => tool.originalName)).toEqual(["visible", "both"]);
     expect(metadata.find((tool) => tool.originalName === "both")?.uiVisibility).toEqual([
@@ -45,13 +51,13 @@ describe("MCP Apps tool visibility", () => {
     expect(isUiToolVisibleToModel(visibility)).toBe(false);
     expect(isUiToolCallableByApp(visibility)).toBe(false);
 
-    const { metadata } = buildToolMetadata(
-      [{ name: "bad", _meta: { ui: { visibility: ["app", "mdoel"] } } }],
-      [],
-      {},
-      "demo",
-      "server",
-    );
+    const { metadata } = buildToolMetadata({
+      tools: [{ name: "bad", _meta: { ui: { visibility: ["app", "mdoel"] } } }],
+      resources: [],
+      definition: {},
+      serverName: "demo",
+      prefix: "server",
+    });
 
     expect(metadata).toEqual([]);
   });
