@@ -33,12 +33,19 @@ function repository(): string {
     ".oxlintrc.json",
     ".oxfmtrc.json",
     "package.json",
+    ".github/workflows/ci.yml",
     "tsconfig.json",
+    "tsconfig.build.json",
     "tsconfig.declarations.json",
     "examples/interactive-visualizer/tsconfig.json",
     "docs/strict-quality-standard.md",
     "docs/quality-exceptions.md",
     "scripts/check-policy.mjs",
+    "scripts/check-directives.mjs",
+    "scripts/quality-exceptions.mjs",
+    "scripts/check.mjs",
+    "scripts/run-checks.mjs",
+    "scripts/typecheck-all.mjs",
     "scripts/tsc.mjs",
   ]) {
     const destination = join(root, file);
@@ -46,13 +53,14 @@ function repository(): string {
     copyFileSync(join(source, file), destination);
   }
   symlinkSync(join(source, "node_modules"), join(root, "node_modules"), "junction");
-  write(root, "cli.d.ts", "export {};\n");
+  write(root, "cli.d.ts", "export declare const version: string;\n");
   write(
     root,
     "__tests__/fixtures/android-keyring-binding.d.cts",
     "declare const binding: object; export = binding;\n",
   );
   write(root, "example.ts", "export const value = 1;\n");
+  write(root, "quality-exceptions.json", "[]\n");
   write(root, "examples/interactive-visualizer/src/example.ts", "export const value = 1;\n");
   return root;
 }
@@ -90,6 +98,21 @@ function compile(root: string, project: string) {
   );
 }
 
+function quality(root: string) {
+  return spawnSync(process.execPath, [join(root, "scripts/check.mjs"), "quality"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+}
+
+function formattedRepository(): string {
+  const root = repository();
+  execFileSync(process.execPath, [resolve("node_modules/oxfmt/bin/oxfmt"), "--write", "."], {
+    cwd: root,
+  });
+  return root;
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
@@ -97,6 +120,59 @@ afterEach(() => {
 });
 
 describe("quality policy", () => {
+  it("runs the actual quality aggregate on a valid reduced compiler and policy graph", () => {
+    const result = quality(formattedRepository());
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  });
+
+  it.each([
+    ["lint", "debugger;\nexport const value = 1;\n", "no-debugger", "lint"],
+    [
+      "semantic",
+      "export function parse(text: string): string {\n  return JSON.parse(text);\n}\n",
+      "no-unsafe-return",
+      "lint",
+    ],
+    ["compiler", 'export const value: number = "wrong";\n', "TS2322", "typecheck:all"],
+    ["formatter", "export const value=1;\n", "example.ts", "format:check"],
+    ["policy", "export const value = 1;\n", "Oxlint categories", "check:policy"],
+  ])(
+    "propagates a real %s failure through the quality aggregate",
+    (fault, sourceText, diagnostic, gate) => {
+      const root = formattedRepository();
+      write(root, "example.ts", sourceText);
+      if (fault === "policy") {
+        updateJson(root, ".oxlintrc.json", (config) => {
+          const categories = recordSchema.parse(config.categories);
+          return { ...config, categories: { ...categories, correctness: "warn" } };
+        });
+        execFileSync(
+          process.execPath,
+          [resolve("node_modules/oxfmt/bin/oxfmt"), "--write", ".oxlintrc.json"],
+          { cwd: root },
+        );
+      }
+      const result = quality(root);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(`${result.stdout}\n${result.stderr}`).toContain(diagnostic);
+      expect(result.stdout).toContain(`[check] ${gate}: exit 1`);
+      expect(result.stdout).toContain("[check] check:directives: exit 0");
+      expect(result.stdout).toContain(`[check] check:policy: exit ${fault === "policy" ? 1 : 0}`);
+      expect(result.stdout).toContain(
+        `[check] typecheck:all: exit ${fault === "compiler" ? 1 : 0}`,
+      );
+      expect(result.stdout).toContain("[check] interactive-visualizer: exit 0");
+      expect(result.stdout).toContain(`[check] build: exit ${fault === "compiler" ? 1 : 0}`);
+      expect(result.stdout).toContain("[check] declarations: exit 0");
+      expect(result.stdout).toContain(
+        `[check] format:check: exit ${fault === "formatter" ? 1 : 0}`,
+      );
+      expect(result.stdout).toContain(
+        `[check] lint: exit ${fault === "lint" || fault === "semantic" ? 1 : 0}`,
+      );
+    },
+  );
+
   it("accepts the adopted configuration and covered source", () => {
     const result = check(repository());
     expect(result.status, result.stderr).toBe(0);
@@ -159,6 +235,77 @@ describe("quality policy", () => {
           return { ...config, compilerOptions: { ...options, strict: false } };
         }),
       "compilerOptions.strict",
+    ],
+    [
+      "build compiler strictness",
+      (root: string) =>
+        updateJson(root, "tsconfig.build.json", (config) => {
+          const options = recordSchema.parse(config.compilerOptions);
+          return { ...config, compilerOptions: { ...options, noUncheckedIndexedAccess: false } };
+        }),
+      "tsconfig.build.json compilerOptions.noUncheckedIndexedAccess",
+    ],
+    [
+      "reduced native lint scope",
+      (root: string) =>
+        updateJson(root, "package.json", (config) => {
+          const scripts = recordSchema.parse(config.scripts);
+          return { ...config, scripts: { ...scripts, lint: "oxlint --deny-warnings scripts" } };
+        }),
+      "Required acceptance script lint",
+    ],
+    [
+      "short-circuiting tests",
+      (root: string) =>
+        updateJson(root, "package.json", (config) => {
+          const scripts = recordSchema.parse(config.scripts);
+          return { ...config, scripts: { ...scripts, test: "vitest run && npm run test:oauth" } };
+        }),
+      "Required acceptance script test",
+    ],
+    [
+      "missing full CI quality acceptance",
+      (root: string) => {
+        const file = join(root, ".github/workflows/ci.yml");
+        writeFileSync(
+          file,
+          readFileSync(file, "utf8").replace("npm run check:quality", "npm run lint:quality"),
+        );
+      },
+      "Required independent CI step is missing or changed",
+    ],
+    [
+      "swallowed CI quality status",
+      (root: string) => {
+        const file = join(root, ".github/workflows/ci.yml");
+        writeFileSync(
+          file,
+          readFileSync(file, "utf8").replace(
+            "npm run check:quality",
+            "npm run check:quality || true",
+          ),
+        );
+      },
+      "Required independent CI step is missing or changed",
+    ],
+    [
+      "shared automation inside required native source scope",
+      (root: string) => {
+        const file = join(root, ".github/workflows/ci.yml");
+        writeFileSync(
+          file,
+          readFileSync(file, "utf8").replaceAll("path: automation", "path: extension/automation"),
+        );
+      },
+      "CI quality must check the extension checkout with shared automation as a sibling",
+    ],
+    [
+      "production import of test-only support",
+      (root: string) => {
+        write(root, "__tests__/support.ts", "export const value = 1;\n");
+        write(root, "example.ts", 'export { value } from "./__tests__/support.ts";\n');
+      },
+      "Production build depends on test-only or diagnostic source:",
     ],
     [
       "checked JavaScript",
@@ -436,7 +583,21 @@ describe("quality policy", () => {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   });
 
+  it("counts actual imported compiler members outside configured root globs", () => {
+    const root = repository();
+    write(root, "uncovered/feature.ts", "export const value = 1;\n");
+    write(root, "example.ts", 'export { value } from "./uncovered/feature.ts";\n');
+    const result = check(root);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it.each([
+    [
+      "build TypeScript",
+      "tsconfig.build.json",
+      "probe.ts",
+      'export const value: number = "wrong";\n',
+    ],
     ["root TypeScript", "tsconfig.json", "probe.ts", 'export const value: number = "wrong";\n'],
     [
       "root JavaScript",

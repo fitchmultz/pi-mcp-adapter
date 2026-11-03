@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
@@ -199,10 +199,16 @@ function verifyCompilerOptions(project, options, javascript) {
   }
 }
 
-/** @param {string[]} files @param {string} project */
-function projectPaths(files, project) {
-  const directory = dirname(resolve(root, project));
-  return new Set(files.map((file) => resolve(directory, file)));
+/** @param {string} project */
+function resolvedProjectFiles(project) {
+  return execFileSync(
+    process.execPath,
+    [join(root, "scripts/tsc.mjs"), "--listFilesOnly", "-p", project],
+    { cwd: root, encoding: "utf8" },
+  )
+    .split(/\r?\n/u)
+    .filter((file) => file !== "")
+    .map((file) => resolve(root, file));
 }
 
 /** @returns {string[]} */
@@ -265,13 +271,17 @@ function verifyIgnoredSources() {
 
 /** @param {string[]} files */
 function verifyCompilerCoverage(files) {
-  const projects = ["tsconfig.json", "examples/interactive-visualizer/tsconfig.json"];
+  const projects = [
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "examples/interactive-visualizer/tsconfig.json",
+  ];
   /** @type {Set<string>} */
   const covered = new Set();
   for (const project of projects) {
     const config = resolvedCompilerConfig(project);
     verifyCompilerOptions(project, config.compilerOptions, true);
-    for (const file of projectPaths(config.files, project)) {
+    for (const file of resolvedProjectFiles(project)) {
       covered.add(file);
     }
   }
@@ -282,7 +292,7 @@ function verifyCompilerCoverage(files) {
     declarations.compilerOptions.skipLibCheck,
     false,
   );
-  const checkedDeclarations = projectPaths(declarations.files, "tsconfig.declarations.json");
+  const checkedDeclarations = new Set(resolvedProjectFiles("tsconfig.declarations.json"));
   for (const file of files) {
     if (!/\.(?:[cm]?[jt]s|[jt]sx)$/u.test(file) || file === "app-bridge.bundle.js") {
       continue;
@@ -296,12 +306,103 @@ function verifyCompilerCoverage(files) {
   }
 }
 
+function verifyProductionBoundary() {
+  for (const file of resolvedProjectFiles("tsconfig.build.json")) {
+    const local = file.replaceAll("\\", "/");
+    if (
+      !local.includes("/node_modules/") &&
+      /\/(?:__tests__|conformance)\/|\/scripts\/native-compat\/|\.test(?:-d)?\.[cm]?[jt]sx?$/u.test(
+        local,
+      )
+    ) {
+      throw new Error(`Production build depends on test-only or diagnostic source: ${file}`);
+    }
+  }
+}
+
+function verifyAcceptanceScripts() {
+  const scripts = z
+    .object({ scripts: z.record(z.string(), z.string()) })
+    .parse(readJson("package.json")).scripts;
+  const required = {
+    check: "node scripts/check.mjs all",
+    "check:quality": "node scripts/check.mjs quality",
+    "check:compat": "node scripts/check.mjs compat",
+    test: "node scripts/check.mjs test",
+    "test:vitest": "vitest run",
+    "test:vitest:compat": "vitest run --exclude __tests__/interactive-visualizer-server.test.ts",
+    "test:oauth":
+      "PI_MCP_ADAPTER_TEST_AUTH_STORE=memory node --test --test-concurrency=1 mcp-auth.test.ts mcp-auth-flow.test.ts mcp-callback-server.test.ts mcp-oauth-provider.test.ts",
+    "test:conformance": "bash conformance/run.sh",
+    build: "node ./scripts/build.mjs",
+    typecheck: "node ./scripts/tsc.mjs --noEmit",
+    "typecheck:all": "node ./scripts/typecheck-all.mjs",
+    lint: "oxlint --deny-warnings .",
+    "format:check": "oxfmt --check .",
+    "check:directives": "node scripts/check-directives.mjs",
+    "check:policy": "node scripts/check-policy.mjs",
+  };
+  for (const [name, command] of Object.entries(required)) {
+    requireEqual(`Required acceptance script ${name}`, scripts[name], command);
+  }
+}
+
+function verifyAcceptanceWorkflow() {
+  const workflow = readFileSync(join(root, ".github/workflows/ci.yml"), "utf8");
+  const steps = workflow.split(/(?=^      - )/mu);
+  const extras = workflow.split("\n  extras:")[1] ?? "";
+  if (
+    !extras.includes("    defaults:\n      run:\n        working-directory: extension\n") ||
+    !extras.includes("          path: extension\n") ||
+    !extras.includes("          path: automation\n")
+  ) {
+    throw new Error(
+      "CI quality must check the extension checkout with shared automation as a sibling",
+    );
+  }
+  const build = "${{ !cancelled() && steps.build.outcome == 'success' }}";
+  const fork =
+    "${{ !cancelled() && steps.fork-build.outcome == 'success' && steps.extension-npm.outcome == 'success' }}";
+  /** @type {ReadonlyArray<readonly [string, string]>} */
+  const required = [
+    ["run: npm run check:quality", "${{ !cancelled() && steps.host.outcome == 'success' }}"],
+    ['npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"', build],
+    [
+      "run: npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts",
+      "${{ !cancelled() && steps.build.outcome == 'success' && steps.example-build.outcome == 'success' }}",
+    ],
+    ["run: npm run test:conformance", "${{ !cancelled() && steps.host.outcome == 'success' }}"],
+    ['--host official --target "$version" --output "$RUNNER_TEMP/official-evidence"', fork],
+    [
+      '--host fork --target "$RUNNER_TEMP/fork-package" --output "$RUNNER_TEMP/fork-evidence"',
+      fork,
+    ],
+  ];
+  for (const [command, condition] of required) {
+    if (
+      !steps.some(
+        (step) =>
+          step.split("\n").some((line) => line.trim() === command) &&
+          step.includes(`if: ${condition}`),
+      )
+    ) {
+      throw new Error(`Required independent CI step is missing or changed: ${command}`);
+    }
+  }
+  if (/^\s+continue-on-error:/mu.test(workflow)) {
+    throw new Error("Required CI failures must not use continue-on-error");
+  }
+}
+
 const checks = {
   "lint policy": verifyLintConfig,
   "formatter policy": verifyFormatterConfig,
   "nested configs": () => verifyNestedConfigs(repositoryFiles()),
   "ignored sources": verifyIgnoredSources,
   "compiler projects": () => verifyCompilerCoverage(repositoryFiles()),
+  "production classification": verifyProductionBoundary,
+  "acceptance scripts": verifyAcceptanceScripts,
+  "acceptance workflow": verifyAcceptanceWorkflow,
 };
 let failed = false;
 for (const [name, check] of Object.entries(checks)) {

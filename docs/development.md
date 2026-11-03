@@ -9,42 +9,14 @@ Use the npm version declared in `package.json`:
 ```bash
 npm ci --ignore-scripts --no-audit --no-fund
 npm ci --prefix examples/interactive-visualizer --ignore-scripts --no-audit --no-fund
-npm run --prefix examples/interactive-visualizer build
-npm run build
-npm run format:check
-npm run check:directives
-npm run check:policy
-npm run lint:conformance
-npm run lint:consumer-tooling
-npm run lint:prompts
-npm run lint:runtime-tests
-npm run lint:tracing
-npm run lint:core-runtime
-npm run lint:sampling
-npm run lint:output-runtime
-npm run lint:credential-runtime
-npm run lint:node-oauth
-npm run lint:sdk-http
-npm run lint:lifecycle-tests
-npm run lint:oauth-recovery
-npm run lint:oauth-flows
-npm run lint:auth-tests
-npm run lint:discovery-tests
-npm run lint:state-tests
-npm run lint:output-tests
-npm run lint:packaging-tests
-npm run lint:quality
-npm run lint:ui-host-tests
-npm run lint:panel-tests
-npm run typecheck
-npm run typecheck:all
-npm test
-npm run test:conformance
+npm run check
 ```
 
 For latest-host qualification, run `node /path/to/automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$PWD" --host official --target latest --output /tmp/pi-mcp-adapter-official`, then qualify the packed latest maintained fork with `--host fork --target /path/to/fork-package`. Plain `npm ci` checks only the locked development snapshot, not latest qualification. Preserve the separate extras checks in `.github/workflows/ci.yml`.
 
-Strict lint is enforced for `conformance/`, the prompt tests and their shared fixtures, `__tests__/runtime/`, `__tests__/auth/`, `__tests__/discovery/`, `__tests__/state/`, `__tests__/output/`, `__tests__/packaging/`, `__tests__/ui-host/`, `__tests__/panel/`, and the pinning test fixture. The discovery scope also includes the root search-ranking suite. Repository-wide strict lint remains a migration target.
+`npm run check` builds the example and root distribution, then requires formatting, full native `oxlint --deny-warnings .`, all four compiler projects, directive and policy checks, Vitest, the four Node OAuth suites, and conformance. Independent stages keep running after a failure. Tests and package consumers that need emitted output are blocked when their build fails. Every failed or blocked required stage fails the aggregate.
+
+`npm test` runs Vitest and the Node OAuth suites independently, retaining both results. `npm run check:quality` runs the non-writing quality checks after the example and root builds; it does not select or install another host. Generated bridge freshness remains checked by its actual Vitest owner, and builds verify uncommitted distribution assets. Named `lint:*` commands remain focused conveniences, not substitutes for full native lint. Adoption remains incomplete until the exact integrated revision passes all required local and hosted checks.
 
 `lint:consumer-tooling` enforces the production profile for the selected-host resolver and packed-consumer loader, their result schemas and the checked CLI observer. The loader validates external JSON and checks the real SDK, gateway activation, reload and CLI registration against the selected host graph.
 
@@ -88,7 +60,7 @@ The auth, runtime and panel scopes include the command authentication, status, o
 
 `check:directives` accepts only the operation-bound lint exceptions in `quality-exceptions.json`, documented in [quality exceptions](quality-exceptions.md). It rejects copied, replaced, duplicated, stale and incorrectly attached directives. The packed-consumer type fixture and executable OAuth configuration suite are approved negative type tests. Their `@ts-expect-error` comments require a description. Other TypeScript error suppressions, file-wide and range disables remain prohibited.
 
-`check:policy` compares the root lint and formatter configurations with the adopted standard and declared profiles, rejects nested quality configs, and checks resolved compiler settings and membership for maintained source and handwritten declarations. It does not yet verify all source classifications or acceptance wiring.
+`check:policy` compares the root lint and formatter configurations with the adopted standard and declared profiles. It rejects nested quality configs and ignored maintained source, checks resolved compiler settings for root, build, declarations and example, and uses native compiler file membership to verify coverage. The production build must not import the declared test-only scopes. Concrete npm entrypoints and independent CI step conditions are also required. Native fault controls exercise failure propagation through the actual runner on reduced disposable projects. These checks do not prove the semantic justification of an editable exception record, every dynamic dependency, or hosted execution.
 
 ## Automatic npm releases (maintainers)
 
@@ -100,7 +72,7 @@ The reusable `release-qualification.yml` gate installs the retained candidate ta
 
 ## Pi release qualification
 
-Pi **1.5.0** is the support floor; host peers remain wildcard. Required qualification uses the latest stable official Pi and latest maintained fork `main`, resolving version/commit once per workflow run and retaining exact SDK/CLI evidence. Locked development dependencies are reproducible snapshots, not qualification targets. Extras use the same resolved official graph. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests, then loads a packed consumer through the native SDK and CLI.
+Pi **1.5.0** is the support floor; host peers remain wildcard. Required qualification uses the latest stable official Pi and latest maintained fork `main`, resolving version/commit once per workflow run and retaining exact SDK/CLI evidence. Locked development dependencies are reproducible snapshots, not qualification targets. Extras use the same resolved official graph. `npm run check:compat` verifies the installed SDK and CLI identity, builds and typechecks, runs Vitest and memory-only OAuth tests independently, then loads a packed consumer through the native SDK and CLI. The native identity and successful build are prerequisites for the packed consumer. The compatibility Vitest command retains its separate interactive-visualizer exclusion; extras verifies that example after its real build.
 
 GitHub CI runs that contract on Node 24 against both official Pi and the maintained fork through the shared Pi compatibility automation, including fresh Git and npm installations loaded by the real Pi CLI. A second job checks lockfile registry hosts, published type declarations, the built interactive visualizer, and MCP protocol conformance. These checks use local MCP fixtures and disposable agent directories, never live credentials or paid providers.
 

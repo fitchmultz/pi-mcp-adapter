@@ -78,6 +78,7 @@ jobs:
           path: fork
           persist-credentials: false
       - name: Build fork once
+        id: fork-build
         working-directory: fork
         env:
           FORK_REF: ${{ steps.fork.outputs.commit }}
@@ -91,8 +92,10 @@ jobs:
           node ../automation/scripts/pack-fork.mjs . "$RUNNER_TEMP/fork-package" "$FORK_REF"
           git diff --exit-code
       - name: Use the extension npm version
+        id: extension-npm
         run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
       - name: Qualify official Pi
+        if: ${{ !cancelled() && steps.fork-build.outcome == 'success' && steps.extension-npm.outcome == 'success' }}
         env:
           version: ${{ needs.resolve.outputs.official-version }}
           GH_TOKEN: ${{ github.token }}
@@ -100,6 +103,7 @@ jobs:
           node automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$GITHUB_WORKSPACE/extension" \
             --host official --target "$version" --output "$RUNNER_TEMP/official-evidence"
       - name: Qualify fork Pi
+        if: ${{ !cancelled() && steps.fork-build.outcome == 'success' && steps.extension-npm.outcome == 'success' }}
         env:
           PI_COMPAT_FORK_REF: ${{ steps.fork.outputs.commit }}
         run: |
@@ -117,17 +121,22 @@ jobs:
           retention-days: 3
 
   extras:
+    defaults:
+      run:
+        working-directory: extension
     needs: resolve
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Require resolved latest hosts
+        working-directory: ${{ github.workspace }}
         env:
           RESOLVE: ${{ needs.resolve.result }}
         run: test "$RESOLVE" = success
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          path: extension
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -135,69 +144,69 @@ jobs:
           check-latest: true
           cache: npm
           cache-dependency-path: |
-            package-lock.json
-            examples/interactive-visualizer/package-lock.json
+            extension/package-lock.json
+            extension/examples/interactive-visualizer/package-lock.json
       - name: Use the extension npm version
         run: npm install --global "$(node -p 'require("./package.json").packageManager')"
       - name: Lockfiles resolve only from the public npm registry
+        id: lockfiles
         run: |
+          failed=0
           for lock in package-lock.json examples/interactive-visualizer/package-lock.json; do
-            npx -y lockfile-lint@5.0.1 --type npm --allowed-hosts npm --validate-https --path "$lock"
+            npx -y lockfile-lint@5.0.1 --type npm --allowed-hosts npm --validate-https --path "$lock" || failed=1
           done
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run format:check
-      - run: npm run check:directives
-      - run: npm run check:policy
-      - run: npm run lint:conformance
-      - run: npm run lint:consumer-tooling
-      - run: npm run lint:prompts
-      - run: npm run lint:runtime-tests
-      - run: npm run lint:tracing
-      - run: npm run lint:core-runtime
-      - run: npm run lint:sampling
-      - run: npm run lint:output-runtime
-      - run: npm run lint:credential-runtime
-      - run: npm run lint:node-oauth
-      - run: npm run lint:sdk-http
-      - run: npm run lint:lifecycle-tests
-      - run: npm run lint:oauth-recovery
-      - run: npm run lint:oauth-flows
-      - run: npm run lint:auth-tests
-      - run: npm run lint:discovery-tests
-      - run: npm run lint:state-tests
-      - run: npm run lint:output-tests
-      - run: npm run lint:packaging-tests
-      - run: npm run lint:quality
-      - run: npm run lint:ui-host-tests
-      - run: npm run lint:panel-tests
+          exit "$failed"
+      - name: Install extension
+        id: install
+        if: ${{ !cancelled() && steps.lockfiles.outcome != 'skipped' }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: fitchmultz/.github
           ref: ${{ env.PI_AUTOMATION_REF }}
           path: automation
           persist-credentials: false
+        id: automation
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
       - name: Select the same latest official graph for extras
+        id: host
+        if: ${{ !cancelled() && steps.automation.outcome == 'success' }}
         env:
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           node --input-type=module <<'NODE'
-          import { prepareHost, selectDevelopmentHost } from './automation/scripts/hosts.mjs';
-          import { writeJson } from './automation/scripts/common.mjs';
+          import { prepareHost, selectDevelopmentHost } from '../automation/scripts/hosts.mjs';
+          import { writeJson } from '../automation/scripts/common.mjs';
           const host = await prepareHost(`${process.env.RUNNER_TEMP}/extras-host`, 'official', process.env.OFFICIAL_VERSION, process.env);
           const selected = selectDevelopmentHost(process.cwd(), host, process.env);
           writeJson(`${process.env.RUNNER_TEMP}/extras-host/host.json`, { provenance: host.provenance, ...selected });
           console.log(JSON.stringify(selected));
           NODE
-      - run: npm run build
+      - name: Install interactive visualizer
+        id: example-install
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm ci --prefix examples/interactive-visualizer --ignore-scripts --no-audit --no-fund
+      - name: Build interactive visualizer
+        id: example-build
+        if: ${{ !cancelled() && steps.example-install.outcome == 'success' }}
+        run: npm run --prefix examples/interactive-visualizer build
+      - name: Build extension
+        id: build
+        if: ${{ !cancelled() && steps.host.outcome == 'success' }}
+        run: npm run build
+      - name: Quality acceptance
+        if: ${{ !cancelled() && steps.host.outcome == 'success' }}
+        run: npm run check:quality
       - name: Published types resolve from the packed tarball
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
           mkdir "$RUNNER_TEMP/consumer"
           cd "$RUNNER_TEMP/consumer"
           echo '{"private":true}' > package.json
           npm install --omit=dev --no-audit --no-fund "$RUNNER_TEMP"/fitchmultz-pi-mcp-adapter-*.tgz
-          node "$GITHUB_WORKSPACE/scripts/check-consumer-types.mjs" "$PWD/node_modules/@fitchmultz/pi-mcp-adapter"
+          node "$GITHUB_WORKSPACE/extension/scripts/check-consumer-types.mjs" "$PWD/node_modules/@fitchmultz/pi-mcp-adapter"
       - name: Retain compatibility evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -209,9 +218,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Interactive visualizer
-        run: |
-          npm ci --prefix examples/interactive-visualizer --ignore-scripts --no-audit --no-fund
-          npm run --prefix examples/interactive-visualizer build
-          npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts
-      - run: npm run typecheck:all
-      - run: npm run test:conformance
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.example-build.outcome == 'success' }}
+        run: npm exec -- vitest run __tests__/interactive-visualizer-server.test.ts
+      - name: Protocol conformance
+        if: ${{ !cancelled() && steps.host.outcome == 'success' }}
+        run: npm run test:conformance
