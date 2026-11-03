@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
-- Enforce strict lint for runtime integration tests (#127) ([efbf499](https://github.com/fitchmultz/pi-mcp-adapter/commit/efbf49927ff2a9041d506daf10453d45e063a2e6))
+- Update MCP SDK and Apps dependencies (#157) ([9a42979](https://github.com/fitchmultz/pi-mcp-adapter/commit/9a429791952b7772c602ced7b063a87a2f7401a8))
+- Enforce strict lint on OAuth grant tests (#156) ([639c94f](https://github.com/fitchmultz/pi-mcp-adapter/commit/639c94f48d1c62c070c23e1c8a5db47f1deb3b67))
 
 ### What's Changed
 
