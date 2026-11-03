@@ -227,7 +227,7 @@ function verifyNestedConfigs(files) {
   for (const file of files) {
     if (
       /\/(?:\.oxlintrc|\.oxfmtrc)(?:\.|$)/u.test(file) ||
-      /(?:^|\/)\.(?:oxlintignore|oxfmtignore|eslintignore)$/u.test(file)
+      /(?:^|\/)\.(?:oxlintignore|oxfmtignore|eslintignore|prettierignore)$/u.test(file)
     ) {
       throw new Error(`Unclassified nested quality configuration: ${file}`);
     }
@@ -249,6 +249,7 @@ function verifyIgnoredSources() {
     ".oxlintignore",
     ".oxfmtignore",
     ".eslintignore",
+    ".prettierignore",
     ":!node_modules/**",
     ":!dist/**",
     ":!dist.staging*/**",

@@ -228,6 +228,19 @@ describe("quality policy", () => {
       "Unclassified nested quality configuration",
     ],
     [
+      "implicit formatter ignore file",
+      (root: string) => write(root, ".prettierignore", "example.ts\n"),
+      "Unclassified nested quality configuration",
+    ],
+    [
+      "Git-ignored implicit formatter ignore file",
+      (root: string) => {
+        appendFileSync(join(root, ".gitignore"), "\n.prettierignore\n");
+        write(root, ".prettierignore", "example.ts\n");
+      },
+      "Unclassified ignored source or quality configuration",
+    ],
+    [
       "formatter exclusion",
       (root: string) =>
         updateJson(root, ".oxfmtrc.json", (config) => {
