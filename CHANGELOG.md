@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- npm-release:unreleased:start -->
 <!-- npm-release:unreleased:end -->
 
+- Enforce strict lint on CIMD authorization tests (#159) ([76135d9](https://github.com/fitchmultz/pi-mcp-adapter/commit/76135d9ab8d650bd000b18efcff97b4cd0420574))
 - Update MCP SDK and Apps dependencies (#157) ([9a42979](https://github.com/fitchmultz/pi-mcp-adapter/commit/9a429791952b7772c602ced7b063a87a2f7401a8))
 - Enforce strict lint on OAuth grant tests (#156) ([639c94f](https://github.com/fitchmultz/pi-mcp-adapter/commit/639c94f48d1c62c070c23e1c8a5db47f1deb3b67))
 
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Enforce strict lint on OAuth grant tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/156
 - Update MCP SDK and Apps dependencies by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/157
+- Enforce strict lint on CIMD authorization tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/159
 
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.9...v8.0.10
 
