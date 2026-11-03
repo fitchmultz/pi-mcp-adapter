@@ -23,7 +23,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -298,8 +298,89 @@ const capabilityFunctionSource = [
   "",
 ].join("\n");
 
+const keyringCases = [
+  {
+    name: "lazy native keyring module",
+    source:
+      'import type * as keyring from "@napi-rs/keyring";\nimport { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\ntype KeyringModule = Pick<typeof keyring, "Entry">;\nexport function loadKeyringEntryClass(): typeof keyring.Entry {\n// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-018: load the native Entry declaration.\nreturn (require("@napi-rs/keyring") as KeyringModule).Entry;\n}\n',
+    id: "QX-018",
+    rule: "typescript/no-unsafe-type-assertion",
+    scopeName: "loadKeyringEntryClass",
+    path: ["body", "body", 0],
+    nodeType: "ReturnStatement",
+    operation: 'return (require("@napi-rs/keyring") as KeyringModule).Entry;',
+    replacement: 'return (require("node:fs") as KeyringModule).Entry;',
+    neighborSuffix:
+      "export function untrusted(value: unknown): KeyringModule {\nreturn value as KeyringModule;\n}\n",
+    diagnostic: ["forward.ts:10:", "[Error/typescript(no-unsafe-type-assertion)]"],
+  },
+  {
+    name: "resolved native keyring binding",
+    source:
+      'import type * as keyring from "@napi-rs/keyring";\nimport { createRequire } from "node:module";\nimport { dirname, join } from "node:path";\nconst require = createRequire(import.meta.url);\ntype KeyringModule = Pick<typeof keyring, "Entry">;\nexport function loadKeyringNativeBindingFallback(): KeyringModule {\nconst target = { packageName: "@napi-rs/keyring-darwin-arm64", bindingFile: "keyring.darwin-arm64.node" };\nconst packageJsonPath = require.resolve(`${target.packageName}/package.json`);\n// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-018: load the native Entry declaration.\nreturn require(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;\n}\n',
+    id: "QX-018",
+    rule: "typescript/no-unsafe-type-assertion",
+    scopeName: "loadKeyringNativeBindingFallback",
+    path: ["body", "body", 2],
+    nodeType: "ReturnStatement",
+    operation:
+      "return require(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;",
+    replacement:
+      'return require(join(dirname(packageJsonPath), "unrelated.node")) as KeyringModule;',
+    neighborSuffix:
+      "export function untrusted(value: unknown): KeyringModule {\nreturn value as KeyringModule;\n}\n",
+    diagnostic: ["forward.ts:13:", "[Error/typescript(no-unsafe-type-assertion)]"],
+  },
+  {
+    name: "primary keyring loader cause",
+    source:
+      'function loadBinding(): never { throw new Error("binding"); }\nexport function loadKeyringEntryClass(): never {\ntry {\nthrow new Error("package");\n} catch (loaderError) {\ntry {\nloadBinding();\n} catch (fallbackError) {\n// oxlint-disable-next-line eslint/preserve-caught-error -- QX-013: retain the primary loader cause.\nthrow new Error(String(fallbackError), { cause: loaderError });\n}\n}\n}\n',
+    id: "QX-013",
+    rule: "eslint/preserve-caught-error",
+    scopeName: "loadKeyringEntryClass",
+    path: ["body", "body", 0, "handler", "body", "body", 0, "handler", "body", "body", 0],
+    nodeType: "ThrowStatement",
+    operation: "throw new Error(String(fallbackError), { cause: loaderError });",
+    replacement: "throw new Error(String(fallbackError), { cause: fallbackError });",
+    neighborSuffix:
+      'export function dropsCaughtError(): never {\ntry { throw new Error("original"); } catch (error) {\nthrow new Error(String(error));\n}\n}\n',
+    diagnostic: ["forward.ts:16:", "[Error/eslint(preserve-caught-error)]"],
+  },
+].map(
+  ({
+    id,
+    rule,
+    scopeName,
+    path,
+    nodeType,
+    operation,
+    name,
+    source,
+    replacement,
+    neighborSuffix,
+    diagnostic,
+  }) => ({
+    name,
+    source,
+    replacement,
+    neighbor: source + neighborSuffix,
+    diagnostic,
+    operation,
+    authorized: {
+      ...site,
+      id,
+      rule,
+      scope: { type: "FunctionDeclaration", name: scopeName },
+      path,
+      nodeType,
+      operation,
+    },
+  }),
+);
+
 describe("operation-bound exceptions", () => {
   it.each([
+    ...keyringCases,
     {
       name: "stored failure",
       source: forward,
@@ -482,6 +563,27 @@ describe("operation-bound exceptions", () => {
     const result = checkSource(file, source, [site]);
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/not authorized|scope is missing|operation changed/u);
+  });
+
+  it.each(keyringCases)("rejects copied, replaced and duplicate $name operations", (entry) => {
+    const copied = checkSource("copied.ts", entry.source, [entry.authorized]);
+    const replaced = checkSource(
+      "forward.ts",
+      entry.source.replace(entry.operation, entry.replacement),
+      [entry.authorized],
+    );
+    const implementation = entry.source.slice(entry.source.indexOf("export function"));
+    const duplicate = checkSource(
+      "forward.ts",
+      entry.source + implementation.replace(entry.authorized.scope.name, "duplicate"),
+      [entry.authorized],
+    );
+    expect(copied.status).toBe(1);
+    expect(copied.stderr).toContain("lint directive is not authorized for this operation");
+    expect(replaced.status).toBe(1);
+    expect(replaced.stderr).toContain("Authorized operation changed");
+    expect(duplicate.status).toBe(1);
+    expect(duplicate.stderr).toContain("lint directive is not authorized for this operation");
   });
 
   it("rejects a stale site without a directive", () => {
