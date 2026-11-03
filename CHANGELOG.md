@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Enforce strict lint on native elicitation tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/169
 - Enforce strict lint on native credential storage by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/172
+- Enforce strict lint on credential payload storage by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/173
 
 **Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.13...v8.0.14
 
