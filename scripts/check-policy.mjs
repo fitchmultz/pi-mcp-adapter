@@ -145,7 +145,11 @@ function verifyLintConfig() {
     nodeRegistrationProfile,
     {
       ...testProfile,
-      files: [...testProfile.files, "conformance/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"],
+      files: [
+        ...testProfile.files,
+        "conformance/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+        "scripts/native-compat/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+      ],
     },
     ...profiles.slice(1),
     vitestProfile,
