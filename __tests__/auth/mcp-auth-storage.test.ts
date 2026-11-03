@@ -265,6 +265,38 @@ describe("mcp-auth storage paths", () => {
     expect(existsSync(filePath)).toBe(false);
   });
 
+  it.each([
+    { name: "tokens", payload: { tokens: { accessToken: 17 } } },
+    { name: "client", payload: { clientInfo: { clientId: 17 } } },
+    { name: "record", payload: [] },
+  ])("keeps malformed legacy $name data out of secure storage", ({ name, payload }) => {
+    const serverName = `invalid-${name}`;
+    const filePath = getAuthEntryFilePath(serverName);
+    const bytes = JSON.stringify(payload);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, bytes);
+
+    expect(() => getAuthEntry(serverName)).toThrow(/Invalid OAuth credential record/);
+    expect(readFileSync(filePath, "utf8")).toBe(bytes);
+    rmSync(filePath);
+    expect(getAuthEntry(serverName)).toBeUndefined();
+  });
+
+  it("preserves future JSON fields across legacy import and secure reads", () => {
+    const entry = {
+      tokens: { accessToken: "legacy-token", futureTokenMetadata: { version: 1 } },
+      serverUrl: "https://example.com/mcp",
+      futureEntryMetadata: { origin: "legacy" },
+    };
+    const filePath = getAuthEntryFilePath("future-fields");
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, JSON.stringify(entry));
+
+    expect(getAuthEntry("future-fields")).toEqual(entry);
+    expect(existsSync(filePath)).toBe(false);
+    expect(getAuthEntry("future-fields")).toEqual(entry);
+  });
+
   it("does not use configured oauthDir values as secure-store namespaces", () => {
     delete process.env.FITCH_MCP_OAUTH_DIR;
     const projectA = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-a-"));

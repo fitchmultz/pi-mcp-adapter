@@ -171,7 +171,7 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("saveAuthEntry / getAuthEntry", () => {
-    nodeIt("should save and retrieve an auth entry", () => {
+    nodeIt("saves an auth entry and updates its supplied URL", () => {
       const entry: AuthEntry = {
         tokens: {
           accessToken: "test-token",
@@ -179,10 +179,10 @@ nodeDescribe("mcp-auth", () => {
           expiresAt: 1234567890,
           scope: "read write",
         },
-        serverUrl: "https://api.example.com",
       };
 
       saveAuthEntry("test-server", entry, "https://api.example.com");
+      assert.strictEqual(entry.serverUrl, "https://api.example.com");
       const retrieved = getAuthEntry("test-server");
 
       assert.deepStrictEqual(retrieved, entry);
