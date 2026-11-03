@@ -4,7 +4,7 @@ import { UI_STREAM_RESULT_PATCH_METHOD } from "./ui-stream-types.ts";
 import {
   isHostContext,
   isToolInput,
-  isToolResult,
+  readToolResult,
   isToolCancelled,
 } from "./host-browser-contracts.ts";
 import type { HostBrowserProxy } from "./host-browser-proxy.ts";
@@ -87,10 +87,7 @@ export class HostBrowserSession {
         await this.bridge.sendToolInput(value);
         return;
       case "tool-result":
-        if (!isToolResult(value)) {
-          throw new Error("Invalid tool result");
-        }
-        await this.bridge.sendToolResult(value);
+        await this.bridge.sendToolResult(readToolResult(value));
         return;
       case "tool-cancelled":
         if (!isToolCancelled(value)) {

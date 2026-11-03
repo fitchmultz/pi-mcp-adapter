@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import assert from "node:assert/strict";
+import { hostConfiguration } from "./fixtures/host-document.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { request } from "./fixtures/strict-ui-boundaries-http.ts";
 import { UiBoundaryWire, connectUiBoundaryWire } from "./fixtures/strict-ui-boundaries-wire.ts";
@@ -373,9 +374,8 @@ describe("MCP UI Integration", () => {
 
       const browser = new BrowserSimulator(handle);
       const html = await browser.loadPage();
-      const resourceToken = html.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/)?.[1];
+      const resourceToken = hostConfiguration(html).uiResourceToken;
       expect(resourceToken).toBeDefined();
-      assert(resourceToken !== undefined);
       const response = await request(
         `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(resourceToken)}`,
       );

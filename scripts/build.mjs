@@ -25,7 +25,12 @@ const RENAME_RETRY_MS = 50;
 const tscPath = fileURLToPath(new URL("./tsc.mjs", import.meta.url));
 // Runtime siblings resolved relative to the compiled module directory
 // (mcp-auth.ts, mcp-code.ts, ui-server.ts). `npm run build:bridge` regenerates the bridge bundle.
-const RUNTIME_ASSETS = ["mcp-keyring-helper.cjs", "mcp-script-worker.mjs", "app-bridge.bundle.js"];
+const RUNTIME_ASSETS = [
+  "mcp-keyring-helper.cjs",
+  "mcp-script-worker.mjs",
+  "app-bridge.bundle.js",
+  "host-browser.bundle.js",
+];
 
 /** @param {unknown} error */
 function errorMessage(error) {

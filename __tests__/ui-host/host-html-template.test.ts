@@ -1,4 +1,17 @@
-import { describe, it, expect } from "vitest";
+import assert from "node:assert/strict";
+import { JSDOM } from "jsdom";
+import { z } from "zod";
+import {
+  LATEST_PROTOCOL_VERSION,
+  McpUiInitializeResultSchema,
+} from "@modelcontextprotocol/ext-apps";
+import { materializeUiMessages } from "../../ui-message-history.ts";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { hostConfiguration } from "../fixtures/host-document.ts";
+import { closeHosts, openHost } from "../fixtures/host-runtime.ts";
+import { readToolResult } from "../../host-browser-contracts.ts";
+
+afterEach(closeHosts);
 import { buildHostHtmlTemplate, type HostHtmlTemplateInput } from "../../host-html-template.ts";
 
 function createMinimalInput(overrides: Partial<HostHtmlTemplateInput> = {}): HostHtmlTemplateInput {
@@ -60,14 +73,27 @@ describe("buildHostHtmlTemplate", () => {
       expect(html).toContain('referrerpolicy="no-referrer"');
     });
 
-    it("rejects nested-frame protocol and raw messages by binding to the sandboxed app frame", () => {
-      const html = buildHostHtmlTemplate(createMinimalInput());
-
-      expect(html).toContain(
-        "new PostMessageTransport(iframe.contentWindow, iframe.contentWindow)",
+    it("rejects nested-frame protocol and raw messages by binding to the sandboxed app frame", async () => {
+      const host = await openHost();
+      const child = host.document.createElement("iframe");
+      host.document.body.append(child);
+      assert(child.contentWindow !== null);
+      const ping = { jsonrpc: "2.0", id: "nested", method: "ping" };
+      host.dispatchWindow(ping, child.contentWindow);
+      host.dispatchWindow(
+        { type: "prompt", prompt: "nested must not forward" },
+        child.contentWindow,
       );
-      expect(html).toContain("if (event.source !== iframe.contentWindow) return;");
-      expect(html).not.toContain("new PostMessageTransport(iframe.contentWindow, null)");
+      host.dispatchWindow({ ...ping, id: "app" });
+      host.dispatchWindow({ type: "prompt", prompt: "direct app message" });
+      await vi.waitFor(() =>
+        expect(host.appMessages).toContainEqual({ jsonrpc: "2.0", id: "app", result: {} }),
+      );
+      await host.settleRequests();
+      expect(host.appMessages).not.toContainEqual(expect.objectContaining({ id: "nested" }));
+      expect((await materializeUiMessages(host.handle.getSessionMessages())).prompts).toEqual([
+        "direct app message",
+      ]);
     });
 
     it("includes control buttons", () => {
@@ -84,26 +110,35 @@ describe("buildHostHtmlTemplate", () => {
       expect(html).toContain("env(safe-area-inset-top");
       expect(html).toContain("@media (max-width: 640px)");
       expect(html).toContain('id="completion-overlay"');
-      expect(html).toContain("closeOrShowDone");
-      expect(html).toContain("visibilitychange");
+      // Close fallback and visibility recovery are exercised by the lifecycle owner.
+      const dom = new JSDOM(html);
+      expect(
+        dom.window.document.getElementById("completion-overlay")?.classList.contains("visible"),
+      ).toBe(false);
+      dom.window.close();
     });
   });
 
   describe("data injection", () => {
-    it("keeps the session token out of the sandboxed app URL", () => {
+    it("keeps the session token out of the sandboxed app URL", async () => {
       const html = buildHostHtmlTemplate(
         createMinimalInput({
           sessionToken: "secret-session-token",
           uiResourceToken: "app-resource-token",
         }),
       );
-
-      expect(html).toContain('const SESSION_TOKEN = "secret-session-token"');
-      expect(html).toContain('const UI_RESOURCE_TOKEN = "app-resource-token"');
-      expect(html).toContain(
-        'iframe.src = "/ui-app?resource=" + encodeURIComponent(UI_RESOURCE_TOKEN)',
+      expect(hostConfiguration(html)).toMatchObject({
+        sessionToken: "secret-session-token",
+        uiResourceToken: "app-resource-token",
+      });
+      const host = await openHost();
+      const url = new URL(host.iframe.src);
+      expect(url.pathname).toBe("/ui-app");
+      expect([...url.searchParams.keys()]).toEqual(["resource"]);
+      expect(url.searchParams.get("resource")).toBe(
+        hostConfiguration(await (await fetch(host.handle.url)).text()).uiResourceToken,
       );
-      expect(html).not.toContain('iframe.src = "/ui-app?session="');
+      expect(host.iframe.src).not.toContain(host.handle.sessionToken);
     });
 
     it("injects tool arguments", () => {
@@ -150,32 +185,49 @@ describe("buildHostHtmlTemplate", () => {
     it("injects requireToolConsent=false", () => {
       const html = buildHostHtmlTemplate(createMinimalInput({ requireToolConsent: false }));
 
-      expect(html).toContain("const REQUIRE_TOOL_CONSENT = false");
+      expect(hostConfiguration(html).requireToolConsent).toBe(false);
     });
 
     it("injects requireToolConsent=true", () => {
       const html = buildHostHtmlTemplate(createMinimalInput({ requireToolConsent: true }));
 
-      expect(html).toContain("const REQUIRE_TOOL_CONSENT = true");
+      expect(hostConfiguration(html).requireToolConsent).toBe(true);
     });
 
-    it("records explicit consent denials", () => {
-      const html = buildHostHtmlTemplate(createMinimalInput({ requireToolConsent: true }));
-
-      expect(html).toContain(
-        'await post("/proxy/ui/consent", { approved: false }).catch(() => {});',
+    it("records explicit consent denials", async () => {
+      const host = await openHost({ confirm: false });
+      host.dispatchWindow({
+        jsonrpc: "2.0",
+        id: "denied",
+        method: "tools/call",
+        params: { name: "echo", arguments: {} },
+      });
+      await vi.waitFor(() =>
+        expect(host.appMessages).toContainEqual(
+          expect.objectContaining({
+            id: "denied",
+            result: {
+              isError: true,
+              content: [{ type: "text", text: "Tool call denied by user." }],
+            },
+          }),
+        ),
       );
-      expect(html).toContain("Tool call denied by user.");
+      await host.settleRequests();
+      expect(host.requests("/proxy/ui/consent").map((request) => request.status)).toEqual([200]);
+      expect(host.requests("/proxy/tools/call")).toHaveLength(0);
     });
   });
 
   describe("iframe permissions", () => {
-    it("sets allow attribute when provided", () => {
+    it("sets allow attribute when provided", async () => {
       const html = buildHostHtmlTemplate(
         createMinimalInput({ allowAttribute: "camera; microphone" }),
       );
 
-      expect(html).toContain('const ALLOW_ATTRIBUTE = "camera; microphone"');
+      expect(hostConfiguration(html).allowAttribute).toBe("camera; microphone");
+      const host = await openHost({ permissions: { camera: {}, microphone: {} } });
+      expect(host.iframe.getAttribute("allow")).toBe("camera; microphone");
     });
   });
 
@@ -339,36 +391,111 @@ describe("buildHostHtmlTemplate", () => {
   });
 
   describe("stream mode", () => {
-    it("registers the stream patch notification method", () => {
-      const html = buildHostHtmlTemplate(createMinimalInput());
-
-      expect(html).toContain(
-        'const STREAM_PATCH_METHOD = "notifications/pi-mcp-adapter/ui-result-patch"',
+    it("honors the native tool-result content default without dropping opaque fields", () => {
+      expect(
+        readToolResult({
+          structuredContent: ["opaque", { nested: true }],
+          vendor: { extension: "retained" },
+        }),
+      ).toEqual({
+        content: [],
+        structuredContent: ["opaque", { nested: true }],
+        vendor: { extension: "retained" },
+      });
+      expect(
+        readToolResult({
+          content: [{ type: "text", text: "known", vendor: { opaque: "nested" } }],
+        }),
+      ).toEqual({
+        content: [{ type: "text", text: "known", vendor: { opaque: "nested" } }],
+      });
+      expect(() => readToolResult({ content: "not native content" })).toThrow(
+        "Invalid tool result",
       );
-      expect(html).toContain('eventSource.addEventListener("result-patch"');
-      expect(html).toContain("bridge.notification({");
     });
 
-    it("skips initial tool input in stream-first mode", () => {
-      const html = buildHostHtmlTemplate(
-        createMinimalInput({
+    it("registers the stream patch notification method", async () => {
+      const host = await openHost();
+      host.handle.sendResultPatch({
+        content: [],
+        structuredContent: { extension: { values: [1, "unknown"] } },
+      });
+      await vi.waitFor(() =>
+        expect(host.appMessages).toContainEqual({
+          jsonrpc: "2.0",
+          method: "notifications/pi-mcp-adapter/ui-result-patch",
+          params: { content: [], structuredContent: { extension: { values: [1, "unknown"] } } },
+        }),
+      );
+    });
+
+    it.each(["stream-first", "eager"] as const)(
+      "delivers initial tool input only in eager mode (%s)",
+      async (mode) => {
+        const toolArgs = { marker: "initial tool input" };
+        const host = await openHost({
+          toolArgs,
           hostContext: {
             "pi-mcp-adapter/stream": {
-              mode: "stream-first",
+              mode,
               streamId: "stream-1",
               intermediateResultPatches: true,
               partialInput: false,
             },
           },
-        }),
-      );
-
-      expect(html).toContain(
-        'const streamMode = initialStreamContext?.mode === "stream-first" ? "stream-first" : "eager";',
-      );
-      expect(html).toContain('if (streamMode !== "stream-first") {');
-      expect(html).toContain("bridge.sendToolInput({ arguments: TOOL_ARGS });");
-    });
+        });
+        host.dispatchWindow({
+          jsonrpc: "2.0",
+          id: "initialize",
+          method: "ui/initialize",
+          params: {
+            protocolVersion: LATEST_PROTOCOL_VERSION,
+            appInfo: { name: "native-test-peer", version: "1" },
+            appCapabilities: {},
+          },
+        });
+        await vi.waitFor(() =>
+          expect(
+            host.appMessages.some(
+              (message) =>
+                z
+                  .object({
+                    id: z.literal("initialize"),
+                    result: McpUiInitializeResultSchema,
+                  })
+                  .safeParse(message).success,
+            ),
+          ).toBe(true),
+        );
+        host.dispatchWindow({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+        await vi.waitFor(() =>
+          expect(host.element("status").textContent).toBe(
+            mode === "stream-first" ? "Streaming…" : "Connected",
+          ),
+        );
+        const initial = {
+          jsonrpc: "2.0",
+          method: "ui/notifications/tool-input",
+          params: { arguments: toolArgs },
+        };
+        const inputs = host.appMessages.filter(
+          (message) =>
+            typeof message === "object" &&
+            message !== null &&
+            "method" in message &&
+            message.method === "ui/notifications/tool-input",
+        );
+        expect(inputs).toEqual(mode === "eager" ? [initial] : []);
+        host.handle.sendToolInput({ marker: "subsequent input" });
+        await vi.waitFor(() =>
+          expect(host.appMessages).toContainEqual({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-input",
+            params: { arguments: { marker: "subsequent input" } },
+          }),
+        );
+      },
+    );
   });
 
   describe("XSS prevention", () => {

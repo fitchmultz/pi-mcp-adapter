@@ -461,6 +461,7 @@
     ".pi/**",
     ".dogfood/**",
     "app-bridge.bundle.js",
+    "host-browser.bundle.js",
     "examples/interactive-visualizer/dist/**",
     "examples/interactive-visualizer/node_modules/**"
   ]

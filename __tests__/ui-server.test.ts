@@ -8,6 +8,7 @@ import { startUiServer, type UiServerOptions, type UiServerHandle } from "../ui-
 import type { McpServerManager } from "../server-manager.ts";
 import type { Client } from "@modelcontextprotocol/client";
 import assert from "node:assert/strict";
+import { hostConfiguration } from "./fixtures/host-document.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { request, connectSSE } from "./fixtures/strict-ui-boundaries-http.ts";
 import {
@@ -46,12 +47,9 @@ function createServerOptions(overrides: Partial<UiServerOptions> = {}): UiServer
 
 async function getUiAppUrl(handle: UiServerHandle): Promise<string> {
   const host = await request(handle.url);
-  const match =
-    typeof host.body === "string" ? host.body.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/) : null;
-  if (match?.[1] === undefined || match[1] === "") {
-    throw new Error("UI resource token missing from host page");
-  }
-  return `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(match[1])}`;
+  assert(typeof host.body === "string");
+  const config = hostConfiguration(host.body);
+  return `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(config.uiResourceToken)}`;
 }
 
 const cleanups: Array<() => Promise<void>> = [];

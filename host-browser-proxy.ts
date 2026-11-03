@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { CallToolResultSchema, EmptyResultSchema } from "@modelcontextprotocol/core";
+import { EmptyResultSchema } from "@modelcontextprotocol/core";
+import { readToolResult } from "./host-browser-contracts.ts";
 import type { CallToolResult, EmptyResult } from "@modelcontextprotocol/client";
 import {
   McpUiMessageResultSchema,
@@ -18,9 +19,6 @@ const envelopeSchema = z.looseObject({
   result: z.unknown().optional(),
 });
 
-function isCallToolResult(value: unknown): value is CallToolResult {
-  return CallToolResultSchema.safeParse(value).success;
-}
 function isEmptyResult(value: unknown): value is EmptyResult {
   return EmptyResultSchema.safeParse(value).success;
 }
@@ -71,11 +69,7 @@ export class HostBrowserProxy {
   }
 
   async callTool(params: unknown): Promise<CallToolResult> {
-    const result = await this.post("/proxy/tools/call", params);
-    if (!isCallToolResult(result)) {
-      throw new Error("Invalid tools/call result");
-    }
-    return result;
+    return readToolResult(await this.post("/proxy/tools/call", params));
   }
 
   async message(params: unknown): Promise<McpUiMessageResult> {

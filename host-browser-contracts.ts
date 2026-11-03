@@ -40,8 +40,22 @@ export function isToolInput(value: unknown): value is McpUiToolInputNotification
   return McpUiToolInputNotificationSchema.shape.params.safeParse(value).success;
 }
 
-export function isToolResult(value: unknown): value is McpUiToolResultNotification["params"] {
+function isToolResultInput(
+  value: unknown,
+): value is z.input<typeof McpUiToolResultNotificationSchema.shape.params> {
   return McpUiToolResultNotificationSchema.shape.params.safeParse(value).success;
+}
+
+export function readToolResult(value: unknown): McpUiToolResultNotification["params"] {
+  if (!isToolResultInput(value)) {
+    throw new Error("Invalid tool result");
+  }
+  return {
+    ...value,
+    content:
+      value.content ??
+      McpUiToolResultNotificationSchema.shape.params.shape.content.parse(value.content),
+  };
 }
 
 export function isToolCancelled(value: unknown): value is McpUiToolCancelledNotification["params"] {
