@@ -43,7 +43,7 @@ it("prepares stored v5 calls without advertising the old precedence schema", () 
   });
   expect(() => prepareGatewayArguments({ action: "read-resource", server: "demo" })).toThrow("uri");
   expect(() => prepareGatewayArguments({ tool: "demo", args: "[]" })).toThrow("JSON object");
-  expect(() => prepareGatewayArguments({ action: {} })).toThrow("MCP action must be a string");
+  expect(() => prepareGatewayArguments({ action: 5 })).toThrow("Unknown MCP action: 5");
   expect(() => prepareGatewayArguments({ action: "missing" })).toThrow(
     "Unknown MCP action: missing",
   );

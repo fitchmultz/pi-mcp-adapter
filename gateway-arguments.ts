@@ -195,15 +195,12 @@ export function prepareGatewayArguments(input: unknown): Record<string, unknown>
   if (value === undefined || Array.isArray(input)) {
     throw new Error("MCP arguments must be an object");
   }
-  const action = value.action === undefined ? legacyAction(value) : value.action;
-  if (typeof action !== "string") {
-    throw new Error("MCP action must be a string");
-  }
+  const action: unknown = value.action === undefined ? legacyAction(value) : value.action;
   if (!isAction(action)) {
-    throw new Error(`Unknown MCP action: ${action}`);
+    throw new Error(`Unknown MCP action: ${String(action)}`);
   }
   const result = migrateLegacy(value, action);
-  if (typeof result.args === "string" || result.args !== undefined) {
+  if (result.args !== undefined) {
     result.args = parseArgs(result.args);
   }
   validateRequirements(result, action);

@@ -5,7 +5,6 @@ import {
   formatMcpPayloadFile,
   readMcpResult,
   resolveMcpOutputGuardOptions,
-  type McpPayloadFile,
 } from "./mcp-output-guard.ts";
 import type { createMcpOutputSpool } from "./mcp-output-preview.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
@@ -46,9 +45,6 @@ const payloadSchema = Type.Object({
   path: Type.Optional(Type.String()),
   error: Type.Optional(Type.String()),
 });
-function isPayloadFile(value: unknown): value is McpPayloadFile {
-  return Value.Check(payloadSchema, value);
-}
 function textFromContent(content: ContentBlock[]): string {
   return content
     .filter((block) => block.type === "text")
@@ -99,7 +95,7 @@ export class ScriptOperations {
     }
     if (isUnknownArray(details.payloadFiles)) {
       for (const value of details.payloadFiles) {
-        if (isPayloadFile(value)) {
+        if (Value.Check(payloadSchema, value)) {
           this.payloadNotices.add(formatMcpPayloadFile(value));
         }
       }
