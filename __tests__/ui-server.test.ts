@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import http from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,140 +6,19 @@ import { dirname, join } from "node:path";
 import { materializeUiMessages } from "../ui-message-history.ts";
 import { startUiServer, type UiServerOptions, type UiServerHandle } from "../ui-server.ts";
 import type { McpServerManager } from "../server-manager.ts";
-import type { ConsentManager } from "../consent-manager.ts";
-import type { McpConfig, UiResourceContent, UiResourcePermissions } from "../types.ts";
-import type { McpExtensionState } from "../state.ts";
-
-// Helper to make HTTP requests to the server
-async function request(
-  url: string,
-  options: {
-    method?: string;
-    body?: unknown;
-    headers?: Record<string, string>;
-  } = {},
-): Promise<{ status: number; body: unknown; headers: http.IncomingHttpHeaders }> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const req = http.request(
-      {
-        hostname: parsed.hostname,
-        port: parsed.port,
-        path: parsed.pathname + parsed.search,
-        method: options.method ?? "GET",
-        headers: {
-          "Content-Type": "application/json",
-          ...options.headers,
-        },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf-8");
-          let body: unknown;
-          try {
-            body = JSON.parse(text);
-          } catch {
-            body = text;
-          }
-          resolve({ status: res.statusCode ?? 0, body, headers: res.headers });
-        });
-      },
-    );
-    req.on("error", reject);
-    if (options.body) {
-      req.write(JSON.stringify(options.body));
-    }
-    req.end();
-  });
-}
-
-// Helper to connect to SSE and collect events
-function connectSSE(
-  url: string,
-  onEvent: (name: string, data: unknown, eventId?: string) => void,
-  headers: Record<string, string> = {},
-): Promise<{ close: () => void }> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const req = http.request(
-      {
-        hostname: parsed.hostname,
-        port: parsed.port,
-        path: parsed.pathname + parsed.search,
-        method: "GET",
-        headers: { Accept: "text/event-stream", ...headers },
-      },
-      (res) => {
-        if (res.statusCode !== 200) {
-          reject(new Error(`SSE connection failed: ${res.statusCode}`));
-          return;
-        }
-        let buffer = "";
-        let eventName = "message";
-        let eventId: string | undefined;
-        res.on("data", (chunk) => {
-          buffer += chunk.toString();
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (line.startsWith("id: ")) {
-              eventId = line.slice(4);
-            } else if (line.startsWith("event: ")) {
-              eventName = line.slice(7);
-            } else if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                onEvent(eventName, data, eventId);
-              } catch {
-                onEvent(eventName, line.slice(6), eventId);
-              }
-              eventName = "message";
-              eventId = undefined;
-            }
-          }
-        });
-        resolve({
-          close: () => {
-            req.destroy();
-          },
-        });
-      },
-    );
-    req.on("error", reject);
-    req.end();
-  });
-}
-
-// Mock factories
-function createMockManager(overrides: Partial<McpServerManager> = {}): McpServerManager {
-  return {
-    getConnection: vi.fn().mockReturnValue({
-      status: "connected",
-      client: {
-        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "result" }] }),
-      },
-      tools: [{ name: "some_tool" }],
-    }),
-    touch: vi.fn(),
-    incrementInFlight: vi.fn(),
-    decrementInFlight: vi.fn(),
-    readResource: vi.fn(),
-    getRequestOptions: vi.fn().mockReturnValue(undefined),
-    ...overrides,
-  } as unknown as McpServerManager;
-}
-
-function createMockConsentManager(overrides: Partial<ConsentManager> = {}): ConsentManager {
-  return {
-    requiresPrompt: vi.fn().mockReturnValue(false),
-    ensureApproved: vi.fn(),
-    registerDecision: vi.fn(),
-    ...overrides,
-  } as unknown as ConsentManager;
-}
+import type { Client } from "@modelcontextprotocol/client";
+import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
+import { request, connectSSE } from "./fixtures/strict-ui-boundaries-http.ts";
+import {
+  createClient,
+  createConnection,
+  createMockManager,
+  createMockConsentManager,
+} from "./fixtures/strict-ui-boundaries-manager.ts";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
+import type { McpConfig, UiResourceContent } from "../types.ts";
 
 function createMockResource(overrides: Partial<UiResourceContent> = {}): UiResourceContent {
   return {
@@ -147,7 +26,7 @@ function createMockResource(overrides: Partial<UiResourceContent> = {}): UiResou
     html: "<h1>Test App</h1>",
     mimeType: "text/html",
     meta: {
-      permissions: [] as UiResourcePermissions,
+      permissions: {},
     },
     ...overrides,
   };
@@ -169,11 +48,13 @@ async function getUiAppUrl(handle: UiServerHandle): Promise<string> {
   const host = await request(handle.url);
   const match =
     typeof host.body === "string" ? host.body.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/) : null;
-  if (!match?.[1]) {
+  if (match?.[1] === undefined || match[1] === "") {
     throw new Error("UI resource token missing from host page");
   }
   return `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(match[1])}`;
 }
+
+const cleanups: Array<() => Promise<void>> = [];
 
 describe("UiServer", () => {
   let handle: UiServerHandle | null = null;
@@ -182,11 +63,15 @@ describe("UiServer", () => {
     if (handle) {
       const ref = handle.getSessionMessages().historyRef;
       handle.close("test-cleanup");
-      if (ref) {
+      if (ref !== undefined && ref !== "") {
         await rm(dirname(ref), { recursive: true, force: true });
       }
       handle = null;
     }
+    for (const cleanup of cleanups.reverse()) {
+      await cleanup();
+    }
+    cleanups.length = 0;
   });
 
   describe("startUiServer", () => {
@@ -209,9 +94,21 @@ describe("UiServer", () => {
     it("uses provided port", async () => {
       // Find a free port first
       const tempServer = http.createServer();
-      await new Promise<void>((resolve) => tempServer.listen(0, "127.0.0.1", resolve));
-      const freePort = (tempServer.address() as { port: number }).port;
-      tempServer.close();
+      await new Promise<void>((resolve) => {
+        tempServer.listen(0, "127.0.0.1", resolve);
+      });
+      const address = tempServer.address();
+      assert(address !== null && typeof address !== "string");
+      const freePort = address.port;
+      await new Promise<void>((resolve, reject) => {
+        tempServer.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
 
       handle = await startUiServer(createServerOptions({ port: freePort }));
 
@@ -229,6 +126,36 @@ describe("UiServer", () => {
       expect(handle.serverName).toBe("my-server");
       expect(handle.toolName).toBe("my_tool");
     });
+
+    it("does not complete a rejected occupied-port startup when its watchdog would expire", async () => {
+      const occupied = http.createServer();
+      await new Promise<void>((resolve, reject) => {
+        occupied.once("error", reject);
+        occupied.listen(0, "127.0.0.1", resolve);
+      });
+      const address = occupied.address();
+      assert(address !== null && typeof address !== "string");
+      const onComplete = vi.fn<NonNullable<UiServerOptions["onComplete"]>>();
+      vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+      try {
+        await expect(
+          startUiServer(createServerOptions({ port: address.port, onComplete })),
+        ).rejects.toThrow(/EADDRINUSE/);
+        vi.advanceTimersByTime(65_000);
+        expect(onComplete).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+        await new Promise<void>((resolve, reject) => {
+          occupied.close((error) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
+          });
+        });
+      }
+    });
   });
 
   describe("GET /", () => {
@@ -240,7 +167,8 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toContain("text/html");
-      expect((res.body as string).toLowerCase()).toContain("<!doctype html>");
+      assert(typeof res.body === "string");
+      expect(res.body.toLowerCase()).toContain("<!doctype html>");
       expect(res.body).toContain("test-server");
       expect(res.body).toContain("test_tool");
     });
@@ -322,7 +250,7 @@ describe("UiServer", () => {
       });
 
       expect(res.status).toBe(403);
-      expect(manager.getConnection).not.toHaveBeenCalled();
+      expect(vi.spyOn(manager, "getConnection")).not.toHaveBeenCalled();
     });
 
     it("enforces metadata CSP and response-level sandboxing while preserving app HTML", async () => {
@@ -342,7 +270,7 @@ describe("UiServer", () => {
           resource: createMockResource({
             html: appHtml,
             meta: {
-              permissions: [] as UiResourcePermissions,
+              permissions: {},
               csp: {
                 resourceDomains: ["https://esm.sh"],
                 connectDomains: ["https://api.excalidraw.com"],
@@ -377,7 +305,7 @@ describe("UiServer", () => {
           resource: createMockResource({
             html: appHtml,
             meta: {
-              permissions: [] as UiResourcePermissions,
+              permissions: {},
               csp: {
                 resourceDomains: [
                   "https://safe.example.com",
@@ -407,7 +335,7 @@ describe("UiServer", () => {
         createServerOptions({
           resource: createMockResource({
             html: appHtml,
-            meta: { permissions: [] as UiResourcePermissions, csp: {} },
+            meta: { permissions: {}, csp: {} },
           }),
         }),
       );
@@ -470,9 +398,9 @@ describe("UiServer", () => {
         events.push({ name, data });
       });
 
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       handle.sendToolResult({ content: [{ type: "text", text: "hello" }] });
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       sse.close();
 
       expect(events.some((e) => e.name === "tool-result")).toBe(true);
@@ -487,7 +415,7 @@ describe("UiServer", () => {
         events.push({ name, data });
       });
 
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       handle.sendResultPatch({
         content: [{ type: "text", text: "phase" }],
         structuredContent: {
@@ -501,7 +429,7 @@ describe("UiServer", () => {
           },
         },
       });
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       sse.close();
 
       const patch = events.find((e) => e.name === "result-patch");
@@ -528,7 +456,7 @@ describe("UiServer", () => {
         firstConnectionEvents.push({ name, data, id: eventId });
       });
 
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       handle.sendResultPatch({
         content: [{ type: "text", text: "shell" }],
         structuredContent: {
@@ -543,7 +471,7 @@ describe("UiServer", () => {
         },
       });
       handle.sendToolResult({ content: [{ type: "text", text: "final" }] });
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       firstConnection.close();
 
       const checkpointEvent = firstConnectionEvents.find((event) => event.name === "result-patch");
@@ -558,7 +486,7 @@ describe("UiServer", () => {
         { "Last-Event-ID": checkpointEvent?.id ?? "" },
       );
 
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       replayConnection.close();
 
       expect(replayedEvents.map((event) => event.name)).toEqual(["tool-result"]);
@@ -573,9 +501,9 @@ describe("UiServer", () => {
         events.push({ name, data });
       });
 
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       handle.sendToolCancelled("user cancelled");
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       sse.close();
 
       const cancelled = events.find((e) => e.name === "tool-cancelled");
@@ -592,9 +520,9 @@ describe("UiServer", () => {
         events.push({ name, data });
       });
 
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       handle.sendHostContext({ displayMode: "fullscreen" });
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       sse.close();
 
       const ctx = events.find((e) => e.name === "host-context");
@@ -605,17 +533,23 @@ describe("UiServer", () => {
 
   describe("POST /proxy/tools/call", () => {
     it("proxies tool call to MCP server", async () => {
-      const mockClient = {
-        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }),
-      };
+      const mockClient = createClient({
+        callTool: vi
+          .fn<Client["callTool"]>()
+          .mockResolvedValue({ content: [{ type: "text", text: "tool result" }] }),
+      });
       const requestOptions = { timeout: 4321 };
       const manager = createMockManager({
-        getConnection: vi.fn().mockReturnValue({
-          status: "connected",
-          client: mockClient,
-          tools: [{ name: "some_tool" }],
-        }),
-        getRequestOptions: vi.fn().mockReturnValue(requestOptions),
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: mockClient,
+            tools: [{ name: "some_tool", inputSchema: { type: "object" } }],
+          }),
+        ),
+        getRequestOptions: vi
+          .fn<McpServerManager["getRequestOptions"]>()
+          .mockReturnValue(requestOptions),
       });
       handle = await startUiServer(createServerOptions({ manager }));
 
@@ -632,8 +566,8 @@ describe("UiServer", () => {
         ok: true,
         result: { content: [{ type: "text", text: "tool result" }] },
       });
-      expect(manager.getRequestOptions).toHaveBeenCalledWith("test-server");
-      expect(mockClient.callTool).toHaveBeenCalledWith(
+      expect(vi.spyOn(manager, "getRequestOptions")).toHaveBeenCalledWith("test-server");
+      expect(vi.spyOn(mockClient, "callTool")).toHaveBeenCalledWith(
         {
           name: "some_tool",
           arguments: { arg1: "value1" },
@@ -643,21 +577,28 @@ describe("UiServer", () => {
     });
 
     it("applies includeTools and excludeTools to app calls", async () => {
-      const mockClient = {
-        callTool: vi.fn().mockResolvedValue({ content: [{ type: "text", text: "result" }] }),
-      };
+      const mockClient = createClient({
+        callTool: vi
+          .fn<Client["callTool"]>()
+          .mockResolvedValue({ content: [{ type: "text", text: "result" }] }),
+      });
       const definition = {
         command: "demo",
         includeTools: ["open_ui", "excluded"],
         excludeTools: ["excluded"],
       };
       const manager = createMockManager({
-        getConnection: vi.fn().mockReturnValue({
-          status: "connected",
-          definition,
-          client: mockClient,
-          tools: [{ name: "open_ui" }, { name: "excluded" }, { name: "not_included" }],
-        }),
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            definition,
+            client: mockClient,
+            tools: ["open_ui", "excluded", "not_included"].map((name) => ({
+              name,
+              inputSchema: { type: "object" },
+            })),
+          }),
+        ),
       });
       handle = await startUiServer(
         createServerOptions({
@@ -677,33 +618,34 @@ describe("UiServer", () => {
           error: `MCP tool "${name}" is not callable by apps`,
         });
       }
-      expect(mockClient.callTool).not.toHaveBeenCalled();
+      expect(vi.spyOn(mockClient, "callTool")).not.toHaveBeenCalled();
 
       const allowed = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
         method: "POST",
         body: { token: handle.sessionToken, params: { name: "open_ui", arguments: {} } },
       });
       expect(allowed.status).toBe(200);
-      expect(mockClient.callTool).toHaveBeenCalledTimes(1);
+      expect(vi.spyOn(mockClient, "callTool")).toHaveBeenCalledTimes(1);
     });
 
     it("returns a gated iframe call as an approval_denied tool result", async () => {
-      const mockClient = { callTool: vi.fn() };
+      const mockClient = createClient({ callTool: vi.fn<Client["callTool"]>() });
       const manager = createMockManager({
-        getConnection: vi.fn().mockReturnValue({
-          status: "connected",
-          client: mockClient,
-          tools: [{ name: "some_tool" }],
-        }),
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: mockClient,
+            tools: [{ name: "some_tool", inputSchema: { type: "object" } }],
+          }),
+        ),
       });
       const config: McpConfig = {
         mcpServers: { "test-server": { command: "demo", approveTools: true } },
       };
-      const state = {
-        config,
-        approvedToolCalls: new Map(),
-        ui: { select: vi.fn().mockResolvedValue("Deny") },
-      } as unknown as McpExtensionState;
+      const context = await createTestExtensionContext();
+      cleanups.push(context.dispose);
+      vi.spyOn(context.context.ui, "select").mockResolvedValue("Deny");
+      const state = createTestState({ config, manager, ui: context.context.ui });
       handle = await startUiServer(createServerOptions({ manager, config, state }));
 
       const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
@@ -721,12 +663,12 @@ describe("UiServer", () => {
           details: { error: "approval_denied", server: "test-server", tool: "some_tool" },
         },
       });
-      expect(mockClient.callTool).not.toHaveBeenCalled();
+      expect(vi.spyOn(mockClient, "callTool")).not.toHaveBeenCalled();
     });
 
     it("checks consent before calling tool", async () => {
       const consentManager = createMockConsentManager({
-        ensureApproved: vi.fn().mockImplementation(() => {
+        ensureApproved: vi.fn<() => void>().mockImplementation(() => {
           throw new Error("Consent denied");
         }),
       });
@@ -741,12 +683,12 @@ describe("UiServer", () => {
       });
 
       expect(res.status).toBe(403);
-      expect(consentManager.ensureApproved).toHaveBeenCalledWith("test-server");
+      expect(vi.spyOn(consentManager, "ensureApproved")).toHaveBeenCalledWith("test-server");
     });
 
     it("returns 503 when server not connected", async () => {
       const manager = createMockManager({
-        getConnection: vi.fn().mockReturnValue(null),
+        getConnection: vi.fn<McpServerManager["getConnection"]>(),
       });
       handle = await startUiServer(createServerOptions({ manager }));
 
@@ -759,17 +701,31 @@ describe("UiServer", () => {
       });
 
       expect(res.status).toBe(503);
-      expect((res.body as { error: string }).error).toContain("not connected");
+      assert(
+        res.body !== null &&
+          typeof res.body === "object" &&
+          "error" in res.body &&
+          typeof res.body.error === "string",
+      );
+      expect(res.body.error).toContain("not connected");
     });
 
     it("rejects app calls to tools that omit app visibility", async () => {
-      const mockClient = { callTool: vi.fn() };
+      const mockClient = createClient({ callTool: vi.fn<Client["callTool"]>() });
       const manager = createMockManager({
-        getConnection: vi.fn().mockReturnValue({
-          status: "connected",
-          client: mockClient,
-          tools: [{ name: "model_only", _meta: { ui: { visibility: ["model"] } } }],
-        }),
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: mockClient,
+            tools: [
+              {
+                name: "model_only",
+                inputSchema: { type: "object" },
+                _meta: { ui: { visibility: ["model"] } },
+              },
+            ],
+          }),
+        ),
       });
       handle = await startUiServer(createServerOptions({ manager }));
 
@@ -786,17 +742,19 @@ describe("UiServer", () => {
         ok: false,
         error: 'MCP tool "model_only" is not callable by apps',
       });
-      expect(mockClient.callTool).not.toHaveBeenCalled();
+      expect(vi.spyOn(mockClient, "callTool")).not.toHaveBeenCalled();
     });
 
     it("rejects app calls when the tool definition is unavailable", async () => {
-      const mockClient = { callTool: vi.fn() };
+      const mockClient = createClient({ callTool: vi.fn<Client["callTool"]>() });
       const manager = createMockManager({
-        getConnection: vi.fn().mockReturnValue({
-          status: "connected",
-          client: mockClient,
-          tools: [],
-        }),
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: mockClient,
+            tools: [],
+          }),
+        ),
       });
       handle = await startUiServer(createServerOptions({ manager }));
 
@@ -810,17 +768,19 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(403);
       expect(res.body).toEqual({ ok: false, error: 'MCP tool "unlisted" is not callable by apps' });
-      expect(mockClient.callTool).not.toHaveBeenCalled();
+      expect(vi.spyOn(mockClient, "callTool")).not.toHaveBeenCalled();
     });
 
-    it("rejects app calls when the tool list is unavailable", async () => {
-      const mockClient = { callTool: vi.fn() };
+    it("rejects unknown app tools from an empty native catalog", async () => {
+      const mockClient = createClient({ callTool: vi.fn<Client["callTool"]>() });
       const manager = createMockManager({
-        getConnection: vi.fn().mockReturnValue({
-          status: "connected",
-          client: mockClient,
-          tools: undefined,
-        }),
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: mockClient,
+            tools: [],
+          }),
+        ),
       });
       handle = await startUiServer(createServerOptions({ manager }));
 
@@ -834,7 +794,7 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(403);
       expect(res.body).toEqual({ ok: false, error: 'MCP tool "unknown" is not callable by apps' });
-      expect(mockClient.callTool).not.toHaveBeenCalled();
+      expect(vi.spyOn(mockClient, "callTool")).not.toHaveBeenCalled();
     });
 
     it("returns 400 for invalid params", async () => {
@@ -866,13 +826,15 @@ describe("UiServer", () => {
     });
 
     it("rejects anonymous tool calls", async () => {
-      const callTool = vi.fn();
+      const callTool = vi.fn<Client["callTool"]>();
       const manager = createMockManager({
-        getConnection: vi.fn().mockReturnValue({
-          status: "connected",
-          client: { callTool },
-          tools: [{ name: "some_tool" }],
-        }),
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: createClient({ callTool }),
+            tools: [{ name: "some_tool", inputSchema: { type: "object" } }],
+          }),
+        ),
       });
       handle = await startUiServer(createServerOptions({ manager }));
 
@@ -897,9 +859,9 @@ describe("UiServer", () => {
         },
       });
 
-      expect(manager.incrementInFlight).toHaveBeenCalledWith("test-server");
-      expect(manager.decrementInFlight).toHaveBeenCalledWith("test-server");
-      expect(manager.touch).toHaveBeenCalled();
+      expect(vi.spyOn(manager, "incrementInFlight")).toHaveBeenCalledWith("test-server");
+      expect(vi.spyOn(manager, "decrementInFlight")).toHaveBeenCalledWith("test-server");
+      expect(vi.spyOn(manager, "touch")).toHaveBeenCalled();
     });
   });
 
@@ -914,7 +876,7 @@ describe("UiServer", () => {
       });
 
       expect(res.status).toBe(403);
-      expect(consentManager.registerDecision).not.toHaveBeenCalled();
+      expect(vi.spyOn(consentManager, "registerDecision")).not.toHaveBeenCalled();
     });
 
     it("registers approval", async () => {
@@ -931,7 +893,10 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ ok: true, result: { approved: true } });
-      expect(consentManager.registerDecision).toHaveBeenCalledWith("test-server", true);
+      expect(vi.spyOn(consentManager, "registerDecision")).toHaveBeenCalledWith(
+        "test-server",
+        true,
+      );
     });
 
     it("registers denial", async () => {
@@ -948,21 +913,80 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ ok: true, result: { approved: false } });
-      expect(consentManager.registerDecision).toHaveBeenCalledWith("test-server", false);
+      expect(vi.spyOn(consentManager, "registerDecision")).toHaveBeenCalledWith(
+        "test-server",
+        false,
+      );
     });
   });
 
   describe("POST /proxy/ui/message", () => {
+    it.each([
+      { role: 7 },
+      { content: "not an array" },
+      { type: "unsupported" },
+      { message: 7 },
+      { prompt: false },
+      { intent: [] },
+      { params: [] },
+    ])("rejects malformed known message fields: %j", async (params) => {
+      const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
+      handle = await startUiServer(createServerOptions({ onMessage }));
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/message`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ ok: false, error: "Invalid UI message params" });
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(handle.getSessionMessages()).toEqual({
+        prompts: [],
+        intents: [],
+        notifications: [],
+        contexts: [],
+      });
+    });
+
+    it("forwards message extensions and round-trips arbitrary intent parameters on disk", async () => {
+      const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
+      handle = await startUiServer(createServerOptions({ onMessage }));
+      const params = {
+        type: "intent",
+        intent: "inspect",
+        params: { node: "雪😀", extension: { values: [null, 7, true] } },
+        _meta: { vendor: "unchanged" },
+        vendor: { opaque: ["extension"] },
+      };
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/message`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params },
+      });
+      expect(res.status).toBe(200);
+      expect(onMessage).toHaveBeenCalledExactlyOnceWith(params);
+      const messages = handle.getSessionMessages();
+      assert(messages.historyRef !== undefined && messages.historyRef !== "");
+      const record: unknown = JSON.parse(await readFile(messages.historyRef, "utf8"));
+      expect(record).toEqual({
+        category: "intents",
+        value: { intent: params.intent, params: params.params },
+      });
+      expect((await materializeUiMessages(messages)).intents).toEqual([
+        { intent: params.intent, params: params.params },
+      ]);
+    });
+
     it("acknowledges failed persistence with recovery data and an operator warning", async () => {
       const root = await mkdtemp(join(tmpdir(), "mcp-ui-server-failure-"));
       try {
         const blocked = join(root, "blocked");
         await writeFile(blocked, "not a directory");
-        const notify = vi.fn();
-        const onMessage = vi.fn();
+        const context = await createTestExtensionContext();
+        cleanups.push(context.dispose);
+        const notify = vi.spyOn(context.context.ui, "notify");
+        const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
         handle = await startUiServer(
           createServerOptions({
-            state: { outputDirectory: blocked, ui: { notify } } as unknown as McpExtensionState,
+            state: createTestState({ outputDirectory: blocked, ui: context.context.ui }),
             onMessage,
           }),
         );
@@ -974,14 +998,16 @@ describe("UiServer", () => {
           },
         });
         expect(res.status).toBe(200);
-        expect(res.body).toMatchObject({
-          ok: true,
-          warning: expect.stringContaining("remain in memory"),
-        });
+        expect(res.body).toMatchObject({ ok: true });
+        assert(
+          res.body !== null &&
+            typeof res.body === "object" &&
+            "warning" in res.body &&
+            typeof res.body.warning === "string",
+        );
+        expect(res.body.warning).toContain("remain in memory");
         expect(notify).toHaveBeenCalledWith(expect.stringContaining("remain in memory"), "warning");
-        expect(res.body).toMatchObject({
-          warning: expect.stringContaining("lost on reload or process exit"),
-        });
+        expect(res.body.warning).toContain("lost on reload or process exit");
         expect(notify).toHaveBeenCalledWith(
           expect.stringContaining("lost on reload or process exit"),
           "warning",
@@ -996,7 +1022,7 @@ describe("UiServer", () => {
     });
 
     it("rejects anonymous messages", async () => {
-      const onMessage = vi.fn();
+      const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
       handle = await startUiServer(createServerOptions({ onMessage }));
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/message`, {
@@ -1010,7 +1036,7 @@ describe("UiServer", () => {
     });
 
     it("tracks prompt messages", async () => {
-      const onMessage = vi.fn();
+      const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
       handle = await startUiServer(createServerOptions({ onMessage }));
 
       await request(`http://localhost:${handle.port}/proxy/ui/message`, {
@@ -1159,7 +1185,7 @@ describe("UiServer", () => {
 
       // Should return current mode, not requested
       expect(res.status).toBe(200);
-      expect((res.body as { result: { mode: string } }).result.mode).toBe("inline");
+      expect(res.body).toMatchObject({ result: { mode: "inline" } });
     });
   });
 
@@ -1179,7 +1205,7 @@ describe("UiServer", () => {
 
   describe("POST /proxy/ui/complete", () => {
     it("marks session complete with reason", async () => {
-      const onComplete = vi.fn();
+      const onComplete = vi.fn<NonNullable<UiServerOptions["onComplete"]>>();
       handle = await startUiServer(createServerOptions({ onComplete }));
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/complete`, {
@@ -1195,7 +1221,7 @@ describe("UiServer", () => {
     });
 
     it("uses default reason when not provided", async () => {
-      const onComplete = vi.fn();
+      const onComplete = vi.fn<NonNullable<UiServerOptions["onComplete"]>>();
       handle = await startUiServer(createServerOptions({ onComplete }));
 
       await request(`http://localhost:${handle.port}/proxy/ui/complete`, {
@@ -1266,7 +1292,7 @@ describe("UiServer", () => {
 
   describe("POST /proxy/ui/context", () => {
     it("stores and forwards context updates", async () => {
-      const onContextUpdate = vi.fn();
+      const onContextUpdate = vi.fn<NonNullable<UiServerOptions["onContextUpdate"]>>();
       handle = await startUiServer(createServerOptions({ onContextUpdate }));
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/context`, {
@@ -1290,15 +1316,46 @@ describe("UiServer", () => {
       ]);
     });
 
-    it("rejects malformed context updates", async () => {
-      const onContextUpdate = vi.fn();
+    it("preserves context extensions in the callback and retained payload", async () => {
+      const onContextUpdate = vi.fn<NonNullable<UiServerOptions["onContextUpdate"]>>();
+      handle = await startUiServer(createServerOptions({ onContextUpdate }));
+      const params = {
+        content: [
+          {
+            type: "text",
+            text: "selection",
+            _meta: { vendor: "block" },
+            vendor: { opaque: ["retained block extension"] },
+          },
+        ],
+        structuredContent: { selected: "雪😀" },
+        _meta: { progressToken: "selection-7" },
+        vendor: { opaque: [null, 7, true] },
+      };
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/context`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params },
+      });
+      expect(res.status).toBe(200);
+      expect(onContextUpdate).toHaveBeenCalledExactlyOnceWith(params);
+      expect(handle.getSessionMessages().contexts).toEqual([
+        { payload: params, summary: JSON.stringify(params), truncated: false },
+      ]);
+    });
+
+    it.each([
+      { content: "some context data" },
+      { content: [{ type: "text", text: 42 }] },
+      { structuredContent: [] },
+    ])("rejects malformed context updates: %j", async (params) => {
+      const onContextUpdate = vi.fn<NonNullable<UiServerOptions["onContextUpdate"]>>();
       handle = await startUiServer(createServerOptions({ onContextUpdate }));
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/context`, {
         method: "POST",
         body: {
           token: handle.sessionToken,
-          params: { content: "some context data" },
+          params,
         },
       });
 
@@ -1321,8 +1378,10 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(200);
       expect(handle.getSessionMessages().contexts[0]).toMatchObject({ truncated: true });
-      expect(handle.getSessionMessages().contexts[0]!.summary.length).toBeLessThanOrEqual(12_000);
-      expect(handle.getSessionMessages().contexts[0]!.payload).toBeUndefined();
+      const context = handle.getSessionMessages().contexts[0];
+      assert(context);
+      expect(context.summary.length).toBeLessThanOrEqual(12_000);
+      expect(context.payload).toBeUndefined();
     });
   });
 
@@ -1351,7 +1410,7 @@ describe("UiServer", () => {
 
   describe("handle.close()", () => {
     it("marks session complete", async () => {
-      const onComplete = vi.fn();
+      const onComplete = vi.fn<NonNullable<UiServerOptions["onComplete"]>>();
       handle = await startUiServer(createServerOptions({ onComplete }));
 
       handle.close("manual-close");
@@ -1360,7 +1419,7 @@ describe("UiServer", () => {
     });
 
     it("uses default reason when not provided", async () => {
-      const onComplete = vi.fn();
+      const onComplete = vi.fn<NonNullable<UiServerOptions["onComplete"]>>();
       handle = await startUiServer(createServerOptions({ onComplete }));
 
       handle.close();
@@ -1371,9 +1430,9 @@ describe("UiServer", () => {
 
   describe("initialResultPromise", () => {
     it("pushes result when promise resolves", async () => {
-      const resultPromise = Promise.resolve({ data: "initial" }) as unknown as NonNullable<
-        UiServerOptions["initialResultPromise"]
-      >;
+      const resultPromise: UiServerOptions["initialResultPromise"] = Promise.resolve({
+        content: [{ type: "text", text: "initial" }],
+      });
       handle = await startUiServer(createServerOptions({ initialResultPromise: resultPromise }));
 
       const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;
@@ -1382,7 +1441,7 @@ describe("UiServer", () => {
         events.push({ name, data });
       });
 
-      await new Promise((r) => setTimeout(r, 100));
+      await delay(100);
       sse.close();
 
       expect(events.some((e) => e.name === "tool-result")).toBe(true);
@@ -1398,12 +1457,18 @@ describe("UiServer", () => {
         events.push({ name, data });
       });
 
-      await new Promise((r) => setTimeout(r, 100));
+      await delay(100);
       sse.close();
 
       const cancelled = events.find((e) => e.name === "tool-cancelled");
       expect(cancelled).toBeTruthy();
-      expect((cancelled?.data as { reason: string }).reason).toContain("Tool failed");
+      assert(
+        cancelled?.data !== null &&
+          typeof cancelled?.data === "object" &&
+          "reason" in cancelled.data &&
+          typeof cancelled.data.reason === "string",
+      );
+      expect(cancelled.data.reason).toContain("Tool failed");
     });
   });
 
@@ -1411,7 +1476,7 @@ describe("UiServer", () => {
     it("rejects non-JSON body", async () => {
       handle = await startUiServer(createServerOptions());
 
-      const res = await request(`http://localhost:${handle.port}/proxy/ui/heartbeat`, {
+      const res = await fetch(`http://localhost:${handle.port}/proxy/ui/heartbeat`, {
         method: "POST",
         body: "not json",
         headers: { "Content-Type": "text/plain" },
@@ -1434,7 +1499,7 @@ describe("UiServer", () => {
             headers: { "Content-Type": "application/json" },
           },
           (res) => {
-            res.on("data", () => {});
+            res.resume();
             res.on("end", () => resolve({ status: res.statusCode ?? 0 }));
           },
         );

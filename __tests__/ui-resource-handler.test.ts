@@ -1,17 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 import { buildCspMetaContent } from "../host-html-template.ts";
-import { UrlElicitationRequiredError } from "@modelcontextprotocol/client";
+import { SdkError, SdkErrorCode, UrlElicitationRequiredError } from "@modelcontextprotocol/client";
 import type { McpServerManager } from "../server-manager.ts";
+import { createMockManager, createConnection } from "./fixtures/strict-ui-boundaries-manager.ts";
 
-// Mock the manager
-function createMockManager(overrides: Partial<McpServerManager> = {}): McpServerManager {
-  return {
-    readResource: vi.fn(),
-    getConnection: vi.fn().mockReturnValue(null),
-    ...overrides,
-  } as unknown as McpServerManager;
-}
+import assert from "node:assert/strict";
+import { UiBoundaryWire, connectUiBoundaryWire } from "./fixtures/strict-ui-boundaries-wire.ts";
 
 describe("UiResourceHandler", () => {
   describe("readUiResource", () => {
@@ -33,62 +28,46 @@ describe("UiResourceHandler", () => {
           url: "https://example.com/connect",
         },
       ]);
-      const manager = createMockManager({ readResource: vi.fn().mockRejectedValue(error) });
+      const manager = createMockManager({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockRejectedValue(error),
+      });
       const handler = new UiResourceHandler(manager);
 
       await expect(handler.readUiResource("server", "ui://test/widget")).rejects.toBe(error);
     });
 
     it("recovers a terminated HTTP session while loading a UI resource", async () => {
-      const { SdkHttpError, SdkErrorCode } = await import("@modelcontextprotocol/client");
-      const stale = {
-        status: "connected" as const,
-        transport: { sessionId: "session-1" },
-        client: {
-          readResource: vi.fn().mockRejectedValueOnce(
-            new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Session not found", {
-              status: 404,
-            }),
-          ),
-        },
-        resources: [],
-      };
-      const fresh = {
-        status: "connected" as const,
-        transport: { sessionId: "session-2" },
-        client: {
-          readResource: vi.fn().mockResolvedValue({
-            contents: [
-              { uri: "ui://test/widget", mimeType: "text/html", text: "<h1>Recovered</h1>" },
-            ],
-          }),
-        },
-        resources: [],
-      };
-      const manager = createMockManager({
-        getConnection: vi.fn().mockReturnValue(stale),
-        reconnect: vi.fn().mockResolvedValue(fresh),
-        getRequestOptions: vi.fn().mockReturnValue(undefined),
-        touch: vi.fn(),
-        incrementInFlight: vi.fn(),
-        decrementInFlight: vi.fn(),
-      });
-      const config = { mcpServers: { server: { url: "https://example.test/mcp" } } };
-      const handler = new UiResourceHandler(manager);
-
-      const result = await handler.readUiResource("server", "ui://test/widget", { config });
-
-      expect(result.html).toBe("<h1>Recovered</h1>");
-      expect(stale.client.readResource).toHaveBeenCalledTimes(1);
-      expect(fresh.client.readResource).toHaveBeenCalledTimes(1);
-      expect(manager.reconnect).toHaveBeenCalledWith("server", config.mcpServers.server, stale);
-      expect(manager.incrementInFlight).toHaveBeenCalledWith("server");
-      expect(manager.decrementInFlight).toHaveBeenCalledWith("server");
+      const wire = new UiBoundaryWire();
+      const manager = await connectUiBoundaryWire(wire, "server");
+      try {
+        const stale = manager.getConnection("server");
+        assert(stale);
+        const staleRead = vi.spyOn(stale.client, "readResource");
+        const reconnect = vi.spyOn(manager, "reconnect");
+        const increment = vi.spyOn(manager, "incrementInFlight");
+        const decrement = vi.spyOn(manager, "decrementInFlight");
+        const config = { mcpServers: { server: wire.definition() } };
+        wire.expired = true;
+        const handler = new UiResourceHandler(manager);
+        const result = await handler.readUiResource("server", "ui://test/widget", { config });
+        expect(result.html).toBe("<h1>Recovered</h1>");
+        expect(staleRead).toHaveBeenCalledTimes(1);
+        expect(wire.calls.filter((call) => call.method === "resources/read")).toEqual([
+          { method: "resources/read", session: "session-1" },
+          { method: "resources/read", session: "session-2" },
+        ]);
+        expect(reconnect).toHaveBeenCalledWith("server", config.mcpServers.server, stale);
+        expect(increment).toHaveBeenCalledWith("server");
+        expect(decrement).toHaveBeenCalledWith("server");
+      } finally {
+        await manager.closeAll();
+        await wire.close();
+      }
     });
 
     it("reads and returns HTML from text content", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -112,7 +91,7 @@ describe("UiResourceHandler", () => {
       const base64Content = Buffer.from(htmlContent).toString("base64");
 
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -131,7 +110,7 @@ describe("UiResourceHandler", () => {
 
     it("throws for empty content", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -150,7 +129,7 @@ describe("UiResourceHandler", () => {
 
     it("throws for unsupported MIME type", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -169,7 +148,7 @@ describe("UiResourceHandler", () => {
 
     it("accepts text/html;profile=mcp-app MIME type", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -187,21 +166,23 @@ describe("UiResourceHandler", () => {
     });
 
     it("throws when no contents returned", async () => {
-      const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
-          contents: [],
-        }),
-      });
-      const handler = new UiResourceHandler(manager);
-
-      await expect(handler.readUiResource("server", "ui://test/widget")).rejects.toThrow(
-        "No contents returned for UI resource: ui://test/widget",
-      );
+      const wire = new UiBoundaryWire();
+      const manager = await connectUiBoundaryWire(wire, "server");
+      try {
+        wire.resourceResult = { contents: [] };
+        const handler = new UiResourceHandler(manager);
+        await expect(handler.readUiResource("server", "ui://test/widget")).rejects.toThrow(
+          "No contents returned for UI resource: ui://test/widget",
+        );
+      } finally {
+        await manager.closeAll();
+        await wire.close();
+      }
     });
 
     it("prefers content with matching URI", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://other/widget",
@@ -225,13 +206,15 @@ describe("UiResourceHandler", () => {
 
     it("falls back to first HTML content if no URI match", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
+              uri: "ui://other/json",
               mimeType: "application/json",
               text: "{}",
             },
             {
+              uri: "ui://other/html",
               mimeType: "text/html",
               text: "<h1>HTML</h1>",
             },
@@ -247,7 +230,7 @@ describe("UiResourceHandler", () => {
 
     it("extracts standard resourceDomains CSP metadata", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -277,7 +260,7 @@ describe("UiResourceHandler", () => {
 
     it("normalizes OpenAI widget CSP metadata from resource content", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -307,7 +290,7 @@ describe("UiResourceHandler", () => {
 
     it("normalizes OpenAI widget CSP metadata from resources/list", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -316,19 +299,22 @@ describe("UiResourceHandler", () => {
             },
           ],
         }),
-        getConnection: vi.fn().mockReturnValue({
-          resources: [
-            {
-              uri: "ui://test/widget",
-              _meta: {
-                "openai/widgetCSP": {
-                  resource_domains: ["https://cdn.example.com"],
-                  connect_domains: ["https://api.example.com"],
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            resources: [
+              {
+                uri: "ui://test/widget",
+                name: "widget",
+                _meta: {
+                  "openai/widgetCSP": {
+                    resource_domains: ["https://cdn.example.com"],
+                    connect_domains: ["https://api.example.com"],
+                  },
                 },
               },
-            },
-          ],
-        }),
+            ],
+          }),
+        ),
       });
       const handler = new UiResourceHandler(manager);
 
@@ -342,7 +328,7 @@ describe("UiResourceHandler", () => {
 
     it("lets standard CSP fields override equivalent OpenAI compatibility fields", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -377,7 +363,7 @@ describe("UiResourceHandler", () => {
       const standardResourceDomains = ["https://standard.example.com"];
       const standardBaseUriDomains = ["https://base.example.com"];
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -424,7 +410,7 @@ describe("UiResourceHandler", () => {
       "normalizes a declared malformed %s CSP container to an empty policy",
       async (_description, meta) => {
         const manager = createMockManager({
-          readResource: vi.fn().mockResolvedValue({
+          readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
             contents: [
               {
                 uri: "ui://test/widget",
@@ -445,7 +431,7 @@ describe("UiResourceHandler", () => {
 
     it("fails closed when a null standard CSP is combined with valid OpenAI widget CSP", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -475,7 +461,7 @@ describe("UiResourceHandler", () => {
 
     it("does not fall back to an OpenAI field when its standard equivalent is malformed", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -502,7 +488,7 @@ describe("UiResourceHandler", () => {
 
     it("prefers a declared malformed content CSP over resource-list CSP", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -512,18 +498,21 @@ describe("UiResourceHandler", () => {
             },
           ],
         }),
-        getConnection: vi.fn().mockReturnValue({
-          resources: [
-            {
-              uri: "ui://test/widget",
-              _meta: {
-                "openai/widgetCSP": {
-                  resource_domains: ["https://list.example.com"],
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            resources: [
+              {
+                uri: "ui://test/widget",
+                name: "widget",
+                _meta: {
+                  "openai/widgetCSP": {
+                    resource_domains: ["https://list.example.com"],
+                  },
                 },
               },
-            },
-          ],
-        }),
+            ],
+          }),
+        ),
       });
       const handler = new UiResourceHandler(manager);
 
@@ -534,7 +523,7 @@ describe("UiResourceHandler", () => {
 
     it("prefers conflicting content CSP over resource-list CSP", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -550,18 +539,21 @@ describe("UiResourceHandler", () => {
             },
           ],
         }),
-        getConnection: vi.fn().mockReturnValue({
-          resources: [
-            {
-              uri: "ui://test/widget",
-              _meta: {
-                "openai/widgetCSP": {
-                  resource_domains: ["https://list.example.com"],
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            resources: [
+              {
+                uri: "ui://test/widget",
+                name: "widget",
+                _meta: {
+                  "openai/widgetCSP": {
+                    resource_domains: ["https://list.example.com"],
+                  },
                 },
               },
-            },
-          ],
-        }),
+            ],
+          }),
+        ),
       });
       const handler = new UiResourceHandler(manager);
 
@@ -574,7 +566,7 @@ describe("UiResourceHandler", () => {
 
     it("extracts permissions meta", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -604,7 +596,7 @@ describe("UiResourceHandler", () => {
 
     it("extracts domain and prefersBorder meta", async () => {
       const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
+        readResource: vi.fn<McpServerManager["readResource"]>().mockResolvedValue({
           contents: [
             {
               uri: "ui://test/widget",
@@ -629,22 +621,26 @@ describe("UiResourceHandler", () => {
     });
 
     it("throws when content has no text or blob", async () => {
-      const manager = createMockManager({
-        readResource: vi.fn().mockResolvedValue({
-          contents: [
-            {
-              uri: "ui://test/widget",
-              mimeType: "text/html",
-              // No text or blob
-            },
-          ],
-        }),
-      });
-      const handler = new UiResourceHandler(manager);
-
-      await expect(handler.readUiResource("server", "ui://test/widget")).rejects.toThrow(
-        "did not include text or blob content",
-      );
+      const wire = new UiBoundaryWire();
+      const manager = await connectUiBoundaryWire(wire, "server");
+      try {
+        wire.resourceResult = { contents: [{ uri: "ui://test/widget", mimeType: "text/html" }] };
+        const handler = new UiResourceHandler(manager);
+        const failure: unknown = await handler
+          .readUiResource("server", "ui://test/widget")
+          .catch((error: unknown) => error);
+        assert(failure instanceof Error);
+        expect(failure.message).toContain(
+          'Failed to fetch UI resource "ui://test/widget": Invalid result for resources/read',
+        );
+        assert(failure.cause instanceof SdkError);
+        expect(failure.cause.code).toBe(SdkErrorCode.InvalidResult);
+        expect(failure.cause.message).toContain('"text"');
+        expect(failure.cause.message).toContain('"blob"');
+      } finally {
+        await manager.closeAll();
+        await wire.close();
+      }
     });
   });
 });
