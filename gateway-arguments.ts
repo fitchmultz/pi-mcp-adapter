@@ -1,4 +1,6 @@
 import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { asObjectRecord } from "./mcp-output-values.ts";
 import { MAX_PAGE_SIZE, MAX_TOOL_NAME_LENGTH } from "./search-ranking.ts";
 
 const actions = [
@@ -58,12 +60,14 @@ export const gatewayParameters = Type.Object(
       }),
     ),
     args: Type.Optional(
-      Type.Object(
-        {},
-        {
-          additionalProperties: true,
-          description: "Tool arguments, or {redirectUrl} for auth-complete.",
-        },
+      Type.Unsafe<Record<string, unknown>>(
+        Type.Object(
+          {},
+          {
+            additionalProperties: true,
+            description: "Tool arguments, or {redirectUrl} for auth-complete.",
+          },
+        ),
       ),
     ),
     query: Type.Optional(
@@ -106,73 +110,113 @@ export const gatewayParameters = Type.Object(
   {
     additionalProperties: false,
     allOf: [
-      ...Object.entries(requirements).map(([action, required]) => ({
-        if: { properties: { action: { const: action } } },
-        then: { required },
-      })),
-      {
-        if: { properties: { action: { enum: ["search", "list", "connect", "resources"] } } },
-        then: { properties: { limit: { maximum: MAX_PAGE_SIZE } } },
-      },
+      ...Object.entries(requirements).map(([action, required]) =>
+        Type.Dependent(
+          Type.Unsafe({ properties: { action: { const: action } } }),
+          Type.Unsafe({ required }),
+          Type.Unknown(),
+        ),
+      ),
+      Type.Dependent(
+        Type.Unsafe({
+          properties: { action: { enum: ["search", "list", "connect", "resources"] } },
+        }),
+        Type.Unsafe({ properties: { limit: { maximum: MAX_PAGE_SIZE } } }),
+        Type.Unknown(),
+      ),
     ],
   },
 );
 
-/** Migrate stored v5 calls before host validation; the advertised schema stays explicit. */
-export function prepareGatewayArguments(input: unknown): GatewayArguments {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error("MCP arguments must be an object");
+function legacyAction(value: Record<string, unknown>): GatewayArguments["action"] {
+  const aliases = [
+    { field: "tool", action: "call" },
+    { field: "connect", action: "connect" },
+    { field: "describe", action: "describe" },
+    { field: "instructions", action: "instructions" },
+  ] satisfies Array<{ field: string; action: GatewayArguments["action"] }>;
+  const match = aliases.find(({ field }) => Boolean(value[field]));
+  if (match) {
+    return match.action;
   }
-  const value = input as Record<string, unknown>;
-  let action = value.action;
-  const result = { ...value };
-  if (action === undefined) {
-    action = value.tool
-      ? "call"
-      : value.connect
-        ? "connect"
-        : value.describe
-          ? "describe"
-          : value.instructions
-            ? "instructions"
-            : value.search !== undefined
-              ? "search"
-              : value.server
-                ? "list"
-                : "status";
-    if (action === "connect") {
-      result.server = value.connect;
-    }
-    if (action === "describe") {
-      result.tool = value.describe;
-    }
-    if (action === "instructions") {
-      result.server = value.instructions;
-    }
-    if (action === "search") {
-      result.query = value.search;
+  if (value.search !== undefined) {
+    return "search";
+  }
+  const hasServer = Boolean(value.server);
+  return hasServer ? "list" : "status";
+}
+
+function isAction(value: unknown): value is GatewayArguments["action"] {
+  return actions.some((action) => action === value);
+}
+
+function migrateLegacy(
+  value: Record<string, unknown>,
+  action: GatewayArguments["action"],
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...value };
+  if (value.action === undefined) {
+    const mappings: Partial<Record<GatewayArguments["action"], "server" | "tool" | "query">> = {
+      connect: "server",
+      describe: "tool",
+      instructions: "server",
+      search: "query",
+    };
+    const destination = mappings[action];
+    if (destination !== undefined) {
+      result[destination] = value[action];
     }
   }
   for (const key of ["connect", "describe", "instructions", "search"]) {
     delete result[key];
   }
-  if (!actions.includes(action as GatewayArguments["action"])) {
-    throw new Error(`Unknown MCP action: ${String(action)}`);
-  }
   result.action = action;
-  if (typeof result.args === "string") {
-    result.args = result.args === "" ? undefined : JSON.parse(result.args);
+  return result;
+}
+
+function parseArgs(value: unknown): Record<string, unknown> | undefined {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    parsed = value === "" ? undefined : JSON.parse(value);
   }
-  if (
-    result.args !== undefined &&
-    (!result.args || typeof result.args !== "object" || Array.isArray(result.args))
-  ) {
+  if (parsed === undefined) {
+    return;
+  }
+  const record = asObjectRecord(parsed);
+  if (record === undefined || Array.isArray(parsed)) {
     throw new Error("Invalid args: expected a JSON object");
   }
-  for (const field of requirements[action as GatewayArguments["action"]] ?? []) {
+  return record;
+}
+
+/** Migrate stored v5 calls before host validation; the advertised schema stays explicit. */
+export function prepareGatewayArguments(input: unknown): GatewayArguments {
+  const value = asObjectRecord(input);
+  if (value === undefined || Array.isArray(input)) {
+    throw new Error("MCP arguments must be an object");
+  }
+  const action = value.action === undefined ? legacyAction(value) : value.action;
+  if (!isAction(action)) {
+    throw new Error(`Unknown MCP action: ${String(action)}`);
+  }
+  const result = migrateLegacy(value, action);
+  if (typeof result.args === "string" || result.args !== undefined) {
+    result.args = parseArgs(result.args);
+  }
+  validateRequirements(result, action);
+  if (!Value.Check(gatewayParameters, result)) {
+    throw new Error("Invalid MCP arguments");
+  }
+  return result;
+}
+
+function validateRequirements(
+  result: Record<string, unknown>,
+  action: GatewayArguments["action"],
+): void {
+  for (const field of requirements[action] ?? []) {
     if (typeof result[field] !== "string" || (field !== "query" && result[field] === "")) {
       throw new Error(`${action} requires ${field}`);
     }
   }
-  return result as GatewayArguments;
 }
