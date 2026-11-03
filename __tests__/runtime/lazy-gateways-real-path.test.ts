@@ -1,11 +1,19 @@
+import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { getCurrentTools, type TranscriptContext } from "@earendil-works/pi-ai";
-import type { McpConfig } from "../types.ts";
-import { gatewayParameters } from "../gateway-arguments.ts";
+import {
+  createAssistantMessageEventStream,
+  getCurrentTools,
+  type AssistantMessage,
+  type Model,
+  type ToolCall,
+} from "@earendil-works/pi-ai";
+import { JSONObjectSchema } from "@modelcontextprotocol/core";
+import type { McpConfig } from "../../types.ts";
+import { gatewayParameters } from "../../gateway-arguments.ts";
+import { requireValue } from "../fixtures/extension-lifecycle.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -17,11 +25,7 @@ afterEach(async () => {
 async function harness(
   options: { tools?: string[]; excludeTools?: string[]; config?: McpConfig } = {},
 ) {
-  const sdk = process.env.PI_PACKAGE_DIR
-    ? await import(
-        /* @vite-ignore */ pathToFileURL(join(process.env.PI_PACKAGE_DIR, "dist/index.js")).href
-      )
-    : await import("@earendil-works/pi-coding-agent");
+  const sdk = await import("@earendil-works/pi-coding-agent");
   const root = await mkdtemp(join(tmpdir(), "mcp-lazy-gateways-"));
   const agentDir = join(root, "agent");
   await mkdir(agentDir);
@@ -69,11 +73,12 @@ async function harness(
     modelsPath: null,
     allowModelNetwork: false,
   });
-  const model = {
+  const model: Model<"openai-completions"> = {
     id: "fixture",
     name: "fixture",
     api: "openai-completions",
     provider: "fixture",
+    baseUrl: "http://127.0.0.1:1",
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -95,8 +100,8 @@ async function harness(
     model,
     sessionManager: sdk.SessionManager.create(root, join(root, "sessions")),
     noTools: "builtin",
-    ...(options.tools ? { tools: options.tools } : {}),
-    ...(options.excludeTools ? { excludeTools: options.excludeTools } : {}),
+    ...(options.tools !== undefined ? { tools: options.tools } : {}),
+    ...(options.excludeTools !== undefined ? { excludeTools: options.excludeTools } : {}),
   });
   cleanups.push(async () => {
     await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
@@ -104,25 +109,26 @@ async function harness(
   });
   await session.bindExtensions({
     mode: "print",
-    onError: (error: { error: string }) => {
+    onError: (error) => {
       throw new Error(error.error);
     },
   });
   const active = () =>
     session
       .getActiveToolNames()
-      .filter((name: string) => name.startsWith("mcp"))
+      .filter((name) => name.startsWith("mcp"))
       .sort();
   async function request(
-    steps: Array<{ name: string; arguments: Record<string, unknown> }>,
+    steps: Array<Pick<ToolCall, "name" | "arguments">>,
     inspect?: (tools: ReturnType<typeof getCurrentTools>, stage: number) => void,
   ) {
     let stage = 0;
     const before = session.messages.length;
-    session.agent.streamFunction = async (_model: unknown, context: TranscriptContext) => {
+    session.agent.streamFunction = async (_model, context) => {
       inspect?.(getCurrentTools(context.messages), stage);
       const call = steps[stage++];
-      const message = {
+      const stopReason = call ? "toolUse" : "stop";
+      const message: AssistantMessage = {
         role: "assistant",
         api: model.api,
         provider: model.provider,
@@ -131,7 +137,7 @@ async function harness(
         content: call
           ? [{ type: "toolCall", id: `call-${before}-${stage}`, ...call }]
           : [{ type: "text", text: "done" }],
-        stopReason: call ? "toolUse" : "stop",
+        stopReason,
         usage: {
           input: 0,
           output: 0,
@@ -141,17 +147,14 @@ async function harness(
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
       };
-      return {
-        async *[Symbol.asyncIterator]() {
-          yield { type: "done", reason: message.stopReason, message };
-        },
-        result: async () => message,
-      };
+      const stream = createAssistantMessageEventStream();
+      stream.push({ type: "done", reason: stopReason, message });
+      return stream;
     };
     await session.prompt("Exercise the local MCP adapter tools.");
     await session.waitForIdle();
     expect(stage, JSON.stringify(session.messages.slice(before))).toBe(steps.length + 1);
-    return session.messages.slice(before).filter((message: any) => message.role === "toolResult");
+    return session.messages.slice(before).filter((message) => message.role === "toolResult");
   }
   return { session, active, request };
 }
@@ -182,20 +185,24 @@ describe("lazy MCP gateways through real Pi SDK", () => {
       ],
     });
     expect(outputs).toHaveLength(4);
-    expect(outputs.slice(0, 3).map((output: any) => output.isError)).toEqual([false, false, false]);
+    expect(outputs.slice(0, 3).map((output) => output.isError)).toEqual([false, false, false]);
     expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);
-    expect(outputs[3].isError).toBe(true);
+    const rejected = requireValue(outputs[3]);
+    expect(rejected.isError).toBe(true);
     // Require native schema rejection, not just the handler's "Provide query or enable" guard.
-    expect(outputs[3].content[0].text).toContain('Validation failed for tool "mcp_search"');
+    const content = requireValue(rejected.content[0]);
+    assert.equal(content.type, "text");
+    expect(content.text).toContain('Validation failed for tool "mcp_search"');
   }, 20_000);
 
   it("loads complete original schemas on the next request, persists branches/reload and respects manual deselection", async () => {
     const h = await harness();
     expect(h.active()).toEqual(["mcp_search"]);
-    expect(h.session.getAllTools().map((tool: any) => tool.name)).toEqual(
+    expect(h.session.getAllTools().map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["mcp", "mcp_script", "mcp_search"]),
     );
     const branch = h.session.sessionManager.appendCustomEntry("test-branch", {});
+    const schemas: Array<{ script: unknown; gateway: unknown }> = [];
     const outputs = await h.request(
       [
         { name: "mcp_search", arguments: { enable: ["script"] } },
@@ -204,27 +211,47 @@ describe("lazy MCP gateways through real Pi SDK", () => {
         { name: "mcp", arguments: { action: "ui-messages" } },
         { name: "mcp", arguments: { action: "resources" } },
       ],
-      (tools, stage) => {
-        expect(tools.some((tool) => tool.name === "mcp_script")).toBe(stage >= 1);
-        expect(tools.some((tool) => tool.name === "mcp")).toBe(stage >= 3);
-        if (stage >= 1) {
-          expect(tools.find((tool) => tool.name === "mcp_script")?.parameters).toMatchObject({
-            required: ["code"],
-            properties: { code: { type: "string" }, timeoutMs: { minimum: 1 } },
-          });
-        }
-        if (stage >= 3) {
-          expect(tools.find((tool) => tool.name === "mcp")?.parameters).toEqual(gatewayParameters);
-        }
+      (tools) => {
+        schemas.push({
+          script: tools.find((tool) => tool.name === "mcp_script")?.parameters,
+          gateway: tools.find((tool) => tool.name === "mcp")?.parameters,
+        });
       },
     );
-    expect(
-      outputs.slice(0, 4).every((output: any) => !output.isError && !output.details?.error),
-    ).toBe(true);
-    expect(outputs[1].content[0].text).toBe("42");
-    expect(outputs[4].isError).toBe(true); // Original per-action validation still owns execution.
+    expect(schemas.map((schema) => schema.script !== undefined)).toEqual([
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect(schemas.map((schema) => schema.gateway !== undefined)).toEqual([
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+    ]);
+    for (const schema of schemas.slice(1)) {
+      expect(schema.script).toMatchObject({
+        required: ["code"],
+        properties: { code: { type: "string" }, timeoutMs: { minimum: 1 } },
+      });
+    }
+    for (const schema of schemas.slice(3)) {
+      expect(schema.gateway).toEqual(gatewayParameters);
+    }
+    expect(outputs).toHaveLength(5);
+    for (const output of outputs.slice(0, 4)) {
+      expect(output.isError).toBe(false);
+      expect(JSONObjectSchema.parse(output.details).error).toBeUndefined();
+    }
+    expect(requireValue(outputs[1]).content[0]).toMatchObject({ type: "text", text: "42" });
+    expect(requireValue(outputs[4]).isError).toBe(true); // Original per-action validation still owns execution.
     expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);
-    const selectedBranch = h.session.sessionManager.getLeafId();
+    const selectedBranch = requireValue(h.session.sessionManager.getLeafId());
     await h.session.reload();
     expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);
     h.session.setActiveToolsByName(["mcp_search", "mcp"]);
@@ -244,8 +271,9 @@ describe("lazy MCP gateways through real Pi SDK", () => {
       const result = await h.request([
         { name, arguments: name === "mcp" ? { action: "status" } : { code: "return 42;" } },
       ]);
-      expect(result[0].isError).toBe(false);
-      expect(result[0].details?.error).toBeUndefined();
+      const output = requireValue(result[0]);
+      expect(output.isError).toBe(false);
+      expect(JSONObjectSchema.parse(output.details).error).toBeUndefined();
       await h.session.reload();
       expect(h.active()).toEqual([name]);
     },
@@ -269,22 +297,25 @@ describe("lazy MCP gateways through real Pi SDK", () => {
       const [result] = await h.request([
         { name: "mcp_search", arguments: { enable: ["gateway", "script"] } },
       ]);
-      expect(result.details.loaded).toEqual(options.allowed ? [{ name: options.allowed }] : []);
-      expect(result.details.unavailable).toEqual(
+      assert.ok(result !== undefined);
+      const details = JSONObjectSchema.parse(result.details);
+      expect(details.loaded).toEqual(
+        options.allowed !== undefined ? [{ name: options.allowed }] : [],
+      );
+      expect(details.unavailable).toEqual(
         options.unavailable === "both" ? ["gateway", "script"] : [options.unavailable],
       );
       const selection = h.session.sessionManager
         .getBranch()
-        .filter(
-          (entry: any) => entry.type === "custom" && entry.customType === "mcp-tool-selection",
-        )
-        .at(-1).data;
-      expect(selection.features).toEqual(
-        options.allowed ? [options.allowed === "mcp" ? "gateway" : "script"] : [],
+        .findLast((entry) => entry.type === "custom" && entry.customType === "mcp-tool-selection");
+      assert.ok(selection?.type === "custom");
+      const data = JSONObjectSchema.parse(selection.data);
+      expect(data.features).toEqual(
+        options.allowed !== undefined ? [options.allowed === "mcp" ? "gateway" : "script"] : [],
       );
       await h.session.reload();
       expect(h.active()).toEqual(
-        options.allowed ? [options.allowed, "mcp_search"].sort() : ["mcp_search"],
+        options.allowed !== undefined ? [options.allowed, "mcp_search"].sort() : ["mcp_search"],
       );
     },
     20_000,

@@ -2,9 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire, registerHooks } from "node:module";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import type { ExtensionError } from "@earendil-works/pi-coding-agent";
-import type { McpStatusSnapshot } from "../../types.ts";
 
 // Synchronous hooks observe native ESM and CommonJS loads. Pi's source loader
 // can also execute transformed modules through require.cache; include that graph
@@ -31,17 +29,26 @@ const configPath = process.env.MCP_CHILD_CONFIG;
 const projectDir = process.env.MCP_CHILD_PROJECT_DIR;
 const adapterPath = process.env.MCP_CHILD_ADAPTER_PATH;
 const eventsPath = process.env.MCP_STARTUP_FIXTURE_EVENTS;
-if (!agentDir || !configPath || !projectDir || !adapterPath || !eventsPath) {
+if (
+  agentDir === undefined ||
+  agentDir === "" ||
+  configPath === undefined ||
+  configPath === "" ||
+  projectDir === undefined ||
+  projectDir === "" ||
+  adapterPath === undefined ||
+  adapterPath === "" ||
+  eventsPath === undefined ||
+  eventsPath === ""
+) {
   throw new Error("Missing lazy-startup child harness environment");
 }
-const sdk = process.env.PI_PACKAGE_DIR
-  ? await import(pathToFileURL(join(process.env.PI_PACKAGE_DIR, "dist/index.js")).href)
-  : await import("@earendil-works/pi-coding-agent");
+const sdk = await import("@earendil-works/pi-coding-agent");
 const settingsManager = sdk.SettingsManager.inMemory();
 const eventBus = sdk.createEventBus();
-const statuses: McpStatusSnapshot[] = [];
+const statuses: unknown[] = [];
 const unsubscribe = eventBus.on("fitch-mcp-adapter/status/v1", (snapshot: unknown) => {
-  statuses.push(snapshot as McpStatusSnapshot);
+  statuses.push(snapshot);
 });
 const loader = new sdk.DefaultResourceLoader({
   cwd: projectDir,
@@ -63,9 +70,7 @@ assert.deepEqual(
 );
 const sourceLoaded = loader
   .getExtensions()
-  .extensions.some(
-    (extension: { path: string }) => resolve(extension.path) === resolve(adapterPath),
-  );
+  .extensions.some((extension) => resolve(extension.path) === resolve(adapterPath));
 assert(sourceLoaded, "Pi must load the source entrypoint, not an existing dist build");
 const modelRuntime = await sdk.ModelRuntime.create({
   authPath: join(agentDir, "auth.json"),
@@ -87,48 +92,42 @@ try {
   session.extensionRunner.setFlagValue("mcp-config", configPath);
   await session.bindExtensions({
     mode: "print",
-    onError: (error: ExtensionError) => errors.push(error),
+    onError: (error) => errors.push(error),
   });
   // Startup initialization is intentionally background work. Wait for its actual
   // status event, not a guessed delay or a mock initializeMcp completion.
   const deadline = Date.now() + 10_000;
-  while (!statuses.some((snapshot) => snapshot.servers.length === 15)) {
+  while (!statuses.some(hasAllServers)) {
     assert(
       Date.now() < deadline,
       `Timed out waiting for native MCP startup: ${JSON.stringify(errors)}`,
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((complete) => {
+      setTimeout(complete, 10);
+    });
   }
-  const tools = session.extensionRunner
-    .getAllRegisteredTools()
-    .map(
-      ({
-        definition,
-      }: {
-        definition: { name: string; description: string; parameters: unknown };
-      }) => ({
-        name: definition.name,
-        description: definition.description,
-        parameters: definition.parameters,
-      }),
-    );
+  const tools = session.extensionRunner.getAllRegisteredTools().map(({ definition }) => ({
+    name: definition.name,
+    description: definition.description,
+    parameters: definition.parameters,
+  }));
   const commands = session.extensionRunner
     .getRegisteredCommands()
-    .map((command: { name: string; description: string }) => ({
+    .map((command) => ({
       name: command.name,
       description: command.description,
     }))
-    .sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name));
+    .sort((a, b) => a.name.localeCompare(b.name));
   const startupStatus = statuses.at(-1);
   const activeTools = session.getActiveToolNames().sort();
   const startupSdkModules = sdkModules();
   const startupZodModules = zodModules();
-  const eventsBeforeCall = await readEvents();
+  const eventsBeforeCall = await readEvents(eventsPath);
   // Use Pi's native registered-tool wrapper to supply its real runtime context.
   // No assistant/model is needed to exercise registration -> stdio -> result.
   const registered = session.extensionRunner
     .getAllRegisteredTools()
-    .find((tool: { definition: { name: string } }) => tool.definition.name === "lazy00_echo");
+    .find((tool) => tool.definition.name === "lazy00_echo");
   assert(registered, "The cached direct tool must be registered before first use");
   const call = await sdk
     .wrapRegisteredTool(registered, session.extensionRunner)
@@ -146,7 +145,7 @@ try {
       startupZodModules,
       afterCallZodModules: zodModules(),
       eventsBeforeCall,
-      eventsAfterCall: await readEvents(),
+      eventsAfterCall: await readEvents(eventsPath),
       call,
     })}`,
   );
@@ -160,15 +159,25 @@ try {
   }
 }
 
-async function readEvents(): Promise<unknown[]> {
+function hasAllServers(snapshot: unknown): boolean {
+  return (
+    typeof snapshot === "object" &&
+    snapshot !== null &&
+    "servers" in snapshot &&
+    Array.isArray(snapshot.servers) &&
+    snapshot.servers.length === 15
+  );
+}
+
+async function readEvents(path: string): Promise<unknown[]> {
   try {
-    return (await readFile(eventsPath!, "utf8"))
+    return (await readFile(path, "utf8"))
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line));
+      .map((line): unknown => JSON.parse(line));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return [];
     }
     throw error;

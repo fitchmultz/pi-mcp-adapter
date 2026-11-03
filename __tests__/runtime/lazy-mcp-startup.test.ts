@@ -121,7 +121,7 @@ describe("cached lazy MCP startup through native Pi", () => {
     delete env.MCP_DIRECT_TOOLS;
     const { stdout, stderr } = await execFileAsync(
       process.execPath,
-      [resolve("__tests__/fixtures/lazy-mcp-startup-child.ts")],
+      [resolve("__tests__/runtime/fixtures/lazy-mcp-startup-child.ts")],
       { cwd: process.cwd(), env, timeout: 60_000, maxBuffer: 2 * 1024 * 1024 },
     );
     expect(stderr).not.toContain("MCP initialization failed");
