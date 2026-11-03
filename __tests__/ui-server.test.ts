@@ -8,6 +8,7 @@ import { startUiServer, type UiServerOptions, type UiServerHandle } from "../ui-
 import type { McpServerManager } from "../server-manager.ts";
 import type { Client } from "@modelcontextprotocol/client";
 import assert from "node:assert/strict";
+import { hostConfiguration } from "./fixtures/host-document.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { request, connectSSE } from "./fixtures/strict-ui-boundaries-http.ts";
 import { UiBoundaryWire, connectUiBoundaryWire } from "./fixtures/strict-ui-boundaries-wire.ts";
@@ -47,12 +48,9 @@ function createServerOptions(overrides: Partial<UiServerOptions> = {}): UiServer
 
 async function getUiAppUrl(handle: UiServerHandle): Promise<string> {
   const host = await request(handle.url);
-  const match =
-    typeof host.body === "string" ? host.body.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/) : null;
-  if (match?.[1] === undefined || match[1] === "") {
-    throw new Error("UI resource token missing from host page");
-  }
-  return `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(match[1])}`;
+  assert(typeof host.body === "string");
+  const config = hostConfiguration(host.body);
+  return `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(config.uiResourceToken)}`;
 }
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -126,6 +124,36 @@ describe("UiServer", () => {
 
       expect(handle.serverName).toBe("my-server");
       expect(handle.toolName).toBe("my_tool");
+    });
+
+    it("does not complete a rejected occupied-port startup when its watchdog would expire", async () => {
+      const occupied = http.createServer();
+      await new Promise<void>((resolve, reject) => {
+        occupied.once("error", reject);
+        occupied.listen(0, "127.0.0.1", resolve);
+      });
+      const address = occupied.address();
+      assert(address !== null && typeof address !== "string");
+      const onComplete = vi.fn<NonNullable<UiServerOptions["onComplete"]>>();
+      vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+      try {
+        await expect(
+          startUiServer(createServerOptions({ port: address.port, onComplete })),
+        ).rejects.toThrow(/EADDRINUSE/);
+        vi.advanceTimersByTime(65_000);
+        expect(onComplete).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+        await new Promise<void>((resolve, reject) => {
+          occupied.close((error) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
+          });
+        });
+      }
     });
   });
 
@@ -898,6 +926,60 @@ describe("UiServer", () => {
   });
 
   describe("POST /proxy/ui/message", () => {
+    it.each([
+      { role: 7 },
+      { content: "not an array" },
+      { type: "unsupported" },
+      { message: 7 },
+      { prompt: false },
+      { intent: [] },
+      { params: [] },
+    ])("rejects malformed known message fields: %j", async (params) => {
+      const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
+      handle = await startUiServer(createServerOptions({ onMessage }));
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/message`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ ok: false, error: "Invalid UI message params" });
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(handle.getSessionMessages()).toEqual({
+        prompts: [],
+        intents: [],
+        notifications: [],
+        contexts: [],
+      });
+    });
+
+    it("forwards message extensions and round-trips arbitrary intent parameters on disk", async () => {
+      const onMessage = vi.fn<NonNullable<UiServerOptions["onMessage"]>>();
+      handle = await startUiServer(createServerOptions({ onMessage }));
+      const params = {
+        type: "intent",
+        intent: "inspect",
+        params: { node: "雪😀", extension: { values: [null, 7, true] } },
+        _meta: { vendor: "unchanged" },
+        vendor: { opaque: ["extension"] },
+      };
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/message`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params },
+      });
+      expect(res.status).toBe(200);
+      expect(onMessage).toHaveBeenCalledExactlyOnceWith(params);
+      const messages = handle.getSessionMessages();
+      assert(messages.historyRef !== undefined && messages.historyRef !== "");
+      const record: unknown = JSON.parse(await readFile(messages.historyRef, "utf8"));
+      expect(record).toEqual({
+        category: "intents",
+        value: { intent: params.intent, params: params.params },
+      });
+      expect((await materializeUiMessages(messages)).intents).toEqual([
+        { intent: params.intent, params: params.params },
+      ]);
+    });
+
     it("acknowledges failed persistence with recovery data and an operator warning", async () => {
       const root = await mkdtemp(join(tmpdir(), "mcp-ui-server-failure-"));
       try {
@@ -1239,7 +1321,38 @@ describe("UiServer", () => {
       ]);
     });
 
-    it("rejects malformed context updates", async () => {
+    it("preserves context extensions in the callback and retained payload", async () => {
+      const onContextUpdate = vi.fn<NonNullable<UiServerOptions["onContextUpdate"]>>();
+      handle = await startUiServer(createServerOptions({ onContextUpdate }));
+      const params = {
+        content: [
+          {
+            type: "text",
+            text: "selection",
+            _meta: { vendor: "block" },
+            vendor: { opaque: ["retained block extension"] },
+          },
+        ],
+        structuredContent: { selected: "雪😀" },
+        _meta: { progressToken: "selection-7" },
+        vendor: { opaque: [null, 7, true] },
+      };
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/context`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params },
+      });
+      expect(res.status).toBe(200);
+      expect(onContextUpdate).toHaveBeenCalledExactlyOnceWith(params);
+      expect(handle.getSessionMessages().contexts).toEqual([
+        { payload: params, summary: JSON.stringify(params), truncated: false },
+      ]);
+    });
+
+    it.each([
+      { content: "some context data" },
+      { content: [{ type: "text", text: 42 }] },
+      { structuredContent: [] },
+    ])("rejects malformed context updates: %j", async (params) => {
       const onContextUpdate = vi.fn<NonNullable<UiServerOptions["onContextUpdate"]>>();
       handle = await startUiServer(createServerOptions({ onContextUpdate }));
 
@@ -1247,7 +1360,7 @@ describe("UiServer", () => {
         method: "POST",
         body: {
           token: handle.sessionToken,
-          params: { content: "some context data" },
+          params,
         },
       });
 

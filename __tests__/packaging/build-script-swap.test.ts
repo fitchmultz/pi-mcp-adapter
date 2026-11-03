@@ -17,7 +17,12 @@ import { afterAll, describe, expect, it } from "vitest";
 
 const execFile = promisify(execFileCallback);
 const buildScript = fileURLToPath(new URL("../../scripts/build.mjs", import.meta.url));
-const RUNTIME_ASSETS = ["mcp-keyring-helper.cjs", "mcp-script-worker.mjs", "app-bridge.bundle.js"];
+const RUNTIME_ASSETS = [
+  "mcp-keyring-helper.cjs",
+  "mcp-script-worker.mjs",
+  "app-bridge.bundle.js",
+  "host-browser.bundle.js",
+];
 
 const tscStub = fileURLToPath(new URL("../fixtures/build-tsc-stub.cjs", import.meta.url));
 const faultPreload = fileURLToPath(

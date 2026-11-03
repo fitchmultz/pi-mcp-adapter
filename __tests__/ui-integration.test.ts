@@ -5,7 +5,11 @@
  * through browser communication back to agent message retrieval.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import http from "node:http";
+import assert from "node:assert/strict";
+import { hostConfiguration } from "./fixtures/host-document.ts";
+import { setTimeout as delay } from "node:timers/promises";
+import { request } from "./fixtures/strict-ui-boundaries-http.ts";
+import { UiBoundaryWire, connectUiBoundaryWire } from "./fixtures/strict-ui-boundaries-wire.ts";
 import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { materializeUiMessages } from "../ui-message-history.ts";
@@ -13,45 +17,7 @@ import { startUiServer, type UiServerHandle } from "../ui-server.ts";
 import { UiResourceHandler } from "../ui-resource-handler.ts";
 import { ConsentManager } from "../consent-manager.ts";
 import type { McpServerManager } from "../server-manager.ts";
-import type { UiResourceContent, UiResourcePermissions, UiSessionMessages } from "../types.ts";
-
-// Helper to make HTTP requests
-async function request(
-  url: string,
-  options: { method?: string; body?: unknown } = {},
-): Promise<{ status: number; body: unknown }> {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const req = http.request(
-      {
-        hostname: parsed.hostname,
-        port: parsed.port,
-        path: parsed.pathname + parsed.search,
-        method: options.method ?? "GET",
-        headers: { "Content-Type": "application/json" },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf-8");
-          let body: unknown;
-          try {
-            body = JSON.parse(text);
-          } catch {
-            body = text;
-          }
-          resolve({ status: res.statusCode ?? 0, body });
-        });
-      },
-    );
-    req.on("error", reject);
-    if (options.body) {
-      req.write(JSON.stringify(options.body));
-    }
-    req.end();
-  });
-}
+import type { UiResourceContent, UiSessionMessages } from "../types.ts";
 
 // Simulate browser behavior
 class BrowserSimulator {
@@ -68,7 +34,8 @@ class BrowserSimulator {
     if (res.status !== 200) {
       throw new Error(`Page load failed: ${res.status}`);
     }
-    return res.body as string;
+    assert(typeof res.body === "string");
+    return res.body;
   }
 
   async sendPrompt(prompt: string): Promise<void> {
@@ -121,7 +88,8 @@ class BrowserSimulator {
     if (res.status !== 200) {
       throw new Error(`Tool call failed: ${res.status}`);
     }
-    return (res.body as { result: unknown }).result;
+    assert(res.body !== null && typeof res.body === "object" && "result" in res.body);
+    return res.body.result;
   }
 
   async grantConsent(): Promise<void> {
@@ -161,53 +129,36 @@ class BrowserSimulator {
   }
 }
 
-// Mock manager that simulates real MCP server behavior
-function createIntegrationManager(): McpServerManager {
-  const tools = new Map([
-    ["get_data", { result: { data: [1, 2, 3] } }],
-    ["save_file", { result: { saved: true, path: "/tmp/file.txt" } }],
-    ["slow_operation", { result: { completed: true }, delay: 100 }],
-  ]);
-  const toolDefinitions = [...tools.keys()].map((name) => ({ name }));
+const cleanups: Array<() => Promise<void>> = [];
 
-  return {
-    getConnection: vi.fn().mockReturnValue({
-      status: "connected",
-      client: {
-        callTool: vi.fn().mockImplementation(async ({ name }) => {
-          const tool = tools.get(name);
-          if (!tool) {
-            throw new Error(`Unknown tool: ${name}`);
-          }
-          if ((tool as { delay?: number }).delay) {
-            await new Promise((r) => setTimeout(r, (tool as { delay: number }).delay));
-          }
-          return { content: [{ type: "text", text: JSON.stringify(tool.result) }] };
-        }),
+async function createIntegrationManager(
+  name = "test-server",
+  toolError = false,
+): Promise<McpServerManager> {
+  const wire = new UiBoundaryWire();
+  wire.tools = ["get_data", "save_file", "slow_operation", "failing_tool"].map((toolName) => ({
+    name: toolName,
+    inputSchema: { type: "object" },
+  }));
+  wire.resultText = JSON.stringify({ data: [1, 2, 3] });
+  wire.toolError = toolError;
+  wire.resourceResult = {
+    contents: [
+      {
+        uri: "ui://test/app",
+        mimeType: "text/html",
+        text: "<!doctype html><html><head><title>Test App</title></head><body><h1>Test MCP App</h1><button id='getData'>Get Data</button><button id='sendPrompt'>Ask Agent</button></body></html>",
       },
-      tools: toolDefinitions,
-    }),
-    touch: vi.fn(),
-    incrementInFlight: vi.fn(),
-    decrementInFlight: vi.fn(),
-    readResource: vi.fn().mockResolvedValue({
-      contents: [
-        {
-          uri: "ui://test/app",
-          mimeType: "text/html",
-          text: `<!DOCTYPE html>
-<html>
-<head><title>Test App</title></head>
-<body>
-  <h1>Test MCP App</h1>
-  <button id="getData">Get Data</button>
-  <button id="sendPrompt">Ask Agent</button>
-</body>
-</html>`,
-        },
-      ],
-    }),
-  } as unknown as McpServerManager;
+    ],
+  };
+  const manager = await connectUiBoundaryWire(wire, name);
+  cleanups.push(
+    () => wire.close(),
+    () => manager.closeAll(),
+  );
+  vi.spyOn(manager, "incrementInFlight");
+  vi.spyOn(manager, "decrementInFlight");
+  return manager;
 }
 
 function approvedConsentManager(): ConsentManager {
@@ -225,24 +176,28 @@ describe("MCP UI Integration", () => {
     if (handle) {
       const ref = handle.getSessionMessages().historyRef;
       handle.close("test-cleanup");
-      if (ref) {
+      if (ref !== undefined) {
         await rm(dirname(ref), { recursive: true, force: true });
       }
       handle = null;
     }
+    for (const cleanup of cleanups.reverse()) {
+      await cleanup();
+    }
+    cleanups.length = 0;
   });
 
   describe("Full UI Session Flow", () => {
     it("completes a full agent → browser → agent cycle", async () => {
       // 1. Agent calls tool with UI
-      const manager = createIntegrationManager();
+      const manager = await createIntegrationManager();
       const consentManager = approvedConsentManager(); // No consent prompts
 
       const resource: UiResourceContent = {
         uri: "ui://test/app",
         html: "<h1>Test App</h1>",
         mimeType: "text/html",
-        meta: { permissions: [] as UiResourcePermissions },
+        meta: { permissions: {} },
       };
 
       const receivedMessages: Omit<UiSessionMessages, "contexts"> = {
@@ -250,11 +205,13 @@ describe("MCP UI Integration", () => {
         notifications: [],
         intents: [],
       };
-      const onMessage = vi.fn().mockImplementation((params) => {
-        if (params.type === "prompt") {
-          receivedMessages.prompts.push(params.prompt);
-        }
-      });
+      const onMessage = vi
+        .fn<NonNullable<Parameters<typeof startUiServer>[0]["onMessage"]>>()
+        .mockImplementation((params) => {
+          if (params.type === "prompt" && params.prompt !== undefined) {
+            receivedMessages.prompts.push(params.prompt);
+          }
+        });
 
       handle = await startUiServer({
         serverName: "test-server",
@@ -288,14 +245,14 @@ describe("MCP UI Integration", () => {
     });
 
     it("handles multiple messages in conversation", async () => {
-      const manager = createIntegrationManager();
+      const manager = await createIntegrationManager("chat-server");
       const consentManager = approvedConsentManager();
 
       const resource: UiResourceContent = {
         uri: "ui://test/chat",
         html: "<div id='chat'></div>",
         mimeType: "text/html",
-        meta: { permissions: [] as UiResourcePermissions },
+        meta: { permissions: {} },
       };
 
       handle = await startUiServer({
@@ -329,14 +286,14 @@ describe("MCP UI Integration", () => {
     });
 
     it("handles consent flow for tool calls", async () => {
-      const manager = createIntegrationManager();
+      const manager = await createIntegrationManager("sensitive-server");
       const consentManager = new ConsentManager();
 
       const resource: UiResourceContent = {
         uri: "ui://test/app",
         html: "<h1>App</h1>",
         mimeType: "text/html",
-        meta: { permissions: [] as UiResourcePermissions },
+        meta: { permissions: {} },
       };
 
       handle = await startUiServer({
@@ -352,7 +309,7 @@ describe("MCP UI Integration", () => {
       await browser.loadPage();
 
       // First tool call should fail - no consent yet
-      await expect(browser.callTool("get_data")).rejects.toThrow();
+      await expect(browser.callTool("get_data")).rejects.toThrow("403");
 
       // Grant consent
       await browser.grantConsent();
@@ -363,14 +320,14 @@ describe("MCP UI Integration", () => {
     });
 
     it("tracks in-flight requests correctly", async () => {
-      const manager = createIntegrationManager();
+      const manager = await createIntegrationManager();
       const consentManager = approvedConsentManager();
 
       const resource: UiResourceContent = {
         uri: "ui://test/app",
         html: "<h1>App</h1>",
         mimeType: "text/html",
-        meta: { permissions: [] as UiResourcePermissions },
+        meta: { permissions: {} },
       };
 
       handle = await startUiServer({
@@ -389,14 +346,14 @@ describe("MCP UI Integration", () => {
       await Promise.all([browser.callTool("get_data"), browser.callTool("save_file")]);
 
       // Both should have incremented/decremented
-      expect(manager.incrementInFlight).toHaveBeenCalledTimes(2);
-      expect(manager.decrementInFlight).toHaveBeenCalledTimes(2);
+      expect(vi.spyOn(manager, "incrementInFlight")).toHaveBeenCalledTimes(2);
+      expect(vi.spyOn(manager, "decrementInFlight")).toHaveBeenCalledTimes(2);
     });
   });
 
   describe("UiResourceHandler + UiServer Integration", () => {
     it("reads resource and starts server with correct content", async () => {
-      const manager = createIntegrationManager();
+      const manager = await createIntegrationManager();
       const handler = new UiResourceHandler(manager);
 
       // Read the UI resource
@@ -417,10 +374,10 @@ describe("MCP UI Integration", () => {
 
       const browser = new BrowserSimulator(handle);
       const html = await browser.loadPage();
-      const resourceToken = html.match(/const UI_RESOURCE_TOKEN = "([^"]+)";/)?.[1];
+      const resourceToken = hostConfiguration(html).uiResourceToken;
       expect(resourceToken).toBeDefined();
       const response = await request(
-        `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(resourceToken!)}`,
+        `http://localhost:${handle.port}/ui-app?resource=${encodeURIComponent(resourceToken)}`,
       );
       expect(response.status).toBe(200);
       expect(response.body).toBe(resource.html);
@@ -429,8 +386,8 @@ describe("MCP UI Integration", () => {
 
   describe("Session Lifecycle", () => {
     it("calls onComplete when session ends", async () => {
-      const onComplete = vi.fn();
-      const manager = createIntegrationManager();
+      const onComplete = vi.fn<NonNullable<Parameters<typeof startUiServer>[0]["onComplete"]>>();
+      const manager = await createIntegrationManager();
       const consentManager = approvedConsentManager();
 
       handle = await startUiServer({
@@ -441,7 +398,7 @@ describe("MCP UI Integration", () => {
           uri: "ui://test/app",
           html: "<h1>App</h1>",
           mimeType: "text/html",
-          meta: { permissions: [] as UiResourcePermissions },
+          meta: { permissions: {} },
         },
         manager,
         consentManager,
@@ -453,23 +410,14 @@ describe("MCP UI Integration", () => {
       await browser.complete("user-finished");
 
       // Wait for callback
-      await new Promise((r) => setTimeout(r, 50));
+      await delay(50);
       expect(onComplete).toHaveBeenCalledWith("user-finished");
     });
   });
 
   describe("Error Handling", () => {
     it("handles MCP server errors gracefully", async () => {
-      const manager = {
-        ...createIntegrationManager(),
-        getConnection: vi.fn().mockReturnValue({
-          status: "connected",
-          client: {
-            callTool: vi.fn().mockRejectedValue(new Error("MCP server error")),
-          },
-          tools: [{ name: "failing_tool" }],
-        }),
-      } as unknown as McpServerManager;
+      const manager = await createIntegrationManager("error-server", true);
 
       const consentManager = approvedConsentManager();
 
@@ -481,7 +429,7 @@ describe("MCP UI Integration", () => {
           uri: "ui://test/app",
           html: "<h1>App</h1>",
           mimeType: "text/html",
-          meta: { permissions: [] as UiResourcePermissions },
+          meta: { permissions: {} },
         },
         manager,
         consentManager,
@@ -491,17 +439,15 @@ describe("MCP UI Integration", () => {
       await browser.loadPage();
 
       // Tool call should fail but not crash the server
-      await expect(browser.callTool("failing_tool")).rejects.toThrow();
+      await expect(browser.callTool("failing_tool")).rejects.toThrow("500");
 
       // Server should still be responsive
       await browser.heartbeat();
     });
 
     it("handles disconnected server", async () => {
-      const manager = {
-        ...createIntegrationManager(),
-        getConnection: vi.fn().mockReturnValue(null),
-      } as unknown as McpServerManager;
+      const manager = await createIntegrationManager("disconnected-server");
+      await manager.close("disconnected-server");
 
       const consentManager = approvedConsentManager();
 
@@ -513,7 +459,7 @@ describe("MCP UI Integration", () => {
           uri: "ui://test/app",
           html: "<h1>App</h1>",
           mimeType: "text/html",
-          meta: { permissions: [] as UiResourcePermissions },
+          meta: { permissions: {} },
         },
         manager,
         consentManager,
@@ -529,7 +475,7 @@ describe("MCP UI Integration", () => {
 
   describe("Display Mode Changes", () => {
     it("allows switching display modes", async () => {
-      const manager = createIntegrationManager();
+      const manager = await createIntegrationManager();
       const consentManager = approvedConsentManager();
 
       handle = await startUiServer({
@@ -540,7 +486,7 @@ describe("MCP UI Integration", () => {
           uri: "ui://test/app",
           html: "<h1>App</h1>",
           mimeType: "text/html",
-          meta: { permissions: [] as UiResourcePermissions },
+          meta: { permissions: {} },
         },
         manager,
         consentManager,
@@ -560,7 +506,7 @@ describe("MCP UI Integration", () => {
       });
 
       expect(res.status).toBe(200);
-      expect((res.body as { result: { mode: string } }).result.mode).toBe("fullscreen");
+      expect(res.body).toMatchObject({ result: { mode: "fullscreen" } });
     });
   });
 });

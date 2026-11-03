@@ -20,6 +20,7 @@ const ignorePatterns = [
   ".pi/**",
   ".dogfood/**",
   "app-bridge.bundle.js",
+  "host-browser.bundle.js",
   "examples/interactive-visualizer/dist/**",
   "examples/interactive-visualizer/node_modules/**",
 ];
@@ -263,7 +264,9 @@ function verifyIgnoredSources() {
     { cwd: root, encoding: "utf8" },
   )
     .split("\0")
-    .filter((file) => file !== "" && file !== "app-bridge.bundle.js");
+    .filter(
+      (file) => file !== "" && file !== "app-bridge.bundle.js" && file !== "host-browser.bundle.js",
+    );
   if (ignored.length > 0) {
     throw new Error(`Unclassified ignored source or quality configuration: ${ignored.join(", ")}`);
   }
@@ -294,7 +297,11 @@ function verifyCompilerCoverage(files) {
   );
   const checkedDeclarations = new Set(resolvedProjectFiles("tsconfig.declarations.json"));
   for (const file of files) {
-    if (!/\.(?:[cm]?[jt]s|[jt]sx)$/u.test(file) || file === "app-bridge.bundle.js") {
+    if (
+      !/\.(?:[cm]?[jt]s|[jt]sx)$/u.test(file) ||
+      file === "app-bridge.bundle.js" ||
+      file === "host-browser.bundle.js"
+    ) {
       continue;
     }
     if (!covered.has(resolve(root, file))) {

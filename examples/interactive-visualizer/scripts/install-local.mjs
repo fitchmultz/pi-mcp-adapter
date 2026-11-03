@@ -1,59 +1,30 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
+import {
+  configPath,
+  distServer,
+  isInstalledExample,
+  loadConfig,
+  serverName,
+} from "./local-config.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(__dirname, "..");
-const distServer = path.join(root, "dist", "server.js");
-const configuredAgentDir = process.env.PI_CODING_AGENT_DIR?.trim();
-const agentDir = !configuredAgentDir
-  ? path.join(homedir(), ".pi", "agent")
-  : configuredAgentDir === "~"
-    ? homedir()
-    : configuredAgentDir.startsWith("~/")
-      ? path.resolve(homedir(), configuredAgentDir.slice(2))
-      : path.resolve(configuredAgentDir);
-const configPath = path.join(agentDir, "fitch-mcp-adapter", "mcp.json");
-const serverName = "interactive-visualizer";
+const config = (await loadConfig()) ?? {};
+const servers = config.mcpServers ?? {};
+const existing = servers[serverName];
 
-function isInstalledExample(/** @type {Record<string, unknown> | null | undefined} */ entry) {
-  if (entry === null || entry === undefined) {
-    return false;
-  }
-  return (
-    entry.command === process.execPath && Array.isArray(entry.args) && entry.args[0] === distServer
-  );
-}
-
-async function loadConfig() {
-  try {
-    const raw = await readFile(configPath, "utf-8");
-    return JSON.parse(raw);
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return { mcpServers: {} };
-    }
-    throw error;
-  }
-}
-
-const config = await loadConfig();
-config.mcpServers = config.mcpServers ?? {};
-const existing = config.mcpServers[serverName];
-
-if (existing && !isInstalledExample(existing)) {
+if (Boolean(existing) && !isInstalledExample(existing)) {
   console.error(
     `Refusing to overwrite existing ${serverName} entry in ${configPath} because it does not match this local example install.`,
   );
   process.exit(1);
 }
 
-config.mcpServers[serverName] = {
+servers[serverName] = {
   command: process.execPath,
   args: [distServer],
   lifecycle: "lazy",
 };
+config.mcpServers = servers;
 
 await mkdir(path.dirname(configPath), { recursive: true });
 await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
