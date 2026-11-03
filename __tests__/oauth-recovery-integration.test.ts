@@ -1001,11 +1001,11 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.settings.autoAuth = true;
     f.state.ui = f.ui;
     await f.connect();
-    const result = await runMcpScript(
-      f.state,
-      `return await tools.call(${JSON.stringify(f.toolName("write"))}, {});`,
-      300,
-    );
+    const result = await runMcpScript({
+      state: f.state,
+      code: `return await tools.call(${JSON.stringify(f.toolName("write"))}, {});`,
+      timeoutMs: 300,
+    });
     expect(result.details.error).toBe("timeout");
     await expect.poll(() => hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
     expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);

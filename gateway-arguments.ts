@@ -190,24 +190,32 @@ function parseArgs(value: unknown): Record<string, unknown> | undefined {
 }
 
 /** Migrate stored v5 calls before host validation; the advertised schema stays explicit. */
-export function prepareGatewayArguments(input: unknown): GatewayArguments {
+export function prepareGatewayArguments(input: unknown): Record<string, unknown> {
   const value = asObjectRecord(input);
   if (value === undefined || Array.isArray(input)) {
     throw new Error("MCP arguments must be an object");
   }
   const action = value.action === undefined ? legacyAction(value) : value.action;
+  if (typeof action !== "string") {
+    throw new Error("MCP action must be a string");
+  }
   if (!isAction(action)) {
-    throw new Error(`Unknown MCP action: ${String(action)}`);
+    throw new Error(`Unknown MCP action: ${action}`);
   }
   const result = migrateLegacy(value, action);
   if (typeof result.args === "string" || result.args !== undefined) {
     result.args = parseArgs(result.args);
   }
   validateRequirements(result, action);
-  if (!Value.Check(gatewayParameters, result)) {
+  return result;
+}
+
+/** Narrow native-validated execution input without preempting the host's coercion step. */
+export function parseGatewayArguments(input: unknown): GatewayArguments {
+  if (!Value.Check(gatewayParameters, input)) {
     throw new Error("Invalid MCP arguments");
   }
-  return result;
+  return input;
 }
 
 function validateRequirements(

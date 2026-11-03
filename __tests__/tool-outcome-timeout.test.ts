@@ -9,63 +9,12 @@ import { executeCall } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { createTestState } from "./test-state.ts";
+import { fileURLToPath } from "node:url";
+import { createOutcomeResponder } from "./fixtures/scripting-runtime-outcome.ts";
 
-// Self-contained so the same wire fixture runs in a real stdio child or on a Unix socket.
-function responder(send: (message: unknown) => void) {
-  let committed = 0;
-  function isWrite(value: unknown): value is { name: "write" } {
-    return typeof value === "object" && value !== null && "name" in value && value.name === "write";
-  }
-  function writeDelay(params: object): number {
-    const args = "arguments" in params ? params.arguments : undefined;
-    return typeof args === "object" &&
-      args !== null &&
-      "delayMs" in args &&
-      typeof args.delayMs === "number"
-      ? args.delayMs
-      : 160;
-  }
-  return async (request: unknown): Promise<void> => {
-    if (
-      typeof request !== "object" ||
-      request === null ||
-      !("id" in request) ||
-      request.id === undefined ||
-      !("method" in request)
-    ) {
-      return;
-    }
-    let result: unknown;
-    if (request.method === "initialize") {
-      result = {
-        protocolVersion: "2025-11-25",
-        capabilities: { tools: {} },
-        serverInfo: { name: "outcome", version: "1" },
-      };
-    } else if (request.method === "tools/list") {
-      result = {
-        tools: ["write", "readback"].map((name) => ({
-          name,
-          inputSchema: { type: "object" },
-          annotations: { readOnlyHint: name === "readback", idempotentHint: false },
-        })),
-      };
-    } else if (request.method === "tools/call") {
-      const params = "params" in request ? request.params : undefined;
-      if (isWrite(params)) {
-        committed++;
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, writeDelay(params));
-        });
-      }
-      result = { content: [{ type: "text", text: String(committed) }] };
-    } else {
-      send({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Unknown method" } });
-      return;
-    }
-    send({ jsonrpc: "2.0", id: request.id, result });
-  };
-}
+const outcomeFixture = fileURLToPath(
+  new URL("./fixtures/scripting-runtime-outcome.ts", import.meta.url),
+);
 
 function assertNoScriptError(output: Awaited<ReturnType<typeof runMcpScript>>): void {
   expect(output.details).not.toHaveProperty("error");
@@ -93,10 +42,11 @@ it.each(["stdio", "unix"])(
     const server =
       transport === "unix"
         ? createServer((socket) => {
-            const handle = responder((message) => socket.write(JSON.stringify(message) + "\n"));
+            const handle = createOutcomeResponder((message) => {
+              socket.write(JSON.stringify(message) + "\n");
+            });
             createInterface({ input: socket }).on("line", (line) => {
-              const request: unknown = JSON.parse(line);
-              handle(request).catch((error: unknown) => {
+              handle(line).catch((error: unknown) => {
                 socket.destroy(error instanceof Error ? error : new Error(String(error)));
               });
             });
@@ -113,15 +63,7 @@ it.each(["stdio", "unix"])(
           ? { socket: socketPath }
           : {
               command: process.execPath,
-              args: [
-                "--input-type=module",
-                "--eval",
-                `
-          import { createInterface } from "node:readline";
-          const handle = (${responder.toString()})(message => process.stdout.write(JSON.stringify(message) + "\\n"));
-          createInterface({ input: process.stdin }).on("line", line => { void handle(JSON.parse(line)); });
-        `,
-              ],
+              args: [outcomeFixture],
             }),
         requestTimeoutMs: 2000,
         retryOnTransportFailure: true,
@@ -173,15 +115,7 @@ it.each([
     try {
       const definition = {
         command: process.execPath,
-        args: [
-          "--input-type=module",
-          "--eval",
-          `
-        import { createInterface } from "node:readline";
-        const handle = (${responder.toString()})(message => process.stdout.write(JSON.stringify(message) + "\\n"));
-        createInterface({ input: process.stdin }).on("line", line => { void handle(JSON.parse(line)); });
-      `,
-        ],
+        args: [outcomeFixture],
         requestTimeoutMs: 10_000,
         retryOnTransportFailure: true,
       };
@@ -204,26 +138,25 @@ it.each([
           /* A successful capture callback owns the cancellation receipt. */
         };
       }
-      const pending = runMcpScript(
+      const pending = runMcpScript({
         state,
-        `
+        code: `
       await tools.local_readback({});
       const write = tools.local_write({ delayMs: 5000 });
       tools.local_write({ blocked: true });
       ${ending === "early return" ? 'await tools.local_readback({}); return "early";' : "await write;"}
     `,
-        ending === "timeout" ? 500 : 10_000,
-        undefined,
-        controller.signal,
-        "script-write",
-        async (_signal, operation) => {
+        timeoutMs: ending === "timeout" ? 500 : 10_000,
+        signal: controller.signal,
+        toolCallId: "script-write",
+        beforeDispatch: async (_signal, operation) => {
           if (operation.args.blocked === true) {
             await new Promise(() => {
               /* Hold this pre-dispatch gate until script cancellation. */
             });
           }
         },
-      );
+      });
       if (ending === "abort") {
         await cancelAfterWrite(state, controller);
       }

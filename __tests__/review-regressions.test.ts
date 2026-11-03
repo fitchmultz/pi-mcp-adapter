@@ -14,6 +14,7 @@ import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { TextContent } from "@earendil-works/pi-ai";
+import { createTestState } from "./test-state.ts";
 
 type ReadPage = Awaited<ReturnType<typeof readMcpResult>>;
 type ReadSuccess = ReadPage & { details: Extract<ReadPage["details"], { nextOffset: unknown }> };
@@ -234,12 +235,12 @@ function collisionState(): McpExtensionState {
     description: name,
     inputSchema: { type: "object" as const, properties: { [name]: { type: "string" } } },
   }));
-  return {
+  return createTestState({
     config: { settings: { toolPrefix: "none" }, mcpServers: { demo: definition } },
     toolMetadata: new Map([
       ["demo", buildToolMetadata(tools, [], definition, "demo", "none").metadata],
     ]),
-  } as unknown as McpExtensionState;
+  });
 }
 
 describe("review regressions: scoped original-name description", () => {
@@ -258,10 +259,10 @@ describe("review regressions: scoped original-name description", () => {
   });
 
   it("prefers the exact scoped original name in tools.describe and preserves unscoped ambiguity", async () => {
-    const result = await runMcpScript(
-      collisionState(),
-      'return { dot: await tools.describe({ server: "demo", path: "a.b" }), underscore: await tools.describe({ server: "demo", path: "a_b" }), unscoped: await tools.describe({ path: "a_b" }) };',
-    );
+    const result = await runMcpScript({
+      state: collisionState(),
+      code: 'return { dot: await tools.describe({ server: "demo", path: "a.b" }), underscore: await tools.describe({ server: "demo", path: "a_b" }), unscoped: await tools.describe({ path: "a_b" }) };',
+    });
     expect(result.details).not.toHaveProperty("error");
     expect(JSON.parse((result.content[0] as TextContent).text)).toMatchObject({
       dot: {

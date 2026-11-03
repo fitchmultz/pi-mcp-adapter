@@ -152,6 +152,7 @@ jobs:
       - run: npm run lint:consumer-tooling
       - run: npm run lint:prompts
       - run: npm run lint:runtime-tests
+      - run: npm run lint:script-runtime
       - run: npm run lint:tracing
       - run: npm run lint:core-runtime
       - run: npm run lint:sampling

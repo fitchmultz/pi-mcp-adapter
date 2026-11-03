@@ -47,7 +47,7 @@ import { createToolLoader, type Feature, type FeaturePolicy } from "./tool-loade
 import {
   gatewayParameters,
   prepareGatewayArguments,
-  type GatewayArguments,
+  parseGatewayArguments,
 } from "./gateway-arguments.ts";
 import {
   guardMcpOutput,
@@ -950,18 +950,18 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           return ready;
         }
         const { runMcpScript } = await import("./mcp-code.ts");
-        return runMcpScript(
-          ready,
-          params.code,
-          params.timeoutMs ?? options.defaultScriptTimeoutMs,
+        return runMcpScript({
+          state: ready,
+          code: params.code,
+          timeoutMs: params.timeoutMs ?? options.defaultScriptTimeoutMs,
           getPiTools,
           signal,
           toolCallId,
-          beforeExecute
+          beforeDispatch: beforeExecute
             ? (callSignal, operation) =>
                 beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)
             : undefined,
-        );
+        });
       },
     });
     scriptToolRegistered = true;
@@ -976,17 +976,17 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       promptSnippet:
         "MCP server operations, resources, saved result readback, and fallback tool calls",
       renderCall: renderMcpProxyToolCall,
-      parameters: gatewayParameters,
+      parameters: Type.Unsafe<Record<string, unknown>>(gatewayParameters),
       prepareArguments: prepareGatewayArguments,
       renderResult: renderMcpToolResult,
       async execute(
         toolCallId: string,
-        rawParams: GatewayArguments,
+        rawParams: Record<string, unknown>,
         signal: AbortSignal | undefined,
         _onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined,
         ctx: ExtensionContext,
       ) {
-        const params = prepareGatewayArguments(rawParams);
+        const params = parseGatewayArguments(prepareGatewayArguments(rawParams));
         if (beforeExecute && params.action !== "call" && params.action !== "read-resource") {
           if (currentOwner) {
             await currentOwner.runCallback("beforeExecute", () => beforeExecute(toolCallId, ctx));

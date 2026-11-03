@@ -123,7 +123,10 @@ describe("runMcpScript", () => {
   });
 
   it("uses script-local discovery guidance when a tool call misses", async () => {
-    const result = await runMcpScript(state, 'return await tools.call("missing_tool", {});');
+    const result = await runMcpScript({
+      state,
+      code: 'return await tools.call("missing_tool", {});',
+    });
     const payload: unknown = JSON.parse(lastText(result));
 
     const discoveryMessage: unknown = expect.stringContaining(
@@ -143,10 +146,10 @@ describe("runMcpScript", () => {
   });
 
   it("searches the script-visible tool catalog with pagination and server filtering", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'return { first: await tools.search({ query: "fixture", limit: 1 }), second: await tools.search({ query: "fixture", limit: 1, offset: 1, server: "fixture" }), empty: await tools.search({ query: "" }) };',
-    );
+      code: 'return { first: await tools.search({ query: "fixture", limit: 1 }), second: await tools.search({ query: "fixture", limit: 1, offset: 1, server: "fixture" }), empty: await tools.search({ query: "" }) };',
+    });
 
     expect(JSON.parse(lastText(result))).toEqual({
       first: {
@@ -190,10 +193,10 @@ describe("runMcpScript", () => {
   });
 
   it("describes exact script-visible paths and suggests corrections without throwing", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'return { found: await tools.describe({ path: "fixture_echo" }), missing: await tools.describe({ path: "fixture_ech" }) };',
-    );
+      code: 'return { found: await tools.describe({ path: "fixture_echo" }), missing: await tools.describe({ path: "fixture_ech" }) };',
+    });
 
     expect(JSON.parse(lastText(result))).toEqual({
       found: {
@@ -214,10 +217,10 @@ describe("runMcpScript", () => {
   });
 
   it("records operation metadata and timing for search, describe, and calls", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'await tools.search({ query: "fixture" }); await tools.describe({ path: "fixture_echo" }); await tools.describe({ path: "fixture_missing" }); return await tools.call("fixture_echo", { value: "traced" });',
-    );
+      code: 'await tools.search({ query: "fixture" }); await tools.describe({ path: "fixture_echo" }); await tools.describe({ path: "fixture_missing" }); return await tools.call("fixture_echo", { value: "traced" });',
+    });
 
     expect(result.details).toMatchObject({
       calls: [
@@ -236,10 +239,10 @@ describe("runMcpScript", () => {
   });
 
   it("calls exact paths and returns an invalid-path envelope without throwing", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'return { success: await tools.call("fixture_echo", { value: "canonical" }), invalid: await tools.call("", {}) };',
-    );
+      code: 'return { success: await tools.call("fixture_echo", { value: "canonical" }), invalid: await tools.call("", {}) };',
+    });
 
     expect(JSON.parse(lastText(result))).toMatchObject({
       success: {
@@ -264,10 +267,10 @@ describe("runMcpScript", () => {
       approvedToolCalls: new Map(),
     });
 
-    const result = await runMcpScript(
-      gatedState,
-      'return await tools.fixture_echo({ value: "blocked" });',
-    );
+    const result = await runMcpScript({
+      state: gatedState,
+      code: 'return await tools.fixture_echo({ value: "blocked" });',
+    });
 
     expect(JSON.parse(lastText(result))).toMatchObject({
       ok: false,
@@ -279,10 +282,10 @@ describe("runMcpScript", () => {
   });
 
   it("calls a prefixed MCP tool through the flat tools proxy", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'return await tools.fixture_echo({ value: "round trip" });',
-    );
+      code: 'return await tools.fixture_echo({ value: "round trip" });',
+    });
 
     expect(JSON.parse(lastText(result))).toMatchObject({
       ok: true,
@@ -303,19 +306,59 @@ describe("runMcpScript", () => {
       },
     });
 
-    const result = await runMcpScript(
-      limitedState,
-      `const result = await tools.fixture_echo({ value: ${JSON.stringify(value)} }); return { omitted: result.data.omitted === true, echoed: result.data.structuredContent?.echoed };`,
-    );
+    const result = await runMcpScript({
+      state: limitedState,
+      code: `const result = await tools.fixture_echo({ value: ${JSON.stringify(value)} }); return { omitted: result.data.omitted === true, echoed: result.data.structuredContent?.echoed };`,
+    });
 
     expect(JSON.parse(lastText(result))).toEqual({ omitted: false, echoed: value });
   });
 
-  it("returns a failure envelope and lets the script continue", async () => {
-    const result = await runMcpScript(
+  it("preserves saved-result optional-field diagnostics and nullish window defaults", async () => {
+    const result = await runMcpScript({
       state,
-      "const failure = await tools.fixture_fail({}); return { failure, continued: true };",
-    );
+      code: `
+        const call = await tools.fixture_echo({ value: "readable" });
+        const invalid = await Promise.all([
+          { path: 4 },
+          { fields: [4] },
+          { fields: null },
+          { offset: "1" },
+          { offset: NaN },
+          { limit: 0 },
+        ].map(input => tools.readResult({ ref: call.resultRef, ...input })));
+        const valid = await tools.readResult({
+          ref: call.resultRef, path: "/structuredContent/echoed", offset: null, limit: null,
+        });
+        return { invalid, valid };
+      `,
+    });
+    const failure = (message: string) => ({
+      content: [{ type: "text", text: message }],
+      details: { error: "result_read_failed", message },
+    });
+    expect(JSON.parse(lastText(result))).toMatchObject({
+      invalid: [
+        failure("path must be an RFC 6901 JSON Pointer"),
+        failure("fields must be an array of keys"),
+        failure("fields must be an array of keys"),
+        failure("offset must be a non-negative integer and limit a positive integer"),
+        failure("offset must be a non-negative integer and limit a positive integer"),
+        failure("offset must be a non-negative integer and limit a positive integer"),
+      ],
+      valid: {
+        content: [{ type: "text", text: '"readable"' }],
+        details: { offset: 0, nextOffset: null, totalCharacters: 10 },
+      },
+    });
+    expect(result.details).not.toHaveProperty("error");
+  });
+
+  it("returns a failure envelope and lets the script continue", async () => {
+    const result = await runMcpScript({
+      state,
+      code: "const failure = await tools.fixture_fail({}); return { failure, continued: true };",
+    });
 
     const failureMessage: unknown = expect.stringContaining("fixture failure");
     expect(JSON.parse(lastText(result))).toMatchObject({
@@ -332,18 +375,18 @@ describe("runMcpScript", () => {
   });
 
   it("does not treat promise/serialization probes as tool calls", async () => {
-    const result = await runMcpScript(state, "return tools;");
+    const result = await runMcpScript({ state, code: "return tools;" });
 
     expect(result.details).not.toHaveProperty("error");
     expect(result.details).not.toHaveProperty("calls");
   });
 
   it("keeps in-flight calls in the trace when the script times out", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'await tools.fixture_echo({ value: "done" }); await tools.fixture_hang({});',
-      300,
-    );
+      code: 'await tools.fixture_echo({ value: "done" }); await tools.fixture_hang({});',
+      timeoutMs: 300,
+    });
 
     expect(result.details).toMatchObject({
       error: "timeout",
@@ -361,13 +404,12 @@ describe("runMcpScript", () => {
 
   it("aborts nested calls and releases in-flight accounting on caller cancellation", async () => {
     const controller = new AbortController();
-    const pending = runMcpScript(
+    const pending = runMcpScript({
       state,
-      "await tools.fixture_hang({});",
-      5000,
-      undefined,
-      controller.signal,
-    );
+      code: "await tools.fixture_hang({});",
+      timeoutMs: 5000,
+      signal: controller.signal,
+    });
     await expect.poll(() => manager.getConnection("fixture")?.inFlight).toBe(1);
     controller.abort(new Error("caller cancelled"));
     const result = await pending;
@@ -387,7 +429,11 @@ describe("runMcpScript", () => {
 
   it("returns promptly on early return and reports un-awaited dispatched calls as unknown", async () => {
     const start = Date.now();
-    const result = await runMcpScript(state, 'tools.fixture_hang({}); return "early";', 5_000);
+    const result = await runMcpScript({
+      state,
+      code: 'tools.fixture_hang({}); return "early";',
+      timeoutMs: 5_000,
+    });
 
     expect(Date.now() - start).toBeLessThan(2_000);
     expect(result.details).not.toHaveProperty("error");
@@ -404,11 +450,11 @@ describe("runMcpScript", () => {
   });
 
   it("terminates synchronous runaway code after an awaited tool call", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'await tools.fixture_echo({ value: "x" }); while (true) {}',
-      300,
-    );
+      code: 'await tools.fixture_echo({ value: "x" }); while (true) {}',
+      timeoutMs: 300,
+    });
 
     expect(result.details).toMatchObject({
       error: "timeout",
@@ -418,7 +464,11 @@ describe("runMcpScript", () => {
 
   it("bounds synchronous runaway code and preserves partial emits", async () => {
     // Margin covers worker spawn latency on slow CI runners; the emit must land before the deadline.
-    const result = await runMcpScript(state, 'emit("before timeout"); while (true) {}', 250);
+    const result = await runMcpScript({
+      state,
+      code: 'emit("before timeout"); while (true) {}',
+      timeoutMs: 250,
+    });
 
     expect(textBlocks(result)[0]).toBe("before timeout");
     expect(result.details).toMatchObject({ error: "timeout", timeoutMs: 250 });
@@ -426,21 +476,21 @@ describe("runMcpScript", () => {
   });
 
   it("orders emitted and captured console blocks before the return value", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'emit("first"); console.log("second"); return "last";',
-    );
+      code: 'emit("first"); console.log("second"); return "last";',
+    });
 
     expect(textBlocks(result)).toEqual(["first", "[console.log] second", "last"]);
   });
 
   it("formats non-JSON values in emitted, returned, and console output", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      `const cycle = {}; cycle.self = cycle;
+      code: `const cycle = {}; cycle.self = cycle;
       const value = { map: new Map([["key", 1]]), set: new Set(["value"]), cycle, fn: function named() {}, symbol: Symbol("token"), bigint: 1n };
       emit(value); console.log(new Map([["console", 2]])); return value;`,
-    );
+    });
 
     for (const block of [textBlocks(result)[0], lastText(result)]) {
       expect(block).toContain("Map(1)");
@@ -454,10 +504,10 @@ describe("runMcpScript", () => {
   });
 
   it("does not format shared acyclic references as circular", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      'const shared = { id: "same" }; return { first: shared, second: shared };',
-    );
+      code: 'const shared = { id: "same" }; return { first: shared, second: shared };',
+    });
 
     const block = lastText(result);
     expect(block).not.toContain("Circular");
@@ -465,12 +515,12 @@ describe("runMcpScript", () => {
   });
 
   it("rejects tools enumeration with discovery guidance without exposing host globals", async () => {
-    const result = await runMcpScript(
+    const result = await runMcpScript({
       state,
-      `let message;
+      code: `let message;
       try { Object.keys(tools); } catch (error) { message = error.message; }
       return { message, globals: [typeof require, typeof fetch, typeof process] };`,
-    );
+    });
 
     const first = textBlocks(result)[0];
     assert.ok(first !== undefined);
@@ -504,10 +554,10 @@ describe("runMcpScript output", () => {
       const image = { type: "image" as const, data: "AAAA", mimeType: "image/png" };
       const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-script-output-"));
       try {
-        const result = await runMcpScript(
-          scriptState(settings, outputDirectory),
-          `${JSON.stringify(values)}.forEach((value, index) => { if (index === 10) emit(${JSON.stringify(image)}); emit(value); });`,
-        );
+        const result = await runMcpScript({
+          state: scriptState(settings, outputDirectory),
+          code: `${JSON.stringify(values)}.forEach((value, index) => { if (index === 10) emit(${JSON.stringify(image)}); emit(value); });`,
+        });
         const blocks = [
           ...values.slice(0, 10).map((text) => ({ type: "text" as const, text })),
           image,
@@ -555,7 +605,7 @@ describe("runMcpScript output", () => {
         import { createTestState } from ${JSON.stringify(new URL("./test-state.ts", import.meta.url).href)};
         const state = createTestState({ outputDirectory: ${JSON.stringify(outputDirectory)} });
         const start = process.memoryUsage.rss();
-        const pending = runMcpScript(state, "const line = 'x'.repeat(${length}); for (let i = 0; i < ${count}; i++) emit(line);", 60000);
+        const pending = runMcpScript({ state, code: "const line = 'x'.repeat(${length}); for (let i = 0; i < ${count}; i++) emit(line);", timeoutMs: 60000 });
         // Hold the host event loop so the worker's output can only queue.
         let queuedGrowth = 0;
         for (const end = Date.now() + 2000; Date.now() < end && queuedGrowth < 128 * 2 ** 20;) queuedGrowth = Math.max(queuedGrowth, process.memoryUsage.rss() - start);

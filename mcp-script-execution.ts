@@ -3,6 +3,7 @@ import type { createMcpOutputSpool } from "./mcp-output-preview.ts";
 import { parseWorkerMessage } from "./mcp-script-protocol.ts";
 import { toScriptContentBlock } from "./mcp-script-values.mjs";
 import type { ScriptOperations } from "./mcp-script-operations.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 
 /** UTF-16 units of emitted output, plus 256 per emit, the worker may queue before waiting for the host. */
 const SCRIPT_OUTPUT_WINDOW = 4 * 1024 * 1024;
@@ -11,9 +12,6 @@ export class McpScriptTimeoutError extends Error {
     super(`mcp_script timed out after ${timeoutMs}ms`);
     this.name = "McpScriptTimeoutError";
   }
-}
-function abortReasonError(reason: unknown): Error {
-  return reason instanceof Error ? reason : new Error(String(reason ?? "MCP request aborted"));
 }
 type Completion = { resolve: () => void; reject: (reason: unknown) => void };
 type ExecutionOptions = {
@@ -123,30 +121,23 @@ export class ScriptExecution {
     });
   }
 
-  private aborted(signal: AbortSignal): Promise<never> {
-    return new Promise<never>((_resolve, reject) => {
-      const onAbort = (): void => {
-        this.stopWorker();
-        reject(abortReasonError(signal.reason));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      this.removeAbortListener = () => signal.removeEventListener("abort", onAbort);
-    });
+  private watchAbort(signal: AbortSignal): void {
+    const onAbort = (): void => this.stopWorker();
+    signal.addEventListener("abort", onAbort, { once: true });
+    this.removeAbortListener = () => signal.removeEventListener("abort", onAbort);
   }
 
   async run(code: string, timeoutMs: number | null): Promise<void> {
     const { externalSignal } = this.options;
-    if (externalSignal?.aborted === true) {
-      throw abortReasonError(externalSignal.reason);
-    }
+    throwIfAborted(externalSignal);
     const races = [this.execution(code)];
     if (timeoutMs !== null) {
       races.push(this.timeout(timeoutMs));
     }
     if (externalSignal) {
-      races.push(this.aborted(externalSignal));
+      this.watchAbort(externalSignal);
     }
-    await Promise.race(races);
+    await abortable(Promise.race(races), externalSignal);
   }
 
   async close(): Promise<void> {

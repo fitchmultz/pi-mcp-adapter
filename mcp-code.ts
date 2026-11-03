@@ -16,18 +16,17 @@ import {
 } from "./mcp-script-operations.ts";
 import { McpScriptTimeoutError, ScriptExecution } from "./mcp-script-execution.ts";
 
-type ScriptArguments = [
-  state: McpExtensionState,
-  code: string,
-  timeoutMs?: number | null,
-  getPiTools?: () => ToolInfo[],
-  signal?: AbortSignal,
-  toolCallId?: string,
-  beforeDispatch?: (
-    signal: AbortSignal | undefined,
-    operation: McpOperationContext,
-  ) => Promise<void>,
-];
+type ScriptOptions = {
+  state: McpExtensionState;
+  code: string;
+  timeoutMs?: number | null | undefined;
+  getPiTools?: (() => ToolInfo[]) | undefined;
+  signal?: AbortSignal | undefined;
+  toolCallId?: string | undefined;
+  beforeDispatch?:
+    | ((signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>)
+    | undefined;
+};
 type ScriptFailure = {
   error: "timeout" | "aborted" | "script_error" | "call_capture_failed";
   message: string;
@@ -67,10 +66,10 @@ function scriptFailure(error: unknown, signal: AbortSignal | undefined): ScriptF
 }
 
 async function runScript(options: {
-  args: ScriptArguments;
+  input: ScriptOptions;
   output: ReturnType<typeof createMcpOutputSpool>;
 }): Promise<ScriptResult> {
-  const [
+  const {
     state,
     code,
     timeoutMs = DEFAULT_MCP_SCRIPT_TIMEOUT_MS,
@@ -78,7 +77,7 @@ async function runScript(options: {
     signal,
     toolCallId,
     beforeDispatch,
-  ] = options.args;
+  } = options.input;
   const { output } = options;
   const resolvedTimeoutMs = resolveTimeout(timeoutMs);
   const externalSignal = combineAbortSignals(state.owner.signal, signal);
@@ -137,14 +136,14 @@ function finishScript(
   };
 }
 
-export async function runMcpScript(...args: ScriptArguments): Promise<ScriptResult> {
-  const [state] = args;
+export async function runMcpScript(input: ScriptOptions): Promise<ScriptResult> {
+  const { state } = input;
   state.activeScripts++;
   try {
     const output = createMcpOutputSpool(
       resolveMcpOutputGuardOptions(state.config.settings, state.outputDirectory),
     );
-    return await runScript({ args, output });
+    return await runScript({ input, output });
   } finally {
     state.activeScripts--;
   }

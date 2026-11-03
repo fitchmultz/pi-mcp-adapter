@@ -9,6 +9,7 @@ import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeUiMessages } from "../proxy-modes.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import { maybeStartUiSession } from "../ui-session.ts";
+import { createTestState } from "./test-state.ts";
 
 const glimpseMocks = vi.hoisted(() => ({
   isGlimpseAvailable: vi.fn(() => true),
@@ -45,6 +46,7 @@ function makeState() {
   const consentManager = new ConsentManager();
   consentManager.registerDecision("demo", true);
   const state = {
+    ...createTestState(),
     config: { settings: { toolPrefix: "server" }, mcpServers: { demo: { command: "demo" } } },
     manager: {
       getConnection: vi.fn(() => connection),
@@ -114,13 +116,12 @@ describe("remote MCP UI viewers", () => {
           }),
       );
       let output: Awaited<ReturnType<typeof runMcpScript>> | undefined;
-      const pending = runMcpScript(
+      const pending = runMcpScript({
         state,
-        "await tools.demo_app({});",
-        ending === "timeout" ? 500 : 5000,
-        undefined,
-        controller.signal,
-      ).then((result) => {
+        code: "await tools.demo_app({});",
+        timeoutMs: ending === "timeout" ? 500 : 5000,
+        signal: controller.signal,
+      }).then((result) => {
         output = result;
         return result;
       });

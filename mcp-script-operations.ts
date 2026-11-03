@@ -6,7 +6,6 @@ import {
   readMcpResult,
   resolveMcpOutputGuardOptions,
   type McpPayloadFile,
-  type ReadMcpResultInput,
 } from "./mcp-output-guard.ts";
 import type { createMcpOutputSpool } from "./mcp-output-preview.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
@@ -47,18 +46,8 @@ const payloadSchema = Type.Object({
   path: Type.Optional(Type.String()),
   error: Type.Optional(Type.String()),
 });
-const readInputSchema = Type.Object({
-  ref: Type.String(),
-  path: Type.Optional(Type.String()),
-  fields: Type.Optional(Type.Array(Type.String())),
-  offset: Type.Optional(Type.Refine(Type.Unknown(), (value) => typeof value === "number")),
-  limit: Type.Optional(Type.Refine(Type.Unknown(), (value) => typeof value === "number")),
-});
 function isPayloadFile(value: unknown): value is McpPayloadFile {
   return Value.Check(payloadSchema, value);
-}
-function isReadInput(value: unknown): value is ReadMcpResultInput {
-  return Value.Check(readInputSchema, value);
 }
 function textFromContent(content: ContentBlock[]): string {
   return content
@@ -117,9 +106,12 @@ export class ScriptOperations {
     }
   }
 
-  private failedCall(path: string, result: Awaited<ReturnType<typeof executeCall>>): unknown {
+  private failedCall(
+    path: string,
+    result: Awaited<ReturnType<typeof executeCall>>,
+    errorCode: string,
+  ): unknown {
     const { details } = result;
-    const errorCode = String(details.error);
     const hasReference = Boolean(details.resultRef);
     const hasRecovery = Boolean(details.recovery);
     const message = callErrorMessage(path, result);
@@ -160,16 +152,17 @@ export class ScriptOperations {
     const { details } = result;
     this.retainNotices(details);
     const timing = { durationMs: Date.now() - startedAt, startedAt };
+    const errorCode = String(details.error);
     if (details.error !== undefined) {
       this.calls[index] = {
         operation: "call",
         path,
         ok: false,
-        error: String(details.error),
+        error: errorCode,
         ...timing,
         ...(details.recovery !== undefined ? { recovery: details.recovery } : {}),
       };
-      return this.failedCall(path, result);
+      return this.failedCall(path, result, errorCode);
     }
     this.calls[index] = { operation: "call", path, ok: true, ...timing };
     const hasReference = Boolean(details.resultRef);
@@ -239,10 +232,8 @@ export class ScriptOperations {
   ): void {
     const identity =
       operation === "search" ? { operation, query: value } : { operation, path: value };
-    const outcome: Outcome =
-      error === undefined
-        ? { ok: true }
-        : { ok: false, error: error instanceof Error ? error.message : String(error) };
+    const message = error instanceof Error ? error.message : String(error);
+    const outcome: Outcome = error === undefined ? { ok: true } : { ok: false, error: message };
     this.calls.push({ ...identity, ...outcome, durationMs: Date.now() - startedAt, startedAt });
   }
 
@@ -359,10 +350,7 @@ export class ScriptOperations {
   private readResult(input: unknown): Promise<unknown> {
     const { state } = this.options;
     const options = resolveMcpOutputGuardOptions(state.config.settings, state.outputDirectory);
-    if (isReadInput(input)) {
-      return readMcpResult(input, options);
-    }
-    return readMcpResult(undefined, options);
+    return readMcpResult(input, options);
   }
 
   private async resource(message: Exclude<ScriptRequest, { type: "call" }>): Promise<unknown> {
