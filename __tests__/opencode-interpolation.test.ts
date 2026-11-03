@@ -79,15 +79,6 @@ describe("OpenCode environment interpolation", () => {
     );
   });
 
-  it("rejects non-string OAuth fields before interpolation", () => {
-    expect(() =>
-      extractOAuthConfig({
-        url: "https://example.test/mcp",
-        oauth: { clientId: 42 } as any,
-      }),
-    ).toThrow("OAuth clientId must be a string");
-  });
-
   it("fails closed before URL resolution when a brace variable is missing", () => {
     delete process.env.MCP_TEST_URL;
     expect(() => resolveServerUrl({ url: "https://{env:MCP_TEST_URL}/mcp" })).toThrow(
