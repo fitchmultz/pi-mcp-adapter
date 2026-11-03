@@ -54,7 +54,7 @@ Manager configuration tests use real HTTP and stdio connections for capability a
 
 The runtime scope includes the stock-dialog elicitation and real stdio SDK suites. A typed three-method dialog fixture preserves selection/input order and notification history. Complete native extension contexts and state back the direct/proxy tool, resource and UI-resource cases. QX-007 covers only the initialized capability accessor in each of the two enumerated legacy stdio fixtures.
 
-`lint:credential-runtime` enforces the production profile for native keyring loading, credential-store diagnostics and Linux recovery dispatch. Native declarations type the lazy synchronous module loads. QX-013 preserves the primary loader failure, and QX-018 covers only the two enumerated native module assertions. The storage suite retains real child-process recovery, platform diagnostics, chunking and plaintext migration checks.
+`lint:credential-runtime` enforces the production profile for native keyring loading, credential-store diagnostics and Linux recovery dispatch. Native declarations type the lazy synchronous module loads. QX-013 preserves the primary loader failure, and QX-018 covers only the two enumerated native module assertions. The same scope includes the shared auth-record types and the payload store for hashed accounts, manifest validation, chunk reads/writes and cleanup. The storage suite retains real child-process recovery, platform diagnostics, chunking and plaintext migration checks.
 
 `lint:sdk-http` enforces the test profile for the real HTTP SDK suite and its typed native capture extension fixture. Latest-host qualification supplies one consistent SDK graph for their static imports and Jiti-loaded factories.
 
