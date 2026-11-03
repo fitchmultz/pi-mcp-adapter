@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.19 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce strict lint on core runtime helpers (#182) ([8a493af](https://github.com/fitchmultz/pi-mcp-adapter/commit/8a493af642c0c0d001182a314c9b3b1ee6b47e54))
+
+### What's Changed
+
+- Enforce strict lint on core runtime helpers by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/182
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.18...v8.0.19
+
 ## 8.0.18 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
