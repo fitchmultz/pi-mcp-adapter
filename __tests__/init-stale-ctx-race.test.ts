@@ -1,72 +1,43 @@
-import { describe, expect, it } from "vitest";
-import { createTestExtensionContext } from "./test-extension-context.ts";
-import { createMcpRuntimeOwner } from "../runtime-owner.ts";
-import { initializeMcp } from "../init.ts";
-import {
-  MachineHttpServer,
-  readMachineBody,
-  machineMessageSchema,
-  machineJson,
-  machineResult,
-} from "./fixtures/oauth-machine-wire.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createActivationFixture } from "./fixtures/strict-activation-boundaries.ts";
+
+let host: Awaited<ReturnType<typeof createActivationFixture>>;
+beforeEach(async () => {
+  host = await createActivationFixture();
+});
+afterEach(async () => {
+  await host.dispose();
+});
 
 describe("initializeMcp vs. a ctx invalidated mid-connect", () => {
   it.each([
-    [
-      "does not reject once the session is disposed mid-connect — it should abandon quietly",
-      undefined,
-    ],
-    ["does not read guarded ctx getters again after startup connects", "unexpected ui failure"],
-  ])("%s", async (_name, message) => {
-    const host = await createTestExtensionContext();
-    host.runner.setUIContext(host.context.ui, "tui");
-    const owner = createMcpRuntimeOwner();
-    const connected = Promise.withResolvers<boolean>();
-    const release = Promise.withResolvers<boolean>();
-    const server = new MachineHttpServer(async (request, response) => {
-      if (request.method !== "POST") {
-        response.writeHead(405).end();
-        return;
-      }
-      const body = machineMessageSchema.parse(JSON.parse(await readMachineBody(request)));
-      if (!("id" in body)) {
-        response.writeHead(202).end();
-        return;
-      }
-      if (body.method === "tools/list") {
-        connected.resolve(true);
-        await release.promise;
-      }
-      machineJson(response, {
-        jsonrpc: "2.0",
-        id: body.id,
-        result: machineResult(body.method, "startup-race", "ok"),
-      });
+    {
+      name: "does not reject once the session is disposed mid-connect — it should abandon quietly",
+      message: undefined,
+    },
+    {
+      name: "does not read guarded ctx getters again after startup connects",
+      message: "unexpected ui failure",
+    },
+  ])("$name", async ({ message }) => {
+    const wire = await host.wire();
+    wire.delay("tools/list");
+    const pending = host.initialize({
+      config: {
+        mcpServers: { demo: { ...wire.definition, lifecycle: "eager" } },
+        settings: {},
+      },
     });
-    try {
-      const url = await server.listen();
-      const pending = initializeMcp(host.api, host.context, owner, {
-        config: { mcpServers: { demo: { url, lifecycle: "eager" } } },
-      });
-      try {
-        await Promise.race([
-          connected.promise,
-          pending.then(() => {
-            throw new Error("Initialization settled before the pending discovery boundary");
-          }),
-        ]);
-        host.runner.invalidate(message);
-        release.resolve(true);
-        const state = await pending;
-        expect(state.manager.getConnection("demo")?.status).toBe("connected");
-      } finally {
-        release.resolve(true);
-        await pending;
-      }
-    } finally {
-      await owner.stop();
-      await server.close();
-      await host.dispose();
-    }
+    // Invalidate the actual SDK context only after native discovery is in flight.
+    // Both its standard stale diagnostic and a nonstandard UI failure must remain unread.
+    await expect.poll(wire.started).toBe(true);
+    host.runner.invalidate(message);
+    expect(() => host.context.hasUI).toThrow(message ?? "stale");
+    wire.release();
+
+    await expect(pending).resolves.toMatchObject({
+      toolMetadata: new Map([["demo", [expect.objectContaining({ originalName: "echo" })]]]),
+    });
+    expect(wire.methods).toContain("tools/list");
   });
 });
