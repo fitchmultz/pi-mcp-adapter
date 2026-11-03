@@ -45,6 +45,29 @@ const strictFamily = [
   "strictPropertyInitialization",
   "useUnknownInCatchVariables",
 ];
+const nodeRegistrationProfile = {
+  files: [
+    "mcp-auth-flow.test.ts",
+    "mcp-auth.test.ts",
+    "mcp-callback-server.test.ts",
+    "mcp-oauth-provider.test.ts",
+  ],
+  excludeFiles: ["**/*/*"],
+  rules: {
+    "typescript/no-floating-promises": [
+      "error",
+      {
+        checkThenables: true,
+        ignoreIIFE: false,
+        ignoreVoid: false,
+        allowForKnownSafeCalls: [
+          { from: "package", package: "node:test", name: ["nodeIt", "nodeDescribe"] },
+        ],
+        allowForKnownSafePromises: [],
+      },
+    ],
+  },
+};
 
 /** @param {string} path @returns {unknown} */
 function readJson(path) {
@@ -113,10 +136,13 @@ function verifyLintConfig() {
     },
   };
   const exceptions = readFileSync(join(root, "docs/quality-exceptions.md"), "utf8");
-  if (!exceptions.includes("## QX-017:")) {
-    throw new Error("Missing quality exception record: QX-017");
+  for (const id of ["QX-017", "QX-019"]) {
+    if (!exceptions.includes(`## ${id}:`)) {
+      throw new Error(`Missing quality exception record: ${id}`);
+    }
   }
   expected.overrides = [
+    nodeRegistrationProfile,
     {
       ...testProfile,
       files: [...testProfile.files, "conformance/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"],
