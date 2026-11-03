@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.13 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Enforce strict lint on MCP sampling bridge (#166) ([bb87eb1](https://github.com/fitchmultz/pi-mcp-adapter/commit/bb87eb14405d9231fb404dc8c50743b3c3757620))
+- Enforce strict lint on native manager configuration tests (#168) ([998be45](https://github.com/fitchmultz/pi-mcp-adapter/commit/998be4523d16239614f4c0f0ca55006660488c23))
+
+### What's Changed
+
+- Enforce strict lint on MCP sampling bridge by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/166
+- Enforce strict lint on native manager configuration tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/168
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.12...v8.0.13
+
 ## 8.0.12 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
