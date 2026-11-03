@@ -439,11 +439,11 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { auth, UnauthorizedError, type OAuthClientProvider } from "@modelcontextprotocol/client";
 ```
 
-The `McpOAuthProvider` class implements `OAuthClientProvider` and is passed to `StreamableHTTPClientTransport`:
+The internal `McpOAuthProvider` class implements `OAuthClientProvider` and is passed to `StreamableHTTPClientTransport`. It is not a public package export:
 
 ```typescript
 const transport = new StreamableHTTPClientTransport(url, {
-  authProvider: new McpOAuthProvider(serverName, serverUrl, config, callbacks),
+  authProvider: new McpOAuthProvider({ serverName, serverUrl, config, callbacks }),
 });
 ```
 

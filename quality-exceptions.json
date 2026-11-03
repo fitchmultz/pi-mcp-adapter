@@ -153,6 +153,33 @@
     "guards": []
   },
   {
+    "id": "QX-018",
+    "file": "mcp-keyring-helper.cjs",
+    "rule": "typescript/no-unsafe-type-assertion",
+    "scope": { "type": "FunctionDeclaration", "name": "loadKeyringEntryClass" },
+    "path": [
+      "body",
+      "body",
+      0,
+      "handler",
+      "body",
+      "body",
+      2,
+      "body",
+      "body",
+      0,
+      "block",
+      "body",
+      1,
+      "argument",
+      "object",
+      "expression"
+    ],
+    "nodeType": "CallExpression",
+    "operation": "requireFromHere(path.join(path.dirname(packageJsonPath), `keyring.${suffix}.node`))",
+    "guards": []
+  },
+  {
     "id": "QX-020",
     "file": "mcp-auth.ts",
     "rule": "eslint/no-param-reassign",
@@ -170,6 +197,68 @@
     "path": ["body", "body", 0],
     "nodeType": "VariableDeclaration",
     "operation": "const { z } = require(\"zod\") as typeof Zod;",
+    "guards": []
+  },
+  {
+    "id": "QX-023",
+    "file": "mcp-auth-flow.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "cleanupFailedCompletion"
+    },
+    "path": ["body", "body", 0, "handler", "body", "body", 0, "consequent", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([primary, cleanupError], \"OAuth completion cleanup failed\");",
+    "guards": ["consequent: primary !== undefined"]
+  },
+  {
+    "id": "QX-023",
+    "file": "mcp-auth-flow.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "authenticateOnce"
+    },
+    "path": ["body", "body", 7, "handler", "body", "body", 1, "handler", "body", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([error, cleanupError], \"OAuth cancellation cleanup failed\");",
+    "guards": []
+  },
+  {
+    "id": "QX-023",
+    "file": "mcp-oauth-start.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "reserveCallback"
+    },
+    "path": ["body", "body", 1, "handler", "body", "body", 1, "handler", "body", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([error, cleanupError], \"OAuth startup cleanup failed\");",
+    "guards": []
+  },
+  {
+    "id": "QX-023",
+    "file": "mcp-oauth-start.ts",
+    "rule": "eslint/preserve-caught-error",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "startInteractive"
+    },
+    "path": ["body", "body", 5, "handler", "body", "body", 1, "handler", "body", "body", 0],
+    "nodeType": "ThrowStatement",
+    "operation": "throw new AggregateError([error, cleanupError], \"OAuth startup cleanup failed\");",
+    "guards": []
+  },
+  {
+    "id": "QX-022",
+    "file": "tool-names.ts",
+    "rule": "eslint/max-params",
+    "scope": { "type": "ExportNamedDeclaration", "name": "isToolAllowed" },
+    "path": [],
+    "nodeType": "ExportNamedDeclaration",
+    "operation": "export function isToolAllowed(\n  toolName: string,\n  serverName: string,\n  prefix: ToolPrefix,\n  includeTools?: unknown,\n  excludeTools?: unknown,\n): boolean {\n  return (\n    isToolIncluded(toolName, serverName, prefix, includeTools) &&\n    !isToolExcluded(toolName, serverName, prefix, excludeTools)\n  );\n}",
     "guards": []
   }
 ]

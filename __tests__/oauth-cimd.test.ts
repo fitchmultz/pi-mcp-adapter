@@ -375,16 +375,16 @@ it("rejects legacy and explicit config stubs instead of sending an orphaned clie
     { clientId: "explicit", issuer: f.origin, configPreRegistered: true, redirectUris: [] },
   ]) {
     saveAuthEntry(f.name, { clientInfo }, f.definition.url);
-    const provider = new McpOAuthProvider(
-      f.name,
-      f.definition.url,
-      { grantType: "client_credentials" },
-      {
+    const provider = new McpOAuthProvider({
+      serverName: f.name,
+      serverUrl: f.definition.url,
+      config: { grantType: "client_credentials" },
+      callbacks: {
         onRedirect() {
           throw new Error("Stored client lookup must not redirect");
         },
       },
-    );
+    });
     expect(await provider.clientInformation({ issuer: f.origin })).toBeUndefined();
     const params = new URLSearchParams({ grant_type: "client_credentials" });
     await provider.addClientAuthentication(new Headers(), params, f.definition.url);

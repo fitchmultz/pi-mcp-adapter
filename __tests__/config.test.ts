@@ -1,3 +1,6 @@
+import assert from "node:assert/strict";
+import type { McpConfig, ServerEntry } from "../config-types.ts";
+import { isConfigObject } from "../config-validation.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
@@ -59,7 +62,6 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-config-project-"));
     process.env.HOME = home;
     process.chdir(project);
-    const realProject = realpathSync(project);
 
     writeJson(join(home, ".config", "mcp", "mcp.json"), {
       settings: { idleTimeout: 5, requestTimeoutMs: 1500, showStatusIcon: true },
@@ -110,6 +112,170 @@ describe("config discovery", () => {
       autoAuth: true,
       oauthDir: ".pi/oauth",
     });
+  });
+
+  it.each([
+    { mcpServers: { invalid: { command: 42 } } },
+    { mcpServers: { invalid: { socket: 42 } } },
+    { mcpServers: { invalid: { oauth: true } } },
+    { mcpServers: { invalid: { disabled: 1 } } },
+    { mcpServers: { invalid: { args: ["node", 42] } } },
+    { mcpServers: { invalid: { headers: { Authorization: false } } } },
+    { mcpServers: { invalid: { directTools: [false] } } },
+    { mcpServers: { invalid: { oauth: { clientId: 42 } } } },
+    { mcpServers: { invalid: { oauth: { privateKeyJwt: { privateKey: "key" } } } } },
+    { mcpServers: { invalid: { oauth: { crossAppAccess: { idpUrl: "https://idp.test" } } } } },
+    { settings: { toolPrefix: "unknown" } },
+    { settings: { autoAuth: "true" } },
+    { settings: { outputGuard: { maxBytes: "100" } } },
+    { settings: { trace: { enabled: "true" } } },
+    { settings: { trace: { file: 42 } } },
+  ])("warns and ignores a complete file with malformed known fields: %j", async (invalid) => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-project-"));
+    process.env.HOME = home;
+    const file = join(project, ".mcp.json");
+    writeJson(file, {
+      ...invalid,
+      mcpServers: {
+        valid: { command: "node" },
+        ...("mcpServers" in invalid ? invalid.mcpServers : {}),
+      },
+    });
+    const before = readFileSync(file, "utf-8");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {
+      // Delivery and file identity are asserted below.
+    });
+    try {
+      const { loadMcpConfig } = await import("../config.ts");
+      expect(loadMcpConfig(undefined, project)).toEqual({ mcpServers: {} });
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(file), expect.any(Error));
+      expect(readFileSync(file, "utf-8")).toBe(before);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("retains legacy values through precedence, cloning and metadata identity without rewriting disk", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-legacy-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-legacy-project-"));
+    process.env.HOME = home;
+    const file = join(project, ".mcp.json");
+    const inherited = join(home, ".config", "mcp", "mcp.json");
+    writeJson(inherited, {
+      mcpServers: {
+        remote: {
+          command: "node",
+          env: { SECRET: "inherited" },
+          oauth: { clientId: "inherited" },
+          disabled: true,
+        },
+      },
+    });
+    const remote = {
+      command: null,
+      socket: null,
+      oauth: null,
+      disabled: "true",
+      url: "https://example.test/mcp",
+      extension: { retained: [null, "legacy"] },
+    } satisfies ServerEntry & { extension: { retained: (string | null)[] } };
+    const original = {
+      mcpServers: { remote, absent: { url: "https://example.test/absent" } },
+      settings: { trace: { enabled: true, file: null } },
+    } satisfies McpConfig;
+    writeJson(file, original);
+    chmodSync(file, 0o600);
+    const before = readFileSync(file, "utf8");
+    const { loadMcpConfig, cloneMcpConfig } = await import("../config.ts");
+    const { computeServerHash } = await import("../metadata-cache.ts");
+    const loaded = loadMcpConfig(undefined, project);
+    expect(loaded).toEqual(original);
+    assert(loaded.mcpServers.remote !== undefined);
+    assert(loaded.mcpServers.absent !== undefined);
+    expect(Object.hasOwn(loaded.mcpServers.remote, "command")).toBe(true);
+    expect(Object.hasOwn(loaded.mcpServers.absent, "command")).toBe(false);
+    expect(computeServerHash(loaded.mcpServers.remote)).not.toBe(
+      computeServerHash({ ...remote, command: "" }),
+    );
+    const cloned = cloneMcpConfig(loaded);
+    expect(cloned).toEqual(original);
+    expect(cloned.mcpServers.remote).not.toBe(loaded.mcpServers.remote);
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("omits malformed imported entries without dropping valid neighbors or rewriting disk", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-import-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-import-project-"));
+    process.env.HOME = home;
+    const imported = join(home, ".cursor", "mcp.json");
+    const entry = { command: "node", extension: { retained: true } };
+    const legacy = {
+      command: null,
+      socket: null,
+      oauth: null,
+      disabled: "true",
+      url: "https://example.test/mcp",
+      extension: { retained: true },
+    } satisfies ServerEntry & { extension: { retained: boolean } };
+    writeJson(imported, {
+      mcpServers: { valid: entry, legacy, invalid: { args: [42] }, primitive: "node" },
+    });
+    writeJson(join(project, ".mcp.json"), { imports: ["cursor"], mcpServers: {} });
+    const before = readFileSync(imported, "utf-8");
+    const { loadMcpConfig } = await import("../config.ts");
+    expect(loadMcpConfig(undefined, project).mcpServers).toEqual({ valid: entry, legacy });
+    expect(readFileSync(imported, "utf-8")).toBe(before);
+  });
+
+  it("preserves extension fields on disk and isolates clones without losing explicit undefined", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-extensions-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-extensions-project-"));
+    process.env.HOME = home;
+    const file = join(project, ".mcp.json");
+    const original = {
+      extension: { retained: [false, null, 4] },
+      settings: { toolPrefix: "none", extension: { retained: true } },
+      mcpServers: {
+        remote: {
+          url: "https://example.test/mcp",
+          oauth: { clientId: "id", extension: { retained: true } },
+          extension: { retained: [1, "two"] },
+        },
+      },
+    };
+    writeJson(file, original);
+    chmodSync(file, 0o600);
+    const { loadMcpConfig, cloneMcpConfig, writeDirectToolsConfig, getServerProvenance } =
+      await import("../config.ts");
+    const loaded = loadMcpConfig(undefined, project);
+    expect(loaded.mcpServers).toEqual(original.mcpServers);
+    expect(loaded.settings).toEqual(original.settings);
+    writeDirectToolsConfig(new Map([["remote", true]]), getServerProvenance(undefined, project));
+    expect(JSON.parse(readFileSync(file, "utf-8"))).toEqual({
+      ...original,
+      mcpServers: { remote: { ...original.mcpServers.remote, directTools: true } },
+    });
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+
+    const supplied = {
+      ...loaded,
+      explicitUndefined: undefined,
+      extension: { nested: [1] },
+      mcpServers: {
+        remote: { ...original.mcpServers.remote, explicitUndefined: undefined },
+      },
+    };
+    const clone = cloneMcpConfig(supplied);
+    expect(clone).toEqual(supplied);
+    expect(Object.hasOwn(clone, "explicitUndefined")).toBe(true);
+    expect(Object.hasOwn(clone, "absent")).toBe(false);
+    expect(Object.hasOwn(clone.mcpServers.remote ?? {}, "explicitUndefined")).toBe(true);
+    assert(clone.mcpServers.remote?.oauth !== undefined);
+    expect(clone.mcpServers.remote.oauth).not.toBe(supplied.mcpServers.remote.oauth);
+    clone.mcpServers.remote.url = "https://changed.test/mcp";
+    expect(supplied.mcpServers.remote.url).toBe("https://example.test/mcp");
   });
 
   it("excludes project config and project-local host imports when project trust is denied", async () => {
@@ -531,7 +697,7 @@ describe("config discovery", () => {
       const { writeProjectServerDisabledOverride } = await import("../config.ts");
       writeProjectServerDisabledOverride(undefined, project, "private", true);
       expect(statSync(filePath).mode & 0o777).toBe(0o600);
-      expect(JSON.parse(readFileSync(filePath, "utf-8")).mcpServers.private).toMatchObject({
+      expect(readJsonServers(filePath).private).toMatchObject({
         bearerToken: "dummy-token",
         disabled: true,
       });
@@ -651,7 +817,8 @@ describe("config discovery", () => {
       kind: "import",
       importKind: "cursor",
     });
-    expect(config.mcpServers.shared!.headers).toBeUndefined();
+    assert(config.mcpServers.shared !== undefined);
+    expect(config.mcpServers.shared.headers).toBeUndefined();
   });
 
   it("reports the deterministic winning host provenance for same-name servers", async () => {
@@ -792,7 +959,9 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-codex-fallback-provenance-project-"));
     process.env.HOME = home;
     process.chdir(project);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // Suppress expected parse warnings; their delivery is asserted below.
+    });
 
     writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
       imports: ["codex"],
@@ -821,7 +990,9 @@ describe("config discovery", () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-codex-fallback-discovery-project-"));
     process.env.HOME = home;
     process.chdir(project);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // Suppress expected parse warnings; their delivery is asserted below.
+    });
 
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(join(home, ".codex", "config.toml"), '[mcp_servers.exa\\nurl = \\"broken\\"\\n');
@@ -924,7 +1095,7 @@ describe("config discovery", () => {
   // source (~/.config/mcp/mcp.json) defines an HTTP server with an
   // Authorization header; a higher-precedence source (~/.pi/agent/fitch-mcp-adapter/mcp.json)
   // overrides it. Auth material bound to the original url must not follow the
-  // server to a different url. See config.ts mergeServerMaps.
+  // server to a different url. See config-merge.ts mergeServerMaps.
   const URL_A = "https://litellm.internal/mcp/";
   const URL_B = "https://attacker.example/mcp/";
 
@@ -973,7 +1144,8 @@ describe("config discovery", () => {
       });
 
       const { loadMcpConfig } = await import("../config.ts");
-      const entry = loadMcpConfig().mcpServers.payroll!;
+      const entry = loadMcpConfig().mcpServers.payroll;
+      assert(entry !== undefined);
       expect(entry).toMatchObject({ ...override, lifecycle: "eager" });
       expect(entry.env).toBeUndefined();
     },
@@ -1013,7 +1185,8 @@ describe("config discovery", () => {
     const config = loadMcpConfig();
 
     expect(config.mcpServers.litellm).toEqual({ url: URL_B });
-    expect(config.mcpServers.litellm!.headers).toBeUndefined();
+    assert(config.mcpServers.litellm !== undefined);
+    expect(config.mcpServers.litellm.headers).toBeUndefined();
   });
 
   it("keeps only the new auth when a higher-precedence override changes both url and headers", async () => {
@@ -1055,7 +1228,8 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const config = loadMcpConfig();
 
-    const entry = config.mcpServers.litellm!;
+    const entry = config.mcpServers.litellm;
+    assert(entry !== undefined);
     expect(entry.url).toBe(URL_B);
     expect(entry.headers).toBeUndefined();
     expect(entry.bearerTokenEnv).toBeUndefined();
@@ -1079,7 +1253,8 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const config = loadMcpConfig();
 
-    const entry = config.mcpServers.litellm!;
+    const entry = config.mcpServers.litellm;
+    assert(entry !== undefined);
     expect(entry).toEqual({ url: URL_B });
     expect(entry.bearerToken).toBeUndefined();
     expect(JSON.stringify(entry)).not.toContain("secret-bearer-token");
@@ -1098,7 +1273,8 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const config = loadMcpConfig();
 
-    const entry = config.mcpServers.litellm!;
+    const entry = config.mcpServers.litellm;
+    assert(entry !== undefined);
     expect(entry).toEqual({ url: URL_B });
     expect(entry.oauth).toBeUndefined();
     expect(JSON.stringify(entry)).not.toContain("oauth-client-secret");
@@ -1143,7 +1319,8 @@ describe("config discovery", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const config = loadMcpConfig();
 
-    const entry = config.mcpServers.litellm!;
+    const entry = config.mcpServers.litellm;
+    assert(entry !== undefined);
     expect(entry).toEqual({ url: URL_B });
     expect(entry.headers).toBeUndefined();
     expect(JSON.stringify(entry)).not.toContain("secret-vk");
@@ -1289,11 +1466,11 @@ describe("config discovery", () => {
       provenance,
     );
 
-    const userConfig = JSON.parse(readFileSync(getPiGlobalConfigPath(), "utf-8"));
-    expect(userConfig.mcpServers.genericServer).toEqual({ directTools: true });
+    const userConfig = readJsonServers(getPiGlobalConfigPath());
+    expect(userConfig.genericServer).toEqual({ directTools: true });
 
-    const projectConfig = JSON.parse(readFileSync(join(project, ".mcp.json"), "utf-8"));
-    expect(projectConfig.mcpServers.projectServer).toMatchObject({
+    const projectConfig = readJsonServers(join(project, ".mcp.json"));
+    expect(projectConfig.projectServer).toMatchObject({
       command: "project",
       directTools: ["search"],
     });
@@ -1344,8 +1521,12 @@ describe("config discovery", () => {
 
     const { previewSharedServerEntry, writeSharedServerEntry } = await import("../config.ts");
     const entry = { url: "https://mcp.deepwiki.com/mcp" };
-    expect(() => previewSharedServerEntry(filePath, "deepwiki", entry)).toThrow();
-    expect(() => writeSharedServerEntry(filePath, "deepwiki", entry)).toThrow();
+    expect(() => previewSharedServerEntry(filePath, "deepwiki", entry)).toThrow(
+      /Cannot read MCP config|Invalid MCP config/,
+    );
+    expect(() => writeSharedServerEntry(filePath, "deepwiki", entry)).toThrow(
+      /Cannot read MCP config|Invalid MCP config/,
+    );
     expect(readFileSync(filePath, "utf-8")).toBe(original);
   });
 
@@ -1375,11 +1556,13 @@ describe("config discovery", () => {
     const importResult = ensureCompatibilityImports(["cursor", "codex"]);
     expect(importResult.added).toEqual(["cursor", "codex"]);
 
-    const piConfig = JSON.parse(readFileSync(getPiGlobalConfigPath(), "utf-8"));
+    const piConfig: unknown = JSON.parse(readFileSync(getPiGlobalConfigPath(), "utf-8"));
+    assert(isConfigObject(piConfig));
     expect(piConfig.imports).toEqual(["cursor", "codex"]);
 
     const starterPath = writeStarterProjectConfig();
-    const starter = JSON.parse(readFileSync(starterPath, "utf-8"));
+    const starter: unknown = JSON.parse(readFileSync(starterPath, "utf-8"));
+    assert(isConfigObject(starter));
     expect(starter.mcpServers).toEqual({});
   });
 
@@ -1616,7 +1799,9 @@ describe("config discovery", () => {
       mcp: { globalOnly: { type: "local", command: ["global"] } },
     });
     writeFileSync(join(project, "opencode.json"), "{ malformed", "utf-8");
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {
+      // Suppress expected parse warnings; their delivery is asserted below.
+    });
 
     const { loadMcpConfig, getMcpDiscoverySummary } = await import("../config.ts");
     expect(loadMcpConfig().mcpServers.globalOnly).toEqual({ command: "global", args: [] });
@@ -1627,3 +1812,10 @@ describe("config discovery", () => {
     warning.mockRestore();
   });
 });
+
+function readJsonServers(path: string): Record<string, unknown> {
+  const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
+  assert(isConfigObject(raw));
+  assert(isConfigObject(raw.mcpServers));
+  return raw.mcpServers;
+}
