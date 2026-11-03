@@ -39,10 +39,10 @@ export type PreparedMcpConnection =
 
 class ConnectionAuthRecovery {
   attempted = false;
+  readonly AuthRequired: typeof SessionRecoveryAuthRequiredError;
   private readonly state: McpExtensionState;
   private readonly serverName: string;
   private readonly signal: AbortSignal | undefined;
-  private readonly AuthRequired: typeof SessionRecoveryAuthRequiredError;
   constructor(
     state: McpExtensionState,
     serverName: string,
@@ -306,7 +306,7 @@ async function callConnection(
   state: McpExtensionState,
   serverName: string,
   ownedSignal: AbortSignal | undefined,
-  recoverAuthConnection: AuthRecovery,
+  auth: ConnectionAuthRecovery,
 ): Promise<ServerConnection | undefined> {
   // Connected metadata is read below, so it does not require another connection attempt.
   let connection = state.manager.getConnection(serverName);
@@ -317,12 +317,10 @@ async function callConnection(
     markKeepAliveAfterConnect(state, serverName);
   }
   if (connection?.status === "needs-auth") {
-    connection = await recoverAuthConnection(serverName, ownedSignal);
+    connection = await auth.recover(serverName, ownedSignal);
   }
   if (connection?.status === "needs-auth") {
-    const { SessionRecoveryAuthRequiredError: AuthRequired } =
-      await import("./session-recovery.ts");
-    throw new AuthRequired(serverName);
+    throw new auth.AuthRequired(serverName);
   }
 
   return connection;
@@ -334,9 +332,10 @@ export async function prepareMcpConnection(
   serverName: string,
   signal?: AbortSignal,
 ): Promise<PreparedMcpConnection> {
+  const { SessionRecoveryAuthRequiredError: AuthRequired } = await import("./session-recovery.ts");
+  // Loading the recovery module yields, so cancellation is checked after it.
   const ownedSignal = combineAbortSignals(state.owner.signal, signal);
   throwIfAborted(ownedSignal);
-  const { SessionRecoveryAuthRequiredError: AuthRequired } = await import("./session-recovery.ts");
   const auth = new ConnectionAuthRecovery(state, serverName, ownedSignal, AuthRequired);
   const recoverAuthConnection = auth.recover;
   const failure = (error: string, message: string) => ({
@@ -351,7 +350,7 @@ export async function prepareMcpConnection(
     return { error: disabledResult("call", serverName) };
   }
   try {
-    const connection = await callConnection(state, serverName, ownedSignal, recoverAuthConnection);
+    const connection = await callConnection(state, serverName, ownedSignal, auth);
     if (connection?.status !== "connected") {
       return unavailableConnection(state, serverName, failure);
     }

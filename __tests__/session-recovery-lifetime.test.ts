@@ -134,7 +134,10 @@ async function fixture(handler: (e: Exchange) => boolean | void = () => {}) {
     auth: false,
     requestTimeoutMs: 2000,
   };
+  const owner = createMcpRuntimeOwner();
+  cleanups.push(() => owner.stop("test cleanup"));
   const state = {
+    owner,
     manager,
     config: { mcpServers: { local: definition }, settings: {} },
     toolMetadata: new Map([

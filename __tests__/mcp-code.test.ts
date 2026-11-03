@@ -12,6 +12,7 @@ import { guardMcpOutput, resolveMcpOutputGuardOptions } from "../mcp-output-guar
 import { McpServerManager } from "../server-manager.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { McpSettings } from "../types.ts";
+import { createTestState } from "./test-state.ts";
 
 const fixture = fileURLToPath(new URL("./fixtures/mcp-code-server.mjs", import.meta.url));
 const definition = { command: process.execPath, args: [fixture] };
@@ -67,7 +68,7 @@ describe("runMcpScript", () => {
   beforeAll(async () => {
     manager = new McpServerManager();
     await manager.connect("fixture", definition);
-    state = {
+    state = createTestState({
       config: { settings: {}, mcpServers: { fixture: definition } },
       toolMetadata: new Map([
         [
@@ -82,10 +83,11 @@ describe("runMcpScript", () => {
       manager,
       failureTracker: new Map(),
       completedUiSessions: [],
-    } as unknown as McpExtensionState;
+    });
   });
 
   afterAll(async () => {
+    await state.owner.stop("test cleanup");
     await manager.closeAll();
   });
 
