@@ -268,6 +268,30 @@ describe("quality policy", () => {
       "no-unreachable",
     ],
     [
+      "base rule in native contract fixtures",
+      "scripts/native-compat/probe.ts",
+      "debugger;\nexport const value = 1;\n",
+      "no-debugger",
+    ],
+    [
+      "category-only rule in native contract fixtures",
+      "scripts/native-compat/probe.ts",
+      "export function value() { return 1; return 2; }\n",
+      "no-unreachable",
+    ],
+    [
+      "type-aware rule in native contract fixtures",
+      "scripts/native-compat/probe.ts",
+      "export function parse(text: string): string { return JSON.parse(text); }\n",
+      "no-unsafe-return",
+    ],
+    [
+      "parameter limit in native contract fixtures",
+      "scripts/native-compat/probe.ts",
+      "export function value(a: number, b: number, c: number, d: number, e: number, f: number, g: number): number { return a + b + c + d + e + f + g; }\n",
+      "max-params",
+    ],
+    [
       "type-aware TypeScript rule",
       "probe.ts",
       "export function parse(text: string): string { return JSON.parse(text); }\n",
@@ -290,7 +314,20 @@ describe("quality policy", () => {
     write(root, file, sourceText);
     const result = lint(root, file);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+    expect(result.stdout).toContain(`${file}:`);
     expect(result.stdout).toContain(diagnostic);
+  });
+
+  it("accepts a six-parameter native contract fixture", () => {
+    const root = repository();
+    const file = "scripts/native-compat/probe.ts";
+    write(
+      root,
+      file,
+      "export function value(a: number, b: number, c: number, d: number, e: number, f: number): number { return a + b + c + d + e + f; }\n",
+    );
+    const result = lint(root, file);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   });
 
   it("leaves the framework profile off unrelated source", () => {

@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -251,5 +252,24 @@ describe("cli init helper", () => {
     expect(exitCode).toBe(1);
     expect(errors.join("\n")).toContain("Use `pi install npm:@fitchmultz/pi-mcp-adapter` instead");
     expect(logs).toEqual([]);
+  });
+});
+
+describe("native contract launcher", () => {
+  it("prints native contract help through a symlinked script directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-mcp-native-bin-"));
+    try {
+      const scripts = join(root, "scripts");
+      symlinkSync(resolve("scripts"), scripts, "junction");
+      const result = spawnSync(
+        process.execPath,
+        [join(scripts, "compat-native-tools.mjs"), "--help"],
+        { encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Usage: node scripts/compat-native-tools.mjs");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
