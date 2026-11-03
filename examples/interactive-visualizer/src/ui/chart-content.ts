@@ -21,7 +21,8 @@ const chartSpecSchema = z.object({
       label: z.string().optional(),
       // Chart.js owns the data-point formats for each controller.
       data: z.unknown().optional(),
-      color: z.string().optional(),
+      // One color or per-element colors; null or "" leaves the dataset on Chart.js defaults.
+      color: z.union([z.string(), z.array(z.string())]).nullish(),
     }),
   ),
 });
