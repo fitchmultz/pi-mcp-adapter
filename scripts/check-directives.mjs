@@ -4,7 +4,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseSync } from "oxc-parser";
 import { loadExceptionSites, resolveExceptionSite } from "./quality-exceptions.mjs";
 
-const negativeTypeTests = new Set(["__tests__/fixtures/published-types-consumer.test-d.mts"]);
+const negativeTypeTests = new Set([
+  "__tests__/fixtures/published-types-consumer.test-d.mts",
+  "__tests__/oauth-config.test-d.ts",
+]);
 const inventory = loadExceptionSites();
 /** @type {Set<ReturnType<typeof resolveExceptionSite>>} */
 const usedSites = new Set();

@@ -23,7 +23,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -57,7 +57,7 @@ afterEach(() => {
 });
 
 describe("directive policy", () => {
-  it("permits literal examples and a described directive in the negative type fixture", () => {
+  it("permits literal examples and described directives in approved negative type fixtures", () => {
     const literals = checkSource(
       "literal.ts",
       [
@@ -69,12 +69,16 @@ describe("directive policy", () => {
         "/** @ts-ignore\n * not a TypeScript directive */",
       ].join("\n"),
     );
-    const negative = checkSource(
-      negativeTest,
-      '// @ts-expect-error A string is not assignable to a number.\nconst number: number = "x";\n',
+    const negatives = [negativeTest, "__tests__/oauth-config.test-d.ts"].map((file) =>
+      checkSource(
+        file,
+        '// @ts-expect-error A string is not assignable to a number.\nconst number: number = "x";\n',
+      ),
     );
     expect(literals.status, literals.stderr).toBe(0);
-    expect(negative.status, negative.stderr).toBe(0);
+    for (const negative of negatives) {
+      expect(negative.status, negative.stderr).toBe(0);
+    }
   });
 
   it.each([
@@ -217,6 +221,18 @@ const transformSource = [
   "};",
   "",
 ].join("\n");
+const capabilitySource = [
+  'import assert from "node:assert/strict";',
+  'import { McpServer } from "@modelcontextprotocol/server";',
+  'const server = new McpServer({ name: "fixture", version: "1" });',
+  'server.registerTool("caps", {}, function reportClientCapabilities() {',
+  "// oxlint-disable-next-line typescript/no-deprecated -- QX-007: observe legacy initialized capabilities.",
+  "const capabilities = server.server.getClientCapabilities();",
+  "assert(capabilities !== undefined);",
+  'return { content: [{ type: "text", text: JSON.stringify(capabilities) }] };',
+  "});",
+  "",
+].join("\n");
 
 describe("operation-bound exceptions", () => {
   it.each([
@@ -271,6 +287,27 @@ describe("operation-bound exceptions", () => {
         "forward.ts:9:8: Unsafe type assertion: type 'ServerEntry' is more narrow than the original type. [Error/typescript(no-unsafe-type-assertion)]",
     },
     {
+      name: "legacy initialized capabilities",
+      source: capabilitySource,
+      authorized: {
+        ...site,
+        id: "QX-007",
+        rule: "typescript/no-deprecated",
+        scope: { type: "FunctionExpression", name: "reportClientCapabilities" },
+        path: ["body", "body", 0],
+        nodeType: "VariableDeclaration",
+        operation: "const capabilities = server.server.getClientCapabilities();",
+      },
+      neighbor: capabilitySource.replace(
+        "assert(capabilities !== undefined);",
+        "server.server.getClientVersion();\nassert(capabilities !== undefined);",
+      ),
+      diagnostic: [
+        "forward.ts:7:15: `getClientVersion` is deprecated.",
+        "[Error/typescript(no-deprecated)]",
+      ],
+    },
+    {
       name: "mutating configuration hook",
       source: transformSource,
       authorized: {
@@ -300,7 +337,10 @@ describe("operation-bound exceptions", () => {
       expect(unguarded.status, unguarded.stderr).toBe(0);
       expect(nativeAccepted.status, nativeAccepted.stdout + nativeAccepted.stderr).toBe(0);
       expect(nativeRejected.status).toBe(1);
-      expect(nativeRejected.stdout + nativeRejected.stderr).toContain(diagnostic);
+      const messages = Array.isArray(diagnostic) ? diagnostic : [diagnostic];
+      for (const message of messages) {
+        expect(nativeRejected.stdout + nativeRejected.stderr).toContain(message);
+      }
     },
   );
 

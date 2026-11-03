@@ -63,6 +63,25 @@ class DelegatingTransport {
 
 The native transport reaches classic initialization and `tools/list`, using two child processes. This decorator is rejected with `the disposable sibling probe requires the SDK's base StdioClientTransport`, after one child process exits. Both runs verify that every child has exited. Adding tracing to the decorator does not change the prototype check that causes this failure.
 
+## QX-007: Read initialized capabilities on native legacy stdio
+
+- **Finding:** Oxlint 1.90.0 and oxlint-tsgolint 7.0.2005 report `typescript/no-deprecated` at `server.server.getClientCapabilities()` in the named `reportClientCapabilities` callback in `__tests__/fixtures/oauth-cross-app-stdio.ts`. There are no rule options.
+- **Contract:** Stdio defaults to legacy version negotiation in `McpServerManager.createClient` (`server-manager.ts:783`). Its client capabilities belong to `initialize`, not a per-request envelope. MCP server 2.3.1 documents that distinction in `dist/createMcpHandler-D4NN8WsG.d.mts:3066-3074`. Its accessor returns the actual initialized value in `dist/mcp-DIH4cS6P.mjs:1383-1385`. The fixture uses the current `McpServer` API and native stdio transport. It must report the capabilities actually received, so the parent can verify that stdio does not advertise enterprise authorization or resolve an IdP source.
+- **Comparison:** The recommended per-request context can validate modern capabilities without a deprecated call:
+
+  ```ts
+  const envelope = z.record(z.string(), z.unknown()).parse(context.mcpReq.envelope);
+  const capabilities = ClientCapabilitiesSchema.parse(
+    envelope["io.modelcontextprotocol/clientCapabilities"],
+  );
+  ```
+
+  This callback passes the compiler and native lint. Through a real default stdio connection, the tool returns `isError: true` because the envelope is `undefined`. Returning empty capabilities instead would let the negative capability assertion pass without observing the initialized client. Intercepting initialization would replace or wrap the SDK's protocol handler instead of reading its public value.
+
+- **Adjustment:** One next-line directive at the native accessor call, bound to the named callback and exact initialized-capability declaration. Other deprecated SDK operations remain checked.
+- **Evidence:** The parent cross-app suite runs the standalone fixture through `McpServerManager`, parses its actual tool response with `ClientCapabilitiesSchema`, checks absent enterprise extensions, and verifies that the command marker and IdP request history stay empty. The separate shutdown fixture checks the native cancelled call and uncaught-exception result in its own process. The directive-policy suite qualifies this exact native accessor shape and requires an adjacent unapproved `getClientVersion()` call to fail with the native deprecation diagnostic and location.
+- **Remaining protection and review:** The fixture asserts that initialized capabilities exist before serializing them. Compiler checks retain the native `McpServer` receiver, and all other safety and deprecation checks remain active. The operation inventory rejects copied, replaced, duplicated and stale directives. Revisit when stdio uses per-request envelopes or the SDK supplies a nondeprecated accessor for the supported initialize-based contract.
+
 ## QX-009: Forward the recorded persistence failure
 
 - **Finding:** Oxlint 1.90.0 and oxlint-tsgolint 7.0.2005 report `typescript/only-throw-error` at `McpTraceWriter.flush`'s stored failure. Options are `allowThrowingAny: false`, `allowThrowingUnknown: false` and `allowRethrowing: true`. Native rethrow permission applies to the immediate catch variable, not this recorded value.

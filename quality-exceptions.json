@@ -10,6 +10,16 @@
     "guards": []
   },
   {
+    "id": "QX-007",
+    "file": "__tests__/fixtures/oauth-cross-app-stdio.ts",
+    "rule": "typescript/no-deprecated",
+    "scope": { "type": "FunctionExpression", "name": "reportClientCapabilities" },
+    "path": ["body", "body", 0],
+    "nodeType": "VariableDeclaration",
+    "operation": "const capabilities = server.server.getClientCapabilities();",
+    "guards": []
+  },
+  {
     "id": "QX-009",
     "file": "mcp-trace.ts",
     "rule": "typescript/only-throw-error",

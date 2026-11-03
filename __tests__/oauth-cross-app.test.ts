@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import assert from "node:assert/strict";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { ClientCapabilitiesSchema } from "@modelcontextprotocol/core";
 import { createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 import {
   appendFileSync,
@@ -12,13 +14,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   auth,
   OAuthError,
   OAuthErrorCode,
   StreamableHTTPClientTransport,
-  type OAuthDiscoveryState,
 } from "@modelcontextprotocol/client";
 import {
   createOAuthRuntime,
@@ -34,11 +36,26 @@ import { executeCall, executeAuthStart } from "../proxy-modes.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { runMcpScript } from "../mcp-code.ts";
 import type { McpExtensionState } from "../state.ts";
-import { withSessionRecovery } from "../session-recovery.ts";
+import { withSessionRecovery, type SessionRecoveryDeps } from "../session-recovery.ts";
 import sharedDocument from "../docs/client-metadata.json" with { type: "json" };
 import type { OAuthConfig, ServerEntry } from "../types.ts";
+import { createTestState } from "./test-state.ts";
+import { createTestExtensionContext } from "./test-extension-context.ts";
+import {
+  clientCapabilities,
+  decodeJwt,
+  jwtClaimsSchema,
+  machineDocumentSchema,
+  machineMessageSchema,
+  machineResult,
+  requiredFormValue,
+  MachineHttpServer,
+  machineJson as json,
+  readMachineBody as body,
+  type MachineMessage,
+} from "./fixtures/oauth-machine-wire.ts";
 
-const browser = vi.hoisted(() => ({ open: vi.fn() }));
+const browser = vi.hoisted(() => ({ open: vi.fn<() => void>() }));
 vi.mock("open", () => ({ default: browser.open }));
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -53,24 +70,7 @@ function scratch() {
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
-async function listen(server: Server) {
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("fixture failed to bind");
-  }
-  return `http://127.0.0.1:${address.port}`;
-}
-function json(res: ServerResponse, data: unknown, status = 200) {
-  res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(data));
-}
-async function body(req: IncomingMessage) {
-  let data = "";
-  for await (const chunk of req) {
-    data += chunk;
-  }
-  return data;
-}
+
 function jwt(
   payload: object,
   key: ReturnType<typeof generateKeyPairSync>["privateKey"],
@@ -83,16 +83,12 @@ function jwt(
   return `${input}.${sign("sha256", Buffer.from(input), { key, dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
 }
 function claims(token: string, key: ReturnType<typeof generateKeyPairSync>["publicKey"]) {
-  const [header, payload, signature] = token.split(".") as [string, string, string];
-  expect(
-    verify(
-      "sha256",
-      Buffer.from(`${header}.${payload}`),
-      { key, dsaEncoding: "ieee-p1363" },
-      Buffer.from(signature, "base64url"),
-    ),
-  ).toBe(true);
-  return JSON.parse(Buffer.from(payload, "base64url").toString());
+  const decoded = decodeJwt(token);
+  assert(
+    verify("sha256", decoded.input, { key, dsaEncoding: "ieee-p1363" }, decoded.signature),
+    "fixture JWT signature",
+  );
+  return jwtClaimsSchema.parse(decoded.payload);
 }
 function gate() {
   let enter!: () => void, release!: () => void, disconnected!: () => void;
@@ -124,27 +120,19 @@ function gate() {
   };
 }
 function nativeSends() {
-  const pending = new Set<Promise<void>>();
-  const send = StreamableHTTPClientTransport.prototype.send;
-  const spy = vi
-    .spyOn(StreamableHTTPClientTransport.prototype, "send")
-    .mockImplementation(function (this: unknown, ...args) {
-      const operation = send.apply(this, args);
-      pending.add(operation);
-      void operation.then(
-        () => pending.delete(operation),
-        () => pending.delete(operation),
-      );
-      return operation;
-    });
+  const spy = vi.spyOn(StreamableHTTPClientTransport.prototype, "send");
+  const count = () =>
+    spy.mock.settledResults.filter((result) => result.type === "incomplete").length;
   return {
     finish: async () => {
-      while (pending.size) {
-        await Promise.allSettled([...pending]);
+      while (count() > 0) {
+        await Promise.allSettled(
+          spy.mock.results.flatMap((result) => (result.type === "return" ? [result.value] : [])),
+        );
       }
     },
     restore: () => spy.mockRestore(),
-    count: () => pending.size,
+    count,
   };
 }
 
@@ -170,7 +158,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     form?: URLSearchParams;
   }> = [];
   const exchanges: Array<{ headers: IncomingMessage["headers"]; form: URLSearchParams }> = [];
-  const requests: any[] = [],
+  const requests: Array<MachineMessage & { headers: IncomingMessage["headers"] }> = [],
     documents: string[] = [],
     registrations: unknown[] = [];
   const tokens = new Set<string>();
@@ -189,8 +177,8 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     idpStatus = 400;
   let heldTool: ReturnType<typeof gate> | undefined,
     cancelledWork = false;
-  const idpServer = createServer(async (req, res) => {
-    const path = req.url!;
+  const idpServer = new MachineHttpServer(async (req, res) => {
+    const path = req.url ?? "/";
     const row: (typeof idpRequests)[number] = { path, headers: req.headers };
     idpRequests.push(row);
     if (path === "/.well-known/oauth-authorization-server") {
@@ -198,7 +186,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     }
     if (path === "/.well-known/openid-configuration") {
       await holds.get("idp-discovery")?.hold(res);
-      return json(res, {
+      json(res, {
         issuer: wrongIdp ? "https://wrong-idp.example" : idp,
         authorization_endpoint: `${idp}/authorize`,
         token_endpoint: `${idp}/token`,
@@ -207,11 +195,13 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
         subject_types_supported: ["public"],
         id_token_signing_alg_values_supported: ["ES256"],
       });
+      return;
     }
     row.form = new URLSearchParams(await body(req));
     await holds.get("idp-token")?.hold(res);
     if (idpError !== undefined) {
-      return json(res, idpError, idpStatus);
+      json(res, idpError, idpStatus);
+      return;
     }
     try {
       expect(path).toBe("/token");
@@ -225,9 +215,9 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
         subject_token: idToken,
       });
       expect(row.form.get("client_secret")).toBe(
-        oauth.crossAppAccess?.clientSecret === undefined ? null : "idp-secret",
+        oauth.crossAppAccess.clientSecret === undefined ? null : "idp-secret",
       );
-      const original = claims(row.form.get("subject_token")!, idpKey.publicKey);
+      const original = claims(requiredFormValue(row.form, "subject_token"), idpKey.publicKey);
       expect(original.aud).toBe("idp-client");
       json(res, {
         access_token: jwt(
@@ -249,42 +239,78 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
       json(res, { error: "invalid_request", error_description: "fixture identity rejection" }, 400);
     }
   });
-  idp = await listen(idpServer);
-  const asServer = createServer(async (req, res) => {
-    if (req.url!.startsWith("/.well-known/")) {
+  idp = await idpServer.listen();
+  const authMethod = {
+    secret: "client_secret_basic",
+    public: "none",
+    private: "private_key_jwt",
+    "private-cimd": "private_key_jwt",
+  }[identity];
+  async function verifyIdentity(form: URLSearchParams, authorization: string | undefined) {
+    if (identity === "secret") {
+      assert.equal(authorization, `Basic ${Buffer.from(`${id}:mcp-secret`).toString("base64")}`);
+      return;
+    }
+    assert.equal(form.get("client_id"), id);
+    assert.equal(authorization, undefined);
+    let publicKey = mcpKey.publicKey;
+    if (id.startsWith("https:")) {
+      const document = machineDocumentSchema.parse(
+        await (await fetch(`${as}/document?id=${encodeURIComponent(id)}`)).json(),
+      );
+      assert.equal(document.client_id, id);
+      assert.equal(
+        document.token_endpoint_auth_method,
+        identity === "public" ? "none" : "private_key_jwt",
+      );
+      const first = document.jwks.keys[0];
+      assert(first !== undefined);
+      publicKey = createPublicKey({ key: first, format: "jwk" });
+    }
+    if (identity === "public") {
+      assert.equal(form.has("client_assertion"), false);
+      return;
+    }
+    assert.partialDeepStrictEqual(claims(requiredFormValue(form, "client_assertion"), publicKey), {
+      iss: id,
+      sub: id,
+      aud: as,
+    });
+  }
+  const asServer = new MachineHttpServer(async (req, res) => {
+    if ((req.url ?? "/").startsWith("/.well-known/")) {
       if (!metadata) {
         return void res.writeHead(404).end();
       }
-      return json(res, {
+      json(res, {
         issuer: wrongIssuer ? "https://wrong-as.example" : as,
         authorization_endpoint: `${as}/authorize`,
         token_endpoint: `${as}/token`,
         response_types_supported: ["code"],
         grant_types_supported: ["urn:ietf:params:oauth:grant-type:jwt-bearer"],
-        token_endpoint_auth_methods_supported: [
-          identity === "secret"
-            ? "client_secret_basic"
-            : identity === "public"
-              ? "none"
-              : "private_key_jwt",
-        ],
+        token_endpoint_auth_methods_supported: [authMethod],
         client_id_metadata_document_supported: true,
       });
+      return;
     }
-    if (req.url!.startsWith("/document")) {
-      documents.push(new URL(req.url!, as).searchParams.get("id")!);
-      return json(res, {
+    if ((req.url ?? "/").startsWith("/document")) {
+      const documentId = new URL(req.url ?? "/", as).searchParams.get("id");
+      assert(documentId !== null);
+      documents.push(documentId);
+      json(res, {
         client_id: id,
         redirect_uris: [],
         grant_types: ["urn:ietf:params:oauth:grant-type:jwt-bearer"],
         token_endpoint_auth_method: identity === "public" ? "none" : "private_key_jwt",
         jwks: { keys: [mcpKey.publicKey.export({ format: "jwk" })] },
       });
+      return;
     }
     const form = new URLSearchParams(await body(req));
     if (req.url === "/register") {
       registrations.push(Object.fromEntries(form));
-      return json(res, { error: "unsupported" }, 400);
+      json(res, { error: "unsupported" }, 400);
+      return;
     }
     if (req.url !== "/token") {
       return void res.writeHead(404).end();
@@ -292,7 +318,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     exchanges.push({ headers: req.headers, form });
     await holds.get("mcp-token")?.hold(res);
     try {
-      const grant = claims(form.get("assertion")!, idpKey.publicKey);
+      const grant = claims(requiredFormValue(form, "assertion"), idpKey.publicKey);
       expect(grant).toMatchObject({
         aud: as,
         resource: `${resource}/mcp`,
@@ -303,36 +329,10 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
       expect(form.get("resource")).toBe(`${resource}/mcp`);
       expect(form.has("subject_token")).toBe(false);
       expect(form.has("client_secret")).toBe(false);
-      if (identity === "secret") {
-        expect(req.headers.authorization).toBe(
-          `Basic ${Buffer.from(`${id}:mcp-secret`).toString("base64")}`,
-        );
-      } else {
-        expect(form.get("client_id")).toBe(id);
-        expect(req.headers.authorization).toBeUndefined();
-        let publicKey = mcpKey.publicKey;
-        if (id.startsWith("https:")) {
-          const document = await (
-            await fetch(`${as}/document?id=${encodeURIComponent(id)}`)
-          ).json();
-          expect(document.client_id).toBe(id);
-          expect(document.token_endpoint_auth_method).toBe(
-            identity === "public" ? "none" : "private_key_jwt",
-          );
-          publicKey = createPublicKey({ key: document.jwks.keys[0], format: "jwk" });
-        }
-        if (identity !== "public") {
-          expect(claims(form.get("client_assertion")!, publicKey)).toMatchObject({
-            iss: id,
-            sub: id,
-            aud: as,
-          });
-        } else {
-          expect(form.has("client_assertion")).toBe(false);
-        }
-      }
+      await verifyIdentity(form, req.headers.authorization);
       if (rejectTokens) {
-        return json(res, { error: "invalid_grant" }, 400);
+        json(res, { error: "invalid_grant" }, 400);
+        return;
       }
       const token = `access-${exchanges.length}`;
       tokens.add(token);
@@ -346,31 +346,63 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
       json(res, { error: "invalid_request", error_description: "fixture grant rejection" }, 400);
     }
   });
-  as = await listen(asServer);
-  const resourceServer = createServer(async (req, res) => {
-    if (req.url!.startsWith("/.well-known/oauth-protected-resource")) {
+  as = await asServer.listen();
+  function resourceMetadata(path: string, res: ServerResponse): boolean {
+    if (path.startsWith("/.well-known/oauth-protected-resource")) {
       if (!prm) {
-        return void res.writeHead(404).end();
+        res.writeHead(404).end();
+        return true;
       }
-      return json(res, {
+      json(res, {
         resource: wrongResource ? "https://wrong-resource.example/mcp" : `${resource}/mcp`,
         authorization_servers: [as],
         scopes_supported: ["tools"],
       });
+      return true;
     }
-    // Discovery fallback must still reach the same AS, so missing PRM tests isolate the absent resource.
-    if (req.url!.startsWith("/.well-known/")) {
-      return json(res, {
+    // Missing PRM must still reach the same AS to isolate the absent resource.
+    if (path.startsWith("/.well-known/")) {
+      json(res, {
         issuer: resource,
         authorization_endpoint: `${as}/authorize`,
         token_endpoint: `${as}/token`,
         response_types_supported: ["code"],
       });
+      return true;
+    }
+    return false;
+  }
+  async function handleTool(method: string, res: ServerResponse): Promise<boolean> {
+    if (method !== "tools/call") {
+      return false;
+    }
+    if (heldTool) {
+      await heldTool.hold(res);
+      if (cancelledWork) {
+        res.writeHead(499).end();
+        return true;
+      }
+    }
+    if (forbidden) {
+      res
+        .writeHead(403, { "www-authenticate": 'Bearer error="insufficient_scope", scope="extra"' })
+        .end();
+      return true;
+    }
+    if (toolFailure++ === 0 && definition.retryOnTransportFailure === true) {
+      res.writeHead(503).end("unavailable");
+      return true;
+    }
+    return false;
+  }
+  const resourceServer = new MachineHttpServer(async (req, res) => {
+    if (resourceMetadata(req.url ?? "/", res)) {
+      return;
     }
     if (req.method !== "POST") {
       return void res.writeHead(405).end();
     }
-    const message = JSON.parse(await body(req));
+    const message = machineMessageSchema.parse(JSON.parse(await body(req)));
     requests.push({ ...message, headers: req.headers });
     if (
       !publicMcp &&
@@ -392,68 +424,44 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     if (message.method === "notifications/initialized") {
       return void res.writeHead(202).end();
     }
-    if (message.method === "tools/call" && heldTool) {
-      await heldTool.hold(res);
-      if (cancelledWork) {
-        return void res.writeHead(499).end();
-      }
+    if (await handleTool(message.method, res)) {
+      return;
     }
-    if (message.method === "tools/call" && forbidden) {
-      return void res
-        .writeHead(403, { "www-authenticate": 'Bearer error="insufficient_scope", scope="extra"' })
-        .end();
-    }
-    if (
-      message.method === "tools/call" &&
-      toolFailure++ === 0 &&
-      definition.retryOnTransportFailure
-    ) {
-      return void res.writeHead(503).end("unavailable");
-    }
-    const result =
-      message.method === "initialize"
-        ? {
-            protocolVersion: "2025-11-25",
-            capabilities: { tools: {} },
-            serverInfo: { name: "caa", version: "1" },
-          }
-        : message.method === "server/discover"
-          ? { supportedVersions: ["2026-07-28"], capabilities: { tools: {} } }
-          : message.method === "tools/list"
-            ? {
-                ttlMs: 10000,
-                cacheScope: "private",
-                tools: [{ name: "echo", inputSchema: { type: "object" } }],
-              }
-            : { content: [{ type: "text", text: "enterprise tool" }] };
-    json(res, { jsonrpc: "2.0", id: message.id, result: { resultType: "complete", ...result } });
+    assert("id" in message, "Expected an MCP request");
+    json(res, {
+      jsonrpc: "2.0",
+      id: message.id,
+      result: machineResult(message.method, "caa", "enterprise tool"),
+    });
   });
-  resource = await listen(resourceServer);
+  resource = await resourceServer.listen();
   idToken = jwt(
     { iss: idp, aud: "idp-client", sub: "user", exp: Math.floor(Date.now() / 1000) + 3600 },
     idpKey.privateKey,
   );
-  const oauth: OAuthConfig = {
-    ...(id.startsWith("https:") ? { clientMetadataUrl: id } : { clientId: id }),
-    ...(identity === "secret"
-      ? { clientSecret: "mcp-secret" }
-      : identity === "public"
-        ? {}
-        : {
-            privateKeyJwt: {
-              privateKey: mcpKey.privateKey.export({ format: "jwk" }),
-              algorithm: "ES256",
-            },
-          }),
+  const oauth: OAuthConfig & { crossAppAccess: NonNullable<OAuthConfig["crossAppAccess"]> } = {
     crossAppAccess: { idpUrl: idp, clientId: "idp-client", idToken, clientSecret: "idp-secret" },
   };
-  const definition: ServerEntry = {
+  if (id.startsWith("https:")) {
+    oauth.clientMetadataUrl = id;
+  } else {
+    oauth.clientId = id;
+  }
+  if (identity === "secret") {
+    oauth.clientSecret = "mcp-secret";
+  } else if (identity !== "public") {
+    oauth.privateKeyJwt = {
+      privateKey: mcpKey.privateKey.export({ format: "jwk" }),
+      algorithm: "ES256",
+    };
+  }
+  const definition: ServerEntry & { url: string } = {
     url: `${resource}/mcp`,
     auth: "oauth",
     headers: { "X-Resource-Only": "resource-secret" },
     oauth,
   };
-  const stored = () => getAuthForUrl(name, definition.url!);
+  const stored = () => getAuthForUrl(name, definition.url);
   cleanups.push(async () => {
     for (const hold of holds.values()) {
       hold.release();
@@ -461,11 +469,12 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     heldTool?.release();
     await manager.closeAll();
     await shutdownOAuth(runtime);
-    if (process.env.CAA_PROOF_FILE) {
+    const testName = expect.getState().currentTestName;
+    if (process.env.CAA_PROOF_FILE !== undefined) {
       appendFileSync(
         process.env.CAA_PROOF_FILE,
         `${JSON.stringify({
-          test: expect.getState().currentTestName,
+          test: testName,
           node: process.version,
           execPath: process.execPath,
           identity,
@@ -475,8 +484,8 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
             audience: r.form?.get("audience"),
             resource: r.form?.get("resource"),
             scope: r.form?.get("scope"),
-            hasResourceHeader: !!r.headers["x-resource-only"],
-            hasAuthorization: !!r.headers.authorization,
+            hasResourceHeader: r.headers["x-resource-only"] !== undefined,
+            hasAuthorization: r.headers.authorization !== undefined,
           })),
           mcpTokenPosts: exchanges.length,
           grants: exchanges.map((e) => e.form.get("grant_type")),
@@ -489,8 +498,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     }
     clearAllCredentials(name);
     for (const server of [resourceServer, asServer, idpServer]) {
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await server.close();
     }
   });
   return {
@@ -511,11 +519,11 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     registrations,
     connect: (signal?: AbortSignal) => manager.connect(name, definition, signal),
     start: (signal?: AbortSignal) =>
-      startAuth(name, definition.url!, definition, { runtime, ...(signal ? { signal } : {}) }),
+      startAuth(name, definition.url, definition, { runtime, ...(signal ? { signal } : {}) }),
     provider: () =>
       new McpOAuthProvider(
         name,
-        definition.url!,
+        definition.url,
         extractOAuthConfig(definition),
         {
           onRedirect: () => {
@@ -554,7 +562,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     rejectResource: (value: boolean) => {
       rejectResourceTokens = value;
     },
-    idpError: (error: unknown, status = 400) => {
+    idpError: (error?: unknown, status = 400) => {
       idpError = error;
       idpStatus = status;
     },
@@ -577,9 +585,28 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
   };
 }
 
-it.each(["secret", "public", "private", "private-cimd"] as const)(
-  "completes native two-stage enterprise authorization with %s MCP identity",
-  async (identity) => {
+it.each([
+  { identity: "secret", clientInfo: { clientId: "mcp-client" } },
+  {
+    identity: "public",
+    clientInfo: {
+      clientId: "https://caa.example/client.json",
+      registrationType: "cimd",
+      redirectUris: [],
+    },
+  },
+  { identity: "private", clientInfo: { clientId: "mcp-client" } },
+  {
+    identity: "private-cimd",
+    clientInfo: {
+      clientId: "https://caa.example/client.json",
+      registrationType: "cimd",
+      redirectUris: [],
+    },
+  },
+] as const)(
+  "completes native two-stage enterprise authorization with $identity MCP identity",
+  async ({ identity, clientInfo }) => {
     const f = await fixture(identity);
     expect(await f.start()).toEqual({ authorizationUrl: "" });
     const connection = await f.connect();
@@ -589,27 +616,29 @@ it.each(["secret", "public", "private", "private-cimd"] as const)(
     expect(f.exchanges).toHaveLength(1);
     expect(f.idpRequests.filter((r) => r.form)).toHaveLength(1);
     expect(
-      f.idpRequests.every((r) => !r.headers.authorization && !r.headers["x-resource-only"]),
+      f.idpRequests.every(
+        (r) => r.headers.authorization === undefined && r.headers["x-resource-only"] === undefined,
+      ),
     ).toBe(true);
     expect(f.idpRequests.find((r) => r.form)?.form?.get("scope")).toBe("tools");
-    expect(f.requests.find((r) => r.method === "tools/call").headers["x-resource-only"]).toBe(
+    expect(f.requests.find((r) => r.method === "tools/call")?.headers["x-resource-only"]).toBe(
       "resource-secret",
     );
     const saved = JSON.stringify(f.stored());
+    const exchange = f.exchanges[0];
+    assert(exchange !== undefined);
     for (const value of [
-      f.oauth.crossAppAccess!.idToken,
+      f.oauth.crossAppAccess.idToken,
       "idp-secret",
       "mcp-secret",
-      f.exchanges[0]!.form.get("assertion")!,
+      requiredFormValue(exchange.form, "assertion"),
     ]) {
       expect(saved).not.toContain(value);
     }
     expect(f.registrations).toHaveLength(0);
     expect(browser.open).not.toHaveBeenCalled();
     expect(hasPendingAuth(f.name, {}, f.runtime)).toBe(false);
-    if (identity === "public" || identity === "private-cimd") {
-      expect(f.stored()?.clientInfo).toMatchObject({ registrationType: "cimd", redirectUris: [] });
-    }
+    expect(f.stored()?.clientInfo).toMatchObject(clientInfo);
   },
 );
 
@@ -618,7 +647,7 @@ it("keeps all IdP sources lazy and renews the user-managed token without another
   const dir = scratch(),
     token = join(dir, "token"),
     marker = join(dir, "reads");
-  writeFileSync(token, f.oauth.crossAppAccess!.idToken);
+  writeFileSync(token, f.oauth.crossAppAccess.idToken);
   f.oauth.crossAppAccess = {
     idpUrl: "${CAA_IDP}",
     clientId: "!printf idp-client",
@@ -640,7 +669,7 @@ it("keeps all IdP sources lazy and renews the user-managed token without another
     });
     expect(readFileSync(marker, "utf8")).toBe("xx");
     expect(
-      f.idpRequests.filter((r) => r.form).map((r) => r.form!.get("subject_token"))[0],
+      f.idpRequests.filter((r) => r.form).map((r) => r.form?.get("subject_token"))[0],
     ).not.toBe(f.oauth.crossAppAccess.idToken);
     expect(f.exchanges).toHaveLength(2);
   } finally {
@@ -649,46 +678,54 @@ it("keeps all IdP sources lazy and renews the user-managed token without another
   }
 });
 
-it.each(["client", "tokens", "metadata", "resource", "missing-resource"])(
-  "rejects %s target failure before any IdP request or secret source",
-  async (failure) => {
+it.each(["client", "tokens"])(
+  "preserves stored %s issuer failures before any IdP request or secret source",
+  async (binding) => {
     const f = await fixture();
     const marker = join(scratch(), "ran");
-    f.oauth.crossAppAccess!.idToken = `!touch '${marker}'; printf TOKEN_SENTINEL`;
-    if (failure === "client" || failure === "tokens") {
-      saveAuthEntry(
-        f.name,
-        {
-          clientInfo: {
-            clientId: f.id,
-            issuer: failure === "client" ? "https://old.example" : f.as,
-            configPreRegistered: true,
-          },
-          tokens: {
-            accessToken: "old",
-            issuer: failure === "tokens" ? "https://old.example" : f.as,
-          },
+    f.oauth.crossAppAccess.idToken = `!touch '${marker}'; printf TOKEN_SENTINEL`;
+    saveAuthEntry(
+      f.name,
+      {
+        clientInfo: {
+          clientId: f.id,
+          issuer: binding === "client" ? "https://old.example" : f.as,
+          configPreRegistered: true,
         },
-        f.definition.url,
-      );
-    }
-    if (failure === "metadata") {
-      f.wrongIssuer();
-    }
-    if (failure === "resource") {
-      f.wrongResource();
-    }
-    if (failure === "missing-resource") {
-      f.noResource();
-    }
+        tokens: {
+          accessToken: "old",
+          issuer: binding === "tokens" ? "https://old.example" : f.as,
+        },
+      },
+      f.definition.url,
+    );
     const before = f.stored();
-    await expect(f.start()).rejects.toThrow();
+    assert(before !== undefined);
+    await expect(f.start()).rejects.toThrow(/issuer/i);
     expect(existsSync(marker)).toBe(false);
     expect(f.idpRequests).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
-    if (before) {
-      expect(f.stored()).toEqual(before);
+    expect(f.stored()).toEqual(before);
+  },
+);
+
+it.each(["metadata", "resource", "missing-resource"])(
+  "rejects %s target discovery before any IdP request or secret source",
+  async (failure) => {
+    const f = await fixture();
+    const marker = join(scratch(), "ran");
+    f.oauth.crossAppAccess.idToken = `!touch '${marker}'; printf TOKEN_SENTINEL`;
+    if (failure === "metadata") {
+      f.wrongIssuer();
+    } else if (failure === "resource") {
+      f.wrongResource();
+    } else {
+      f.noResource();
     }
+    await expect(f.start()).rejects.toThrow(/crossAppAccess|issuer|resource/i);
+    expect(existsSync(marker)).toBe(false);
+    expect(f.idpRequests).toHaveLength(0);
+    expect(f.exchanges).toHaveLength(0);
   },
 );
 
@@ -713,26 +750,26 @@ it.each(["issued", "rejected"])(
       f.idpError({ error: "invalid_grant" });
     }
     const first = await auth(provider, {
-      serverUrl: f.definition.url!,
+      serverUrl: f.definition.url,
       fetchFn: provider.fetch,
-    }).catch((error) => error);
-    if (outcome === "rejected") {
-      expect(first).toBeInstanceOf(OAuthError);
-    } else {
-      expect(first).toBe("AUTHORIZED");
-    }
-    f.idpError(undefined);
+    }).catch((error: unknown) => {
+      assert(error instanceof OAuthError);
+      return "REJECTED";
+    });
+    expect(first).toBe(outcome === "rejected" ? "REJECTED" : "AUTHORIZED");
+    f.idpError();
     await provider.saveDiscoveryState({
       authorizationServerUrl: f.as,
       authorizationServerMetadata: {
         issuer: f.as,
+        authorization_endpoint: `${f.as}/authorize`,
         token_endpoint: `${f.as}/token`,
         response_types_supported: ["code"],
-      } as NonNullable<OAuthDiscoveryState["authorizationServerMetadata"]>,
+      },
     });
     f.noResource();
     await expect(
-      auth(provider, { serverUrl: f.definition.url!, fetchFn: provider.fetch }),
+      auth(provider, { serverUrl: f.definition.url, fetchFn: provider.fetch }),
     ).rejects.toThrow(/protected resource metadata/);
     expect(f.exchanges).toHaveLength(outcome === "rejected" ? 0 : 1);
     expect(f.idpRequests.filter((r) => r.form)).toHaveLength(1);
@@ -754,9 +791,9 @@ it.each([
   if (failure === "issuer") {
     f.wrongIdp();
   } else if (failure === "command") {
-    f.oauth.crossAppAccess!.idToken = "!printf 'TOKEN_SENTINEL' >&2; exit 7";
+    f.oauth.crossAppAccess.idToken = "!printf 'TOKEN_SENTINEL' >&2; exit 7";
   } else if (failure === "nul") {
-    f.oauth.crossAppAccess!.idToken = "!printf 'TOKEN_SENTINEL'\0";
+    f.oauth.crossAppAccess.idToken = "!printf 'TOKEN_SENTINEL'\0";
   } else {
     f.idpError(
       failure.startsWith("malformed")
@@ -765,12 +802,13 @@ it.each([
       failure === "malformed-success" ? 200 : 400,
     );
   }
-  const error = await f.start().catch((error) => error);
-  expect(error).toBeInstanceOf(OAuthError);
-  expect(error.code).toBe(OAuthErrorCode.InvalidRequest);
-  expect(error.message).toContain("crossAppAccess");
-  expect(String(error)).not.toContain("TOKEN_SENTINEL");
-  expect(error.cause).toBeUndefined();
+  const rejected = await f.start().catch((error: unknown) => error);
+  assert(rejected instanceof OAuthError);
+  expect(rejected).toBeInstanceOf(OAuthError);
+  expect(rejected.code).toBe(OAuthErrorCode.InvalidRequest);
+  expect(rejected.message).toContain("crossAppAccess");
+  expect(String(rejected)).not.toContain("TOKEN_SENTINEL");
+  expect(rejected.cause).toBeUndefined();
   expect(f.stored()).toEqual(before);
   expect(f.exchanges).toHaveLength(1);
   expect(browser.open).not.toHaveBeenCalled();
@@ -783,26 +821,23 @@ it.each(["auto", "legacy"] as const)(
     f.definition.protocolVersion = protocolVersion;
     f.oauth.scope = "configured";
     await f.start();
-    expect(f.exchanges[0]!.form.get("scope")).toBe("configured");
+    expect(f.exchanges[0]?.form.get("scope")).toBe("configured");
     f.expire();
     await f.connect();
-    expect(f.exchanges[1]!.form.get("scope")).toBe("tools");
+    expect(f.exchanges[1]?.form.get("scope")).toBe("tools");
     const handshakes = f.requests.filter(
       (r) => r.method === (protocolVersion === "auto" ? "server/discover" : "initialize"),
     );
     expect(handshakes.length).toBeGreaterThanOrEqual(2);
     for (const request of handshakes) {
-      expect(
-        (protocolVersion === "auto"
-          ? request.params._meta["io.modelcontextprotocol/clientCapabilities"]
-          : request.params.capabilities
-        ).extensions,
-      ).toEqual({ "io.modelcontextprotocol/enterprise-managed-authorization": {} });
+      expect(clientCapabilities(request, protocolVersion)?.extensions).toEqual({
+        "io.modelcontextprotocol/enterprise-managed-authorization": {},
+      });
     }
   },
 );
 
-it.each([false, "bearer", "implicit-header"])(
+it.each([false, "bearer", "implicit-header"] as const)(
   "does not advertise CAA for an ineligible ordinary connection (%s), but preserves explicit discovery",
   async (mode) => {
     const f = await fixture();
@@ -810,20 +845,18 @@ it.each([false, "bearer", "implicit-header"])(
     if (mode === "implicit-header") {
       delete f.definition.auth;
     } else {
-      f.definition.auth = mode as false | "bearer";
+      f.definition.auth = mode;
     }
     await f.connect();
-    expect(
-      f.requests.find((r) => r.method === "server/discover").params._meta[
-        "io.modelcontextprotocol/clientCapabilities"
-      ]?.extensions,
-    ).toBeUndefined();
+    const ordinary = f.requests.find((r) => r.method === "server/discover");
+    assert(ordinary !== undefined);
+    expect(clientCapabilities(ordinary)?.extensions).toBeUndefined();
     await f.start();
-    expect(
-      f.requests.filter((r) => r.method === "server/discover").at(-1).params._meta[
-        "io.modelcontextprotocol/clientCapabilities"
-      ].extensions,
-    ).toEqual({ "io.modelcontextprotocol/enterprise-managed-authorization": {} });
+    const explicit = f.requests.findLast((r) => r.method === "server/discover");
+    assert(explicit !== undefined);
+    expect(clientCapabilities(explicit)?.extensions).toEqual({
+      "io.modelcontextprotocol/enterprise-managed-authorization": {},
+    });
   },
 );
 
@@ -833,7 +866,7 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
     const f = await fixture();
     const hold = f.hold(stage),
       controller = new AbortController();
-    const pending = f.start(controller.signal).catch((error) => error);
+    const pending = f.start(controller.signal).catch((error: unknown) => error);
     await hold.started;
     const before = structuredClone(f.stored());
     controller.abort();
@@ -857,7 +890,7 @@ it.each(["auto", "legacy"] as const)(
     const hold = f.hold("idp-token"),
       sends = nativeSends();
     try {
-      const pending = f.connect().catch((error) => error);
+      const pending = f.connect().catch((error: unknown) => error);
       await hold.started;
       const before = structuredClone(f.stored());
       await f.manager.close(f.name);
@@ -893,12 +926,17 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
     try {
       const pending = connection.client
         .callTool({ name: "echo" }, { signal: controller.signal })
-        .catch((error) => error);
+        .catch((error: unknown) => error);
       await hold.started;
       const before = structuredClone(f.stored());
       controller.abort();
       expect(await pending).toBeInstanceOf(Error);
-      await Promise.race([hold.aborted, new Promise((resolve) => setTimeout(resolve, 100))]);
+      await Promise.race([
+        hold.aborted,
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 100);
+        }),
+      ]);
       hold.release();
       await sends.finish();
       const outcome = {
@@ -907,10 +945,11 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
         tokenPosts: f.exchanges.length,
         pendingNativeSends: sends.count(),
       };
-      if (process.env.CAA_PROOF_FILE) {
+      const testName = expect.getState().currentTestName;
+      if (process.env.CAA_PROOF_FILE !== undefined) {
         appendFileSync(
           process.env.CAA_PROOF_FILE,
-          `${JSON.stringify({ test: expect.getState().currentTestName, outcome })}\n`,
+          `${JSON.stringify({ test: testName, outcome })}\n`,
         );
       }
       expect(outcome).toEqual({
@@ -954,14 +993,19 @@ it.each([
           { name: "echo" },
           mode === "abort" ? { signal: controller.signal } : { timeout: 100 },
         )
-        .catch((error) => error);
+        .catch((error: unknown) => error);
       await hold.started;
       const before = structuredClone(f.stored());
       if (mode === "abort") {
         controller.abort();
       }
       expect(await pending).toBeInstanceOf(Error);
-      await Promise.race([hold.aborted, new Promise((resolve) => setTimeout(resolve, 100))]);
+      await Promise.race([
+        hold.aborted,
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 100);
+        }),
+      ]);
       hold.release();
       await sends.finish();
       const outcome = {
@@ -970,10 +1014,11 @@ it.each([
         tokenPosts: f.exchanges.length,
         pendingNativeSends: sends.count(),
       };
-      if (process.env.CAA_PROOF_FILE) {
+      const testName = expect.getState().currentTestName;
+      if (process.env.CAA_PROOF_FILE !== undefined) {
         appendFileSync(
           process.env.CAA_PROOF_FILE,
-          `${JSON.stringify({ test: expect.getState().currentTestName, outcome })}\n`,
+          `${JSON.stringify({ test: testName, outcome })}\n`,
         );
       }
       expect(outcome).toEqual({
@@ -1003,14 +1048,19 @@ it.each(["auto", "legacy"] as const)(
     try {
       const first = connection.client
         .callTool({ name: "echo" }, { signal: controller.signal })
-        .catch((error) => error);
+        .catch((error: unknown) => error);
       await hold.started;
       const second = connection.client.callTool({ name: "echo" });
       await vi.waitFor(() => expect(f.idpRequests.filter((r) => r.form)).toHaveLength(3));
       expect(sends.count()).toBe(2);
       controller.abort();
       expect(await first).toBeInstanceOf(Error);
-      await Promise.race([hold.aborted, new Promise((resolve) => setTimeout(resolve, 100))]);
+      await Promise.race([
+        hold.aborted,
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 100);
+        }),
+      ]);
       expect(sends.count()).toBeGreaterThan(0);
       hold.release();
       await sends.finish();
@@ -1042,7 +1092,7 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
       try {
         const pending = (
           connection ? connection.client.callTool({ name: "echo" }) : f.connect(controller.signal)
-        ).catch((error) => error);
+        ).catch((error: unknown) => error);
         await hold.started;
         const before = structuredClone(f.stored()),
           count = f.exchanges.length;
@@ -1072,18 +1122,15 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
 it("does not advertise CAA or execute IdP sources on native stdio connections", async () => {
   const f = await fixture(),
     marker = join(scratch(), "ran");
-  const code = `import {Server} from '@modelcontextprotocol/server'; import {StdioServerTransport} from '@modelcontextprotocol/server/stdio';
-    const server=new Server({name:'caps',version:'1'},{capabilities:{tools:{}}});
-    server.setRequestHandler('tools/list',async()=>({tools:[{name:'caps',inputSchema:{type:'object'}}]}));
-    server.setRequestHandler('tools/call',async()=>({content:[{type:'text',text:JSON.stringify(server.getClientCapabilities())}]}));
-    await server.connect(new StdioServerTransport());`;
   const connection = await f.manager.connect("stdio", {
     command: process.execPath,
-    args: ["--input-type=module", "-e", code],
+    args: [fileURLToPath(new URL("./fixtures/oauth-cross-app-stdio.ts", import.meta.url))],
     oauth: { crossAppAccess: { idpUrl: f.idp, clientId: "idp", idToken: `!touch '${marker}'` } },
   });
   const result = await connection.client.callTool({ name: "caps" });
-  expect(JSON.parse((result.content[0] as { text: string }).text).extensions).toBeUndefined();
+  const first = result.content[0];
+  assert(first?.type === "text");
+  expect(ClientCapabilitiesSchema.parse(JSON.parse(first.text)).extensions).toBeUndefined();
   expect(existsSync(marker)).toBe(false);
   expect(f.idpRequests).toHaveLength(0);
 });
@@ -1096,7 +1143,7 @@ it("delivers a legitimate legacy cancellation notification so the server stops a
     controller = new AbortController();
   const pending = connection.client
     .callTool({ name: "echo" }, { signal: controller.signal })
-    .catch((error) => error);
+    .catch((error: unknown) => error);
   await hold.started;
   controller.abort();
   expect(await pending).toBeInstanceOf(Error);
@@ -1124,32 +1171,7 @@ it("returns a rejected native send Promise rather than throwing synchronously af
 it("keeps legacy cancellation sends promise-based after OAuth runtime shutdown", () => {
   const child = spawnSync(
     process.execPath,
-    [
-      "--input-type=module",
-      "-e",
-      `
-    import {createServer} from 'node:http';
-    import {McpServerManager} from './server-manager.ts';
-    import {createOAuthRuntime,shutdownOAuth} from './mcp-auth-flow.ts';
-    let uncaught=0;process.on('uncaughtException',()=>{uncaught++});
-    let entered;const started=new Promise(r=>{entered=r});
-    const server=createServer(async(req,res)=>{
-      if(req.method!=='POST')return res.writeHead(405).end();
-      let data='';for await(const chunk of req)data+=chunk;const b=JSON.parse(data);
-      if(b.method==='tools/call'){entered();return;}
-      if(b.method.startsWith('notifications/'))return res.writeHead(202).end();
-      const result=b.method==='initialize'?{protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'legacy',version:'1'}}:{tools:[{name:'hold',inputSchema:{type:'object'}}]};
-      res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({jsonrpc:'2.0',id:b.id,result}));
-    });
-    await new Promise(r=>server.listen(0,'127.0.0.1',r));const url='http://127.0.0.1:'+server.address().port+'/mcp';
-    const runtime=createOAuthRuntime(),manager=new McpServerManager();manager.setOAuthRuntime(runtime);
-    const connection=await manager.connect('legacy',{url,auth:'oauth',protocolVersion:'legacy',oauth:{clientId:'mcp',crossAppAccess:{idpUrl:url,clientId:'idp',idToken:'unused'}}});
-    const controller=new AbortController(),pending=connection.client.callTool({name:'hold'},{signal:controller.signal}).catch(()=>{});
-    await started;await shutdownOAuth(runtime);controller.abort();await new Promise(r=>setImmediate(r));
-    await manager.closeAll();await pending;server.closeAllConnections();await new Promise(r=>server.close(r));
-    console.log(JSON.stringify({uncaught}));process.exitCode=uncaught?1:0;
-  `,
-    ],
+    [fileURLToPath(new URL("./fixtures/oauth-cross-app-shutdown.ts", import.meta.url))],
     { encoding: "utf8", timeout: 5000 },
   );
   expect(
@@ -1167,7 +1189,7 @@ it("releases the native async context on deactivation and cannot re-enable it wi
     provider.runWithSignal(caller.signal, () => expect(provider.signal.aborted).toBe(false));
     provider.deactivate();
     expect(disable).toHaveBeenCalledTimes(1);
-    const late = vi.fn();
+    const late = vi.fn<() => void>();
     expect(() => provider.runWithSignal(caller.signal, late)).toThrow(/no longer active/);
     expect(late).not.toHaveBeenCalled();
     expect(provider.signal.aborted).toBe(true);
@@ -1190,7 +1212,7 @@ it("does not retain a completed connect caller signal and lets shared reconnect 
     waiter = new AbortController();
   const first = f.manager
     .reconnect(f.name, f.definition, stale, waiter.signal)
-    .catch((error) => error);
+    .catch((error: unknown) => error);
   await hold.started;
   waiter.abort();
   expect(await first).toBeInstanceOf(Error);
@@ -1228,7 +1250,11 @@ it("keeps the native noninteractive scope retry bound and transport-failure trac
     manager: f.manager,
     config: { mcpServers: { [f.name]: f.definition } },
     retryOnTransportFailure: true,
-    onNeedsAuth: vi.fn(),
+    onNeedsAuth: vi
+      .fn<NonNullable<SessionRecoveryDeps["onNeedsAuth"]>>()
+      .mockImplementation(async () => {
+        throw new Error("Unexpected interactive authentication");
+      }),
   };
   expect(
     await withSessionRecovery(deps, f.name, (c) => c.client.callTool({ name: "echo" })),
@@ -1278,7 +1304,7 @@ it("refuses positively identified stored shared CIMD without deleting it, but pr
 });
 
 function stateFor(f: Awaited<ReturnType<typeof fixture>>, autoAuth = true): McpExtensionState {
-  return {
+  return createTestState({
     manager: f.manager,
     oauthRuntime: f.runtime,
     config: { mcpServers: { [f.name]: f.definition }, settings: { autoAuth } },
@@ -1300,7 +1326,7 @@ function stateFor(f: Awaited<ReturnType<typeof fixture>>, autoAuth = true): McpE
     failureMessages: new Map(),
     completedUiSessions: [],
     metadataCacheEnabled: false,
-  } as unknown as McpExtensionState;
+  });
 }
 async function callHost(
   f: Awaited<ReturnType<typeof fixture>>,
@@ -1323,7 +1349,12 @@ async function callHost(
       description: "echo",
     },
   );
-  return execute("call", {}, undefined, undefined, {} as never);
+  const native = await createTestExtensionContext();
+  try {
+    return await execute("call", {}, undefined, undefined, native.context);
+  } finally {
+    await native.dispose();
+  }
 }
 
 it.each(["proxy", "direct", "script"])(
@@ -1335,7 +1366,7 @@ it.each(["proxy", "direct", "script"])(
     f.rejectResource(false);
     const result = await callHost(f, stateFor(f), host);
     expect(JSON.stringify(result)).toContain("enterprise tool");
-    expect(result.details?.error).toBeUndefined();
+    expect(result.details.error).toBeUndefined();
     expect(f.exchanges).toHaveLength(2);
     expect(browser.open).not.toHaveBeenCalled();
     expect(hasPendingAuth(f.name, {}, f.runtime)).toBe(false);
@@ -1352,7 +1383,12 @@ it.each(["proxy", "direct"])(
     f.idpError({ error: "invalid_client", error_description: "TOKEN_SENTINEL" });
     const state = stateFor(f);
     for (const custom of [undefined, "Contact your workspace administrator"]) {
-      state.config.settings!.authRequiredMessage = custom as string;
+      assert(state.config.settings !== undefined);
+      if (custom === undefined) {
+        delete state.config.settings.authRequiredMessage;
+      } else {
+        state.config.settings.authRequiredMessage = custom;
+      }
       const result = await callHost(f, state, host),
         text = JSON.stringify(result);
       expect(text).toContain(custom ?? "ID-token source");
@@ -1364,11 +1400,11 @@ it.each(["proxy", "direct"])(
 
 it("runs explicit proxy auth-start and public IdP authentication through the same native flow", async () => {
   const f = await fixture();
-  delete f.oauth.crossAppAccess!.clientSecret;
+  delete f.oauth.crossAppAccess.clientSecret;
   const result = await executeAuthStart(stateFor(f), f.name);
-  expect(result.details?.error).toBeUndefined();
-  expect(result.details?.authenticated).toBe(true);
-  expect(f.idpRequests.find((r) => r.form)?.form?.has("client_secret")).toBe(false);
+  expect(result.details.error).toBeUndefined();
+  expect(result.details.authenticated).toBe(true);
+  expect(f.idpRequests.find((r) => r.form !== undefined)?.form?.has("client_secret")).toBe(false);
   expect(f.exchanges).toHaveLength(1);
   expect(browser.open).not.toHaveBeenCalled();
 });
@@ -1376,51 +1412,11 @@ it("runs explicit proxy auth-start and public IdP authentication through the sam
 it("re-resolves an ID-token source for the native bounded MCP invalid-grant retry", async () => {
   const f = await fixture(),
     marker = join(scratch(), "reads"),
-    token = f.oauth.crossAppAccess!.idToken;
-  f.oauth.crossAppAccess!.idToken = `!printf x >> '${marker}'; printf '%s' '${token}'`;
+    token = f.oauth.crossAppAccess.idToken;
+  f.oauth.crossAppAccess.idToken = `!printf x >> '${marker}'; printf '%s' '${token}'`;
   f.rejectTokens();
   await expect(f.start()).rejects.toThrow(/invalid_grant/);
   expect(readFileSync(marker, "utf8")).toBe("xx");
   expect(f.exchanges).toHaveLength(2);
   expect(browser.open).not.toHaveBeenCalled();
-});
-
-it("rejects bad CAA shapes and contradictory grants without disclosing or resolving inputs", () => {
-  const valid = { idpUrl: "https://idp.example", clientId: "idp", idToken: "TOKEN_SENTINEL" };
-  const configs: unknown[] = [
-    null,
-    false,
-    [],
-    {},
-    { ...valid, idToken: "" },
-    { ...valid, idpUrl: 42 },
-    { ...valid, clientId: [] },
-    { ...valid, clientSecret: null },
-    { ...valid, audience: "override" },
-    { ...valid, resource: "override" },
-  ].map((crossAppAccess) => ({ crossAppAccess }));
-  configs.push(
-    { crossAppAccess: valid, grantType: "authorization_code" },
-    { crossAppAccess: valid, grantType: "client_credentials" },
-  );
-  for (const config of configs) {
-    for (const build of [
-      () => extractOAuthConfig({ oauth: config as OAuthConfig }),
-      () =>
-        new McpOAuthProvider("bad", "https://resource.example", config as OAuthConfig, {
-          onRedirect() {},
-        }),
-    ]) {
-      let error: unknown;
-      try {
-        build();
-      } catch (caught) {
-        error = caught;
-      }
-      expect(error).toBeInstanceOf(Error);
-      expect(String(error)).toContain("crossAppAccess");
-      expect(String(error)).not.toContain("TOKEN_SENTINEL");
-      expect((error as Error).cause).toBeUndefined();
-    }
-  }
 });
