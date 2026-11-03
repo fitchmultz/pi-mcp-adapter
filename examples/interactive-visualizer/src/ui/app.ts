@@ -39,12 +39,10 @@ function renderChart(spec: ChartSpec) {
     type: spec.type,
     data: {
       labels: spec.labels,
-      datasets: spec.datasets.map((ds) => ({
-        label: ds.label,
-        data: ds.data,
-        backgroundColor: ds.color === "" ? undefined : ds.color,
-        borderColor: ds.color === "" ? undefined : ds.color,
-      })),
+      datasets: spec.datasets.map((ds) => {
+        const color = ds.color === null || ds.color === "" ? undefined : ds.color;
+        return { label: ds.label, data: ds.data, backgroundColor: color, borderColor: color };
+      }),
     },
     options: {
       responsive: true,
