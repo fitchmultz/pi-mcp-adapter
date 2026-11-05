@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.31 - 2026-11-05
+
+<!-- npm-release:unreleased:start -->
+
 - Fix `/mcp` and `/mcp-auth` loading in Pi-managed installs without local host dependencies.
+
+<!-- npm-release:unreleased:end -->
+
+- Fix MCP command loading without physical host peers (#206) ([c354396](https://github.com/fitchmultz/pi-mcp-adapter/commit/c354396a5a4a552cf415fb5b62d129ba822e359b))
+
+### What's Changed
+
+- Fix MCP command loading without physical host peers by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/206
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.30...v8.0.31
 
 ## 8.0.30 - 2026-11-03
 
