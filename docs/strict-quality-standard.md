@@ -991,12 +991,12 @@ Record the repository and adopted version; supported runtimes and package manage
 **pi-mcp-adapter adoption:**
 
 - Standard: 5.2. Node.js 24 or newer; official Pi 1.5.0 or newer and the maintained Pi fork. Package manager: npm 12.2.0.
-- Tools: Oxlint 1.91.0, oxlint-tsgolint 7.0.2005, Oxfmt 0.76.0, TypeScript 7.0.2, and oxc-parser 0.157.0. Latest stable quality releases were resolved from npm on 5 November 2026. Host qualification selects the latest official release and maintained fork independently.
+- Tools: Oxlint 1.91.0, oxlint-tsgolint 7.0.2006, Oxfmt 0.76.0, TypeScript 7.0.2, and oxc-parser 0.157.0. Latest stable quality releases were resolved from npm on 5 November 2026. Host qualification selects the latest official release and maintained fork independently.
 - Coverage: `.oxlintrc.json`, `.oxfmtrc.json`, `tsconfig.json`, `tsconfig.build.json`, `tsconfig.declarations.json`, and `examples/interactive-visualizer/tsconfig.json`. Production tooling uses the production profile. Tests, conformance drivers and native compatibility fixtures use the test profile. Dedicated negative type tests are compiler-checked and also run by Vitest.
 - Acceptance: `npm run check` after root and example clean installs. It runs builds, full native lint, formatting, all four compiler projects, policy and directive checks, generator freshness, Vitest, Node OAuth tests and conformance. [.github/workflows/ci.yml](../.github/workflows/ci.yml) owns hosted acceptance.
 - Formatting and generation: Oxfmt owns maintained supported files, including generated `metadata-cache-validator.ts`. `scripts/generate-metadata-cache-schema.mts` verifies that artifact. `scripts/build-app-bridge.mjs` and `scripts/build-host-browser.mjs` own their committed bundles. The build scripts own root and example `dist/` output. Dependencies, local runtime state and conformance result logs are not maintained implementation.
 - Enforcement has no finding budget or diagnostic filter. [The exception audit](quality-audit.md) records each retained operation and its concrete supported-contract constraint. Qualified site decisions are not migration debt; every other operation retains native checking.
-- Verification and delivery: see [the audit results](quality-audit.md). Adoption is incomplete until its exact integrated revision passes every required gate, including hosted CI. Removing the conformance failure baseline exposes any referee failure rather than accepting it.
+- Verification and delivery: see [the audit results](quality-audit.md). Adoption is incomplete until its exact integrated revision passes every required gate, including hosted CI. The conformance suite uses the stable referee source with its reviewed IdP fixture correction; all native assertions remain required and there is no failure baseline.
 
 ### Quality-exception record
 

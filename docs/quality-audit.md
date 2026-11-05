@@ -8,7 +8,7 @@ This audit applies guide 5.2 to `fitchmultz/pi-mcp-adapter`, starting at
 remain untouched. The full guide is [the adopted standard](strict-quality-standard.md).
 
 The Appendix A rules and Oxfmt options already match the guide. They remain fully
-enabled. Oxlint is upgraded to 1.91.0; Oxfmt 0.76.0, oxlint-tsgolint 7.0.2005 and
+enabled. Oxlint is upgraded to 1.91.0; Oxfmt 0.76.0, oxlint-tsgolint 7.0.2006 and
 oxc-parser 0.157.0 are the current stable releases resolved from npm on 5 November 2026. No semantic tool patch or diagnostic filter is used.
 
 ## Removed exceptions and exclusions
@@ -143,7 +143,7 @@ verify runtime rejection, and the packed consumer checks the published types.
 
 The remaining Git ignores in `.gitignore:1-9` cover dependencies, local runtime
 state, conformance output, log files, macOS metadata and generated distributions.
-The two client-exit cases in `conformance/run.sh:29-31` are negative protocol-test
+The two client-exit cases in `conformance/run.sh:34-36` are negative protocol-test
 expectations, not accepted failures: the real referee asserts bounded scope retries
 and rejection of a mismatched resource. All wire assertions and timeouts remain
 fatal. The explicit legacy issuer option at `conformance/driver.ts:187` exercises
@@ -180,13 +180,15 @@ Node 24.22.1, official Pi 1.5.0, and the committed quality-tool versions.
 | Policy and directives | `npm run check:policy`; `npm run check:directives`                                                                                                     | Both pass. Hidden-source mutations fail as intended.                                                                                                                        |
 | Generator freshness   | `npm run check:cache-schema`; `npm run check:browser`                                                                                                  | Both pass. Standalone bridge freshness passes in Vitest.                                                                                                                    |
 | Packed official host  | `PI_COMPAT_HOST=official PI_COMPAT_EXPECTED_VERSION=1.5.0 node scripts/compat-host.mjs`; same environment with `node scripts/compat-package-smoke.mjs` | Passed. Packed npm install, native SDK reload, bundled CLI, commands without physical peers, nested tool cancellation/redaction and selection persistence run successfully. |
-| Protocol conformance  | `npm run test:conformance`                                                                                                                             | **Failed**, 25 of 26 scenarios pass. The unchanged official cross-app referee fails both exchange assertions.                                                               |
-| Aggregate             | `npm run check`                                                                                                                                        | **Failed only at conformance**; independent checks still ran.                                                                                                               |
+| Protocol conformance  | `npm run test:conformance`                                                                                                                             | Passed all 26 scenarios using the stable referee source with the reviewed IdP fixture correction. No assertions or scenarios are skipped.                                   |
+| Aggregate             | `npm run check`                                                                                                                                        | Final integrated rerun follows the referee correction; all constituent checks are required.                                                                                 |
 
 The supplied guide and adopted copy also match exactly after Oxfmt formatting,
 excluding the repository's Appendix B adoption record. `git diff --check` passes.
-Hosted official/fork qualification and review are pending. The known conformance
-failure prevents claiming complete adoption or merging the change.
+Hosted official/fork qualification and both automated reviews passed on `8a8afd0`.
+The current referee correction is requalified by the full integrated run and current-head
+checks on [PR #208](https://github.com/fitchmultz/pi-mcp-adapter/pull/208). No required
+failure is accepted; merge and release require all those checks.
 
 ## Files changed
 
@@ -205,6 +207,8 @@ failure prevents claiming complete adoption or merging the change.
 - `conformance/README.md`
 - `conformance/baseline-client.yml` (deleted)
 - `conformance/details.md`
+- `conformance/idp-discovery.patch`
+- `conformance/prepare-referee.sh`
 - `conformance/run.sh`
 - `connection-handshake.ts`
 - `docs/development.md`
@@ -227,7 +231,7 @@ failure prevents claiming complete adoption or merging the change.
 - `state.ts`
 - `tool-approval.ts`
 
-## Guide feedback and blocker
+## Guide feedback
 
 - Required SDK callback arity and callback-property APIs conflict with generic
   arity/EventTarget preferences. Rest tuples and aliases hide these operations
@@ -240,9 +244,19 @@ failure prevents claiming complete adoption or merging the change.
 - Native URL validation and JavaScript echo coercion have observable failure/byte
   behavior that their suggested replacements do not retain.
 - JSON Schema's noncallable `then` property is not a Promise thenable.
-- The published conformance referee 0.1.16 supplies an incomplete IdP OIDC document
-  for `auth/cross-app-access-complete-flow`. The baseline-free scenario fails.
-  Production validation remains strict; the fixture is not patched or filtered.
+
+## Referee correction
+
+The 0.1.16 release source is built with `conformance/idp-discovery.patch`, which
+backports [upstream PR #574](https://github.com/modelcontextprotocol/conformance/pull/574).
+It supplies the three required IdP metadata fields and uses RS256 for the fixture's
+ID token, matching OIDC Discovery's mandatory advertised algorithm. ID-JAG signing,
+all referee assertions, scenario selection and production OAuth validation are unchanged.
+`conformance/prepare-referee.sh` uses the official release commit and its lockfile;
+`conformance/run.sh` builds once, runs all 26 native scenarios and cleans temporary
+source/output. Patch application and the native build happen on every run, so input
+changes cannot reuse stale output. This fixes the dependency fixture rather than
+recording or suppressing a failure.
 
 The installed referee source is [cross-app-access.ts:160-173](https://github.com/modelcontextprotocol/conformance/blob/21a9a2febd7100d7c17ac1021ee7f2ed9f66a1e0/src/scenarios/client/auth/cross-app-access.ts#L160-L173).
 A separate real-referee discovery probe received HTTP 200 with only `issuer`,
@@ -251,6 +265,9 @@ The installed SDK's `discoverAuthorizationServerMetadata` rejected that actual
 response with three `invalid_type` issues naming the missing fields. This confirms
 the failure before either exchange, rather than inferring it from fixture text.
 
-These conflicts are surfaced for guide review rather than used to weaken the
-baseline. The final acceptance result must report the conformance failure if the
-published referee still cannot complete the unchanged scenario.
+The upstream regression calls the SDK's real discovery helper against the running
+fixture. It fails with those three missing-field errors before the correction. The
+corrected upstream build and all 642 tests pass, and its canonical typecheck/lint
+pass on the M1. The adapter's corrected stable runner passes all 26 scenarios on
+Termux. These results do not claim that upstream has published the correction;
+the patch and source provenance remain explicit until that release is available.

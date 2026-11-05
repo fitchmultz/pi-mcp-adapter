@@ -11,14 +11,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 RESULTS_DIR="${CONFORMANCE_RESULTS_DIR:-conformance/results}"
-CONFORMANCE="npm exec --yes --package=@modelcontextprotocol/conformance@0.1.16 -- conformance"
 DRIVER="bash conformance/driver.sh"
 TIMEOUT="${CONFORMANCE_TIMEOUT_MS:-90000}"
+
+referee_dir="$(mktemp -d "${TMPDIR:-/tmp}/pi-mcp-referee.XXXXXX")"
+log_file="$(mktemp "${TMPDIR:-/tmp}/pi-mcp-conformance-log.XXXXXX")"
+trap 'rm -rf "$referee_dir"; rm -f "$log_file"' EXIT
+bash conformance/prepare-referee.sh "$referee_dir"
+CONFORMANCE=(node "$referee_dir/dist/index.js")
 
 run_scenario() {
   local scenario="$1"
   shift
-  $CONFORMANCE client \
+  "${CONFORMANCE[@]}" client \
     --command "$DRIVER" \
     --scenario "$scenario" \
     --timeout "$TIMEOUT" \
@@ -45,24 +50,22 @@ for argument in "$@"; do
 done
 
 if [[ -n "$focused_scenario" ]]; then
-  focused_log="$(mktemp "${TMPDIR:-/tmp}/pi-mcp-conformance-log.XXXXXX")"
-  trap 'rm -f "$focused_log"' EXIT
   set +e
-  $CONFORMANCE client \
+  "${CONFORMANCE[@]}" client \
     --command "$DRIVER" \
     --timeout "$TIMEOUT" \
     --output-dir "$RESULTS_DIR" \
-    "$@" 2>&1 | tee "$focused_log"
+    "$@" 2>&1 | tee "$log_file"
   focused_status=${PIPESTATUS[0]}
   set -e
   if [[ "$focused_status" -ne 0 ]]; then
     exit "$focused_status"
   fi
-  if grep -q "Client timed out after" "$focused_log"; then
+  if grep -q "Client timed out after" "$log_file"; then
     echo "MCP client conformance timed out" >&2
     exit 1
   fi
-  if grep -q "Client exited with code" "$focused_log" \
+  if grep -q "Client exited with code" "$log_file" \
     && ! allows_client_error "$focused_scenario"; then
     echo "MCP client exited unexpectedly despite passing wire checks" >&2
     exit 1
@@ -78,7 +81,7 @@ fi
 rm -rf "$RESULTS_DIR"
 mkdir -p "$RESULTS_DIR"
 
-scenarios="$({ $CONFORMANCE list --client 2>/dev/null || true; } |
+scenarios="$("${CONFORMANCE[@]}" list --client |
   awk '/^Client scenarios/{found=1; next} found && /^  - /{print $2}')"
 if [[ -z "$scenarios" ]]; then
   echo "Unable to list MCP client conformance scenarios" >&2
@@ -86,8 +89,6 @@ if [[ -z "$scenarios" ]]; then
 fi
 
 failed=0
-log_file="$(mktemp "${TMPDIR:-/tmp}/pi-mcp-conformance-log.XXXXXX")"
-trap 'rm -f "$log_file"' EXIT
 
 while IFS= read -r scenario; do
   [[ -z "$scenario" ]] && continue
