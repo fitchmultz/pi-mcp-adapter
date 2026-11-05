@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fix `/mcp` and `/mcp-auth` loading in Pi-managed installs without local host dependencies.
+
 ## 8.0.30 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
