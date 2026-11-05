@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.33 - 2026-11-05
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Use configured deadlines in post-expiry auth tests (#210) ([2e9829b](https://github.com/fitchmultz/pi-mcp-adapter/commit/2e9829bb0b3686a7b865fda4af2c1a360f1155bc))
+
+### What's Changed
+
+- Use configured deadlines in post-expiry auth tests by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/210
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.32...v8.0.33
+
 ## 8.0.32 - 2026-11-05
 
 <!-- npm-release:unreleased:start -->
