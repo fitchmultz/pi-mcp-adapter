@@ -78,7 +78,6 @@ async function expiredState() {
   const needsAuth = { ...stale, status: "needs-auth" as const };
   let current = stale;
   vi.spyOn(state.manager, "getConnection").mockImplementation(() => current);
-  vi.spyOn(state.manager, "getRequestOptions").mockReturnValue({ timeout: 30 });
   const reconnect = vi.spyOn(state.manager, "reconnect").mockImplementation(async () => {
     current = needsAuth;
     return current;
