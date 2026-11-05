@@ -5,11 +5,5 @@ conformance/results/
 *.log
 .DS_Store
 
-progress.md
-worker-summary.md
-worker-*.md
-plan.md
-triage-*.md
-review-*.md
 dist/
 dist.staging*/

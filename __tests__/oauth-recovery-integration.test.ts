@@ -170,7 +170,7 @@ async function collidingAuthBindings(kind: "pending" | "single-flight") {
 }
 
 describe("OAuth permission recovery through native HTTP and production hosts", () => {
-  it("retains ordered errors without cause when callback binding and startup cleanup fail", async () => {
+  it("retains ordered errors and the cleanup cause when callback binding and startup cleanup fail", async () => {
     const f = await fixture();
     const occupied = createServer();
     await new Promise<void>((resolve) => {
@@ -200,12 +200,12 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome.reason.errors).toEqual([recorded.value, cleanup]);
     expect(outcome.reason.errors[0]).toBe(recorded.value);
     expect(outcome.reason.errors[1]).toBe(cleanup);
-    expect(Object.getOwnPropertyNames(outcome.reason)).toEqual(["stack", "message", "errors"]);
+    expect(outcome.reason.cause).toBe(cleanup);
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
     expect(f.exchanges).toHaveLength(0);
   });
 
-  it("retains ordered errors without cause when native client lookup and startup cleanup fail", async () => {
+  it("retains ordered errors and the cleanup cause when native client lookup and startup cleanup fail", async () => {
     const f = await fixture();
     const primary = new Error("client credentials unavailable");
     const cleanup = new Error("state cleanup unavailable");
@@ -220,13 +220,13 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome.reason.errors).toEqual([primary, cleanup]);
     expect(outcome.reason.errors[0]).toBe(primary);
     expect(outcome.reason.errors[1]).toBe(cleanup);
-    expect(Object.getOwnPropertyNames(outcome.reason)).toEqual(["stack", "message", "errors"]);
+    expect(outcome.reason.cause).toBe(cleanup);
     expect(f.http.some((request) => request.path.startsWith("/.well-known/"))).toBe(true);
     expect(f.exchanges).toHaveLength(0);
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
   });
 
-  it("retains ordered errors without cause when token persistence and completion cleanup fail", async () => {
+  it("retains ordered errors and the cleanup cause when token persistence and completion cleanup fail", async () => {
     const f = await fixture();
     const { authorizationUrl } = await f.start();
     const callback = await f.authorize(authorizationUrl);
@@ -243,14 +243,14 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome.reason.errors).toEqual([primary, cleanup]);
     expect(outcome.reason.errors[0]).toBe(primary);
     expect(outcome.reason.errors[1]).toBe(cleanup);
-    expect(Object.getOwnPropertyNames(outcome.reason)).toEqual(["stack", "message", "errors"]);
+    expect(outcome.reason.cause).toBe(cleanup);
     expect(f.exchanges).toHaveLength(1);
     expect(f.stored()?.tokens).toBeUndefined();
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
     expect((await fetch(callback)).status).toBe(400);
   });
 
-  it("retains ordered errors without cause when cancellation and callback cleanup fail", async () => {
+  it("retains ordered errors and the cleanup cause when cancellation and callback cleanup fail", async () => {
     const f = await fixture();
     const controller = new AbortController();
     const primary = new Error("consent cancelled");
@@ -273,7 +273,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome.reason.errors).toEqual([primary, cleanup]);
     expect(outcome.reason.errors[0]).toBe(primary);
     expect(outcome.reason.errors[1]).toBe(cleanup);
-    expect(Object.getOwnPropertyNames(outcome.reason)).toEqual(["stack", "message", "errors"]);
+    expect(outcome.reason.cause).toBe(cleanup);
     expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
     expect(f.exchanges).toHaveLength(0);
     expect(browser.open).not.toHaveBeenCalled();

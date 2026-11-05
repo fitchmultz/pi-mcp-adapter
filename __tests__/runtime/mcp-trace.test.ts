@@ -126,23 +126,28 @@ describe("MCP protocol tracing", () => {
     expect(writer.isDisabled).toBe(true);
   });
 
-  it("isolates writer failures, preserves callbacks and rethrows the original strict-flush error", async () => {
-    const failure = new Error("disk full");
-    const append = vi
-      .fn<NonNullable<McpTraceWriterOptions["appendFile"]>>()
-      .mockRejectedValue(failure);
-    const writer = new McpTraceWriter({ filePath: await tracePath(), appendFile: append });
-    const { client, received } = await observedClient({
-      record: (event) => writer.write(event),
-    });
-    const result = await client.callTool({ name: "echo", arguments: { text: "still connected" } });
-    await writer.flush();
+  it.each([new Error("disk full"), "disk full", { code: "EIO" }])(
+    "isolates writer failures, preserves callbacks and rejects with the original strict-flush failure: %j",
+    async (failure) => {
+      const append = vi
+        .fn<NonNullable<McpTraceWriterOptions["appendFile"]>>()
+        .mockRejectedValue(failure);
+      const writer = new McpTraceWriter({ filePath: await tracePath(), appendFile: append });
+      const { client, received } = await observedClient({
+        record: (event) => writer.write(event),
+      });
+      const result = await client.callTool({
+        name: "echo",
+        arguments: { text: "still connected" },
+      });
+      await writer.flush();
 
-    expect(received).toEqual(["still connected"]);
-    expect(result.content).toEqual([{ type: "text", text: "still connected" }]);
-    expect(writer.isDisabled).toBe(true);
-    await expect(writer.flush(true)).rejects.toBe(failure);
-  });
+      expect(received).toEqual(["still connected"]);
+      expect(result.content).toEqual([{ type: "text", text: "still connected" }]);
+      expect(writer.isDisabled).toBe(true);
+      await expect(writer.flush(true)).rejects.toBe(failure);
+    },
+  );
 
   it("does not let a throwing observer break transport callbacks", async () => {
     const { client, received } = await observedClient({

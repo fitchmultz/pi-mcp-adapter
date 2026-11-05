@@ -11,25 +11,24 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 RESULTS_DIR="${CONFORMANCE_RESULTS_DIR:-conformance/results}"
-BASELINE="conformance/baseline-client.yml"
-CONFORMANCE="npm exec --yes --package=@modelcontextprotocol/conformance@0.1.16 -- conformance"
 DRIVER="bash conformance/driver.sh"
 TIMEOUT="${CONFORMANCE_TIMEOUT_MS:-90000}"
+
+referee_dir="$(mktemp -d "${TMPDIR:-/tmp}/pi-mcp-referee.XXXXXX")"
+log_file="$(mktemp "${TMPDIR:-/tmp}/pi-mcp-conformance-log.XXXXXX")"
+trap 'rm -rf "$referee_dir"; rm -f "$log_file"' EXIT
+bash conformance/prepare-referee.sh "$referee_dir"
+CONFORMANCE=(node "$referee_dir/dist/index.js")
 
 run_scenario() {
   local scenario="$1"
   shift
-  $CONFORMANCE client \
+  "${CONFORMANCE[@]}" client \
     --command "$DRIVER" \
     --scenario "$scenario" \
-    --expected-failures "$BASELINE" \
     --timeout "$TIMEOUT" \
     --output-dir "$RESULTS_DIR" \
     "$@"
-}
-
-is_baselined() {
-  grep -Fqx "  - $1" "$BASELINE"
 }
 
 allows_client_error() {
@@ -51,26 +50,22 @@ for argument in "$@"; do
 done
 
 if [[ -n "$focused_scenario" ]]; then
-  focused_log="$(mktemp "${TMPDIR:-/tmp}/pi-mcp-conformance-log.XXXXXX")"
-  trap 'rm -f "$focused_log"' EXIT
   set +e
-  $CONFORMANCE client \
+  "${CONFORMANCE[@]}" client \
     --command "$DRIVER" \
-    --expected-failures "$BASELINE" \
     --timeout "$TIMEOUT" \
     --output-dir "$RESULTS_DIR" \
-    "$@" 2>&1 | tee "$focused_log"
+    "$@" 2>&1 | tee "$log_file"
   focused_status=${PIPESTATUS[0]}
   set -e
   if [[ "$focused_status" -ne 0 ]]; then
     exit "$focused_status"
   fi
-  if grep -q "Client timed out after" "$focused_log"; then
+  if grep -q "Client timed out after" "$log_file"; then
     echo "MCP client conformance timed out" >&2
     exit 1
   fi
-  if grep -q "Client exited with code" "$focused_log" \
-    && ! is_baselined "$focused_scenario" \
+  if grep -q "Client exited with code" "$log_file" \
     && ! allows_client_error "$focused_scenario"; then
     echo "MCP client exited unexpectedly despite passing wire checks" >&2
     exit 1
@@ -86,7 +81,7 @@ fi
 rm -rf "$RESULTS_DIR"
 mkdir -p "$RESULTS_DIR"
 
-scenarios="$({ $CONFORMANCE list --client 2>/dev/null || true; } |
+scenarios="$("${CONFORMANCE[@]}" list --client |
   awk '/^Client scenarios/{found=1; next} found && /^  - /{print $2}')"
 if [[ -z "$scenarios" ]]; then
   echo "Unable to list MCP client conformance scenarios" >&2
@@ -94,21 +89,17 @@ if [[ -z "$scenarios" ]]; then
 fi
 
 failed=0
-log_file="$(mktemp "${TMPDIR:-/tmp}/pi-mcp-conformance-log.XXXXXX")"
-trap 'rm -f "$log_file"' EXIT
 
 while IFS= read -r scenario; do
   [[ -z "$scenario" ]] && continue
   printf '%-52s' "$scenario"
   if run_scenario "$scenario" "$@" >"$log_file" 2>&1; then
-    # conformance 0.1.16's baseline check only evaluates wire checks. Do not
-    # let it hide an unexpected client-process failure after those checks ran.
+    # The referee evaluates wire checks separately from client-process failures.
     if grep -q "Client timed out after" "$log_file"; then
       echo "FAIL"
       tail -40 "$log_file"
       failed=1
     elif grep -q "Client exited with code" "$log_file" \
-      && ! is_baselined "$scenario" \
       && ! allows_client_error "$scenario"; then
       echo "FAIL"
       tail -40 "$log_file"
@@ -128,4 +119,4 @@ if [[ "$failed" -ne 0 ]]; then
   exit 1
 fi
 
-echo "All MCP client conformance scenarios passed or matched the reviewed baseline."
+echo "All MCP client conformance scenarios passed."

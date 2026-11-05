@@ -34,7 +34,7 @@ function checkSource(file: string, source: string, sites: unknown[] = []) {
   mkdirSync(join(cwd, "docs"), { recursive: true });
   writeFileSync(
     join(cwd, "docs/quality-exceptions.md"),
-    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-011: Invalid runtime options\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-020: Supplied auth-entry URL update\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-023: Preserve ordered aggregate errors without adding cause\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-3003: Missing host theme\n## QX-030: Standalone bridge callback contracts\n## QX-031: Native raw echo coercion\n## QX-7001: JSON Schema conditional keyword\n",
+    "## QX-001: Native transport observation\n## QX-007: Legacy initialized capabilities\n## QX-009: Forward captured failures\n## QX-010: Native client callbacks\n## QX-012: Mutating configuration hook\n## QX-016: Receiver-preserving native method captures\n## QX-013: Preserve the primary keyring load failure\n## QX-018: Native keyring module declarations\n## QX-021: Lazy declared Zod API\n## QX-022: Published positional filtering API\n## QX-024: Supported native SDK operations\n## QX-025: Native tool callback\n## QX-026: Native URL validation\n## QX-030: Standalone bridge callback contracts\n## QX-031: Native raw echo coercion\n## QX-7001: JSON Schema conditional keyword\n",
   );
   return { ...spawnSync(process.execPath, [checker], { cwd, encoding: "utf8" }), cwd };
 }
@@ -176,7 +176,6 @@ const managerFiles = [
   "connection-http.ts",
   "connection-runtime.ts",
   "connection-oauth-ownership.ts",
-  "connection-handshake.ts",
   "tool-transport.ts",
 ];
 const managerSites = loadExceptionSites().filter((entry) => managerFiles.includes(entry.file));
@@ -368,18 +367,6 @@ const captures = [
     operation,
   },
 }));
-const invalidDirective =
-  "// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-011: exercise runtime validation.";
-const invalidSource = [
-  'import type { ServerEntry } from "./adapter/types.ts";',
-  "export const invalid = function invalidProtocolOptions(value: unknown): ServerEntry {",
-  "return (",
-  invalidDirective,
-  "value as ServerEntry",
-  ");",
-  "};",
-  "",
-].join("\n");
 const transformSource = [
   'import assert from "node:assert/strict";',
   'import type { McpConfig } from "./adapter/types.ts";',
@@ -610,60 +597,6 @@ const keyringCases = [
 
 const zodModuleSource =
   'import type * as Zod from "zod";\nimport { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\nexport function createAuthRecordSchemas(): Zod.ZodString {\n// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-021: keep Zod outside cached startup.\nconst { z } = require("zod") as typeof Zod;\nreturn z.string();\n}\n';
-const authEntrySource = [
-  'import type { AuthEntry } from "./adapter/auth-record-types.ts";',
-  "export function saveAuthEntry(entry: AuthEntry, serverUrl?: string): void {",
-  "if (serverUrl !== undefined && serverUrl.length > 0) {",
-  "// oxlint-disable-next-line eslint/no-param-reassign -- QX-020: preserve the supplied entry's URL update.",
-  "entry.serverUrl = serverUrl;",
-  "}",
-  "}",
-  "",
-].join("\n");
-const aggregateCases = [
-  {
-    name: "cleanupFailedCompletion",
-    primary: "primary",
-    message: "OAuth completion cleanup failed",
-  },
-  {
-    name: "authenticateOnce",
-    primary: "error",
-    message: "OAuth cancellation cleanup failed",
-  },
-  { name: "reserveCallback", primary: "error", message: "OAuth startup cleanup failed" },
-  { name: "startInteractive", primary: "error", message: "OAuth startup cleanup failed" },
-].map(({ name, primary, message }) => {
-  const operation = `throw new AggregateError([${primary}, cleanupError], "${message}");`;
-  const source = [
-    `export function ${name}(${primary}: Error, cleanup: Error): never {`,
-    "try {",
-    "throw cleanup;",
-    "} catch (cleanupError) {",
-    "// oxlint-disable-next-line eslint/preserve-caught-error -- QX-023: preserve ordered failures without adding cause.",
-    operation,
-    "}",
-    "}",
-    "",
-  ].join("\n");
-  return {
-    name: `ordered aggregate in ${name}`,
-    source,
-    operation,
-    replacement: `throw new AggregateError([cleanupError, ${primary}], "${message}");`,
-    neighbor: `${source}export function dropsCaughtError(): never {\ntry { throw new Error("original"); } catch (error) {\nthrow new Error(String(error));\n}\n}\n`,
-    diagnostic: ["forward.ts:11:", "[Error/eslint(preserve-caught-error)]"],
-    authorized: {
-      ...site,
-      id: "QX-023",
-      rule: "eslint/preserve-caught-error",
-      scope: { type: "FunctionDeclaration", name },
-      path: ["body", "body", 0, "handler", "body", "body", 0],
-      nodeType: "ThrowStatement",
-      operation,
-    },
-  };
-});
 const urlValidationSource =
   'export function resolveServerUrl(resolved: string): string {\ntry {\n// oxlint-disable-next-line eslint/no-new -- QX-026: preserve native URL errors without canonicalizing the returned bytes.\nnew URL(resolved);\n} catch (error) {\nthrow new Error("Invalid URL", { cause: error });\n}\nreturn resolved;\n}\n';
 
@@ -759,7 +692,6 @@ const echoSource = [
 ].join("\n");
 const functionCases = [
   ...keyringCases,
-  ...aggregateCases,
   {
     name: "native URL validation",
     source: urlValidationSource,
@@ -812,24 +744,6 @@ const functionCases = [
       operation: 'const { z } = require("zod") as typeof Zod;',
     },
   },
-  {
-    name: "supplied auth-entry URL update",
-    source: authEntrySource,
-    operation: "entry.serverUrl",
-    replacement: "entry.oauthState",
-    neighbor: `${authEntrySource}export function unrelated(entry: AuthEntry): void {\nentry.codeVerifier = "neighbor";\n}\n`,
-    diagnostic: ["forward.ts:9:", "[Error/eslint(no-param-reassign)]"],
-    authorized: {
-      ...site,
-      id: "QX-020",
-      rule: "eslint/no-param-reassign",
-      scope: { type: "FunctionDeclaration", name: "saveAuthEntry" },
-      path: ["body", "body", 0, "consequent", "body", 0, "expression", "left"],
-      nodeType: "MemberExpression",
-      operation: "entry.serverUrl",
-      guards: ["consequent: serverUrl !== undefined && serverUrl.length > 0"],
-    },
-  },
 ];
 
 const positionalDirective =
@@ -862,18 +776,6 @@ const positionalSite = {
   operation: positionalOperation,
 };
 
-const themeDirective =
-  "// oxlint-disable-next-line typescript/no-unnecessary-condition -- QX-3003: JavaScript hosts can omit the theme.";
-const themeOperation = 'if (ui.theme === undefined) {\nreturn "status";\n}';
-const themeSource = [
-  'import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";',
-  "export function forward(ui: ExtensionUIContext): string {",
-  themeDirective,
-  themeOperation,
-  'return ui.theme.fg("accent", "status");',
-  "}",
-  "",
-].join("\n");
 const executeDirective =
   "// oxlint-disable-next-line eslint/max-params -- QX-025: preserve Pi's five native callback positions.";
 const executeOperation = [
@@ -889,23 +791,6 @@ const executeSource = [
   "",
 ].join("\n");
 const hostCases = [
-  {
-    name: "missing native theme",
-    source: themeSource,
-    directive: themeDirective,
-    operation: themeOperation,
-    replacement: themeOperation.replace("=== undefined", "!== undefined"),
-    authorized: {
-      ...site,
-      id: "QX-3003",
-      rule: "typescript/no-unnecessary-condition",
-      nodeType: "IfStatement",
-      path: ["body", "body", 0],
-      operation: themeOperation,
-    },
-    neighbor: `${themeSource}export function unrelated(ui: ExtensionUIContext): boolean {\nreturn ui.theme === undefined;\n}\n`,
-    diagnostic: ["forward.ts:10:", "[Error/typescript(no-unnecessary-condition)]"],
-  },
   {
     name: "native Pi execute callback",
     source: executeSource,
@@ -1121,22 +1006,6 @@ describe("operation-bound exceptions", () => {
       diagnostic: ["forward.ts:5:", "[Error/typescript(unbound-method)]"],
     })),
     {
-      name: "invalid runtime option assertion",
-      source: invalidSource,
-      authorized: {
-        ...site,
-        id: "QX-011",
-        rule: "typescript/no-unsafe-type-assertion",
-        scope: { type: "FunctionExpression", name: "invalidProtocolOptions" },
-        path: ["body", "body", 0, "argument", "expression"],
-        nodeType: "TSAsExpression",
-        operation: "value as ServerEntry",
-      },
-      neighbor: `${invalidSource}export function unrelated(value: unknown): ServerEntry {\nreturn value as ServerEntry;\n}\n`,
-      diagnostic:
-        "forward.ts:9:8: Unsafe type assertion: type 'ServerEntry' is more narrow than the original type. [Error/typescript(no-unsafe-type-assertion)]",
-    },
-    {
       name: "legacy initialized capabilities",
       source: capabilitySource,
       authorized: {
@@ -1275,18 +1144,6 @@ describe("operation-bound exceptions", () => {
     const result = checkSource("forward.ts", forward.replace(`${directive}\n`, ""), [site]);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unused exception site QX-009");
-  });
-
-  it.each(aggregateCases)("rejects an unused $name directive natively", (entry) => {
-    const source = entry.source.replace(entry.operation, "throw cleanupError;");
-    const result = checkSource("forward.ts", source, [entry.authorized]);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("Authorized operation changed");
-    const native = nativeLint(result.cwd);
-    expect(native.status).toBe(1);
-    expect(native.stdout + native.stderr).toContain(
-      "forward.ts:5:1: Unused oxlint-disable directive (no problems were reported). [Error]",
-    );
   });
 
   it("requires the URL directive to suppress a real finding at the authorized site", () => {

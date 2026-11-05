@@ -17,8 +17,6 @@ const ignorePatterns = [
   "dist/**",
   "dist.staging*/**",
   "conformance/results/**",
-  ".pi/**",
-  ".dogfood/**",
   "app-bridge.bundle.js",
   "host-browser.bundle.js",
   "examples/interactive-visualizer/dist/**",
@@ -254,8 +252,6 @@ function verifyIgnoredSources() {
     ":!dist/**",
     ":!dist.staging*/**",
     ":!conformance/results/**",
-    ":!.pi/**",
-    ":!.dogfood/**",
     ":!examples/interactive-visualizer/dist/**",
     ":!examples/interactive-visualizer/node_modules/**",
   ];

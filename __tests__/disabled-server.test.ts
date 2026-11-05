@@ -361,11 +361,7 @@ describe("disabled MCP servers", () => {
   it("keeps no-theme status usable and reports disabled count", async () => {
     const state = await disabledState();
     state.config.settings = { mcpFooterStatus: "full" };
-    // A JavaScript host can omit the required SDK theme at runtime.
-    // Preserve the adapter fallback without inventing a partial Theme class.
-    const ui = { ...host.ui };
-    Object.defineProperty(ui, "theme", { value: undefined });
-    state.ui = ui;
+    state.ui = { ...host.ui, theme: undefined };
     updateStatusBar(state);
     expect(host.ui.setStatus).toHaveBeenCalledWith("mcp", "🔌 MCP: 1 server enabled (1 disabled)");
   });

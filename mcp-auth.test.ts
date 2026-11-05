@@ -171,21 +171,21 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("saveAuthEntry / getAuthEntry", () => {
-    nodeIt("saves an auth entry and updates its supplied URL", () => {
-      const entry: AuthEntry = {
+    nodeIt("saves the URL without mutating the supplied auth entry", () => {
+      const entry: AuthEntry = Object.freeze({
         tokens: {
           accessToken: "test-token",
           refreshToken: "refresh-token",
           expiresAt: 1234567890,
           scope: "read write",
         },
-      };
+      });
 
       saveAuthEntry("test-server", entry, "https://api.example.com");
-      assert.strictEqual(entry.serverUrl, "https://api.example.com");
+      assert.strictEqual(entry.serverUrl, undefined);
       const retrieved = getAuthEntry("test-server");
 
-      assert.deepStrictEqual(retrieved, entry);
+      assert.deepStrictEqual(retrieved, { ...entry, serverUrl: "https://api.example.com" });
     });
 
     nodeIt("should update existing entries", () => {

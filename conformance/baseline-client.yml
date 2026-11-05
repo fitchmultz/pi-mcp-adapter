@@ -1,8 +1,0 @@
-# Known gaps in pi-mcp-adapter's MCP client conformance coverage.
-# Remove an entry as soon as its scenario passes. The conformance CLI treats a
-# passing baseline entry as stale and fails the run.
-client:
-  # Stable 0.1.16's IdP OIDC document omits mandatory response_types_supported,
-  # subject_types_supported and id_token_signing_alg_values_supported. Native
-  # strict discovery rejects it before exchange; valid local CAA flows are covered.
-  - auth/cross-app-access-complete-flow

@@ -14,7 +14,7 @@ import type {
 export interface SamplingHandlerOptions {
   serverName: string;
   autoApprove: boolean;
-  ui?: ExtensionUIContext;
+  ui?: Pick<ExtensionUIContext, "confirm">;
   modelRegistry: ModelRegistry;
   getCurrentModel: () => Model<Api> | undefined;
   getSignal: () => AbortSignal | undefined;
