@@ -162,11 +162,13 @@ checks ran. Published semantic lint cannot execute there because
 also reported associated lint-control failures and two timeouts. Native M1
 verification is the applicable quality-tool result, not Android runtime proof.
 
-The native M1 candidate is verified against the base revision above plus patch
-SHA-256 `61d37b03299b2303016b786da28877502d1df8b67a492578fd9b45aa831a4391`.
-This record's result updates are documentation-only. Commands below ran through
-`npx --yes npm@12.2.0 run check` after clean root and example installs. They use
-Node 24.22.1, official Pi 1.5.0, and the committed quality-tool versions.
+The complete native M1 check passes at commit
+`3962aff1dc991313eb8e3dab5e4a5347d8248ba1`, tree
+`0d36df458774891052713a557c2c9aed976bffca`. This record's final result update
+is documentation-only. After clean root and example installs, `npm run check`
+ran with npm 12.2.0 explicitly first on PATH, Node 24.22.1, official Pi 1.5.0,
+Oxlint 1.91.0 and oxlint-tsgolint 7.0.2006. The latter release appeared during
+adoption; its native policy and exception controls are requalified by this run.
 
 | Gate                  | Command                                                                                                                                                | Result                                                                                                                                                                      |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -181,7 +183,7 @@ Node 24.22.1, official Pi 1.5.0, and the committed quality-tool versions.
 | Generator freshness   | `npm run check:cache-schema`; `npm run check:browser`                                                                                                  | Both pass. Standalone bridge freshness passes in Vitest.                                                                                                                    |
 | Packed official host  | `PI_COMPAT_HOST=official PI_COMPAT_EXPECTED_VERSION=1.5.0 node scripts/compat-host.mjs`; same environment with `node scripts/compat-package-smoke.mjs` | Passed. Packed npm install, native SDK reload, bundled CLI, commands without physical peers, nested tool cancellation/redaction and selection persistence run successfully. |
 | Protocol conformance  | `npm run test:conformance`                                                                                                                             | Passed all 26 scenarios using the stable referee source with the reviewed IdP fixture correction. No assertions or scenarios are skipped.                                   |
-| Aggregate             | `npm run check`                                                                                                                                        | Final integrated rerun follows the referee correction; all constituent checks are required.                                                                                 |
+| Aggregate             | `npm run check`                                                                                                                                        | Passed every required stage, including baseline-free conformance.                                                                                                           |
 
 The supplied guide and adopted copy also match exactly after Oxfmt formatting,
 excluding the repository's Appendix B adoption record. `git diff --check` passes.
@@ -269,5 +271,5 @@ The upstream regression calls the SDK's real discovery helper against the runnin
 fixture. It fails with those three missing-field errors before the correction. The
 corrected upstream build and all 642 tests pass, and its canonical typecheck/lint
 pass on the M1. The adapter's corrected stable runner passes all 26 scenarios on
-Termux. These results do not claim that upstream has published the correction;
+Termux and the M1. These results do not claim that upstream has published the correction;
 the patch and source provenance remain explicit until that release is available.
