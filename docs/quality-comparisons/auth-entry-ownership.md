@@ -1,44 +1,19 @@
-# Auth-entry URL ownership comparison
+# Auth-entry URL ownership
 
-QX-020 preserves `saveAuthEntry`'s update to the supplied mutable record. The
-comparison uses the actual helper and persistence code, not a replacement store.
+`saveAuthEntry` borrows a readonly input record. A non-empty URL produces a shallow
+copy for persistence; the function does not change the caller's record. The secure
+write and legacy plaintext cleanup retain their order.
 
-## Compliant alternative
+`updateTokens` and `updateClientInfo` own their mutable records and finish with the
+save call. Neither reads the record afterward. The other production callers pass
+no URL and do not need a mutation. This helper is not exported by either package
+entrypoint. Its observable input mutation is not a requirement of these consumers.
 
-Replace the conditional parameter assignment in `saveAuthEntry` with a shallow
-copy, leaving the secure write and plaintext cleanup unchanged:
+The native save/read test in `mcp-auth.test.ts` supplies a frozen record, requires
+that its URL stays absent, and checks the full stored record with the requested
+URL. It fails on an attempted parameter write. Existing token/client-information
+replacement, issuer isolation, migration and native storage tests remain active.
 
-```ts
-const storedEntry =
-  serverUrl !== undefined && serverUrl.length > 0 ? { ...entry, serverUrl } : entry;
-writeSecureAuthEntry(serverName, storedEntry);
-removeLegacyAuthEntry(serverName, options);
-```
-
-This alternative passes the root compiler and fully strict native lint. It is a
-reasonable implementation when the API borrows an input record instead of
-updating it. A mutation through an alias or `Object.assign` would not resolve the
-ownership decision.
-
-## Observed difference
-
-On Node 24.22.2, Oxlint 1.90.0, oxlint-tsgolint 7.0.2005 and TypeScript 7.0.2,
-a disposable native probe runs both complete modules against the memory store.
-Each input is `{ tokens: { accessToken: "fixture" } }`; each save receives
-`"https://example.com/mcp"` as its URL.
-
-| Observation                          | Selected implementation | Compliant copy |
-| ------------------------------------ | ----------------------- | -------------- |
-| Supplied entry's `serverUrl`         | Provided URL            | Absent         |
-| Persisted entry read through the API | Equal                   | Equal          |
-| Root compiler                        | Pass                    | Pass           |
-| Native lint without a directive      | Parameter mutation      | Pass           |
-
-The probe asserts both argument states and deep equality of the persisted
-records. It removes its synthetic credentials and temporary plaintext directory.
-The comparison establishes an observable mutation difference, not a broken
-external consumer or a performance result.
-
-The native save/read case now starts without `serverUrl` and asserts that the
-save updates the supplied entry. Its persisted-record equality assertion remains.
-This gives the retained mutable-helper contract a direct regression check.
+This implementation needs no parameter-mutation exception. The input, stored
+credential contents and caller-visible behavior are checked independently rather
+than treating a historical mutation as a compatibility requirement.

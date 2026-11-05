@@ -180,8 +180,9 @@ async function reserveCallback(
       clearOAuthState(serverName, authStorageOptions);
       await Promise.resolve();
     } catch (cleanupError) {
-      // oxlint-disable-next-line eslint/preserve-caught-error -- QX-023: preserve ordered failures without adding cause.
-      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed");
+      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed", {
+        cause: cleanupError,
+      });
     }
     throw error;
   }
@@ -378,8 +379,9 @@ async function startInteractive(
         context.authStorageOptions,
       );
     } catch (cleanupError) {
-      // oxlint-disable-next-line eslint/preserve-caught-error -- QX-023: preserve ordered failures without adding cause.
-      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed");
+      throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed", {
+        cause: cleanupError,
+      });
     }
     throw error;
   }

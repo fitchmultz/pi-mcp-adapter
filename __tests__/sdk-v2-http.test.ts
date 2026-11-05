@@ -359,24 +359,6 @@ async function call(state: McpExtensionState, entry: string, signal?: AbortSigna
 }
 
 describe("published SDK v2 over real local HTTP", () => {
-  it.each([
-    { protocolVersion: "future" },
-    { retryOnTransportFailure: "true" },
-    { oauth: { skipIssuerMetadataValidation: "true" } },
-  ])(
-    "rejects invalid in-memory protocol options before connecting: %j",
-    async function rejectsInvalidProtocolOptions(invalid) {
-      const f = await fixture();
-      await expect(
-        f.connect(
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-011: negative runtime inputs must reach the manager's own validation.
-          invalid as unknown as ServerEntry,
-        ),
-      ).rejects.toThrow(/must be/);
-      expect(f.requests).toHaveLength(0);
-    },
-  );
-
   it("uses native discovery, wire metadata and nested dynamic parameter headers without legacy traffic", async () => {
     const f = await fixture((e) => {
       if (e.body.method !== "tools/list") {

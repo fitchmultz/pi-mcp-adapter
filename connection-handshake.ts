@@ -44,8 +44,9 @@ export class ConnectionHandshake {
         try {
           await abortCleanup;
         } catch (cleanupError) {
-          // oxlint-disable-next-line eslint/preserve-caught-error -- QX-023: preserve ordered original failures without adding cause.
-          throw new AggregateError([error, cleanupError], "MCP connection abort cleanup failed");
+          throw new AggregateError([error, cleanupError], "MCP connection abort cleanup failed", {
+            cause: cleanupError,
+          });
         }
       }
       throw error;

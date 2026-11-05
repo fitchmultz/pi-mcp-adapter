@@ -124,7 +124,7 @@ describe("MCP manager owner races", () => {
     expect(errors[0]).toBeInstanceOf(Error);
     expect(errors[0]).toHaveProperty("message", "MCP connection demo was closed");
     expect(errors[1]).toBe(cleanupError);
-    expect(Object.hasOwn(outcome.reason, "cause")).toBe(false);
+    expect(outcome.reason.cause).toBe(cleanupError);
     // Native close ran before the injected failure; terminal cleanup is already observed.
     cleanups.pop();
   });

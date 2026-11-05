@@ -8,6 +8,7 @@ const negativeTypeTests = new Set([
   "__tests__/catalog-metadata.test-d.ts",
   "__tests__/fixtures/published-types-consumer.test-d.mts",
   "__tests__/oauth-config.test-d.ts",
+  "__tests__/protocol-config.test-d.ts",
 ]);
 const inventory = loadExceptionSites();
 /** @type {Set<ReturnType<typeof resolveExceptionSite>>} */

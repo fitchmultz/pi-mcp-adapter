@@ -15,6 +15,7 @@ export async function createManagerBoundaryHttp(
   } = {},
 ): Promise<{
   definition: ServerDefinition;
+  requests: readonly { method: string | undefined; url: string | undefined }[];
   initializes: () => number;
   initializeStarted: Promise<null>;
   release: () => void;
@@ -24,10 +25,12 @@ export async function createManagerBoundaryHttp(
   const pending: Array<() => void> = [];
   let initializes = 0;
   let hold = options.holdInitialize === true;
+  const requests: { method: string | undefined; url: string | undefined }[] = [];
   function reply(response: ServerResponse, id: string | number, result: unknown): void {
     machineJson(response, { jsonrpc: "2.0", id, result });
   }
   const http = new MachineHttpServer(async (request, response) => {
+    requests.push({ method: request.method, url: request.url });
     if (request.method !== "POST") {
       response.writeHead(request.method === "DELETE" ? 200 : 405).end();
       return;
@@ -68,6 +71,7 @@ export async function createManagerBoundaryHttp(
   const origin = await http.listen();
   return {
     definition: { url: `${origin}/mcp`, auth: false, protocolVersion: "legacy" },
+    requests,
     initializes: () => initializes,
     initializeStarted: initializeStarted.promise,
     release: () => {

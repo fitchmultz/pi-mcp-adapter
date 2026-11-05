@@ -14,7 +14,7 @@ interface ToolApprovalState {
   owner: McpRuntimeOwner;
   config: McpConfig;
   approvedToolCalls: Map<string, true>;
-  ui?: ExtensionContext["ui"];
+  ui?: Pick<ExtensionContext["ui"], "select">;
 }
 
 export type ToolCallApprovalResult =

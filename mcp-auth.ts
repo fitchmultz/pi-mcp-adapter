@@ -292,19 +292,17 @@ export function inspectAuthForUrl(
 }
 
 /**
- * Save an auth entry. A non-empty serverUrl also updates the supplied entry.
+ * Save an auth entry without mutating the caller's record.
  */
 export function saveAuthEntry(
   serverName: string,
-  entry: AuthEntry,
+  entry: Readonly<AuthEntry>,
   serverUrl?: string,
   options?: AuthStorageOptions,
 ): void {
-  if (serverUrl !== undefined && serverUrl.length > 0) {
-    // oxlint-disable-next-line eslint/no-param-reassign -- QX-020: preserve the supplied entry's URL update.
-    entry.serverUrl = serverUrl;
-  }
-  writeSecureAuthEntry(serverName, entry);
+  const storedEntry =
+    serverUrl !== undefined && serverUrl.length > 0 ? { ...entry, serverUrl } : entry;
+  writeSecureAuthEntry(serverName, storedEntry);
   removeLegacyAuthEntry(serverName, options);
 }
 

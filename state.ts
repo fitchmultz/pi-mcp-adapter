@@ -64,7 +64,10 @@ export interface McpExtensionState {
   completedUiSessions: CompletedUiSession[];
   activeScripts: number;
   openBrowser: (url: string) => Promise<void>;
-  ui?: ExtensionContext["ui"];
+  /** Adapter hosts may supply the UI without Pi's terminal theme. */
+  ui?: Omit<ExtensionContext["ui"], "theme"> & {
+    theme?: ExtensionContext["ui"]["theme"] | undefined;
+  };
   sendMessage?: SendMessageFn;
   onToolMetadataUpdated?: (serverName: string, reason: string) => void | Promise<void>;
   statusEvents?: McpStatusEventBus;

@@ -369,6 +369,16 @@ describe("quality policy", () => {
       "Unclassified ignored source",
     ],
     [
+      "source hidden in .pi",
+      (root: string) => write(root, ".pi/feature.ts", "export const value = 1;\n"),
+      "Unclassified ignored source",
+    ],
+    [
+      "source hidden in .dogfood",
+      (root: string) => write(root, ".dogfood/feature.ts", "export const value = 1;\n"),
+      "Unclassified ignored source",
+    ],
+    [
       "ignored quality config",
       (root: string) => {
         appendFileSync(join(root, ".gitignore"), "\n.oxlintignore\n");

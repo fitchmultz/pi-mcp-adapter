@@ -172,22 +172,9 @@ export class McpTraceWriter {
     this.options = options;
     this.maxBytes = boundedPositiveInteger(options.maxBytes, DEFAULT_MCP_TRACE_MAX_BYTES);
     this.maxEvents = boundedPositiveInteger(options.maxEvents, DEFAULT_MCP_TRACE_MAX_EVENTS);
-    this.append =
-      options.appendFile ??
-      (async (path, data, appendOptions) => {
-        await appendFile(path, data, appendOptions);
-      });
-    this.resetFile =
-      options.writeFile ??
-      (async (path, data, writeOptions) => {
-        await writeFile(path, data, writeOptions);
-      });
-    this.makeDirectory =
-      options.mkdir ??
-      (async (path) => {
-        await mkdir(path, { recursive: true });
-        return;
-      });
+    this.append = options.appendFile ?? appendFile;
+    this.resetFile = options.writeFile ?? writeFile;
+    this.makeDirectory = options.mkdir ?? mkdir;
     this.fileReady = this.makeDirectory(dirname(this.options.filePath), { recursive: true })
       .then(() => this.resetFile(this.options.filePath, "", { encoding: "utf8" }))
       .catch((error: unknown) => {

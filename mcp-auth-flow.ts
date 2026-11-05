@@ -204,8 +204,9 @@ async function cleanupFailedCompletion(
     );
   } catch (cleanupError) {
     if (primary !== undefined) {
-      // oxlint-disable-next-line eslint/preserve-caught-error -- QX-023: preserve ordered failures without adding cause.
-      throw new AggregateError([primary, cleanupError], "OAuth completion cleanup failed");
+      throw new AggregateError([primary, cleanupError], "OAuth completion cleanup failed", {
+        cause: cleanupError,
+      });
     }
     throw cleanupError;
   }
@@ -356,8 +357,9 @@ async function authenticateOnce(
     try {
       await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
     } catch (cleanupError) {
-      // oxlint-disable-next-line eslint/preserve-caught-error -- QX-023: preserve ordered failures without adding cause.
-      throw new AggregateError([error, cleanupError], "OAuth cancellation cleanup failed");
+      throw new AggregateError([error, cleanupError], "OAuth cancellation cleanup failed", {
+        cause: cleanupError,
+      });
     }
     throw error;
   }

@@ -11,7 +11,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 RESULTS_DIR="${CONFORMANCE_RESULTS_DIR:-conformance/results}"
-BASELINE="conformance/baseline-client.yml"
 CONFORMANCE="npm exec --yes --package=@modelcontextprotocol/conformance@0.1.16 -- conformance"
 DRIVER="bash conformance/driver.sh"
 TIMEOUT="${CONFORMANCE_TIMEOUT_MS:-90000}"
@@ -22,14 +21,9 @@ run_scenario() {
   $CONFORMANCE client \
     --command "$DRIVER" \
     --scenario "$scenario" \
-    --expected-failures "$BASELINE" \
     --timeout "$TIMEOUT" \
     --output-dir "$RESULTS_DIR" \
     "$@"
-}
-
-is_baselined() {
-  grep -Fqx "  - $1" "$BASELINE"
 }
 
 allows_client_error() {
@@ -56,7 +50,6 @@ if [[ -n "$focused_scenario" ]]; then
   set +e
   $CONFORMANCE client \
     --command "$DRIVER" \
-    --expected-failures "$BASELINE" \
     --timeout "$TIMEOUT" \
     --output-dir "$RESULTS_DIR" \
     "$@" 2>&1 | tee "$focused_log"
@@ -70,7 +63,6 @@ if [[ -n "$focused_scenario" ]]; then
     exit 1
   fi
   if grep -q "Client exited with code" "$focused_log" \
-    && ! is_baselined "$focused_scenario" \
     && ! allows_client_error "$focused_scenario"; then
     echo "MCP client exited unexpectedly despite passing wire checks" >&2
     exit 1
@@ -101,14 +93,12 @@ while IFS= read -r scenario; do
   [[ -z "$scenario" ]] && continue
   printf '%-52s' "$scenario"
   if run_scenario "$scenario" "$@" >"$log_file" 2>&1; then
-    # conformance 0.1.16's baseline check only evaluates wire checks. Do not
-    # let it hide an unexpected client-process failure after those checks ran.
+    # The referee evaluates wire checks separately from client-process failures.
     if grep -q "Client timed out after" "$log_file"; then
       echo "FAIL"
       tail -40 "$log_file"
       failed=1
     elif grep -q "Client exited with code" "$log_file" \
-      && ! is_baselined "$scenario" \
       && ! allows_client_error "$scenario"; then
       echo "FAIL"
       tail -40 "$log_file"
@@ -128,4 +118,4 @@ if [[ "$failed" -ne 0 ]]; then
   exit 1
 fi
 
-echo "All MCP client conformance scenarios passed or matched the reviewed baseline."
+echo "All MCP client conformance scenarios passed."

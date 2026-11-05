@@ -19,7 +19,7 @@ The `auth/basic-cimd` fixture requires its own document identity, so the driver 
 
 The `auth/client-credentials-jwt` fixture supplies its throwaway client ID, PEM private key and algorithm through `oauth.clientId` and `oauth.privateKeyJwt`. Native signing, token exchange and the final MCP tool call use the adapter's real provider. `__tests__/oauth-private-key-jwt.test.ts` also covers JWK and command sources, browser code/refresh, custom documents, issuer guards and cancellation over local HTTP.
 
-The `auth/cross-app-access-complete-flow` driver uses the real `oauth.crossAppAccess` configuration and discovers the fixture's IdP issuer. The unmodified fixture remains baselined because its OIDC metadata is invalid, not because cross-app authorization is missing. Local HTTP tests in `__tests__/oauth-cross-app.test.ts` cover valid OIDC discovery, both token exchanges, identity separation, actual network cancellation and final tool use. Corrected-fixture development evidence is supplemental, never a substitute for the unchanged official CI lane.
+The `auth/cross-app-access-complete-flow` driver uses the real `oauth.crossAppAccess` configuration and discovers the fixture's IdP issuer. Its unmodified IdP fixture omits mandatory OIDC metadata. Strict discovery rejects it, so this scenario fails acceptance until the referee supplies a valid document. Local HTTP tests in `__tests__/oauth-cross-app.test.ts` cover valid OIDC discovery, both token exchanges, identity separation, actual network cancellation and final tool use. Corrected-fixture development evidence is supplemental, never a substitute for the unchanged official CI lane.
 
 The `auth/2025-03-26-oauth-metadata-backcompat` fixture advertises an origin authorization server but returns a path-scoped issuer. That scenario explicitly enables `oauth.skipIssuerMetadataValidation`; it is not evidence of strict-default metadata acceptance. `__tests__/sdk-v2-oauth.test.ts` separately proves strict rejection, explicit opt-out, callback validation, issuer binding, and refresh with the actual SDK.
 
@@ -47,14 +47,10 @@ Results are written to `conformance/results/` and ignored by git. Set `CONFORMAN
 
 The full runner is sequential. The conformance CLI's `--suite` mode runs scenarios in parallel, but pre-registered OAuth clients bind an exact localhost callback port. Parallel runs can therefore fail because another scenario briefly owns that port, which tests port contention rather than MCP behavior.
 
-## Expected failures
+## Acceptance
 
-`baseline-client.yml` lists known adapter or SDK gaps. A failure in that file keeps the suite green; an unexpected failure or a baseline entry that starts passing fails the run.
+Every scenario must pass. The runner has no expected-failure baseline or skipped scenarios. It also fails on timeouts and unexpected client-process errors, even if the referee's wire checks pass.
 
-Current gaps:
+The published 0.1.16 referee's cross-app IdP document omits `response_types_supported`, `subject_types_supported`, and `id_token_signing_alg_values_supported`. This is a visible failing gate, not an accepted exception. [The quality audit](../docs/quality-audit.md) records the actual result and blocker. Production OAuth discovery remains strict.
 
-| Scenario                              | Reason                                                                                                                                                                                             |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auth/cross-app-access-complete-flow` | The referee's IdP OIDC document omits required `response_types_supported`, `subject_types_supported` and `id_token_signing_alg_values_supported`; the native SDK rejects it before token exchange. |
-
-Baseline comments contain the protocol-level details. Do not add a failure caused by the driver, callback-port contention, or test setup.
+`auth/scope-retry-limit` and `auth/resource-mismatch` deliberately exercise client rejection. Their successful wire assertions may accompany a nonzero client exit; a referee failure or timeout still fails the runner.
