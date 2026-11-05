@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import { hostCli, hostIndex, hostRoot } from "./compat-host.mjs";
 import { cliObservationSchema, packResultSchema } from "./compat-consumer-results.mjs";
 import { verifyNativeTools } from "./compat-native-tools.mjs";
+import { verifyCommands } from "./native-compat/commands.ts";
 
 const root = mkdtempSync(join(tmpdir(), "mcp-package-"));
 const agentDir = join(root, "agent");
@@ -107,6 +108,7 @@ try {
     suppliedPackage !== undefined && suppliedPackage !== ""
       ? resolve(suppliedPackage)
       : installConsumer(npm);
+  verifyCommands(packageRoot, root);
   for (const file of [
     "dist/index.js",
     "dist/index.d.ts",
