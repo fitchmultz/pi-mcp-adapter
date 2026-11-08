@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -160,111 +159,60 @@ async function harness(
 }
 
 describe("lazy MCP gateways through real Pi SDK", () => {
-  it("advertises object-typed search alternatives and validates query or enable through Pi", async () => {
+  it("declares the gateway from startup and the script tool once loaded, with complete schemas", async () => {
     const h = await harness();
-    let search: ReturnType<typeof getCurrentTools>[number] | undefined;
-    const outputs = await h.request(
-      [
-        { name: "mcp_search", arguments: { query: "" } },
-        { name: "mcp_search", arguments: { enable: ["gateway"] } },
-        { name: "mcp_search", arguments: { query: "", enable: ["script"] } },
-        { name: "mcp_search", arguments: {} },
-      ],
-      (tools, stage) => {
-        if (stage === 0) {
-          search = tools.find((tool) => tool.name === "mcp_search");
-        }
-      },
-    );
-    // Providers such as xAI require an explicit object type on each root alternative.
-    expect(search?.parameters).toMatchObject({
-      type: "object",
-      anyOf: [
-        { type: "object", required: ["query"] },
-        { type: "object", required: ["enable"] },
-      ],
-    });
-    expect(outputs).toHaveLength(4);
-    expect(outputs.slice(0, 3).map((output) => output.isError)).toEqual([false, false, false]);
-    expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);
-    const rejected = requireValue(outputs[3]);
-    expect(rejected.isError).toBe(true);
-    // Require native schema rejection, not just the handler's "Provide query or enable" guard.
-    const content = requireValue(rejected.content[0]);
-    assert.equal(content.type, "text");
-    expect(content.text).toContain('Validation failed for tool "mcp_search"');
-  }, 20_000);
-
-  it("loads complete original schemas on the next request, persists branches/reload and respects manual deselection", async () => {
-    const h = await harness();
-    expect(h.active()).toEqual(["mcp_search"]);
-    expect(h.session.getAllTools().map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["mcp", "mcp_script", "mcp_search"]),
-    );
-    const branch = h.session.sessionManager.appendCustomEntry("test-branch", {});
+    expect(h.active()).toEqual(["mcp"]);
+    const script = h.session.getAllTools().find((tool) => tool.name === "mcp_script");
+    expect(script?.exposure).toBe("deferred");
+    expect(h.session.getCallableToolNames()).toContain("mcp_script");
     const schemas: Array<{ script: unknown; gateway: unknown }> = [];
+    const inspect = (tools: ReturnType<typeof getCurrentTools>) => {
+      schemas.push({
+        script: tools.find((tool) => tool.name === "mcp_script")?.parameters,
+        gateway: tools.find((tool) => tool.name === "mcp")?.parameters,
+      });
+    };
+    const first = await h.request([{ name: "mcp", arguments: { action: "ui-messages" } }], inspect);
+    expect(requireValue(first[0]).isError).toBe(false);
+    h.session.setActiveToolsByName([...h.session.getActiveToolNames(), "mcp_script"]);
     const outputs = await h.request(
       [
-        { name: "mcp_search", arguments: { enable: ["script"] } },
         { name: "mcp_script", arguments: { code: "emit(6 * 7);" } },
-        { name: "mcp_search", arguments: { enable: ["gateway"] } },
-        { name: "mcp", arguments: { action: "ui-messages" } },
         { name: "mcp", arguments: { action: "resources" } },
       ],
-      (tools) => {
-        schemas.push({
-          script: tools.find((tool) => tool.name === "mcp_script")?.parameters,
-          gateway: tools.find((tool) => tool.name === "mcp")?.parameters,
-        });
-      },
+      inspect,
     );
     expect(schemas.map((schema) => schema.script !== undefined)).toEqual([
       false,
-      true,
-      true,
-      true,
-      true,
-      true,
-    ]);
-    expect(schemas.map((schema) => schema.gateway !== undefined)).toEqual([
-      false,
-      false,
       false,
       true,
       true,
       true,
     ]);
-    for (const schema of schemas.slice(1)) {
+    for (const schema of schemas) {
+      expect(schema.gateway).toEqual(gatewayParameters);
+    }
+    for (const schema of schemas.slice(2)) {
       expect(schema.script).toMatchObject({
         required: ["code"],
         properties: { code: { type: "string" }, timeoutMs: { minimum: 1 } },
       });
     }
-    for (const schema of schemas.slice(3)) {
-      expect(schema.gateway).toEqual(gatewayParameters);
-    }
-    expect(outputs).toHaveLength(5);
-    for (const output of outputs.slice(0, 4)) {
-      expect(output.isError).toBe(false);
-      expect(JSONObjectSchema.parse(output.details).error).toBeUndefined();
-    }
-    expect(requireValue(outputs[1]).content[0]).toMatchObject({ type: "text", text: "42" });
-    expect(requireValue(outputs[4]).isError).toBe(true); // Original per-action validation still owns execution.
-    expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);
-    const selectedBranch = requireValue(h.session.sessionManager.getLeafId());
+    expect(outputs).toHaveLength(2);
+    expect(requireValue(outputs[0]).isError).toBe(false);
+    expect(JSONObjectSchema.parse(requireValue(outputs[0]).details).error).toBeUndefined();
+    expect(requireValue(outputs[0]).content[0]).toMatchObject({ type: "text", text: "42" });
+    expect(requireValue(outputs[1]).isError).toBe(true); // Original per-action validation still owns execution.
+    expect(h.active()).toEqual(["mcp", "mcp_script"]);
     await h.session.reload();
-    expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);
-    h.session.setActiveToolsByName(["mcp_search", "mcp"]);
-    await h.session.reload();
-    expect(h.active()).toEqual(["mcp", "mcp_search"]);
-    await h.session.navigateTree(branch, { summarize: false });
-    expect(h.active()).toEqual(["mcp_search"]);
-    await h.session.navigateTree(selectedBranch, { summarize: false });
-    expect(h.active()).toEqual(["mcp", "mcp_script", "mcp_search"]);
+    expect(h.active()).toEqual(["mcp", "mcp_script"]);
+    expect(h.session.getAllTools().find((tool) => tool.name === "mcp_script")?.exposure).toBe(
+      "deferred",
+    );
   }, 20_000);
 
   it.each(["mcp", "mcp_script"])(
-    "keeps loader-excluded %s usable and eager",
+    "keeps an allowlisted %s usable across reload",
     async (name) => {
       const h = await harness({ tools: [name] });
       expect(h.active()).toEqual([name]);
@@ -281,42 +229,24 @@ describe("lazy MCP gateways through real Pi SDK", () => {
   );
 
   it.each([
-    { tools: ["mcp_search", "mcp"], allowed: "mcp", unavailable: "script" },
-    { tools: ["mcp_search", "mcp_script"], allowed: "mcp_script", unavailable: "gateway" },
-    { excludeTools: ["mcp", "mcp_script"], allowed: undefined, unavailable: "both" },
-    {
-      config: { mcpServers: {}, settings: { scriptMode: false } },
-      allowed: "mcp",
-      unavailable: "script",
-    },
+    { tools: ["mcp"], registered: ["mcp"] },
+    { excludeTools: ["mcp", "mcp_script"], registered: [] },
+    { config: { mcpServers: {}, settings: { scriptMode: false } }, registered: ["mcp"] },
   ])(
-    "never activates or persists denied/config-disabled features: $unavailable / $allowed",
+    "registers only permitted, enabled gateways: $registered",
     async (options) => {
       const h = await harness(options);
-      expect(h.active()).toEqual(["mcp_search"]);
-      const [result] = await h.request([
-        { name: "mcp_search", arguments: { enable: ["gateway", "script"] } },
-      ]);
-      assert.ok(result !== undefined);
-      const details = JSONObjectSchema.parse(result.details);
-      expect(details.loaded).toEqual(
-        options.allowed !== undefined ? [{ name: options.allowed }] : [],
-      );
-      expect(details.unavailable).toEqual(
-        options.unavailable === "both" ? ["gateway", "script"] : [options.unavailable],
-      );
-      const selection = h.session.sessionManager
-        .getBranch()
-        .findLast((entry) => entry.type === "custom" && entry.customType === "mcp-tool-selection");
-      assert.ok(selection?.type === "custom");
-      const data = JSONObjectSchema.parse(selection.data);
-      expect(data.features).toEqual(
-        options.allowed !== undefined ? [options.allowed === "mcp" ? "gateway" : "script"] : [],
-      );
+      const registered = () =>
+        h.session
+          .getAllTools()
+          .map((tool) => tool.name)
+          .filter((name) => name.startsWith("mcp"))
+          .sort();
+      expect(registered()).toEqual(options.registered);
+      expect(h.active()).toEqual(options.registered);
       await h.session.reload();
-      expect(h.active()).toEqual(
-        options.allowed !== undefined ? [options.allowed, "mcp_search"].sort() : ["mcp_search"],
-      );
+      expect(registered()).toEqual(options.registered);
+      expect(h.active()).toEqual(options.registered);
     },
     20_000,
   );

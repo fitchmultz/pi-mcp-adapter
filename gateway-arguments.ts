@@ -71,7 +71,7 @@ export const gatewayParameters = Type.Object(
       ),
     ),
     query: Type.Optional(
-      Type.String({ description: "Search terms. Prefer mcp_search to discover and load tools." }),
+      Type.String({ description: "Search terms. Prefer tool_search to load typed tools." }),
     ),
     includeSchemas: Type.Optional(
       Type.Boolean({ description: "Include complete schemas in search results (default true)." }),

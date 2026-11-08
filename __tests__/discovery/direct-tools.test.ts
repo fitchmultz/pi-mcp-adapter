@@ -57,11 +57,11 @@ describe("buildProxyDescription", () => {
     const description = buildProxyDescription(config);
 
     expect(description).toContain("ui-messages");
-    expect(description).toContain("mcp_search");
-    expect(description).toContain("mcp_script");
+    expect(description).toContain("tool_search");
+    expect(description).toContain("codemode");
     expect(description).toContain("read-result");
     expect(description).toContain("Configured servers: demo");
-    expect(description).toContain("Native Pi tools are called directly");
+    expect(description).not.toContain("mcp_search");
   });
 
   it("lists enabled servers without requiring cached metadata or exposing filters", () => {

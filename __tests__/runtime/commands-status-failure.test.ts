@@ -80,7 +80,7 @@ describe("MCP status failure reasons", () => {
     state.toolMetadata.clear();
     await showTools(state, host.context);
     expect(requireValue(vi.mocked(ui.notify).mock.calls[2])[0]).toBe(
-      "No MCP tools discovered. Use mcp_search to discover tools.",
+      'No MCP tools discovered. Connect a server with mcp({ action: "connect" }).',
     );
   });
 

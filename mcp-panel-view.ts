@@ -202,7 +202,7 @@ export class PanelView {
     } else {
       lines.push(
         layout.row(this.renderStatistics()),
-        layout.row(fg(this.t.hint, "Pins load at startup; discover more with mcp_search.")),
+        layout.row(fg(this.t.hint, "Pins load at startup; the rest load through tool_search.")),
       );
     }
     lines.push(layout.emptyRow(), ...this.renderHints(layout));

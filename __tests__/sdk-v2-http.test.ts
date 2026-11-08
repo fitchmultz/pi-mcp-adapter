@@ -1036,13 +1036,8 @@ describe("published SDK v2 over real local HTTP", () => {
 
   it("keeps Pi's provider prompt stable while proxy discovery and instructions refresh", async () => {
     let discoveries = 0;
-    let heldCall: Exchange | undefined;
     const instructions = "Read the data guide before querying. ".repeat(20);
     const f = await fixture((e) => {
-      if (e.body.method === "tools/call" && e.body.params.arguments.value === "pending") {
-        heldCall = e;
-        return true;
-      }
       if (e.body.method === "server/discover") {
         result(e, {
           ...modern,
@@ -1153,7 +1148,7 @@ describe("published SDK v2 over real local HTTP", () => {
         throw new Error(error.error);
       },
     });
-    expect(session.getActiveToolNames()).not.toContain("mcp");
+    expect(session.getActiveToolNames()).toContain("mcp");
     expect(session.getActiveToolNames()).not.toContain("mcp_script");
     const steps = [
       { connect: "local" },
@@ -1171,8 +1166,7 @@ describe("published SDK v2 over real local HTTP", () => {
           tools: getCurrentTools(context.messages),
         }),
       );
-      const loading = prefixes.length === 1;
-      const step = loading ? { enable: ["gateway", "script"] } : steps[prefixes.length - 2];
+      const step = steps[prefixes.length - 1];
       const message: AssistantMessage = {
         role: "assistant",
         api: "openai-completions",
@@ -1180,14 +1174,7 @@ describe("published SDK v2 over real local HTTP", () => {
         model: "fixture",
         timestamp: Date.now(),
         content: step
-          ? [
-              {
-                type: "toolCall",
-                id: `call-${prefixes.length}`,
-                name: loading ? "mcp_search" : "mcp",
-                arguments: step,
-              },
-            ]
+          ? [{ type: "toolCall", id: `call-${prefixes.length}`, name: "mcp", arguments: step }]
           : [{ type: "text", text: "done" }],
         stopReason: step ? "toolUse" : "stop",
         usage: {
@@ -1202,7 +1189,7 @@ describe("published SDK v2 over real local HTTP", () => {
       return streamMessage(message);
     };
     await session.prompt("Read the server guidance and discover the newly available tool.");
-    const outputs = toolResults(session.messages).slice(1);
+    const outputs = toolResults(session.messages);
     expect(outputs).toHaveLength(steps.length);
     expect(
       outputs.every(
@@ -1217,26 +1204,17 @@ describe("published SDK v2 over real local HTTP", () => {
     );
     expect(JSON.stringify(requireValue(outputs[4]).content)).toContain("Read newly available data");
     expect(f.calls().map((e) => e.body.params.name)).toEqual(["second"]);
-    expect(prefixes).toHaveLength(steps.length + 2);
+    expect(prefixes).toHaveLength(steps.length + 1);
     const prefixSchema = z.object({
       systemPrompt: z.string(),
       tools: z.array(z.object({ name: z.string() })),
     });
-    expect(
-      prefixSchema.parse(JSON.parse(requireValue(prefixes[0]))).tools.map((item) => item.name),
-    ).not.toEqual(expect.arrayContaining(["mcp", "mcp_script"]));
-    const prefix = prefixSchema.parse(JSON.parse(requireValue(prefixes[1])));
+    const prefix = prefixSchema.parse(JSON.parse(requireValue(prefixes[0])));
     expect(prefix.systemPrompt).toContain("MCP server operations");
-    expect(prefix.tools.map((item) => item.name)).toEqual(
-      expect.arrayContaining(["mcp", "mcp_script"]),
-    );
-    expect(new Set(prefixes.slice(1)).size).toBe(1);
+    expect(prefix.tools.map((item) => item.name)).toContain("mcp");
+    expect(prefix.tools.map((item) => item.name)).not.toContain("mcp_script");
+    expect(new Set(prefixes).size).toBe(1);
 
-    session.setActiveToolsByName(
-      session
-        .getActiveToolNames()
-        .filter((name: string) => name !== "mcp" && name !== "mcp_script"),
-    );
     let stage = 0;
     let savedRef: string | undefined;
     let savedText: string | undefined;
@@ -1259,10 +1237,9 @@ describe("published SDK v2 over real local HTTP", () => {
       });
       let next: Pick<ToolCall, "name" | "arguments"> | undefined;
       if (stage === 0) {
-        next = {
-          name: "mcp_search",
-          arguments: { query: "newly available", server: "local", limit: 1 },
-        };
+        // tool_search loads a deferred catalog tool through the same native active-tool set.
+        session.setActiveToolsByName([...session.getActiveToolNames(), "local_second"]);
+        next = { name: "mcp", arguments: { action: "describe", tool: "local_second" } };
       } else if (stage === 1) {
         next = { name: requireValue(selected).name, arguments: { value: "typed" } };
       } else if (stage === 2) {
@@ -1276,7 +1253,7 @@ describe("published SDK v2 over real local HTTP", () => {
         const reference = /\[MCP result saved: (".*?")\./.exec(text)?.[1];
         savedRef = z.string().parse(JSON.parse(requireValue(reference)));
         savedText = text;
-        next = { name: "mcp_search", arguments: { enable: ["gateway"] } };
+        next = { name: "mcp", arguments: { action: "status" } };
       } else if (stage === 3) {
         next = {
           name: "mcp",
@@ -1313,102 +1290,24 @@ describe("published SDK v2 over real local HTTP", () => {
       "Load the matching typed tool, call it, then inspect its saved structured data without another remote call.",
     );
     expect(stage).toBe(5);
-    expect(loadingStages.slice(0, 3).map((snapshot) => snapshot.hasGateway)).toEqual([
-      false,
-      false,
-      false,
+    expect(loadingStages.map((snapshot) => snapshot.hasGateway)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
     ]);
     expect(requireValue(loadingStages[0]).selected).toBeUndefined();
-    expect(requireValue(loadingStages[0]).callable).not.toContain("local_second");
+    expect(requireValue(loadingStages[0]).callable).toContain("local_second");
     expect(requireValue(requireValue(loadingStages[1]).selected).parameters).toEqual(
       tool.inputSchema,
     );
-    expect(requireValue(loadingStages[1]).callable).toContain("local_second");
     expect(savedRef).toBeDefined();
-    expect(savedText).toContain('mcp_search({ enable: ["gateway"] })');
+    expect(savedText).toContain('mcp action "read-result"');
     const readback = requireValue(toolResults(session.messages).at(-1));
     expect(readback.isError).toBe(false);
     expect(JSON.parse(textBlock(readback.content[0]))).toEqual({ value: "typed" });
     expect(f.calls().map((e) => e.body.params.name)).toEqual(["second", "second"]);
-    const selection = requireValue(
-      session.sessionManager
-        .getBranch()
-        .filter((entry) => entry.type === "custom")
-        .findLast((entry) => entry.customType === "mcp-tool-selection"),
-    );
-    expect(z.object({ selected: z.unknown() }).parse(selection.data).selected).toEqual([
-      { server: "local", tool: "second" },
-    ]);
-
-    {
-      session.setActiveToolsByName(
-        session.getActiveToolNames().filter((name: string) => name !== "mcp_script"),
-      );
-      let requests = 0;
-      const scriptVisibility: boolean[] = [];
-      session.agent.streamFunction = async (_model, context) => {
-        const first = requests++ === 0;
-        const typed = requireValue(
-          getCurrentTools(context.messages).find(
-            (candidate) => candidate.description === "Read newly available data",
-          ),
-        );
-        const pendingCall: ToolCall = {
-          type: "toolCall",
-          id: "pending-typed",
-          name: typed.name,
-          arguments: { value: "pending" },
-        };
-        scriptVisibility.push(
-          getCurrentTools(context.messages).some((candidate) => candidate.name === "mcp_script"),
-        );
-        const message: AssistantMessage = {
-          role: "assistant",
-          api: model.api,
-          provider: "fixture",
-          model: "fixture",
-          timestamp: Date.now(),
-          content: first ? [pendingCall] : [{ type: "text", text: "done" }],
-          stopReason: first ? "toolUse" : "stop",
-          usage: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 0,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          },
-        };
-        return streamMessage(message, first ? pendingCall : undefined);
-      };
-      const pending = session.prompt("Keep the accepted typed call while loading script.");
-      try {
-        await expect.poll(() => heldCall !== undefined).toBe(true);
-        const search = session.agent.state.tools.find((item) => item.name === "mcp_search");
-        await requireValue(search).execute("load-with-pending", { enable: ["script"] });
-        expect(session.getActiveToolNames()).toContain("mcp_script");
-        expect(session.getActiveToolNames()).toContain("local_second");
-      } finally {
-        if (heldCall) {
-          result(heldCall, {
-            resultType: "complete",
-            content: [{ type: "text", text: "settled once" }],
-          });
-        }
-        await pending;
-      }
-      await session.waitForIdle();
-      expect(scriptVisibility).toEqual([false, true]);
-      expect(
-        f.calls().filter((request) => request.body.params.arguments.value === "pending"),
-        JSON.stringify(session.messages.slice(-4)),
-      ).toHaveLength(1);
-      expect(
-        session.messages.filter(
-          (message) => message.role === "toolResult" && message.toolCallId === "pending-typed",
-        ),
-      ).toMatchObject([{ isError: false, content: [{ type: "text", text: "settled once" }] }]);
-    }
   }, 20_000);
 
   it("awaits native Pi factory checkpoints and capture across Jiti without replaying completed effects", async () => {

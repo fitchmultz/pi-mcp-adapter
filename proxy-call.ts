@@ -144,7 +144,7 @@ class CallLookup {
         content: [
           {
             type: "text",
-            text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).`,
+            text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.`,
           },
         ],
         details: {
@@ -301,7 +301,6 @@ class CallLookup {
     } else {
       hint = ' Use mcp({ action: "search", query: "..." }) to search.';
     }
-    hint += ' If mcp is inactive, load it with mcp_search({ enable: ["gateway"] }).';
     if (
       serverName !== undefined &&
       serverName.length > 0 &&

@@ -198,8 +198,7 @@ async function startAdapter(options: McpAdapterOptions = {}, requestTimeoutMs = 
       throw new Error(error.error);
     },
   });
-  const loader = requireNativeTool(session, "mcp_search");
-  await loader.execute("bootstrap", { enable: ["gateway", "script"] });
+  session.setActiveToolsByName([...session.getActiveToolNames(), "mcp_script"]);
   const proxy = requireNativeTool(session, "mcp");
   const script = requireNativeTool(session, "mcp_script");
   expect(asObjectRecord((await proxy.execute("bootstrap", {})).details)?.error).toBeUndefined();

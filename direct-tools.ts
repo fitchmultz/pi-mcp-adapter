@@ -34,7 +34,7 @@ export function buildProxyDescription(config: McpConfig): string {
     .map(([name]) => name)
     .sort();
   return [
-    'MCP gateway. Use mcp_search to discover typed tools; enable mcp_script with mcp_search({ enable: ["script"] }) for multi-call composition. Native Pi tools are called directly.',
+    "MCP gateway. Typed MCP tools are separate Pi tools: tool_search loads them and codemode can call them directly.",
     `Configured servers: ${servers.length > 0 ? servers.join(", ") : "none"}. Catalog discovery is lazy.`,
     "Actions: status; list/search/describe; call (tool,args,server?); connect (server); instructions (server); resources (server); read-resource (server,uri); read-result (ref,path?,fields?,offset?,limit?); auth-start/auth-complete (server,args?); ui-messages.",
     "Use call when a discovered direct tool is unavailable in this host. read-result reads a retained response without repeating the remote operation.",

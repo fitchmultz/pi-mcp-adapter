@@ -3,11 +3,8 @@ import type {
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { TSchema } from "typebox";
 import type { MetadataCache } from "./metadata-cache.ts";
-import type { McpExtensionState } from "./state.ts";
-import type { DirectToolSpec, McpAdapterOptions, McpConfig, ToolMetadata } from "./types.ts";
-import { toolErrorOverride } from "./error-signal.ts";
+import type { DirectToolSpec, McpConfig, ToolMetadata } from "./types.ts";
 import {
   catalogDefinition,
   collectCatalog,
@@ -15,16 +12,6 @@ import {
   type LoaderDependencies,
   type Selection,
 } from "./tool-loader-catalog.ts";
-import {
-  featureKeys,
-  featureNames,
-  isFeature,
-  readToolSelection,
-  TOOL_SELECTION_ENTRY,
-  type Feature,
-  type FeaturePolicy,
-} from "./tool-loader-snapshots.ts";
-export type { Feature, FeaturePolicy } from "./tool-loader-snapshots.ts";
 
 const key = (value: Selection): string => JSON.stringify([value.server, value.tool]);
 const reserved = new Set([
@@ -37,313 +24,282 @@ const reserved = new Set([
   "find",
   "ls",
   "mcp",
-  "mcp_search",
   "mcp_script",
 ]);
-type Registration = { selection: Selection; name: string; fingerprint: string; pinned: boolean };
+type Registration = {
+  name: string;
+  fingerprint: string;
+  definition: ReturnType<typeof catalogDefinition>;
+  hidden: boolean;
+  pinned: boolean;
+  /**
+   * Whether a withdrawn pin re-activates on return: it was active when it left, or a later session
+   * boundary reached a branch that did not record removing it.
+   */
+  activeWhenWithdrawn: boolean;
+};
 interface ToolLoader {
-  registerFeature: <TParams extends TSchema, TDetails>(
-    feature: Feature,
-    definition: ToolDefinition<TParams, TDetails>,
-  ) => void;
-  restore: (ctx: ExtensionContext) => void;
   sync: (
     config: McpConfig,
     cache: MetadataCache | null,
     env?: string[] | null,
-    registerGateways?: (pins: DirectToolSpec[]) => FeaturePolicy,
+    registerGateways?: (pins: DirectToolSpec[]) => void,
   ) => DirectToolSpec[];
-  activate: (
-    matches: Array<{ server: string; tool: ToolMetadata }>,
-    enable?: Feature[],
-  ) => Array<{ name: string }>;
-  persist: () => void;
-  selectedServers: () => string[];
+  /** Whether any catalog tool is registered with deferred exposure. */
+  hasDeferred: () => boolean;
+  /** Decides every registered pin again after a session start or tree navigation. */
+  settlePins: () => void;
 }
 
+/** Replays the branch's recorded tool loadout (Pi docs/session-format.md) for one tool. */
+export function removedOnBranch(
+  manager: ExtensionContext["sessionManager"],
+  name: string,
+): boolean {
+  let removed = false;
+  for (const entry of manager.getBranch()) {
+    if (entry.type !== "message" || entry.message.role !== "system") {
+      continue;
+    }
+    if (entry.message.toolsRemoved?.some((tool) => tool.name === name) === true) {
+      removed = true;
+    }
+    if (entry.message.toolsAdded?.some((tool) => tool.name === name) === true) {
+      removed = false;
+    }
+  }
+  return removed;
+}
+
+/**
+ * How re-registering a tool changes its pin; a first registration has no change. A pin returning
+ * from withdrawal counts as gained only if `activeWhenWithdrawn`, so a deselection holds.
+ */
+function pinChange(
+  existing: Registration | undefined,
+  pinned: boolean,
+): "lost" | "gained" | undefined {
+  if (existing === undefined) {
+    return undefined;
+  }
+  if (existing.pinned && !pinned) {
+    return "lost";
+  }
+  return pinned && (!existing.pinned || (existing.hidden && existing.activeWhenWithdrawn))
+    ? "gained"
+    : undefined;
+}
+
+/**
+ * Pi's own MCP extension activates tool_search when it registers deferred tools, since only
+ * tool_search can declare them. Only a registered tool_search that reaches other tools qualifies,
+ * and a branch that recorded removing it keeps it off, as Pi keeps any recorded removal.
+ * Returns whether the decision is made: false only while no such tool_search is registered.
+ */
+export function activateToolSearch(
+  pi: ExtensionAPI,
+  manager: ExtensionContext["sessionManager"] | undefined,
+): boolean {
+  if (
+    !pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.reachesTools !== undefined)
+  ) {
+    return false;
+  }
+  const active = pi.getActiveTools();
+  if (
+    !active.includes("tool_search") &&
+    (manager === undefined || !removedOnBranch(manager, "tool_search"))
+  ) {
+    pi.setActiveTools([...active, "tool_search"]);
+  }
+  return true;
+}
+
+/**
+ * Registers the MCP catalog with Pi. Pinned tools are direct and active from startup; every
+ * other catalog tool registers with deferred exposure so Pi's native tool_search loads it and the
+ * transcript owns which loaded tools survive resume, reload and branch navigation. Tools that leave
+ * the catalog are re-registered hidden, since Pi cannot unregister a tool.
+ */
 class Loader implements ToolLoader {
   private readonly pi: ExtensionAPI;
   private readonly dependencies: LoaderDependencies;
   private readonly registered = new Map<string, Registration>();
+  /** Pins decided since the last session boundary, so a later live deselection is not undone. */
+  private readonly settled = new Set<string>();
   private readonly fingerprints = new WeakMap<
     ToolMetadata,
-    { server: string; instructions: string | undefined; value: string }
+    { server: string; instructions: string | undefined; pinned: boolean; value: string }
   >();
-  private available = new Set<string>();
-  private selected = new Map<string, Selection>();
-  private inactive = new Map<string, Selection>();
-  private features: FeaturePolicy = {};
-  private selectedFeatures = new Set<Feature>();
-  private inactiveFeatures = new Set<Feature>();
-  private readonly registeredFeatures = new Set<Feature>();
-  private restoring = true;
 
   constructor(pi: ExtensionAPI, dependencies: LoaderDependencies) {
     this.pi = pi;
     this.dependencies = dependencies;
-    pi.registerEntryRenderer(TOOL_SELECTION_ENTRY, () => {
-      // Selection history is persisted for restoration, not displayed in the transcript.
-    });
   }
 
-  private setActive(names: string[]): void {
-    const unique = [...new Set(names)];
-    if (JSON.stringify(this.pi.getActiveTools()) !== JSON.stringify(unique)) {
-      this.pi.setActiveTools(unique);
-    }
-  }
-
-  registerFeature = <TParams extends TSchema, TDetails>(
-    feature: Feature,
-    definition: ToolDefinition<TParams, TDetails>,
-  ): void => {
-    this.pi.registerTool({
-      defaultActive: false,
-      ...definition,
-      async execute(...args) {
-        const result = await definition.execute(...args);
-        return { ...result, ...toolErrorOverride(result.details) };
-      },
-    });
-    this.registeredFeatures.add(feature);
-  };
-
-  private captureFeatures(current: Set<string>): void {
-    for (const feature of featureKeys) {
-      if (this.features[feature] === undefined) {
-        continue;
-      }
-      if (current.has(featureNames[feature])) {
-        if (this.features[feature].eager !== true) {
-          this.selectedFeatures.add(feature);
-        }
-        this.inactiveFeatures.delete(feature);
-      } else {
-        this.selectedFeatures.delete(feature);
-        if (this.features[feature].eager === true) {
-          this.inactiveFeatures.add(feature);
-        }
-      }
-    }
-  }
-
-  private capture(): void {
-    const current = new Set(this.pi.getActiveTools());
-    this.captureFeatures(current);
-    for (const [id, { selection, name, pinned }] of this.registered) {
-      if (!this.available.has(id)) {
-        continue;
-      }
-      if (current.has(name)) {
-        if (!pinned) {
-          this.selected.set(id, selection);
-        }
-        this.inactive.delete(id);
-      } else {
-        this.selected.delete(id);
-        if (pinned) {
-          this.inactive.set(id, selection);
-        }
-      }
-    }
-  }
-
-  persist = (): void => {
-    this.capture();
-    this.pi.appendEntry(TOOL_SELECTION_ENTRY, {
-      selected: [...this.selected.values()],
-      inactive: [...this.inactive.values()],
-      features: [...this.selectedFeatures],
-      inactiveFeatures: [...this.inactiveFeatures],
-    });
-  };
-
-  restore = (ctx: ExtensionContext): void => {
-    const data = readToolSelection(ctx) ?? {
-      selected: [],
-      inactive: [],
-      features: [],
-      inactiveFeatures: [],
-    };
-    this.selected = new Map(data.selected.map((selection) => [key(selection), selection]));
-    this.inactive = new Map((data.inactive ?? []).map((selection) => [key(selection), selection]));
-    this.selectedFeatures = new Set(data.features?.filter(isFeature) ?? []);
-    this.inactiveFeatures = new Set(data.inactiveFeatures?.filter(isFeature) ?? []);
-    this.restoring = true;
-  };
-
-  private register(item: CatalogTool, cache: MetadataCache | null): void {
+  /**
+   * Reports a pin the tool lost, which Pi keeps active across re-registration, or one it gained or
+   * regained active after withdrawal, which activates like a new pin within the session.
+   */
+  private register(item: CatalogTool, cache: MetadataCache | null): "lost" | "gained" | undefined {
     const { spec, selection, name, pinned } = item;
     const instructions =
       this.dependencies.getState()?.serverInstructions.get(spec.serverName) ??
       cache?.servers[spec.serverName]?.instructions;
     const fingerprint = this.fingerprint(item, instructions);
     const id = key(selection);
-    if (this.registered.get(id)?.fingerprint !== fingerprint) {
-      this.pi.registerTool(catalogDefinition(spec, instructions, this.dependencies));
+    const existing = this.registered.get(id);
+    if (existing?.fingerprint === fingerprint && !existing.hidden) {
+      return undefined;
     }
-    this.registered.set(id, { selection, name, fingerprint, pinned });
+    const definition = catalogDefinition(spec, instructions, this.dependencies, pinned);
+    this.pi.registerTool(definition);
+    this.registered.set(id, {
+      name,
+      fingerprint,
+      definition,
+      hidden: false,
+      pinned,
+      activeWhenWithdrawn: false,
+    });
+    return pinChange(existing, pinned);
+  }
+
+  /**
+   * Pins register with `defaultActive: false`, so Pi activates one itself only when the session
+   * names it (a `tools` allowlist or `+name`) or restores it from the branch's recorded loadout.
+   * Each other pin is activated once per session boundary unless the branch recorded removing it,
+   * as Pi keeps a recorded removal; `gained` pins activate regardless.
+   */
+  private activatePins(gained: ReadonlySet<string>): void {
+    const registered = new Set(this.pi.getAllTools().map((tool) => tool.name));
+    const pins = [...this.registered.values()]
+      .filter(
+        (item) =>
+          item.pinned &&
+          !item.hidden &&
+          registered.has(item.name) &&
+          (gained.has(item.name) || !this.settled.has(item.name)),
+      )
+      .map((item) => item.name);
+    const active = this.pi.getActiveTools();
+    const activate = pins.filter(
+      (name) =>
+        !active.includes(name) &&
+        (gained.has(name) || this.dependencies.removedOnBranch?.(name) !== true),
+    );
+    for (const name of pins) {
+      this.settled.add(name);
+    }
+    if (activate.length > 0) {
+      this.pi.setActiveTools([...active, ...activate]);
+    }
+  }
+
+  private deactivate(names: ReadonlySet<string>): void {
+    const active = this.pi.getActiveTools();
+    if (active.some((name) => names.has(name))) {
+      this.pi.setActiveTools(active.filter((name) => !names.has(name)));
+    }
+  }
+
+  private withdraw(available: Set<string>): void {
+    const active = new Set(this.pi.getActiveTools());
+    for (const [id, registration] of this.registered) {
+      if (available.has(id) || registration.hidden) {
+        continue;
+      }
+      registration.activeWhenWithdrawn = active.has(registration.name);
+      const hidden: ToolDefinition<
+        ReturnType<typeof catalogDefinition>["parameters"],
+        Record<string, unknown>
+      > = { ...registration.definition, exposure: "hidden" };
+      this.pi.registerTool(hidden);
+      registration.hidden = true;
+    }
   }
 
   private fingerprint(item: CatalogTool, instructions: string | undefined): string {
-    const { spec, source, name } = item;
+    const { spec, source, name, pinned } = item;
     const previous = Object.isFrozen(source) ? this.fingerprints.get(source) : undefined;
     const fingerprint =
-      previous?.server === spec.serverName && previous.instructions === instructions
+      previous?.server === spec.serverName &&
+      previous.instructions === instructions &&
+      previous.pinned === pinned
         ? previous.value
-        : JSON.stringify({ spec, name, instructions });
+        : JSON.stringify({ spec, name, instructions, pinned });
     if (Object.isFrozen(source)) {
-      this.fingerprints.set(source, { server: spec.serverName, instructions, value: fingerprint });
+      this.fingerprints.set(source, {
+        server: spec.serverName,
+        instructions,
+        pinned,
+        value: fingerprint,
+      });
     }
     return fingerprint;
   }
 
-  private syncTools(
-    specs: CatalogTool[],
-    cache: MetadataCache | null,
-    previousNames: Set<string>,
-  ): string[] {
+  /** Catalog tools this loader may own: unique, unreserved, and not registered by another extension. */
+  private eligible(specs: readonly CatalogTool[]): CatalogTool[] {
+    const previousNames = new Set([...this.registered.values()].map((item) => item.name));
     const existing = new Set(this.pi.getAllTools().map((tool) => tool.name));
     const counts = new Map<string, number>();
     for (const { name } of specs) {
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
-    this.available = new Set();
-    const enabled: string[] = [];
-    for (const item of specs) {
-      const { selection, name, pinned } = item;
-      const id = key(selection);
-      if (
-        reserved.has(name) ||
-        (counts.get(name) ?? 0) > 1 ||
-        this.isForeignName(name, existing, previousNames)
-      ) {
-        continue;
-      }
-      this.available.add(id);
-      this.register(item, cache);
-      if (this.isSelected(id, pinned)) {
-        enabled.push(name);
-      }
-    }
-    return enabled;
-  }
-
-  private isSelected(id: string, pinned: boolean): boolean {
-    return this.selected.has(id) || (pinned && !this.inactive.has(id));
-  }
-
-  private isForeignName(name: string, existing: Set<string>, previousNames: Set<string>): boolean {
-    return existing.has(name) && !previousNames.has(name);
-  }
-
-  private syncFeatures(policy: FeaturePolicy): string[] {
-    const permitted = new Set(this.pi.getAllTools().map((tool) => tool.name));
-    const loaderMissing = !permitted.has("mcp_search");
-    const enabled: string[] = [];
-    this.features = {};
-    for (const feature of featureKeys) {
-      const requested = policy[feature];
-      if (requested && permitted.has(featureNames[feature])) {
-        const eager = requested.eager === true || loaderMissing;
-        this.features[feature] = { eager };
-        if (this.selectedFeatures.has(feature) || (eager && !this.inactiveFeatures.has(feature))) {
-          enabled.push(featureNames[feature]);
-        }
-      } else {
-        this.selectedFeatures.delete(feature);
-        this.inactiveFeatures.delete(feature);
-      }
-    }
-    return enabled;
+    return specs.filter(
+      ({ name }) =>
+        !reserved.has(name) &&
+        counts.get(name) === 1 &&
+        (!existing.has(name) || previousNames.has(name)),
+    );
   }
 
   sync: ToolLoader["sync"] = (config, cache, env, registerGateways) => {
-    if (!this.restoring) {
-      this.capture();
-    }
-    const previousNames = new Set([...this.registered.values()].map((item) => item.name));
     const specs = collectCatalog(config, cache, env, this.dependencies.getState);
-    const enabled = this.syncTools(specs, cache, previousNames);
+    const eligible = this.eligible(specs);
+    const available = new Set(eligible.map((item) => key(item.selection)));
+    const lost = new Set<string>();
+    const gained = new Set<string>();
+    for (const item of eligible) {
+      const change = this.register(item, cache);
+      if (change !== undefined) {
+        (change === "lost" ? lost : gained).add(item.name);
+      }
+    }
+    this.withdraw(available);
+    this.deactivate(lost);
+    for (const name of lost) {
+      this.settled.delete(name);
+    }
+    this.activatePins(gained);
     const permitted = new Set(this.pi.getAllTools().map((tool) => tool.name));
     const pins = specs
       .filter(
-        (item) =>
-          item.pinned && this.available.has(key(item.selection)) && permitted.has(item.name),
+        (item) => item.pinned && available.has(key(item.selection)) && permitted.has(item.name),
       )
       .map((item) => item.spec);
-    const policy = registerGateways?.(pins);
-    if (policy) {
-      enabled.push(...this.syncFeatures(policy));
-    }
-    // Retain the journal: official 1.0 initial SDK resume has a native loadout restoration gap.
-    const ownedNames = new Set([
-      ...previousNames,
-      ...[...this.registered.values()].map((item) => item.name),
-    ]);
-    for (const feature of this.registeredFeatures) {
-      ownedNames.add(featureNames[feature]);
-    }
-    this.setActive([
-      ...this.pi.getActiveTools().filter((name) => !ownedNames.has(name)),
-      ...enabled,
-    ]);
-    this.restoring = false;
+    registerGateways?.(pins);
     return pins;
   };
 
-  activate: ToolLoader["activate"] = (matches, enable = []) => {
-    const requested = matches.flatMap(({ server, tool }) => {
-      const id = key({ server, tool: tool.originalName });
-      const registration = this.available.has(id) ? this.registered.get(id) : undefined;
-      return registration ? [registration] : [];
-    });
-    // No await between reading and extending the current loadout: parallel searches union their selections.
-    const permitted = new Set(this.pi.getAllTools().map((tool) => tool.name));
-    const requestedFeatures = [...new Set(enable)].filter(
-      (feature) => this.features[feature] !== undefined && permitted.has(featureNames[feature]),
-    );
-    this.setActive([
-      ...this.pi.getActiveTools(),
-      ...requested.map((item) => item.name),
-      ...requestedFeatures.map((feature) => featureNames[feature]),
-    ]);
-    const current = new Set(this.pi.getActiveTools());
-    const tools = requested
-      .filter((item) => current.has(item.name))
-      .map(({ selection, name }) => {
-        this.selected.set(key(selection), selection);
-        return { name };
-      });
-    for (const feature of requestedFeatures) {
-      if (!current.has(featureNames[feature])) {
-        continue;
-      }
-      this.selectedFeatures.add(feature);
-      tools.push({ name: featureNames[feature] });
-    }
-    this.persist();
-    return tools;
-  };
+  hasDeferred: ToolLoader["hasDeferred"] = () =>
+    [...this.registered.values()].some((item) => !item.hidden && !item.pinned);
 
-  selectedServers = (): string[] => [
-    ...new Set([...this.selected.values()].map((item) => item.server)),
-  ];
+  settlePins: ToolLoader["settlePins"] = () => {
+    this.settled.clear();
+    for (const registration of this.registered.values()) {
+      if (registration.hidden && registration.pinned) {
+        // Decided now: a prompt sent while the pin is withdrawn records it removed.
+        registration.activeWhenWithdrawn =
+          this.dependencies.removedOnBranch?.(registration.name) !== true;
+      }
+    }
+    this.activatePins(new Set());
+  };
 }
 
-export function createToolLoader(
-  pi: ExtensionAPI,
-  getState: () => McpExtensionState | null,
-  getInitPromise: () => Promise<McpExtensionState> | null,
-  beforeExecute?: McpAdapterOptions["beforeExecute"],
-): ToolLoader {
-  const loader = new Loader(pi, { getState, getInitPromise, beforeExecute });
-  return {
-    registerFeature: loader.registerFeature,
-    restore: loader.restore,
-    sync: loader.sync,
-    activate: loader.activate,
-    persist: loader.persist,
-    selectedServers: loader.selectedServers,
-  };
+export function createToolLoader(pi: ExtensionAPI, dependencies: LoaderDependencies): ToolLoader {
+  const loader = new Loader(pi, dependencies);
+  return { sync: loader.sync, hasDeferred: loader.hasDeferred, settlePins: loader.settlePins };
 }

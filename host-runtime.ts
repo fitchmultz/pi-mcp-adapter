@@ -9,9 +9,9 @@ import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { createMcpRuntimeOwner, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { createOAuthRuntime, shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
-import { formatTerminalError, parallelLimit, MAX_CONCURRENT_SERVER_CONNECTS } from "./utils.ts";
+import { formatTerminalError } from "./utils.ts";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
-import { createToolLoader } from "./tool-loader.ts";
+import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
 import { logger } from "./logger.ts";
 import { abortable } from "./abort.ts";
 import { McpHostCommands } from "./host-commands.ts";
@@ -58,6 +58,9 @@ export class McpHostRuntime implements McpAdapterHost {
     .filter(Boolean);
   private readonly toolLoader: ReturnType<typeof createToolLoader>;
   private readonly tools: McpHostTools;
+  private sessionManager: ExtensionContext["sessionManager"] | undefined;
+  /** Whether tool_search activation was decided since the last session start or tree navigation. */
+  private toolSearchSettled = false;
 
   constructor(pi: ExtensionAPI, options: McpAdapterOptions) {
     this.pi = pi;
@@ -66,13 +69,14 @@ export class McpHostRuntime implements McpAdapterHost {
     this.programmaticConfig = this.sessionConfig !== undefined;
     this.config =
       this.sessionConfig !== undefined ? cloneMcpConfig(this.sessionConfig) : { mcpServers: {} };
-    this.toolLoader = createToolLoader(
-      pi,
-      () => this.state,
-      () => this.initPromise,
-      options.beforeExecute,
-    );
-    this.tools = new McpHostTools(pi, this, this.toolLoader, options);
+    this.toolLoader = createToolLoader(pi, {
+      getState: () => this.state,
+      getInitPromise: () => this.initPromise,
+      beforeExecute: options.beforeExecute,
+      removedOnBranch: (name) =>
+        this.sessionManager !== undefined && removedOnBranch(this.sessionManager, name),
+    });
+    this.tools = new McpHostTools(pi, this, options);
   }
 
   install(): void {
@@ -82,17 +86,24 @@ export class McpHostRuntime implements McpAdapterHost {
     this.pi.registerFlag("mcp-config", { description: "Path to MCP config file", type: "string" });
     this.registerEvents();
     new McpHostCommands(this.pi, this).register();
-    this.tools.registerSearch();
     if (!this.options.transformConfig) {
       this.tools.syncGateways(this.config, null, []);
     }
   }
 
   private registerEvents(): void {
-    this.pi.on("session_start", (_event, ctx) => this.startSession(ctx));
+    this.pi.on("session_start", (_event, ctx) => {
+      this.sessionManager = ctx.sessionManager;
+      this.toolSearchSettled = false;
+      this.toolLoader.settlePins();
+      return this.startSession(ctx);
+    });
+    // Pi restores the target branch's recorded loadout before session_tree.
     this.pi.on("session_tree", (_event, ctx) => {
-      this.toolLoader.restore(ctx);
-      this.syncToolSurface();
+      this.sessionManager = ctx.sessionManager;
+      this.toolSearchSettled = false;
+      this.toolLoader.settlePins();
+      this.activateToolSearch();
     });
     this.pi.on("model_select", () => {
       if (this.state) {
@@ -121,13 +132,27 @@ export class McpHostRuntime implements McpAdapterHost {
 
   syncToolSurface(): void {
     const config = this.state?.config ?? this.config;
-    const cache = loadMetadataCache(this.state?.metadataCacheEnabled ?? false);
+    this.syncCatalog(config, loadMetadataCache(this.state?.metadataCacheEnabled ?? false));
+  }
+
+  private syncCatalog(config: McpConfig, cache: MetadataCache | null): void {
     this.toolLoader.sync(
       config,
       cache,
       this.envRaw === "__none__" ? null : this.envDirectToolOverride,
       (specs) => this.tools.syncGateways(config, cache, specs),
     );
+    this.activateToolSearch();
+  }
+
+  /** Once per session start or tree navigation, so a later live deselection is not undone. */
+  private activateToolSearch(): void {
+    if (
+      !this.toolSearchSettled &&
+      (this.toolLoader.hasDeferred() || this.tools.hasDeferredScript())
+    ) {
+      this.toolSearchSettled = activateToolSearch(this.pi, this.sessionManager);
+    }
   }
 
   private registerPromptCommands(specs: Iterable<PromptMetadata>): void {
@@ -159,7 +184,6 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private async shutdown(): Promise<void> {
-    this.toolLoader.persist();
     ++this.generation;
     const state = this.state;
     const owner = this.owner;
@@ -230,15 +254,9 @@ export class McpHostRuntime implements McpAdapterHost {
     this.config = runtimeConfig;
     const cacheEnabled =
       ctx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
-    this.toolLoader.restore(ctx);
     this.registerPromptCommands(resolveCachedPrompts(runtimeConfig, cacheEnabled));
     const cache = loadMetadataCache(cacheEnabled);
-    this.toolLoader.sync(
-      runtimeConfig,
-      cache,
-      this.envRaw === "__none__" ? null : this.envDirectToolOverride,
-      (specs) => this.tools.syncGateways(runtimeConfig, cache, specs),
-    );
+    this.syncCatalog(runtimeConfig, cache);
     const init = await import("./init.ts");
     this.initModule = init;
     if (!this.isCurrent(owner, generation)) {
@@ -323,17 +341,6 @@ export class McpHostRuntime implements McpAdapterHost {
     const state = this.state;
     if (!state) {
       return;
-    }
-    const uncached = this.toolLoader
-      .selectedServers()
-      .filter(
-        (server) =>
-          !state.toolMetadata.has(server) && state.config.mcpServers[server] !== undefined,
-      );
-    if (uncached.length > 0) {
-      await parallelLimit(uncached, MAX_CONCURRENT_SERVER_CONNECTS, (server) =>
-        init.lazyConnect(state, server, owner.signal),
-      );
     }
     owner.throwIfInactive();
     this.syncPromptCommands();

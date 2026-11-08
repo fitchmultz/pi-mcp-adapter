@@ -167,24 +167,16 @@ try {
       name,
     );
   }
-  assert.deepEqual(
-    session.getActiveToolNames(),
-    ["mcp_search"],
-    "registered gateways must not be active by default",
-  );
-  const search = session.agent.state.tools.find((tool) => tool.name === "mcp_search");
-  assert.ok(search, "mcp_search must be registered");
-  const loaded = await search.execute("load-gateways", { enable: ["gateway", "script"] });
-  /** @type {unknown} */
-  const details = loaded.details;
-  assert.ok(details !== null && typeof details === "object" && "loaded" in details);
-  assert.deepEqual(details.loaded, [{ name: "mcp" }, { name: "mcp_script" }]);
-  assert.deepEqual(session.getActiveToolNames().sort(), ["mcp", "mcp_script", "mcp_search"]);
+  assert.deepEqual(session.getActiveToolNames(), ["mcp"], "the gateway is active from startup");
+  const script = session.getAllTools().find((tool) => tool.name === "mcp_script");
+  assert.equal(script?.exposure, "deferred", "mcp_script registers deferred");
+  assert.ok(session.getCallableToolNames().includes("mcp_script"));
+  session.setActiveToolsByName(["mcp", "mcp_script"]);
   await session.reload();
   assert.deepEqual(
     session.getActiveToolNames().sort(),
-    ["mcp", "mcp_script", "mcp_search"],
-    "loaded gateways survive reload",
+    ["mcp", "mcp_script"],
+    "a loaded script tool survives reload",
   );
   assert.deepEqual(errors, []);
   assert.equal(
@@ -237,9 +229,10 @@ try {
   );
   for (const name of ["mcp", "mcp_script"]) {
     assert.ok(observed.tools.includes(name), `CLI tool ${name}`);
-    assert.ok(!observed.activeTools.includes(name), `CLI tool ${name} must start inactive`);
   }
-  assert.ok(observed.activeTools.includes("mcp_search"));
+  assert.ok(observed.activeTools.includes("mcp"), "CLI gateway starts active");
+  assert.ok(!observed.activeTools.includes("mcp_script"), "CLI script tool starts deferred");
+  assert.ok(!observed.tools.includes("mcp_search"));
   for (const name of ["mcp", "mcp-auth"]) {
     assert.ok(observed.commands.includes(name), `CLI command ${name}`);
   }

@@ -133,7 +133,7 @@ describe("cached lazy MCP startup through native Pi", () => {
     expect(report.sourceLoaded).toBe(true);
     expect(report.errors).toEqual([]);
     expect(report.tools.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["mcp", "mcp_search", "mcp_script", "lazy00_echo"]),
+      expect.arrayContaining(["mcp", "mcp_script", "lazy00_echo"]),
     );
     expect(
       report.tools
@@ -147,7 +147,7 @@ describe("cached lazy MCP startup through native Pi", () => {
       required: ["text"],
       properties: { text: { type: "string" } },
     });
-    expect(report.activeTools).toEqual(["lazy00_echo", "mcp_search"]);
+    expect(report.activeTools).toEqual(["lazy00_echo", "mcp"]);
     expect(report.commands.filter((command) => command.name.startsWith("mcp__"))).toEqual(
       serverNames.map((name) => ({
         name: `mcp__${name}__brief`,

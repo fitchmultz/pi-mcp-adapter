@@ -40,7 +40,7 @@ Run `/reload` after config changes. Ask Pi:
 
 > Use Chrome DevTools to take a screenshot of the current page.
 
-By default, servers connect when Pi discovers an uncached catalog or calls a tool. Cached catalogs remain searchable without a connection.
+By default, servers connect when Pi discovers an uncached catalog or calls a tool. Cached catalogs register as deferred Pi tools without a connection: Pi's `tool_search` loads the ones a task needs, `codemode` scripts can call them directly, and the `mcp` gateway discovers servers that have no cached catalog yet.
 
 ## Controls and settings
 
@@ -53,7 +53,7 @@ By default, servers connect when Pi discovers an uncached catalog or calls a too
 | `/mcp disable <server>`   | Disable the server for this project; apply with `/reload` |
 | `/mcp enable <server>`    | Enable the server for this project; apply with `/reload`  |
 
-Use [`directTools`](docs/reference.md#typed-discovery-and-pinned-tools) to pin tools at startup. Other tools remain available for discovery. Global search covers known catalogs; select a server to discover an unknown catalog.
+Use [`directTools`](docs/reference.md#typed-discovery-and-pinned-tools) to pin tools at startup. Other tools stay deferred until `tool_search` loads them. Like Pi's own MCP extension, the adapter activates a registered `tool_search` when it registers deferred tools, once per session start or tree navigation; a branch that recorded removing `tool_search` keeps it off. Gateway search covers known catalogs; `mcp({ action: "connect", server })` discovers an unknown catalog.
 
 Use [`approveTools`](docs/reference.md#tool-approval) to require confirmation before sensitive calls. Matching calls fail in headless sessions without approval.
 

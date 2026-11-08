@@ -217,9 +217,6 @@ describe("Pi registered extension reload real path", () => {
       oldPids.push(second.pid);
       await waitFor(() => !isAlive(first.pid));
       expect(harness.session.getActiveToolNames()).toContain("delayed_reload_identity");
-      harness.session.setActiveToolsByName(
-        harness.session.getActiveToolNames().filter((name) => name !== "delayed_reload_identity"),
-      );
 
       await harness.session.reload();
       const active = await waitForFixture(
@@ -230,7 +227,7 @@ describe("Pi registered extension reload real path", () => {
       assert(third !== undefined);
       oldPids.push(third.pid);
       await waitFor(() => !isAlive(second.pid));
-      expect(harness.session.getActiveToolNames()).not.toContain("delayed_reload_identity");
+      expect(harness.session.getActiveToolNames()).toContain("delayed_reload_identity");
 
       expect(active).toHaveLength(1);
       expect(third.toolName).toBe("reload_identity");

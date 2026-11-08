@@ -2,11 +2,15 @@
 
 [Install the current package](../README.md#install). For pre-v5 state, follow the migration steps below **before restarting Pi**.
 
+## Upgrading from v8
+
+Version 9 removes `mcp_search`. Pi's native `tool_search` loads deferred typed tools, Pi's transcript decides which loaded tools a branch declares, and the adapter no longer writes `mcp-tool-selection` session entries (existing entries are ignored). The `mcp` gateway is active whenever it is registered; `disableProxyTool` still hides it once configured pins are available. `mcp_script` registers deferred: load it with `tool_search` or call it from `codemode`. The adapter activates a registered `tool_search` when it registers deferred tools, unless the branch recorded removing it. Catalog tools that a server drops are re-registered hidden, and a tool that loses its pin leaves the active set. A pin you deselect stays off when the branch resumes or its server drops and restores the tool, unless the session's tool selection names it.
+
 ## Upgrading from v5
 
 Version 6 keeps v5's package, config paths, and OAuth namespace. No credential migration is needed.
 
-- Use `mcp_search({ query: "...", server: "name" })` to discover and load typed tools. It loads matches for the next request; it never executes a search hit. `directTools` now pins tools at startup rather than deciding which tools can ever be loaded.
+- Typed tools register as deferred Pi tools; Pi's native `tool_search` loads them for the next request and `codemode` calls them directly. `directTools` now pins tools at startup rather than deciding which tools can ever be loaded.
 - Give every new gateway call an explicit `action`: `mcp({ action: "search", query: "..." })`, `mcp({ action: "describe", tool: "..." })`, or `mcp({ action: "call", tool: "...", args: {} })`. Arguments are objects. Stored v5 calls with optional mode fields or JSON-string arguments are normalized at the ingress compatibility boundary; they are not the advertised v6 interface.
 - Resources use `resources` and `read-resource` actions, or `tools.resources` and `tools.readResource` in scripts. Generated `read_<resource>` aliases remain callable through gateway/script compatibility, but no longer appear as functions or panel checkboxes. Remove resource aliases from `directTools`; legacy resource pins keep the gateway available even with `disableProxyTool: true`.
 - Script descriptions always return complete JSON Schema in `inputSchema`, with `outputSchema` and other descriptor fields when supplied. Replace `inputTypeScript` consumers. Calls keep raw MCP results, including error-result data; use returned result references for bounded readback without another server call.

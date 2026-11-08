@@ -10,6 +10,7 @@ import {
   DefaultResourceLoader,
   createAgentSession,
   createCodemodeExtension,
+  createToolSearchExtension,
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
@@ -22,7 +23,11 @@ interface SessionOptions {
   directTools?: boolean | string[];
   disabled?: boolean;
   tools?: string[];
+  /** Start from Pi's default tools, which restores a resumed branch's recorded loadout. */
+  stockTools?: boolean;
   eager?: boolean;
+  /** MCP server URL; defaults to the fixture's own server. */
+  url?: string;
 }
 
 export class NativeSession {
@@ -97,14 +102,16 @@ export class NativeFixture {
     directTools = false,
     disabled = false,
     tools,
+    stockTools = false,
     eager = false,
+    url = this.url,
   }: SessionOptions = {}): Promise<NativeSession> {
     const settingsManager = SettingsManager.inMemory();
     const adapter = createMcpAdapter({
       config: {
         mcpServers: {
           local: {
-            url: this.url,
+            url,
             auth: false,
             directTools,
             disabled,
@@ -137,7 +144,12 @@ export class NativeFixture {
       noContextFiles: true,
       noPromptTemplates: true,
       noThemes: true,
-      extensionFactories: [adapter, nativeProbe, createCodemodeExtension({ models: false })],
+      extensionFactories: [
+        adapter,
+        nativeProbe,
+        createCodemodeExtension({ models: false }),
+        createToolSearchExtension(),
+      ],
     });
     await resourceLoader.reload();
     assert.deepEqual(resourceLoader.getExtensions().errors, []);
@@ -149,7 +161,7 @@ export class NativeFixture {
       modelRuntime: this.modelRuntime,
       model: this.model,
       sessionManager: manager,
-      noTools: "builtin",
+      ...(stockTools ? {} : { noTools: "builtin" as const }),
       ...(tools === undefined ? {} : { tools }),
     });
     const native = new NativeSession(session, this.model);

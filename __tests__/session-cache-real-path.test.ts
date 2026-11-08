@@ -140,16 +140,6 @@ async function harness(
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
   });
-  const first = manager.appendCustomEntry("mcp-tool-selection", {
-    selected: [{ server: "demo", tool: "search" }],
-    inactive: [{ server: "demo", tool: "pinned" }],
-    features: [],
-  });
-  const second = manager.appendCustomEntry("mcp-tool-selection", {
-    selected: [],
-    inactive: [],
-    features: ["gateway"],
-  });
   const { session } = await createAgentSession({
     cwd: root,
     agentDir,
@@ -163,7 +153,7 @@ async function harness(
   const errors: string[] = [];
   await session.bindExtensions({ mode: "print", onError: (error) => errors.push(error.error) });
   await setImmediate();
-  return { root, session, first, second, errors, cachePath, cache, configPath, definition };
+  return { root, session, errors, cachePath, cache, configPath, definition };
 }
 
 async function liveCatalogHarness() {
@@ -193,7 +183,11 @@ async function liveCatalogHarness() {
   await rename(`${h.cachePath}.replacement`, h.cachePath);
   await configure(definition);
   let id = 0;
+  // Deferred catalog tools are declared once loaded; load them the way tool_search does.
   const run = async (name: string, params: Record<string, unknown>) => {
+    if (h.session.getCallableToolNames().includes(name)) {
+      h.session.setActiveToolsByName([...new Set([...h.session.getActiveToolNames(), name])]);
+    }
     const tool = h.session.agent.state.tools.find((candidate) => candidate.name === name);
     if (!tool) {
       throw new Error(`Pi tool ${name} is not active`);
@@ -258,25 +252,21 @@ function liveServers(lifecycle: "eager" | "lazy") {
 }
 
 describe("cached tool surface through Pi SessionManager", () => {
-  it("restores each branch's selections and observes changed metadata and config on session_start", async () => {
+  it("registers the cached catalog and observes changed metadata and config on session_start", async () => {
     const h = await harness();
     const active = () => h.session.getActiveToolNames().sort();
+    const search = () => h.session.getAllTools().find((tool) => tool.name === "demo_search");
     try {
-      expect(active()).toEqual(["demo_pinned", "mcp", "mcp_search"]);
-      await h.session.navigateTree(h.first, { summarize: false });
-      expect(active()).toEqual(["demo_search", "mcp_search"]);
-      await h.session.navigateTree(h.second, { summarize: false });
-      expect(active()).toEqual(["demo_pinned", "mcp", "mcp_search"]);
-      await h.session.navigateTree(h.first, { summarize: false });
-      expect(active()).toEqual(["demo_search", "mcp_search"]);
+      expect(active()).toEqual(["demo_pinned", "mcp"]);
+      expect(search()?.exposure).toBe("deferred");
+      expect(h.session.getCallableToolNames()).toContain("demo_search");
       await writeFile(`${h.cachePath}.replacement`, JSON.stringify(h.cache("updated")));
       await rename(`${h.cachePath}.replacement`, h.cachePath);
       await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
       await setImmediate();
-      expect(active()).toEqual(["demo_search", "mcp_search"]);
-      const search = h.session.getAllTools().find((tool) => tool.name === "demo_search");
-      expect(search?.description).toBe("updated");
-      expect(search?.parameters).toMatchObject({
+      expect(active()).toEqual(["demo_pinned", "mcp"]);
+      expect(search()?.description).toBe("updated");
+      expect(search()?.parameters).toMatchObject({
         properties: { query: { description: "updated" } },
       });
       await writeFile(
@@ -285,7 +275,9 @@ describe("cached tool surface through Pi SessionManager", () => {
       );
       await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
       await setImmediate();
-      expect(active()).toEqual(["mcp_search"]);
+      expect(active()).toEqual(["mcp"]);
+      expect(search()?.exposure).toBe("hidden");
+      expect(h.session.getCallableToolNames()).not.toContain("demo_search");
       expect(h.errors).toEqual([]);
     } finally {
       await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
@@ -484,7 +476,7 @@ describe("cached tool surface through Pi SessionManager", () => {
     const h = await harness(Date.now() + 86400000);
     try {
       expect(h.session.getAllTools().map((tool) => tool.name)).not.toContain("demo_search");
-      expect(h.session.getActiveToolNames().sort()).toEqual(["mcp", "mcp_search"]);
+      expect(h.session.getActiveToolNames()).toEqual(["mcp"]);
       expect(h.errors).toEqual([]);
     } finally {
       await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
@@ -497,8 +489,7 @@ describe("live catalog through Pi and MCP stdio", () => {
   it("keeps repeated calls and searches current across list changes, reconnect and config reload", async () => {
     const add = vi.spyOn(MiniSearch.prototype, "add");
     const h = await liveCatalogHarness();
-    const search = (query: string) =>
-      h.run("mcp_search", { query, server: "demo", enable: ["gateway"] });
+    const search = (query: string) => h.run("mcp", { action: "search", query, server: "demo" });
     const resources = () => h.run("mcp", { action: "resources", server: "demo" });
     try {
       expect(matchedTools(await search("saffron"))).toEqual(["demo_probe"]);
