@@ -7,7 +7,7 @@ description: Write mcp_script JavaScript for discovering, inspecting, and callin
 
 Use `mcp_script` for MCP calls with loops, filtering, chaining, fan-out, or other logic between calls. Pass ordinary JavaScript as its `code` argument. For a single call, use a loaded typed tool. Pi's native `tool_search` loads typed MCP tools for the next request; explicit `mcp` actions cover gateway-only workflows. Discovery never executes a search hit.
 
-`mcp_script` registers as a deferred Pi tool: load it with `tool_search`, name it in `defaultTools`, or call it from `codemode`. The `mcp` gateway is active whenever it is registered.
+`mcp_script` registers as a deferred Pi tool: load it with `tool_search` or call it from `codemode`. The `mcp` gateway is active whenever it is registered.
 
 ## Discover, inspect, then call
 

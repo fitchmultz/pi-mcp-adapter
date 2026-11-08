@@ -119,8 +119,10 @@ describe("MCP catalog registration", () => {
     loader.sync(config, cache());
     expect(loader.sync(unpinned, cache())).toEqual([]);
     expect(definition(h, "demo_pinned").exposure).toBe("deferred");
+    expect(h.active()).not.toContainEqual({ name: "demo_pinned" });
     loader.sync(config, cache());
     expect(definition(h, "demo_pinned")).not.toHaveProperty("exposure");
+    expect(h.active()).toContainEqual({ name: "demo_pinned" });
     const updated = cache();
     const first = updated.servers.demo?.tools[0];
     assert.ok(first);

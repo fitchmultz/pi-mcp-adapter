@@ -11,7 +11,7 @@ import { createOAuthRuntime, shutdownOAuth, type McpOAuthRuntime } from "./mcp-o
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { formatTerminalError } from "./utils.ts";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
-import { createToolLoader } from "./tool-loader.ts";
+import { activateToolSearch, createToolLoader } from "./tool-loader.ts";
 import { logger } from "./logger.ts";
 import { abortable } from "./abort.ts";
 import { McpHostCommands } from "./host-commands.ts";
@@ -123,6 +123,9 @@ export class McpHostRuntime implements McpAdapterHost {
       this.envRaw === "__none__" ? null : this.envDirectToolOverride,
       (specs) => this.tools.syncGateways(config, cache, specs),
     );
+    if (this.toolLoader.hasDeferred() || this.tools.hasDeferredScript()) {
+      activateToolSearch(this.pi);
+    }
   }
 
   private registerPromptCommands(specs: Iterable<PromptMetadata>): void {

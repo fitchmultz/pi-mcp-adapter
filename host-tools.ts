@@ -68,6 +68,11 @@ export class McpHostTools {
     return this.withdrawals.has(name) && !this.hidden.has(name);
   }
 
+  /** mcp_script registers with deferred exposure whenever it is registered. */
+  hasDeferredScript(): boolean {
+    return this.registered("mcp_script");
+  }
+
   private registerScriptTool(): void {
     if (this.registered("mcp_script")) {
       return;

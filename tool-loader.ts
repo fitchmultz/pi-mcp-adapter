@@ -28,6 +28,7 @@ type Registration = {
   fingerprint: string;
   definition: ReturnType<typeof catalogDefinition>;
   hidden: boolean;
+  pinned: boolean;
 };
 interface ToolLoader {
   sync: (
@@ -36,6 +37,22 @@ interface ToolLoader {
     env?: string[] | null,
     registerGateways?: (pins: DirectToolSpec[]) => void,
   ) => DirectToolSpec[];
+  /** Whether any catalog tool is registered with deferred exposure. */
+  hasDeferred: () => boolean;
+}
+
+/**
+ * Pi's own MCP extension activates tool_search when it registers deferred tools, since only
+ * tool_search can declare them. Only a registered tool_search that reaches other tools qualifies.
+ */
+export function activateToolSearch(pi: ExtensionAPI): void {
+  const active = pi.getActiveTools();
+  if (
+    !active.includes("tool_search") &&
+    pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.reachesTools !== undefined)
+  ) {
+    pi.setActiveTools([...active, "tool_search"]);
+  }
 }
 
 /**
@@ -58,7 +75,8 @@ class Loader implements ToolLoader {
     this.dependencies = dependencies;
   }
 
-  private register(item: CatalogTool, cache: MetadataCache | null): void {
+  /** Returns whether a pinned tool lost its pin, since Pi keeps it active across re-registration. */
+  private register(item: CatalogTool, cache: MetadataCache | null): boolean {
     const { spec, selection, name, pinned } = item;
     const instructions =
       this.dependencies.getState()?.serverInstructions.get(spec.serverName) ??
@@ -67,11 +85,19 @@ class Loader implements ToolLoader {
     const id = key(selection);
     const existing = this.registered.get(id);
     if (existing?.fingerprint === fingerprint && !existing.hidden) {
-      return;
+      return false;
     }
     const definition = catalogDefinition(spec, instructions, this.dependencies, pinned);
     this.pi.registerTool(definition);
-    this.registered.set(id, { name, fingerprint, definition, hidden: false });
+    this.registered.set(id, { name, fingerprint, definition, hidden: false, pinned });
+    return existing?.pinned === true && !pinned;
+  }
+
+  private deactivate(names: ReadonlySet<string>): void {
+    const active = this.pi.getActiveTools();
+    if (active.some((name) => names.has(name))) {
+      this.pi.setActiveTools(active.filter((name) => !names.has(name)));
+    }
   }
 
   private withdraw(available: Set<string>): void {
@@ -108,25 +134,31 @@ class Loader implements ToolLoader {
     return fingerprint;
   }
 
-  sync: ToolLoader["sync"] = (config, cache, env, registerGateways) => {
+  /** Catalog tools this loader may own: unique, unreserved, and not registered by another extension. */
+  private eligible(specs: readonly CatalogTool[]): CatalogTool[] {
     const previousNames = new Set([...this.registered.values()].map((item) => item.name));
     const existing = new Set(this.pi.getAllTools().map((tool) => tool.name));
-    const specs = collectCatalog(config, cache, env, this.dependencies.getState);
     const counts = new Map<string, number>();
     for (const { name } of specs) {
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
-    const available = new Set<string>();
-    for (const item of specs) {
-      const { selection, name } = item;
-      const foreign = existing.has(name) && !previousNames.has(name);
-      if (reserved.has(name) || (counts.get(name) ?? 0) > 1 || foreign) {
-        continue;
-      }
-      available.add(key(selection));
-      this.register(item, cache);
-    }
+    return specs.filter(
+      ({ name }) =>
+        !reserved.has(name) &&
+        counts.get(name) === 1 &&
+        (!existing.has(name) || previousNames.has(name)),
+    );
+  }
+
+  sync: ToolLoader["sync"] = (config, cache, env, registerGateways) => {
+    const specs = collectCatalog(config, cache, env, this.dependencies.getState);
+    const eligible = this.eligible(specs);
+    const available = new Set(eligible.map((item) => key(item.selection)));
+    const unpinned = new Set(
+      eligible.filter((item) => this.register(item, cache)).map((item) => item.name),
+    );
     this.withdraw(available);
+    this.deactivate(unpinned);
     const permitted = new Set(this.pi.getAllTools().map((tool) => tool.name));
     const pins = specs
       .filter(
@@ -136,6 +168,9 @@ class Loader implements ToolLoader {
     registerGateways?.(pins);
     return pins;
   };
+
+  hasDeferred: ToolLoader["hasDeferred"] = () =>
+    [...this.registered.values()].some((item) => !item.hidden && !item.pinned);
 }
 
 export function createToolLoader(
@@ -145,5 +180,5 @@ export function createToolLoader(
   beforeExecute?: McpAdapterOptions["beforeExecute"],
 ): ToolLoader {
   const loader = new Loader(pi, { getState, getInitPromise, beforeExecute });
-  return { sync: loader.sync };
+  return { sync: loader.sync, hasDeferred: loader.hasDeferred };
 }

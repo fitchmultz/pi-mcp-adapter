@@ -43,7 +43,10 @@ async function verifyComposition(f: NativeFixture, native: NativeSession): Promi
   assert.ok(echo);
   assert.equal(echo.exposure, "deferred");
   assert.equal(echo.namespace?.instructions, instructions);
-  session.setActiveToolsByName([...session.getActiveToolNames(), "tool_search"]);
+  assert.ok(
+    session.getActiveToolNames().includes("tool_search"),
+    "the adapter activates tool_search for its deferred tools",
+  );
   const loaded = await native.run("tool_search", { query: "echo" });
   assert.ok(session.getActiveToolNames().includes("local_echo"), JSON.stringify(loaded));
   const success = await native.run("native_probe", { value: "ok" });

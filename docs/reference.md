@@ -71,7 +71,7 @@ Servers are **lazy by default**. Cached tool descriptors register as deferred Pi
 tool_search({ query: "take screenshot" });
 ```
 
-The loaded tools become available with their full argument schemas on the next model request. The agent then calls the chosen typed tool normally. `codemode` scripts can call any registered catalog tool without loading it first. Stock Pi registers `tool_search` and `codemode` inactive; add `+tool_search` (or `+codemode`) to `defaultTools` in Pi settings so the model can reach deferred tools.
+The loaded tools become available with their full argument schemas on the next model request. The agent then calls the chosen typed tool normally. `codemode` scripts can call any registered catalog tool without loading it first. Pi registers `tool_search` inactive; like Pi's own MCP extension, the adapter activates it whenever it registers deferred tools. A host allowlist that omits `tool_search` keeps it off.
 
 The `mcp` gateway is active whenever it is registered. Use it for resources, authentication, UI messages, saved-result readback, fallback calls, and for discovering a server whose catalog is not cached yet:
 
@@ -494,7 +494,7 @@ mcp({
 
 ### MCP Scripting
 
-For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. `mcp_script` registers as a deferred Pi tool: load it with `tool_search`, name it in `defaultTools`, or call it from `codemode`. Use `tool_search` for typed discovery, a loaded typed tool for a single call, and `mcp` for explicit gateway actions. Set `settings.scriptMode` to `false` to withdraw the scripting tool.
+For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. `mcp_script` registers as a deferred Pi tool: load it with `tool_search` or call it from `codemode`. Use `tool_search` for typed discovery, a loaded typed tool for a single call, and `mcp` for explicit gateway actions. Set `settings.scriptMode` to `false` to withdraw the scripting tool.
 
 The bundled `mcp-scripting` skill is a separate Pi package resource. To hide that skill while keeping the adapter extension installed, replace the package entry in Pi settings with the object form and disable package skills:
 
