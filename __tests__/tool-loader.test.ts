@@ -176,6 +176,20 @@ describe("MCP catalog registration", () => {
     recorded = false;
     loader.settlePins();
     expect(h.active()).toContainEqual({ name: "demo_pinned" });
+    // A boundary while the pin is withdrawn decides its return from the branch it reaches.
+    loader.sync({ mcpServers: {} }, null);
+    h.api.setActiveTools(["mcp", "read"]);
+    recorded = true;
+    loader.settlePins();
+    loader.sync(config, cache());
+    expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
+    loader.sync({ mcpServers: {} }, null);
+    recorded = false;
+    loader.settlePins();
+    // A prompt sent while the pin is withdrawn records it removed; that is not a deselection.
+    recorded = true;
+    loader.sync(config, cache());
+    expect(h.active()).toContainEqual({ name: "demo_pinned" });
   });
 
   it("withdraws tools that leave the catalog and restores them when they return", async () => {

@@ -32,7 +32,10 @@ type Registration = {
   definition: ReturnType<typeof catalogDefinition>;
   hidden: boolean;
   pinned: boolean;
-  /** Whether a pin was active when it left the catalog; only such a pin re-activates on return. */
+  /**
+   * Whether a withdrawn pin re-activates on return: it was active when it left, or a later session
+   * boundary reached a branch that did not record removing it.
+   */
   activeWhenWithdrawn: boolean;
 };
 interface ToolLoader {
@@ -70,7 +73,7 @@ export function removedOnBranch(
 
 /**
  * How re-registering a tool changes its pin; a first registration has no change. A pin returning
- * from withdrawal counts as gained only if it was active when withdrawn, so a deselection holds.
+ * from withdrawal counts as gained only if `activeWhenWithdrawn`, so a deselection holds.
  */
 function pinChange(
   existing: Registration | undefined,
@@ -285,6 +288,13 @@ class Loader implements ToolLoader {
 
   settlePins: ToolLoader["settlePins"] = () => {
     this.settled.clear();
+    for (const registration of this.registered.values()) {
+      if (registration.hidden && registration.pinned) {
+        // Decided now: a prompt sent while the pin is withdrawn records it removed.
+        registration.activeWhenWithdrawn =
+          this.dependencies.removedOnBranch?.(registration.name) !== true;
+      }
+    }
     this.activatePins(new Set());
   };
 }
