@@ -11,7 +11,7 @@ import { createOAuthRuntime, shutdownOAuth, type McpOAuthRuntime } from "./mcp-o
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { formatTerminalError } from "./utils.ts";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
-import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
+import { activateToolSearch, createToolLoader } from "./tool-loader.ts";
 import { logger } from "./logger.ts";
 import { abortable } from "./abort.ts";
 import { McpHostCommands } from "./host-commands.ts";
@@ -73,8 +73,6 @@ export class McpHostRuntime implements McpAdapterHost {
       getState: () => this.state,
       getInitPromise: () => this.initPromise,
       beforeExecute: options.beforeExecute,
-      removedOnBranch: (name) =>
-        this.sessionManager !== undefined && removedOnBranch(this.sessionManager, name),
     });
     this.tools = new McpHostTools(pi, this, options);
   }

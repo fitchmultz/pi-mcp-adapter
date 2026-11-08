@@ -45,10 +45,7 @@ interface ToolLoader {
 }
 
 /** Replays the branch's recorded tool loadout (Pi docs/session-format.md) for one tool. */
-export function removedOnBranch(
-  manager: ExtensionContext["sessionManager"],
-  name: string,
-): boolean {
+function removedOnBranch(manager: ExtensionContext["sessionManager"], name: string): boolean {
   let removed = false;
   for (const entry of manager.getBranch()) {
     if (entry.type !== "message" || entry.message.role !== "system") {
@@ -109,7 +106,7 @@ class Loader implements ToolLoader {
     this.dependencies = dependencies;
   }
 
-  /** Returns whether the tool must leave the active set. */
+  /** Returns whether a pinned tool lost its pin, since Pi keeps it active across re-registration. */
   private register(item: CatalogTool, cache: MetadataCache | null): boolean {
     const { spec, selection, name, pinned } = item;
     const instructions =
@@ -124,19 +121,7 @@ class Loader implements ToolLoader {
     const definition = catalogDefinition(spec, instructions, this.dependencies, pinned);
     this.pi.registerTool(definition);
     this.registered.set(id, { name, fingerprint, definition, hidden: false, pinned });
-    return this.leavesActiveSet(item, existing);
-  }
-
-  /**
-   * Pi keeps a lost pin active across re-registration, and activates a pin registered after it
-   * restored the branch even when the branch removed it. A withdrawn pin that returns stays active,
-   * as Pi activates it like a new tool.
-   */
-  private leavesActiveSet(item: CatalogTool, existing: Registration | undefined): boolean {
-    if (!item.pinned) {
-      return existing?.pinned === true;
-    }
-    return existing === undefined && this.dependencies.removedOnBranch?.(item.name) === true;
+    return existing?.pinned === true && !pinned;
   }
 
   private deactivate(names: ReadonlySet<string>): void {
@@ -200,11 +185,11 @@ class Loader implements ToolLoader {
     const specs = collectCatalog(config, cache, env, this.dependencies.getState);
     const eligible = this.eligible(specs);
     const available = new Set(eligible.map((item) => key(item.selection)));
-    const inactive = new Set(
+    const unpinned = new Set(
       eligible.filter((item) => this.register(item, cache)).map((item) => item.name),
     );
     this.withdraw(available);
-    this.deactivate(inactive);
+    this.deactivate(unpinned);
     const permitted = new Set(this.pi.getAllTools().map((tool) => tool.name));
     const pins = specs
       .filter(

@@ -231,21 +231,22 @@ async function verifyPinning(f: NativeFixture): Promise<void> {
     pins.session.getAllTools().find((tool) => tool.name === "local_echo")?.exposure,
     "direct",
   );
-  // Pins register after Pi restores the branch, so the adapter keeps a recorded deselection.
   await pins.run("mcp", { action: "status" });
   without(pins, "local_echo");
   await pins.run("mcp", { action: "status" });
   await f.release(pins);
-  const deselected = await f.make({
+  // Pi owns pin activation: an allowlist that names a pin activates it after a recorded removal.
+  const named = await f.make({
     directTools: ["echo"],
     eager: true,
     manager: pins.session.sessionManager,
+    tools: ["mcp", "local_echo"],
   });
-  assert.ok(deselected.session.getAllTools().some((tool) => tool.name === "local_echo"));
   assert.ok(
-    !deselected.session.getActiveToolNames().includes("local_echo"),
-    "a recorded pin deselection survives resume",
+    named.session.getActiveToolNames().includes("local_echo"),
+    "an allowlist naming a pin activates it after the branch removed it",
   );
+  await f.release(named);
   const disabled = await f.make({ directTools: true, disabled: true });
   assert.ok(!disabled.session.getAllTools().some((tool) => tool.name === "local_echo"));
   const restricted = await f.make({ directTools: true, tools: ["mcp"] });
