@@ -85,7 +85,7 @@ const { session } = await sdk.createAgentSession({
   settingsManager,
   modelRuntime,
   noTools: "builtin",
-  tools: ["mcp_search", "lazy00_echo"],
+  tools: ["mcp", "lazy00_echo"],
 });
 const errors: ExtensionError[] = [];
 try {

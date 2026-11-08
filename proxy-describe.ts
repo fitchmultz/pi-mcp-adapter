@@ -20,8 +20,8 @@ function missingDescription(
   const suggestions = rankSuggestions(state, toolName, 5, serverFilter);
   const hint =
     suggestions.length > 0
-      ? `Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ action: "describe", tool: "${String(suggestions[0])}" }). Load if inactive: mcp_search({ enable: ["gateway"] }).`
-      : `Use mcp_search({ query: "..." }) to search.`;
+      ? `Did you mean: ${suggestions.join(", ")}. Inspect with mcp({ action: "describe", tool: "${String(suggestions[0])}" }).`
+      : `Use mcp({ action: "search", query: "..." }) to search.`;
   return {
     content: [{ type: "text", text: `Tool "${toolName}" not found. ${hint}` }],
     details: { mode: "describe", error: "tool_not_found", requestedTool: toolName, suggestions },

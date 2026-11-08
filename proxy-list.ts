@@ -126,7 +126,7 @@ export function executeList(
       content: [
         {
           type: "text" as const,
-          text: `Server "${server}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).`,
+          text: `Server "${server}" not found. Use mcp({ action: "status" }) to see available servers.`,
         },
       ],
       details: { mode: "list", server, tools: [], count: 0, error: "not_found" },
@@ -192,7 +192,7 @@ export function executeInstructions(state: McpExtensionState, server: string): P
       content: [
         {
           type: "text" as const,
-          text: `Server "${server}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).`,
+          text: `Server "${server}" not found. Use mcp({ action: "status" }) to see available servers.`,
         },
       ],
       details: { mode: "instructions", server, error: "not_found" },

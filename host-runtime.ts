@@ -9,7 +9,7 @@ import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { createMcpRuntimeOwner, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { createOAuthRuntime, shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
-import { formatTerminalError, parallelLimit, MAX_CONCURRENT_SERVER_CONNECTS } from "./utils.ts";
+import { formatTerminalError } from "./utils.ts";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
 import { createToolLoader } from "./tool-loader.ts";
 import { logger } from "./logger.ts";
@@ -72,7 +72,7 @@ export class McpHostRuntime implements McpAdapterHost {
       () => this.initPromise,
       options.beforeExecute,
     );
-    this.tools = new McpHostTools(pi, this, this.toolLoader, options);
+    this.tools = new McpHostTools(pi, this, options);
   }
 
   install(): void {
@@ -82,7 +82,6 @@ export class McpHostRuntime implements McpAdapterHost {
     this.pi.registerFlag("mcp-config", { description: "Path to MCP config file", type: "string" });
     this.registerEvents();
     new McpHostCommands(this.pi, this).register();
-    this.tools.registerSearch();
     if (!this.options.transformConfig) {
       this.tools.syncGateways(this.config, null, []);
     }
@@ -90,10 +89,6 @@ export class McpHostRuntime implements McpAdapterHost {
 
   private registerEvents(): void {
     this.pi.on("session_start", (_event, ctx) => this.startSession(ctx));
-    this.pi.on("session_tree", (_event, ctx) => {
-      this.toolLoader.restore(ctx);
-      this.syncToolSurface();
-    });
     this.pi.on("model_select", () => {
       if (this.state) {
         this.syncToolSurface();
@@ -159,7 +154,6 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private async shutdown(): Promise<void> {
-    this.toolLoader.persist();
     ++this.generation;
     const state = this.state;
     const owner = this.owner;
@@ -230,7 +224,6 @@ export class McpHostRuntime implements McpAdapterHost {
     this.config = runtimeConfig;
     const cacheEnabled =
       ctx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
-    this.toolLoader.restore(ctx);
     this.registerPromptCommands(resolveCachedPrompts(runtimeConfig, cacheEnabled));
     const cache = loadMetadataCache(cacheEnabled);
     this.toolLoader.sync(
@@ -323,17 +316,6 @@ export class McpHostRuntime implements McpAdapterHost {
     const state = this.state;
     if (!state) {
       return;
-    }
-    const uncached = this.toolLoader
-      .selectedServers()
-      .filter(
-        (server) =>
-          !state.toolMetadata.has(server) && state.config.mcpServers[server] !== undefined,
-      );
-    if (uncached.length > 0) {
-      await parallelLimit(uncached, MAX_CONCURRENT_SERVER_CONNECTS, (server) =>
-        init.lazyConnect(state, server, owner.signal),
-      );
     }
     owner.throwIfInactive();
     this.syncPromptCommands();

@@ -343,7 +343,7 @@ class UiHttpServer {
   private handleError(error: unknown, res: ServerResponse): void {
     const options = this.options;
     if (error instanceof SessionRecoveryAuthRequiredError) {
-      const fallback = `Server "${options.serverName}" requires OAuth authentication. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${options.serverName}" }) to get a browser URL, or /mcp-auth ${options.serverName} in an interactive local session.`;
+      const fallback = `Server "${options.serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${options.serverName}" }) to get a browser URL, or /mcp-auth ${options.serverName} in an interactive local session.`;
       const message =
         error.authMessage ??
         (options.config

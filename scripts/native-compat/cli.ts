@@ -21,7 +21,7 @@ export default function nativeCli(pi: ExtensionAPI): void {
   })(pi);
   installPolicy(pi);
   const steps: FixtureCall[] = [
-    { name: "mcp_search", arguments: { query: "echo", server: "local" } },
+    { name: "mcp", arguments: { action: "connect", server: "local" } },
     ...["coded-cli", "fail", "redact", "blocked"].map((value) => ({
       name: "codemode",
       arguments: { code: `return await tools.local_echo({value:${JSON.stringify(value)}});` },

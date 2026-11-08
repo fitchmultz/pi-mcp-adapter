@@ -1,5 +1,5 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type, type TSchema } from "typebox";
 import type { McpAdapterHost, HostToolExecute } from "./host-contract.ts";
 import type { DirectToolSpec, McpAdapterOptions, McpConfig } from "./types.ts";
 import {
@@ -12,209 +12,64 @@ import {
   reconstructToolMetadata,
   type MetadataCache,
 } from "./metadata-cache.ts";
-import type { createToolLoader, Feature, FeaturePolicy } from "./tool-loader.ts";
+import { toolErrorOverride } from "./error-signal.ts";
 import { renderMcpToolResult, renderMcpProxyToolCall } from "./tool-result-renderer.ts";
-import { MAX_PAGE_SIZE, paginate, rankToolMatches } from "./search-ranking.ts";
-import {
-  guardMcpOutput,
-  guardedMcpDetails,
-  resolveMcpOutputGuardOptions,
-} from "./mcp-output-guard.ts";
-import type * as importProxy from "./proxy-modes.ts";
-import type { McpExtensionState } from "./state.ts";
-import { throwIfAborted } from "./abort.ts";
 import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS } from "./utils.ts";
 import { gatewayParameters, prepareGatewayArguments } from "./gateway-arguments.ts";
 import { executeGateway } from "./host-gateway.ts";
 
-type SearchParams = {
-  query?: string;
-  enable?: Feature[];
-  server?: string;
-  limit?: number;
-  offset?: number;
-};
-const unavailableFeatures = (enable: Feature[] = [], tools: Array<{ name: string }>) =>
-  enable.filter(
-    (feature) =>
-      !tools.some((tool) => tool.name === (feature === "gateway" ? "mcp" : "mcp_script")),
-  );
-
 export class McpHostTools {
   private readonly pi: ExtensionAPI;
   private readonly host: McpAdapterHost;
-  private readonly loader: ReturnType<typeof createToolLoader>;
   private readonly options: McpAdapterOptions;
   private readonly envRaw = process.env.MCP_DIRECT_TOOLS;
   private readonly envDirectToolOverride = this.envRaw
     ?.split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  private scriptToolRegistered = false;
-  private proxyToolRegistered = false;
+  private readonly withdrawals = new Map<string, () => void>();
+  private readonly hidden = new Set<string>();
   private proxyToolDescription: string | null = null;
 
-  constructor(
-    pi: ExtensionAPI,
-    host: McpAdapterHost,
-    loader: ReturnType<typeof createToolLoader>,
-    options: McpAdapterOptions,
-  ) {
+  constructor(pi: ExtensionAPI, host: McpAdapterHost, options: McpAdapterOptions) {
     this.pi = pi;
     this.host = host;
-    this.loader = loader;
     this.options = options;
   }
 
-  private async searchAndLoad(params: SearchParams, signal: AbortSignal | undefined) {
-    throwIfAborted(signal);
-    if (params.query === undefined && (params.enable?.length ?? 0) === 0) {
-      throw new Error("Provide query or enable.");
-    }
-    // Loading front doors does not require initialization or connect to a server.
-    if (params.query === undefined) {
-      return this.loadFeatures(params.enable);
-    }
-    const ready = await this.host.getToolState(signal);
-    if ("content" in ready) {
-      return { ...ready, tools: [] };
-    }
-    const proxy = await import("./proxy-modes.ts");
-    if (params.server !== undefined && needsDiscovery(ready, params.server)) {
-      const discovery = await proxy.executeConnect(ready, { serverName: params.server, signal });
-      const failed = Boolean(discovery.details.error);
-      if (failed) {
-        return { ...discovery, tools: [] };
-      }
-    }
-    this.host.syncToolSurface();
-    return this.searchLoaded(ready, { ...params, query: params.query }, proxy);
-  }
-
-  private async searchLoaded(
-    ready: McpExtensionState,
-    params: SearchParams & { query: string },
-    proxy: typeof importProxy,
-  ) {
-    const matches = findMatches(ready, params);
-    const page = paginate(matches, params.offset ?? 0, params.limit ?? 5);
-    const tools = this.loader.activate(page.items, params.enable);
-    const unavailable = unavailableFeatures(params.enable, tools);
-    const typedCount = tools.filter(
-      (tool) => tool.name !== "mcp" && tool.name !== "mcp_script",
-    ).length;
-    const result = proxy.executeSearch(ready, {
-      query: params.query,
-      server: params.server,
-      includeSchemas: typedCount < page.items.length,
-      limit: params.limit ?? 5,
-      offset: params.offset,
-      caller: "mcp_search",
-    });
-    const guarded = await guardMcpOutput(
-      [
-        ...result.content,
-        {
-          type: "text",
-          text:
-            tools.length > 0
-              ? `Loaded for the next request: ${JSON.stringify(tools)}`
-              : 'No direct tools loaded. Enable gateway or script with mcp_search({ enable: ["gateway"] }) or mcp_search({ enable: ["script"] }), then use mcp action call or tools.call with the returned exact names.',
-        },
-        ...(unavailable.length > 0
-          ? [
-              {
-                type: "text" as const,
-                text: `Unavailable under configuration or host policy: ${unavailable.join(", ")}`,
-              },
-            ]
-          : []),
-      ],
-      resolveMcpOutputGuardOptions(ready.config.settings, ready.outputDirectory),
-    );
-    return {
-      content: guarded.content,
-      details: {
-        ...result.details,
-        ...guardedMcpDetails(guarded),
-        loaded: tools,
-        ...(unavailable.length > 0 ? { unavailable } : {}),
+  private registerHostTool<TParams extends TSchema, TDetails>(
+    definition: ToolDefinition<TParams, TDetails>,
+  ): void {
+    const wrapped: ToolDefinition<TParams, TDetails> = {
+      ...definition,
+      async execute(...args) {
+        const result = await definition.execute(...args);
+        return { ...result, ...toolErrorOverride(result.details) };
       },
-      tools,
     };
+    this.withdrawals.set(definition.name, () =>
+      this.pi.registerTool({ ...wrapped, exposure: "hidden" }),
+    );
+    this.hidden.delete(definition.name);
+    this.pi.registerTool(wrapped);
   }
 
-  private loadFeatures(enable: Feature[] | undefined) {
-    const tools = this.loader.activate([], enable);
-    const unavailable = unavailableFeatures(enable, tools);
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Loaded for the next request: ${JSON.stringify(tools)}${unavailable.length > 0 ? `. Unavailable under configuration or host policy: ${unavailable.join(", ")}` : ""}`,
-        },
-      ],
-      details: { loaded: tools, unavailable },
-      tools,
-    };
+  /** Pi cannot unregister a tool; a withdrawn gateway is re-registered hidden until needed again. */
+  private hideHostTool(name: string): void {
+    const withdraw = this.withdrawals.get(name);
+    if (!withdraw || this.hidden.has(name)) {
+      return;
+    }
+    this.hidden.add(name);
+    withdraw();
   }
 
-  registerSearch(): void {
-    const beforeExecute = this.options.beforeExecute;
-    const host = this.host;
-    const searchAndLoad = (params: SearchParams, signal?: AbortSignal) =>
-      this.searchAndLoad(params, signal);
-    const execute: HostToolExecute<SearchParams> =
-      // oxlint-disable-next-line eslint/max-params -- QX-025: preserve Pi's native five-position execute callback.
-      async function executeMcpSearch(toolCallId, params, signal, _onUpdate, ctx) {
-        if (beforeExecute) {
-          if (host.owner) {
-            await host.owner.runCallback("beforeExecute", () => beforeExecute(toolCallId, ctx));
-          } else {
-            await beforeExecute(toolCallId, ctx);
-          }
-        }
-        return searchAndLoad(params, signal);
-      };
-    const searchDefinition = {
-      name: "mcp_search",
-      label: "MCP Search",
-      description:
-        "Discover and load typed MCP tools for the next request. Use query; server discovers an uncached server (empty query browses it). Results report incomplete coverage. Or enable gateway for mcp status/list/search/describe/call/connect/instructions, resources/read-resource, read-result, auth-start/auth-complete and ui-messages; enable script for JavaScript composition, resources and saved-result readback. Enable alone performs no integration action. Loaded schemas stay available in this session/branch.",
-      parameters: Type.Object(
-        {
-          query: Type.Optional(Type.String()),
-          enable: Type.Optional(
-            Type.Array(Type.Union([Type.Literal("gateway"), Type.Literal("script")]), {
-              minItems: 1,
-              uniqueItems: true,
-            }),
-          ),
-          server: Type.Optional(Type.String()),
-          limit: Type.Optional(
-            Type.Integer({
-              minimum: 1,
-              maximum: MAX_PAGE_SIZE,
-              description: "Tools to load (default 5).",
-            }),
-          ),
-          offset: Type.Optional(Type.Integer({ minimum: 0 })),
-        },
-        {
-          anyOf: [
-            { type: "object", required: ["query"] },
-            { type: "object", required: ["enable"] },
-          ],
-        },
-      ),
-      renderResult: renderMcpToolResult,
-      execute,
-    };
-    this.pi.registerTool(searchDefinition);
+  private registered(name: string): boolean {
+    return this.withdrawals.has(name) && !this.hidden.has(name);
   }
 
   private registerScriptTool(): void {
-    if (this.scriptToolRegistered) {
+    if (this.registered("mcp_script")) {
       return;
     }
     const options = this.options;
@@ -242,7 +97,8 @@ export class McpHostTools {
             : undefined,
         });
       };
-    this.loader.registerFeature("script", {
+    this.registerHostTool({
+      exposure: "deferred",
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp_script",
       label: "MCP Script",
@@ -268,7 +124,6 @@ export class McpHostTools {
       renderResult: renderMcpToolResult,
       execute,
     });
-    this.scriptToolRegistered = true;
   }
 
   private registerProxyTool(description: string): void {
@@ -279,7 +134,7 @@ export class McpHostTools {
       async function executeMcpGateway(toolCallId, rawParams, signal, _onUpdate, ctx) {
         return executeGateway(pi, host, options, [toolCallId, rawParams, signal, _onUpdate, ctx]);
       };
-    this.loader.registerFeature("gateway", {
+    this.registerHostTool({
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
       name: "mcp",
       label: "MCP",
@@ -292,7 +147,6 @@ export class McpHostTools {
       renderResult: renderMcpToolResult,
       execute,
     });
-    this.proxyToolRegistered = true;
     this.proxyToolDescription = description;
   }
 
@@ -300,11 +154,7 @@ export class McpHostTools {
     config: McpConfig,
     cache: MetadataCache | null,
     directSpecs: DirectToolSpec[],
-  ): FeaturePolicy {
-    const policy: FeaturePolicy = {};
-    if (config.settings?.scriptMode !== false) {
-      policy.script = {};
-    }
+  ): void {
     const missingConfiguredDirectToolServers = getMissingConfiguredDirectToolServers(
       config,
       cache,
@@ -319,16 +169,17 @@ export class McpHostTools {
 
     if (shouldRegisterProxyTool) {
       const description = buildProxyDescription(config);
-      if (!this.proxyToolRegistered || this.proxyToolDescription !== description) {
+      if (!this.registered("mcp") || this.proxyToolDescription !== description) {
         this.registerProxyTool(description);
       }
-      policy.gateway = { eager: hasPinnedResources };
+    } else {
+      this.hideHostTool("mcp");
     }
-
-    if (policy.script) {
+    if (config.settings?.scriptMode !== false) {
       this.registerScriptTool();
+    } else {
+      this.hideHostTool("mcp_script");
     }
-    return policy;
   }
   private hasPinnedResources(config: McpConfig, cache: MetadataCache | null): boolean {
     return (
@@ -371,23 +222,6 @@ export class McpHostTools {
   }
 }
 
-function findMatches(
-  ready: McpExtensionState,
-  params: SearchParams & { query: string },
-): Parameters<ReturnType<typeof createToolLoader>["activate"]>[0] {
-  if (params.query.trim().length > 0) {
-    return rankToolMatches(ready, params.query, params.server);
-  }
-  const server = params.server;
-  if (server === undefined || server.length === 0) {
-    return [];
-  }
-  return (ready.toolMetadata.get(server) ?? [])
-    .filter((tool) => tool.resourceUri === undefined || tool.resourceUri.length === 0)
-    .map((tool) => ({ server, tool }))
-    .sort((a, b) => a.tool.name.localeCompare(b.tool.name));
-}
-
 function gatewayRequired(
   config: McpConfig,
   {
@@ -402,8 +236,4 @@ function gatewayRequired(
     directCount === 0 ||
     missingCount > 0
   );
-}
-
-function needsDiscovery(ready: McpExtensionState, server: string): boolean {
-  return server.length > 0 && !ready.toolMetadata.has(server);
 }

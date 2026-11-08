@@ -147,7 +147,10 @@ export async function showTools(state: McpExtensionState, ctx: ExtensionContext)
     );
 
   if (allTools.length === 0) {
-    ctx.ui.notify("No MCP tools discovered. Use mcp_search to discover tools.", "info");
+    ctx.ui.notify(
+      'No MCP tools discovered. Connect a server with mcp({ action: "connect" }).',
+      "info",
+    );
     return;
   }
 

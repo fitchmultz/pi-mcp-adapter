@@ -369,19 +369,6 @@
     "rule": "eslint/max-params",
     "scope": {
       "type": "FunctionExpression",
-      "name": "executeMcpSearch"
-    },
-    "path": [],
-    "nodeType": "FunctionExpression",
-    "operation": "async function executeMcpSearch(toolCallId, params, signal, _onUpdate, ctx) {\n        if (beforeExecute) {\n          if (host.owner) {\n            await host.owner.runCallback(\"beforeExecute\", () => beforeExecute(toolCallId, ctx));\n          } else {\n            await beforeExecute(toolCallId, ctx);\n          }\n        }\n        return searchAndLoad(params, signal);\n      }",
-    "guards": []
-  },
-  {
-    "id": "QX-025",
-    "file": "host-tools.ts",
-    "rule": "eslint/max-params",
-    "scope": {
-      "type": "FunctionExpression",
       "name": "executeMcpScript"
     },
     "path": [],

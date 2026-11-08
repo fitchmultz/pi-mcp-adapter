@@ -182,7 +182,7 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
-  it("keeps the gateway loadable while pinned tools are undiscovered", async () => {
+  it("keeps the gateway active while pinned tools are undiscovered", async () => {
     const config = {
       mcpServers: { demo: { command: "demo", directTools: true } },
       settings: { disableProxyTool: true },
@@ -193,14 +193,9 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.initializeMcp.mockResolvedValue(state);
     mocks.getMissingConfiguredDirectToolServers.mockReturnValue(["demo"]);
     const { default: adapter } = await import("../index.ts");
-    const { api, spies, handlers, tool: registeredTool } = await createPi();
+    const { api, spies, handlers } = await createPi();
     adapter(api);
     await handlers.get("session_start")({}, {});
-    expect(api.getActiveTools()).not.toContain("mcp");
-    const search = registeredTool("mcp_search");
-    expect(await search.execute("enable", { enable: ["gateway"] })).toHaveProperty("tools", [
-      { name: "mcp" },
-    ]);
     expect(api.getActiveTools()).toContain("mcp");
     expect(spies.registerTool).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: "demo_search" }),
@@ -247,54 +242,39 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.getActiveTools()).toContain("demo_search");
   });
 
-  it.each([false, true])(
-    "refreshes pins and gateway while preserving a manual deactivation (%s)",
-    async (manuallyDisabled) => {
-      const config = {
-        mcpServers: { demo: { command: "demo", directTools: true } },
-        settings: { disableProxyTool: true },
-      };
-      const state = createState();
-      state.config = config;
-      const tool = { name: "demo_search", originalName: "search", description: "Search" };
-      state.toolMetadata.set("demo", [tool]);
-      mocks.loadMcpConfig.mockReturnValue(config);
-      mocks.initializeMcp.mockResolvedValue(state);
-      const { default: adapter } = await import("../index.ts");
-      const { api, spies, handlers, tool: registeredTool } = await createPi();
-      adapter(api);
-      await handlers.get("session_start")({}, {});
-      await Promise.resolve();
-      expect(api.getActiveTools()).toContain("demo_search");
-      expect(api.getActiveTools()).not.toContain("mcp");
-      if (manuallyDisabled) {
-        api.setActiveTools(api.getActiveTools().filter((name) => name !== "demo_search"));
-      }
-      state.toolMetadata.set("demo", []);
-      mocks.buildProxyDescription.mockReturnValue("MCP gateway refreshed");
-      await requireValue(state.onToolMetadataUpdated)("demo", "tools-list-changed");
-      expect(api.getActiveTools()).not.toContain("demo_search");
-      expect(api.getActiveTools()).not.toContain("mcp");
-      const search = registeredTool("mcp_search");
-      expect(await search.execute("enable", { enable: ["gateway"] })).toHaveProperty("tools", [
-        { name: "mcp" },
-      ]);
-      expect(spies.registerTool).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "mcp", description: "MCP gateway refreshed" }),
-      );
-      state.toolMetadata.set("demo", [{ ...tool, description: "Search v2" }]);
-      await requireValue(state.onToolMetadataUpdated)("demo", "tools-list-changed");
-      expect(spies.registerTool).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "demo_search", description: "Search v2" }),
-      );
-      expect(api.getActiveTools().includes("demo_search")).toBe(!manuallyDisabled);
-      expect(await search.execute("disabled", { enable: ["gateway"] })).toHaveProperty(
-        "details.unavailable",
-        ["gateway"],
-      );
-      expect(api.getActiveTools()).not.toContain("mcp");
-    },
-  );
+  it("withdraws dropped pins, refreshes the gateway description and re-registers returning schemas", async () => {
+    const config = {
+      mcpServers: { demo: { command: "demo", directTools: true } },
+      settings: { disableProxyTool: true },
+    };
+    const state = createState();
+    state.config = config;
+    const tool = { name: "demo_search", originalName: "search", description: "Search" };
+    state.toolMetadata.set("demo", [tool]);
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.initializeMcp.mockResolvedValue(state);
+    const { default: adapter } = await import("../index.ts");
+    const { api, spies, handlers, tool: registeredTool } = await createPi();
+    adapter(api);
+    await handlers.get("session_start")({}, {});
+    await Promise.resolve();
+    expect(api.getActiveTools()).toContain("demo_search");
+    expect(api.getActiveTools()).not.toContain("mcp");
+    state.toolMetadata.set("demo", []);
+    mocks.buildProxyDescription.mockReturnValue("MCP gateway refreshed");
+    await requireValue(state.onToolMetadataUpdated)("demo", "tools-list-changed");
+    expect(api.getActiveTools()).not.toContain("demo_search");
+    expect(registeredTool("demo_search").exposure).toBe("hidden");
+    expect(api.getActiveTools()).toContain("mcp");
+    expect(registeredTool("mcp").description).toBe("MCP gateway refreshed");
+    state.toolMetadata.set("demo", [{ ...tool, description: "Search v2" }]);
+    await requireValue(state.onToolMetadataUpdated)("demo", "tools-list-changed");
+    expect(spies.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "demo_search", description: "Search v2" }),
+    );
+    expect(registeredTool("demo_search")).not.toHaveProperty("exposure");
+    expect(api.getActiveTools()).toContain("demo_search");
+  });
 
   it("keeps the gateway for legacy resource pins without registering fake functions", async () => {
     const config = {
@@ -362,7 +342,7 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
-  it("loads an initially inactive schema when discovery selects it", async () => {
+  it("registers unpinned schemas deferred so Pi's tool_search can load them", async () => {
     const config = { mcpServers: { demo: { command: "demo" } } };
     const state = createState();
     state.config = config;
@@ -371,27 +351,19 @@ describe("mcpAdapter session lifecycle", () => {
     ]);
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.initializeMcp.mockResolvedValue(state);
-    mocks.executeSearch.mockReturnValue({
-      content: [{ type: "text", text: "Search" }],
-      details: {},
-    });
     const { default: adapter } = await import("../index.ts");
-    const { api, spies, handlers, tool: registeredTool } = await createPi();
+    const { api, handlers, tool: registeredTool } = await createPi();
     adapter(api);
     await handlers.get("session_start")({}, {});
     await Promise.resolve();
     expect(api.getActiveTools()).not.toContain("demo_search");
-    const search = registeredTool("mcp_search");
-    const result = await search.execute("search-1", { query: "search", server: "demo" });
-    expect(result).toHaveProperty("tools", [{ name: "demo_search" }]);
+    expect(registeredTool("demo_search").exposure).toBe("deferred");
+    expect(registeredTool("demo_search").namespace).toEqual({ name: "mcp_demo" });
+    api.setActiveTools([...api.getActiveTools(), "demo_search"]);
     expect(api.getActiveTools()).toContain("demo_search");
-    expect(spies.appendEntry).toHaveBeenCalledWith(
-      "mcp-tool-selection",
-      expect.objectContaining({ selected: [{ server: "demo", tool: "search" }] }),
-    );
   });
 
-  it("loads front doors without waiting for startup and retains transformed restrictions on a branch change", async () => {
+  it("declares the gateway before startup completes and honors transformed restrictions", async () => {
     const config: McpConfig = {
       mcpServers: { demo: { command: "unused", lifecycle: "lazy" } },
       settings: { scriptMode: false },
@@ -408,17 +380,9 @@ describe("mcpAdapter session lifecycle", () => {
     createMcpAdapter({ transformConfig: () => config, beforeExecute })(api);
     await handlers.get("session_start")({}, {});
     try {
-      const search = registeredTool("mcp_search");
-      const loaded = await search.execute("enable", {
-        enable: ["gateway", "script"],
-        server: "demo",
-      });
-      expect(loaded.details).toEqual({ loaded: [{ name: "mcp" }], unavailable: ["script"] });
-      expect(beforeExecute).toHaveBeenCalledTimes(1);
-      expect(mocks.executeConnect).not.toHaveBeenCalled();
-      expect(mocks.executeSearch).not.toHaveBeenCalled();
-      await handlers.get("session_tree")({}, {});
-      expect(api.getActiveTools()).toEqual(["bash", "mcp_search", "mcp"]);
+      expect(api.getActiveTools()).toEqual(["bash", "mcp"]);
+      expect(registeredTool("mcp").executionMode).toBe("sequential");
+      expect(beforeExecute).not.toHaveBeenCalled();
       expect(api.getAllTools().some((tool) => tool.name === "mcp_script")).toBe(false);
     } finally {
       initialization.resolve(state);
@@ -427,7 +391,7 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
-  it("loads the advertised next page and retry through public tool names", async () => {
+  it("pages gateway search through the advertised public call", async () => {
     const config = { mcpServers: { demo: { command: "demo" } } };
     const state = createState();
     state.config = config;
@@ -448,39 +412,34 @@ describe("mcpAdapter session lifecycle", () => {
     adapter(api);
     await handlers.get("session_start")({}, {});
     await Promise.resolve();
-    const search = registeredTool("mcp_search");
     const gateway = registeredTool("mcp");
-    const active = () => api.getActiveTools().map((name) => ({ name }));
-    const beta = { name: "demo_beta" };
     const params = { query: "records", server: "demo", limit: 1 };
-    const page = await search.execute("page-1", params);
-    expect(active()).not.toContainEqual(beta);
     // Dispatch the operation printed in the result, rather than constructing page two ourselves.
-    const follow = (result: Awaited<ReturnType<typeof search.execute>>) => {
+    const follow = (result: Awaited<ReturnType<typeof gateway.execute>>) => {
       const text = result.content
         .filter((item) => item.type === "text")
         .map((item) => item.text)
         .join("\n");
-      const call = requireValue(text.match(/(mcp_search|mcp)\((\{[^\n]+\})\)/));
-      expect(call).not.toBeNull();
-      const parsed: unknown = JSON.parse(requireValue(call[2]).replace(/(\w+):/g, '"$1":'));
-      const args = z.record(z.string(), z.unknown()).parse(parsed);
-      return (call[1] === "mcp_search" ? search : gateway).execute("follow", args);
+      const call = requireValue(text.match(/mcp\((\{[^\n]+\})\)/));
+      const parsed: unknown = JSON.parse(requireValue(call[1]).replace(/(\w+):/g, '"$1":'));
+      return gateway.execute("follow", z.record(z.string(), z.unknown()).parse(parsed));
     };
-    const before = active();
-    const metadataPage = await gateway.execute("metadata-page", { action: "search", ...params });
-    const firstBlock = requireValue(metadataPage.content[0]);
+    const before = api.getActiveTools();
+    const page = await gateway.execute("page-1", { action: "search", ...params });
+    const firstBlock = requireValue(page.content[0]);
     assert.equal(firstBlock.type, "text");
     expect(firstBlock.text).toContain('mcp({ action: "search"');
-    await follow(metadataPage);
-    expect(active()).toEqual(before);
-    expect(active()).not.toContainEqual(beta);
+    expect(page).toMatchObject({ details: { matches: [{ tool: "demo_alpha" }] } });
     const next = await follow(page);
-    expect(next).toHaveProperty("tools", [beta]);
-    expect(active()).toContainEqual(beta);
-    expect(next).toMatchObject({ details: { matches: [{ tool: "demo_beta" }] } });
-    expect(next).toHaveProperty("details.query", params.query);
-    const retry = await search.execute("out-of-range", { ...params, offset: 99 });
+    expect(next).toMatchObject({
+      details: { matches: [{ tool: "demo_beta" }], query: params.query },
+    });
+    expect(api.getActiveTools()).toEqual(before);
+    const retry = await gateway.execute("out-of-range", {
+      action: "search",
+      ...params,
+      offset: 99,
+    });
     expect(await follow(retry)).toMatchObject({ details: { matches: [{ tool: "demo_alpha" }] } });
     expect(mocks.executeConnect).not.toHaveBeenCalled();
   });
@@ -747,7 +706,7 @@ describe("mcpAdapter session lifecycle", () => {
       mocks.buildProxyDescription.mockImplementation(buildProxyDescription);
       mocks.initializeMcp.mockImplementation(async (_pi, _ctx, _owner, options) => {
         const tools = spies.registerTool.mock.calls.map(([tool]) => tool);
-        expect(tools.map((tool) => tool.name)).toEqual(["mcp_search", "mcp"]);
+        expect(tools.map((tool) => tool.name)).toEqual(["mcp"]);
         expect(requireValue(tools.find((tool) => tool.name === "mcp")).description).toContain(
           "ephemeral",
         );
@@ -760,7 +719,7 @@ describe("mcpAdapter session lifecycle", () => {
       const { createMcpAdapter } = await import("../index.ts");
       const { api, spies, handlers, tool: registeredTool } = await createPi();
       createMcpAdapter({ ...(snapshot ? { config: source } : {}), transformConfig })(api);
-      expect(spies.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(["mcp_search"]);
+      expect(spies.registerTool).not.toHaveBeenCalled();
       expect(transformConfig).not.toHaveBeenCalled();
 
       const reasons: SessionStartEvent["reason"][] = ["startup", "reload", "new"];
@@ -793,10 +752,7 @@ describe("mcpAdapter session lifecycle", () => {
         const proxy = registeredTool("mcp");
         expect(proxy.description).toContain("ephemeral");
         expect(proxy.description).toContain("docs");
-        expect(spies.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
-          "mcp_search",
-          "mcp",
-        ]);
+        expect(spies.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(["mcp"]);
         expect(transformConfig).toHaveBeenCalledTimes(index + 1);
 
         // Runtime edits must not leak into a retained hook result or the next session.
@@ -896,7 +852,7 @@ describe("mcpAdapter session lifecycle", () => {
     await handlers.get("session_shutdown")();
   });
 
-  it("loads gateways without direct registration with MCP_DIRECT_TOOLS=__none__ through metadata updates", async () => {
+  it("serves gateways without direct registration with MCP_DIRECT_TOOLS=__none__ through metadata updates", async () => {
     process.env.MCP_DIRECT_TOOLS = "__none__";
     const config: McpConfig = {
       mcpServers: {
@@ -926,12 +882,8 @@ describe("mcpAdapter session lifecycle", () => {
     const { api, spies, handlers, tool: registeredTool } = await createPi();
     mcpAdapter(api);
     await handlers.get("session_start")({}, {});
-    expect(api.getActiveTools()).toEqual(["bash", "mcp_search"]);
-    const search = registeredTool("mcp_search");
-    expect(await search.execute("enable", { enable: ["gateway", "script"] })).toHaveProperty(
-      "tools",
-      [{ name: "mcp" }, { name: "mcp_script" }],
-    );
+    expect(api.getActiveTools()).toEqual(["bash", "mcp"]);
+    expect(registeredTool("mcp_script").exposure).toBe("deferred");
     const proxy = registeredTool("mcp");
     for (const server of ["demo", "other"]) {
       expect(await proxy.execute(`connect-${server}`, { connect: server })).toEqual({
@@ -956,11 +908,10 @@ describe("mcpAdapter session lifecycle", () => {
         beforeDispatch: undefined,
       });
       expect(spies.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
-        "mcp_search",
         "mcp",
         "mcp_script",
       ]);
-      expect(api.getActiveTools().sort()).toEqual(["bash", "mcp", "mcp_script", "mcp_search"]);
+      expect(api.getActiveTools()).toEqual(["bash", "mcp"]);
     }
     expect(requireValue(mocks.initializeMcp.mock.calls[0]?.[3]).resolvedConfig).toEqual(config);
     await handlers.get("session_shutdown")();

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Register unpinned catalog tools and `mcp_script` with Pi's native `deferred` exposure, keep the `mcp` gateway active whenever it is registered, withdraw dropped catalog tools and config-disabled gateways with `hidden` exposure, and remove `mcp_search` together with the adapter-owned `mcp-tool-selection` session entries; Pi's `tool_search` loads typed tools and Pi's transcript restores them.
+
 ## 8.0.33 - 2026-11-05
 
 <!-- npm-release:unreleased:start -->

@@ -46,7 +46,7 @@ function bindLifecycleHost(fixture: Awaited<ReturnType<typeof createTestExtensio
   }));
 
   const handlers = {
-    get(event: "session_start" | "session_tree" | "session_shutdown") {
+    get(event: "session_start" | "session_shutdown") {
       assert(fixture.runner.hasHandlers(event), `Missing native ${event} registration`);
       return async (
         payload: { reason?: SessionStartEvent["reason"] } = {},
@@ -60,11 +60,6 @@ function bindLifecycleHost(fixture: Awaited<ReturnType<typeof createTestExtensio
               reason: payload.reason ?? "startup",
             });
             break;
-          case "session_tree": {
-            const leaf = fixture.runner.createContext().sessionManager.getLeafId();
-            await fixture.runner.emit({ type: "session_tree", newLeafId: leaf, oldLeafId: leaf });
-            break;
-          }
           case "session_shutdown":
             await fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
             break;

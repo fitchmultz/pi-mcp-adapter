@@ -77,7 +77,7 @@ export async function verifyCli(fixture: NativeFixture): Promise<void> {
       "-e",
       "builtin:codemode",
       "--tools",
-      "mcp_search,codemode,local_echo",
+      "mcp,codemode,local_echo",
       "--provider",
       "fixture",
       "--model",

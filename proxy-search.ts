@@ -7,15 +7,14 @@ import { isToolCallApprovalRequired } from "./tool-approval.ts";
 import { truncateAtWord } from "./utils.ts";
 
 interface SearchContinuation {
-  caller: "mcp" | "mcp_search";
   query: string;
   server: string | undefined;
   showSchemas: boolean;
   limit: number;
 }
 function searchContinuation(options: SearchContinuation, nextOffset: number | null): string {
-  const { caller, query, server, showSchemas, limit } = options;
-  return `${caller}({ ${caller === "mcp" ? 'action: "search", ' : ""}query: ${JSON.stringify(query)}${(server ?? "").length > 0 ? `, server: ${JSON.stringify(server)}` : ""}${caller === "mcp" && !showSchemas ? ", includeSchemas: false" : ""}, limit: ${limit}, offset: ${String(nextOffset)} })`;
+  const { query, server, showSchemas, limit } = options;
+  return `mcp({ action: "search", query: ${JSON.stringify(query)}${(server ?? "").length > 0 ? `, server: ${JSON.stringify(server)}` : ""}${showSchemas ? "" : ", includeSchemas: false"}, limit: ${limit}, offset: ${String(nextOffset)} })`;
 }
 function formatSearchMatch(
   state: McpExtensionState,
@@ -129,14 +128,12 @@ export function executeSearch(
     includeSchemas,
     limit = 12,
     offset = 0,
-    caller = "mcp",
   }: {
     query: string;
     server?: string | undefined;
     includeSchemas?: boolean | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
-    caller?: "mcp" | "mcp_search" | undefined;
   },
 ): ProxyToolResult {
   const showSchemas = includeSchemas !== false;
@@ -157,9 +154,8 @@ export function executeSearch(
   const coverage = catalogCoverage(state, server);
   const coverageNotice = coverage.complete
     ? ""
-    : `\nCatalog is incomplete. Undiscovered servers: ${coverage.unknownServers.join(", ")}. Search with server to discover one.`;
+    : `\nCatalog is incomplete. Undiscovered servers: ${coverage.unknownServers.join(", ")}. Use mcp({ action: "connect", server }) to discover one.`;
   const empty = emptySearchPage(page, {
-    caller,
     query,
     server,
     showSchemas,
@@ -172,7 +168,7 @@ export function executeSearch(
     return empty;
   }
 
-  const text = searchPageText(state, page, { caller, query, server, showSchemas, limit, offset });
+  const text = searchPageText(state, page, { query, server, showSchemas, limit, offset });
 
   return {
     content: [{ type: "text" as const, text: text.trim() + coverageNotice }],

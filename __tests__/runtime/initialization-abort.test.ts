@@ -131,14 +131,9 @@ async function start() {
     },
   });
   await discovering;
-  expect(session.getActiveToolNames()).not.toContain("mcp");
+  expect(session.getActiveToolNames()).toContain("mcp");
   expect(session.getActiveToolNames()).not.toContain("mcp_script");
-  const loader = session.agent.state.tools.find((tool) => tool.name === "mcp_search");
-  if (loader === undefined) {
-    throw new Error("mcp_search was not registered");
-  }
-  const loaded = await loader.execute("load-during-startup", { enable: ["gateway", "script"] });
-  expect(loaded.details).toMatchObject({ loaded: [{ name: "mcp" }, { name: "mcp_script" }] });
+  session.setActiveToolsByName([...session.getActiveToolNames(), "mcp_script"]);
   expect(calls).toEqual([]);
   expect(discoveries).toBe(1);
 }

@@ -18,8 +18,7 @@ import {
 } from "./types.ts";
 import { normalizeDirectToolInputSchema } from "./utils.ts";
 
-import type { Selection } from "./tool-loader-snapshots.ts";
-export type { Selection } from "./tool-loader-snapshots.ts";
+export type Selection = { server: string; tool: string };
 export type CatalogTool = {
   spec: DirectToolSpec;
   source: ToolMetadata;
@@ -108,10 +107,16 @@ function nativeAnnotations(
   };
 }
 
+/**
+ * Pinned tools are ordinary direct tools, active from registration. Other catalog tools register
+ * with deferred exposure: Pi lists them for tool_search and codemode and declares them to the
+ * model only once loaded.
+ */
 export function catalogDefinition(
   spec: DirectToolSpec,
   instructions: string | undefined,
   dependencies: LoaderDependencies,
+  pinned: boolean,
 ): ToolDefinition<
   ReturnType<typeof Type.Unsafe<Record<string, unknown>>>,
   Record<string, unknown>
@@ -124,8 +129,7 @@ export function catalogDefinition(
     },
     ...(spec.outputSchema ? { outputSchema: nativeMcpOutputSchema(spec.outputSchema) } : {}),
     ...(spec.annotations ? { annotations: nativeAnnotations(spec.annotations) } : {}),
-    // Inactive direct tools are not callable through codemode or nested execution.
-    defaultActive: false,
+    ...(pinned ? {} : { exposure: "deferred" }),
     ...(dependencies.beforeExecute ? { executionMode: "sequential" } : {}),
     label: spec.title ?? `MCP: ${spec.originalName}`,
     description: spec.description === "" ? "(no description)" : spec.description,

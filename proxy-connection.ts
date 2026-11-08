@@ -255,7 +255,7 @@ export async function executeConnect(
       content: [
         {
           type: "text" as const,
-          text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).`,
+          text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.`,
         },
       ],
       details: { mode: "connect", error: "not_found", server: serverName },

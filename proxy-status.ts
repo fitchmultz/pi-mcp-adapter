@@ -73,7 +73,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
   }
 
   if (servers.length > 0) {
-    text += `\nmcp_search({ query: "...", server: "name" }) to discover tools; mcp({ action: "resources", server: "name" }) for resources.`;
+    text += `\ntool_search loads typed tools; mcp({ action: "search", query: "...", server: "name" }) inspects a catalog; mcp({ action: "resources", server: "name" }) lists resources.`;
     if (!coverage.complete) {
       text += `\nPartial catalog: ${coverage.unknownServers.length} undiscovered server(s).`;
     }

@@ -10,6 +10,7 @@ import {
   DefaultResourceLoader,
   createAgentSession,
   createCodemodeExtension,
+  createToolSearchExtension,
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
@@ -137,7 +138,12 @@ export class NativeFixture {
       noContextFiles: true,
       noPromptTemplates: true,
       noThemes: true,
-      extensionFactories: [adapter, nativeProbe, createCodemodeExtension({ models: false })],
+      extensionFactories: [
+        adapter,
+        nativeProbe,
+        createCodemodeExtension({ models: false }),
+        createToolSearchExtension(),
+      ],
     });
     await resourceLoader.reload();
     assert.deepEqual(resourceLoader.getExtensions().errors, []);

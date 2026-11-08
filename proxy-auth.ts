@@ -14,7 +14,7 @@ type AutoAuthResult =
 export function getAuthRequiredMessage(
   state: McpExtensionState,
   serverName: string,
-  defaultMessage = `Server "${serverName}" requires OAuth authentication. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
+  defaultMessage = `Server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
 ): string {
   const oauth = state.config.mcpServers[serverName]?.oauth;
   if (typeof oauth === "object" && oauth !== null && oauth.crossAppAccess !== undefined) {
@@ -40,7 +40,7 @@ function getAuthFailedMessage(
   ) {
     return `OAuth authentication failed for "${serverName}": ${message}. ${getAuthRequiredMessage(state, serverName)}`;
   }
-  return `OAuth authentication failed for "${serverName}": ${message}. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
+  return `OAuth authentication failed for "${serverName}": ${message}. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`;
 }
 
 function getRedirectPort(authorizationUrl: string): number | undefined {
@@ -126,7 +126,7 @@ export async function attemptAutoAuth(
       message: getAuthRequiredMessage(
         state,
         serverName,
-        `Server "${serverName}" requires OAuth authentication. If mcp is inactive, first mcp_search({ enable: ["gateway"] }). Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
+        `Server "${serverName}" requires OAuth authentication. Run mcp({ action: "auth-start", server: "${serverName}" }) to get a browser URL, or /mcp-auth ${serverName} in an interactive local session.`,
       ),
     };
   }
@@ -181,7 +181,7 @@ export async function executeAuthStart(
       content: [
         {
           type: "text" as const,
-          text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).`,
+          text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.`,
         },
       ],
       details: { mode: "auth-start", error: "not_found", server: serverName },
@@ -251,7 +251,7 @@ export async function executeAuthComplete(
       content: [
         {
           type: "text" as const,
-          text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers (load it first with mcp_search({ enable: ["gateway"] }) if inactive).`,
+          text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.`,
         },
       ],
       details: { mode: "auth-complete", error: "not_found", server: serverName },

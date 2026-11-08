@@ -5,9 +5,9 @@ description: Write mcp_script JavaScript for discovering, inspecting, and callin
 
 # MCP scripting
 
-Use `mcp_script` for MCP calls with loops, filtering, chaining, fan-out, or other logic between calls. Pass ordinary JavaScript as its `code` argument. For a single call, use an already loaded typed tool. Use `mcp_search({ query, server?, limit?, offset? })` to discover and load typed tools for the next request, or explicit `mcp` actions for gateway-only workflows. Discovery never executes a search hit.
+Use `mcp_script` for MCP calls with loops, filtering, chaining, fan-out, or other logic between calls. Pass ordinary JavaScript as its `code` argument. For a single call, use a loaded typed tool. Pi's native `tool_search` loads typed MCP tools for the next request; explicit `mcp` actions cover gateway-only workflows. Discovery never executes a search hit.
 
-If `mcp_script` is inactive, first call `mcp_search({ enable: ["script"] })`. For gateway actions, load `mcp` with `mcp_search({ enable: ["gateway"] })`. Enable both in one call when needed. Enabling does not connect to a server or run an integration action; selections stay active for the session/branch. Hosts permitting only one gateway without the loader keep that tool eager.
+`mcp_script` registers as a deferred Pi tool: load it with `tool_search`, name it in `defaultTools`, or call it from `codemode`. The `mcp` gateway is active whenever it is registered.
 
 ## Discover, inspect, then call
 
@@ -34,7 +34,7 @@ return results;
 
 ## API and return shapes
 
-- `await tools.search({ query, server?, limit?, offset? })` returns `{ items, total, hasMore, nextOffset, coverage }`. Items carry `path`, `name`, `server`, optional `description`, and `score`. Discovery failures return `{ error, coverage }`. Script search defaults to **12** items, maximum **100**, with zero-based item offsets. The separate `mcp_search` loader defaults to **5**.
+- `await tools.search({ query, server?, limit?, offset? })` returns `{ items, total, hasMore, nextOffset, coverage }`. Items carry `path`, `name`, `server`, optional `description`, and `score`. Discovery failures return `{ error, coverage }`. Script search defaults to **12** items, maximum **100**, with zero-based item offsets.
 - `coverage` is `{ complete, knownServers, unknownServers }`. Global search covers known catalogs without starting every lazy server. Select an uncached server to discover it. Script search does not activate typed tools.
 - `await tools.describe({ path, server? })` returns the complete tool descriptor with `path`, `server`, original `name`, and all server-supplied fields, including `inputSchema`, `outputSchema`, `title`, `annotations`, and `_meta` when present. It never substitutes `inputTypeScript`. Failures return `{ path, error: { code, message, suggestions? } }`. Supply `server` to disambiguate a name.
 - `await tools.call(path, args, server?)` returns `{ ok: true, data, resultRef? }` or `{ ok: false, error: { code, message, ... }, data?, resultRef? }`. `data` is the **raw MCP result**, including raw error-result data when available. Tools usually return `{ content, structuredContent?, isError?, ... }`; resource reads return `{ contents, ... }`.
