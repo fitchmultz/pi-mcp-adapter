@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createMcpAdapter } from "../../index.ts";
-import { formatMcpResultReference } from "../../mcp-output-guard.ts";
 import type { McpAdapterOptions } from "../../types.ts";
 import { createTestExtensionContext } from "../test-extension-context.ts";
 
@@ -89,12 +88,13 @@ describe("factory output directory", () => {
     try {
       await Promise.all(
         adapters.map(async (adapter, index) => {
-          const result = await adapter.call("mcp_script", {
-            code: 'emit("unique".repeat(20_000))',
-          });
+          const text = "unique".repeat(20_000);
+          const result = await adapter.call("output_echo", { text });
           const path = spillDetails.parse(result.details).outputGuard.fullOutputPath;
           expect(dirname(dirname(path))).toBe(directories[index]);
-          expect(await readFile(path, "utf8")).toBe("unique".repeat(20_000));
+          expect(await readFile(path, "utf8")).toBe(
+            `${text}\n${JSON.stringify({ echo: text }, null, 2)}`,
+          );
         }),
       );
     } finally {
@@ -153,31 +153,10 @@ describe("factory output directory", () => {
           .parse(JSON.parse(await readFile(resourceDetails.resultRef, "utf8")));
         expect(resourceRaw.contents[0]?.text).toBe("resource\n".repeat(10_000));
         paths.push(resourceDetails.resultRef);
-        const text = "script-inner: π\n".repeat(10_000);
-        const final = `script-final:${text}`;
-        const script = await adapter.call("mcp_script", {
-          code: `const r = await tools.output_echo({ text: ${JSON.stringify(text)} }); if (!r.ok || r.data.structuredContent.echo !== ${JSON.stringify(text)}) throw new Error("raw result changed"); emit("script-final:" + r.data.content[0].text);`,
-        });
-        const scriptDetails = spillDetails
-          .extend({ error: z.unknown().optional(), resultRefs: z.array(z.string()) })
-          .parse(script.details);
-        expect(scriptDetails.error).toBeUndefined();
-        const firstRef = scriptDetails.resultRefs[0];
-        assert.ok(typeof firstRef === "string");
-        await check(
-          scriptDetails.outputGuard.fullOutputPath,
-          `${final}\n${formatMcpResultReference(firstRef)}`,
-        );
         const files = (await readdir(expectedParent, { recursive: true }))
           .filter((name) => name.endsWith(".txt"))
           .map((name) => join(expectedParent, name));
-        expect(files).toHaveLength(8);
-        expect(new Set(files).size).toBe(8);
-        const innerFiles = files.filter((path) => !paths.includes(path));
-        // Raw script calls retain their JSON but never create unused rendered-text spills.
-        expect(await Promise.all(innerFiles.map((path) => readFile(path, "utf8")))).toEqual([
-          JSON.stringify({ content: [{ type: "text", text }], structuredContent: { echo: text } }),
-        ]);
+        expect(files.sort()).toEqual([...paths].sort());
       } finally {
         await adapter.stop();
       }

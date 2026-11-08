@@ -63,7 +63,7 @@ The adapter supports [resources](docs/reference.md#mcp-resources) and [prompt te
 
 [MCP Apps](docs/reference.md#mcp-ui-integration) open interactive UIs in a browser or through [Glimpse](https://github.com/hazat/glimpse) on macOS. Apps can send messages to Pi. Try the [interactive visualizer](examples/interactive-visualizer/README.md).
 
-Use [`mcp_script`](docs/reference.md#mcp-scripting) for loops and dependent tool calls. See [gateway examples](docs/reference.md#usage) for exact call shapes.
+Use Pi's `codemode` tool for [loops and dependent tool calls](docs/reference.md#multi-call-work). See [gateway examples](docs/reference.md#usage) for exact call shapes.
 
 ## Warnings and platform limits
 

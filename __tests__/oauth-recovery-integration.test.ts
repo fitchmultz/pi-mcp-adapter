@@ -15,7 +15,6 @@ import * as callbackServer from "../mcp-callback-server.ts";
 import * as authStorage from "../mcp-auth.ts";
 import { openMcpAuthPanel } from "../commands.ts";
 import { createMcpAdapter } from "../index.ts";
-import { runMcpScript } from "../mcp-code.ts";
 import {
   startAuth,
   completeAuthFromInput,
@@ -363,7 +362,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   });
 
   for (const era of ["legacy", "modern"] as const) {
-    for (const host of ["proxy", "direct", "script"] as const) {
+    for (const host of ["proxy", "direct"] as const) {
       it.each([
         [false, false],
         [false, true],
@@ -1106,24 +1105,6 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     },
   );
 
-  it("script timeout cancels native callback waiting and its outstanding tool", async () => {
-    const f = await fixture();
-    f.definition.auth = "oauth";
-    f.seed("basic");
-    f.settings.autoAuth = true;
-    f.state.ui = f.ui;
-    await f.connect();
-    const result = await runMcpScript({
-      state: f.state,
-      code: `return await tools.call(${JSON.stringify(f.toolName("write"))}, {});`,
-      timeoutMs: 300,
-    });
-    expect(result.details.error).toBe("timeout");
-    await expect.poll(() => hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
-    expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);
-    expect(f.exchanges).toHaveLength(0);
-  });
-
   it("manual auth-start keeps its five-minute flow after the originating tool ends", async () => {
     const f = await fixture();
     const controller = new AbortController();
@@ -1833,7 +1814,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect((await f.call()).details.error).toBeUndefined();
   });
 
-  it.each(["proxy", "direct", "script"] as const)(
+  it.each(["proxy", "direct"] as const)(
     "%s stops a denied automatic permission flow without dispatching again",
     async (host) => {
       const f = await fixture("modern");

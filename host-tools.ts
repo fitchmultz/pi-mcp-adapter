@@ -14,7 +14,6 @@ import {
 } from "./metadata-cache.ts";
 import { toolErrorOverride } from "./error-signal.ts";
 import { renderMcpToolResult, renderMcpProxyToolCall } from "./tool-result-renderer.ts";
-import { DEFAULT_MCP_SCRIPT_TIMEOUT_MS } from "./utils.ts";
 import { gatewayParameters, prepareGatewayArguments } from "./gateway-arguments.ts";
 import { executeGateway } from "./host-gateway.ts";
 
@@ -68,69 +67,6 @@ export class McpHostTools {
     return this.withdrawals.has(name) && !this.hidden.has(name);
   }
 
-  /** mcp_script registers with deferred exposure whenever it is registered. */
-  hasDeferredScript(): boolean {
-    return this.registered("mcp_script");
-  }
-
-  private registerScriptTool(): void {
-    if (this.registered("mcp_script")) {
-      return;
-    }
-    const options = this.options;
-    const beforeExecute = options.beforeExecute;
-    const getToolState = (signal?: AbortSignal) => this.host.getToolState(signal);
-    const getPiTools = () => this.pi.getAllTools();
-    const execute: HostToolExecute<{ code: string; timeoutMs?: number }> =
-      // oxlint-disable-next-line eslint/max-params -- QX-025: preserve Pi's native five-position execute callback.
-      async function executeMcpScript(toolCallId, params, signal, _onUpdate, ctx) {
-        const ready = await getToolState(signal);
-        if ("content" in ready) {
-          return ready;
-        }
-        const { runMcpScript } = await import("./mcp-code.ts");
-        return runMcpScript({
-          state: ready,
-          code: params.code,
-          timeoutMs: params.timeoutMs ?? options.defaultScriptTimeoutMs,
-          getPiTools,
-          signal,
-          toolCallId,
-          beforeDispatch: beforeExecute
-            ? (callSignal, operation) =>
-                beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)
-            : undefined,
-        });
-      };
-    this.registerHostTool({
-      exposure: "deferred",
-      ...(beforeExecute ? { executionMode: "sequential" as const } : {}),
-      name: "mcp_script",
-      label: "MCP Script",
-      description:
-        "Compose MCP calls with trusted JavaScript: await tools.search({query, server?}), tools.describe({path}), tools.call(path,args). Describe returns complete JSON schemas. Calls return {ok,data} with raw MCP results, or {ok:false,error,data?}. Resources: tools.resources({server}), tools.readResource({server,uri}). Saved results: tools.readResult({ref,path?,fields?,offset?,limit?}); never repeats a remote call. Use emit(value) to return selected data or content blocks. No Node, filesystem, or network globals. Prefer a direct tool for one call; use scripts for loops, filtering and chains.",
-      promptSnippet:
-        "Batch multiple MCP tool calls in one JavaScript request (loop, filter, chain)",
-      parameters: Type.Object({
-        code: Type.String({
-          description:
-            "Trusted JavaScript MCP script. Use tools.<prefixedToolName>(args) and emit(value).",
-        }),
-        timeoutMs: Type.Optional(
-          Type.Number({
-            minimum: 1,
-            description:
-              options.defaultScriptTimeoutMs === null
-                ? "Execution timeout in milliseconds (no default deadline)"
-                : `Execution timeout in milliseconds (default: ${options.defaultScriptTimeoutMs ?? DEFAULT_MCP_SCRIPT_TIMEOUT_MS})`,
-          }),
-        ),
-      }),
-      renderResult: renderMcpToolResult,
-      execute,
-    });
-  }
-
   private registerProxyTool(description: string): void {
     const beforeExecute = this.options.beforeExecute;
     const { pi, host, options } = this;
@@ -179,11 +115,6 @@ export class McpHostTools {
       }
     } else {
       this.hideHostTool("mcp");
-    }
-    if (config.settings?.scriptMode !== false) {
-      this.registerScriptTool();
-    } else {
-      this.hideHostTool("mcp_script");
     }
   }
   private hasPinnedResources(config: McpConfig, cache: MetadataCache | null): boolean {

@@ -2,9 +2,13 @@
 
 [Install the current package](../README.md#install). For pre-v5 state, follow the migration steps below **before restarting Pi**.
 
-## Upgrading from v8
+## Upgrading from 8.0.34
 
-Version 9 removes `mcp_search`. Pi's native `tool_search` loads deferred typed tools, Pi's transcript decides which loaded tools a branch declares, and the adapter no longer writes `mcp-tool-selection` session entries (existing entries are ignored). The `mcp` gateway is active whenever it is registered; `disableProxyTool` still hides it once configured pins are available. `mcp_script` registers deferred: load it with `tool_search` or call it from `codemode`. The adapter activates a registered `tool_search` when it registers deferred tools, unless the branch recorded removing it. Catalog tools that a server drops are re-registered hidden, and a tool that loses its pin leaves the active set. A pin you deselect stays off when the branch resumes or its server drops and restores the tool, unless the session's tool selection names it.
+Releases after 8.0.34 remove `mcp_script`, the bundled `mcp-scripting` skill, the `scriptMode` setting, and the `defaultScriptTimeoutMs` factory option. Use Pi's `codemode` tool for loops and dependent calls: its scripts call deferred typed tools directly and reach gateway actions, including `read-result` and `read-resource`, through `tools.mcp`. The adapter ignores a leftover `scriptMode` setting and no longer reads `defaultScriptTimeoutMs`; remove both. A package entry that hid the skill with `"skills": []` keeps working.
+
+## Upgrading from 8.0.33 or earlier
+
+8.0.34 removes `mcp_search`. Pi's native `tool_search` loads deferred typed tools, Pi's transcript decides which loaded tools a branch declares, and the adapter no longer writes `mcp-tool-selection` session entries (existing entries are ignored). The `mcp` gateway is active whenever it is registered; `disableProxyTool` still hides it once configured pins are available. The adapter activates a registered `tool_search` when it registers deferred tools, unless the branch recorded removing it. Catalog tools that a server drops are re-registered hidden, and a tool that loses its pin leaves the active set. A pin you deselect stays off when the branch resumes or its server drops and restores the tool, unless the session's tool selection names it.
 
 ## Upgrading from v5
 

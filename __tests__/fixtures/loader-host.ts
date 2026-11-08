@@ -19,15 +19,15 @@ export function loaderFixtureTool(
   };
 }
 
-interface ScriptingLoaderHost {
+interface LoaderHost {
   api: ExtensionAPI;
   dispose: () => Promise<void>;
   definitions: Map<string, ToolDefinition>;
   active: () => Array<{ name: string }>;
 }
-export async function createScriptingLoaderHost(
+export async function createLoaderHost(
   allow: (ref: { name: string }) => boolean = () => true,
-): Promise<ScriptingLoaderHost> {
+): Promise<LoaderHost> {
   const native = await createTestExtensionContext("builtin", (api) => {
     api.registerTool(loaderFixtureTool("mcp"));
     api.registerTool(loaderFixtureTool("read"));

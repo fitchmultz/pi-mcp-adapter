@@ -114,7 +114,6 @@ export async function executeResourceRead(
     signal,
     identity = {},
     beforeDispatch,
-    raw = false,
   }: {
     server: string;
     uri: string;
@@ -123,7 +122,6 @@ export async function executeResourceRead(
     beforeDispatch?:
       | ((signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>)
       | undefined;
-    raw?: boolean | undefined;
   },
 ): ReturnType<typeof executeCall> {
   return executeCall(state, {
@@ -133,9 +131,6 @@ export async function executeResourceRead(
     signal,
     identity,
     beforeDispatch,
-    options: {
-      resourceUri: uri,
-      raw,
-    },
+    options: { resourceUri: uri },
   });
 }

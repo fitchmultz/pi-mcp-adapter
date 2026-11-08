@@ -312,7 +312,6 @@ function retentionRequired(
 export async function retainMcpResult(
   result: unknown,
   options: McpOutputGuardOptions = {},
-  rawResult = false,
 ): Promise<RetainedMcpResult> {
   const raw = safeStringify(result);
   const rawBytes = byteLength(raw);
@@ -334,7 +333,7 @@ export async function retainMcpResult(
     rawBytes,
     artifact,
     payloadFiles,
-    summarize: oversized && !rawResult,
+    summarize: oversized,
   });
 }
 

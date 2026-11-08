@@ -11,7 +11,6 @@ import {
   saveMcpOutputStream,
 } from "../mcp-output-guard.ts";
 import { executeDescribe } from "../proxy-modes.ts";
-import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import type { McpExtensionState } from "../state.ts";
 import { firstText } from "./fixtures/proxy-runtime.ts";
@@ -275,26 +274,5 @@ describe("review regressions: scoped original-name description", () => {
       });
     }
     expect(executeDescribe(state, "a_b").details.error).toBe("ambiguous_tool");
-  });
-
-  it("prefers the exact scoped original name in tools.describe and preserves unscoped ambiguity", async () => {
-    const result = await runMcpScript({
-      state: collisionState(),
-      code: 'return { dot: await tools.describe({ server: "demo", path: "a.b" }), underscore: await tools.describe({ server: "demo", path: "a_b" }), unscoped: await tools.describe({ path: "a_b" }) };',
-    });
-    expect(result.details).not.toHaveProperty("error");
-    expect(JSON.parse(firstText(result))).toMatchObject({
-      dot: {
-        server: "demo",
-        name: "a.b",
-        inputSchema: { properties: { "a.b": { type: "string" } } },
-      },
-      underscore: {
-        server: "demo",
-        name: "a_b",
-        inputSchema: { properties: { a_b: { type: "string" } } },
-      },
-      unscoped: { error: { code: "ambiguous_tool" } },
-    });
   });
 });

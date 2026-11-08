@@ -39,7 +39,6 @@ interface ToolCallOptions extends McpToolCallIdentity {
   recoverAuthConnection: NonNullable<SessionRecoveryDeps["onNeedsAuth"]>;
   authRequiredMessage: () => string;
   autoAuthAttempted: () => boolean;
-  raw?: boolean;
 }
 
 type RuntimeDependencies = Awaited<ReturnType<typeof loadCallDependencies>>;
@@ -87,7 +86,6 @@ class ToolCallRuntime {
       server: serverName,
       tool: target.originalName,
       ...(options.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
-      ...(options.innerCallId !== undefined ? { innerCallId: options.innerCallId } : {}),
     };
   }
   private schemaSuffix(): string {
@@ -251,12 +249,11 @@ class ToolCallRuntime {
             ? this.deps.ui.summarizeUiSessionResult(this.uiSession)
             : undefined,
         detailsBase: options.detailsBase,
-        raw: options.raw,
         outputGuardOptions: this.outputGuardOptions,
         schemaSuffix: () => this.schemaSuffix(),
       });
     } catch (error) {
-      if (this.beforeDispatchPending && options.innerCallId === undefined) {
+      if (this.beforeDispatchPending) {
         throw error;
       }
       return await this.failure(error);
@@ -276,7 +273,7 @@ class ToolCallRuntime {
     const message =
       failure.phase === "before"
         ? "MCP call capture failed before dispatch; the tool did not run. Restore capture before continuing."
-        : "MCP outcome capture failed. Use the retained outcome to continue the original work; do not repeat a completed call or rerun the script.";
+        : "MCP outcome capture failed. Use the retained outcome to continue the original work; do not repeat a completed call.";
     this.uiSession?.sendToolCancelled(message);
     const retained =
       "result" in failure && failure.result !== undefined
@@ -322,7 +319,7 @@ class ToolCallRuntime {
       return this.captureFailureResult(error, this.captureFailure);
     }
     if (recovery.isToolTransportFailure(error) || recovery.isInterruptedToolCall(error)) {
-      const message = `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call or rerun its script.`;
+      const message = `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call.`;
       return this.cancelled(
         message,
         { error: "ambiguous_outcome", recovery: { ...this.identity, action: "readback" } },

@@ -6,35 +6,15 @@ import { createInterface } from "node:readline";
 import { expect, it } from "vitest";
 import { McpServerManager } from "../server-manager.ts";
 import { executeCall } from "../proxy-modes.ts";
-import { runMcpScript } from "../mcp-code.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { createTestState } from "./test-state.ts";
 import { fileURLToPath } from "node:url";
-import { createOutcomeResponder } from "./fixtures/scripting-runtime-outcome.ts";
+import { createOutcomeResponder } from "./fixtures/outcome-server.ts";
 
-const outcomeFixture = fileURLToPath(
-  new URL("./fixtures/scripting-runtime-outcome.ts", import.meta.url),
-);
+const outcomeFixture = fileURLToPath(new URL("./fixtures/outcome-server.ts", import.meta.url));
 const closingWriteFixture = fileURLToPath(
   new URL("./fixtures/closing-write-server.ts", import.meta.url),
 );
-
-function assertNoScriptError(output: Awaited<ReturnType<typeof runMcpScript>>): void {
-  expect(output.details).not.toHaveProperty("error");
-}
-function assertScriptError(output: Awaited<ReturnType<typeof runMcpScript>>, error: unknown): void {
-  expect(output.details.error).toBe(error);
-}
-
-async function cancelAfterWrite(
-  state: Parameters<typeof executeCall>[0],
-  controller: AbortController,
-): Promise<void> {
-  await expect
-    .poll(async () => (await executeCall(state, { toolName: "local_readback", args: {} })).content)
-    .toEqual([{ type: "text", text: "1" }]);
-  controller.abort(new Error("caller cancelled"));
-}
 
 it.each(["stdio", "unix"])(
   "reports a committed %s tool's expired deadline without replay",
@@ -107,115 +87,6 @@ it.each(["stdio", "unix"])(
         });
       }
       await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
-
-it.each([
-  ["timeout", false],
-  ["abort", false],
-  ["early return", false],
-  ["timeout", true],
-] as const)(
-  "reports committed writes when a script ends by %s (capture=%s)",
-  async (ending, capture) => {
-    const manager = new McpServerManager();
-    const controller = new AbortController();
-    try {
-      const definition = {
-        command: process.execPath,
-        args: [outcomeFixture],
-        requestTimeoutMs: 10_000,
-        retryOnTransportFailure: true,
-      };
-      const connection = await manager.connect("local", definition);
-      const state = createTestState({
-        manager,
-        config: { mcpServers: { local: definition }, settings: {} },
-        toolMetadata: new Map([
-          [
-            "local",
-            buildToolMetadata({
-              tools: connection.tools,
-              resources: [],
-              definition,
-              serverName: "local",
-              prefix: "server",
-            }).metadata,
-          ],
-        ]),
-        failureTracker: new Map(),
-        serverInstructions: new Map(),
-        completedUiSessions: [],
-      });
-      if (capture) {
-        state.onToolCall = async () => {
-          /* A successful capture callback owns the cancellation receipt. */
-        };
-      }
-      const pending = runMcpScript({
-        state,
-        code: `
-      await tools.local_readback({});
-      const write = tools.local_write({ delayMs: 5000 });
-      tools.local_write({ blocked: true });
-      ${ending === "early return" ? 'await tools.local_readback({}); return "early";' : "await write;"}
-    `,
-        timeoutMs: ending === "timeout" ? 500 : 10_000,
-        signal: controller.signal,
-        toolCallId: "script-write",
-        beforeDispatch: async (_signal, operation) => {
-          if (operation.args.blocked === true) {
-            await new Promise(() => {
-              /* Hold this pre-dispatch gate until script cancellation. */
-            });
-          }
-        },
-      });
-      if (ending === "abort") {
-        await cancelAfterWrite(state, controller);
-      }
-      const output = await pending;
-      const errors = { "early return": undefined, timeout: "timeout", abort: "aborted" };
-      const assertEnding = ending === "early return" ? assertNoScriptError : assertScriptError;
-      assertEnding(output, errors[ending]);
-      const capturedError: unknown = expect.any(Error);
-      const recovery: unknown = expect.objectContaining({
-        server: "local",
-        tool: "write",
-        toolCallId: "script-write",
-        innerCallId: 2,
-        ...(capture
-          ? { phase: "after", args: { delayMs: 5000 }, error: capturedError }
-          : { action: "readback" }),
-      });
-      expect(output.details.calls).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ path: "local_readback", ok: true }),
-          expect.objectContaining({
-            path: "local_write",
-            error: capture ? "aborted" : "ambiguous_outcome",
-            recovery,
-          }),
-          expect.objectContaining({ path: "local_write", error: "aborted" }),
-        ]),
-      );
-      const recoveryNotice: unknown = expect.stringContaining(
-        capture ? "do not repeat a completed call or rerun the script" : "Do not blindly repeat",
-      );
-      expect(output.content).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            text: recoveryNotice,
-          }),
-        ]),
-      );
-      expect((await executeCall(state, { toolName: "local_readback", args: {} })).content).toEqual([
-        { type: "text", text: "1" },
-      ]);
-      expect(connection.inFlight).toBe(0);
-    } finally {
-      await manager.closeAll();
     }
   },
 );

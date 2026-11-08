@@ -18,7 +18,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const config: McpConfig = { mcpServers: {} };
 const options: McpAdapterOptions = {
   config,
-  defaultScriptTimeoutMs: null,
   transformConfig: (resolved, ctx) => {
     const cwd: string = ctx.cwd;
     void cwd;
@@ -56,7 +55,7 @@ const patch: ServerStreamResultPatchNotification | undefined =
   }).data;
 
 // @ts-expect-error Factory options must retain their declared value types.
-createMcpAdapter({ defaultScriptTimeoutMs: "unlimited" });
+createMcpAdapter({ outputDirectory: 42 });
 // @ts-expect-error The returned extension requires the host API.
 createMcpAdapter(options)("invalid host");
 // @ts-expect-error The default export also requires the host API.

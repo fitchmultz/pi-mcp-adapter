@@ -7,9 +7,12 @@ import { z } from "zod";
 const argumentsSchema = z.object({ value: z.string() });
 const schema = z.toJSONSchema(argumentsSchema);
 export const instructions = "Complete native namespace instructions. ".repeat(100);
+/** Plain text larger than the inline output limit, returned for the small input "large". */
+export const largeOutput = "native é😀\n".repeat(30_000);
 
 export class WireFixture {
   readonly effects: unknown[] = [];
+  private stalled: ServerResponse[] | undefined;
   private held: ServerResponse | undefined;
   private readonly hold: PromiseWithResolvers<void> = Promise.withResolvers();
   readonly started = this.hold.promise;
@@ -36,6 +39,13 @@ export class WireFixture {
       this.held = response;
       this.hold.resolve();
       return undefined;
+    }
+    if (value === "large") {
+      return {
+        resultType: "complete",
+        content: [{ type: "text", text: largeOutput }],
+        structuredContent: { value },
+      };
     }
     return {
       resultType: "complete",
@@ -102,6 +112,10 @@ export class WireFixture {
       return;
     }
     assert.ok("id" in message, "native request must have an id");
+    if (this.stalled !== undefined) {
+      this.stalled.push(response);
+      return;
+    }
     const result =
       message.method === "tools/call" ? this.call(message, response) : this.result(message.method);
     if (result === undefined) {
@@ -110,6 +124,19 @@ export class WireFixture {
     response
       .writeHead(200, { "content-type": "application/json" })
       .end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+  }
+
+  /** Leaves later requests unanswered, as from a server that accepted them and stalled. */
+  stall(): void {
+    this.stalled = [];
+  }
+
+  /** Drops the stalled requests and answers new ones again. */
+  resume(): void {
+    for (const response of this.stalled ?? []) {
+      response.destroy();
+    }
+    this.stalled = undefined;
   }
 
   finishHeld(): void {

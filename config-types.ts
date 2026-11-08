@@ -153,8 +153,6 @@ export interface McpSettings {
   idleTimeout?: number; // minutes, default 10, 0 to disable
   requestTimeoutMs?: number; // milliseconds, overrides the SDK request timeout when > 0
   directTools?: boolean;
-  /** Register the trusted MCP-only JavaScript scripting tool. Defaults to true; set false to hide it. */
-  scriptMode?: boolean;
   /** Default approval gate for matching tools/resources; per-server settings override it. */
   approveTools?: boolean | string[];
   disableProxyTool?: boolean;

@@ -159,7 +159,6 @@ const settingsFields = {
   idleTimeout: isNumber,
   requestTimeoutMs: isNumber,
   directTools: isBoolean,
-  scriptMode: isBoolean,
   approveTools: isToolSelection,
   disableProxyTool: isBoolean,
   freezeDirectTools: isBoolean,

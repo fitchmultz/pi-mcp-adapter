@@ -24,7 +24,6 @@ const reserved = new Set([
   "find",
   "ls",
   "mcp",
-  "mcp_script",
 ]);
 type Registration = {
   name: string;

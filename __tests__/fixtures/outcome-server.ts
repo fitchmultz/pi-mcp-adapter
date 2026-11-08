@@ -33,8 +33,7 @@ export function createOutcomeResponder(
       const call = CallToolRequestSchema.parse(request);
       if (call.params.name === "write") {
         committed++;
-        const delayMs = call.params.arguments?.delayMs;
-        await delay(typeof delayMs === "number" ? delayMs : 160);
+        await delay(160);
       }
       result = { content: [{ type: "text", text: String(committed) }] };
     } else {
