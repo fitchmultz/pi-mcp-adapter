@@ -201,6 +201,13 @@ describe("MCP catalog registration", () => {
     recorded = true;
     loader.sync(config, cache());
     expect(h.active()).toContainEqual({ name: "demo_pinned" });
+    // A pin the user deselected stays off when it leaves and returns.
+    h.api.setActiveTools(["mcp", "read"]);
+    loader.sync({ mcpServers: {} }, null);
+    loader.sync(config, cache());
+    expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
+    loader.settlePins();
+    expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
   });
 
   it("registers nothing when direct tools are suppressed by the environment", async () => {

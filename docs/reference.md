@@ -590,7 +590,7 @@ Every eligible cached or live tool registers as a Pi tool under its flat prefixe
 
 Pi's transcript records which loaded tools a branch declares and restores them across resume, reload, and branch navigation in default-tool sessions; SDK sessions that pass a plain `tools` allowlist or `noTools` own their initial selection, and tree navigation restores the branch loadout in every session. Host tool allowlists remain binding. Loaded schemas remain available rather than unloading each turn; activation changes declarations and can invalidate the prompt-cache prefix.
 
-Tools that a server drops from its catalog, tools of disabled servers, and tools outside the current working directory's configuration are re-registered with `hidden` exposure, which withdraws them from every path until the catalog offers them again. Legacy resource pins keep the gateway registered even with `disableProxyTool: true`.
+Tools that a server drops from its catalog, tools of disabled servers, and tools outside the current working directory's configuration are re-registered with `hidden` exposure, which withdraws them from every path until the catalog offers them again. A returning pin is active again only if it was active when it left. Legacy resource pins keep the gateway registered even with `disableProxyTool: true`.
 
 Both official Pi and the maintained fork use public tool registration and active-tool APIs. Always use the exact name returned by discovery rather than constructing names.
 

@@ -32,6 +32,8 @@ type Registration = {
   definition: ReturnType<typeof catalogDefinition>;
   hidden: boolean;
   pinned: boolean;
+  /** Whether a pin was active when it left the catalog; only such a pin re-activates on return. */
+  activeWhenWithdrawn: boolean;
 };
 interface ToolLoader {
   sync: (
@@ -66,7 +68,10 @@ export function removedOnBranch(
   return removed;
 }
 
-/** How re-registering a tool changes its pin; a first registration has no change. */
+/**
+ * How re-registering a tool changes its pin; a first registration has no change. A pin returning
+ * from withdrawal counts as gained only if it was active when withdrawn, so a deselection holds.
+ */
 function pinChange(
   existing: Registration | undefined,
   pinned: boolean,
@@ -77,7 +82,9 @@ function pinChange(
   if (existing.pinned && !pinned) {
     return "lost";
   }
-  return pinned && (!existing.pinned || existing.hidden) ? "gained" : undefined;
+  return pinned && (!existing.pinned || (existing.hidden && existing.activeWhenWithdrawn))
+    ? "gained"
+    : undefined;
 }
 
 /**
@@ -129,7 +136,7 @@ class Loader implements ToolLoader {
 
   /**
    * Reports a pin the tool lost, which Pi keeps active across re-registration, or one it gained or
-   * regained after withdrawal, which activates like a new pin within the session.
+   * regained active after withdrawal, which activates like a new pin within the session.
    */
   private register(item: CatalogTool, cache: MetadataCache | null): "lost" | "gained" | undefined {
     const { spec, selection, name, pinned } = item;
@@ -144,7 +151,14 @@ class Loader implements ToolLoader {
     }
     const definition = catalogDefinition(spec, instructions, this.dependencies, pinned);
     this.pi.registerTool(definition);
-    this.registered.set(id, { name, fingerprint, definition, hidden: false, pinned });
+    this.registered.set(id, {
+      name,
+      fingerprint,
+      definition,
+      hidden: false,
+      pinned,
+      activeWhenWithdrawn: false,
+    });
     return pinChange(existing, pinned);
   }
 
@@ -187,10 +201,12 @@ class Loader implements ToolLoader {
   }
 
   private withdraw(available: Set<string>): void {
+    const active = new Set(this.pi.getActiveTools());
     for (const [id, registration] of this.registered) {
       if (available.has(id) || registration.hidden) {
         continue;
       }
+      registration.activeWhenWithdrawn = active.has(registration.name);
       const hidden: ToolDefinition<
         ReturnType<typeof catalogDefinition>["parameters"],
         Record<string, unknown>
