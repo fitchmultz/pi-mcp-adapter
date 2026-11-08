@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.34 - 2026-11-08
+
+<!-- npm-release:unreleased:start -->
+
 - Register unpinned catalog tools and `mcp_script` with Pi's native `deferred` exposure, keep the `mcp` gateway active whenever it is registered, withdraw dropped catalog tools and config-disabled gateways with `hidden` exposure, and remove `mcp_search` together with the adapter-owned `mcp-tool-selection` session entries; Pi's `tool_search`, which the adapter activates when it registers deferred tools, loads typed tools and Pi's transcript restores them.
+
+<!-- npm-release:unreleased:end -->
+
+- Defer the MCP catalog to native tool_search and drop mcp_search (1/2) (#212) ([4b7e729](https://github.com/fitchmultz/pi-mcp-adapter/commit/4b7e729d6e9705fd07a4db815f62e6e311fc8efa))
+
+### What's Changed
+
+- Defer the MCP catalog to native tool_search and drop mcp_search (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/212
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.33...v8.0.34
 
 ## 8.0.33 - 2026-11-05
 
