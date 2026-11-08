@@ -71,7 +71,7 @@ Servers are **lazy by default**. Cached tool descriptors register as deferred Pi
 tool_search({ query: "take screenshot" });
 ```
 
-The loaded tools become available with their full argument schemas on the next model request. The agent then calls the chosen typed tool normally. `codemode` scripts can call any registered catalog tool without loading it first. Pi registers `tool_search` inactive; like Pi's own MCP extension, the adapter activates it whenever it registers deferred tools. A host allowlist that omits `tool_search` keeps it off.
+The loaded tools become available with their full argument schemas on the next model request. The agent then calls the chosen typed tool normally. `codemode` scripts can call any registered catalog tool without loading it first. Pi registers `tool_search` inactive; like Pi's own MCP extension, the adapter activates it when it registers deferred tools. It does so once per session start or tree navigation, so a later deselection lasts, and a branch that recorded removing `tool_search` keeps it off. A host allowlist that omits `tool_search` keeps it off.
 
 The `mcp` gateway is active whenever it is registered. Use it for resources, authentication, UI messages, saved-result readback, fallback calls, and for discovering a server whose catalog is not cached yet:
 
@@ -586,7 +586,7 @@ URL mode is advertised only in TUI mode. The adapter displays the requesting ser
 
 ### Typed Discovery and Pinned Tools
 
-Every eligible cached or live tool registers as a Pi tool under its flat prefixed name, with `mcp_<server>` namespace metadata and the server's instructions. Pinned tools (`directTools`) are ordinary direct tools, active from startup. Every other catalog tool registers with Pi's native `deferred` exposure: it is not declared to the model until `tool_search` loads it, but `codemode` scripts and nested tool execution can call it at any time. Loading does not execute a tool.
+Every eligible cached or live tool registers as a Pi tool under its flat prefixed name, with `mcp_<server>` namespace metadata and the server's instructions. Pinned tools (`directTools`) are ordinary direct tools, active from startup unless the branch recorded deselecting them. Every other catalog tool registers with Pi's native `deferred` exposure: it is not declared to the model until `tool_search` loads it, but `codemode` scripts and nested tool execution can call it at any time. Loading does not execute a tool.
 
 Pi's transcript records which loaded tools a branch declares and restores them across resume, reload, and branch navigation in default-tool sessions; SDK sessions that pass a plain `tools` allowlist or `noTools` own their initial selection, and tree navigation restores the branch loadout in every session. Host tool allowlists remain binding. Loaded schemas remain available rather than unloading each turn; activation changes declarations and can invalidate the prompt-cache prefix.
 

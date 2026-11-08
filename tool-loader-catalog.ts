@@ -29,7 +29,9 @@ export type CatalogTool = {
 export type LoaderDependencies = {
   getState: () => McpExtensionState | null;
   getInitPromise: () => Promise<McpExtensionState> | null;
-  beforeExecute: McpAdapterOptions["beforeExecute"];
+  beforeExecute?: McpAdapterOptions["beforeExecute"];
+  /** Whether the current branch's recorded tool loadout ends with this tool removed. */
+  removedOnBranch?: ((name: string) => boolean) | undefined;
 };
 
 function serverMetadata(

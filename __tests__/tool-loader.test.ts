@@ -73,11 +73,7 @@ function definition(h: Awaited<ReturnType<typeof host>>, name: string) {
 describe("MCP catalog registration", () => {
   it("registers pins as active direct tools and the rest of the catalog deferred", async () => {
     const h = await host();
-    const loader = createToolLoader(
-      h.api,
-      () => null,
-      () => null,
-    );
+    const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     const pins: DirectToolSpec[][] = [];
     expect(loader.sync(config, cache(), undefined, (specs) => void pins.push(specs))).toHaveLength(
       1,
@@ -97,25 +93,20 @@ describe("MCP catalog registration", () => {
 
   it("serializes guarded calls at the public execution boundary", async () => {
     const guardedHost = await host();
-    const guarded = createToolLoader(
-      guardedHost.api,
-      () => null,
-      () => null,
-      async () => {
+    const guarded = createToolLoader(guardedHost.api, {
+      getState: () => null,
+      getInitPromise: () => null,
+      async beforeExecute() {
         /* Gate intentionally allows the call; registration must still be sequential. */
       },
-    );
+    });
     guarded.sync(config, cache());
     expect(definition(guardedHost, "demo_search").executionMode).toBe("sequential");
   });
 
   it("re-registers a tool when its pin, schema or server instructions change", async () => {
     const h = await host();
-    const loader = createToolLoader(
-      h.api,
-      () => null,
-      () => null,
-    );
+    const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     loader.sync(config, cache());
     expect(loader.sync(unpinned, cache())).toEqual([]);
     expect(definition(h, "demo_pinned").exposure).toBe("deferred");
@@ -142,11 +133,7 @@ describe("MCP catalog registration", () => {
     const h = await host();
     h.api.registerTool(loaderFixtureTool("search", { name: "outside" }));
     h.api.registerTool(loaderFixtureTool("mcp_script"));
-    const loader = createToolLoader(
-      h.api,
-      () => null,
-      () => null,
-    );
+    const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     loader.sync({ ...config, settings: { toolPrefix: "none" } }, cache());
     expect(definition(h, "search").namespace).toEqual({ name: "outside" });
     expect(h.definitions.has("pinned")).toBe(true);
@@ -165,21 +152,18 @@ describe("MCP catalog registration", () => {
 
   it("reports no pins when the host excludes them", async () => {
     const h = await host((ref) => ["mcp", "read"].includes(ref.name));
-    const loader = createToolLoader(
-      h.api,
-      () => null,
-      () => null,
-    );
+    const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     expect(loader.sync(config, cache())).toEqual([]);
   });
 
   it("withdraws tools that leave the catalog and restores them when they return", async () => {
     const h = await host();
-    const loader = createToolLoader(
-      h.api,
-      () => null,
-      () => null,
-    );
+    let recorded = false;
+    const loader = createToolLoader(h.api, {
+      getState: () => null,
+      getInitPromise: () => null,
+      removedOnBranch: (name) => recorded && name === "demo_pinned",
+    });
     loader.sync(config, cache());
     const shrunk = cache();
     shrunk.servers.demo = { ...requireEntry(shrunk, "demo"), tools: [tool("pinned")] };
@@ -191,15 +175,15 @@ describe("MCP catalog registration", () => {
     loader.sync({ mcpServers: {} }, null);
     expect(definition(h, "demo_pinned").exposure).toBe("hidden");
     expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
+    // The next prompt records the withdrawn pin as removed, which is not a user deselection.
+    recorded = true;
+    loader.sync(config, cache());
+    expect(h.active()).toContainEqual({ name: "demo_pinned" });
   });
 
   it("registers nothing when direct tools are suppressed by the environment", async () => {
     const h = await host();
-    const loader = createToolLoader(
-      h.api,
-      () => null,
-      () => null,
-    );
+    const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     expect(loader.sync(config, cache(), null)).toEqual([]);
     expect(h.definitions.size).toBe(0);
   });

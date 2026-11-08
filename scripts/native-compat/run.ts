@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { NativeFixture, type NativeSession } from "./fixture.ts";
@@ -165,12 +166,85 @@ async function verifyCancellation(f: NativeFixture, native: NativeSession): Prom
   assert.match(readFileSync(f.captured, "utf8"), /SYNTHETIC-SECRET/);
 }
 
+function without(native: NativeSession, name: string): void {
+  native.session.setActiveToolsByName(
+    native.session.getActiveToolNames().filter((active) => active !== name),
+  );
+}
+
+/** tool_search is activated once per start or tree navigation, never over a recorded removal. */
+async function verifyToolSearchActivation(f: NativeFixture): Promise<void> {
+  const first = await f.make();
+  without(first, "tool_search");
+  await first.run("mcp", { action: "status" });
+  const unmentioned = first.session.sessionManager.getLeafId();
+  assert.ok(unmentioned !== null);
+  await f.release(first);
+  const resumed = await f.make({ manager: first.session.sessionManager });
+  assert.ok(
+    resumed.session.getActiveToolNames().includes("tool_search"),
+    "resume activates tool_search on a branch that never mentioned it",
+  );
+  await resumed.run("mcp", { action: "status" });
+  await resumed.session.navigateTree(unmentioned, { summarize: false });
+  assert.ok(
+    resumed.session.getActiveToolNames().includes("tool_search"),
+    "tree navigation activates it again",
+  );
+  await f.release(resumed);
+  const removed = await f.make();
+  await removed.run("mcp", { action: "status" });
+  without(removed, "tool_search");
+  await removed.run("mcp", { action: "status" });
+  await f.release(removed);
+  const restored = await f.make({ manager: removed.session.sessionManager });
+  assert.ok(
+    !restored.session.getActiveToolNames().includes("tool_search"),
+    "a recorded removal stays off",
+  );
+  await f.release(restored);
+  // A server that accepts the connection and never answers keeps the eager connect pending.
+  const hanging = createServer();
+  await new Promise<void>((resolve) => {
+    hanging.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = hanging.address();
+    assert.ok(address !== null && typeof address === "object", "hanging server must report a port");
+    const connecting = await f.make({ eager: true, url: `http://127.0.0.1:${address.port}/mcp` });
+    assert.ok(
+      connecting.session.getActiveToolNames().includes("tool_search"),
+      "tool_search is active while an eager server is still connecting",
+    );
+    hanging.closeAllConnections();
+    await f.release(connecting);
+  } finally {
+    hanging.closeAllConnections();
+    hanging.close();
+  }
+}
+
 async function verifyPinning(f: NativeFixture): Promise<void> {
   const pins = await f.make({ directTools: ["echo"], eager: true });
   assert.ok(pins.session.getActiveToolNames().includes("local_echo"), "pins are active at startup");
   assert.equal(
     pins.session.getAllTools().find((tool) => tool.name === "local_echo")?.exposure,
     "direct",
+  );
+  // Pins register after Pi restores the branch, so the adapter keeps a recorded deselection.
+  await pins.run("mcp", { action: "status" });
+  without(pins, "local_echo");
+  await pins.run("mcp", { action: "status" });
+  await f.release(pins);
+  const deselected = await f.make({
+    directTools: ["echo"],
+    eager: true,
+    manager: pins.session.sessionManager,
+  });
+  assert.ok(deselected.session.getAllTools().some((tool) => tool.name === "local_echo"));
+  assert.ok(
+    !deselected.session.getActiveToolNames().includes("local_echo"),
+    "a recorded pin deselection survives resume",
   );
   const disabled = await f.make({ directTools: true, disabled: true });
   assert.ok(!disabled.session.getAllTools().some((tool) => tool.name === "local_echo"));
@@ -192,10 +266,11 @@ try {
   );
   await verifySavedOutput(native);
   await verifyCancellation(fixture, native);
+  await verifyToolSearchActivation(fixture);
   await verifyPinning(fixture);
   await verifyCli(fixture);
   console.log(
-    "[native-tools] standalone ESM + native deferred catalog/tool_search/nested/codemode success/failure/redaction/permission/cancel; tree/reload/resume/pins/disabled/restrictions passed",
+    "[native-tools] standalone ESM + native deferred catalog/tool_search/nested/codemode success/failure/redaction/permission/cancel; tree/reload/resume/tool_search activation/pins/disabled/restrictions passed",
   );
 } finally {
   await fixture.close();

@@ -11,11 +11,11 @@ export async function resolvePinnedTools(
 ): Promise<DirectToolSpec[]> {
   const host = await createTestExtensionContext("builtin");
   try {
-    return createToolLoader(
-      host.api,
-      () => null,
-      () => null,
-    ).sync({ ...config, settings: { ...config.settings, toolPrefix: prefix } }, cache, env);
+    return createToolLoader(host.api, { getState: () => null, getInitPromise: () => null }).sync(
+      { ...config, settings: { ...config.settings, toolPrefix: prefix } },
+      cache,
+      env,
+    );
   } finally {
     await host.dispose();
   }

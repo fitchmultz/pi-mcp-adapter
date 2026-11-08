@@ -1,7 +1,10 @@
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import type { MetadataCache } from "./metadata-cache.ts";
-import type { McpExtensionState } from "./state.ts";
-import type { DirectToolSpec, McpAdapterOptions, McpConfig, ToolMetadata } from "./types.ts";
+import type { DirectToolSpec, McpConfig, ToolMetadata } from "./types.ts";
 import {
   catalogDefinition,
   collectCatalog,
@@ -41,18 +44,49 @@ interface ToolLoader {
   hasDeferred: () => boolean;
 }
 
+/** Replays the branch's recorded tool loadout (Pi docs/session-format.md) for one tool. */
+export function removedOnBranch(
+  manager: ExtensionContext["sessionManager"],
+  name: string,
+): boolean {
+  let removed = false;
+  for (const entry of manager.getBranch()) {
+    if (entry.type !== "message" || entry.message.role !== "system") {
+      continue;
+    }
+    if (entry.message.toolsRemoved?.some((tool) => tool.name === name) === true) {
+      removed = true;
+    }
+    if (entry.message.toolsAdded?.some((tool) => tool.name === name) === true) {
+      removed = false;
+    }
+  }
+  return removed;
+}
+
 /**
  * Pi's own MCP extension activates tool_search when it registers deferred tools, since only
- * tool_search can declare them. Only a registered tool_search that reaches other tools qualifies.
+ * tool_search can declare them. Only a registered tool_search that reaches other tools qualifies,
+ * and a branch that recorded removing it keeps it off, as Pi keeps any recorded removal.
+ * Returns whether the decision is made: false only while no such tool_search is registered.
  */
-export function activateToolSearch(pi: ExtensionAPI): void {
+export function activateToolSearch(
+  pi: ExtensionAPI,
+  manager: ExtensionContext["sessionManager"] | undefined,
+): boolean {
+  if (
+    !pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.reachesTools !== undefined)
+  ) {
+    return false;
+  }
   const active = pi.getActiveTools();
   if (
     !active.includes("tool_search") &&
-    pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.reachesTools !== undefined)
+    (manager === undefined || !removedOnBranch(manager, "tool_search"))
   ) {
     pi.setActiveTools([...active, "tool_search"]);
   }
+  return true;
 }
 
 /**
@@ -75,7 +109,7 @@ class Loader implements ToolLoader {
     this.dependencies = dependencies;
   }
 
-  /** Returns whether a pinned tool lost its pin, since Pi keeps it active across re-registration. */
+  /** Returns whether the tool must leave the active set. */
   private register(item: CatalogTool, cache: MetadataCache | null): boolean {
     const { spec, selection, name, pinned } = item;
     const instructions =
@@ -90,7 +124,19 @@ class Loader implements ToolLoader {
     const definition = catalogDefinition(spec, instructions, this.dependencies, pinned);
     this.pi.registerTool(definition);
     this.registered.set(id, { name, fingerprint, definition, hidden: false, pinned });
-    return existing?.pinned === true && !pinned;
+    return this.leavesActiveSet(item, existing);
+  }
+
+  /**
+   * Pi keeps a lost pin active across re-registration, and activates a pin registered after it
+   * restored the branch even when the branch removed it. A withdrawn pin that returns stays active,
+   * as Pi activates it like a new tool.
+   */
+  private leavesActiveSet(item: CatalogTool, existing: Registration | undefined): boolean {
+    if (!item.pinned) {
+      return existing?.pinned === true;
+    }
+    return existing === undefined && this.dependencies.removedOnBranch?.(item.name) === true;
   }
 
   private deactivate(names: ReadonlySet<string>): void {
@@ -154,11 +200,11 @@ class Loader implements ToolLoader {
     const specs = collectCatalog(config, cache, env, this.dependencies.getState);
     const eligible = this.eligible(specs);
     const available = new Set(eligible.map((item) => key(item.selection)));
-    const unpinned = new Set(
+    const inactive = new Set(
       eligible.filter((item) => this.register(item, cache)).map((item) => item.name),
     );
     this.withdraw(available);
-    this.deactivate(unpinned);
+    this.deactivate(inactive);
     const permitted = new Set(this.pi.getAllTools().map((tool) => tool.name));
     const pins = specs
       .filter(
@@ -173,12 +219,7 @@ class Loader implements ToolLoader {
     [...this.registered.values()].some((item) => !item.hidden && !item.pinned);
 }
 
-export function createToolLoader(
-  pi: ExtensionAPI,
-  getState: () => McpExtensionState | null,
-  getInitPromise: () => Promise<McpExtensionState> | null,
-  beforeExecute?: McpAdapterOptions["beforeExecute"],
-): ToolLoader {
-  const loader = new Loader(pi, { getState, getInitPromise, beforeExecute });
+export function createToolLoader(pi: ExtensionAPI, dependencies: LoaderDependencies): ToolLoader {
+  const loader = new Loader(pi, dependencies);
   return { sync: loader.sync, hasDeferred: loader.hasDeferred };
 }

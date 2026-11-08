@@ -11,7 +11,7 @@ import { createOAuthRuntime, shutdownOAuth, type McpOAuthRuntime } from "./mcp-o
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { formatTerminalError } from "./utils.ts";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
-import { activateToolSearch, createToolLoader } from "./tool-loader.ts";
+import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
 import { logger } from "./logger.ts";
 import { abortable } from "./abort.ts";
 import { McpHostCommands } from "./host-commands.ts";
@@ -58,6 +58,9 @@ export class McpHostRuntime implements McpAdapterHost {
     .filter(Boolean);
   private readonly toolLoader: ReturnType<typeof createToolLoader>;
   private readonly tools: McpHostTools;
+  private sessionManager: ExtensionContext["sessionManager"] | undefined;
+  /** Whether tool_search activation was decided since the last session start or tree navigation. */
+  private toolSearchSettled = false;
 
   constructor(pi: ExtensionAPI, options: McpAdapterOptions) {
     this.pi = pi;
@@ -66,12 +69,13 @@ export class McpHostRuntime implements McpAdapterHost {
     this.programmaticConfig = this.sessionConfig !== undefined;
     this.config =
       this.sessionConfig !== undefined ? cloneMcpConfig(this.sessionConfig) : { mcpServers: {} };
-    this.toolLoader = createToolLoader(
-      pi,
-      () => this.state,
-      () => this.initPromise,
-      options.beforeExecute,
-    );
+    this.toolLoader = createToolLoader(pi, {
+      getState: () => this.state,
+      getInitPromise: () => this.initPromise,
+      beforeExecute: options.beforeExecute,
+      removedOnBranch: (name) =>
+        this.sessionManager !== undefined && removedOnBranch(this.sessionManager, name),
+    });
     this.tools = new McpHostTools(pi, this, options);
   }
 
@@ -88,7 +92,17 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private registerEvents(): void {
-    this.pi.on("session_start", (_event, ctx) => this.startSession(ctx));
+    this.pi.on("session_start", (_event, ctx) => {
+      this.sessionManager = ctx.sessionManager;
+      this.toolSearchSettled = false;
+      return this.startSession(ctx);
+    });
+    // Pi restores the target branch's recorded loadout before session_tree.
+    this.pi.on("session_tree", (_event, ctx) => {
+      this.sessionManager = ctx.sessionManager;
+      this.toolSearchSettled = false;
+      this.activateToolSearch();
+    });
     this.pi.on("model_select", () => {
       if (this.state) {
         this.syncToolSurface();
@@ -116,15 +130,26 @@ export class McpHostRuntime implements McpAdapterHost {
 
   syncToolSurface(): void {
     const config = this.state?.config ?? this.config;
-    const cache = loadMetadataCache(this.state?.metadataCacheEnabled ?? false);
+    this.syncCatalog(config, loadMetadataCache(this.state?.metadataCacheEnabled ?? false));
+  }
+
+  private syncCatalog(config: McpConfig, cache: MetadataCache | null): void {
     this.toolLoader.sync(
       config,
       cache,
       this.envRaw === "__none__" ? null : this.envDirectToolOverride,
       (specs) => this.tools.syncGateways(config, cache, specs),
     );
-    if (this.toolLoader.hasDeferred() || this.tools.hasDeferredScript()) {
-      activateToolSearch(this.pi);
+    this.activateToolSearch();
+  }
+
+  /** Once per session start or tree navigation, so a later live deselection is not undone. */
+  private activateToolSearch(): void {
+    if (
+      !this.toolSearchSettled &&
+      (this.toolLoader.hasDeferred() || this.tools.hasDeferredScript())
+    ) {
+      this.toolSearchSettled = activateToolSearch(this.pi, this.sessionManager);
     }
   }
 
@@ -229,12 +254,7 @@ export class McpHostRuntime implements McpAdapterHost {
       ctx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
     this.registerPromptCommands(resolveCachedPrompts(runtimeConfig, cacheEnabled));
     const cache = loadMetadataCache(cacheEnabled);
-    this.toolLoader.sync(
-      runtimeConfig,
-      cache,
-      this.envRaw === "__none__" ? null : this.envDirectToolOverride,
-      (specs) => this.tools.syncGateways(runtimeConfig, cache, specs),
-    );
+    this.syncCatalog(runtimeConfig, cache);
     const init = await import("./init.ts");
     this.initModule = init;
     if (!this.isCurrent(owner, generation)) {

@@ -24,6 +24,8 @@ interface SessionOptions {
   disabled?: boolean;
   tools?: string[];
   eager?: boolean;
+  /** MCP server URL; defaults to the fixture's own server. */
+  url?: string;
 }
 
 export class NativeSession {
@@ -99,13 +101,14 @@ export class NativeFixture {
     disabled = false,
     tools,
     eager = false,
+    url = this.url,
   }: SessionOptions = {}): Promise<NativeSession> {
     const settingsManager = SettingsManager.inMemory();
     const adapter = createMcpAdapter({
       config: {
         mcpServers: {
           local: {
-            url: this.url,
+            url,
             auth: false,
             directTools,
             disabled,
