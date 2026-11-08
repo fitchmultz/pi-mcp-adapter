@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.35 - 2026-11-08
+
+<!-- npm-release:unreleased:start -->
+
 - Remove `mcp_script`, its worker, the bundled `mcp-scripting` skill, the `scriptMode` setting, and the `defaultScriptTimeoutMs` factory option; Pi's `codemode` covers multi-call work by calling deferred typed tools and `mcp` gateway actions directly.
+
+<!-- npm-release:unreleased:end -->
+
+- Remove mcp_script in favor of Pi's codemode (2/2) (#214) ([7515606](https://github.com/fitchmultz/pi-mcp-adapter/commit/75156061bd28b1df018baee5f31691245d352b58))
+
+### What's Changed
+
+- Remove mcp_script in favor of Pi's codemode (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/214
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.34...v8.0.35
 
 ## 8.0.34 - 2026-11-08
 
