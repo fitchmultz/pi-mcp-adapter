@@ -42,10 +42,15 @@ interface ToolLoader {
   ) => DirectToolSpec[];
   /** Whether any catalog tool is registered with deferred exposure. */
   hasDeferred: () => boolean;
+  /** Decides every registered pin again after a session start or tree navigation. */
+  settlePins: () => void;
 }
 
 /** Replays the branch's recorded tool loadout (Pi docs/session-format.md) for one tool. */
-function removedOnBranch(manager: ExtensionContext["sessionManager"], name: string): boolean {
+export function removedOnBranch(
+  manager: ExtensionContext["sessionManager"],
+  name: string,
+): boolean {
   let removed = false;
   for (const entry of manager.getBranch()) {
     if (entry.type !== "message" || entry.message.role !== "system") {
@@ -59,6 +64,20 @@ function removedOnBranch(manager: ExtensionContext["sessionManager"], name: stri
     }
   }
   return removed;
+}
+
+/** How re-registering a tool changes its pin; a first registration has no change. */
+function pinChange(
+  existing: Registration | undefined,
+  pinned: boolean,
+): "lost" | "gained" | undefined {
+  if (existing === undefined) {
+    return undefined;
+  }
+  if (existing.pinned && !pinned) {
+    return "lost";
+  }
+  return pinned && (!existing.pinned || existing.hidden) ? "gained" : undefined;
 }
 
 /**
@@ -96,6 +115,8 @@ class Loader implements ToolLoader {
   private readonly pi: ExtensionAPI;
   private readonly dependencies: LoaderDependencies;
   private readonly registered = new Map<string, Registration>();
+  /** Pins decided since the last session boundary, so a later live deselection is not undone. */
+  private readonly settled = new Set<string>();
   private readonly fingerprints = new WeakMap<
     ToolMetadata,
     { server: string; instructions: string | undefined; pinned: boolean; value: string }
@@ -106,8 +127,11 @@ class Loader implements ToolLoader {
     this.dependencies = dependencies;
   }
 
-  /** Returns whether a pinned tool lost its pin, since Pi keeps it active across re-registration. */
-  private register(item: CatalogTool, cache: MetadataCache | null): boolean {
+  /**
+   * Reports a pin the tool lost, which Pi keeps active across re-registration, or one it gained or
+   * regained after withdrawal, which activates like a new pin within the session.
+   */
+  private register(item: CatalogTool, cache: MetadataCache | null): "lost" | "gained" | undefined {
     const { spec, selection, name, pinned } = item;
     const instructions =
       this.dependencies.getState()?.serverInstructions.get(spec.serverName) ??
@@ -116,12 +140,43 @@ class Loader implements ToolLoader {
     const id = key(selection);
     const existing = this.registered.get(id);
     if (existing?.fingerprint === fingerprint && !existing.hidden) {
-      return false;
+      return undefined;
     }
     const definition = catalogDefinition(spec, instructions, this.dependencies, pinned);
     this.pi.registerTool(definition);
     this.registered.set(id, { name, fingerprint, definition, hidden: false, pinned });
-    return existing?.pinned === true && !pinned;
+    return pinChange(existing, pinned);
+  }
+
+  /**
+   * Pins register with `defaultActive: false`, so Pi activates one itself only when the session
+   * names it (a `tools` allowlist or `+name`) or restores it from the branch's recorded loadout.
+   * Each other pin is activated once per session boundary unless the branch recorded removing it,
+   * as Pi keeps a recorded removal; `gained` pins activate regardless.
+   */
+  private activatePins(gained: ReadonlySet<string>): void {
+    const registered = new Set(this.pi.getAllTools().map((tool) => tool.name));
+    const pins = [...this.registered.values()]
+      .filter(
+        (item) =>
+          item.pinned &&
+          !item.hidden &&
+          registered.has(item.name) &&
+          (gained.has(item.name) || !this.settled.has(item.name)),
+      )
+      .map((item) => item.name);
+    const active = this.pi.getActiveTools();
+    const activate = pins.filter(
+      (name) =>
+        !active.includes(name) &&
+        (gained.has(name) || this.dependencies.removedOnBranch?.(name) !== true),
+    );
+    for (const name of pins) {
+      this.settled.add(name);
+    }
+    if (activate.length > 0) {
+      this.pi.setActiveTools([...active, ...activate]);
+    }
   }
 
   private deactivate(names: ReadonlySet<string>): void {
@@ -185,11 +240,20 @@ class Loader implements ToolLoader {
     const specs = collectCatalog(config, cache, env, this.dependencies.getState);
     const eligible = this.eligible(specs);
     const available = new Set(eligible.map((item) => key(item.selection)));
-    const unpinned = new Set(
-      eligible.filter((item) => this.register(item, cache)).map((item) => item.name),
-    );
+    const lost = new Set<string>();
+    const gained = new Set<string>();
+    for (const item of eligible) {
+      const change = this.register(item, cache);
+      if (change !== undefined) {
+        (change === "lost" ? lost : gained).add(item.name);
+      }
+    }
     this.withdraw(available);
-    this.deactivate(unpinned);
+    this.deactivate(lost);
+    for (const name of lost) {
+      this.settled.delete(name);
+    }
+    this.activatePins(gained);
     const permitted = new Set(this.pi.getAllTools().map((tool) => tool.name));
     const pins = specs
       .filter(
@@ -202,9 +266,14 @@ class Loader implements ToolLoader {
 
   hasDeferred: ToolLoader["hasDeferred"] = () =>
     [...this.registered.values()].some((item) => !item.hidden && !item.pinned);
+
+  settlePins: ToolLoader["settlePins"] = () => {
+    this.settled.clear();
+    this.activatePins(new Set());
+  };
 }
 
 export function createToolLoader(pi: ExtensionAPI, dependencies: LoaderDependencies): ToolLoader {
   const loader = new Loader(pi, dependencies);
-  return { sync: loader.sync, hasDeferred: loader.hasDeferred };
+  return { sync: loader.sync, hasDeferred: loader.hasDeferred, settlePins: loader.settlePins };
 }

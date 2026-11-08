@@ -23,6 +23,8 @@ interface SessionOptions {
   directTools?: boolean | string[];
   disabled?: boolean;
   tools?: string[];
+  /** Start from Pi's default tools, which restores a resumed branch's recorded loadout. */
+  stockTools?: boolean;
   eager?: boolean;
   /** MCP server URL; defaults to the fixture's own server. */
   url?: string;
@@ -100,6 +102,7 @@ export class NativeFixture {
     directTools = false,
     disabled = false,
     tools,
+    stockTools = false,
     eager = false,
     url = this.url,
   }: SessionOptions = {}): Promise<NativeSession> {
@@ -158,7 +161,7 @@ export class NativeFixture {
       modelRuntime: this.modelRuntime,
       model: this.model,
       sessionManager: manager,
-      noTools: "builtin",
+      ...(stockTools ? {} : { noTools: "builtin" as const }),
       ...(tools === undefined ? {} : { tools }),
     });
     const native = new NativeSession(session, this.model);

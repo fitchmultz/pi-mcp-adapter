@@ -225,7 +225,8 @@ async function verifyToolSearchActivation(f: NativeFixture): Promise<void> {
 }
 
 async function verifyPinning(f: NativeFixture): Promise<void> {
-  const pins = await f.make({ directTools: ["echo"], eager: true });
+  const pinned = { directTools: ["echo"], eager: true, stockTools: true };
+  const pins = await f.make(pinned);
   assert.ok(pins.session.getActiveToolNames().includes("local_echo"), "pins are active at startup");
   assert.equal(
     pins.session.getAllTools().find((tool) => tool.name === "local_echo")?.exposure,
@@ -235,18 +236,22 @@ async function verifyPinning(f: NativeFixture): Promise<void> {
   without(pins, "local_echo");
   await pins.run("mcp", { action: "status" });
   await f.release(pins);
-  // Pi owns pin activation: an allowlist that names a pin activates it after a recorded removal.
-  const named = await f.make({
-    directTools: ["echo"],
-    eager: true,
-    manager: pins.session.sessionManager,
-    tools: ["mcp", "local_echo"],
-  });
+  const manager = pins.session.sessionManager;
+  const resumed = await f.make({ ...pinned, manager });
   assert.ok(
-    named.session.getActiveToolNames().includes("local_echo"),
-    "an allowlist naming a pin activates it after the branch removed it",
+    !resumed.session.getActiveToolNames().includes("local_echo"),
+    "a recorded pin deselection survives resume",
   );
-  await f.release(named);
+  await f.release(resumed);
+  // Selections that name the pin still activate it after the branch removed it.
+  for (const tools of [["mcp", "local_echo"], ["+local_echo"]]) {
+    const named = await f.make({ ...pinned, manager, tools });
+    assert.ok(
+      named.session.getActiveToolNames().includes("local_echo"),
+      `tools ${tools.join(",")} activates a pin the branch removed`,
+    );
+    await f.release(named);
+  }
   const disabled = await f.make({ directTools: true, disabled: true });
   assert.ok(!disabled.session.getAllTools().some((tool) => tool.name === "local_echo"));
   const restricted = await f.make({ directTools: true, tools: ["mcp"] });

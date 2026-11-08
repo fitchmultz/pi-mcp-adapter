@@ -11,7 +11,7 @@ import { createOAuthRuntime, shutdownOAuth, type McpOAuthRuntime } from "./mcp-o
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { formatTerminalError } from "./utils.ts";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
-import { activateToolSearch, createToolLoader } from "./tool-loader.ts";
+import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
 import { logger } from "./logger.ts";
 import { abortable } from "./abort.ts";
 import { McpHostCommands } from "./host-commands.ts";
@@ -73,6 +73,8 @@ export class McpHostRuntime implements McpAdapterHost {
       getState: () => this.state,
       getInitPromise: () => this.initPromise,
       beforeExecute: options.beforeExecute,
+      removedOnBranch: (name) =>
+        this.sessionManager !== undefined && removedOnBranch(this.sessionManager, name),
     });
     this.tools = new McpHostTools(pi, this, options);
   }
@@ -93,12 +95,14 @@ export class McpHostRuntime implements McpAdapterHost {
     this.pi.on("session_start", (_event, ctx) => {
       this.sessionManager = ctx.sessionManager;
       this.toolSearchSettled = false;
+      this.toolLoader.settlePins();
       return this.startSession(ctx);
     });
     // Pi restores the target branch's recorded loadout before session_tree.
     this.pi.on("session_tree", (_event, ctx) => {
       this.sessionManager = ctx.sessionManager;
       this.toolSearchSettled = false;
+      this.toolLoader.settlePins();
       this.activateToolSearch();
     });
     this.pi.on("model_select", () => {

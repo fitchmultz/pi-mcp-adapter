@@ -4,7 +4,7 @@
 
 ## Upgrading from v8
 
-Version 9 removes `mcp_search`. Pi's native `tool_search` loads deferred typed tools, Pi's transcript decides which loaded tools a branch declares, and the adapter no longer writes `mcp-tool-selection` session entries (existing entries are ignored). The `mcp` gateway is active whenever it is registered; `disableProxyTool` still hides it once configured pins are available. `mcp_script` registers deferred: load it with `tool_search` or call it from `codemode`. The adapter activates a registered `tool_search` when it registers deferred tools, unless the branch recorded removing it. Catalog tools that a server drops are re-registered hidden, and a tool that loses its pin leaves the active set.
+Version 9 removes `mcp_search`. Pi's native `tool_search` loads deferred typed tools, Pi's transcript decides which loaded tools a branch declares, and the adapter no longer writes `mcp-tool-selection` session entries (existing entries are ignored). The `mcp` gateway is active whenever it is registered; `disableProxyTool` still hides it once configured pins are available. `mcp_script` registers deferred: load it with `tool_search` or call it from `codemode`. The adapter activates a registered `tool_search` when it registers deferred tools, unless the branch recorded removing it. Catalog tools that a server drops are re-registered hidden, and a tool that loses its pin leaves the active set. A pin you deselect stays off when the branch resumes, unless the session's tool selection names it.
 
 ## Upgrading from v5
 

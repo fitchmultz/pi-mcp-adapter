@@ -156,9 +156,36 @@ describe("MCP catalog registration", () => {
     expect(loader.sync(config, cache())).toEqual([]);
   });
 
+  it("keeps a live pin deselection until a session boundary, which keeps a recorded removal", async () => {
+    const h = await host();
+    let recorded = false;
+    const loader = createToolLoader(h.api, {
+      getState: () => null,
+      getInitPromise: () => null,
+      removedOnBranch: (name) => recorded && name === "demo_pinned",
+    });
+    loader.sync(config, cache());
+    h.api.setActiveTools(["mcp", "read"]);
+    const refreshed = cache();
+    refreshed.servers.demo = { ...requireEntry(refreshed, "demo"), instructions: "Changed" };
+    loader.sync(config, refreshed);
+    expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
+    recorded = true;
+    loader.settlePins();
+    expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
+    recorded = false;
+    loader.settlePins();
+    expect(h.active()).toContainEqual({ name: "demo_pinned" });
+  });
+
   it("withdraws tools that leave the catalog and restores them when they return", async () => {
     const h = await host();
-    const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
+    let recorded = false;
+    const loader = createToolLoader(h.api, {
+      getState: () => null,
+      getInitPromise: () => null,
+      removedOnBranch: (name) => recorded && name === "demo_pinned",
+    });
     loader.sync(config, cache());
     const shrunk = cache();
     shrunk.servers.demo = { ...requireEntry(shrunk, "demo"), tools: [tool("pinned")] };
@@ -170,6 +197,10 @@ describe("MCP catalog registration", () => {
     loader.sync({ mcpServers: {} }, null);
     expect(definition(h, "demo_pinned").exposure).toBe("hidden");
     expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
+    // The next prompt records the withdrawn pin as removed, which is not a user deselection.
+    recorded = true;
+    loader.sync(config, cache());
+    expect(h.active()).toContainEqual({ name: "demo_pinned" });
   });
 
   it("registers nothing when direct tools are suppressed by the environment", async () => {

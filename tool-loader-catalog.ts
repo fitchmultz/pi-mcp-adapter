@@ -30,6 +30,8 @@ export type LoaderDependencies = {
   getState: () => McpExtensionState | null;
   getInitPromise: () => Promise<McpExtensionState> | null;
   beforeExecute?: McpAdapterOptions["beforeExecute"];
+  /** Whether the current branch's recorded tool loadout ends with this tool removed. */
+  removedOnBranch?: ((name: string) => boolean) | undefined;
 };
 
 function serverMetadata(
@@ -108,9 +110,9 @@ function nativeAnnotations(
 }
 
 /**
- * Pinned tools are ordinary direct tools, active from registration. Other catalog tools register
- * with deferred exposure: Pi lists them for tool_search and codemode and declares them to the
- * model only once loaded.
+ * Pinned tools are direct tools that the loader activates itself (see `Loader.activatePins`). Other
+ * catalog tools register with deferred exposure: Pi lists them for tool_search and codemode and
+ * declares them to the model only once loaded.
  */
 export function catalogDefinition(
   spec: DirectToolSpec,
@@ -129,7 +131,7 @@ export function catalogDefinition(
     },
     ...(spec.outputSchema ? { outputSchema: nativeMcpOutputSchema(spec.outputSchema) } : {}),
     ...(spec.annotations ? { annotations: nativeAnnotations(spec.annotations) } : {}),
-    ...(pinned ? {} : { exposure: "deferred" }),
+    ...(pinned ? { defaultActive: false } : { exposure: "deferred" }),
     ...(dependencies.beforeExecute ? { executionMode: "sequential" } : {}),
     label: spec.title ?? `MCP: ${spec.originalName}`,
     description: spec.description === "" ? "(no description)" : spec.description,
