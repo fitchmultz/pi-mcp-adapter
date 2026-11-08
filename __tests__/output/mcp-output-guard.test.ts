@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import {
-  guardMcpOutput,
-  retainMcpResult,
-  resolveMcpOutputGuardOptions,
-} from "../../mcp-output-guard.ts";
+import { guardMcpOutput, resolveMcpOutputGuardOptions } from "../../mcp-output-guard.ts";
 
 describe("guardMcpOutput", () => {
   it("includes readback notices in the output budget and returned byte count", async () => {
@@ -30,14 +26,6 @@ describe("guardMcpOutput", () => {
     } finally {
       await rm(outputDirectory, { recursive: true, force: true });
     }
-  });
-
-  it("retains oversized raw script results without constructing a discarded model summary", async () => {
-    const raw = { content: [{ type: "text", text: "x".repeat(500) }] };
-    const retained = await retainMcpResult(raw, { detailsMaxBytes: 100 }, true);
-    expect(retained.mcpResult).toBe(raw);
-    assert.ok(typeof retained.resultRef === "string");
-    expect(JSON.parse(await readFile(retained.resultRef, "utf8"))).toEqual(raw);
   });
 
   it("leaves small MCP output unchanged and keeps the raw result in details", async () => {

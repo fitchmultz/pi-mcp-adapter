@@ -274,7 +274,7 @@ function applyFieldSelection(value: unknown, fields: unknown): unknown {
 
 /** Validate the ref as an MCP output artifact inside this host's output root. */
 async function resolveReadRef(inputRef: string, options: McpOutputGuardOptions): Promise<string> {
-  // Script-only hosts deliberately have no general filesystem capability.
+  // Gateway-only hosts deliberately have no general filesystem capability.
   const [root, ref] = await Promise.all([
     realpath(options.outputDirectory === undefined ? tmpdir() : resolve(options.outputDirectory)),
     realpath(resolve(inputRef)),

@@ -369,19 +369,6 @@
     "rule": "eslint/max-params",
     "scope": {
       "type": "FunctionExpression",
-      "name": "executeMcpScript"
-    },
-    "path": [],
-    "nodeType": "FunctionExpression",
-    "operation": "async function executeMcpScript(toolCallId, params, signal, _onUpdate, ctx) {\n        const ready = await getToolState(signal);\n        if (\"content\" in ready) {\n          return ready;\n        }\n        const { runMcpScript } = await import(\"./mcp-code.ts\");\n        return runMcpScript({\n          state: ready,\n          code: params.code,\n          timeoutMs: params.timeoutMs ?? options.defaultScriptTimeoutMs,\n          getPiTools,\n          signal,\n          toolCallId,\n          beforeDispatch: beforeExecute\n            ? (callSignal, operation) =>\n                beforeExecute(toolCallId, { ...ctx, signal: callSignal }, operation)\n            : undefined,\n        });\n      }",
-    "guards": []
-  },
-  {
-    "id": "QX-025",
-    "file": "host-tools.ts",
-    "rule": "eslint/max-params",
-    "scope": {
-      "type": "FunctionExpression",
       "name": "executeMcpGateway"
     },
     "path": [],

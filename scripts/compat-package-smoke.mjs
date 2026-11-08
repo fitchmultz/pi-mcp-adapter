@@ -112,13 +112,11 @@ try {
   for (const file of [
     "dist/index.js",
     "dist/index.d.ts",
-    "dist/mcp-script-worker.mjs",
     "dist/mcp-keyring-helper.cjs",
     "dist/app-bridge.bundle.js",
   ]) {
     assert.ok(readFileSync(join(packageRoot, file)).length > 0, file);
   }
-  assert.ok(readFileSync(join(packageRoot, "skills/mcp-scripting/SKILL.md")).length > 0);
   Object.assign(process.env, env);
   const sdk = await import("@earendil-works/pi-coding-agent");
   const settingsManager = sdk.SettingsManager.inMemory();
@@ -161,34 +159,19 @@ try {
     mode: "print",
     onError: (error) => errors.push(error),
   });
-  for (const name of ["mcp", "mcp_script"]) {
-    assert.ok(
-      session.getAllTools().some((tool) => tool.name === name),
-      name,
-    );
-  }
+  assert.ok(session.getAllTools().some((tool) => tool.name === "mcp"));
   assert.deepEqual(session.getActiveToolNames(), ["mcp"], "the gateway is active from startup");
-  const script = session.getAllTools().find((tool) => tool.name === "mcp_script");
-  assert.equal(script?.exposure, "deferred", "mcp_script registers deferred");
-  assert.ok(session.getCallableToolNames().includes("mcp_script"));
-  session.setActiveToolsByName(["mcp", "mcp_script"]);
   await session.reload();
-  assert.deepEqual(
-    session.getActiveToolNames().sort(),
-    ["mcp", "mcp_script"],
-    "a loaded script tool survives reload",
-  );
+  assert.deepEqual(session.getActiveToolNames(), ["mcp"], "the gateway stays active after reload");
   assert.deepEqual(errors, []);
   assert.equal(
     resourceLoader.getExtensions().extensions[0]?.resolvedPath,
     join(packageRoot, "dist/index.js"),
   );
-  for (const name of ["mcp", "mcp_script"]) {
-    assert.ok(
-      session.getAllTools().some((tool) => tool.name === name),
-      `after reload: ${name}`,
-    );
-  }
+  assert.ok(
+    session.getAllTools().some((tool) => tool.name === "mcp"),
+    "after reload: mcp",
+  );
   const marker = join(root, "cli.json");
   const observer = join(root, "observer.ts");
   copyFileSync(new URL("./compat-cli-observer.ts", import.meta.url), observer);
@@ -227,12 +210,11 @@ try {
     hostRoot,
     "CLI loader must use the selected host graph",
   );
-  for (const name of ["mcp", "mcp_script"]) {
-    assert.ok(observed.tools.includes(name), `CLI tool ${name}`);
-  }
+  assert.ok(observed.tools.includes("mcp"), "CLI tool mcp");
   assert.ok(observed.activeTools.includes("mcp"), "CLI gateway starts active");
-  assert.ok(!observed.activeTools.includes("mcp_script"), "CLI script tool starts deferred");
-  assert.ok(!observed.tools.includes("mcp_search"));
+  for (const removed of ["mcp_search", "mcp_script"]) {
+    assert.ok(!observed.tools.includes(removed), `CLI has no ${removed}`);
+  }
   for (const name of ["mcp", "mcp-auth"]) {
     assert.ok(observed.commands.includes(name), `CLI command ${name}`);
   }

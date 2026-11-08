@@ -193,7 +193,7 @@ Run the `/mcp-auth` command with the server name:
 /mcp-auth my-oauth-server
 ```
 
-Manual `/mcp-auth` is the default flow. With `settings.autoAuth: true`, proxy/direct/script tool execution may authenticate when a server needs auth or rejects a call for insufficient scope. Browser authorization still requires an interactive host, and each invocation gets at most one automatic auth attempt and one post-auth retry. Initial sign-in does not grant a second automatic consent attempt in the same invocation.
+Manual `/mcp-auth` is the default flow. With `settings.autoAuth: true`, proxy and direct tool execution may authenticate when a server needs auth or rejects a call for insufficient scope. Browser authorization still requires an interactive host, and each invocation gets at most one automatic auth attempt and one post-auth retry. Initial sign-in does not grant a second automatic consent attempt in the same invocation.
 
 For browser authorization, this will:
 

@@ -34,7 +34,6 @@ import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
 import { McpServerManager } from "../server-manager.ts";
 import { executeCall, executeAuthStart } from "../proxy-modes.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
-import { runMcpScript } from "../mcp-code.ts";
 import type { McpExtensionState } from "../state.ts";
 import { withSessionRecovery, type SessionRecoveryDeps } from "../session-recovery.ts";
 import sharedDocument from "../docs/client-metadata.json" with { type: "json" };
@@ -1336,12 +1335,6 @@ async function callHost(
   if (host === "proxy") {
     return executeCall(state, { toolName: `${f.name}_echo`, args: {}, serverOverride: f.name });
   }
-  if (host === "script") {
-    return runMcpScript({
-      state,
-      code: `emit(await tools.call(${JSON.stringify(`${f.name}_echo`)}, {}));`,
-    });
-  }
   const execute = createDirectToolExecutor(
     () => state,
     () => null,
@@ -1366,7 +1359,7 @@ async function callHost(
   }
 }
 
-it.each(["proxy", "direct", "script"])(
+it.each(["proxy", "direct"])(
   "finishes %s automatic auth without UI or callback after a real needs-auth connection",
   async (host) => {
     const f = await fixture();

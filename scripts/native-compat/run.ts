@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { NativeFixture, type NativeSession } from "./fixture.ts";
 import { verifyCli } from "./cli-proof.ts";
-import { instructions } from "./wire.ts";
+import { instructions, largeOutput } from "./wire.ts";
 
 const probeSchema = z.object({
   outcome: z.object({
@@ -113,17 +112,10 @@ function firstText(result: ToolResultMessage, reason: string): string {
 }
 
 async function verifySavedOutput(native: NativeSession): Promise<void> {
-  const { session } = native;
-  assert.equal(
-    session.getAllTools().find((tool) => tool.name === "mcp_script")?.exposure,
-    "deferred",
-  );
-  session.setActiveToolsByName([...session.getActiveToolNames(), "mcp_script"]);
-  const historyText = "native é😀\n".repeat(30_000);
-  const spilled = await native.run("mcp_script", {
-    code: 'emit("native é😀\\n".repeat(30_000));',
-  });
+  const spilled = await native.run("mcp", { tool: "local_echo", args: { value: "large" } });
   const ref = savedSchema.parse(spilled.details).outputGuard.fullOutputPath;
+  const historyText = readFileSync(ref, "utf8");
+  assert.ok(historyText.startsWith(largeOutput), "the saved output holds the complete text");
   for (const offset of [0, 220_000, 11_000]) {
     const page = await native.run("mcp", { action: "read-result", ref, offset, limit: 110 });
     assert.equal(
@@ -133,13 +125,6 @@ async function verifySavedOutput(native: NativeSession): Promise<void> {
     assert.equal(pageSchema.parse(page.details).totalCharacters, historyText.length);
     assert.equal(pageSchema.parse(page.details).nextOffset, offset + 110);
   }
-  const scriptPage = await native.run("mcp_script", {
-    code: `const page = await tools.readResult({ref:${JSON.stringify(ref)},offset:220000,limit:110}); emit(page.content[0].text);`,
-  });
-  assert.equal(
-    firstText(scriptPage, "script page must have a first content block"),
-    historyText.slice(220_000, 220_110),
-  );
   await writeFile(ref, "redacted é😀");
   const redactedPage = await native.run("mcp", { action: "read-result", ref });
   assert.equal(
@@ -147,9 +132,7 @@ async function verifySavedOutput(native: NativeSession): Promise<void> {
     "redacted é😀",
   );
   assert.equal(pageSchema.parse(redactedPage.details).totalCharacters, "redacted é😀".length);
-  console.log(
-    "[native-tools] registered gateway + script saved plain-output pages and rewrite invalidation passed",
-  );
+  console.log("[native-tools] gateway saved plain-output pages and rewrite invalidation passed");
 }
 
 async function verifyCancellation(f: NativeFixture, native: NativeSession): Promise<void> {
@@ -203,24 +186,17 @@ async function verifyToolSearchActivation(f: NativeFixture): Promise<void> {
     "a recorded removal stays off",
   );
   await f.release(restored);
-  // A server that accepts the connection and never answers keeps the eager connect pending.
-  const hanging = createServer();
-  await new Promise<void>((resolve) => {
-    hanging.listen(0, "127.0.0.1", resolve);
-  });
+  // The cached catalog registers deferred tools while the eager connect to its server stalls.
+  f.wire.stall();
   try {
-    const address = hanging.address();
-    assert.ok(address !== null && typeof address === "object", "hanging server must report a port");
-    const connecting = await f.make({ eager: true, url: `http://127.0.0.1:${address.port}/mcp` });
+    const connecting = await f.make({ eager: true });
     assert.ok(
       connecting.session.getActiveToolNames().includes("tool_search"),
       "tool_search is active while an eager server is still connecting",
     );
-    hanging.closeAllConnections();
     await f.release(connecting);
   } finally {
-    hanging.closeAllConnections();
-    hanging.close();
+    f.wire.resume();
   }
 }
 

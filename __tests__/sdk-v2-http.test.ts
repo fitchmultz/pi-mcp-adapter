@@ -43,8 +43,6 @@ import { computeServerHash, reconstructToolMetadata, serializeTools } from "../m
 import { buildToolMetadata } from "../tool-metadata.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { resolvePinnedTools } from "./fixtures/pinned-tools.ts";
-import { runMcpScript } from "../mcp-code.ts";
-import { formatMcpResultReference } from "../mcp-output-guard.ts";
 import type { McpExtensionState } from "../state.ts";
 import type { McpOperationContext, McpToolCallEvent, ServerEntry } from "../types.ts";
 import { SERVER_STREAM_RESULT_PATCH_METHOD } from "../ui-stream-types.ts";
@@ -76,11 +74,6 @@ function entryCall(
       return { name: `local_${name}`, arguments: args };
     case "proxy":
       return { name: "mcp", arguments: { tool: `local_${name}`, args } };
-    case "script":
-      return {
-        name: "mcp_script",
-        arguments: { code: `return await tools.local_${name}(${JSON.stringify(args)});` },
-      };
     default:
       throw new Error(`Unknown fixture entry: ${entry}`);
   }
@@ -124,7 +117,6 @@ type Exchange = { req: IncomingMessage; res: ServerResponse; body: WireRequest }
 type HttpExchange = { req: IncomingMessage; res: ServerResponse; body: unknown };
 const operationSchema = z.object({
   toolCallId: z.string().exactOptional(),
-  innerCallId: z.number().exactOptional(),
   server: z.string(),
   tool: z.string(),
   args: z.record(z.string(), z.unknown()),
@@ -304,29 +296,6 @@ async function fixture(
 }
 
 async function call(state: McpExtensionState, entry: string, signal?: AbortSignal) {
-  if (entry === "script") {
-    const output = await runMcpScript({
-      state,
-      code: 'return await tools.local_echo({ value: "test" });',
-      timeoutMs: 2000,
-      signal: signal,
-    });
-    const text = output.content.findLast(
-      (c) => c.type === "text" && !c.text.startsWith("[MCP result saved:"),
-    );
-    assert.ok(text?.type === "text");
-    const decoded = z
-      .object({
-        ok: z.boolean(),
-        error: z
-          .object({ code: z.string(), message: z.string(), recovery: z.unknown().optional() })
-          .optional(),
-        data: z.unknown().optional(),
-      })
-      .parse(JSON.parse(text.text));
-    const details: Record<string, unknown> = output.details;
-    return { ...decoded, content: output.content, details };
-  }
   const context = entry === "direct" ? await createTestExtensionContext() : undefined;
   if (context !== undefined) {
     cleanups.push(context.dispose);
@@ -350,12 +319,7 @@ async function call(state: McpExtensionState, entry: string, signal?: AbortSigna
           requireValue(context).runner.createToolContext("call-id", signal),
         )
       : await executeCall(state, { toolName: "local_echo", args: { value: "test" }, signal });
-  return {
-    ok: output.details.error === undefined,
-    error: undefined,
-    data: undefined,
-    ...output,
-  };
+  return { ok: output.details.error === undefined, ...output };
 }
 
 describe("published SDK v2 over real local HTTP", () => {
@@ -614,7 +578,7 @@ describe("published SDK v2 over real local HTTP", () => {
     }
   });
 
-  it.each(["direct", "proxy", "script"])(
+  it.each(["direct", "proxy"])(
     "uses one same-client fresh transport retry through %s",
     async (entry) => {
       const f = await fixture((e) => {
@@ -635,39 +599,36 @@ describe("published SDK v2 over real local HTTP", () => {
     },
   );
 
-  it.each(["direct", "proxy", "script"])(
-    "retries partial SSE body loss once through %s",
-    async (entry) => {
-      const f = await fixture((e) => {
-        if (e.body.method !== "tools/call" || f.calls().length > 1) {
-          return;
-        }
-        e.res.writeHead(200, { "content-type": "text/event-stream" });
-        e.res.write(": started\n\n");
-        setTimeout(() => e.res.destroy(), 20);
-        return true;
-      });
-      const { state, connection } = await f.connect({ retryOnTransportFailure: true });
-      const started = performance.now();
-      const output = await call(state, entry);
-      expect(
-        output.ok,
-        JSON.stringify({
-          output,
-          calls: f.calls().map((c) => c.body.id),
-          elapsedMs: performance.now() - started,
-        }),
-      ).toBe(true);
-      expect(f.calls()).toHaveLength(2);
-      expect(requireValue(f.calls()[0]).body.id).not.toBe(requireValue(f.calls()[1]).body.id);
-      expect(f.manager.getConnection("local")?.client).toBe(connection.client);
-      expect(f.requests.filter((r) => r.body.method === "server/discover")).toHaveLength(1);
-      expect(connection.inFlight).toBe(0);
-    },
-  );
+  it.each(["direct", "proxy"])("retries partial SSE body loss once through %s", async (entry) => {
+    const f = await fixture((e) => {
+      if (e.body.method !== "tools/call" || f.calls().length > 1) {
+        return;
+      }
+      e.res.writeHead(200, { "content-type": "text/event-stream" });
+      e.res.write(": started\n\n");
+      setTimeout(() => e.res.destroy(), 20);
+      return true;
+    });
+    const { state, connection } = await f.connect({ retryOnTransportFailure: true });
+    const started = performance.now();
+    const output = await call(state, entry);
+    expect(
+      output.ok,
+      JSON.stringify({
+        output,
+        calls: f.calls().map((c) => c.body.id),
+        elapsedMs: performance.now() - started,
+      }),
+    ).toBe(true);
+    expect(f.calls()).toHaveLength(2);
+    expect(requireValue(f.calls()[0]).body.id).not.toBe(requireValue(f.calls()[1]).body.id);
+    expect(f.manager.getConnection("local")?.client).toBe(connection.client);
+    expect(f.requests.filter((r) => r.body.method === "server/discover")).toHaveLength(1);
+    expect(connection.inFlight).toBe(0);
+  });
 
   it.each(
-    ["direct", "proxy", "script"].flatMap((entry) =>
+    ["direct", "proxy"].flatMap((entry) =>
       ["sse", "json", "timeout", "http500-timeout", "legacy-timeout"].map((failure) => ({
         entry,
         failure,
@@ -742,40 +703,21 @@ describe("published SDK v2 over real local HTTP", () => {
       }
       const output = await call(state, entry);
       expect(mutations).toBe(1);
-      expect(entry === "script" ? requireValue(output.error).code : output.details.error).toBe(
-        "ambiguous_outcome",
-      );
-      expect(
-        entry === "script" ? requireValue(output.error).message : output.details.message,
-      ).toContain("Read back the original operation");
-      expect(
-        entry === "script" ? requireValue(output.error).recovery : output.details.recovery,
-      ).toMatchObject({
-        action: "readback",
-      });
+      expect(output.details.error).toBe("ambiguous_outcome");
+      expect(output.details.message).toContain("Read back the original operation");
+      expect(output.details.recovery).toMatchObject({ action: "readback" });
       expect(
         captured.map((event) => ({
           phase: event.phase,
           args: event.args,
-          innerCallId: event.innerCallId,
           hasError: "error" in event && event.error instanceof Error,
         })),
       ).toEqual(
         failure.endsWith("timeout")
           ? []
           : [
-              {
-                phase: "before",
-                args: { value: "test" },
-                innerCallId: entry === "script" ? 1 : undefined,
-                hasError: false,
-              },
-              {
-                phase: "after",
-                args: { value: "test" },
-                innerCallId: entry === "script" ? 1 : undefined,
-                hasError: true,
-              },
+              { phase: "before", args: { value: "test" }, hasError: false },
+              { phase: "after", args: { value: "test" }, hasError: true },
             ],
       );
       const readback = await executeCall(state, {
@@ -894,69 +836,6 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(safe || !JSON.stringify(output).includes("not-in-error-text")).toBe(true);
   });
 
-  it("describes complete native input schemas without a lossy TypeScript projection", async () => {
-    const inputSchema = {
-      type: "object",
-      properties: {
-        value: { type: "string", description: "Value to echo", minLength: 1 },
-        count: { type: "integer", minimum: 1, default: 1 },
-      },
-      required: ["value"],
-      additionalProperties: false,
-    };
-    const f = await fixture((e) => {
-      if (e.body.method !== "tools/list") {
-        return;
-      }
-      result(e, {
-        resultType: "complete",
-        tools: [
-          { ...tool, inputSchema },
-          {
-            ...tool,
-            name: "compact",
-            inputSchema: {
-              type: "object",
-              properties: { value: { type: "string" } },
-              required: ["value"],
-            },
-          },
-        ],
-      });
-      return true;
-    });
-    const { state } = await f.connect();
-    const script = await runMcpScript({
-      state,
-      code: `
-      const native = await tools.describe({ path: "local_echo" });
-      const compact = await tools.describe({ path: "local_compact" });
-      return { native, compact, called: await tools.call(native.path, { value: "test" }) };
-    `,
-    });
-    expect(script.details).not.toHaveProperty("error");
-    const described = z
-      .object({
-        native: z.object({ inputSchema: z.unknown() }).loose(),
-        compact: z.object({ inputSchema: z.unknown() }).loose(),
-        called: z.unknown(),
-      })
-      .parse(JSON.parse(textBlock(script.content[0])));
-    expect(described.native.inputSchema).toEqual(inputSchema);
-    expect(described.native).not.toHaveProperty("inputTypeScript");
-    expect(described.compact.inputSchema).toEqual({
-      type: "object",
-      properties: { value: { type: "string" } },
-      required: ["value"],
-    });
-    expect(described.compact).not.toHaveProperty("inputTypeScript");
-    expect(described.called).toMatchObject({
-      ok: true,
-      data: { structuredContent: { value: "test" } },
-    });
-    expect(requireValue(f.calls()[0]).body.params.arguments).toEqual({ value: "test" });
-  });
-
   it("applies public proxy connect pagination to the discovered server list", async () => {
     const f = await fixture((e) => {
       if (e.body.method !== "tools/list") {
@@ -1002,7 +881,7 @@ describe("published SDK v2 over real local HTTP", () => {
     );
   });
 
-  it("preserves native annotations through cached metadata, direct tools and both describe paths", async () => {
+  it("preserves native annotations through cached metadata, direct tools and gateway describe", async () => {
     const f = await fixture();
     const { state, connection } = await f.connect({ directTools: true });
     const definition = requireValue(state.config.mcpServers.local);
@@ -1023,14 +902,6 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(JSON.parse(textBlock(executeDescribe(state, "local_echo").content[0]))).toMatchObject({
       annotations: { readOnlyHint: true },
     });
-    const script = await runMcpScript({
-      state,
-      code: 'return tools.describe({ path: "local_echo" });',
-    });
-    const described = z
-      .object({ annotations: z.unknown() })
-      .parse(JSON.parse(textBlock(script.content[0])));
-    expect(described.annotations).toEqual({ readOnlyHint: true });
     expect(f.calls()).toHaveLength(0);
   });
 
@@ -1149,7 +1020,6 @@ describe("published SDK v2 over real local HTTP", () => {
       },
     });
     expect(session.getActiveToolNames()).toContain("mcp");
-    expect(session.getActiveToolNames()).not.toContain("mcp_script");
     const steps = [
       { connect: "local" },
       { search: "echo" },
@@ -1212,7 +1082,6 @@ describe("published SDK v2 over real local HTTP", () => {
     const prefix = prefixSchema.parse(JSON.parse(requireValue(prefixes[0])));
     expect(prefix.systemPrompt).toContain("MCP server operations");
     expect(prefix.tools.map((item) => item.name)).toContain("mcp");
-    expect(prefix.tools.map((item) => item.name)).not.toContain("mcp_script");
     expect(new Set(prefixes).size).toBe(1);
 
     let stage = 0;
@@ -1229,9 +1098,7 @@ describe("published SDK v2 over real local HTTP", () => {
         (candidate) => candidate.description === "Read newly available data",
       );
       loadingStages.push({
-        hasGateway: active.some(
-          (candidate) => candidate.name === "mcp" || candidate.name === "mcp_script",
-        ),
+        hasGateway: active.some((candidate) => candidate.name === "mcp"),
         selected,
         callable: session.getCallableToolNames(),
       });
@@ -1415,7 +1282,7 @@ describe("published SDK v2 over real local HTTP", () => {
         "/capture": ({ body, res }) => {
           const capture = captureSchema.parse(body);
           captures.push({ ...capture, res });
-          if (mode !== "hold" || capture.event.innerCallId !== 1) {
+          if (mode !== "hold") {
             res.writeHead(mode === `reject-${capture.event.phase}` ? 503 : 200).end();
           }
         },
@@ -1491,11 +1358,27 @@ describe("published SDK v2 over real local HTTP", () => {
       },
     });
     // This safety/capture fixture explicitly selects its entry points; lazy loading is exercised above.
-    session.setActiveToolsByName([...session.getActiveToolNames(), "mcp", "mcp_script"]);
-    const script = `const first = await tools.local_echo({ value: ["first"].join("") }); await tools.local_echo({ value: first.data.structuredContent.id }); emit(first.data.content[0].text);`;
-    let nativeCalls: ToolCall[] = [
-      { type: "toolCall", id: "native-writer", name: "fixture_writer", arguments: {} },
-      { type: "toolCall", id: "native-outer", name: "mcp_script", arguments: { code: script } },
+    session.setActiveToolsByName([...session.getActiveToolNames(), "mcp"]);
+    // The eager server's pinned tools register once its connection completes.
+    await expect.poll(() => session.getActiveToolNames().includes("local_echo")).toBe(true);
+    let nativeTurns: ToolCall[][] = [
+      [
+        { type: "toolCall", id: "native-writer", name: "fixture_writer", arguments: {} },
+        {
+          type: "toolCall",
+          id: "native-direct",
+          name: "local_echo",
+          arguments: { value: "first" },
+        },
+      ],
+      [
+        {
+          type: "toolCall",
+          id: "native-proxy",
+          name: "mcp",
+          arguments: { tool: "local_echo", args: { value: "resource-1" } },
+        },
+      ],
     ];
     let modelCalls = 0;
     session.agent.streamFunction = async (_model, _context, options) => {
@@ -1503,14 +1386,9 @@ describe("published SDK v2 over real local HTTP", () => {
       let content: AssistantMessage["content"] = [];
       let stopReason: AssistantMessage["stopReason"] = "aborted";
       if (!aborted) {
-        modelCalls++;
-        if (modelCalls === 1) {
-          content = nativeCalls;
-          stopReason = "toolUse";
-        } else {
-          content = [{ type: "text", text: "done" }];
-          stopReason = "stop";
-        }
+        const turn = nativeTurns[modelCalls++];
+        content = turn ?? [{ type: "text", text: "done" }];
+        stopReason = turn === undefined ? "stop" : "toolUse";
       }
       const message: AssistantMessage = {
         role: "assistant",
@@ -1531,19 +1409,18 @@ describe("published SDK v2 over real local HTTP", () => {
       };
       return streamMessage(message);
     };
-    const pending = session.prompt("fixture: finish the workspace write and both effects");
+    const pending = session.prompt("fixture: finish the workspace write, then both effects");
     await expect.poll(() => writer !== undefined).toBe(true);
     expect(checkpoints).toHaveLength(0);
     expect(effects).toBe(0);
     requireValue(writer).writeHead(200).end();
     await expect.poll(() => checkpoints.length).toBe(1);
     expect(checkpoints[0]).toMatchObject({
-      toolCallId: "native-outer",
+      toolCallId: "native-direct",
       workspace: "writer finished",
       artifacts: [],
       operation: {
-        toolCallId: "native-outer",
-        innerCallId: 1,
+        toolCallId: "native-direct",
         server: "local",
         tool: "echo",
         args: { value: "first" },
@@ -1563,11 +1440,10 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(effects).toBe(0);
     expect(requireValue(captures[0]).event).toMatchObject({
       phase: "before",
-      toolCallId: "native-outer",
-      innerCallId: 1,
+      toolCallId: "native-direct",
       args: { value: "first" },
     });
-    expect(requireValue(captures[0]).bytes).toContain('"name":"mcp_script"');
+    expect(requireValue(captures[0]).bytes).toContain('"name":"local_echo"');
     requireValue(captures[0]).res.writeHead(200).end();
     await expect.poll(() => captures.length).toBe(2);
     expect(effects).toBe(1);
@@ -1579,17 +1455,17 @@ describe("published SDK v2 over real local HTTP", () => {
       id: "resource-1",
       value: "first",
     });
+    mode = "pass";
     requireValue(captures[1]).res.writeHead(200).end();
     await expect.poll(() => checkpoints.length).toBe(2);
     expect(checkpoints[1]).toMatchObject({
-      toolCallId: "native-outer",
-      operation: {
-        toolCallId: "native-outer",
-        innerCallId: 2,
-        args: { value: "resource-1" },
-      },
+      toolCallId: "native-proxy",
+      operation: { toolCallId: "native-proxy", args: { value: "resource-1" } },
     });
-    expect(requireValue(checkpoints[1]).artifacts).not.toContain(largeOutput); // Scripts retain raw JSON, without unused rendered-text work.
+    // The dependent call's checkpoint already holds the first result and its retained raw JSON.
+    expect(requireValue(checkpoints[1]).bytes).toContain(
+      '"role":"toolResult","toolCallId":"native-direct"',
+    );
     expect(
       requireValue(checkpoints[1]).artifacts.map((bytes): unknown =>
         bytes.startsWith("{") ? JSON.parse(bytes) : null,
@@ -1608,29 +1484,23 @@ describe("published SDK v2 over real local HTTP", () => {
     await session.waitForIdle();
     expect(effects).toBe(2);
     expect(requireValue(captures[2]).event).toMatchObject({
-      toolCallId: "native-outer",
-      innerCallId: 2,
+      phase: "before",
+      toolCallId: "native-proxy",
       args: { value: "resource-1" },
     });
-    const scriptResult = requireValue(
+    const directResult = requireValue(
       toolResults(
         sessionManager
           .getEntries()
           .filter((entry) => entry.type === "message")
           .map((entry) => entry.message),
-      ).find((message) => message.toolCallId === "native-outer"),
+      ).find((message) => message.toolCallId === "native-direct"),
     );
-    const scriptDetails = z
-      .object({
-        outputGuard: z.object({ fullOutputPath: z.string() }),
-        resultRefs: z.array(z.string()),
-      })
-      .parse(scriptResult.details);
-    const finalPath = scriptDetails.outputGuard.fullOutputPath;
+    const finalPath = z
+      .object({ outputGuard: z.object({ fullOutputPath: z.string() }) })
+      .parse(directResult.details).outputGuard.fullOutputPath;
     expect(dirname(dirname(finalPath))).toBe(outputDirectory);
-    expect(await readFile(finalPath, "utf8")).toBe(
-      [largeOutput, ...scriptDetails.resultRefs.map(formatMcpResultReference)].join("\n"),
-    );
+    expect(await readFile(finalPath, "utf8")).toContain(largeOutput);
     const restoredPath = join(root, "restored.jsonl");
     await writeFile(restoredPath, checkpoint);
     const restored = SessionManager.open(restoredPath);
@@ -1643,10 +1513,10 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(requireValue(entries[1]).result).toMatchObject({
       structuredContent: { id: "resource-1" },
     });
-    expect(effects).toBe(2); // Opening native history does not replay its script.
+    expect(effects).toBe(2); // Opening native history does not replay its calls.
 
     const registered = session.extensionRunner.getAllRegisteredTools();
-    for (const name of ["local_echo", "mcp", "mcp_script"]) {
+    for (const name of ["local_echo", "mcp"]) {
       expect(
         requireValue(registered.find((t) => t.definition.name === name)).definition.executionMode,
       ).toBe("sequential");
@@ -1673,23 +1543,22 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(effects).toBe(2);
     expect(JSON.stringify(blocked)).not.toContain("synthetic-secret-must-not-leak");
     mode = "reject-after";
-    const interrupted = await execute("mcp_script", "interrupted-outer", { code: script });
+    const interrupted = await execute("local_echo", "interrupted-outer", { value: "first" });
     expect(interrupted.details).toMatchObject({
       error: "call_capture_failed",
       recovery: {
         phase: "after",
         toolCallId: "interrupted-outer",
-        innerCallId: 1,
         args: { value: "first" },
         result: { structuredContent: { id: "resource-3" } },
       },
     });
-    expect(effects).toBe(3); // Never hands an uncheckpointed result to dependent script work.
+    expect(effects).toBe(3); // The completed effect is reported for recovery, never repeated.
     expect(JSON.stringify(interrupted)).not.toContain("synthetic-secret-must-not-leak");
     mode = "hold";
     const controller = new AbortController();
     const stoppedCaptureCount = captures.length;
-    const stopped = execute("mcp_script", "stopped-outer", { code: script }, controller.signal);
+    const stopped = execute("local_echo", "stopped-outer", { value: "first" }, controller.signal);
     await expect.poll(() => captures.length).toBe(stoppedCaptureCount + 1);
     controller.abort(new Error("Stop"));
     expect((await stopped).details.error).toBe("aborted");
@@ -1705,17 +1574,12 @@ describe("published SDK v2 over real local HTTP", () => {
       toolCallId: "proxy-outer",
       args: { value: "proxy" },
     });
-    expect(requireValue(captures.at(-1)).event.innerCallId).toBeUndefined();
     expect(effects).toBe(4);
-    const lost = await execute("mcp_script", "lost-outer", {
-      code: 'await tools.local_echo({ value: ["lose", "response"].join("-") });',
+    const lost = await execute("local_echo", "lost-outer", { value: "lose-response" });
+    expect(lost.details).toMatchObject({
+      error: "ambiguous_outcome",
+      recovery: { toolCallId: "lost-outer", action: "readback" },
     });
-    expect(lost.details.calls).toMatchObject([
-      {
-        error: "ambiguous_outcome",
-        recovery: { toolCallId: "lost-outer", innerCallId: 1, action: "readback" },
-      },
-    ]);
     expect(textBlock(lost.content[0])).toContain("Read back the original operation");
     expect(effects).toBe(5);
     const lostPath = join(root, "lost-response.jsonl");
@@ -1729,7 +1593,6 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(intent).toMatchObject({
       phase: "before",
       toolCallId: "lost-outer",
-      innerCallId: 1,
       args: { value: "lose-response" },
     });
     const readback = await execute("mcp", "readback-outer", {
@@ -1748,8 +1611,8 @@ describe("published SDK v2 over real local HTTP", () => {
     });
     expect(effects).toBe(5);
     expect(checkpoints.map((c) => c.toolCallId)).toEqual([
-      "native-outer",
-      "native-outer",
+      "native-direct",
+      "native-proxy",
       "blocked-outer",
       "interrupted-outer",
       "stopped-outer",
@@ -1762,36 +1625,14 @@ describe("published SDK v2 over real local HTTP", () => {
       "checkpoint unavailable",
     );
     expect(effects).toBe(5);
-    const beforeRejectedScript = captures.length;
-    const rejectedScript = await execute("mcp_script", "checkpoint-script-rejected", {
-      code: `
-      const failed = await tools.local_echo({ value: "never" });
-      const catalog = await tools.describe({ path: "local_echo" });
-      return { failed, name: catalog.name };
-    `,
-    });
-    expect(rejectedScript.details.error).toBeUndefined();
-    expect(JSON.parse(textBlock(rejectedScript.content[0]))).toMatchObject({
-      failed: { ok: false, error: { code: "call_failed" } },
-      name: "echo",
-    });
-    expect(captures).toHaveLength(beforeRejectedScript);
-    expect(effects).toBe(5);
 
-    for (const entry of ["direct", "proxy", "script"]) {
+    for (const entry of ["direct", "proxy"]) {
       checkpointMode = "hold";
       const beforeCount = checkpoints.length;
       const captureCount = captures.length;
       const { name, arguments: args } = entryCall(entry, "echo", { value: "never" });
       const id = `native-stop-${name}`;
-      nativeCalls = [
-        {
-          type: "toolCall",
-          id,
-          name,
-          arguments: entry === "script" ? { code: script } : args,
-        },
-      ];
+      nativeTurns = [[{ type: "toolCall", id, name, arguments: args }]];
       modelCalls = 0;
       const stopping = session.prompt(`fixture: stop ${name} during its checkpoint`);
       await expect.poll(() => checkpoints.length).toBe(beforeCount + 1);
@@ -1819,7 +1660,6 @@ describe("published SDK v2 over real local HTTP", () => {
     for (const { entry, names } of [
       { entry: "direct", names: ["readback", "upsert"] },
       { entry: "proxy", names: ["readback", "upsert", "read_saved_data"] },
-      { entry: "script", names: ["readback", "upsert", "read_saved_data"] },
     ]) {
       for (const name of names) {
         const id = `${entry}-${name}`;
@@ -1836,7 +1676,6 @@ describe("published SDK v2 over real local HTTP", () => {
         const operation = requireValue(checkpoints.at(-1)).operation;
         expect(operation).toEqual({
           toolCallId: id,
-          ...(entry === "script" ? { innerCallId: 1 } : {}),
           server: "local",
           tool: name,
           args,
@@ -1883,43 +1722,6 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(requireValue(checkpoints.at(-1)).operation).toBeUndefined();
       expect(captures).toHaveLength(count);
     }
-
-    // Inner calls stay parallel, with independent IDs and args even under one outer ID.
-    checkpointMode = "hold";
-    const checkpointCount = checkpoints.length;
-    const parallelCaptureCount = captures.length;
-    const parallel = execute("mcp_script", "parallel-outer", {
-      code: `return Promise.all([
-      tools.local_echo({ value: "parallel-first" }), tools.local_upsert({ value: "parallel-second" })
-    ]);`,
-    });
-    await expect.poll(() => checkpoints.length).toBe(checkpointCount + 2);
-    // Parallel HTTP arrivals need not match the script's native call order.
-    const pair = checkpoints
-      .slice(checkpointCount)
-      .sort(
-        (a, b) =>
-          requireValue(requireValue(a.operation).innerCallId) -
-          requireValue(requireValue(b.operation).innerCallId),
-      );
-    expect(
-      pair.map((c) => [
-        requireValue(c.operation).toolCallId,
-        requireValue(c.operation).innerCallId,
-        requireValue(c.operation).args.value,
-      ]),
-    ).toEqual([
-      ["parallel-outer", 1, "parallel-first"],
-      ["parallel-outer", 2, "parallel-second"],
-    ]);
-    requireValue(pair[1]).res.writeHead(200).end();
-    await expect.poll(() => captures.length).toBe(parallelCaptureCount + 2);
-    expect(captures.slice(parallelCaptureCount).map((c) => c.event.innerCallId)).toEqual([2, 2]);
-    requireValue(pair[0]).res.writeHead(200).end();
-    expect((await parallel).details.calls).toMatchObject([{ ok: true }, { ok: true }]);
-    expect(captures.slice(parallelCaptureCount).map((c) => c.event.innerCallId)).toEqual([
-      2, 2, 1, 1,
-    ]);
   }, 20000);
 
   it.each([undefined, false])(
@@ -2618,29 +2420,20 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.requests).toHaveLength(1);
   });
 
-  it.each(["direct", "proxy", "script"])(
-    "preserves null structured content through %s",
-    async (entry) => {
-      const f = await fixture((e) => {
-        if (e.body.method !== "tools/call") {
-          return;
-        }
-        result(e, { resultType: "complete", content: [], structuredContent: null });
-        return true;
-      });
-      const { state } = await f.connect({ requestTimeoutMs: 500.5 });
-      const output = await call(state, entry);
-      expect(output.ok, JSON.stringify(output)).toBe(true);
-      const scriptData: unknown = expect.objectContaining({ structuredContent: null });
-      expect(entry === "script" ? output.data : output.content[0]).toEqual(
-        entry === "script" ? scriptData : { type: "text", text: "null" },
-      );
-      expect(
-        entry === "script" ||
-          textBlock(output.content[1]).includes(z.string().parse(output.details.resultRef)),
-      ).toBe(true);
-    },
-  );
+  it.each(["direct", "proxy"])("preserves null structured content through %s", async (entry) => {
+    const f = await fixture((e) => {
+      if (e.body.method !== "tools/call") {
+        return;
+      }
+      result(e, { resultType: "complete", content: [], structuredContent: null });
+      return true;
+    });
+    const { state } = await f.connect({ requestTimeoutMs: 500.5 });
+    const output = await call(state, entry);
+    expect(output.ok, JSON.stringify(output)).toBe(true);
+    expect(output.content[0]).toEqual({ type: "text", text: "null" });
+    expect(textBlock(output.content[1])).toContain(z.string().parse(output.details.resultRef));
+  });
 
   it("discovers every tool when changing catalog pages reuse the same cursor", async () => {
     let page = 0;

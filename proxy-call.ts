@@ -20,8 +20,6 @@ import { asObjectRecord } from "./mcp-output-values.ts";
 export interface ExecuteCallOptions {
   exactOriginalName?: boolean;
   resourceUri?: string;
-  /** Scripts receive the raw protocol result without model-facing content transformation. */
-  raw?: boolean;
 }
 
 interface ExecuteCallRequest {
@@ -407,7 +405,7 @@ async function dispatchApprovedCall(
     prepared: Extract<Awaited<ReturnType<typeof prepareMcpConnection>>, { connection: unknown }>;
   },
 ): Promise<ProxyToolResult> {
-  const { args, identity, beforeDispatch, options, signal } = request;
+  const { args, identity, beforeDispatch, signal } = request;
   const approval = await ensureToolCallApproved(state, {
     serverName,
     toolMeta,
@@ -425,7 +423,6 @@ async function dispatchApprovedCall(
     options: {
       ...identity,
       ...(beforeDispatch ? { beforeDispatch } : {}),
-      ...(options.raw !== undefined ? { raw: options.raw } : {}),
       detailsBase: {
         mode: "call",
         server: serverName,

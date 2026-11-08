@@ -3,14 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createToolLoader } from "../tool-loader.ts";
 import { computeServerHash } from "../metadata-cache.ts";
 import type { DirectToolSpec, McpConfig, McpTool, MetadataCache } from "../types.ts";
-import {
-  createScriptingLoaderHost,
-  loaderFixtureTool,
-} from "./fixtures/scripting-runtime-loader.ts";
+import { createLoaderHost, loaderFixtureTool } from "./fixtures/loader-host.ts";
 
-const hosts: Awaited<ReturnType<typeof createScriptingLoaderHost>>[] = [];
+const hosts: Awaited<ReturnType<typeof createLoaderHost>>[] = [];
 async function host(allow?: (ref: { name: string }) => boolean) {
-  const instance = await createScriptingLoaderHost(allow);
+  const instance = await createLoaderHost(allow);
   hosts.push(instance);
   return instance;
 }
@@ -132,7 +129,6 @@ describe("MCP catalog registration", () => {
   it("uses unique public names without touching foreign tools", async () => {
     const h = await host();
     h.api.registerTool(loaderFixtureTool("search", { name: "outside" }));
-    h.api.registerTool(loaderFixtureTool("mcp_script"));
     const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     loader.sync({ ...config, settings: { toolPrefix: "none" } }, cache());
     expect(definition(h, "search").namespace).toEqual({ name: "outside" });
@@ -141,7 +137,6 @@ describe("MCP catalog registration", () => {
     expect([...h.definitions.keys()].sort()).toEqual([
       "demo_pinned",
       "demo_search",
-      "mcp_script",
       "other_search",
       "pinned",
       "search",

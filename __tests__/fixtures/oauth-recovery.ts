@@ -4,7 +4,6 @@ import { expect, vi } from "vitest";
 import { createTestState } from "../test-state.ts";
 import { createTestExtensionContext } from "../test-extension-context.ts";
 import { createDirectToolExecutor } from "../../direct-tools.ts";
-import { runMcpScript } from "../../mcp-code.ts";
 import {
   createOAuthRuntime,
   startAuth,
@@ -133,16 +132,7 @@ function bindRecoveryFixture(
     connect: () => manager.connect(name, definition),
     call: (tool = "write", signal?: AbortSignal) =>
       executeCall(state, { toolName: toolName(tool), args: {}, serverOverride: name, signal }),
-    callHost: async (host: "proxy" | "direct" | "script"): Promise<unknown> => {
-      if (host === "script") {
-        const result = await runMcpScript({
-          state,
-          code: `emit(await tools.call(${JSON.stringify(toolName("write"))}, {}));`,
-        });
-        expect(result.details.error).toBeUndefined();
-        const output: unknown = JSON.parse(resultText(result));
-        return output;
-      }
+    callHost: async (host: "proxy" | "direct"): Promise<unknown> => {
       const result =
         host === "proxy"
           ? await executeCall(state, {

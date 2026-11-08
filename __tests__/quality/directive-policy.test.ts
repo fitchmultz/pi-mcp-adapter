@@ -1040,7 +1040,7 @@ describe("operation-bound exceptions", () => {
       },
       neighbor: transformSource.replace(
         "return config;",
-        "config.settings = { scriptMode: false };\nreturn config;",
+        "config.settings = { directTools: false };\nreturn config;",
       ),
       diagnostic:
         "forward.ts:7:1: Assignment to property of function parameter 'config'. [Error/eslint(no-param-reassign)]",

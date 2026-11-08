@@ -363,10 +363,9 @@ describe("mcpAdapter session lifecycle", () => {
     expect(api.getActiveTools()).toContain("demo_search");
   });
 
-  it("declares the gateway before startup completes and honors transformed restrictions", async () => {
+  it("declares the gateway from the transformed config before startup completes", async () => {
     const config: McpConfig = {
       mcpServers: { demo: { command: "unused", lifecycle: "lazy" } },
-      settings: { scriptMode: false },
     };
     const state = createState();
     state.config = config;
@@ -383,7 +382,6 @@ describe("mcpAdapter session lifecycle", () => {
       expect(api.getActiveTools()).toEqual(["bash", "mcp"]);
       expect(registeredTool("mcp").executionMode).toBe("sequential");
       expect(beforeExecute).not.toHaveBeenCalled();
-      expect(api.getAllTools().some((tool) => tool.name === "mcp_script")).toBe(false);
     } finally {
       initialization.resolve(state);
       await Promise.resolve();
@@ -674,10 +672,10 @@ describe("mcpAdapter session lifecycle", () => {
     async (snapshot) => {
       const source: McpConfig = {
         mcpServers: { docs: { command: "docs-server", env: { ORIGINAL: "yes" } } },
-        settings: { autoAuth: true, scriptMode: true },
+        settings: { autoAuth: true, samplingAutoApprove: true },
       };
       const original = structuredClone(source);
-      const sharedSettings = { autoAuth: false, scriptMode: false };
+      const sharedSettings = { autoAuth: false, samplingAutoApprove: false };
       const inputs: McpConfig[] = [];
       const states: ReturnType<typeof createState>[] = [];
       const transformConfig = vi.fn<NonNullable<McpAdapterOptions["transformConfig"]>>(
@@ -741,7 +739,7 @@ describe("mcpAdapter session lifecycle", () => {
               env: { SESSION: sessionId },
             },
           },
-          settings: { autoAuth: false, scriptMode: false },
+          settings: { autoAuth: false, samplingAutoApprove: false },
         });
         const transform = requireValue(transformConfig.mock.calls[index]);
         expect(transform[1]).toBe(initialization[1]);
@@ -757,18 +755,18 @@ describe("mcpAdapter session lifecycle", () => {
 
         // Runtime edits must not leak into a retained hook result or the next session.
         const runtime = requireValue(states[index]).config;
-        requireValue(runtime.settings).scriptMode = true;
+        requireValue(runtime.settings).samplingAutoApprove = true;
         requireValue(requireValue(runtime.mcpServers.ephemeral).env).SESSION = "runtime-edit";
         const result = requireValue(transformConfig.mock.results[index]);
         assert.equal(result.type, "return");
-        expect(requireValue(result.value.settings).scriptMode).toBe(false);
+        expect(requireValue(result.value.settings).samplingAutoApprove).toBe(false);
         expect(requireValue(requireValue(result.value.mcpServers.ephemeral).env).SESSION).toBe(
           sessionId,
         );
       }
       expect(inputs).toEqual([original, original, original]);
       expect(source).toEqual(original);
-      expect(sharedSettings).toEqual({ autoAuth: false, scriptMode: false });
+      expect(sharedSettings).toEqual({ autoAuth: false, samplingAutoApprove: false });
       expect(mocks.loadMcpConfig).toHaveBeenCalledTimes(snapshot ? 0 : reasons.length);
       await handlers.get("session_shutdown")();
     },
@@ -883,7 +881,6 @@ describe("mcpAdapter session lifecycle", () => {
     mcpAdapter(api);
     await handlers.get("session_start")({}, {});
     expect(api.getActiveTools()).toEqual(["bash", "mcp"]);
-    expect(registeredTool("mcp_script").exposure).toBe("deferred");
     const proxy = registeredTool("mcp");
     for (const server of ["demo", "other"]) {
       expect(await proxy.execute(`connect-${server}`, { connect: server })).toEqual({
@@ -907,10 +904,7 @@ describe("mcpAdapter session lifecycle", () => {
         identity: { toolCallId: `call-${server}` },
         beforeDispatch: undefined,
       });
-      expect(spies.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
-        "mcp",
-        "mcp_script",
-      ]);
+      expect(spies.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual(["mcp"]);
       expect(api.getActiveTools()).toEqual(["bash", "mcp"]);
     }
     expect(requireValue(mocks.initializeMcp.mock.calls[0]?.[3]).resolvedConfig).toEqual(config);

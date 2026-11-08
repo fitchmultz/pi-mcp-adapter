@@ -312,7 +312,6 @@ function retentionRequired(
 export async function retainMcpResult(
   result: unknown,
   options: McpOutputGuardOptions = {},
-  rawResult = false,
 ): Promise<RetainedMcpResult> {
   const raw = safeStringify(result);
   const rawBytes = byteLength(raw);
@@ -334,7 +333,7 @@ export async function retainMcpResult(
     rawBytes,
     artifact,
     payloadFiles,
-    summarize: oversized && !rawResult,
+    summarize: oversized,
   });
 }
 
@@ -364,7 +363,7 @@ export function formatMcpPayloadFile(file: McpPayloadFile): string {
 }
 
 export function formatMcpResultReference(ref: string): string {
-  return `[MCP result saved: ${JSON.stringify(ref)}. Inspect without repeating the call using mcp action "read-result" or tools.readResult with this ref. Optionally select a JSON Pointer with path.]`;
+  return `[MCP result saved: ${JSON.stringify(ref)}. Inspect without repeating the call using mcp action "read-result" with this ref. Optionally select a JSON Pointer with path.]`;
 }
 
 async function saveArtifact(

@@ -132,8 +132,6 @@ async function start() {
   });
   await discovering;
   expect(session.getActiveToolNames()).toContain("mcp");
-  expect(session.getActiveToolNames()).not.toContain("mcp_script");
-  session.setActiveToolsByName([...session.getActiveToolNames(), "mcp_script"]);
   expect(calls).toEqual([]);
   expect(discoveries).toBe(1);
 }
@@ -162,18 +160,13 @@ function call(name: string, signal?: AbortSignal) {
   if (tool === undefined) {
     throw new Error(`${name} was not registered`);
   }
-  let args: object = {};
-  if (name === "mcp") {
-    args = { tool: "demo_echo", args: {} };
-  } else if (name === "mcp_script") {
-    args = { code: "emit(await tools.demo_echo({}));" };
-  }
+  const args = name === "mcp" ? { tool: "demo_echo", args: {} } : {};
   const result = tool.execute("init-abort", args, signal);
   pending.push(result);
   return result;
 }
 
-describe.each(["mcp", "mcp_script", "demo_echo"])("native registered %s initialization", (name) => {
+describe.each(["mcp", "demo_echo"])("native registered %s initialization", (name) => {
   it.each(["before", "during"])(
     "honors cancellation %s the wait without cancelling shared startup",
     async (timing) => {
@@ -222,11 +215,11 @@ describe.each(["mcp", "mcp_script", "demo_echo"])("native registered %s initiali
   );
 });
 
-it.each(["mcp", "mcp_script"])("keeps the %s 30-second initialization timeout", async (name) => {
+it("keeps the gateway 30-second initialization timeout", async () => {
   await start();
   vi.useFakeTimers();
   let settled = false;
-  const waiting = call(name).then((result) => {
+  const waiting = call("mcp").then((result) => {
     settled = true;
     return result;
   });

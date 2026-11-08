@@ -147,10 +147,7 @@ export class McpHostRuntime implements McpAdapterHost {
 
   /** Once per session start or tree navigation, so a later live deselection is not undone. */
   private activateToolSearch(): void {
-    if (
-      !this.toolSearchSettled &&
-      (this.toolLoader.hasDeferred() || this.tools.hasDeferredScript())
-    ) {
+    if (!this.toolSearchSettled && this.toolLoader.hasDeferred()) {
       this.toolSearchSettled = activateToolSearch(this.pi, this.sessionManager);
     }
   }

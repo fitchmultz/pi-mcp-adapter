@@ -6,7 +6,7 @@ For installation and a first task, start with the [README](../README.md). This g
 - [Config files](#file-layout), [server options](#server-options), and [settings](#settings)
 - [SDK configuration](#sdk-configuration), [call capture](#execution-checkpoints-and-call-capture), and [runtime status](#runtime-status-snapshots)
 - [Transport behavior and retry safety](#transport-compatibility)
-- [Approvals](#tool-approval), [output/readback](#output-guard), and [scripting](#mcp-scripting)
+- [Approvals](#tool-approval), [output/readback](#output-guard), and [multi-call work](#multi-call-work)
 - [Typed discovery and pins](#typed-discovery-and-pinned-tools), [resources](#mcp-resources), [prompts](#mcp-prompts), and [Apps](#mcp-ui-integration)
 - [Gateway actions](#usage), [slash commands](#commands), and [limits](#limitations)
 
@@ -130,9 +130,7 @@ A supplied `config` is a complete, isolated snapshot. It is not merged with file
 
 With `configPath` and no `config`, the adapter keeps normal file merge behavior, and that path takes precedence over argv and `--mcp-config`. The default export keeps the normal file-based behavior. OAuth credentials are stored in the operating system credential store and keyed by the configured server name; URL binding prevents credentials from being accepted for a different server URL. `settings.oauthDir` selects the parent of a `fitch-mcp-adapter/` legacy plaintext import directory; `FITCH_MCP_OAUTH_DIR` explicitly overrides the final import path. Neither changes the OS credential namespace. CSRF state and PKCE verifiers are flow-local, so concurrent authorization flows do not share transient secrets.
 
-Set `createMcpAdapter({ outputDirectory: "/workspace/internal/mcp-output" })` to keep oversized tool/resource text, raw MCP JSON, and final `mcp_script` output beneath a host-owned directory. The directory is created on the first spill; each file still uses a random subdirectory/name and mode `0600`. Relative paths resolve from the process working directory when written; prefer an absolute path for hosts that change directories. This runtime option works with either configuration mode and does not change live results, output limits, or cleanup. The host owns retention, access, and any redaction of saved copies; files may contain sensitive data. Omitting it keeps the system temp directory.
-
-Set `createMcpAdapter({ defaultScriptTimeoutMs: null })` to remove the default overall `mcp_script` deadline for that host only. Omitting the option keeps 30,000ms; a numeric default must be an integer from 1 to 2,147,483,647 milliseconds. Each script's explicit `timeoutMs` takes precedence. This is a factory option, not an MCP config or global Pi setting. It does not change initialization waits, individual MCP request deadlines, Stop/AbortSignal, session-owner shutdown, or unfinished-call cleanup. Without an overall deadline, a script can run until it completes or is stopped. Script result `details.timeoutMs` is `null` when no overall deadline applies.
+Set `createMcpAdapter({ outputDirectory: "/workspace/internal/mcp-output" })` to keep oversized tool/resource text and raw MCP JSON beneath a host-owned directory. The directory is created on the first spill; each file still uses a random subdirectory/name and mode `0600`. Relative paths resolve from the process working directory when written; prefer an absolute path for hosts that change directories. This runtime option works with either configuration mode and does not change live results, output limits, or cleanup. The host owns retention, access, and any redaction of saved copies; files may contain sensitive data. Omitting it keeps the system temp directory.
 
 ### Session configuration
 
@@ -156,23 +154,23 @@ Hosts that share a server within a root session can supply their root-session ID
 
 ### Execution checkpoints and call capture
 
-`createMcpAdapter({ beforeExecute: async (toolCallId, ctx, operation) => { ... } })` lets a host finish its workspace/native-session checkpoint before the next MCP action. For direct tools, actual `mcp` calls and every resolved `mcp_script` inner call, it runs after target resolution, connection, approval and UI preparation but **before the individual service deadline** and `onToolCall` capture. Any configured overall script deadline still applies. A second awaited script call reaches this boundary after the first call's output files have finished writing. The callback receives the native Pi call ID and that invocation's `ExtensionContext`, with its caller/owner/script cancellation signal in `ctx.signal`. Pass it to checkpoint I/O and throw if the checkpoint cannot complete. Rejection prevents that call: direct/proxy execution throws, while scripts keep their failed-call envelope so they can handle preparation failures. Existing two-argument callbacks remain supported.
+`createMcpAdapter({ beforeExecute: async (toolCallId, ctx, operation) => { ... } })` lets a host finish its workspace/native-session checkpoint before the next MCP action. For direct tools and actual `mcp` calls, it runs after target resolution, connection, approval and UI preparation but **before the individual service deadline** and `onToolCall` capture. The callback receives the native Pi call ID and that invocation's `ExtensionContext`, with its caller/owner cancellation signal in `ctx.signal`. Pass it to checkpoint I/O and throw if the checkpoint cannot complete. Rejection prevents that call: direct and gateway execution throws. Existing two-argument callbacks remain supported.
 
-The optional `McpOperationContext` (exported from the package and `/types`) carries the same `server`, `tool`, resolved `args`, optional `annotations`/`resourceUri`, and outer/inner IDs as the native before event, plus `annotationsTrusted`. Live connection annotations take precedence over frozen direct-tool hints, including when live hints are absent. `annotationsTrusted` reports only the existing server `retryOnTransportFailure: true` opt-in; it is not a new permission or configuration gate. No server configuration, headers, credentials, or SDK clients are exposed. Non-call proxy modes (including status, discovery, connect and auth actions) still invoke the callback without an operation; unresolved or denied tool calls do not dispatch.
+The optional `McpOperationContext` (exported from the package and `/types`) carries the same `server`, `tool`, resolved `args`, optional `annotations`/`resourceUri`, and call ID as the native before event, plus `annotationsTrusted`. Live connection annotations take precedence over frozen direct-tool hints, including when live hints are absent. `annotationsTrusted` reports only the existing server `retryOnTransportFailure: true` opt-in; it is not a new permission or configuration gate. No server configuration, headers, credentials, or SDK clients are exposed. Non-call proxy modes (including status, discovery, connect and auth actions) still invoke the callback without an operation; unresolved or denied tool calls do not dispatch.
 
 A host can skip an expensive before-effect save for a native resource read (`operation.resourceUri`) or for `operation.annotationsTrusted && operation.annotations?.readOnlyHint === true`. Missing/false hints and `idempotentHint: true` alone are not read-only: an idempotent write still changes state. Keep unknown operations conservative and retain original intent/outcome capture. The adapter does not choose the host's save policy.
 
-Supplying `beforeExecute` marks the adapter's tools `executionMode: "sequential"`, so Pi finishes earlier sibling tools before entering this boundary. Omitting it keeps normal scheduling. It does not serialize `Promise.all` inside a script, join detached writers, or implement checkpoint storage. The host still owns coherent capture and a final completion checkpoint, including final script output files. These callbacks do not change request or script timeout defaults.
+Supplying `beforeExecute` marks the adapter's tools `executionMode: "sequential"`, so Pi finishes earlier sibling tools before entering this boundary. Omitting it keeps normal scheduling. It does not join detached writers or implement checkpoint storage. The host still owns coherent capture and a final completion checkpoint. These callbacks do not change request timeout defaults.
 
-`createMcpAdapter({ onToolCall: async (event) => { ... } })` supplies one optional, session-scoped callback for `mcp`, direct tools, and each resolved `mcp_script` call. Load this factory instead of also loading the default adapter. The callback is passed directly, so separate Pi/Jiti module instances do not need to share a singleton or event bus.
+`createMcpAdapter({ onToolCall: async (event) => { ... } })` supplies one optional, session-scoped callback for `mcp` and direct tool calls. Load this factory instead of also loading the default adapter. The callback is passed directly, so separate Pi/Jiti module instances do not need to share a singleton or event bus.
 
-`McpToolCallEvent` (exported from `@fitchmultz/pi-mcp-adapter/types`) contains `server`, `tool`, the actual resolved `args`, optional SDK `annotations` and `resourceUri`, and a cancellation/deadline `signal`. `toolCallId` is the outer native Pi ID; scripts additionally carry their existing numeric `innerCallId`. These IDs are correlation only, not provider idempotency keys.
+`McpToolCallEvent` (exported from `@fitchmultz/pi-mcp-adapter/types`) contains `server`, `tool`, the actual resolved `args`, optional SDK `annotations` and `resourceUri`, and a cancellation/deadline `signal`. `toolCallId` is the native Pi call ID. It is correlation only, not a provider idempotency key.
 
 - `phase: "before"`: awaited after approval, before dispatch. Rejection prevents the call.
-- `phase: "after"`: contains either the raw `result` (including MCP error results) or the thrown `error`. Awaited before delivering the outcome to Pi or dependent script work. It runs once after native recovery/retry settles, not once per HTTP subrequest. Output spill files are written **after** this callback; they are complete when the tool or awaited script call resolves, not at the after event.
-- Capture failure returns `call_capture_failed` with the original event, excluding `signal`, in `details.recovery`. A completed result stays there; the adapter never repeats it. A script stops before consuming that result or starting dependent work. Cancellation remains `aborted`.
+- `phase: "after"`: contains either the raw `result` (including MCP error results) or the thrown `error`. Awaited before delivering the outcome to Pi. It runs once after native recovery/retry settles, not once per HTTP subrequest. Output spill files are written **after** this callback; they are complete when the tool call resolves, not at the after event.
+- Capture failure returns `call_capture_failed` with the original event, excluding `signal`, in `details.recovery`. A completed result stays there; the adapter never repeats it. Cancellation remains `aborted`.
 
-The two callbacks serve different boundaries: `beforeExecute` saves completed workspace writes; `onToolCall` captures the resolved operation and its raw outcome. The host owns `pi.appendEntry()` and the awaited checkpoint of that same native JSONL. Exclude `signal`, serialize thrown errors explicitly, redact sensitive checkpoint bytes, and honor the signal and session/attempt fence. `pi.appendEntry()` alone only persists locally; `pi.events.emit()` is not an awaited barrier. Custom entries do not enter model context automatically: the host must provide truthful recovered results or readback instructions when resuming. The adapter stores no separate transcript or receipts, does not replay scripts, and does not invent provider operation keys.
+The two callbacks serve different boundaries: `beforeExecute` saves completed workspace writes; `onToolCall` captures the resolved operation and its raw outcome. The host owns `pi.appendEntry()` and the awaited checkpoint of that same native JSONL. Exclude `signal`, serialize thrown errors explicitly, redact sensitive checkpoint bytes, and honor the signal and session/attempt fence. `pi.appendEntry()` alone only persists locally; `pi.events.emit()` is not an awaited barrier. Custom entries do not enter model context automatically: the host must provide truthful recovered results or readback instructions when resuming. The adapter stores no separate transcript or receipts, does not replay calls, and does not invent provider operation keys.
 
 ### Runtime shutdown and replacement
 
@@ -218,7 +216,7 @@ For known legacy servers, set `protocolVersion: "legacy"`. This is also the work
 
 `retryOnTransportFailure` is off by default. Enabling it trusts the configured server's explicit `readOnlyHint: true` or `idempotentHint: true` tool annotations for at most one new `callTool` request on the same modern HTTP client. Annotations are retained in live/cached metadata and describe output; the live catalog takes precedence over frozen direct-tool metadata. Eligible failures are a rejected tool POST fetch before response headers arrive, an HTTP 5xx tool response without a JSON-RPC error, or an SSE response body disconnecting before its JSON-RPC response arrives. The first attempt may already have run. Fresh SDK request IDs are not idempotency keys.
 
-Unknown or non-idempotent tools remain callable but are never automatically redispatched after those failures. An unresolved transport failure, interrupted JSON response body, closed connection, or cancellation/deadline while a dispatched tool request awaits its response returns internal `ambiguous_outcome` details with server/tool/call identity and readback instructions. Scripts retain these outcomes in their `calls` trace even when stopped by an overall timeout, cancellation, or early return. Use the original saved arguments and the provider's supported operation/resource identity to read the prior result, then continue the remaining work; do not blindly repeat a write or rerun its whole script. Missing annotations are not permission denial. Confirmed pre-dispatch legacy-session and authentication recovery remain available.
+Unknown or non-idempotent tools remain callable but are never automatically redispatched after those failures. An unresolved transport failure, interrupted JSON response body, closed connection, or cancellation/deadline while a dispatched tool request awaits its response returns internal `ambiguous_outcome` details with server/tool/call identity and readback instructions. Use the original saved arguments and the provider's supported operation/resource identity to read the prior result, then continue the remaining work; do not blindly repeat a write. Missing annotations are not permission denial. Confirmed pre-dispatch legacy-session and authentication recovery remain available.
 
 A broken SSE body fails only the affected request, even when retries are disabled. Completed responses and later stream notifications remain intact. Native SSE resumption stays SDK-owned: a server-provided event ID lets the SDK resume the existing stream before any adapter retry.
 
@@ -427,7 +425,6 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
 | `mcpServers.<name>.oauth.authorizationParams` | Extra authorization URL parameters for provider-specific OAuth extensions. Flow-owned parameters such as `client_id`, `redirect_uri`, `scope`, `state`, `code_challenge`, `response_type`, and `resource` cannot be overridden.                                                                                                                                                    |
 | `directTools`                                 | Global default for all servers (default: false). Per-server overrides this.                                                                                                                                                                                                                                                                                                        |
 | `freezeDirectTools`                           | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ action: "connect", server: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false.                                                                                                       |
-| `scriptMode`                                  | Register the deferred `mcp_script` plain-JavaScript tool (default: true). Set to `false` to withdraw it.                                                                                                                                                                                                                                                                           |
 | `disableProxyTool`                            | Hide `mcp` once configured pinned tools are available. Legacy resource pins keep it available for resource access.                                                                                                                                                                                                                                                                 |
 | `autoAuth`                                    | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false).                                                                                                                                                                                                                                                                                 |
 | `sampling`                                    | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available).                                                                                                                                                                                                                    |
@@ -462,7 +459,7 @@ Oversized MCP tool/resource results are guarded by default so a single huge resp
 
 - Inline text output is capped at **50 KiB / 2,000 lines** (matching Pi's built-in `bash` guard). Larger output is truncated to a head preview and the full text is saved to a temp file whose path is included in the result, so the agent can `read`/`grep` it.
 - **Image content blocks pass through unchanged** — only text output is guarded. Images are delivered to the provider as native image content.
-- In gateway and direct modes, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results use a compact summary and retain the full raw JSON in a file. Scripts receive the raw result before model-facing rendering, so they can reduce it without creating an unused text preview.
+- In gateway and direct modes, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results use a compact summary and retain the full raw JSON in a file.
 - Structured data, media, resources, extra protocol fields, and oversized results include a model-visible **result reference** to the saved raw result. Tiny plain-text results remain inline without an artifact. `structuredContent` is shown even when the server also returns content blocks.
 
 Tune the limits with the object form:
@@ -490,70 +487,11 @@ mcp({
 });
 ```
 
-`path` is an RFC 6901 JSON Pointer; `fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count **characters in the selected, pretty-printed JSON**, starting at zero—not rows, lines, or bytes. Readback defaults to 12,000 characters and remains bounded by the output byte/line caps. Continue with `details.nextOffset` until it is `null`. Readback requires an existing adapter output artifact in this host's output directory; it never calls the server again. The same operation is available as `tools.readResult` in scripts.
+`path` is an RFC 6901 JSON Pointer; `fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count **characters in the selected, pretty-printed JSON**, starting at zero—not rows, lines, or bytes. Readback defaults to 12,000 characters and remains bounded by the output byte/line caps. Continue with `details.nextOffset` until it is `null`. Readback requires an existing adapter output artifact in this host's output directory; it never calls the server again.
 
-### MCP Scripting
+### Multi-call work
 
-For multi-call MCP work, write ordinary JavaScript: discover, inspect, call, loop, filter, chain, or fan out, then return one result. `mcp_script` registers as a deferred Pi tool: load it with `tool_search` or call it from `codemode`. Use `tool_search` for typed discovery, a loaded typed tool for a single call, and `mcp` for explicit gateway actions. Set `settings.scriptMode` to `false` to withdraw the scripting tool.
-
-The bundled `mcp-scripting` skill is a separate Pi package resource. To hide that skill while keeping the adapter extension installed, replace the package entry in Pi settings with the object form and disable package skills:
-
-```json
-{
-  "packages": [{ "source": "npm:@fitchmultz/pi-mcp-adapter", "skills": [] }]
-}
-```
-
-You can also disable package resources through `pi config`.
-
-First inspect candidate schemas. This script discovers and describes without executing a search hit:
-
-```js
-const found = await tools.search({ query: "search issues", server: "github" });
-if (found.error) return found;
-emit(found.coverage);
-for (const item of found.items) {
-  emit(await tools.describe({ path: item.path, server: item.server }));
-}
-```
-
-After choosing a tool and checking its schema, pass ordinary JavaScript as `mcp_script`'s `code` argument:
-
-```js
-const results = [];
-for (const query of ["is:open label:bug", "is:open label:docs"]) {
-  const result = await tools.call("github_search_issues", { query });
-  if (!result.ok) return result;
-  results.push({ query, data: result.data });
-}
-return results;
-```
-
-The script API is:
-
-| Method                                                             | Result                                                                                                                                                                                    |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tools.search({ query, server?, limit?, offset? })`                | `{ items, total, hasMore, nextOffset, coverage }`; items include `path`, `name`, and `server`; discovery errors include `error`                                                           |
-| `tools.describe({ path, server? })`                                | Complete descriptor with `path`, `server`, `name`, and the server's `inputSchema`, `outputSchema`, `title`, annotations, `_meta`, and other fields when present; failures contain `error` |
-| `tools.call(path, args, server?)` or `tools.exact_flat_name(args)` | `{ ok: true, data, resultRef? }` or `{ ok: false, error: { code, message, ... }, data?, resultRef? }`                                                                                     |
-| `tools.resources({ server, limit?, offset? })`                     | `{ mode: "resources", server, items, total, hasMore, nextOffset }`; failures contain `error`                                                                                              |
-| `tools.readResource({ server, uri })`                              | The call envelope above, with raw resource data in `data.contents`                                                                                                                        |
-| `tools.readResult({ ref, path?, fields?, offset?, limit? })`       | `{ content, details }`; readback text and `details.nextOffset`, or `details.error` on failure                                                                                             |
-| `emit(value)` / `console.log(value)`                               | Captured output before the final return value                                                                                                                                             |
-
-For an ambiguous flat name, call `tools.call(descriptor.name, args, descriptor.server)` using the original name and server returned by describe.
-
-Search/resource pages default to 12 items, maximum 100. `coverage` contains `complete`, `knownServers`, and `unknownServers`. Selecting an uncached server discovers it; global search does not connect every lazy server. Script discovery does not activate typed tools. Descriptions retain JSON Schema rather than a lossy TypeScript projection.
-
-`data` is the raw MCP result: tool calls usually return `{ content, structuredContent?, isError?, ... }`; resource reads return `{ contents, ... }`. Error results retain their raw data when available. Handle `ok: false`; ordinary call failures do not automatically stop the script. Capture failures stop dependent work, and ambiguous outcomes require provider readback instead of blindly repeating a call. Result details include a concise `calls` trace and saved result references. Reduce raw results before emitting them; the final output uses the normal output guard.
-
-Use JavaScript loops and Promise utilities; fluent helpers such as `tools.find(...).one()`, `tools.parallel(...)`, and `tools.retry(...)` are not provided. Await every call before returning. The default timeout is 30 seconds unless the SDK host overrides it with `defaultScriptTimeoutMs`; an explicit per-script `timeoutMs` wins. Each script runs in a local worker that is terminated on timeout or cancellation, including infinite loops.
-
-For a tool-restricted subagent, a host can allow only `mcp_script`; include the relevant exact tool names or let the script use its discovery methods. A gateway-only host can use `mcp({ action: "search", query: "..." })` without activating tools outside its allowlist. Authentication, approvals, filters, and cancellation apply to every call.
-
-`mcp_script` is a trusted agent-authored MCP scripting layer, not an isolation boundary. The worker exposes no Node, filesystem, or network globals such as `process`, `Buffer`, or `fetch`. Run Pi in an isolated environment if you need isolation. This is local orchestration, not provider-native programmatic tool calling; it does not claim Codex native PTC support. Pi's general code-mode skill is separate and batches general Pi tools.
-
-See the bundled `mcp-scripting` skill for the workflow and exact return shapes.
+Use Pi's `codemode` tool for loops, filters, and dependent tool calls. Its scripts call any registered catalog tool, deferred or loaded, as `await tools.<flat_name>(args)`, and find unlisted tools with `searchTools`, `describeTool`, and `describeNamespace`. Gateway actions stay available as `tools.mcp({ action, ... })`, including `read-result` and `read-resource`. Each nested call runs through Pi's tool pipeline and the adapter's normal execution path, so authentication, approvals, filters, `beforeExecute`, `onToolCall`, output guards, and cancellation apply to it. Enable `codemode` with `+codemode` in `defaultTools` or `--tools`.
 
 ### MCP Resources
 
@@ -564,7 +502,7 @@ mcp({ action: "resources", server: "docs", limit: 12, offset: 0 });
 mcp({ action: "read-resource", server: "docs", uri: "docs://guide" });
 ```
 
-List first, then use the exact URI. Listings preserve the server's resource descriptor fields, including name, title, MIME type, icons, and `_meta` when supplied. `exposeResources`, include/exclude filters, disabled servers, authentication, and approval policy remain binding. Existing `read_<resource>` filter names still select resources, but these compatibility aliases are not typed functions and cannot be pinned in `/mcp`. Scripts use `tools.resources` and `tools.readResource`.
+List first, then use the exact URI. Listings preserve the server's resource descriptor fields, including name, title, MIME type, icons, and `_meta` when supplied. `exposeResources`, include/exclude filters, disabled servers, authentication, and approval policy remain binding. Existing `read_<resource>` filter names still select resources, but these compatibility aliases are not typed functions and cannot be pinned in `/mcp`.
 
 ### MCP Prompts
 
@@ -594,7 +532,7 @@ Tools that a server drops from its catalog, tools of disabled servers, and tools
 
 Both official Pi and the maintained fork use public tool registration and active-tool APIs. Always use the exact name returned by discovery rather than constructing names.
 
-Tool execution uses Pi's public request-boundary scheduling, not retired native async or pending-call APIs. Configured approval, MCP App UI consent, and the `beforeExecute` sequential checkpoint barrier remain binding. This is separate from local `mcp_script` orchestration.
+Tool execution uses Pi's public request-boundary scheduling, not retired native async or pending-call APIs. Configured approval, MCP App UI consent, and the `beforeExecute` sequential checkpoint barrier remain binding.
 
 Add `directTools` to pin frequently used tools into the initial active set:
 
@@ -642,7 +580,7 @@ To set a global default for all servers:
 
 Per-server `directTools` overrides the global setting. The example above pins tools for every server except `huge-server`, whose tools remain discoverable.
 
-Set `MCP_DIRECT_TOOLS=__none__` before loading the adapter to suppress all typed-tool registration, including pins and deferred catalog tools. Gateway search can still discover schemas; use gateway or script calls instead. Normal tool filters, host allowlists, and disabled-server settings still apply.
+Set `MCP_DIRECT_TOOLS=__none__` before loading the adapter to suppress all typed-tool registration, including pins and deferred catalog tools. Gateway search can still discover schemas; use gateway calls instead. Normal tool filters, host allowlists, and disabled-server settings still apply.
 
 To expose only a subset of a server, add `includeTools`. Values can be exact original names, prefixed names, or simple glob patterns. Legacy `read_<resource>` names continue to filter resource access:
 
@@ -672,7 +610,7 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
 }
 ```
 
-`includeTools` and `excludeTools` filter typed tools, gateway/script discovery, resource access, and the `/mcp` panel. App-only tools stay out of the model catalog and pin choices.
+`includeTools` and `excludeTools` filter typed tools, gateway discovery, resource access, and the `/mcp` panel. App-only tools stay out of the model catalog and pin choices.
 
 Active schemas consume context; inactive cached schemas do not. Pin the tools you routinely need and discover the rest as the task requires.
 
@@ -793,7 +731,7 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/fitch-mcp-adapt
 
 `connect` refreshes an already connected server, including tools, resources, prompts, and instructions. Server-scoped discovery connects that server if its catalog is unknown. Global search uses known catalogs and returns `coverage: { complete, knownServers, unknownServers }`; partial coverage is never presented as an exhaustive result. Gateway search provides schemas without activating functions, so it works for gateway-only hosts.
 
-Gateway search ranks names, descriptions, and parameter guidance using MiniSearch. Catalog pages use item offsets: gateway/script search and lists default to 12; maximum 100. Follow the returned `nextOffset`. Saved-result readback uses character offsets instead. Native `tool_search` uses Pi's own ranking over the registered deferred tools.
+Gateway search ranks names, descriptions, and parameter guidance using MiniSearch. Catalog pages use item offsets: gateway search and lists default to 12; maximum 100. Follow the returned `nextOffset`. Saved-result readback uses character offsets instead. Native `tool_search` uses Pi's own ranking over the registered deferred tools.
 
 An exact, case-sensitive public tool name ranks before lexical matches; with `server`, an exact original tool name also ranks first within that server. Unscoped original names do not select an account. All remaining matches retain MiniSearch order. Gateway search continuation and retry calls remain metadata-only.
 
@@ -820,22 +758,22 @@ Gateway and typed-tool results render compactly in the terminal: long text shows
 | `/mcp-auth`               | Open an OAuth server picker in interactive UI sessions                                                                   |
 | `/mcp-auth <server>`      | OAuth setup for a specific server                                                                                        |
 
-If `settings.autoAuth` is `true`, `mcp({ action: "connect", server: "..." })`, gateway calls, and typed/script tool calls may run OAuth when needed, with at most one automatic auth attempt per invocation and one post-auth retry. Browser authorization requires an interactive host. Auth-only replacement preserves accepted work on the old client; ordinary `/mcp reconnect` and panel `ctrl+r` remain hard resets.
+If `settings.autoAuth` is `true`, `mcp({ action: "connect", server: "..." })`, gateway calls, and typed tool calls may run OAuth when needed, with at most one automatic auth attempt per invocation and one post-auth retry. Browser authorization requires an interactive host. Auth-only replacement preserves accepted work on the old client; ordinary `/mcp reconnect` and panel `ctrl+r` remain hard resets.
 
 In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or Enter on a server that needs auth. In remote/headless sessions, use the proxy tool's `auth-start` and `auth-complete` actions. Complete without arguments when the browser reaches Pi's callback, or paste the redirect URL when it cannot. `/mcp-auth` without a server only opens a picker in the interactive UI.
 
 ### MCP output schemas
 
-Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls. Typed direct tools also expose that schema and bounded `structuredContent` to native Pi composition. Human text/images remain complementary. Oversized, absent, or not-run structured results return an `mcpAdapter` receipt (`omitted`, optional `resultRef`/`error`) instead of fabricating a server-schema value. Only the protocol's structured field is exposed: private details and `_meta` are not copied. Native content-only result-hook redaction drops structured output, as intended. Any JSON structured value—including `null`, `false`, and `0`—is rendered as text, including alongside non-empty content or images. The raw result remains available for script reduction and saved-result readback.
+Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls. Typed direct tools also expose that schema and bounded `structuredContent` to native Pi composition. Human text/images remain complementary. Oversized, absent, or not-run structured results return an `mcpAdapter` receipt (`omitted`, optional `resultRef`/`error`) instead of fabricating a server-schema value. Only the protocol's structured field is exposed: private details and `_meta` are not copied. Native content-only result-hook redaction drops structured output, as intended. Any JSON structured value—including `null`, `false`, and `0`—is rendered as text, including alongside non-empty content or images. The raw result remains available for saved-result readback.
 
 ## How It Works
 
-- Active `mcp` gateway; pins are active direct tools; other typed schemas and the optional `mcp_script` register deferred and load through native `tool_search` or run from `codemode`
+- Active `mcp` gateway; pins are active direct tools; other typed schemas register deferred and load through native `tool_search` or run from `codemode`
 - Lazy servers connect on selected discovery or calls; configured pins and eager/keep-alive servers can bootstrap intentionally
 - Tool metadata is cached to disk so search/list/describe work without live connections
 - Idle servers disconnect after 10 minutes (configurable), reconnect automatically on next use
 - npx-based servers resolve to direct binary paths, avoiding an extra npm parent process
-- Pi validates loaded typed-tool arguments against their schemas; gateway and script arguments are validated by the MCP server
+- Pi validates loaded typed-tool arguments against their schemas; gateway arguments are validated by the MCP server
 - Keep-alive servers get health checks and auto-reconnect
 - `directTools` pins initial tools; search-driven selections persist separately on the native session branch
 - Resources use explicit URI-based listing and reading, without synthetic function definitions

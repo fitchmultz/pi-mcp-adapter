@@ -11,11 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDirectToolExecutor } from "../../direct-tools.ts";
 import { executeCall } from "../../proxy-modes.ts";
-import { runMcpScript } from "../../mcp-code.ts";
 import { resolveMcpResultContent } from "../../tool-registrar.ts";
 import * as output from "../../mcp-output-guard.ts";
 import * as resources from "../../resource-tools.ts";
-import type { ToolMetadata } from "../../types.ts";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -87,11 +85,6 @@ const text = (result: Pick<AgentToolResult<unknown>, "content">) =>
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("\n");
-const firstText = (result: Pick<AgentToolResult<unknown>, "content">) => {
-  const block = result.content[0];
-  assert.ok(block && block.type === "text");
-  return block.text;
-};
 
 describe("MCP execution redesign", () => {
   let host: Awaited<ReturnType<typeof createTestExtensionContext>>;
@@ -173,14 +166,6 @@ describe("MCP execution redesign", () => {
     expect(text(result)).toContain("not rendered");
     expect(text(result)).toContain("test://receipt");
     expect(result.content).toContainEqual(raw.content[2]);
-    const script = await runMcpScript({
-      state,
-      code: "const r = await tools.demo_echo({}); return r.ok;",
-    });
-    expect(text(script)).toContain("MCP audio: audio/wav; not rendered. Saved file:");
-    expect(text(script)).toContain(
-      "MCP binary resource (test://file): application/octet-stream; not rendered. Saved file:",
-    );
   });
 
   it("reads JSON pointers, fields and bounded pages without losing line boundaries", async () => {
@@ -256,20 +241,18 @@ describe("MCP execution redesign", () => {
     });
   });
 
-  it("keeps resource policy and legacy aliases while exposing URI reads to scripts", async () => {
+  it("keeps resource policy and legacy aliases beside URI reads", async () => {
     const { state, connection, readResource } = await fixture();
     connection.resources = [{ name: "notes", uri: "test://notes" }];
     expect((await resources.executeResourceList(state, { server: "demo" })).details).toMatchObject({
       items: [{ uri: "test://notes" }],
     });
-    const script = await runMcpScript({
-      state,
-      code: 'const list = await tools.resources({ server: "demo" }); const read = await tools.readResource({ server: "demo", uri: list.items[0].uri }); return read;',
+    const read = await resources.executeResourceRead(state, {
+      server: "demo",
+      uri: "test://notes",
     });
-    expect(JSON.parse(firstText(script))).toMatchObject({
-      ok: true,
-      data: { contents: [{ uri: "test://notes", text: "notes" }] },
-    });
+    expect(read.details.error).toBeUndefined();
+    expect(text(read)).toContain("notes");
     expect(
       (await executeCall(state, { toolName: "demo_read_notes" })).details.error,
     ).toBeUndefined();
@@ -292,70 +275,7 @@ describe("MCP execution redesign", () => {
     expect(readResource).toHaveBeenCalledTimes(2);
   });
 
-  it("scripts describe exact raw schemas and report partial catalog coverage", async () => {
-    const { state } = await fixture();
-    const descriptor: ToolMetadata = {
-      name: "demo_echo",
-      originalName: "echo",
-      description: "Echo",
-      title: "Echo value",
-      inputSchema: {
-        type: "object",
-        properties: { value: { type: "string", minLength: 4, description: "Value" } },
-      },
-      outputSchema: { type: "object", properties: { id: { type: "number" } } },
-      annotations: { readOnlyHint: true },
-      _meta: { vendor: "retained" },
-      execution: { taskSupport: "optional" },
-    };
-    state.toolMetadata.set("demo", [descriptor]);
-    state.config.mcpServers.unknown = { command: "not contacted" };
-    const result = await runMcpScript({
-      state,
-      code: 'return { found: await tools.describe({ path: "demo_echo" }), search: await tools.search({ query: "Echo" }) };',
-    });
-    const parsed = z
-      .object({ found: z.unknown(), search: z.object({ coverage: z.unknown() }) })
-      .parse(JSON.parse(firstText(result)));
-    const { originalName: _originalName, name: _name, ...fields } = descriptor;
-    expect(parsed.found).toEqual({ ...fields, name: "echo", path: "demo_echo", server: "demo" });
-    expect(parsed.search.coverage).toEqual({
-      complete: false,
-      knownServers: ["demo"],
-      unknownServers: ["unknown"],
-    });
-  });
-
-  it("discovers only the selected uncached server and surfaces authentication failures", async () => {
-    const { state, connection } = await fixture();
-    state.config.mcpServers.cold = { command: "fixture" };
-    state.config.mcpServers.other = { command: "must not connect" };
-    const connect = vi.spyOn(state.manager, "connect").mockResolvedValue(connection);
-    const result = await runMcpScript({
-      state,
-      code: 'return await tools.search({ query: "Echo", server: "cold" });',
-    });
-    expect(JSON.parse(firstText(result))).toMatchObject({
-      items: [{ path: "cold_echo" }],
-      coverage: { complete: true, knownServers: ["cold"], unknownServers: [] },
-    });
-    expect(connect.mock.calls.map((call) => call[0])).toEqual(["cold"]);
-    state.toolMetadata.delete("cold");
-    connect.mockResolvedValue({ ...connection, status: "needs-auth" });
-    const failed = await runMcpScript({
-      state,
-      code: 'return await tools.search({ query: "Echo", server: "cold" });',
-    });
-    expect(JSON.parse(firstText(failed))).toMatchObject({
-      error: { code: "auth_required" },
-      coverage: { complete: false, unknownServers: ["cold"] },
-    });
-    expect(failed.details.calls).toMatchObject([
-      { operation: "search", ok: false, error: "auth_required" },
-    ]);
-  });
-
-  it("rejects normalized live alias collisions but executes exact original identities", async () => {
+  it("rejects normalized live alias collisions without dispatch", async () => {
     const { state, connection, callTool } = await fixture();
     connection.tools = [
       { name: "a.b", inputSchema: { type: "object" } },
@@ -368,15 +288,6 @@ describe("MCP execution redesign", () => {
       "ambiguous_tool",
     );
     expect(callTool).not.toHaveBeenCalled();
-    const script = await runMcpScript({
-      state,
-      code: 'return await tools.call("a_b", {}, "demo");',
-    });
-    expect(JSON.parse(firstText(script))).toMatchObject({ ok: true });
-    expect(callTool).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "a_b" }),
-      expect.anything(),
-    );
   });
 
   it("keeps same-name resources addressable by URI and rejects the ambiguous legacy alias", async () => {
@@ -444,23 +355,7 @@ describe("MCP execution redesign", () => {
     expect(callTool).not.toHaveBeenCalled();
   });
 
-  it("preserves raw MCP error payloads in script envelopes", async () => {
-    const raw: CallToolResult = {
-      isError: true,
-      content: [{ type: "text", text: "Declined" }],
-      structuredContent: { reason: "quota", remaining: 0 },
-    };
-    const { state, callTool } = await fixture(raw);
-    const result = await runMcpScript({ state, code: "return await tools.demo_echo({});" });
-    expect(JSON.parse(firstText(result))).toMatchObject({
-      ok: false,
-      data: raw,
-      error: { code: "tool_error" },
-    });
-    expect(callTool).toHaveBeenCalledTimes(1);
-  });
-
-  it("exposes retained raw JSON through gateway and script readback without another dispatch", async () => {
+  it("exposes retained raw JSON through gateway readback without another dispatch", async () => {
     const raw: CallToolResult = {
       content: [{ type: "text", text: "Done" }],
       structuredContent: { rows: [{ id: 1, secret: "omit" }, { id: 2 }] },
@@ -477,11 +372,6 @@ describe("MCP execution redesign", () => {
       { outputDirectory: directory },
     );
     expect(JSON.parse(text(page))).toEqual([{ id: 1 }, { id: 2 }]);
-    const script = await runMcpScript({
-      state,
-      code: `return await tools.readResult({ ref: ${JSON.stringify(ref)}, path: "/structuredContent/rows/1" });`,
-    });
-    expect(text(script)).toContain('\\"id\\": 2');
     expect(callTool).toHaveBeenCalledTimes(1);
   });
 
