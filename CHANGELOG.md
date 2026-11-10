@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.36 - 2026-11-10
+
+<!-- npm-release:unreleased:start -->
+
 - Limit the call arguments of a collapsed `mcp` gateway or typed MCP tool card to their first three terminal-wrapped rows, an ellipsis and Pi's `app.tools.expand` hint; arguments that fit in five rows show whole, and an expanded card and Pi's HTML export show them as before.
+
+<!-- npm-release:unreleased:end -->
+
+- Collapse long MCP call arguments until the card is expanded (#216) ([1b19f13](https://github.com/fitchmultz/pi-mcp-adapter/commit/1b19f134b42947edfd1f1ca85866c69591d639cf))
+
+### What's Changed
+
+- Collapse long MCP call arguments until the card is expanded by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/216
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.35...v8.0.36
 
 ## 8.0.35 - 2026-11-08
 
