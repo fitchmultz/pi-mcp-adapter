@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Limit the call arguments of a collapsed `mcp` gateway or typed MCP tool card to their first three terminal-wrapped rows, an ellipsis and Pi's `app.tools.expand` hint; arguments that fit in five rows show whole, and an expanded card and Pi's HTML export show them as before.
+
 ## 8.0.35 - 2026-11-08
 
 <!-- npm-release:unreleased:start -->

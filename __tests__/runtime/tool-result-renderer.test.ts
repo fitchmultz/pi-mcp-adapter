@@ -1,4 +1,5 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { type Component, Text } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -16,6 +17,8 @@ type TestResult = AgentToolResult<TestDetails>;
 
 // Pi injects keyHint into every render context; this one formats the default expand key.
 const keyHint = (_keybinding: string, description: string) => `ctrl+o ${description}`;
+// What Pi's terminal card passes when it draws a collapsed call again: the component it got before.
+const collapsedCard = { expanded: false, lastComponent: new Text("", 0, 0), keyHint };
 
 const collapsedOptions: ToolRenderResultOptions = { expanded: false, isPartial: false };
 const plainTheme: NonNullable<Parameters<typeof renderMcpToolResult>[2]> = {
@@ -26,6 +29,19 @@ const plainTheme: NonNullable<Parameters<typeof renderMcpToolResult>[2]> = {
 function result(content: TestResult["content"], details: TestDetails = {}): TestResult {
   return { content, details };
 }
+
+function rows(component: Component, width: number): string[] {
+  return component.render(width).map((row) => row.trimEnd());
+}
+
+const longCallArguments = {
+  title: "Collapsed call cards",
+  team: "Pi",
+  priority: 2,
+  state: "Todo",
+  assignee: "me",
+  tail: "tail-marker",
+};
 
 describe("MCP tool call renderer", () => {
   it("shows proxy tool calls with parsed JSON arguments", () => {
@@ -84,6 +100,101 @@ describe("MCP tool call renderer", () => {
 
   it("omits empty direct tool arguments", () => {
     expect(formatMcpDirectToolCallLines("cf-portal_status", {})).toEqual(["cf-portal_status"]);
+  });
+});
+
+describe("MCP collapsed tool call arguments", () => {
+  it.each([
+    {
+      renderer: "gateway",
+      title: "mcp call linear_save_issue @ linear",
+      render: () =>
+        renderMcpProxyToolCall(
+          { tool: "linear_save_issue", server: "linear", args: longCallArguments },
+          plainTheme,
+          collapsedCard,
+        ),
+    },
+    {
+      renderer: "direct tool",
+      title: "linear_save_issue",
+      render: () =>
+        createMcpDirectToolCallRenderer("linear_save_issue")(
+          longCallArguments,
+          plainTheme,
+          collapsedCard,
+        ),
+    },
+  ])(
+    "shows three argument rows, an ellipsis and the expand hint for a collapsed $renderer call",
+    ({ title, render }) => {
+      expect(rows(render(), 80)).toEqual([
+        title,
+        "{",
+        '  "title": "Collapsed call cards",',
+        '  "team": "Pi",',
+        "…",
+        "(ctrl+o to expand)",
+      ]);
+    },
+  );
+
+  it("limits wrapped rows, not JSON lines", () => {
+    const output = rows(
+      createMcpDirectToolCallRenderer("linear_save_comment")(
+        { body: `${"word ".repeat(60)}tail-marker` },
+        plainTheme,
+        collapsedCard,
+      ),
+      40,
+    );
+
+    expect(output).toHaveLength(6);
+    expect(output.slice(0, 2)).toEqual(["linear_save_comment", "{"]);
+    expect(output.slice(-2)).toEqual(["…", "(ctrl+o to expand)"]);
+    expect(output.join("\n")).not.toContain("tail-marker");
+  });
+
+  it("shows collapsed arguments whole when they fit in the rows of a collapsed preview", () => {
+    const output = rows(
+      renderMcpProxyToolCall(
+        { tool: "check_task", args: { taskId: "task-1", wait: true, timeout: 30 } },
+        plainTheme,
+        collapsedCard,
+      ),
+      80,
+    );
+
+    expect(output).toEqual([
+      "mcp call check_task",
+      "{",
+      '  "taskId": "task-1",',
+      '  "wait": true,',
+      '  "timeout": 30',
+      "}",
+    ]);
+  });
+
+  it("shows every argument row when expanded", () => {
+    const output = rows(
+      createMcpDirectToolCallRenderer("linear_save_issue")(longCallArguments, plainTheme, {
+        ...collapsedCard,
+        expanded: true,
+      }),
+      80,
+    );
+
+    expect(output).toEqual([
+      "linear_save_issue",
+      "{",
+      '  "title": "Collapsed call cards",',
+      '  "team": "Pi",',
+      '  "priority": 2,',
+      '  "state": "Todo",',
+      '  "assignee": "me",',
+      '  "tail": "tail-marker"',
+      "}",
+    ]);
   });
 });
 
