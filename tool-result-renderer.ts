@@ -38,6 +38,7 @@ interface McpToolRenderContext extends Pick<KeybindingHints, "keyHint"> {
 
 interface McpToolCallRenderContext extends Pick<KeybindingHints, "keyHint"> {
   expanded: boolean;
+  lastComponent: Component | undefined;
 }
 
 export interface McpToolResultDisplay {
@@ -279,6 +280,15 @@ export function formatMcpDirectToolCallLines(
   return [displayName, formatJsonish(args, maxInputChars)];
 }
 
+/**
+ * Whether Pi may keep this rendering of the call as the only one. Its HTML export renders each call
+ * once and cannot expand it, so a first rendering must hold every argument. A terminal card renders
+ * its call again before it first shows it, and passes the earlier component back each time.
+ */
+function isFirstRendering(context: McpToolCallRenderContext): boolean {
+  return context.lastComponent === undefined;
+}
+
 function renderToolCallLines(
   lines: string[],
   theme: RenderTheme | undefined,
@@ -288,7 +298,12 @@ function renderToolCallLines(
   const [title = "mcp", ...rest] = lines;
   const styledTitle = activeTheme.fg("toolTitle", activeTheme.bold(title));
   const styledRest = rest.map((line) => activeTheme.fg("muted", line));
-  if (context === undefined || context.expanded || styledRest.length === 0) {
+  if (
+    context === undefined ||
+    context.expanded ||
+    isFirstRendering(context) ||
+    styledRest.length === 0
+  ) {
     return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
   }
   return new CollapsedToolCall(

@@ -6,15 +6,21 @@ import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { JSDOM } from "jsdom";
 import MiniSearch from "minisearch";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
+  initTheme,
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
+import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { computeServerHash } from "../metadata-cache.ts";
 
 const original = {
@@ -50,6 +56,29 @@ afterEach(async () => {
     console.info(`Retained synthetic Pi journals under ${root}`);
   }
 });
+
+function assistantMessage(
+  content: AssistantMessage["content"],
+  stopReason: AssistantMessage["stopReason"],
+): AssistantMessage {
+  return {
+    role: "assistant",
+    api: "openai-completions",
+    provider: "synthetic",
+    model: "fixture",
+    timestamp: Date.now(),
+    content,
+    stopReason,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  };
+}
 
 async function harness(
   cachedAt = Date.now(),
@@ -123,23 +152,9 @@ async function harness(
     allowModelNetwork: false,
   });
   const manager = SessionManager.create(root, join(root, "sessions"));
-  manager.appendMessage({
-    role: "assistant",
-    api: "openai-completions",
-    provider: "synthetic",
-    model: "fixture",
-    timestamp: Date.now(),
-    content: [{ type: "text", text: "Public synthetic session." }],
-    stopReason: "stop",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-  });
+  manager.appendMessage(
+    assistantMessage([{ type: "text", text: "Public synthetic session." }], "stop"),
+  );
   const { session } = await createAgentSession({
     cwd: root,
     agentDir,
@@ -477,6 +492,145 @@ describe("cached tool surface through Pi SessionManager", () => {
     try {
       expect(h.session.getAllTools().map((tool) => tool.name)).not.toContain("demo_search");
       expect(h.session.getActiveToolNames()).toEqual(["mcp"]);
+      expect(h.errors).toEqual([]);
+    } finally {
+      await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      h.session.dispose();
+    }
+  });
+});
+
+const cardArguments = {
+  title: "Collapsed call cards",
+  team: "Pi",
+  priority: 2,
+  state: "Todo",
+  assignee: "me",
+  tail: "tail-marker",
+};
+const cardArgumentRows = [
+  "{",
+  '  "title": "Collapsed call cards",',
+  '  "team": "Pi",',
+  '  "priority": 2,',
+  '  "state": "Todo",',
+  '  "assignee": "me",',
+  '  "tail": "tail-marker"',
+  "}",
+];
+const cardResult = {
+  content: [
+    {
+      type: "text" as const,
+      text: Array.from({ length: 8 }, (_, index) => `result line ${index + 1}`).join("\n"),
+    },
+  ],
+  details: { mode: "call", server: "demo", tool: "pinned" },
+  isError: false,
+};
+
+const exportedSessionSchema = z.object({
+  renderedTools: z.record(
+    z.string(),
+    z.object({
+      callHtml: z.string(),
+      resultHtmlCollapsed: z.string().optional(),
+      resultHtmlExpanded: z.string().optional(),
+    }),
+  ),
+});
+
+/** The cards Pi pre-rendered into an exported page, by tool call id. */
+async function exportedCards(path: string) {
+  const page = new JSDOM(await readFile(path, "utf8"));
+  const data = page.window.document.querySelector("#session-data")?.textContent ?? "";
+  return exportedSessionSchema.parse(JSON.parse(Buffer.from(data, "base64").toString("utf8")))
+    .renderedTools;
+}
+
+function htmlRows(html: string | undefined): string[] {
+  return [...JSDOM.fragment(html ?? "").querySelectorAll(".ansi-line")].map((row) =>
+    row.textContent.trimEnd(),
+  );
+}
+
+describe("MCP tool cards through Pi's HTML export and terminal card", () => {
+  it("exports the complete arguments of typed and gateway calls and both result forms", async () => {
+    const h = await harness();
+    try {
+      initTheme("dark"); // Pi's CLI does this at startup in every mode.
+      h.session.sessionManager.appendMessage(
+        assistantMessage(
+          [
+            { type: "toolCall", id: "typed", name: "demo_pinned", arguments: cardArguments },
+            {
+              type: "toolCall",
+              id: "gateway",
+              name: "mcp",
+              arguments: { tool: "pinned", server: "demo", args: cardArguments },
+            },
+          ],
+          "toolUse",
+        ),
+      );
+      h.session.sessionManager.appendMessage({
+        role: "toolResult",
+        toolCallId: "typed",
+        toolName: "demo_pinned",
+        timestamp: Date.now(),
+        ...cardResult,
+      });
+
+      const cards = await exportedCards(await h.session.exportToHtml(join(h.root, "export.html")));
+
+      // An exported call has no expanded form, so it must hold every argument.
+      expect(htmlRows(cards.typed?.callHtml)).toEqual(["demo_pinned", ...cardArgumentRows]);
+      expect(htmlRows(cards.gateway?.callHtml)).toEqual([
+        "mcp call pinned @ demo",
+        ...cardArgumentRows,
+      ]);
+      expect(htmlRows(cards.typed?.resultHtmlCollapsed).at(-1)).toContain("to expand");
+      expect(htmlRows(cards.typed?.resultHtmlExpanded).at(-1)).toBe("result line 8");
+      expect(h.errors).toEqual([]);
+    } finally {
+      await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      h.session.dispose();
+    }
+  });
+
+  it("keeps the collapsed call preview in Pi's terminal card until the card is expanded", async () => {
+    const h = await harness();
+    try {
+      initTheme("dark");
+      const tui = new TuiMainScreen(new ProcessTerminal());
+      vi.spyOn(tui, "requestRender").mockImplementation(() => {
+        // Exercise the card without drawing to the user's terminal.
+      });
+      const card = new ToolExecutionComponent(
+        "demo_pinned",
+        "typed",
+        cardArguments,
+        {},
+        h.session.getToolDefinition("demo_pinned"),
+        tui,
+        h.root,
+      );
+      const shown = () => stripVTControlCharacters(card.render(100).join("\n"));
+      const expectCollapsedCall = () => {
+        const text = shown();
+        expect(text).toContain('"team": "Pi",');
+        expect(text).not.toContain("tail-marker");
+      };
+
+      card.setExpanded(false); // Pi sets the expanded state on every card before it first shows it.
+      expectCollapsedCall();
+      card.setArgsComplete();
+      card.markExecutionStarted();
+      expectCollapsedCall();
+      card.updateResult(cardResult);
+      expectCollapsedCall();
+      card.setExpanded(true);
+      expect(shown()).toContain('"tail": "tail-marker"');
       expect(h.errors).toEqual([]);
     } finally {
       await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });

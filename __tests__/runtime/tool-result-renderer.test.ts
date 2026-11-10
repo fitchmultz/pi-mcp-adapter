@@ -1,5 +1,5 @@
 import type { AgentToolResult, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import { type Component, Text } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -17,6 +17,8 @@ type TestResult = AgentToolResult<TestDetails>;
 
 // Pi injects keyHint into every render context; this one formats the default expand key.
 const keyHint = (_keybinding: string, description: string) => `ctrl+o ${description}`;
+// What Pi's terminal card passes when it draws a collapsed call again: the component it got before.
+const collapsedCard = { expanded: false, lastComponent: new Text("", 0, 0), keyHint };
 
 const collapsedOptions: ToolRenderResultOptions = { expanded: false, isPartial: false };
 const plainTheme: NonNullable<Parameters<typeof renderMcpToolResult>[2]> = {
@@ -110,17 +112,18 @@ describe("MCP collapsed tool call arguments", () => {
         renderMcpProxyToolCall(
           { tool: "linear_save_issue", server: "linear", args: longCallArguments },
           plainTheme,
-          { expanded: false, keyHint },
+          collapsedCard,
         ),
     },
     {
       renderer: "direct tool",
       title: "linear_save_issue",
       render: () =>
-        createMcpDirectToolCallRenderer("linear_save_issue")(longCallArguments, plainTheme, {
-          expanded: false,
-          keyHint,
-        }),
+        createMcpDirectToolCallRenderer("linear_save_issue")(
+          longCallArguments,
+          plainTheme,
+          collapsedCard,
+        ),
     },
   ])(
     "shows three argument rows, an ellipsis and the expand hint for a collapsed $renderer call",
@@ -141,7 +144,7 @@ describe("MCP collapsed tool call arguments", () => {
       createMcpDirectToolCallRenderer("linear_save_comment")(
         { body: `${"word ".repeat(60)}tail-marker` },
         plainTheme,
-        { expanded: false, keyHint },
+        collapsedCard,
       ),
       40,
     );
@@ -157,7 +160,7 @@ describe("MCP collapsed tool call arguments", () => {
       renderMcpProxyToolCall(
         { tool: "check_task", args: { taskId: "task-1", wait: true, timeout: 30 } },
         plainTheme,
-        { expanded: false, keyHint },
+        collapsedCard,
       ),
       80,
     );
@@ -175,8 +178,8 @@ describe("MCP collapsed tool call arguments", () => {
   it("shows every argument row when expanded", () => {
     const output = rows(
       createMcpDirectToolCallRenderer("linear_save_issue")(longCallArguments, plainTheme, {
+        ...collapsedCard,
         expanded: true,
-        keyHint,
       }),
       80,
     );
