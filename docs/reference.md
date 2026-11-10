@@ -739,7 +739,7 @@ Describe preserves the complete server descriptor, including JSON Schemas, annot
 
 The gateway description stays stable as catalogs and credentials change. Server instructions are available through `action: "instructions"` and previews in server listings, rather than injected dynamically into the prompt.
 
-Gateway and typed-tool results render compactly in the terminal: long text shows the first three terminal-wrapped lines with Pi's `app.tools.expand` hint. Expanding reveals the guarded result. Structured data and saved-result references remain visible to the model.
+Gateway and typed-tool cards render compactly in the terminal. A collapsed card shows the first three terminal-wrapped rows of long call arguments and of long result text, each followed by an ellipsis and Pi's `app.tools.expand` hint. Arguments that fit in five rows show whole. Expanding shows the arguments as formatted JSON, cut at 1,500 characters, and the guarded result. Structured data and saved-result references remain visible to the model.
 
 ## Commands
 

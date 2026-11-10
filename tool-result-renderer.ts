@@ -1,8 +1,9 @@
-import type {
-  AgentToolResult,
-  KeybindingHints,
-  Theme,
-  ToolRenderResultOptions,
+import {
+  truncateToVisualLines,
+  type AgentToolResult,
+  type KeybindingHints,
+  type Theme,
+  type ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 import { asObjectRecord } from "./mcp-output-values.ts";
@@ -35,6 +36,10 @@ interface McpToolRenderContext extends Pick<KeybindingHints, "keyHint"> {
   isError: boolean;
 }
 
+interface McpToolCallRenderContext extends Pick<KeybindingHints, "keyHint"> {
+  expanded: boolean;
+}
+
 export interface McpToolResultDisplay {
   lines: string[];
   truncated: boolean;
@@ -59,28 +64,16 @@ class CollapsibleText implements Component {
     text: string;
     expanded: boolean;
     maxCollapsedLines: number;
-    ellipsis: string;
-    expandHint: string | undefined;
+    footer: string;
     preTruncated?: boolean;
   }) {
-    const {
-      text,
-      expanded,
-      maxCollapsedLines,
-      ellipsis,
-      expandHint,
-      preTruncated = false,
-    } = options;
+    const { text, expanded, maxCollapsedLines, footer, preTruncated = false } = options;
     this.text = text;
     this.expanded = expanded;
     this.maxCollapsedLines = maxCollapsedLines;
     this.preTruncated = preTruncated;
     this.fullText = new Text(text, 0, 0);
-    this.footerText = new Text(
-      expandHint === undefined ? ellipsis : `${ellipsis}\n${expandHint}`,
-      0,
-      0,
-    );
+    this.footerText = new Text(footer, 0, 0);
   }
 
   render(width: number): string[] {
@@ -113,6 +106,64 @@ class CollapsibleText implements Component {
 
   invalidate(): void {
     // Text owns its width cache; the stored input and collapsed prefix are immutable.
+  }
+}
+
+/** The rows that end a collapsed preview: an ellipsis, then the expand hint when Pi supplies one. */
+function collapsedFooter(
+  theme: RenderTheme,
+  context: Pick<KeybindingHints, "keyHint"> | undefined,
+): string {
+  const ellipsis = theme.fg("muted", "…");
+  if (context === undefined) {
+    return ellipsis;
+  }
+  // Pi injects keyHint so the hint shows the user's configured keys.
+  return `${ellipsis}\n${theme.fg("muted", "(")}${context.keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+}
+
+/**
+ * A collapsed call: the title, then the arguments in the rows a collapsed result gets. Arguments
+ * that fit in the rows of that preview and its footer are shown whole, so a collapsed call is
+ * never taller than the expanded one.
+ */
+class CollapsedToolCall implements Component {
+  private readonly title: Text;
+  private readonly footer: Text;
+  private readonly styledArguments: string;
+  // Pi renders a card's children on every frame and reuses its own rows while they return the
+  // same strings, so the arguments are wrapped once per width.
+  private cache: { width: number; lines: string[] } | undefined;
+
+  constructor(styledTitle: string, styledArguments: string, footer: string) {
+    this.title = new Text(styledTitle, 0, 0);
+    this.footer = new Text(footer, 0, 0);
+    this.styledArguments = styledArguments;
+  }
+
+  render(width: number): string[] {
+    if (this.cache?.width !== width) {
+      const footer = this.footer.render(width);
+      const preview = truncateToVisualLines(
+        this.styledArguments,
+        DEFAULT_MAX_COLLAPSED_LINES + footer.length,
+        width,
+        0,
+        "start",
+      );
+      const argumentRows =
+        preview.skippedCount === 0
+          ? preview.visualLines
+          : [...preview.visualLines.slice(0, DEFAULT_MAX_COLLAPSED_LINES), ...footer];
+      this.cache = { width, lines: [...this.title.render(width), ...argumentRows] };
+    }
+    return this.cache.lines;
+  }
+
+  invalidate(): void {
+    this.title.invalidate();
+    this.footer.invalidate();
+    this.cache = undefined;
   }
 }
 
@@ -228,24 +279,42 @@ export function formatMcpDirectToolCallLines(
   return [displayName, formatJsonish(args, maxInputChars)];
 }
 
-function renderToolCallLines(lines: string[], theme?: RenderTheme): Text {
+function renderToolCallLines(
+  lines: string[],
+  theme: RenderTheme | undefined,
+  context: McpToolCallRenderContext | undefined,
+): Component {
   const activeTheme = theme ?? plainTheme;
   const [title = "mcp", ...rest] = lines;
   const styledTitle = activeTheme.fg("toolTitle", activeTheme.bold(title));
   const styledRest = rest.map((line) => activeTheme.fg("muted", line));
-  return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
+  if (context === undefined || context.expanded || styledRest.length === 0) {
+    return new Text([styledTitle, ...styledRest].join("\n"), 0, 0);
+  }
+  return new CollapsedToolCall(
+    styledTitle,
+    styledRest.join("\n"),
+    collapsedFooter(activeTheme, context),
+  );
 }
 
-export function renderMcpProxyToolCall(args: McpProxyToolCallInput, theme?: RenderTheme): Text {
-  return renderToolCallLines(formatMcpProxyToolCallLines(args), theme);
+export function renderMcpProxyToolCall(
+  args: McpProxyToolCallInput,
+  theme?: RenderTheme,
+  context?: McpToolCallRenderContext,
+): Component {
+  return renderToolCallLines(formatMcpProxyToolCallLines(args), theme, context);
 }
 
 export function createMcpDirectToolCallRenderer(
   displayName: string,
-): (args: Record<string, unknown>, theme?: RenderTheme) => Text {
-  return (args: Record<string, unknown>, theme?: RenderTheme) => {
-    return renderToolCallLines(formatMcpDirectToolCallLines(displayName, args), theme);
-  };
+): (
+  args: Record<string, unknown>,
+  theme?: RenderTheme,
+  context?: McpToolCallRenderContext,
+) => Component {
+  return (args, theme, context) =>
+    renderToolCallLines(formatMcpDirectToolCallLines(displayName, args), theme, context);
 }
 
 function blockToLines(block: McpToolContentBlock): string[] {
@@ -382,17 +451,12 @@ export function renderMcpToolResult(
     ...identityLines,
     ...display.lines.map((line) => activeTheme.fg("toolOutput", line)),
   ].join("\n");
-  // Pi injects keyHint so the hint shows the user's configured keys.
-  const expandHint = context
-    ? `${activeTheme.fg("muted", "(")}${context.keyHint("app.tools.expand", "to expand")}${activeTheme.fg("muted", ")")}`
-    : undefined;
 
   return new CollapsibleText({
     text: output,
     expanded,
     maxCollapsedLines: DEFAULT_MAX_COLLAPSED_LINES + identityLines.length,
-    ellipsis: activeTheme.fg("muted", "…"),
-    expandHint,
+    footer: collapsedFooter(activeTheme, context),
     preTruncated: display.truncated,
   });
 }
