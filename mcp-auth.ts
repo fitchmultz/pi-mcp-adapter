@@ -31,6 +31,7 @@ export {
 import {
   isAuthEntry,
   type AuthEntry,
+  type AuthIdentity,
   type AuthStorageOptions,
   type OAuthCredentialStatus,
   type StoredClientInfo,
@@ -38,6 +39,7 @@ import {
 } from "./auth-record-types.ts";
 import {
   getAuthEntryAccount,
+  getLegacyAuthEntryAccount,
   parseJsonPayload,
   readSecureAuthPayloadFromStore,
   removeAuthEntryFromStore,
@@ -45,6 +47,7 @@ import {
 } from "./credential-payloads.ts";
 export type {
   AuthEntry,
+  AuthIdentity,
   AuthStorageOptions,
   OAuthCredentialStatus,
   StoredClientInfo,
@@ -76,7 +79,7 @@ function getServerDir(serverName: unknown, options?: AuthStorageOptions): string
   if (typeof serverName !== "string") {
     throw new Error(`Invalid MCP server name: ${JSON.stringify(serverName)}`);
   }
-  const storageKey = getAuthEntryAccount(serverName);
+  const storageKey = getLegacyAuthEntryAccount(serverName);
   return join(getAuthBaseDir(options), storageKey);
 }
 
@@ -135,64 +138,112 @@ function removeLegacyAuthEntry(serverName: string, options?: AuthStorageOptions)
   }
 }
 
-function writeSecureAuthEntry(serverName: string, entry: AuthEntry): void {
+function writeSecureAuthEntry(identity: AuthIdentity, entry: AuthEntry): void {
+  const storedEntry = { ...entry, serverUrl: identity.serverUrl };
+  const account = getAuthEntryAccount(identity);
   try {
-    writeSecureAuthEntryToStore(getAuthSecretStore(AUTH_SECRET_SERVICE), serverName, entry);
+    writeSecureAuthEntryToStore(
+      getAuthSecretStore(AUTH_SECRET_SERVICE),
+      identity.serverName,
+      account,
+      storedEntry,
+    );
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) {
       throw error;
     }
     writeSecureAuthEntryToStore(
       linuxKeyringRecoveryAuthSecretStore(AUTH_SECRET_SERVICE),
-      serverName,
-      entry,
+      identity.serverName,
+      account,
+      storedEntry,
     );
   }
 }
 
-function readSecureAuthEntryFromStore(
-  store: AuthSecretStore,
-  serverName: string,
-): AuthEntry | undefined {
-  const stored = readSecureAuthPayloadFromStore(store, serverName);
-  return stored === undefined
-    ? undefined
-    : parseAuthEntryPayload(serverName, stored.payload, stored.source);
-}
-
 function readSecureAuthEntry(
-  serverName: string,
+  identity: AuthIdentity,
   service = AUTH_SECRET_SERVICE,
+  legacy = false,
 ): AuthEntry | undefined {
+  const account = legacy
+    ? getLegacyAuthEntryAccount(identity.serverName)
+    : getAuthEntryAccount(identity);
+  function read(store: AuthSecretStore): AuthEntry | undefined {
+    const stored = readSecureAuthPayloadFromStore(store, identity.serverName, account);
+    return stored === undefined
+      ? undefined
+      : parseAuthEntryPayload(identity.serverName, stored.payload, stored.source);
+  }
   try {
-    return readSecureAuthEntryFromStore(getAuthSecretStore(service), serverName);
+    return read(getAuthSecretStore(service));
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) {
       throw error;
     }
-    return readSecureAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore(service), serverName);
+    return read(linuxKeyringRecoveryAuthSecretStore(service));
+  }
+}
+
+function removeSecureAuthEntry(identity: AuthIdentity, legacy = false): void {
+  const account = legacy
+    ? getLegacyAuthEntryAccount(identity.serverName)
+    : getAuthEntryAccount(identity);
+  try {
+    removeAuthEntryFromStore(getAuthSecretStore(AUTH_SECRET_SERVICE), identity.serverName, account);
+  } catch (error) {
+    if (!shouldAttemptLinuxKeyringRecovery(error)) {
+      throw error;
+    }
+    removeAuthEntryFromStore(
+      linuxKeyringRecoveryAuthSecretStore(AUTH_SECRET_SERVICE),
+      identity.serverName,
+      account,
+    );
+  }
+}
+
+function consumeMatchingLegacy(identity: AuthIdentity, options?: AuthStorageOptions): void {
+  if (matchesIdentity(readSecureAuthEntry(identity, AUTH_SECRET_SERVICE, true), identity)) {
+    removeSecureAuthEntry(identity, true);
+  }
+  removeMatchingLegacyPlaintext(identity, options);
+}
+
+function matchesIdentity(entry: AuthEntry | undefined, identity: AuthIdentity): entry is AuthEntry {
+  return entry !== undefined && entry.serverUrl !== "" && entry.serverUrl === identity.serverUrl;
+}
+
+function removeMatchingLegacyPlaintext(identity: AuthIdentity, options?: AuthStorageOptions): void {
+  if (matchesIdentity(readLegacyAuthEntry(identity.serverName, options), identity)) {
+    removeLegacyAuthEntry(identity.serverName, options);
   }
 }
 
 function readAuthEntry(
-  serverName: string,
+  identity: AuthIdentity,
   options?: AuthStorageOptions,
   behavior: { migrateLegacy?: boolean } = {},
 ): AuthEntry | undefined {
-  const entry = readSecureAuthEntry(serverName);
-  if (entry !== undefined) {
-    if (behavior.migrateLegacy !== false) {
-      removeLegacyAuthEntry(serverName, options);
+  const scoped = readSecureAuthEntry(identity);
+  if (scoped !== undefined) {
+    return matchesIdentity(scoped, identity) ? scoped : undefined;
+  }
+  const secure = readSecureAuthEntry(identity, AUTH_SECRET_SERVICE, true);
+  const legacy = matchesIdentity(secure, identity)
+    ? secure
+    : readLegacyAuthEntry(identity.serverName, options);
+  if (!matchesIdentity(legacy, identity)) {
+    return undefined;
+  }
+  if (behavior.migrateLegacy !== false) {
+    writeSecureAuthEntry(identity, legacy);
+    if (JSON.stringify(readSecureAuthEntry(identity)) !== JSON.stringify(legacy)) {
+      throw new Error(`Failed to verify migrated OAuth credentials for ${identity.serverName}`);
     }
-    return entry;
+    consumeMatchingLegacy(identity, options);
   }
-  const legacyEntry = readLegacyAuthEntry(serverName, options);
-  if (legacyEntry === undefined || behavior.migrateLegacy === false) {
-    return legacyEntry;
-  }
-  writeSecureAuthEntry(serverName, legacyEntry);
-  removeLegacyAuthEntry(serverName, options);
-  return legacyEntry;
+  return legacy;
 }
 
 function getLegacyAuthBaseDir(): string {
@@ -200,86 +251,59 @@ function getLegacyAuthBaseDir(): string {
   return override !== undefined && override.length > 0 ? override : getAgentPath("mcp-oauth");
 }
 
-/** Explicit copy-only upgrade. Normal reads and logout never access the old service. */
+/** Copy-only upgrade from the old service; an existing scoped record always wins. */
 export function migrateLegacyAuthEntry(
-  serverName: string,
+  identity: AuthIdentity,
   legacyDirectory = getLegacyAuthBaseDir(),
 ): "copied" | "existing" | "absent" {
-  if (readSecureAuthEntry(serverName) !== undefined) {
+  if (readSecureAuthEntry(identity) !== undefined) {
     return "existing";
   }
-  let entry = readSecureAuthEntry(serverName, LEGACY_AUTH_SECRET_SERVICE);
-  if (entry === undefined) {
-    const path = join(legacyDirectory, getAuthEntryAccount(serverName), "tokens.json");
+  let entry = readSecureAuthEntry(identity, LEGACY_AUTH_SECRET_SERVICE, true);
+  if (!matchesIdentity(entry, identity)) {
+    const path = join(
+      legacyDirectory,
+      getLegacyAuthEntryAccount(identity.serverName),
+      "tokens.json",
+    );
     if (!existsSync(path)) {
       return "absent";
     }
-    entry = parseAuthEntryPayload(serverName, readFileSync(path, "utf8"), path);
+    entry = parseAuthEntryPayload(identity.serverName, readFileSync(path, "utf8"), path);
   }
-  writeSecureAuthEntry(serverName, entry);
-  if (JSON.stringify(readSecureAuthEntry(serverName)) !== JSON.stringify(entry)) {
-    throw new Error(`Failed to verify migrated OAuth credentials for ${serverName}`);
+  if (!matchesIdentity(entry, identity)) {
+    return "absent";
+  }
+  writeSecureAuthEntry(identity, entry);
+  if (JSON.stringify(readSecureAuthEntry(identity)) !== JSON.stringify(entry)) {
+    throw new Error(`Failed to verify migrated OAuth credentials for ${identity.serverName}`);
   }
   return "copied";
 }
 
-/**
- * Get auth entry for a server.
- */
+/** Read or import credentials for exactly this configured name and URL. */
 export function getAuthEntry(
-  serverName: string,
+  identity: AuthIdentity,
   options?: AuthStorageOptions,
 ): AuthEntry | undefined {
-  return readAuthEntry(serverName, options);
+  return readAuthEntry(identity, options);
 }
 
-/**
- * Get auth entry and validate it's for the correct URL.
- * Returns undefined if URL has changed (credentials are invalid).
- */
 export function getAuthForUrl(
-  serverName: string,
-  serverUrl: string,
+  identity: AuthIdentity,
   options?: AuthStorageOptions,
 ): AuthEntry | undefined {
-  const entry = getAuthEntry(serverName, options);
-  if (entry === undefined) {
-    return undefined;
-  }
-
-  // If no serverUrl is stored, this is from an old version - consider it invalid
-  if (entry.serverUrl === undefined || entry.serverUrl.length === 0) {
-    return undefined;
-  }
-
-  // If URL has changed, credentials are invalid
-  if (entry.serverUrl !== serverUrl) {
-    return undefined;
-  }
-
-  return entry;
+  return getAuthEntry(identity, options);
 }
 
-/**
- * Inspect credentials for status-only UI paths without treating unavailable
- * or invalid credentials as missing. Authentication operations continue to
- * use getAuthForUrl() directly and therefore remain fail-closed.
- */
+/** Inspect without migration; unavailable storage is not reported as missing. */
 export function inspectAuthForUrl(
-  serverName: string,
-  serverUrl: string,
+  identity: AuthIdentity,
   options?: AuthStorageOptions,
 ): OAuthCredentialStatus {
   try {
-    const entry = readAuthEntry(serverName, options, { migrateLegacy: false });
-    if (
-      entry?.serverUrl === undefined ||
-      entry.serverUrl.length === 0 ||
-      entry.serverUrl !== serverUrl
-    ) {
-      return { status: "absent" };
-    }
-    return { status: "present", entry };
+    const entry = readAuthEntry(identity, options, { migrateLegacy: false });
+    return entry === undefined ? { status: "absent" } : { status: "present", entry };
   } catch (error) {
     if (error instanceof OAuthCredentialStoreError) {
       return { status: "unavailable", message: formatOAuthCredentialStoreUnavailable(error) };
@@ -291,132 +315,77 @@ export function inspectAuthForUrl(
   }
 }
 
-/**
- * Save an auth entry without mutating the caller's record.
- */
+/** Save a copy whose stored URL always comes from the credential identity. */
 export function saveAuthEntry(
-  serverName: string,
+  identity: AuthIdentity,
   entry: Readonly<AuthEntry>,
-  serverUrl?: string,
   options?: AuthStorageOptions,
 ): void {
-  const storedEntry =
-    serverUrl !== undefined && serverUrl.length > 0 ? { ...entry, serverUrl } : entry;
-  writeSecureAuthEntry(serverName, storedEntry);
-  removeLegacyAuthEntry(serverName, options);
+  writeSecureAuthEntry(identity, entry);
+  consumeMatchingLegacy(identity, options);
 }
 
-/**
- * Remove auth entry for a server.
- */
-export function removeAuthEntry(serverName: string, options?: AuthStorageOptions): void {
-  try {
-    removeAuthEntryFromStore(getAuthSecretStore(AUTH_SECRET_SERVICE), serverName);
-  } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) {
-      throw error;
-    }
-    removeAuthEntryFromStore(linuxKeyringRecoveryAuthSecretStore(AUTH_SECRET_SERVICE), serverName);
-  }
-  removeLegacyAuthEntry(serverName, options);
+/** Consume matching automatic-import sources so logout cannot restore them. */
+export function removeAuthEntry(identity: AuthIdentity, options?: AuthStorageOptions): void {
+  removeSecureAuthEntry(identity);
+  consumeMatchingLegacy(identity, options);
 }
 
-/**
- * Update tokens for a server.
- */
 export function updateTokens(
-  serverName: string,
+  identity: AuthIdentity,
   tokens: StoredTokens,
-  serverUrl?: string,
   options?: AuthStorageOptions,
 ): void {
-  const entry = getAuthEntry(serverName, options) ?? {};
-  if (serverUrl !== undefined && serverUrl.length > 0 && entry.serverUrl !== serverUrl) {
-    delete entry.clientInfo;
-    delete entry.codeVerifier;
-    delete entry.oauthState;
-  }
+  const entry = getAuthEntry(identity, options) ?? {};
   entry.tokens = tokens;
-  saveAuthEntry(serverName, entry, serverUrl, options);
+  saveAuthEntry(identity, entry, options);
 }
 
-/**
- * Update client info for a server.
- */
 export function updateClientInfo(
-  serverName: string,
+  identity: AuthIdentity,
   clientInfo: StoredClientInfo,
-  serverUrl?: string,
   options?: AuthStorageOptions,
 ): void {
-  const entry = getAuthEntry(serverName, options) ?? {};
-  if (serverUrl !== undefined && serverUrl.length > 0 && entry.serverUrl !== serverUrl) {
-    delete entry.tokens;
-    delete entry.codeVerifier;
-    delete entry.oauthState;
-  }
+  const entry = getAuthEntry(identity, options) ?? {};
   entry.clientInfo = clientInfo;
-  saveAuthEntry(serverName, entry, serverUrl, options);
+  saveAuthEntry(identity, entry, options);
 }
 
-/**
- * Clear code verifier for a server.
- */
-export function clearCodeVerifier(serverName: string, options?: AuthStorageOptions): void {
-  const entry = getAuthEntry(serverName, options);
-  if (entry) {
-    delete entry.codeVerifier;
-    saveAuthEntry(serverName, entry, undefined, options);
-  }
-}
-
-/**
- * Get OAuth state for a server.
- */
 export function getOAuthState(
-  serverName: string,
+  identity: AuthIdentity,
   options?: AuthStorageOptions,
 ): string | undefined {
-  const entry = getAuthEntry(serverName, options);
-  return entry?.oauthState;
+  return getAuthEntry(identity, options)?.oauthState;
 }
 
-/**
- * Clear OAuth state for a server.
- */
-export function clearOAuthState(serverName: string, options?: AuthStorageOptions): void {
-  const entry = getAuthEntry(serverName, options);
+export function clearAllCredentials(identity: AuthIdentity, options?: AuthStorageOptions): void {
+  removeAuthEntry(identity, options);
+}
+
+function clearField(
+  identity: AuthIdentity,
+  field: "codeVerifier" | "oauthState" | "clientInfo" | "tokens",
+  options?: AuthStorageOptions,
+): void {
+  const entry = getAuthEntry(identity, options);
   if (entry) {
-    delete entry.oauthState;
-    saveAuthEntry(serverName, entry, undefined, options);
+    delete entry[field];
+    saveAuthEntry(identity, entry, options);
   }
 }
 
-/**
- * Clear all credentials for a server.
- */
-export function clearAllCredentials(serverName: string, options?: AuthStorageOptions): void {
-  removeAuthEntry(serverName, options);
+export function clearCodeVerifier(identity: AuthIdentity, options?: AuthStorageOptions): void {
+  clearField(identity, "codeVerifier", options);
 }
 
-/**
- * Clear only client info for a server.
- */
-export function clearClientInfo(serverName: string, options?: AuthStorageOptions): void {
-  const entry = getAuthEntry(serverName, options);
-  if (entry) {
-    delete entry.clientInfo;
-    saveAuthEntry(serverName, entry, undefined, options);
-  }
+export function clearOAuthState(identity: AuthIdentity, options?: AuthStorageOptions): void {
+  clearField(identity, "oauthState", options);
 }
 
-/**
- * Clear only tokens for a server.
- */
-export function clearTokens(serverName: string, options?: AuthStorageOptions): void {
-  const entry = getAuthEntry(serverName, options);
-  if (entry) {
-    delete entry.tokens;
-    saveAuthEntry(serverName, entry, undefined, options);
-  }
+export function clearClientInfo(identity: AuthIdentity, options?: AuthStorageOptions): void {
+  clearField(identity, "clientInfo", options);
+}
+
+export function clearTokens(identity: AuthIdentity, options?: AuthStorageOptions): void {
+  clearField(identity, "tokens", options);
 }

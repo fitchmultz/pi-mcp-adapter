@@ -326,7 +326,7 @@ it.each([
   const before = f.stored();
   assert(before !== undefined);
   assert(before.clientInfo !== undefined);
-  clearAllCredentials(f.name);
+  clearAllCredentials({ serverName: f.name, serverUrl: f.definition.url });
   const file = getAuthEntryFilePath(f.name);
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   writeFileSync(
@@ -374,7 +374,7 @@ it("rejects legacy and explicit config stubs instead of sending an orphaned clie
     { clientId: "legacy", issuer: f.origin },
     { clientId: "explicit", issuer: f.origin, configPreRegistered: true, redirectUris: [] },
   ]) {
-    saveAuthEntry(f.name, { clientInfo }, f.definition.url);
+    saveAuthEntry({ serverName: f.name, serverUrl: f.definition.url }, { clientInfo });
     const provider = new McpOAuthProvider({
       serverName: f.name,
       serverUrl: f.definition.url,
@@ -390,9 +390,8 @@ it("rejects legacy and explicit config stubs instead of sending an orphaned clie
     await provider.addClientAuthentication(new Headers(), params, f.definition.url);
     expect(params.has("client_id")).toBe(false);
     saveAuthEntry(
-      f.name,
+      { serverName: f.name, serverUrl: f.definition.url },
       { clientInfo, tokens: { accessToken: "old", refreshToken: "old", issuer: f.origin } },
-      f.definition.url,
     );
     expect(await f.start()).toEqual({ authorizationUrl: "" });
     expect(f.exchanges.at(-1)?.get("client_id")).toBe(

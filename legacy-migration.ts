@@ -73,7 +73,13 @@ function migrateLegacyCredentials(
     if (typeof definition.url !== "string") {
       continue;
     }
-    credentials.push({ server, status: migrateLegacyAuthEntry(server, legacyDirectory) });
+    credentials.push({
+      server,
+      status: migrateLegacyAuthEntry(
+        { serverName: server, serverUrl: definition.url },
+        legacyDirectory,
+      ),
+    });
   }
   return credentials;
 }

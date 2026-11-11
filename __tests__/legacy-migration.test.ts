@@ -174,15 +174,24 @@ describe("explicit pre-v5 state migration", () => {
     ]);
     const config = loadMcpConfig(undefined, project);
     const options = getAuthStorageOptions(config.settings?.oauthDir, project);
-    expect(getAuthForUrl("oauth", entry.serverUrl, options)).toEqual(entry);
-    expect(readFileSync(source, "utf8")).toBe(original);
-    updateTokens("oauth", { accessToken: "refreshed-token" }, entry.serverUrl, options);
-    expect(getAuthForUrl("oauth", entry.serverUrl, options)?.tokens?.accessToken).toBe(
-      "refreshed-token",
+    expect(getAuthForUrl({ serverName: "oauth", serverUrl: entry.serverUrl }, options)).toEqual(
+      entry,
     );
     expect(readFileSync(source, "utf8")).toBe(original);
-    clearAllCredentials("oauth", options);
-    expect(getAuthForUrl("oauth", entry.serverUrl, options)).toBeUndefined();
+    updateTokens(
+      { serverName: "oauth", serverUrl: entry.serverUrl },
+      { accessToken: "refreshed-token" },
+      options,
+    );
+    expect(
+      getAuthForUrl({ serverName: "oauth", serverUrl: entry.serverUrl }, options)?.tokens
+        ?.accessToken,
+    ).toBe("refreshed-token");
+    expect(readFileSync(source, "utf8")).toBe(original);
+    clearAllCredentials({ serverName: "oauth", serverUrl: "https://example.com/mcp" }, options);
+    expect(
+      getAuthForUrl({ serverName: "oauth", serverUrl: entry.serverUrl }, options),
+    ).toBeUndefined();
     expect(readFileSync(source, "utf8")).toBe(original);
   });
 
@@ -201,12 +210,16 @@ describe("explicit pre-v5 state migration", () => {
     expect(migrateLegacyState({ cwd: project }).credentials).toEqual([
       { server: "oauth", status: "copied" },
     ]);
-    expect(getAuthEntry("oauth")).toEqual(entry);
+    expect(getAuthEntry({ serverName: "oauth", serverUrl: "https://example.com/mcp" })).toEqual(
+      entry,
+    );
     expect(migrateLegacyState({ cwd: project }).credentials).toEqual([
       { server: "oauth", status: "existing" },
     ]);
-    clearAllCredentials("oauth");
-    expect(getAuthEntry("oauth")).toBeUndefined();
+    clearAllCredentials({ serverName: "oauth", serverUrl: "https://example.com/mcp" });
+    expect(
+      getAuthEntry({ serverName: "oauth", serverUrl: "https://example.com/mcp" }),
+    ).toBeUndefined();
     expect(JSON.parse(readFileSync(source, "utf8"))).toEqual(entry);
   });
 });

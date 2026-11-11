@@ -92,7 +92,8 @@ nodeDescribe("mcp-auth", () => {
       try {
         delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
         assert.throws(
-          () => getAuthEntry("fallback-failure"),
+          () =>
+            getAuthEntry({ serverName: "fallback-failure", serverUrl: "https://api.example.com" }),
           (error) => {
             assert(error instanceof Error);
             assert.match(error.message, /Failed to read OAuth credentials/);
@@ -110,7 +111,10 @@ nodeDescribe("mcp-auth", () => {
         Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
         Object.defineProperty(process, "arch", { ...archDescriptor, value: "x64" });
         linuxFallback = true;
-        assert.strictEqual(getAuthEntry("fallback-success"), undefined);
+        assert.strictEqual(
+          getAuthEntry({ serverName: "fallback-success", serverUrl: "https://api.example.com" }),
+          undefined,
+        );
         assert.deepStrictEqual(resolved, [
           "@napi-rs/keyring-linux-x64-gnu/package.json",
           "@napi-rs/keyring-linux-x64-musl/package.json",
@@ -130,7 +134,10 @@ nodeDescribe("mcp-auth", () => {
 
   nodeDescribe("getAuthEntry", () => {
     nodeIt("should return undefined for non-existent entry", () => {
-      const entry = getAuthEntry("non-existent");
+      const entry = getAuthEntry({
+        serverName: "non-existent",
+        serverUrl: "https://api.example.com",
+      });
       assert.strictEqual(entry, undefined);
     });
 
@@ -146,10 +153,17 @@ nodeDescribe("mcp-auth", () => {
         "utf-8",
       );
 
-      const entry = getAuthEntry("legacy-import");
+      const entry = getAuthEntry({
+        serverName: "legacy-import",
+        serverUrl: "https://api.example.com",
+      });
       assert.strictEqual(entry?.tokens?.accessToken, "legacy-token");
       assert.strictEqual(existsSync(filePath), false);
-      assert.strictEqual(getAuthEntry("legacy-import")?.tokens?.accessToken, "legacy-token");
+      assert.strictEqual(
+        getAuthEntry({ serverName: "legacy-import", serverUrl: "https://api.example.com" })?.tokens
+          ?.accessToken,
+        "legacy-token",
+      );
     });
 
     nodeIt("should fail closed when the secure credential store is unavailable", () => {
@@ -157,7 +171,11 @@ nodeDescribe("mcp-auth", () => {
       process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
       try {
         assert.throws(
-          () => getAuthEntry("secure-store-unavailable"),
+          () =>
+            getAuthEntry({
+              serverName: "secure-store-unavailable",
+              serverUrl: "https://api.example.com",
+            }),
           /Failed to read OAuth credentials.*OS secure credential store/,
         );
       } finally {
@@ -181,9 +199,12 @@ nodeDescribe("mcp-auth", () => {
         },
       });
 
-      saveAuthEntry("test-server", entry, "https://api.example.com");
+      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
       assert.strictEqual(entry.serverUrl, undefined);
-      const retrieved = getAuthEntry("test-server");
+      const retrieved = getAuthEntry({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
 
       assert.deepStrictEqual(retrieved, { ...entry, serverUrl: "https://api.example.com" });
     });
@@ -198,9 +219,12 @@ nodeDescribe("mcp-auth", () => {
         serverUrl: "https://api.example.com",
       };
 
-      saveAuthEntry("test-server", entry1, "https://api.example.com");
-      saveAuthEntry("test-server", entry2, "https://api.example.com");
-      const retrieved = getAuthEntry("test-server");
+      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry1);
+      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry2);
+      const retrieved = getAuthEntry({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
 
       assert.strictEqual(retrieved?.tokens?.accessToken, "token2");
     });
@@ -213,8 +237,11 @@ nodeDescribe("mcp-auth", () => {
         serverUrl: "https://api.example.com",
       };
 
-      saveAuthEntry("test-server", entry, "https://api.example.com");
-      const retrieved = getAuthForUrl("test-server", "https://api.example.com");
+      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
+      const retrieved = getAuthForUrl({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
 
       assert.deepStrictEqual(retrieved, entry);
     });
@@ -225,21 +252,27 @@ nodeDescribe("mcp-auth", () => {
         serverUrl: "https://api.example.com",
       };
 
-      saveAuthEntry("test-server", entry, "https://api.example.com");
-      const retrieved = getAuthForUrl("test-server", "https://different.com");
+      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
+      const retrieved = getAuthForUrl({
+        serverName: "test-server",
+        serverUrl: "https://different.com",
+      });
 
       assert.strictEqual(retrieved, undefined);
     });
 
-    nodeIt("should return undefined when serverUrl is not stored", () => {
+    nodeIt("stores the URL from identity even when the supplied record omits it", () => {
       const entry: AuthEntry = {
         tokens: { accessToken: "test-token" },
       };
 
-      saveAuthEntry("test-server", entry);
-      const retrieved = getAuthForUrl("test-server", "https://api.example.com");
+      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
+      const retrieved = getAuthForUrl({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
 
-      assert.strictEqual(retrieved, undefined);
+      assert.strictEqual(retrieved?.serverUrl, "https://api.example.com");
     });
   });
 
@@ -249,9 +282,12 @@ nodeDescribe("mcp-auth", () => {
         tokens: { accessToken: "test-token" },
       };
 
-      saveAuthEntry("test-server", entry);
-      removeAuthEntry("test-server");
-      const retrieved = getAuthEntry("test-server");
+      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
+      removeAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" });
+      const retrieved = getAuthEntry({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
 
       assert.strictEqual(retrieved, undefined);
     });
@@ -259,29 +295,44 @@ nodeDescribe("mcp-auth", () => {
 
   nodeDescribe("updateTokens", () => {
     nodeIt("should update tokens for a server", () => {
-      updateTokens("test-server", {
-        accessToken: "new-token",
-        refreshToken: "new-refresh",
-        expiresAt: 1234567890,
-        scope: "read",
-      });
+      updateTokens(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        {
+          accessToken: "new-token",
+          refreshToken: "new-refresh",
+          expiresAt: 1234567890,
+          scope: "read",
+        },
+      );
 
-      const entry = getAuthEntry("test-server");
+      const entry = getAuthEntry({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
       assert.strictEqual(entry?.tokens?.accessToken, "new-token");
     });
 
     nodeIt("should preserve existing client info", () => {
-      updateClientInfo("test-server", { clientId: "client-123" });
-      updateTokens("test-server", { accessToken: "token" });
+      updateClientInfo(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        { clientId: "client-123" },
+      );
+      updateTokens(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        { accessToken: "token" },
+      );
 
-      const entry = getAuthEntry("test-server");
+      const entry = getAuthEntry({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
       assert.strictEqual(entry?.clientInfo?.clientId, "client-123");
       assert.strictEqual(entry.tokens?.accessToken, "token");
     });
 
-    nodeIt("should clear URL-bound auth state when tokens move to a different server URL", () => {
+    nodeIt("keeps old URL credentials separate when saving tokens for a new URL", () => {
       saveAuthEntry(
-        "token-url-change",
+        { serverName: "token-url-change", serverUrl: "https://old.example.com/mcp" },
         {
           tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
           clientInfo: { clientId: "old-client" },
@@ -289,16 +340,22 @@ nodeDescribe("mcp-auth", () => {
           oauthState: "old-state",
           serverUrl: "https://old.example.com/mcp",
         },
-        "https://old.example.com/mcp",
       );
 
-      updateTokens("token-url-change", { accessToken: "new-token" }, "https://new.example.com/mcp");
+      updateTokens(
+        { serverName: "token-url-change", serverUrl: "https://new.example.com/mcp" },
+        { accessToken: "new-token" },
+      );
 
       assert.strictEqual(
-        getAuthForUrl("token-url-change", "https://old.example.com/mcp"),
-        undefined,
+        getAuthForUrl({ serverName: "token-url-change", serverUrl: "https://old.example.com/mcp" })
+          ?.tokens?.accessToken,
+        "old-token",
       );
-      const newEntry = getAuthForUrl("token-url-change", "https://new.example.com/mcp");
+      const newEntry = getAuthForUrl({
+        serverName: "token-url-change",
+        serverUrl: "https://new.example.com/mcp",
+      });
       assert.strictEqual(newEntry?.tokens?.accessToken, "new-token");
       assert.strictEqual(newEntry.clientInfo, undefined);
       assert.strictEqual(newEntry.codeVerifier, undefined);
@@ -306,20 +363,25 @@ nodeDescribe("mcp-auth", () => {
     });
 
     nodeIt("should clear legacy URL-bound auth state when saving tokens with a server URL", () => {
-      saveAuthEntry("token-legacy-url-change", {
-        tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
-        clientInfo: { clientId: "old-client" },
-        codeVerifier: "old-verifier",
-        oauthState: "old-state",
-      });
-
-      updateTokens(
-        "token-legacy-url-change",
-        { accessToken: "new-token" },
-        "https://new.example.com/mcp",
+      saveAuthEntry(
+        { serverName: "token-legacy-url-change", serverUrl: "https://api.example.com" },
+        {
+          tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
+          clientInfo: { clientId: "old-client" },
+          codeVerifier: "old-verifier",
+          oauthState: "old-state",
+        },
       );
 
-      const newEntry = getAuthForUrl("token-legacy-url-change", "https://new.example.com/mcp");
+      updateTokens(
+        { serverName: "token-legacy-url-change", serverUrl: "https://new.example.com/mcp" },
+        { accessToken: "new-token" },
+      );
+
+      const newEntry = getAuthForUrl({
+        serverName: "token-legacy-url-change",
+        serverUrl: "https://new.example.com/mcp",
+      });
       assert.strictEqual(newEntry?.tokens?.accessToken, "new-token");
       assert.strictEqual(newEntry.clientInfo, undefined);
       assert.strictEqual(newEntry.codeVerifier, undefined);
@@ -329,61 +391,78 @@ nodeDescribe("mcp-auth", () => {
 
   nodeDescribe("updateClientInfo", () => {
     nodeIt("should update client info for a server", () => {
-      updateClientInfo("test-server", {
-        clientId: "client-123",
-        clientSecret: "secret",
-        clientIdIssuedAt: 1234567890,
-        clientSecretExpiresAt: 1234567999,
-      });
+      updateClientInfo(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        {
+          clientId: "client-123",
+          clientSecret: "secret",
+          clientIdIssuedAt: 1234567890,
+          clientSecretExpiresAt: 1234567999,
+        },
+      );
 
-      const entry = getAuthEntry("test-server");
+      const entry = getAuthEntry({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
       assert.strictEqual(entry?.clientInfo?.clientId, "client-123");
       assert.strictEqual(entry.clientInfo.clientSecret, "secret");
     });
 
+    nodeIt("keeps old URL credentials separate when saving client info for a new URL", () => {
+      saveAuthEntry(
+        { serverName: "url-change", serverUrl: "https://old.example.com/mcp" },
+        {
+          tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
+          clientInfo: { clientId: "old-client" },
+          codeVerifier: "old-verifier",
+          oauthState: "old-state",
+          serverUrl: "https://old.example.com/mcp",
+        },
+      );
+
+      updateClientInfo(
+        { serverName: "url-change", serverUrl: "https://new.example.com/mcp" },
+        { clientId: "new-client" },
+      );
+
+      assert.strictEqual(
+        getAuthForUrl({ serverName: "url-change", serverUrl: "https://old.example.com/mcp" })
+          ?.tokens?.accessToken,
+        "old-token",
+      );
+      const newEntry = getAuthForUrl({
+        serverName: "url-change",
+        serverUrl: "https://new.example.com/mcp",
+      });
+      assert.strictEqual(newEntry?.clientInfo?.clientId, "new-client");
+      assert.strictEqual(newEntry.tokens, undefined);
+      assert.strictEqual(newEntry.codeVerifier, undefined);
+      assert.strictEqual(newEntry.oauthState, undefined);
+    });
+
     nodeIt(
-      "should clear URL-bound credentials when client info moves to a different server URL",
+      "should clear stale verifier and state when legacy client info gains a server URL",
       () => {
         saveAuthEntry(
-          "url-change",
+          { serverName: "legacy-url-change", serverUrl: "https://api.example.com" },
           {
             tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
             clientInfo: { clientId: "old-client" },
             codeVerifier: "old-verifier",
             oauthState: "old-state",
-            serverUrl: "https://old.example.com/mcp",
           },
-          "https://old.example.com/mcp",
         );
-
-        updateClientInfo("url-change", { clientId: "new-client" }, "https://new.example.com/mcp");
-
-        assert.strictEqual(getAuthForUrl("url-change", "https://old.example.com/mcp"), undefined);
-        const newEntry = getAuthForUrl("url-change", "https://new.example.com/mcp");
-        assert.strictEqual(newEntry?.clientInfo?.clientId, "new-client");
-        assert.strictEqual(newEntry.tokens, undefined);
-        assert.strictEqual(newEntry.codeVerifier, undefined);
-        assert.strictEqual(newEntry.oauthState, undefined);
-      },
-    );
-
-    nodeIt(
-      "should clear stale verifier and state when legacy client info gains a server URL",
-      () => {
-        saveAuthEntry("legacy-url-change", {
-          tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
-          clientInfo: { clientId: "old-client" },
-          codeVerifier: "old-verifier",
-          oauthState: "old-state",
-        });
 
         updateClientInfo(
-          "legacy-url-change",
+          { serverName: "legacy-url-change", serverUrl: "https://new.example.com/mcp" },
           { clientId: "new-client" },
-          "https://new.example.com/mcp",
         );
 
-        const newEntry = getAuthForUrl("legacy-url-change", "https://new.example.com/mcp");
+        const newEntry = getAuthForUrl({
+          serverName: "legacy-url-change",
+          serverUrl: "https://new.example.com/mcp",
+        });
         assert.strictEqual(newEntry?.clientInfo?.clientId, "new-client");
         assert.strictEqual(newEntry.tokens, undefined);
         assert.strictEqual(newEntry.codeVerifier, undefined);
@@ -394,41 +473,72 @@ nodeDescribe("mcp-auth", () => {
 
   nodeDescribe("legacy flow state cleanup", () => {
     nodeIt("clears a code verifier", () => {
-      saveAuthEntry("test-server", { codeVerifier: "verifier-123" });
-      clearCodeVerifier("test-server");
-      assert.strictEqual(getAuthEntry("test-server")?.codeVerifier, undefined);
+      saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        { codeVerifier: "verifier-123" },
+      );
+      clearCodeVerifier({ serverName: "test-server", serverUrl: "https://api.example.com" });
+      assert.strictEqual(
+        getAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" })
+          ?.codeVerifier,
+        undefined,
+      );
     });
 
     nodeIt("clears OAuth state", () => {
-      saveAuthEntry("test-server", { oauthState: "state-abc-123" });
-      assert.strictEqual(getOAuthState("test-server"), "state-abc-123");
-      clearOAuthState("test-server");
-      assert.strictEqual(getOAuthState("test-server"), undefined);
+      saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        { oauthState: "state-abc-123" },
+      );
+      assert.strictEqual(
+        getOAuthState({ serverName: "test-server", serverUrl: "https://api.example.com" }),
+        "state-abc-123",
+      );
+      clearOAuthState({ serverName: "test-server", serverUrl: "https://api.example.com" });
+      assert.strictEqual(
+        getOAuthState({ serverName: "test-server", serverUrl: "https://api.example.com" }),
+        undefined,
+      );
     });
   });
 
   nodeDescribe("clearAllCredentials", () => {
     nodeIt("should remove all credentials", () => {
-      saveAuthEntry("test-server", {
-        tokens: { accessToken: "token" },
-        clientInfo: { clientId: "client" },
-        codeVerifier: "verifier",
-      });
+      saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        {
+          tokens: { accessToken: "token" },
+          clientInfo: { clientId: "client" },
+          codeVerifier: "verifier",
+        },
+      );
 
-      clearAllCredentials("test-server");
+      clearAllCredentials({ serverName: "test-server", serverUrl: "https://api.example.com" });
 
-      assert.strictEqual(getAuthEntry("test-server"), undefined);
+      assert.strictEqual(
+        getAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }),
+        undefined,
+      );
     });
   });
 
   nodeDescribe("clearClientInfo", () => {
     nodeIt("should only remove client info", () => {
-      updateTokens("test-server", { accessToken: "token" });
-      updateClientInfo("test-server", { clientId: "client" });
+      updateTokens(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        { accessToken: "token" },
+      );
+      updateClientInfo(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        { clientId: "client" },
+      );
 
-      clearClientInfo("test-server");
+      clearClientInfo({ serverName: "test-server", serverUrl: "https://api.example.com" });
 
-      const entry = getAuthEntry("test-server");
+      const entry = getAuthEntry({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
       assert.strictEqual(entry?.clientInfo, undefined);
       assert.strictEqual(entry?.tokens?.accessToken, "token");
     });
@@ -436,12 +546,21 @@ nodeDescribe("mcp-auth", () => {
 
   nodeDescribe("clearTokens", () => {
     nodeIt("should only remove tokens", () => {
-      updateTokens("test-server", { accessToken: "token" });
-      updateClientInfo("test-server", { clientId: "client" });
+      updateTokens(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        { accessToken: "token" },
+      );
+      updateClientInfo(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        { clientId: "client" },
+      );
 
-      clearTokens("test-server");
+      clearTokens({ serverName: "test-server", serverUrl: "https://api.example.com" });
 
-      const entry = getAuthEntry("test-server");
+      const entry = getAuthEntry({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
       assert.strictEqual(entry?.tokens, undefined);
       assert.strictEqual(entry?.clientInfo?.clientId, "client");
     });

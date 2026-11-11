@@ -15,9 +15,9 @@ import {
 } from "./mcp-callback-server.ts";
 import {
   getAuthForUrl,
+  type AuthIdentity,
   clearAllCredentials,
   getOAuthState,
-  clearOAuthState,
   getAuthBaseDir,
   type AuthStorageOptions,
 } from "./mcp-auth.ts";
@@ -162,7 +162,9 @@ async function clearSatisfiedChallenge(context: CompletionContext): Promise<void
     return;
   }
   const issuedScope = (
-    await Promise.resolve(getAuthForUrl(serverName, pendingAuth.serverUrl, authStorageOptions))
+    await Promise.resolve(
+      getAuthForUrl({ serverName, serverUrl: pendingAuth.serverUrl }, authStorageOptions),
+    )
   )?.tokens?.scope;
   if (issuedScope !== undefined && !isStrictScopeSuperset(requiredScope, issuedScope)) {
     delete request.challenge;
@@ -197,7 +199,7 @@ async function cleanupFailedCompletion(
   try {
     await clearPendingAuth(
       context.runtime,
-      context.serverName,
+      context.pendingAuth,
       context.oauthState,
       context.authStorageOptions,
     );
@@ -242,7 +244,7 @@ export async function completeAuth(
   if (!keepPendingForRetry) {
     await clearPendingAuth(
       context.runtime,
-      serverName,
+      context.pendingAuth,
       context.oauthState,
       context.authStorageOptions,
     );
@@ -352,7 +354,7 @@ async function authenticateOnce(
       cancelPendingCallback(oauthState);
     }
     try {
-      await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
+      await clearPendingAuth(runtime, { serverName, serverUrl }, oauthState, authStorageOptions);
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "OAuth cancellation cleanup failed", {
         cause: cleanupError,
@@ -391,27 +393,30 @@ async function showAuthorizationUrl(
 /**
  * Remove all OAuth credentials for a server.
  *
- * @param serverName - The name of the MCP server
+ * @param identity - The configured name and exact URL whose credentials are removed.
  */
-export async function removeAuth(serverName: string, options: AuthenticateOptions): Promise<void> {
+export async function removeAuth(
+  identity: AuthIdentity,
+  options: AuthenticateOptions,
+): Promise<void> {
+  const { serverName, serverUrl } = identity;
   const runtime = useRuntime(options.runtime);
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
   throwIfAborted(signal);
   const authStorageOptions = options.authStorageOptions ?? {};
-  const oauthState = await Promise.resolve(getOAuthState(serverName, authStorageOptions));
+  const oauthState = await Promise.resolve(getOAuthState(identity, authStorageOptions));
   throwIfAborted(signal);
   if (oauthState !== undefined && oauthState !== "") {
     cancelPendingCallback(oauthState);
   }
-  await clearPendingAuth(runtime, serverName, oauthState, authStorageOptions);
+  await clearPendingAuth(runtime, identity, oauthState, authStorageOptions);
   throwIfAborted(signal);
   for (const [key, request] of getRuntimeState(runtime).requests) {
-    if (request.serverName === serverName) {
+    if (request.serverName === serverName && request.serverUrl === serverUrl) {
       getRuntimeState(runtime).requests.delete(key);
     }
   }
-  clearAllCredentials(serverName, authStorageOptions);
-  clearOAuthState(serverName, authStorageOptions);
+  clearAllCredentials(identity, authStorageOptions);
   await Promise.resolve();
   throwIfAborted(signal);
   console.log(`MCP Auth: Removed credentials for ${serverName}`);

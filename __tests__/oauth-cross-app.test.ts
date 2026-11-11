@@ -460,7 +460,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
     headers: { "X-Resource-Only": "resource-secret" },
     oauth,
   };
-  const stored = () => getAuthForUrl(name, definition.url);
+  const stored = () => getAuthForUrl({ serverName: name, serverUrl: definition.url });
   cleanups.push(async () => {
     for (const hold of holds.values()) {
       hold.release();
@@ -495,7 +495,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
         })}\n`,
       );
     }
-    clearAllCredentials(name);
+    clearAllCredentials({ serverName: name, serverUrl: definition.url });
     for (const server of [resourceServer, asServer, idpServer]) {
       await server.close();
     }
@@ -684,7 +684,7 @@ it.each(["client", "tokens"])(
     const marker = join(scratch(), "ran");
     f.oauth.crossAppAccess.idToken = `!touch '${marker}'; printf TOKEN_SENTINEL`;
     saveAuthEntry(
-      f.name,
+      { serverName: f.name, serverUrl: f.definition.url },
       {
         clientInfo: {
           clientId: f.id,
@@ -696,7 +696,6 @@ it.each(["client", "tokens"])(
           issuer: binding === "tokens" ? "https://old.example" : f.as,
         },
       },
-      f.definition.url,
     );
     const before = f.stored();
     assert(before !== undefined);
@@ -1270,7 +1269,7 @@ it("keeps the native noninteractive scope retry bound and transport-failure trac
 it("refuses positively identified stored shared CIMD without deleting it, but preserves opaque/static identity priority", async () => {
   const f = await fixture("public");
   saveAuthEntry(
-    f.name,
+    { serverName: f.name, serverUrl: f.definition.url },
     {
       clientInfo: {
         clientId: sharedDocument.client_id,
@@ -1280,7 +1279,6 @@ it("refuses positively identified stored shared CIMD without deleting it, but pr
       },
       tokens: { accessToken: "old", issuer: f.as },
     },
-    f.definition.url,
   );
   const before = f.stored();
   await expect(f.start()).rejects.toThrow(/shared browser registration/);
@@ -1289,9 +1287,8 @@ it("refuses positively identified stored shared CIMD without deleting it, but pr
   for (const configured of [false, true]) {
     const provider = f.provider();
     saveAuthEntry(
-      f.name,
+      { serverName: f.name, serverUrl: f.definition.url },
       { clientInfo: { clientId: sharedDocument.client_id, issuer: f.as, redirectUris: [] } },
-      f.definition.url,
     );
     if (configured) {
       f.oauth.clientId = sharedDocument.client_id;

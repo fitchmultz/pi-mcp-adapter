@@ -292,9 +292,8 @@ describe("commands onboarding", () => {
     const { waitForCallback } = await import("../../mcp-callback-server.ts");
     const { logoutServer } = await import("../../commands.ts");
     saveAuthEntry(
-      "oauth-server",
+      { serverName: "oauth-server", serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken: "token", refreshToken: "refresh" }, oauthState: "pending-state" },
-      "https://example.com/mcp",
     );
     const pendingCallback = waitForCallback("pending-state");
     const state = await createState({
@@ -306,7 +305,9 @@ describe("commands onboarding", () => {
       logoutServer("oauth-server", state, { ...host.context, cwd: process.cwd() }),
     ]);
     expect(result.ok).toBe(true);
-    expect(getAuthEntry("oauth-server")).toBeUndefined();
+    expect(
+      getAuthEntry({ serverName: "oauth-server", serverUrl: "https://example.com/mcp" }),
+    ).toBeUndefined();
     expect(close).toHaveBeenCalledWith("oauth-server");
     expect(host.context.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("OAuth credentials cleared"),
@@ -318,8 +319,14 @@ describe("commands onboarding", () => {
     vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-commands-oauth-"));
     const { updateTokens } = await import("../../mcp-auth.ts");
     const { openMcpPanel } = await import("../../commands.ts");
-    updateTokens("legacy", { accessToken: "legacy-token" });
-    updateTokens("stale", { accessToken: "stale-token" }, "https://old.example.com/mcp");
+    updateTokens(
+      { serverName: "legacy", serverUrl: "https://api.example.com/mcp" },
+      { accessToken: "legacy-token" },
+    );
+    updateTokens(
+      { serverName: "stale", serverUrl: "https://old.example.com/mcp" },
+      { accessToken: "stale-token" },
+    );
     await openMcpPanel({
       state: await createState({
         config: {
@@ -340,7 +347,10 @@ describe("commands onboarding", () => {
   it("panel reconnect force-clears stale needs-auth state", async () => {
     vi.stubEnv("HOME", temporaryDirectory("pi-mcp-commands-reconnect-"));
     const { updateTokens } = await import("../../mcp-auth.ts");
-    updateTokens("notion", { accessToken: "token" }, "https://mcp.notion.com/mcp");
+    updateTokens(
+      { serverName: "notion", serverUrl: "https://mcp.notion.com/mcp" },
+      { accessToken: "token" },
+    );
     const definition = { url: "https://mcp.notion.com/mcp", auth: "oauth" } as const;
     const client = new Client({ name: "panel-test", version: "1" });
     let currentConnection: ServerConnection | undefined = {

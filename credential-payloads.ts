@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AuthEntry } from "./auth-record-types.ts";
+import type { AuthEntry, AuthIdentity } from "./auth-record-types.ts";
 import { OAuthCredentialStoreError } from "./credential-store-errors.ts";
 import type { AuthSecretStore } from "./keyring-store.ts";
 
@@ -17,7 +17,16 @@ interface CredentialPayload {
   source: string;
 }
 
-export function getAuthEntryAccount(serverName: unknown): string {
+export function getAuthEntryAccount(identity: AuthIdentity): string {
+  if (typeof identity.serverName !== "string" || typeof identity.serverUrl !== "string") {
+    throw new Error("MCP credential identity requires a server name and exact URL");
+  }
+  return `v2-sha256-${createHash("sha256")
+    .update(JSON.stringify([identity.serverName, identity.serverUrl]), "utf8")
+    .digest("hex")}`;
+}
+
+export function getLegacyAuthEntryAccount(serverName: unknown): string {
   if (typeof serverName !== "string") {
     throw new Error(`Invalid MCP server name: ${JSON.stringify(serverName)}`);
   }
@@ -154,9 +163,9 @@ function readChunkedAuthPayload(
 export function writeSecureAuthEntryToStore(
   store: AuthSecretStore,
   serverName: string,
+  account: string,
   entry: AuthEntry,
 ): void {
-  const account = getAuthEntryAccount(serverName);
   const payload = JSON.stringify(entry);
   const previousManifest = readExistingChunkManifest(store, serverName, account);
   const manifest =
@@ -192,8 +201,8 @@ export function writeSecureAuthEntryToStore(
 export function readSecureAuthPayloadFromStore(
   store: AuthSecretStore,
   serverName: string,
+  account: string,
 ): CredentialPayload | undefined {
-  const account = getAuthEntryAccount(serverName);
   let payload: string | undefined;
   try {
     payload = store.read(account);
@@ -217,8 +226,11 @@ export function readSecureAuthPayloadFromStore(
     : { payload, source: "OS secure credential store" };
 }
 
-export function removeAuthEntryFromStore(store: AuthSecretStore, serverName: string): void {
-  const account = getAuthEntryAccount(serverName);
+export function removeAuthEntryFromStore(
+  store: AuthSecretStore,
+  serverName: string,
+  account: string,
+): void {
   try {
     const payload = store.read(account);
     const manifest =

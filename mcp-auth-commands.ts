@@ -145,11 +145,18 @@ async function removeCredentials(
   const signal = state.owner.signal;
   try {
     const { removeAuth } = await import("./mcp-auth-flow.ts");
-    await removeAuth(serverName, {
-      authStorageOptions: state.authStorageOptions,
-      signal,
-      runtime: state.oauthRuntime,
-    });
+    const serverUrl = state.config.mcpServers[serverName]?.url;
+    if (typeof serverUrl !== "string") {
+      return;
+    }
+    await removeAuth(
+      { serverName, serverUrl },
+      {
+        authStorageOptions: state.authStorageOptions,
+        signal,
+        runtime: state.oauthRuntime,
+      },
+    );
   } catch (error) {
     if (isAbortError(error, signal)) {
       throw error;

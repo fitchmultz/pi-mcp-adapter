@@ -117,7 +117,7 @@ export async function createCallbackHttpFixture(
   };
   if (options.oauth === true) {
     saveAuthEntry(
-      name,
+      { serverName: name, serverUrl: url },
       {
         tokens: {
           accessToken: token,
@@ -126,7 +126,6 @@ export async function createCallbackHttpFixture(
           issuer: origin,
         },
       },
-      url,
     );
   }
 
@@ -372,14 +371,13 @@ export async function createCallbackHttpFixture(
     expire: () => {
       token = "SYNTHETIC-UPDATED";
       updateTokens(
-        name,
+        { serverName: name, serverUrl: url },
         {
           accessToken: "SYNTHETIC-INITIAL",
           refreshToken: "SYNTHETIC-REFRESH",
           expiresAt: 1,
           issuer: origin,
         },
-        url,
       );
     },
     close: async () => {

@@ -124,7 +124,7 @@ async function oauthFixture() {
   cleanups.push(async () => {
     await manager.closeAll();
     await shutdownOAuth(runtime);
-    clearAllCredentials(name);
+    clearAllCredentials({ serverName: name, serverUrl: definition.url });
     await server.close();
   });
   const oauth = {
@@ -220,7 +220,7 @@ describe("published SDK OAuth compatibility over local HTTP", () => {
     expect(await f.complete(authorizationUrl)).toBe("authenticated");
     expect(requireValue(f.tokenRequests[0]).get("code")).toBe("fixture-code");
     expect(requireValue(f.tokenRequests[0]).get("code_verifier")).toBeTruthy();
-    const stored = getAuthForUrl(f.name, f.definition.url);
+    const stored = getAuthForUrl({ serverName: f.name, serverUrl: f.definition.url });
     expect(stored?.tokens?.issuer).toBe(f.origin);
     expect(stored?.clientInfo?.clientSecret).toBeUndefined();
     const call = await f.connect(true);

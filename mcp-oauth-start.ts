@@ -83,16 +83,25 @@ async function resetIncompleteRegistration(
   ) {
     return;
   }
-  clearClientInfo(context.serverName, context.authStorageOptions);
-  clearCodeVerifier(context.serverName, context.authStorageOptions);
-  clearOAuthState(context.serverName, context.authStorageOptions);
+  clearClientInfo(
+    { serverName: context.serverName, serverUrl: context.serverUrl },
+    context.authStorageOptions,
+  );
+  clearCodeVerifier(
+    { serverName: context.serverName, serverUrl: context.serverUrl },
+    context.authStorageOptions,
+  );
+  clearOAuthState(
+    { serverName: context.serverName, serverUrl: context.serverUrl },
+    context.authStorageOptions,
+  );
   await Promise.resolve();
 }
 
 async function startNonInteractive(context: StartContext): Promise<{ authorizationUrl: string }> {
   const { serverName, serverUrl, config, authStorageOptions, signal } = context;
   const storedAuth = await Promise.resolve(
-    getAuthForUrl(serverName, serverUrl, authStorageOptions),
+    getAuthForUrl({ serverName, serverUrl }, authStorageOptions),
   );
   await resetIncompleteRegistration(context, storedAuth);
   const authProvider = new McpOAuthProvider({
@@ -158,7 +167,7 @@ async function reserveCallback(
   binding: IssuerBinding,
   redirectCallback: ReturnType<typeof parseOAuthRedirectUri> | undefined,
 ): Promise<void> {
-  const { config, serverName, authStorageOptions, signal } = context;
+  const { config, serverName, serverUrl, authStorageOptions, signal } = context;
   try {
     await ensureCallbackServer({
       strictPort: (config.clientId ?? "") !== "" || config.redirectUri !== undefined,
@@ -177,7 +186,7 @@ async function reserveCallback(
   } catch (error) {
     releaseCallbackServer(oauthState);
     try {
-      clearOAuthState(serverName, authStorageOptions);
+      clearOAuthState({ serverName, serverUrl }, authStorageOptions);
       await Promise.resolve();
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed", {
@@ -281,10 +290,22 @@ async function recoverRedirectRegistration(
   if (matchesStoredRedirect(storedAuth.clientInfo, redirectUrl ?? "")) {
     return;
   }
-  clearClientInfo(context.serverName, context.authStorageOptions);
-  clearTokens(context.serverName, context.authStorageOptions);
-  clearCodeVerifier(context.serverName, context.authStorageOptions);
-  clearOAuthState(context.serverName, context.authStorageOptions);
+  clearClientInfo(
+    { serverName: context.serverName, serverUrl: context.serverUrl },
+    context.authStorageOptions,
+  );
+  clearTokens(
+    { serverName: context.serverName, serverUrl: context.serverUrl },
+    context.authStorageOptions,
+  );
+  clearCodeVerifier(
+    { serverName: context.serverName, serverUrl: context.serverUrl },
+    context.authStorageOptions,
+  );
+  clearOAuthState(
+    { serverName: context.serverName, serverUrl: context.serverUrl },
+    context.authStorageOptions,
+  );
   await Promise.resolve();
 }
 
@@ -331,7 +352,10 @@ async function startInteractive(
   let authProvider: McpOAuthProvider | undefined;
   try {
     const storedAuth = await Promise.resolve(
-      getAuthForUrl(context.serverName, context.serverUrl, context.authStorageOptions),
+      getAuthForUrl(
+        { serverName: context.serverName, serverUrl: context.serverUrl },
+        context.authStorageOptions,
+      ),
     );
     const discovery = challengeDiscovery(
       applyConfiguredScope(
@@ -349,7 +373,10 @@ async function startInteractive(
     if (await authorizeInteractive(context, flow, request, storedAuth)) {
       authProvider.deactivate();
       releaseCallbackServer(oauthState);
-      clearOAuthState(context.serverName, context.authStorageOptions);
+      clearOAuthState(
+        { serverName: context.serverName, serverUrl: context.serverUrl },
+        context.authStorageOptions,
+      );
       await Promise.resolve();
       return { authorizationUrl: "" };
     }
@@ -375,12 +402,7 @@ async function startInteractive(
   } catch (error) {
     authProvider?.deactivate();
     try {
-      await clearPendingAuth(
-        context.runtime,
-        context.serverName,
-        oauthState,
-        context.authStorageOptions,
-      );
+      await clearPendingAuth(context.runtime, context, oauthState, context.authStorageOptions);
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed", {
         cause: cleanupError,
@@ -439,13 +461,18 @@ async function setPendingAuth(
   const { runtime, serverName, signal, generation } = context;
   const state = getRuntimeState(runtime);
   const key = getPendingAuthKey(serverName, pendingAuth.authStorageOptions);
-  await clearPendingAuth(runtime, serverName, undefined, pendingAuth.authStorageOptions);
+  await clearPendingAuth(
+    runtime,
+    state.pendingAuths.get(key) ?? pendingAuth,
+    undefined,
+    pendingAuth.authStorageOptions,
+  );
   throwIfAborted(signal);
   if (generation !== state.generation) {
     throw new Error("OAuth runtime stopped");
   }
   const cleanupTimer = setTimeout(() => {
-    clearPendingAuth(runtime, serverName, oauthState, pendingAuth.authStorageOptions).catch(
+    clearPendingAuth(runtime, pendingAuth, oauthState, pendingAuth.authStorageOptions).catch(
       (error: unknown) => {
         console.error(`MCP Auth: Timed-out flow cleanup failed: ${formatTerminalError(error)}`);
       },

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Isolate stored OAuth credentials by configured server name and exact URL, including migration, field clears, and logout.
+
 ## 8.0.38 - 2026-11-11
 
 <!-- npm-release:unreleased:start -->

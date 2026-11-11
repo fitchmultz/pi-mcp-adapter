@@ -324,7 +324,7 @@ A Node.js HTTP server runs on a loopback callback endpoint and handles the activ
 
 ## Token Storage
 
-Persistent OAuth entries are stored in service `fitch-mcp-adapter.oauth`, with the account `sha256-<hash of configured server name>`, using macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
+Persistent OAuth entries are stored in service `fitch-mcp-adapter.oauth`, with the account `v2-sha256-<SHA-256 of the UTF-8 JSON array [serverName, serverUrl]>`, using macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
 
 The adapter fails closed when the OS credential store is unavailable. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth; the adapter does not silently fall back to plaintext token files.
 
@@ -332,15 +332,15 @@ Final runtime shutdown joins owned SDK operations, including background GET/reco
 
 On Linux, if credential access fails because Pi inherited a revoked session keyring, the adapter makes one best-effort retry through `keyctl session - node <packaged helper>`. This lets explicit re-authentication write fresh credentials from a new session keyring without restarting a long-lived tmux or server process. The recovery path requires `keyctl` and `node` on `PATH`; missing, locked, or otherwise unavailable credential stores still fail closed.
 
-Normal runtime uses `<Pi agent dir>/fitch-mcp-adapter/mcp-oauth/sha256-<server-hash>/tokens.json` only for legacy plaintext imports. With `settings.oauthDir`, runtime uses a `fitch-mcp-adapter/` child of that directory, so a migrated v4 setting cannot consume or delete its old token files. Explicit migration reads the original directory. `FITCH_MCP_OAUTH_DIR` overrides the final runtime import path. A valid entry in these locations is imported on first read and its plaintext file removed. These directories do not change the OS credential namespace.
+Normal runtime uses `<Pi agent dir>/fitch-mcp-adapter/mcp-oauth/sha256-<server-hash>/tokens.json` only for legacy plaintext imports. With `settings.oauthDir`, runtime uses a `fitch-mcp-adapter/` child of that directory, so a migrated v4 setting cannot consume or delete its old token files. Explicit migration reads the original directory. `FITCH_MCP_OAUTH_DIR` overrides the final runtime import path. A valid entry is imported only when its stored URL exactly matches the configured URL. Matching name-only entries in the current OS service are also imported automatically. Each copy is verified before its matching source is removed. Entries with missing or different URLs stay untouched. An existing URL-scoped credential wins. These directories select legacy import sources, not separate OS credential namespaces.
 
 Version 5 never automatically reads v4's `pi-mcp-adapter.oauth` service, old default `~/.pi/agent/mcp-oauth/` directory, or `MCP_OAUTH_DIR`. After installation and before restarting Pi, run `fitch-mcp-adapter migrate --dry-run`, then `fitch-mcp-adapter migrate` from each project with an old override. See [upgrade instructions](docs/migration.md#upgrading-from-v4).
 
-Explicit migration copies configured HTTP servers' old OS entries or legacy token files into the new service only when no destination credential exists. It preserves URL/issuer bindings, client registration and tokens, verifies each copy, prints no plaintext secrets, and leaves all old sources untouched. Dry-run lists file actions without reading the keychain or writing. Existing destinations are never overwritten or merged; repeated migration skips them. The old `MCP_OAUTH_DIR` is honored only for this explicit migration.
+Explicit migration copies configured HTTP servers' old OS entries or legacy token files into the new service only when the stored URL exactly matches and no credential exists for that name and URL. It preserves URL/issuer bindings, client registration and tokens, verifies each copy, prints no plaintext secrets, and leaves all old sources untouched. Dry-run lists file actions without reading the keychain or writing. Existing destinations are never overwritten or merged; repeated migration skips them. The old `MCP_OAUTH_DIR` is honored only for this explicit migration.
 
-Logging out removes the new namespace's entry; normal runtime cannot restore it from the old namespace. Migration preserves the existing provider grant rather than creating a second grant. Sign in again if you need a separate provider grant.
+Logging out removes only the configured name and exact URL's entry and matching automatic-import sources. Other URLs' credentials and unmatched legacy records stay untouched. Normal runtime cannot restore a logout from the old namespace; rerunning explicit migration can intentionally copy that old grant again. Migration preserves the existing provider grant rather than creating a second grant. Sign in again if you need a separate provider grant.
 
-The stored `serverUrl` field ensures credentials are invalidated if the server URL changes. Client and token issuer bindings also remain strict: a changed authorization-server issuer requires explicitly clearing credentials before authenticating again, including for CIMD. Normal authentication never silently changes stored-login or issuer bindings.
+Credential reads, writes, field clears, and logout use an explicit `{ serverName, serverUrl }` identity. The stored `serverUrl` always comes from that identity. URLs are not normalized: even a trailing slash selects a separate login. Changing a URL leaves the previous URL's credentials intact but does not use them for the new URL. Client and token issuer bindings also remain strict: a changed authorization-server issuer requires explicitly clearing credentials before authenticating again, including for CIMD. Normal authentication never silently changes stored-login or issuer bindings.
 
 ### Android / Termux
 
@@ -362,7 +362,7 @@ Persistent OAuth credentials are written to the OS credential store. Normal lega
 
 ### URL Validation
 
-Credentials are tied to a specific server URL. If the URL changes, the credentials are invalidated and re-authentication is required.
+Credentials are tied to a configured server name and exact URL. Changing the URL selects a separate login without overwriting or deleting the previous URL's credentials.
 
 ## Troubleshooting
 

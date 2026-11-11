@@ -62,9 +62,9 @@ const server = "android-diagnostic";
 const entry = { tokens: { accessToken: "synthetic-only" }, serverUrl: url };
 /** @type {[string, () => unknown][]} */
 const operations = [
-  ["read", () => auth.getAuthForUrl(server, url)],
-  ["write", () => auth.saveAuthEntry(server, entry, url)],
-  ["remove", () => auth.removeAuthEntry(server)],
+  ["read", () => auth.getAuthForUrl({ serverName: server, serverUrl: url })],
+  ["write", () => auth.saveAuthEntry({ serverName: server, serverUrl: url }, entry)],
+  ["remove", () => auth.removeAuthEntry({ serverName: server, serverUrl: url })],
 ];
 const legacy = auth.getAuthEntryFilePath(server);
 const genericStatus =
@@ -91,7 +91,7 @@ function checkFailures(nativeFailure) {
     }
     return { operation, error };
   });
-  const status = auth.inspectAuthForUrl(server, url);
+  const status = auth.inspectAuthForUrl({ serverName: server, serverUrl: url });
   const messages = errors.map(({ operation, error }) => ({
     operation,
     message: error instanceof Error ? error.message : undefined,
@@ -139,12 +139,17 @@ function checkFailures(nativeFailure) {
 }
 
 if (mode === "working") {
-  assert.equal(auth.getAuthEntry(server), undefined);
-  auth.saveAuthEntry(server, entry, url);
-  assert.deepEqual(auth.getAuthForUrl(server, url), entry);
-  assert.deepEqual(auth.inspectAuthForUrl(server, url), { status: "present", entry });
-  auth.removeAuthEntry(server);
-  assert.deepEqual(auth.inspectAuthForUrl(server, url), { status: "absent" });
+  assert.equal(auth.getAuthEntry({ serverName: server, serverUrl: url }), undefined);
+  auth.saveAuthEntry({ serverName: server, serverUrl: url }, entry);
+  assert.deepEqual(auth.getAuthForUrl({ serverName: server, serverUrl: url }), entry);
+  assert.deepEqual(auth.inspectAuthForUrl({ serverName: server, serverUrl: url }), {
+    status: "present",
+    entry,
+  });
+  auth.removeAuthEntry({ serverName: server, serverUrl: url });
+  assert.deepEqual(auth.inspectAuthForUrl({ serverName: server, serverUrl: url }), {
+    status: "absent",
+  });
   assert.equal(fs.existsSync(dirname(legacy)), false);
   const require = createRequire(join(home, "package.json"));
   /** @type {unknown} */
