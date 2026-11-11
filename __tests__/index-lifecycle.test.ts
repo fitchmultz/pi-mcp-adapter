@@ -1509,6 +1509,30 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
+  it("reports a failed initialization's reason from /mcp instead of not-initialized", async () => {
+    mocks.initializeMcp.mockRejectedValue(new Error("init boom"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {
+      // The assertion below owns the expected initialization diagnostic.
+    });
+
+    try {
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers, command: registeredCommand } = await createPi();
+      mcpAdapter(api);
+
+      await handlers.get("session_start")({}, {});
+      await nextTurn();
+
+      const notify = vi.fn<(message: string, type?: string) => void>();
+      await registeredCommand("mcp").handler("status", { hasUI: true, ui: { notify } });
+
+      expect(notify).toHaveBeenCalledWith("MCP initialization failed: init boom", "error");
+      expect(mocks.executeStatus).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("logs initialization errors when updateStatusBar throws", async () => {
     const state = createState();
     mocks.initializeMcp.mockResolvedValue(state);
