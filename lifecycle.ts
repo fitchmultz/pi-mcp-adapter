@@ -18,7 +18,8 @@ export class McpLifecycleManager {
   private onIdleShutdown: ((serverName: string) => void) | undefined;
   private activeHealthCheck: Promise<void> | undefined;
   private shutdownPromise: Promise<void> | undefined;
-  private stopped = false;
+  /** The loop's own phase: armed by a session, disarmed by its abort or shutdown. */
+  private phase: "idle" | "running" | "stopped" = "idle";
   private removeHealthAbortListener: (() => void) | undefined;
 
   private readonly manager: McpServerManager;
@@ -73,13 +74,13 @@ export class McpLifecycleManager {
       clearInterval(this.healthCheckInterval);
     }
     this.removeHealthAbortListener?.();
-    this.stopped = false;
+    this.phase = "running";
     if (signal?.aborted === true) {
-      this.stopped = true;
+      this.phase = "stopped";
       return;
     }
     const stop = () => {
-      this.stopped = true;
+      this.phase = "stopped";
       if (this.healthCheckInterval) {
         clearInterval(this.healthCheckInterval);
       }
@@ -88,7 +89,7 @@ export class McpLifecycleManager {
     signal?.addEventListener("abort", stop, { once: true });
     this.removeHealthAbortListener = () => signal?.removeEventListener("abort", stop);
     this.healthCheckInterval = setInterval(() => {
-      if (this.stopped || signal?.aborted === true || this.activeHealthCheck) {
+      if (this.phase === "stopped" || signal?.aborted === true || this.activeHealthCheck) {
         return;
       }
       const check = this.checkConnections(signal)
@@ -106,7 +107,7 @@ export class McpLifecycleManager {
   }
 
   private isStopped(signal?: AbortSignal): boolean {
-    return this.stopped || signal?.aborted === true;
+    return this.phase === "stopped" || signal?.aborted === true;
   }
 
   private needsReconnect(name: string, definition: ServerDefinition): boolean {
@@ -186,7 +187,7 @@ export class McpLifecycleManager {
   }
 
   private async shutdownOnce(): Promise<void> {
-    this.stopped = true;
+    this.phase = "stopped";
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
     }
