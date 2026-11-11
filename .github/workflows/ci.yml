@@ -2,8 +2,6 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -24,13 +22,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PI_AUTOMATION_REF: 98d15dcb7bd607a43ef874464306e7c2f7ce3ff8 # main
+  PI_AUTOMATION_REF: f407404914bf6d048e4d952c62711df5103cc7ef # main
 
 jobs:
   resolve:
-    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@98d15dcb7bd607a43ef874464306e7c2f7ce3ff8 # main
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@f407404914bf6d048e4d952c62711df5103cc7ef # main
     with:
-      automation-ref: 98d15dcb7bd607a43ef874464306e7c2f7ce3ff8 # main
+      automation-ref: f407404914bf6d048e4d952c62711df5103cc7ef # main
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
