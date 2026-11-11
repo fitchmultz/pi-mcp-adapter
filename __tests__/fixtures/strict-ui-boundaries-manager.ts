@@ -13,7 +13,6 @@ export function createConnection(overrides: Partial<ServerConnection> = {}): Ser
     resources: [],
     prompts: [],
     lastUsedAt: Date.now(),
-    inFlight: 0,
     ...overrides,
   };
 }

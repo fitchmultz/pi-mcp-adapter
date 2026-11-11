@@ -123,13 +123,13 @@ export class McpServerManager {
     }
     try {
       this.touch(name);
-      this.incrementInFlight(name);
+      this.incrementInFlight(connection);
       return await connection.client.getPrompt(
         { name: promptName, ...(args ? { arguments: args } : {}) },
         this.getRequestOptions(name, signal),
       );
     } finally {
-      this.decrementInFlight(name);
+      this.decrementInFlight(connection);
       this.touch(name);
     }
   }
@@ -145,10 +145,10 @@ export class McpServerManager {
 
     try {
       this.touch(name);
-      this.incrementInFlight(name);
+      this.incrementInFlight(connection);
       return await connection.client.readResource({ uri }, this.getRequestOptions(name, signal));
     } finally {
-      this.decrementInFlight(name);
+      this.decrementInFlight(connection);
       this.touch(name);
     }
   }
@@ -173,12 +173,16 @@ export class McpServerManager {
     this.lifecycle.touch(name);
   }
 
-  incrementInFlight(name: string): void {
-    this.lifecycle.incrementInFlight(name);
+  incrementInFlight(connection: ServerConnection): void {
+    this.lifecycle.incrementInFlight(connection);
   }
 
-  decrementInFlight(name: string): void {
-    this.lifecycle.decrementInFlight(name);
+  decrementInFlight(connection: ServerConnection): void {
+    this.lifecycle.decrementInFlight(connection);
+  }
+
+  inFlightCount(connection: ServerConnection): number {
+    return this.lifecycle.inFlightCount(connection);
   }
 
   isIdle(name: string, timeoutMs: number): boolean {

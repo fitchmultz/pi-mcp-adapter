@@ -119,8 +119,8 @@ describe("AbortSignal propagation", () => {
       { name: "slow", arguments: {}, _meta: undefined },
       { signal: passedSignal },
     );
-    expect(decrement).toHaveBeenCalledWith("demo");
-    expect(connection.inFlight).toBe(0);
+    expect(decrement).toHaveBeenCalledWith(connection);
+    expect(manager.inFlightCount(connection)).toBe(0);
     cache.release();
     await manager.closeAll();
     expect(http.messages.filter((message) => message.method === "tools/call")).toHaveLength(0);
@@ -154,8 +154,8 @@ describe("AbortSignal propagation", () => {
       { name: "slow", arguments: {}, _meta: undefined },
       { signal: passedSignal },
     );
-    expect(decrement).toHaveBeenCalledWith("demo");
-    expect(connection.inFlight).toBe(0);
+    expect(decrement).toHaveBeenCalledWith(connection);
+    expect(manager.inFlightCount(connection)).toBe(0);
     cache.release();
     await manager.closeAll();
     expect(http.messages.filter((message) => message.method === "tools/call")).toHaveLength(0);
@@ -184,8 +184,8 @@ describe("AbortSignal propagation", () => {
     const result = await inFlight;
     expect(result.details.error).toBe("aborted");
     expect(callTool).not.toHaveBeenCalled();
-    expect(decrement).toHaveBeenCalledWith("demo");
-    expect(connection.inFlight).toBe(0);
+    expect(decrement).toHaveBeenCalledWith(connection);
+    expect(manager.inFlightCount(connection)).toBe(0);
     expect(http.messages.filter((message) => message.method === "tools/call")).toHaveLength(0);
     captured.resolve(null);
   });

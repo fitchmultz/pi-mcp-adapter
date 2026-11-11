@@ -19,7 +19,6 @@ export interface ServerConnection {
   promptDiscoveryFailed?: boolean;
   instructions?: string;
   lastUsedAt: number;
-  inFlight: number;
   status: "connected" | "closed" | "needs-auth";
   /** Whether this connection was constructed with the native OAuth provider. */
   oauthProvider?: boolean;

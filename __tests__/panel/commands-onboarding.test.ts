@@ -351,7 +351,6 @@ describe("commands onboarding", () => {
       resources: [],
       prompts: [],
       lastUsedAt: 0,
-      inFlight: 0,
       status: "needs-auth",
     };
     const manager = new McpServerManager();
@@ -368,7 +367,6 @@ describe("commands onboarding", () => {
         resources: [],
         prompts: [],
         lastUsedAt: 0,
-        inFlight: 0,
       };
       return currentConnection;
     });

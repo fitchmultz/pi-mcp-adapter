@@ -993,7 +993,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.signIn();
     f.settings.autoAuth = true;
     f.state.ui = f.ui;
-    await f.connect();
+    const started = await f.connect();
     const results = await Promise.all([f.call(), f.call()]);
     for (const result of results) {
       expect(result.details.error).toBeUndefined();
@@ -1001,7 +1001,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(browser.open).toHaveBeenCalledTimes(1);
     expect(f.exchanges).toHaveLength(1);
     expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(4);
-    expect(f.manager.getConnection(f.name)?.inFlight).toBe(0);
+    expect(f.manager.inFlightCount(started)).toBe(0);
   });
 
   it("does not give an initial-auth invocation another consent for its later scope challenge", async () => {
@@ -1436,27 +1436,27 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   });
 
   it("preserves accepted work for automatic auth handoff", async () => {
-    const { f, close, effect } = await startAcceptedEffect();
+    const { f, old, close, effect } = await startAcceptedEffect();
     expect((await f.call()).details.error).toBeUndefined();
     expect(close).not.toHaveBeenCalled();
-    expect(f.manager.getConnection(f.name)?.inFlight).toBe(1);
+    expect(f.manager.inFlightCount(old)).toBe(1);
     f.controls.releaseEffect();
     expect((await effect).details.error).toBeUndefined();
     await expect.poll(() => close.mock.calls.length).toBe(1);
-    expect(f.manager.getConnection(f.name)?.inFlight).toBe(0);
+    expect(f.manager.inFlightCount(old)).toBe(0);
     expect(f.controls.effectCount).toBe(1);
     expect(f.requests.filter((r) => r.name === "effect")).toHaveLength(1);
   });
 
   it("preserves accepted work for panel auth handoff", async () => {
-    const { f, close, effect } = await startAcceptedEffect();
+    const { f, old, close, effect } = await startAcceptedEffect();
     const { host, flow } = await openAuthPanel(f, "\u0001");
     expect(close).not.toHaveBeenCalled();
-    expect(f.manager.getConnection(f.name)?.inFlight).toBe(1);
+    expect(f.manager.inFlightCount(old)).toBe(1);
     f.controls.releaseEffect();
     expect((await effect).details.error).toBeUndefined();
     await expect.poll(() => close.mock.calls.length).toBe(1);
-    expect(f.manager.getConnection(f.name)?.inFlight).toBe(0);
+    expect(f.manager.inFlightCount(old)).toBe(0);
     expect(f.controls.effectCount).toBe(1);
     expect(f.requests.filter((r) => r.name === "effect")).toHaveLength(1);
     host.input("\u001b");
@@ -1671,7 +1671,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome).toHaveProperty("reason", expect.any(InsufficientScopeError));
     expect(f.request()?.challenge?.requiredScope).toBe("write");
     expect(f.manager.getConnection(f.name)).toBe(fresh);
-    expect(fresh.inFlight).toBe(0);
+    expect(f.manager.inFlightCount(fresh)).toBe(0);
     await expect.poll(() => close.mock.calls.length).toBe(1);
     await shutdownOAuth(f.runtime);
     expect(f.request()).toBeUndefined();

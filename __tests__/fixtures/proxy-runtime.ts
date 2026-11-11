@@ -61,7 +61,6 @@ export async function proxyRuntimeConnection(
     resources: [],
     prompts: [],
     lastUsedAt: Date.now(),
-    inFlight: 0,
     status: "connected",
   };
 }

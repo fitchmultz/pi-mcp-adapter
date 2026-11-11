@@ -29,4 +29,22 @@ describe("McpServerManager connection close ownership", () => {
     assert(clientOrder !== undefined && transportOrder !== undefined);
     expect(clientOrder).toBeLessThan(transportOrder);
   });
+
+  it("keeps in-flight accounting on the connection a call started on", async () => {
+    const manager = new McpServerManager(join(__dirname, ".."));
+
+    const first = await manager.connect("demo", definition);
+    manager.incrementInFlight(first);
+    await manager.close("demo");
+    manager.decrementInFlight(first);
+
+    const second = await manager.connect("demo", definition);
+    expect(manager.inFlightCount(second)).toBe(0);
+
+    manager.incrementInFlight(second);
+    manager.decrementInFlight(first);
+    expect(manager.inFlightCount(second)).toBe(1);
+
+    await manager.close("demo");
+  });
 });

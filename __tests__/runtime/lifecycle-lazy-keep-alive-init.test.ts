@@ -119,7 +119,6 @@ describe("lazy-keep-alive initializeMcp integration", () => {
       resources: [],
       prompts: [],
       lastUsedAt: Date.now(),
-      inFlight: 0,
     };
     current = undefined;
     connect = vi.spyOn(McpServerManager.prototype, "connect").mockImplementation(async () => {

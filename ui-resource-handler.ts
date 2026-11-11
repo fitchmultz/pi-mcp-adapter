@@ -79,7 +79,11 @@ export class UiResourceHandler {
     }
     const { withSessionRecovery } = await import("./session-recovery.ts");
     this.manager.touch(serverName);
-    this.manager.incrementInFlight(serverName);
+    const counted = this.manager.getConnection(serverName);
+    if (!counted) {
+      throw new Error(`Server "${serverName}" is not connected`);
+    }
+    this.manager.incrementInFlight(counted);
     try {
       return await withSessionRecovery(
         {
@@ -96,7 +100,7 @@ export class UiResourceHandler {
           ),
       );
     } finally {
-      this.manager.decrementInFlight(serverName);
+      this.manager.decrementInFlight(counted);
       this.manager.touch(serverName);
     }
   }

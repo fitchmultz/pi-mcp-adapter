@@ -236,9 +236,14 @@ class ToolCallRuntime {
   }
   async run(): Promise<ProxyToolResult> {
     const { state, serverName, target, options } = this.request;
+    // Count on the connection this call will dispatch on, if one exists yet; a call that
+    // recovery later migrates keeps its count on the connection it started on.
+    const connection = state.manager.getConnection(serverName);
     try {
       state.manager.touch(serverName);
-      state.manager.incrementInFlight(serverName);
+      if (connection !== undefined) {
+        state.manager.incrementInFlight(connection);
+      }
       throwIfAborted(this.callerSignal);
       const operation = await this.prepareOperation();
       const result = await this.dispatch(operation);
@@ -261,7 +266,9 @@ class ToolCallRuntime {
       if (this.uiSession?.reused === true) {
         this.uiSession.close();
       }
-      state.manager.decrementInFlight(serverName);
+      if (connection !== undefined) {
+        state.manager.decrementInFlight(connection);
+      }
       state.manager.touch(serverName);
     }
   }

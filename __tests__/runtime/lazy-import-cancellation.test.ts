@@ -91,9 +91,9 @@ describe("cancellation while operation-only modules load", () => {
         expect(beforeDispatch).not.toHaveBeenCalled();
         expect(capture).not.toHaveBeenCalled();
         expect(nativeCall).not.toHaveBeenCalled();
-        expect(increment).toHaveBeenCalledExactlyOnceWith("fixture");
-        expect(decrement).toHaveBeenCalledExactlyOnceWith("fixture");
-        expect(connection.inFlight).toBe(0);
+        expect(increment).toHaveBeenCalledExactlyOnceWith(connection);
+        expect(decrement).toHaveBeenCalledExactlyOnceWith(connection);
+        expect(manager.inFlightCount(connection)).toBe(0);
       } finally {
         await cleanup();
       }
@@ -136,7 +136,7 @@ describe("cancellation while operation-only modules load", () => {
         expect(beforeDispatch).not.toHaveBeenCalled();
         expect(capture).not.toHaveBeenCalled();
         expect(nativeCall).not.toHaveBeenCalled();
-        expect(connection.inFlight).toBe(0);
+        expect(manager.inFlightCount(connection)).toBe(0);
       } finally {
         await cleanup();
       }

@@ -155,7 +155,6 @@ describe("lazy-keep-alive lifecycle", () => {
       resources: [],
       prompts: [],
       lastUsedAt: Date.now(),
-      inFlight: 0,
       status: "needs-auth",
     };
     vi.spyOn(manager, "getConnection").mockReturnValue(connection);

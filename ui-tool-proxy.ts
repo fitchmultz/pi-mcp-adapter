@@ -146,7 +146,7 @@ export class UiToolProxy {
     const options = this.options;
     try {
       options.manager.touch(options.serverName);
-      options.manager.incrementInFlight(options.serverName);
+      options.manager.incrementInFlight(connection);
       const result = options.config
         ? await withSessionRecovery(
             {
@@ -164,7 +164,7 @@ export class UiToolProxy {
           );
       sendJson(res, 200, { ok: true, result });
     } finally {
-      options.manager.decrementInFlight(options.serverName);
+      options.manager.decrementInFlight(connection);
       options.manager.touch(options.serverName);
     }
   }
