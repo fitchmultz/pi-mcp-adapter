@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.38 - 2026-11-11
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Wake the version workflow only for release events (#220) ([f9a8b2e](https://github.com/fitchmultz/pi-mcp-adapter/commit/f9a8b2e0ebff5386bf835c10a202c8463ea6554f))
+
+### What's Changed
+
+- Wake the version workflow only for release events by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/220
+- ci: align shared automation pins and wire release supersession inputs by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/221
+- refactor(status): one derived server stage for every status surface (1/7) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/222
+- refactor(host): explicit adapter session phase (2/7) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/223
+- refactor(oauth): one record per pending flow and callback state (3/7) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/225
+- refactor(request): name the attempt state of a connection and a tool send (4/7) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/226
+- refactor(ui): name the UI session lifecycle on both sides (5/7) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/227
+- refactor(panel): name tool exposure and the panel's input mode (6/7) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/228
+- refactor: keep the reason a background latch stopped (7/7) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/229
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.37...v8.0.38
+
 ## 8.0.37 - 2026-11-11
 
 <!-- npm-release:unreleased:start -->
