@@ -201,12 +201,17 @@ it("validates document URLs at extraction and direct-provider boundaries without
 it("rejects non-string OAuth redirectUri values", async () => {
   await assert.rejects(
     () =>
-      startAuth("typed-redirect", "https://api.example.com/mcp", {
-        url: "https://api.example.com/mcp",
-        auth: "oauth",
-        // @ts-expect-error OAuth redirect URIs are strings, not port numbers.
-        oauth: { redirectUri: 3118 },
-      }),
+      startAuth(
+        "typed-redirect",
+        "https://api.example.com/mcp",
+        {
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          // @ts-expect-error OAuth redirect URIs are strings, not port numbers.
+          oauth: { redirectUri: 3118 },
+        },
+        {},
+      ),
     /redirectUri must be a string/,
   );
 });

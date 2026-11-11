@@ -28,7 +28,7 @@ import type { ElicitationUIContext } from "../elicitation-handler.ts";
 import { McpServerManager } from "../server-manager.ts";
 import {
   completeAuthFromInput,
-  initializeOAuth,
+  createOAuthRuntime,
   shutdownOAuth,
   startAuth,
 } from "../mcp-auth-flow.ts";
@@ -187,7 +187,7 @@ if (scenario === "auth/2025-03-26-oauth-metadata-backcompat") {
   definition.oauth = { ...definition.oauth, skipIssuerMetadataValidation: true };
 }
 
-const oauthRuntime = await initializeOAuth();
+const oauthRuntime = createOAuthRuntime();
 const manager = new McpServerManager(process.cwd());
 manager.setOAuthRuntime(oauthRuntime);
 manager.setElicitationConfig({ allowUrl: false, ui: scriptedUi });

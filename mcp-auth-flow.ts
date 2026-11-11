@@ -27,8 +27,8 @@ import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import {
   clearPendingAuth,
   getPendingAuthKey,
-  getRuntime,
   getRuntimeState,
+  useRuntime,
   pendingAuthState,
   type AuthStatus,
   type AuthenticateOptions,
@@ -59,9 +59,10 @@ export {
 export {
   createOAuthRuntime,
   hasPendingAuth,
-  initializeOAuth,
+  pendingAuthState,
   shutdownOAuth,
   supportsOAuth,
+  useRuntime,
   type AuthStatus,
   type AuthenticateOptions,
   type McpOAuthRuntime,
@@ -72,10 +73,10 @@ export {
  */
 export async function completeAuthFromInput(
   serverName: string,
-  input?: string,
-  options: AuthenticateOptions = {},
+  input: string | undefined,
+  options: AuthenticateOptions,
 ): Promise<AuthStatus> {
-  const runtime = getRuntime(options);
+  const runtime = useRuntime(options.runtime);
   const fallbackAuthStorageOptions = options.authStorageOptions ?? {};
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
   throwIfAborted(signal);
@@ -96,7 +97,7 @@ type CompletionContext = {
 };
 
 function completionContext(serverName: string, options: AuthenticateOptions): CompletionContext {
-  const runtime = getRuntime(options);
+  const runtime = useRuntime(options.runtime);
   const state = getRuntimeState(runtime);
   const fallback = options.authStorageOptions ?? {};
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
@@ -213,8 +214,8 @@ async function cleanupFailedCompletion(
 /** Complete OAuth authentication with an explicit code or a captured callback. */
 export async function completeAuth(
   serverName: string,
-  authorizationCode?: string | AuthorizationResponseInput,
-  options: AuthenticateOptions = {},
+  authorizationCode: string | AuthorizationResponseInput | undefined,
+  options: AuthenticateOptions,
 ): Promise<AuthStatus> {
   const context = completionContext(serverName, options);
   const response = completionResponse(context, authorizationCode);
@@ -260,13 +261,13 @@ export async function completeAuth(
 export async function authenticate(
   serverName: string,
   serverUrl: string,
-  definition?: ServerEntry,
-  options: AuthenticateOptions = {},
+  definition: ServerEntry | undefined,
+  options: AuthenticateOptions,
 ): Promise<AuthStatus> {
   if (isServerDisabled(definition)) {
     throw new Error(`MCP server "${serverName}" is disabled`);
   }
-  const runtime = getRuntime(options);
+  const runtime = useRuntime(options.runtime);
   const runtimeState = getRuntimeState(runtime);
   const authStorageOptions = options.authStorageOptions ?? {};
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
@@ -300,7 +301,7 @@ async function authenticateOnce(
   definition: ServerEntry | undefined,
   options: AuthenticateOptions,
 ): Promise<AuthStatus> {
-  const runtime = getRuntime(options);
+  const runtime = useRuntime(options.runtime);
   const authStorageOptions = options.authStorageOptions ?? {};
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
   // Start auth flow
@@ -392,11 +393,8 @@ async function showAuthorizationUrl(
  *
  * @param serverName - The name of the MCP server
  */
-export async function removeAuth(
-  serverName: string,
-  options: AuthenticateOptions = {},
-): Promise<void> {
-  const runtime = getRuntime(options);
+export async function removeAuth(serverName: string, options: AuthenticateOptions): Promise<void> {
+  const runtime = useRuntime(options.runtime);
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
   throwIfAborted(signal);
   const authStorageOptions = options.authStorageOptions ?? {};

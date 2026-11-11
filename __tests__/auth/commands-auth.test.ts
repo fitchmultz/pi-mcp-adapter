@@ -3,6 +3,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import type { authenticate, removeAuth } from "../../mcp-auth-flow.ts";
 import { authenticateServer, logoutServer, openMcpAuthPanel } from "../../commands.ts";
 import { createPanelHost } from "../fixtures/panel-host.ts";
+import { createOAuthRuntime } from "../../mcp-oauth-runtime.ts";
 import { createTestState } from "../test-state.ts";
 
 const mocks = vi.hoisted(() => ({
@@ -64,10 +65,12 @@ describe("authenticateServer", () => {
     const definition = { url: "${MCP_AUTH_URL}", auth: "oauth" as const };
     const controller = new AbortController();
     const callback: unknown = expect.any(Function);
+    const runtime = createOAuthRuntime();
     const result = await authenticateServer({
       serverName: "sentry",
       config: { mcpServers: { sentry: definition } },
       ctx: { ...host.context, signal: controller.signal },
+      runtime,
     });
 
     expect(result.ok).toBe(true);
@@ -75,7 +78,7 @@ describe("authenticateServer", () => {
       "sentry",
       "https://mcp.sentry.dev/mcp",
       definition,
-      { onAuthorizationUrl: callback, signal: controller.signal },
+      { onAuthorizationUrl: callback, signal: controller.signal, runtime },
     );
   });
 
@@ -86,6 +89,7 @@ describe("authenticateServer", () => {
       serverName: "sentry",
       config: { mcpServers: { sentry: { url: "https://${MCP_AUTH_URL}/mcp", auth: "oauth" } } },
       ctx: host.context,
+      runtime: createOAuthRuntime(),
     });
 
     expect(result.ok).toBe(false);
@@ -134,21 +138,29 @@ describe("authenticateServer", () => {
       "https://auth.example.com/authorize?resource=https%3A%2F%2Fmcp.sentry.dev%2Fmcp";
     const callback: unknown = expect.any(Function);
     mocks.authenticate.mockImplementationOnce(async (_name, _url, _definition, options) => {
-      await options?.onAuthorizationUrl?.(authorizationUrl);
+      await options.onAuthorizationUrl?.(authorizationUrl);
       return "authenticated";
     });
+    const runtime = createOAuthRuntime();
     const result = await authenticateServer({
       serverName: "sentry",
       config: { mcpServers: { sentry: { url: "https://mcp.sentry.dev/mcp", auth: "oauth" } } },
       ctx: host.context,
+      runtime,
     });
 
     expect(result.ok).toBe(true);
     expect(mocks.authenticate).toHaveBeenCalledWith(
       "sentry",
       "https://mcp.sentry.dev/mcp",
-      { url: "https://mcp.sentry.dev/mcp", auth: "oauth" },
-      { onAuthorizationUrl: callback },
+      {
+        url: "https://mcp.sentry.dev/mcp",
+        auth: "oauth",
+      },
+      {
+        onAuthorizationUrl: callback,
+        runtime,
+      },
     );
     expect(host.context.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining(authorizationUrl),

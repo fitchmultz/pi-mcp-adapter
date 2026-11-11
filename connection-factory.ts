@@ -107,6 +107,7 @@ export class ConnectionFactory {
         typeof definition.url === "string" &&
         definition.url.length > 0 &&
         supportsOAuth(definition) &&
+        this.oauthRuntime !== undefined &&
         runtime.getOAuthRequest(
           name,
           resolveServerUrl(definition) ?? "",

@@ -5,12 +5,7 @@ import {
   computeScopeUnion,
 } from "@modelcontextprotocol/client";
 import { issuersMatch } from "./mcp-oauth-config.ts";
-import {
-  getRuntimeState,
-  getLegacyRuntime,
-  type McpOAuthRuntime,
-  type OAuthRequest,
-} from "./mcp-oauth-runtime.ts";
+import { getRuntimeState, type McpOAuthRuntime, type OAuthRequest } from "./mcp-oauth-runtime.ts";
 
 export function isOAuthChallenge(
   error: unknown,
@@ -26,7 +21,7 @@ export function getOAuthRequest(
   serverName: string,
   serverUrl: string,
   storageBase: string,
-  runtime: McpOAuthRuntime = getLegacyRuntime(),
+  runtime: McpOAuthRuntime,
 ): OAuthRequest | undefined {
   if (runtime.signal.aborted) {
     return undefined;
@@ -37,12 +32,12 @@ export function getOAuthRequest(
 
 type OAuthRequestBinding = Pick<OAuthRequest, "serverName" | "serverUrl"> & {
   storageBase: string;
-  runtime?: McpOAuthRuntime | undefined;
+  runtime: McpOAuthRuntime;
 };
 
 /** Observe native challenges only; no credential reads or auth work here. */
 export function recordOAuthChallenge(binding: OAuthRequestBinding, error: unknown): void {
-  const { serverName, serverUrl, storageBase, runtime = getLegacyRuntime() } = binding;
+  const { serverName, serverUrl, storageBase, runtime } = binding;
   if (runtime.signal.aborted || !isOAuthChallenge(error)) {
     return;
   }
@@ -67,7 +62,7 @@ function scopeChallenge(
 }
 
 export function bindOAuthRequestIssuer(binding: OAuthRequestBinding, issuer: string): void {
-  const { serverName, serverUrl, storageBase, runtime = getLegacyRuntime() } = binding;
+  const { serverName, serverUrl, storageBase, runtime } = binding;
   const request = getOAuthRequest(serverName, serverUrl, storageBase, runtime);
   if (!request) {
     return;

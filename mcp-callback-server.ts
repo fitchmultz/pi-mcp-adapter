@@ -121,7 +121,16 @@ type CallbackEntry =
       timeout: ReturnType<typeof setTimeout>;
     };
 
-/** Server singleton state */
+/**
+ * Server singleton state.
+ *
+ * The callback server is process-shared: every OAuth runtime in the process
+ * reaches the same server and port, and reserved callback states plus active
+ * runtimes hold it open. stopCallbackServer() is therefore only called by
+ * shutdownOAuth() once no runtime remains active; a runtime must release its
+ * own reserved states (releaseCallbackServer/cancelPendingCallback) before
+ * that shutdown can succeed.
+ */
 let server: Server | undefined;
 let bindingPromise: Promise<void> | undefined;
 let stoppingPromise: Promise<void> | undefined;

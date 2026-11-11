@@ -237,7 +237,7 @@ describe("published SDK OAuth compatibility over local HTTP", () => {
     await expect(
       completeAuthFromInput(f.name, `code=fixture-code&state=${state}`, { runtime: f.runtime }),
     ).rejects.toThrow('requires the RFC 9207 "iss"');
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(true);
     await expect(f.complete(authorizationUrl, "http://wrong.invalid")).rejects.toThrow(
       "does not match",
     );
@@ -271,7 +271,7 @@ describe("published SDK OAuth compatibility over local HTTP", () => {
       cancelDiscovery(),
     ]);
     await expect.poll(f.discoveryClosed).toBe(true);
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect(f.tokenRequests).toHaveLength(0);
   });
 

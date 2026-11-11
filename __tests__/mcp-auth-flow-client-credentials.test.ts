@@ -127,28 +127,35 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { completeAuthFromInput, hasPendingAuth, startAuth } =
+    const { completeAuthFromInput, createOAuthRuntime, hasPendingAuth, startAuth } =
       await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
-    await startAuth("rfc9207-missing", "https://api.example.com/mcp", { auth: "oauth" });
+    await startAuth(
+      "rfc9207-missing",
+      "https://api.example.com/mcp",
+      { auth: "oauth" },
+      { runtime },
+    );
     await expect(
-      completeAuthFromInput("rfc9207-missing", `code=auth-code&state=${oauthState}`),
+      completeAuthFromInput("rfc9207-missing", `code=auth-code&state=${oauthState}`, { runtime }),
     ).rejects.toThrow('requires the RFC 9207 "iss" parameter');
 
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
-    expect(hasPendingAuth("rfc9207-missing")).toBe(true);
+    expect(hasPendingAuth("rfc9207-missing", runtime)).toBe(true);
 
     await expect(
       completeAuthFromInput(
         "rfc9207-missing",
         `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://auth.example.com")}`,
+        { runtime },
       ),
     ).resolves.toBe("authenticated");
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(2);
     const completedCall = mocks.sdkAuth.mock.calls[1];
     assert(completedCall !== undefined);
     expect(completedCall[1].iss).toBe("https://auth.example.com");
-    expect(hasPendingAuth("rfc9207-missing")).toBe(false);
+    expect(hasPendingAuth("rfc9207-missing", runtime)).toBe(false);
   });
 
   it("rejects a mismatched RFC 9207 issuer before token exchange", async () => {
@@ -173,19 +180,26 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { completeAuthFromInput, hasPendingAuth, startAuth } =
+    const { completeAuthFromInput, createOAuthRuntime, hasPendingAuth, startAuth } =
       await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
-    await startAuth("rfc9207-mismatch", "https://api.example.com/mcp", { auth: "oauth" });
+    await startAuth(
+      "rfc9207-mismatch",
+      "https://api.example.com/mcp",
+      { auth: "oauth" },
+      { runtime },
+    );
     await expect(
       completeAuthFromInput(
         "rfc9207-mismatch",
         `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://attacker.example.com")}`,
+        { runtime },
       ),
     ).rejects.toThrow("does not match the discovered issuer");
 
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
-    expect(hasPendingAuth("rfc9207-mismatch")).toBe(false);
+    expect(hasPendingAuth("rfc9207-mismatch", runtime)).toBe(false);
   });
 
   it("rejects a callback issuer mismatch when metadata is unavailable", async () => {
@@ -203,39 +217,53 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { completeAuthFromInput, startAuth } = await import("../mcp-auth-flow.ts");
+    const { completeAuthFromInput, createOAuthRuntime, startAuth } =
+      await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
-    await startAuth("issuer-without-metadata", "https://api.example.com/mcp", { auth: "oauth" });
+    await startAuth(
+      "issuer-without-metadata",
+      "https://api.example.com/mcp",
+      { auth: "oauth" },
+      { runtime },
+    );
     await expect(
       completeAuthFromInput(
         "issuer-without-metadata",
         `code=auth-code&state=${oauthState}&iss=${encodeURIComponent("https://attacker.example.com")}`,
+        { runtime },
       ),
     ).rejects.toThrow("does not match the discovered issuer");
 
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
   });
 
-  it("does not start the callback server during OAuth initialization", async () => {
-    const { initializeOAuth } = await import("../mcp-auth-flow.ts");
+  it("does not start the callback server when a runtime is created", async () => {
+    const { createOAuthRuntime } = await import("../mcp-auth-flow.ts");
 
-    await initializeOAuth();
+    createOAuthRuntime();
 
     expect(mocks.ensureCallbackServer).not.toHaveBeenCalled();
   });
 
   it("authenticates client_credentials non-interactively without callback server or browser", async () => {
-    const { authenticate } = await import("../mcp-auth-flow.ts");
+    const { authenticate, createOAuthRuntime } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
-    const status = await authenticate("svc", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-      oauth: {
-        grantType: "client_credentials",
-        clientId: "service-client",
-        clientSecret: "service-secret",
+    const status = await authenticate(
+      "svc",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: {
+          grantType: "client_credentials",
+          clientId: "service-client",
+          clientSecret: "service-secret",
+        },
       },
-    });
+      { runtime },
+    );
 
     expect(status).toBe("authenticated");
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
@@ -259,7 +287,8 @@ describe("mcp-auth-flow explicit auth", () => {
       });
       return "AUTHORIZED";
     });
-    const { authenticate } = await import("../mcp-auth-flow.ts");
+    const { authenticate, createOAuthRuntime } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getAuthForUrl, saveAuthEntry } = await import("../mcp-auth.ts");
 
     saveAuthEntry(
@@ -272,11 +301,16 @@ describe("mcp-auth-flow explicit auth", () => {
       "https://api.example.com/mcp",
     );
 
-    const status = await authenticate("stale-client-credentials", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-      oauth: { grantType: "client_credentials" },
-    });
+    const status = await authenticate(
+      "stale-client-credentials",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: { grantType: "client_credentials" },
+      },
+      { runtime },
+    );
 
     expect(status).toBe("authenticated");
     const stored = getAuthForUrl("stale-client-credentials", "https://api.example.com/mcp");
@@ -289,27 +323,38 @@ describe("mcp-auth-flow explicit auth", () => {
   });
 
   it("deduplicates concurrent authentication attempts for the same server", async () => {
-    const { authenticate } = await import("../mcp-auth-flow.ts");
+    const { authenticate, createOAuthRuntime } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
     const [first, second] = await Promise.all([
-      authenticate("svc", "https://api.example.com/mcp", {
-        url: "https://api.example.com/mcp",
-        auth: "oauth",
-        oauth: {
-          grantType: "client_credentials",
-          clientId: "service-client",
-          clientSecret: "service-secret",
+      authenticate(
+        "svc",
+        "https://api.example.com/mcp",
+        {
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: {
+            grantType: "client_credentials",
+            clientId: "service-client",
+            clientSecret: "service-secret",
+          },
         },
-      }),
-      authenticate("svc", "https://api.example.com/mcp", {
-        url: "https://api.example.com/mcp",
-        auth: "oauth",
-        oauth: {
-          grantType: "client_credentials",
-          clientId: "service-client",
-          clientSecret: "service-secret",
+        { runtime },
+      ),
+      authenticate(
+        "svc",
+        "https://api.example.com/mcp",
+        {
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: {
+            grantType: "client_credentials",
+            clientId: "service-client",
+            clientSecret: "service-secret",
+          },
         },
-      }),
+        { runtime },
+      ),
     ]);
 
     expect(first).toBe("authenticated");
@@ -318,7 +363,8 @@ describe("mcp-auth-flow explicit auth", () => {
   });
 
   it("runs SDK auth before reporting expired tokens as re-authenticated", async () => {
-    const { authenticate } = await import("../mcp-auth-flow.ts");
+    const { authenticate, createOAuthRuntime } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getOAuthState, updateClientInfo, updateTokens } = await import("../mcp-auth.ts");
 
     updateClientInfo(
@@ -336,10 +382,15 @@ describe("mcp-auth-flow explicit auth", () => {
       "https://api.example.com/mcp",
     );
 
-    const status = await authenticate("expired", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-    });
+    const status = await authenticate(
+      "expired",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+      },
+      { runtime },
+    );
 
     expect(status).toBe("authenticated");
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
@@ -360,7 +411,8 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getAuthForUrl, getOAuthState, saveAuthEntry } = await import("../mcp-auth.ts");
 
     saveAuthEntry(
@@ -373,10 +425,15 @@ describe("mcp-auth-flow explicit auth", () => {
       "https://api.example.com/mcp",
     );
 
-    const result = await startAuth("stale", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-    });
+    const result = await startAuth(
+      "stale",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+      },
+      { runtime },
+    );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
     const stored = getAuthForUrl("stale", "https://api.example.com/mcp");
@@ -462,7 +519,8 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getAuthForUrl, updateClientInfo, updateTokens } = await import("../mcp-auth.ts");
 
     updateClientInfo(
@@ -480,10 +538,15 @@ describe("mcp-auth-flow explicit auth", () => {
       "https://api.example.com/mcp",
     );
 
-    await startAuth("tokened", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-    });
+    await startAuth(
+      "tokened",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+      },
+      { runtime },
+    );
 
     expect(getAuthForUrl("tokened", "https://api.example.com/mcp")?.clientInfo?.clientId).toBe(
       "stored-client",
@@ -501,7 +564,8 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getAuthForUrl, saveAuthEntry } = await import("../mcp-auth.ts");
 
     saveAuthEntry(
@@ -519,11 +583,16 @@ describe("mcp-auth-flow explicit auth", () => {
       "https://api.example.com/mcp",
     );
 
-    const result = await startAuth("stale-redirect", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-      oauth: { redirectUri: "http://localhost:3118/callback" },
-    });
+    const result = await startAuth(
+      "stale-redirect",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: { redirectUri: "http://localhost:3118/callback" },
+      },
+      { runtime },
+    );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
     const stored = getAuthForUrl("stale-redirect", "https://api.example.com/mcp");
@@ -554,7 +623,8 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getAuthForUrl, updateClientInfo, updateTokens } = await import("../mcp-auth.ts");
 
     updateClientInfo(
@@ -571,10 +641,15 @@ describe("mcp-auth-flow explicit auth", () => {
       "https://api.example.com/mcp",
     );
 
-    const result = await startAuth("missing-redirect-metadata", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-    });
+    const result = await startAuth(
+      "missing-redirect-metadata",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+      },
+      { runtime },
+    );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
     const stored = getAuthForUrl("missing-redirect-metadata", "https://api.example.com/mcp");
@@ -594,7 +669,8 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getAuthEntryFilePath, getAuthForUrl } = await import("../mcp-auth.ts");
     const legacyFile = getAuthEntryFilePath("malformed-redirect-metadata");
     mkdirSync(dirname(legacyFile), { recursive: true });
@@ -611,10 +687,15 @@ describe("mcp-auth-flow explicit auth", () => {
       }),
     );
 
-    const result = await startAuth("malformed-redirect-metadata", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-    });
+    const result = await startAuth(
+      "malformed-redirect-metadata",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+      },
+      { runtime },
+    );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
     const stored = getAuthForUrl("malformed-redirect-metadata", "https://api.example.com/mcp");
@@ -632,7 +713,8 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getAuthForUrl, updateClientInfo } = await import("../mcp-auth.ts");
 
     updateClientInfo(
@@ -641,11 +723,16 @@ describe("mcp-auth-flow explicit auth", () => {
       "https://api.example.com/mcp",
     );
 
-    await startAuth("registered", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-      oauth: { clientId: "registered-client" },
-    });
+    await startAuth(
+      "registered",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: { clientId: "registered-client" },
+      },
+      { runtime },
+    );
 
     expect(getAuthForUrl("registered", "https://api.example.com/mcp")?.clientInfo?.clientId).toBe(
       "stored-dynamic-client",
@@ -662,14 +749,20 @@ describe("mcp-auth-flow explicit auth", () => {
     });
     mocks.open.mockRejectedValueOnce(new Error("no browser"));
     mocks.waitForCallback.mockResolvedValueOnce({ code: "manual-code" });
-    const { authenticate } = await import("../mcp-auth-flow.ts");
+    const { authenticate, createOAuthRuntime } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getOAuthState } = await import("../mcp-auth.ts");
 
     await expect(
-      authenticate("browser-fail", "https://api.example.com/mcp", {
-        url: "https://api.example.com/mcp",
-        auth: "oauth",
-      }),
+      authenticate(
+        "browser-fail",
+        "https://api.example.com/mcp",
+        {
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+        },
+        { runtime },
+      ),
     ).resolves.toBe("authenticated");
 
     expect(mocks.sdkAuth).toHaveBeenNthCalledWith(2, expect.anything(), {
@@ -694,7 +787,9 @@ describe("mcp-auth-flow explicit auth", () => {
     );
     const controller = new AbortController();
     const reason = new Error("request cancelled");
-    const { authenticate, hasPendingAuth } = await import("../mcp-auth-flow.ts");
+    const { authenticate, createOAuthRuntime, hasPendingAuth } =
+      await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getOAuthState } = await import("../mcp-auth.ts");
 
     await expect(
@@ -706,6 +801,7 @@ describe("mcp-auth-flow explicit auth", () => {
           auth: "oauth",
         },
         {
+          runtime,
           signal: controller.signal,
           onAuthorizationUrl: () => controller.abort(reason),
         },
@@ -714,7 +810,7 @@ describe("mcp-auth-flow explicit auth", () => {
 
     expect(mocks.waitForCallback).toHaveBeenCalledTimes(1);
     expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(expect.any(String));
-    expect(hasPendingAuth("cancel-manual")).toBe(false);
+    expect(hasPendingAuth("cancel-manual", runtime)).toBe(false);
     expect(getOAuthState("cancel-manual")).toBeUndefined();
   });
 
@@ -742,7 +838,8 @@ describe("mcp-auth-flow explicit auth", () => {
     mocks.open.mockResolvedValueOnce();
     const controller = new AbortController();
     const reason = new Error("request cancelled");
-    const { authenticate } = await import("../mcp-auth-flow.ts");
+    const { authenticate, createOAuthRuntime } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getAuthForUrl } = await import("../mcp-auth.ts");
 
     const authentication = authenticate(
@@ -752,7 +849,7 @@ describe("mcp-auth-flow explicit auth", () => {
         url: "https://api.example.com/mcp",
         auth: "oauth",
       },
-      { signal: controller.signal },
+      { runtime, signal: controller.signal },
     );
     await tokenExchangeStarted;
     controller.abort(reason);
@@ -772,15 +869,21 @@ describe("mcp-auth-flow explicit auth", () => {
       );
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
-    const result = await startAuth("google", "https://gmailmcp.googleapis.com/mcp/v1", {
-      url: "https://gmailmcp.googleapis.com/mcp/v1",
-      auth: "oauth",
-      oauth: {
-        authorizationParams: { access_type: "offline", prompt: "consent" },
+    const result = await startAuth(
+      "google",
+      "https://gmailmcp.googleapis.com/mcp/v1",
+      {
+        url: "https://gmailmcp.googleapis.com/mcp/v1",
+        auth: "oauth",
+        oauth: {
+          authorizationParams: { access_type: "offline", prompt: "consent" },
+        },
       },
-    });
+      { runtime },
+    );
 
     const url = new URL(result.authorizationUrl);
     expect(url.searchParams.get("client_id")).toBe("abc");
@@ -795,14 +898,20 @@ describe("mcp-auth-flow explicit auth", () => {
       );
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
     await expect(
-      startAuth("bad-param", "https://api.example.com/mcp", {
-        url: "https://api.example.com/mcp",
-        auth: "oauth",
-        oauth: { authorizationParams: { state: "config-state" } },
-      }),
+      startAuth(
+        "bad-param",
+        "https://api.example.com/mcp",
+        {
+          url: "https://api.example.com/mcp",
+          auth: "oauth",
+          oauth: { authorizationParams: { state: "config-state" } },
+        },
+        { runtime },
+      ),
     ).rejects.toThrow(
       "OAuth authorizationParams.state cannot override an authorization flow parameter",
     );
@@ -820,7 +929,8 @@ describe("mcp-auth-flow explicit auth", () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {
       // Capture unexpected console output without printing authorization URLs.
     });
-    const { authenticate } = await import("../mcp-auth-flow.ts");
+    const { authenticate, createOAuthRuntime } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
     try {
       await expect(
@@ -831,7 +941,7 @@ describe("mcp-auth-flow explicit auth", () => {
             url: "https://api.example.com/mcp",
             auth: "oauth",
           },
-          { onAuthorizationUrl },
+          { runtime, onAuthorizationUrl },
         ),
       ).resolves.toBe("authenticated");
     } finally {
@@ -850,19 +960,62 @@ describe("mcp-auth-flow explicit auth", () => {
       );
       return "REDIRECT";
     });
-    const { hasPendingAuth, startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, hasPendingAuth, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
     const definition = {
       url: "https://api.example.com/mcp",
       auth: "oauth" as const,
     };
-    const first = await startAuth("manual-repeat", "https://api.example.com/mcp", definition);
-    const second = await startAuth("manual-repeat", "https://api.example.com/mcp", definition);
+    const first = await startAuth("manual-repeat", "https://api.example.com/mcp", definition, {
+      runtime,
+    });
+    const second = await startAuth("manual-repeat", "https://api.example.com/mcp", definition, {
+      runtime,
+    });
 
     expect(first.authorizationUrl).toBe("https://auth.example.com/authorize?client_id=first");
     expect(second).toEqual(first);
-    expect(hasPendingAuth("manual-repeat")).toBe(true);
+    expect(hasPendingAuth("manual-repeat", runtime)).toBe(true);
     expect(mocks.sdkAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a failed start's callback reservation while an older flow stays pending", async () => {
+    let firstState = "";
+    mocks.sdkAuth
+      .mockImplementationOnce(async (provider) => {
+        assert(provider.state !== undefined);
+        firstState = await provider.state();
+        await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
+        return "REDIRECT";
+      })
+      .mockImplementationOnce(async () => {
+        throw new Error("authorization server unavailable");
+      });
+    const { createOAuthRuntime, hasPendingAuth, pendingAuthState, startAuth } =
+      await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
+
+    await startAuth("leaky", "https://api.example.com/mcp", { auth: "oauth" }, { runtime });
+    expect(hasPendingAuth("leaky", runtime)).toBe(true);
+
+    // The second start uses a different URL, so it cannot reuse the pending
+    // flow: it reserves its own callback state and then fails mid-flow.
+    await expect(
+      startAuth("leaky", "https://api.example.com/other", { auth: "oauth" }, { runtime }),
+    ).rejects.toThrow("authorization server unavailable");
+
+    // The older pending flow is untouched...
+    expect(hasPendingAuth("leaky", runtime)).toBe(true);
+    expect(pendingAuthState(runtime, "leaky")).toBe(firstState);
+    expect(mocks.cancelPendingCallback).not.toHaveBeenCalledWith(firstState);
+    // ...and the failed start released the callback state it reserved.
+    const reservedStates = mocks.ensureCallbackServer.mock.calls
+      .map((call) => call[0]?.oauthState)
+      .filter((state) => typeof state === "string");
+    const failedState = reservedStates.find((state) => state !== firstState);
+    assert(failedState !== undefined);
+    expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(failedState);
   });
 
   it("isolates concurrent OAuth runtimes with the same server name and auth directory", async () => {
@@ -895,8 +1048,8 @@ describe("mcp-auth-flow explicit auth", () => {
     const [stateA, stateB] = states;
     assert(stateA !== undefined && stateB !== undefined);
     expect(stateA).not.toBe(stateB);
-    expect(hasPendingAuth("shared", undefined, runtimeA)).toBe(true);
-    expect(hasPendingAuth("shared", undefined, runtimeB)).toBe(true);
+    expect(hasPendingAuth("shared", runtimeA)).toBe(true);
+    expect(hasPendingAuth("shared", runtimeB)).toBe(true);
 
     await expect(
       completeAuthFromInput("shared", `code=code-a&state=${stateA}`, { runtime: runtimeA }),
@@ -908,11 +1061,11 @@ describe("mcp-auth-flow explicit auth", () => {
 
     await shutdownOAuth(runtimeA);
     await shutdownOAuth(runtimeA);
-    expect(hasPendingAuth("shared", undefined, runtimeA)).toBe(false);
+    expect(hasPendingAuth("shared", runtimeA)).toBe(false);
     expect(mocks.stopCallbackServer).not.toHaveBeenCalled();
 
     await shutdownOAuth(runtimeB);
-    expect(hasPendingAuth("shared", undefined, runtimeB)).toBe(false);
+    expect(hasPendingAuth("shared", runtimeB)).toBe(false);
     expect(mocks.stopCallbackServer).toHaveBeenCalledTimes(1);
   });
 
@@ -942,7 +1095,7 @@ describe("mcp-auth-flow explicit auth", () => {
     await shutdownOAuth(runtimeA);
 
     expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(states[0]);
-    expect(hasPendingAuth("shared", undefined, runtimeB)).toBe(true);
+    expect(hasPendingAuth("shared", runtimeB)).toBe(true);
     expect(mocks.stopCallbackServer).not.toHaveBeenCalled();
     const remainingState = states[1];
     assert(remainingState !== undefined);
@@ -988,18 +1141,26 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { completeAuth, startAuth } = await import("../mcp-auth-flow.ts");
+    const { completeAuth, createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
     const { getOAuthState } = await import("../mcp-auth.ts");
 
-    await startAuth("direct-complete", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-      headers: { "X-Tenant": "tenant-a" },
-    });
+    await startAuth(
+      "direct-complete",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        headers: { "X-Tenant": "tenant-a" },
+      },
+      { runtime },
+    );
     expect(oauthState).toBeDefined();
     expect(getOAuthState("direct-complete")).toBeUndefined();
 
-    await expect(completeAuth("direct-complete", "auth-code")).resolves.toBe("authenticated");
+    await expect(completeAuth("direct-complete", "auth-code", { runtime })).resolves.toBe(
+      "authenticated",
+    );
 
     const probeInit = mocks.fetch.mock.calls[0]?.[1];
     assert(probeInit !== undefined && typeof probeInit.body === "string");
@@ -1034,14 +1195,22 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { completeAuth, startAuth } = await import("../mcp-auth-flow.ts");
+    const { completeAuth, createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
-    await startAuth("configured-scope", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-      oauth: { scope: "session:role:MCP_ROLE" },
-    });
-    await expect(completeAuth("configured-scope", "auth-code")).resolves.toBe("authenticated");
+    await startAuth(
+      "configured-scope",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: { scope: "session:role:MCP_ROLE" },
+      },
+      { runtime },
+    );
+    await expect(completeAuth("configured-scope", "auth-code", { runtime })).resolves.toBe(
+      "authenticated",
+    );
 
     expect(mocks.sdkAuth).toHaveBeenNthCalledWith(1, expect.anything(), {
       serverUrl: "https://api.example.com/mcp",
@@ -1063,17 +1232,23 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
-    const result = await startAuth("explicit-redirect", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-      oauth: {
-        redirectUri: "http://127.0.0.1:3118/callback",
-        clientName: "Custom MCP",
-        clientUri: "https://example.com/custom-mcp",
+    const result = await startAuth(
+      "explicit-redirect",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: {
+          redirectUri: "http://127.0.0.1:3118/callback",
+          clientName: "Custom MCP",
+          clientUri: "https://example.com/custom-mcp",
+        },
       },
-    });
+      { runtime },
+    );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
     const callbackBinding = mocks.ensureCallbackServer.mock.calls[0]?.[0];
@@ -1093,15 +1268,21 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
-    const result = await startAuth("svc", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-      oauth: {
-        clientId: "registered-client",
+    const result = await startAuth(
+      "svc",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+        oauth: {
+          clientId: "registered-client",
+        },
       },
-    });
+      { runtime },
+    );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
     const callbackBinding = mocks.ensureCallbackServer.mock.calls[0]?.[0];
@@ -1115,12 +1296,18 @@ describe("mcp-auth-flow explicit auth", () => {
       await provider.redirectToAuthorization(new URL("https://auth.example.com/authorize"));
       return "REDIRECT";
     });
-    const { startAuth } = await import("../mcp-auth-flow.ts");
+    const { createOAuthRuntime, startAuth } = await import("../mcp-auth-flow.ts");
+    const runtime = createOAuthRuntime();
 
-    const result = await startAuth("svc", "https://api.example.com/mcp", {
-      url: "https://api.example.com/mcp",
-      auth: "oauth",
-    });
+    const result = await startAuth(
+      "svc",
+      "https://api.example.com/mcp",
+      {
+        url: "https://api.example.com/mcp",
+        auth: "oauth",
+      },
+      { runtime },
+    );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
     const callbackBinding = mocks.ensureCallbackServer.mock.calls[0]?.[0];

@@ -162,7 +162,9 @@ class HttpConnection {
         },
         onDiscoveryState: (state) => {
           this.issuer = state.authorizationServerMetadata?.issuer ?? state.authorizationServerUrl;
-          if (this.active()) {
+          // Without an OAuth runtime this connection keeps no OAuth bookkeeping;
+          // hosts that enable OAuth always attach one before connecting.
+          if (this.active() && this.options.oauthRuntime !== undefined) {
             runtime.bindOAuthRequestIssuer(
               {
                 serverName,
@@ -263,7 +265,8 @@ class HttpConnection {
         !this.active() ||
         isServerDisabled(definition) ||
         !supportsOAuth(definition) ||
-        !runtime.isOAuthChallenge(error)
+        !runtime.isOAuthChallenge(error) ||
+        oauthRuntime === undefined
       ) {
         return;
       }
@@ -283,7 +286,7 @@ class HttpConnection {
 
   private bindChallengeIssuer(): void {
     const { runtime, serverName, oauthRuntime } = this.options;
-    if (this.issuer !== undefined && this.issuer.length > 0) {
+    if (oauthRuntime !== undefined && this.issuer !== undefined && this.issuer.length > 0) {
       const request = runtime.getOAuthRequest(
         serverName,
         this.serverUrl,

@@ -88,6 +88,13 @@ interface McpOAuthProviderOptions {
  * Implements the OAuthClientProvider interface from the MCP SDK.
  */
 export class McpOAuthProvider implements OAuthClientProvider {
+  /**
+   * Callback URL captured at construction, including the port bound at that
+   * moment. Constructing a provider is only valid after reserveCallback() has
+   * bound the shared callback server, so the snapshot matches the port the
+   * browser will actually be redirected to; later port changes do not rebind
+   * an existing provider.
+   */
   private readonly redirectUrlSnapshot: string | undefined;
   readonly clientMetadataUrl?: string;
   private readonly controller = new AbortController();

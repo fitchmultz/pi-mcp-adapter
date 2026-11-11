@@ -59,7 +59,7 @@ describe("lazy-keep-alive lifecycle", () => {
 
   beforeEach(() => {
     manager = new McpServerManager();
-    lifecycle = new McpLifecycleManager(manager);
+    lifecycle = new McpLifecycleManager(manager, () => false);
   });
 
   afterEach(async () => {

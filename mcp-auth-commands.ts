@@ -37,7 +37,7 @@ async function runAuthentication(input: {
   config: McpConfig;
   ctx: ExtensionContext;
   signal: AbortSignal | undefined;
-  runtime: McpOAuthRuntime | undefined;
+  runtime: McpOAuthRuntime;
 }): Promise<McpAuthResult> {
   const { serverName, serverUrl, definition, config, ctx, signal, runtime } = input;
   const ui = ctx.ui;
@@ -54,7 +54,7 @@ async function runAuthentication(input: {
       );
     },
     ...(signal ? { signal } : {}),
-    ...(runtime ? { runtime } : {}),
+    runtime,
   });
   if (signal?.aborted === true) {
     signal.throwIfAborted();
@@ -107,7 +107,7 @@ export async function authenticateServer(input: {
   config: McpConfig;
   ctx: ExtensionContext;
   signal?: AbortSignal | undefined;
-  runtime?: McpOAuthRuntime | undefined;
+  runtime: McpOAuthRuntime;
 }): Promise<McpAuthResult> {
   const { serverName, config, ctx, signal, runtime } = input;
   const ui = ctx.hasUI ? ctx.ui : undefined;
