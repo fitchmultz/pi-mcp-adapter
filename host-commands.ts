@@ -20,10 +20,13 @@ type Command = {
 
 function snapshotContext(ctx: ExtensionContext, owner: McpRuntimeOwner | null): ExtensionContext {
   const trusted = ctx.isProjectTrusted();
+  // A stopped runtime has nothing left to fence: its UI calls must not become undefined, or a
+  // failed session could not even report why it failed.
+  const live = owner?.isActive() === true ? owner : null;
   return {
     ...ctx,
-    ui: owner && ctx.hasUI ? createOwnedUi(ctx.ui, owner) : ctx.ui,
-    signal: owner?.signal ?? ctx.signal,
+    ui: live !== null && ctx.hasUI ? createOwnedUi(ctx.ui, live) : ctx.ui,
+    signal: live?.signal ?? ctx.signal,
     isProjectTrusted: () => trusted,
   };
 }

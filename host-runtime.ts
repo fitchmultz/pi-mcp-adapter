@@ -15,6 +15,7 @@ import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-lo
 import { logger } from "./logger.ts";
 import { abortable } from "./abort.ts";
 import { McpHostCommands } from "./host-commands.ts";
+import { HostSession } from "./host-session.ts";
 import { McpStateCleanup } from "./host-state-cleanup.ts";
 import { McpHostTools } from "./host-tools.ts";
 
@@ -36,9 +37,7 @@ async function awaitWithTimeout<T>(promise: Promise<T>): Promise<T | typeof INIT
 }
 
 export class McpHostRuntime implements McpAdapterHost {
-  state: McpExtensionState | null = null;
-  initPromise: Promise<McpExtensionState> | null = null;
-  owner: McpRuntimeOwner | null = null;
+  private readonly session = new HostSession();
   configPath: string | undefined;
   directToolsFrozen = false;
   config: McpConfig;
@@ -47,7 +46,6 @@ export class McpHostRuntime implements McpAdapterHost {
   private readonly options: McpAdapterOptions;
   private readonly sessionConfig: McpConfig | undefined;
   private oauthRuntime: McpOAuthRuntime | null = null;
-  private generation = 0;
   private runtimeCwd: string | undefined;
   private initModule: typeof Init | undefined;
   private readonly promptCommands = new Set<string>();
@@ -61,6 +59,18 @@ export class McpHostRuntime implements McpAdapterHost {
   private sessionManager: ExtensionContext["sessionManager"] | undefined;
   /** Whether tool_search activation was decided since the last session start or tree navigation. */
   private toolSearchSettled = false;
+
+  get state(): McpExtensionState | null {
+    return this.session.currentState;
+  }
+
+  get initPromise(): Promise<McpExtensionState> | null {
+    return this.session.pendingInitialization;
+  }
+
+  get owner(): McpRuntimeOwner | null {
+    return this.session.currentOwner;
+  }
 
   constructor(pi: ExtensionAPI, options: McpAdapterOptions) {
     this.pi = pi;
@@ -181,14 +191,11 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private async shutdown(): Promise<void> {
-    ++this.generation;
     const state = this.state;
     const owner = this.owner;
     const oauthRuntime = this.oauthRuntime;
-    this.owner = null;
+    this.session.end();
     this.oauthRuntime = null;
-    this.state = null;
-    this.initPromise = null;
     const stopOwner = owner?.stop("MCP extension session shutdown") ?? Promise.resolve();
     const results = await Promise.allSettled([
       stopOwner,
@@ -221,16 +228,13 @@ export class McpHostRuntime implements McpAdapterHost {
   private async startSession(ctx: ExtensionContext): Promise<void> {
     this.runtimeCwd = ctx.cwd;
     this.directToolsFrozen = false;
-    const generation = ++this.generation;
     const previousState = this.state;
     const previousOwner = this.owner;
     const previousOAuthRuntime = this.oauthRuntime;
     const owner = createMcpRuntimeOwner();
     const oauthRuntime = createOAuthRuntime(owner.signal);
-    this.owner = owner;
+    const generation = this.session.begin(owner);
     this.oauthRuntime = oauthRuntime;
-    this.state = null;
-    this.initPromise = null;
     const stopPrevious =
       previousOwner?.stop("MCP extension session restarted") ?? Promise.resolve();
     try {
@@ -244,7 +248,7 @@ export class McpHostRuntime implements McpAdapterHost {
         `MCP: failed to shut down previous session state: ${formatTerminalError(error)}`,
       );
     }
-    if (!this.isCurrent(owner, generation)) {
+    if (!this.session.owns(owner, generation)) {
       return;
     }
     const runtimeConfig = this.resolveConfig(ctx);
@@ -256,7 +260,7 @@ export class McpHostRuntime implements McpAdapterHost {
     this.syncCatalog(runtimeConfig, cache);
     const init = await import("./init.ts");
     this.initModule = init;
-    if (!this.isCurrent(owner, generation)) {
+    if (!this.session.owns(owner, generation)) {
       return;
     }
     const initialization = this.startInitialization({
@@ -270,10 +274,6 @@ export class McpHostRuntime implements McpAdapterHost {
     if (this.shouldAwaitInitialization(runtimeConfig, cache)) {
       await initialization;
     }
-  }
-
-  private isCurrent(owner: McpRuntimeOwner, generation: number): boolean {
-    return generation === this.generation && owner.isActive();
   }
 
   private shouldAwaitInitialization(config: McpConfig, cache: MetadataCache | null): boolean {
@@ -295,10 +295,10 @@ export class McpHostRuntime implements McpAdapterHost {
       statusEvents: this.pi.events,
       ...(this.options.onToolCall ? { onToolCall: this.options.onToolCall } : {}),
     });
-    this.initPromise = promise;
+    this.session.initialize(generation, promise);
     return promise
       .then(async (state) => {
-        if (!owner.isActive() || generation !== this.generation || this.initPromise !== promise) {
+        if (!this.session.owns(owner, generation)) {
           try {
             await this.shutdownState(state, "stale_session_start");
           } catch (error) {
@@ -308,12 +308,12 @@ export class McpHostRuntime implements McpAdapterHost {
           }
           return;
         }
-        this.state = state;
+        this.session.ready(state);
         this.bindMetadataUpdates(owner);
         await this.completeInitialization(input);
         return;
       })
-      .catch((error: unknown) => this.rejectInitialization(input, promise, error));
+      .catch((error: unknown) => this.rejectInitialization(input, error));
   }
 
   private bindMetadataUpdates(owner: McpRuntimeOwner): void {
@@ -335,7 +335,7 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private async completeInitialization({ init, owner }: Initialization): Promise<void> {
-    const state = this.state;
+    const state = this.session.currentState;
     if (!state) {
       return;
     }
@@ -343,7 +343,6 @@ export class McpHostRuntime implements McpAdapterHost {
     this.syncPromptCommands();
     this.syncToolSurface();
     init.updateStatusBar(state);
-    this.initPromise = null;
     if (state.config.settings?.freezeDirectTools === true) {
       this.directToolsFrozen = true;
       logger.info(
@@ -352,24 +351,20 @@ export class McpHostRuntime implements McpAdapterHost {
     }
   }
 
-  private async rejectInitialization(
-    input: Initialization,
-    promise: Promise<McpExtensionState>,
-    error: unknown,
-  ): Promise<void> {
+  private async rejectInitialization(input: Initialization, error: unknown): Promise<void> {
     const { owner, generation, oauthRuntime } = input;
-    if (
-      !owner.isActive() ||
-      generation !== this.generation ||
-      (this.initPromise !== promise && this.initPromise !== null)
-    ) {
+    // A newer session owns the runtime; this rejection is its predecessor's.
+    if (!this.session.owns(owner, generation)) {
       return;
     }
     console.error(`MCP initialization failed: ${formatTerminalError(error)}`);
-    this.initPromise = null;
-    if (this.state) {
+    const state = this.session.currentState;
+    if (state) {
+      // The state was published; the failure belongs to its completion work, not the session.
+      this.session.ready(state);
       return;
     }
+    this.session.fail(formatTerminalError(error));
     try {
       await Promise.all([owner.stop("MCP initialization failed"), shutdownOAuth(oauthRuntime)]);
     } catch (cleanupError) {
@@ -383,11 +378,12 @@ export class McpHostRuntime implements McpAdapterHost {
     owner: McpRuntimeOwner | null,
     ctx: ExtensionContext,
   ): Promise<McpExtensionState | null> {
-    if (!this.state && this.initPromise) {
+    const pending = this.session.pendingInitialization;
+    if (!this.session.currentState && pending) {
       try {
-        const initialized = await this.initPromise;
+        const initialized = await pending;
         owner?.throwIfInactive();
-        this.state = initialized;
+        this.session.adopt(initialized);
       } catch (error) {
         ctx.ui.notify(
           `MCP initialization failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -396,17 +392,19 @@ export class McpHostRuntime implements McpAdapterHost {
         return null;
       }
     }
-    if (!this.state) {
-      ctx.ui.notify("MCP not initialized", "error");
+    const state = this.session.currentState;
+    if (!state) {
+      ctx.ui.notify(unavailableStateMessage(this.session), "error");
     }
-    return this.state;
+    return state;
   }
 
   async getToolState(signal?: AbortSignal): ReturnType<McpAdapterHost["getToolState"]> {
-    const owner = this.owner;
-    if (!this.state && this.initPromise) {
+    const owner = this.session.currentOwner;
+    const pending = this.session.pendingInitialization;
+    if (!this.session.currentState && pending) {
       try {
-        const initialized = await awaitWithTimeout(abortable(this.initPromise, signal));
+        const initialized = await awaitWithTimeout(abortable(pending, signal));
         if (initialized === INIT_WAIT_TIMED_OUT) {
           return {
             content: [
@@ -416,7 +414,7 @@ export class McpHostRuntime implements McpAdapterHost {
           };
         }
         owner?.throwIfInactive();
-        this.state = initialized;
+        this.session.adopt(initialized);
       } catch (error) {
         if (cancelled(owner, signal, error)) {
           throw error;
@@ -429,14 +427,32 @@ export class McpHostRuntime implements McpAdapterHost {
       }
     }
     owner?.throwIfInactive();
-    return (
-      this.state ?? {
+    return this.toolStateReport();
+  }
+
+  private toolStateReport(): McpExtensionState | ToolStateUnavailable {
+    const state = this.session.currentState;
+    if (state) {
+      return state;
+    }
+    const message = this.session.failureMessage;
+    if (message === null) {
+      return {
         content: [{ type: "text", text: "MCP not initialized" }],
         details: { error: "not_initialized" },
-      }
-    );
+      };
+    }
+    return {
+      content: [{ type: "text", text: `MCP initialization failed: ${message}` }],
+      details: { error: "init_failed", message },
+    };
   }
 }
+
+type ToolStateUnavailable = {
+  content: Array<{ type: "text"; text: string }>;
+  details: { error: string; message?: string };
+};
 
 type Initialization = {
   init: typeof Init;
@@ -446,6 +462,12 @@ type Initialization = {
   runtimeConfig: McpConfig;
   generation: number;
 };
+
+/** Why no state is available; a recorded initialization failure keeps its reason. */
+function unavailableStateMessage(session: HostSession): string {
+  const failure = session.failureMessage;
+  return failure === null ? "MCP not initialized" : `MCP initialization failed: ${failure}`;
+}
 
 function cancelled(
   owner: McpRuntimeOwner | null,
