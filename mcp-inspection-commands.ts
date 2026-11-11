@@ -2,35 +2,17 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type PromptMetadata } from "./types.ts";
 import { getFailureAgeSeconds, getFailureMessage } from "./init.ts";
-import { sanitizeTerminalText } from "./utils.ts";
-function statusLabel(
-  state: McpExtensionState,
-  name: string,
-): { status: string; statusIcon: string; failed: boolean } {
-  const connection = state.manager.getConnection(name);
-  const metadata = state.toolMetadata.get(name);
+import { inspectionStatus, serverStage } from "./server-status.ts";
+
+function statusLabel(state: McpExtensionState, name: string): ReturnType<typeof inspectionStatus> {
   const failedAgo = getFailureAgeSeconds(state, name);
-  let status = "not connected";
-  let statusIcon = "○";
-  let failed = false;
-
-  if (connection?.status === "connected") {
-    status = "connected";
-    statusIcon = "✓";
-  } else if (connection?.status === "needs-auth") {
-    status = "needs auth";
-    statusIcon = "⚠";
-  } else if (failedAgo !== null) {
-    const reason = sanitizeTerminalText(getFailureMessage(state, name) ?? "");
-    status =
-      reason.length > 0 ? `failed ${failedAgo}s ago — ${reason}` : `failed ${failedAgo}s ago`;
-    statusIcon = "✗";
-    failed = true;
-  } else if (metadata !== undefined) {
-    status = "cached";
-  }
-
-  return { status, statusIcon, failed };
+  const stage = serverStage({
+    definition: state.config.mcpServers[name],
+    transport: state.manager.getConnection(name)?.status,
+    failedAgoSeconds: failedAgo,
+    catalogKnown: state.toolMetadata.get(name) !== undefined,
+  });
+  return inspectionStatus(stage, failedAgo, getFailureMessage(state, name));
 }
 
 function serverStatusLine(state: McpExtensionState, name: string): string {

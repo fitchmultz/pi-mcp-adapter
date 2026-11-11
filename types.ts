@@ -214,13 +214,14 @@ export interface MetadataCache {
   servers: Record<string, ServerCacheEntry>;
 }
 
+/** What the `/mcp` panel reports; the panel adds its local reconnect as "connecting". */
+export type McpPanelConnectionStatus = "connected" | "idle" | "failed" | "needs-auth" | "disabled";
+
 export interface McpPanelCallbacks {
   reconnect: (serverName: string, afterAuth?: boolean) => Promise<boolean>;
   canAuthenticate: (serverName: string) => boolean;
   authenticate: (serverName: string) => Promise<McpAuthResult>;
-  getConnectionStatus: (
-    serverName: string,
-  ) => "connected" | "idle" | "failed" | "needs-auth" | "disabled";
+  getConnectionStatus: (serverName: string) => McpPanelConnectionStatus;
   getFailureMessage?: (serverName: string) => string | null;
   refreshCacheAfterReconnect: (serverName: string) => ServerCacheEntry | null;
 }

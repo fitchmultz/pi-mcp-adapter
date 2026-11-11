@@ -2,42 +2,13 @@ import type { McpExtensionState } from "./state.ts";
 import type { McpStatusEventBus } from "./mcp-status-events.ts";
 export type { McpStatusEventBus } from "./mcp-status-events.ts";
 import {
+  isServerDisabled,
   MCP_STATUS_EVENT,
   MCP_STATUS_SNAPSHOT_VERSION,
   type McpServerStatusSnapshot,
   type McpStatusSnapshot,
 } from "./types.ts";
-
-const FAILURE_BACKOFF_MS = 60 * 1000;
-
-function getActiveFailureAgeSeconds(
-  state: McpExtensionState,
-  serverName: string,
-): number | undefined {
-  const failedAt = state.failureTracker.get(serverName);
-  if (failedAt === undefined || failedAt === 0 || Number.isNaN(failedAt)) {
-    return undefined;
-  }
-  const ageMs = Date.now() - failedAt;
-  return ageMs > FAILURE_BACKOFF_MS ? undefined : Math.round(ageMs / 1000);
-}
-
-function getServerStatus(
-  connection: ReturnType<McpExtensionState["manager"]["getConnection"]>,
-  failedAgoSeconds: number | undefined,
-  catalogKnown: boolean,
-): McpServerStatusSnapshot["status"] {
-  if (connection?.status === "connected") {
-    return "connected";
-  }
-  if (connection?.status === "needs-auth") {
-    return "needs-auth";
-  }
-  if (failedAgoSeconds !== undefined) {
-    return "failed";
-  }
-  return catalogKnown ? "cached" : "not-connected";
-}
+import { failureAgeSeconds, runtimeStatus, serverStage } from "./server-status.ts";
 
 function getCatalogCounts(
   state: McpExtensionState,
@@ -56,20 +27,28 @@ function getCatalogCounts(
 }
 
 function getServerSnapshot(state: McpExtensionState, name: string): McpServerStatusSnapshot {
-  if (state.config.mcpServers[name]?.disabled === true) {
+  const definition = state.config.mcpServers[name];
+  if (isServerDisabled(definition)) {
     return { name, status: "disabled", toolCount: 0, catalogKnown: false, disabled: true };
   }
   const connection = state.manager.getConnection(name);
   const { toolCount, resourceCount, catalogKnown } = getCatalogCounts(state, name, connection);
-  const failedAgoSeconds = getActiveFailureAgeSeconds(state, name);
-  const status = getServerStatus(connection, failedAgoSeconds, catalogKnown);
+  const failedAgoSeconds = failureAgeSeconds(state.failureTracker.get(name), Date.now());
+  const status = runtimeStatus(
+    serverStage({
+      definition,
+      transport: connection?.status,
+      failedAgoSeconds,
+      catalogKnown,
+    }),
+  );
   return {
     name,
     status,
     toolCount,
     catalogKnown,
     ...(resourceCount !== undefined ? { resourceCount } : {}),
-    ...(status === "failed" && failedAgoSeconds !== undefined ? { failedAgoSeconds } : {}),
+    ...(status === "failed" && failedAgoSeconds !== null ? { failedAgoSeconds } : {}),
     disabled: false,
   };
 }

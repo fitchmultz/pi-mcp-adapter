@@ -1,6 +1,7 @@
 import type {
   McpConfig,
   McpPanelCallbacks,
+  McpPanelConnectionStatus,
   ServerEntry,
   ServerProvenance,
   ToolPrefix,
@@ -18,7 +19,8 @@ function estimateTokens(tool: CachedTool): number {
   return Math.ceil((tool.name.length + descLen + schemaLen) / 4) + 10;
 }
 
-type ConnectionStatus = ReturnType<McpPanelCallbacks["getConnectionStatus"]> | "connecting";
+/** The panel adds its local reconnect transition to the reported connection status. */
+type ConnectionStatus = McpPanelConnectionStatus | "connecting";
 
 export interface ToolState {
   name: string;
