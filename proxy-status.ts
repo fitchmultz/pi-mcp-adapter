@@ -1,10 +1,10 @@
 import type { McpExtensionState } from "./state.ts";
 import type { ProxyToolResult } from "./proxy-result.ts";
 
-import type { ServerConnection } from "./server-manager.ts";
-import { type ToolMetadata, isServerDisabled } from "./types.ts";
+import { isServerDisabled } from "./types.ts";
 import { getFailureAgeSeconds } from "./init.ts";
 import { catalogCoverage } from "./tool-metadata.ts";
+import { proxyStatusText, serverStage } from "./server-status.ts";
 
 function serverStatus(state: McpExtensionState, name: string) {
   const definition = state.config.mcpServers[name];
@@ -13,49 +13,47 @@ function serverStatus(state: McpExtensionState, name: string) {
   const metadata = disabled ? undefined : state.toolMetadata.get(name);
   const toolCount = metadata?.filter((tool) => (tool.resourceUri ?? "").length === 0).length ?? 0;
   const failedAgo = disabled ? null : getFailureAgeSeconds(state, name);
-  const status = disabled ? "disabled" : connectionStatus(connection, metadata, failedAgo);
-  return { name, status, toolCount, failedAgo, ...(disabled ? { disabled: true } : {}) };
-}
-function connectionStatus(
-  connection: ServerConnection | undefined,
-  metadata: ToolMetadata[] | undefined,
-  failedAgo: number | null,
-): string {
-  if (connection?.status === "connected") {
-    return "connected";
-  }
-  if (connection?.status === "needs-auth") {
-    return "needs-auth";
-  }
-  if (failedAgo !== null) {
-    return "failed";
-  }
-  return metadata === undefined ? "not connected" : "cached";
+  const stage = serverStage({
+    definition,
+    transport: connection?.status,
+    failedAgoSeconds: failedAgo,
+    catalogKnown: metadata !== undefined,
+  });
+  return {
+    name,
+    stage,
+    status: proxyStatusText(stage),
+    toolCount,
+    failedAgo,
+    ...(disabled ? { disabled: true } : {}),
+  };
 }
 
-function formatServerStatus(server: ReturnType<typeof serverStatus>): string {
-  if (server.disabled === true) {
-    return `⊘ ${server.name} (disabled)\n`;
+function formatServerStatus({
+  name,
+  stage,
+  toolCount,
+  failedAgo,
+}: ReturnType<typeof serverStatus>): string {
+  switch (stage) {
+    case "disabled":
+      return `⊘ ${name} (disabled)\n`;
+    case "connected":
+      return `✓ ${name} (${toolCount} tools)\n`;
+    case "needs-auth":
+      return `⚠ ${name} (needs auth)\n`;
+    case "cached":
+      return `○ ${name} (${toolCount} tools, cached)\n`;
+    case "failed":
+      return `✗ ${name} (failed ${failedAgo ?? 0}s ago)\n`;
+    case "undiscovered":
+      return `○ ${name} (not discovered)\n`;
   }
-  if (server.status === "connected") {
-    return `✓ ${server.name} (${server.toolCount} tools)\n`;
-  }
-  if (server.status === "needs-auth") {
-    return `⚠ ${server.name} (needs auth)\n`;
-  }
-  if (server.status === "cached") {
-    return `○ ${server.name} (${server.toolCount} tools, cached)\n`;
-  }
-  if (server.status === "failed") {
-    return `✗ ${server.name} (failed ${server.failedAgo ?? 0}s ago)\n`;
-  }
-  return `○ ${server.name} (not discovered)\n`;
 }
 
 export function executeStatus(state: McpExtensionState): ProxyToolResult {
-  const servers: ReturnType<typeof serverStatus>[] = [];
-
-  servers.push(...Object.keys(state.config.mcpServers).map((name) => serverStatus(state, name)));
+  const entries = Object.keys(state.config.mcpServers).map((name) => serverStatus(state, name));
+  const servers = entries.map(({ stage: _stage, ...row }) => row);
 
   const disabledCount = servers.filter((s) => s.disabled === true).length;
   const enabledServers = servers.filter((s) => s.disabled !== true);
@@ -68,7 +66,7 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
     text += ` (${disabledCount} disabled)`;
   }
   text += "\n\n";
-  for (const server of servers) {
+  for (const server of entries) {
     text += formatServerStatus(server);
   }
 

@@ -138,6 +138,33 @@ describe("MCP status snapshots", () => {
     expect(snapshot).not.toHaveProperty("config");
   });
 
+  it("keeps configuration, transport and failure precedence in one derivation", () => {
+    const state = createTestState({
+      config: {
+        mcpServers: {
+          disabled: { command: "node", disabled: true },
+          auth: { url: "https://example.invalid" },
+        },
+      },
+      failureTracker: new Map([
+        ["disabled", Date.now()],
+        ["auth", Date.now()],
+      ]),
+    });
+    states.push(state);
+    vi.spyOn(state.manager, "getConnection").mockImplementation((name) => {
+      if (name === "disabled") {
+        return createConnection("connected");
+      }
+      return name === "auth" ? createConnection("needs-auth") : undefined;
+    });
+
+    expect(createMcpStatusSnapshot(state).servers).toEqual([
+      { name: "disabled", status: "disabled", toolCount: 0, catalogKnown: false, disabled: true },
+      { name: "auth", status: "needs-auth", toolCount: 0, catalogKnown: false, disabled: false },
+    ]);
+  });
+
   it("publishes an empty snapshot at shutdown", () => {
     const emit = vi.fn<McpStatusEventBus["emit"]>();
     publishMcpStatusShutdown({ emit });

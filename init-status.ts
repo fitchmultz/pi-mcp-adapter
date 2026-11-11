@@ -5,13 +5,13 @@ import { formatMcpStatus, sanitizeTerminalText } from "./utils.ts";
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
+import { FAILURE_BACKOFF_MS, failureAgeSeconds } from "./server-status.ts";
 import {
   updateServerMetadata,
   updateMetadataCache,
   notifyToolMetadataUpdated,
   markKeepAliveAfterConnect,
 } from "./init-metadata.ts";
-const FAILURE_BACKOFF_MS = 60 * 1000;
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
 const failureExpiryTimers = new WeakMap<
   McpExtensionState,
@@ -101,15 +101,7 @@ export function updateStatusBar(state: McpExtensionState): void {
 }
 
 export function getFailureAgeSeconds(state: McpExtensionState, serverName: string): number | null {
-  const failedAt = state.failureTracker.get(serverName);
-  if (failedAt === undefined || failedAt === 0) {
-    return null;
-  }
-  const ageMs = Date.now() - failedAt;
-  if (ageMs > FAILURE_BACKOFF_MS) {
-    return null;
-  }
-  return Math.round(ageMs / 1000);
+  return failureAgeSeconds(state.failureTracker.get(serverName), Date.now());
 }
 
 export function getFailureMessage(state: McpExtensionState, serverName: string): string | null {

@@ -22,6 +22,7 @@ import {
   writeStarterProjectConfig,
 } from "./config.ts";
 import { getFailureAgeSeconds, getFailureMessage } from "./init.ts";
+import { panelStatus, serverStage } from "./server-status.ts";
 import { loadMetadataCache } from "./metadata-cache.ts";
 import { supportsOAuth } from "./mcp-oauth-runtime.ts";
 import { inspectAuthForUrl } from "./mcp-auth.ts";
@@ -264,7 +265,8 @@ function buildMcpPanelCallbacks(
       if (isServerDisabled(definition)) {
         return "disabled";
       }
-      const connection = state.manager.getConnection(serverName);
+      const transport = state.manager.getConnection(serverName)?.status;
+      // Stored-credential diagnostics outrank the connection stage for OAuth servers.
       const credentialStatus = panelCredentialStatus(
         state,
         serverName,
@@ -274,16 +276,14 @@ function buildMcpPanelCallbacks(
       if (credentialStatus !== undefined) {
         return credentialStatus;
       }
-      if (connection?.status === "needs-auth") {
-        return "needs-auth";
-      }
-      if (connection?.status === "connected") {
-        return "connected";
-      }
-      if (getFailureAgeSeconds(state, serverName) !== null) {
-        return "failed";
-      }
-      return "idle";
+      return panelStatus(
+        serverStage({
+          definition,
+          transport,
+          failedAgoSeconds: getFailureAgeSeconds(state, serverName),
+          catalogKnown: state.toolMetadata.has(serverName),
+        }),
+      );
     },
     getFailureMessage: (serverName: string) =>
       authStatusFailures.get(serverName) ?? getFailureMessage(state, serverName),
