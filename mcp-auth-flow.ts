@@ -29,6 +29,7 @@ import {
   getPendingAuthKey,
   getRuntime,
   getRuntimeState,
+  pendingAuthState,
   type AuthStatus,
   type AuthenticateOptions,
   type PendingAuth,
@@ -75,12 +76,10 @@ export async function completeAuthFromInput(
   options: AuthenticateOptions = {},
 ): Promise<AuthStatus> {
   const runtime = getRuntime(options);
-  const runtimeState = getRuntimeState(runtime);
   const fallbackAuthStorageOptions = options.authStorageOptions ?? {};
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
   throwIfAborted(signal);
-  const key = getPendingAuthKey(serverName, fallbackAuthStorageOptions);
-  const oauthState = runtimeState.pendingAuthStates.get(key);
+  const oauthState = pendingAuthState(runtime, serverName, fallbackAuthStorageOptions);
   throwIfAborted(signal);
   const parsed =
     input === undefined ? undefined : parseAuthorizationRedirectInput(input, oauthState);
@@ -102,14 +101,13 @@ function completionContext(serverName: string, options: AuthenticateOptions): Co
   const fallback = options.authStorageOptions ?? {};
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
   throwIfAborted(signal);
-  const key = getPendingAuthKey(serverName, fallback);
-  const pendingAuth = state.pendingAuths.get(key);
+  const pendingAuth = state.pendingAuths.get(getPendingAuthKey(serverName, fallback));
   if (!pendingAuth) {
     throw new Error(
       `No pending OAuth flow for server: ${serverName}. Run auth-start for this server first.`,
     );
   }
-  const oauthState = state.pendingAuthStates.get(key);
+  const oauthState = pendingAuth.callbackState;
   throwIfAborted(signal);
   return {
     runtime,
@@ -220,6 +218,7 @@ export async function completeAuth(
 ): Promise<AuthStatus> {
   const context = completionContext(serverName, options);
   const response = completionResponse(context, authorizationCode);
+  // RFC 9207: a server that advertises `iss` support but omits it keeps the flow open for a retry.
   let keepPendingForRetry =
     response.iss === undefined && context.pendingAuth.callbackIssuer.issParameterSupported === true;
   try {
@@ -302,7 +301,6 @@ async function authenticateOnce(
   options: AuthenticateOptions,
 ): Promise<AuthStatus> {
   const runtime = getRuntime(options);
-  const runtimeState = getRuntimeState(runtime);
   const authStorageOptions = options.authStorageOptions ?? {};
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
   // Start auth flow
@@ -322,9 +320,7 @@ async function authenticateOnce(
     // Get the state that was already generated and stored in startAuth().
     // Keep this lookup and its abort check inside the cleanup boundary because
     // startAuth has already reserved callback state at this point.
-    oauthState = runtimeState.pendingAuthStates.get(
-      getPendingAuthKey(serverName, authStorageOptions),
-    );
+    oauthState = pendingAuthState(runtime, serverName, authStorageOptions);
     throwIfAborted(signal);
     if (oauthState === undefined || oauthState === "") {
       throw new Error("OAuth state not found - this should not happen");

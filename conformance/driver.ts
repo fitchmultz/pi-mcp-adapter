@@ -226,10 +226,8 @@ async function runAuthRoundTrip(): Promise<void> {
       `OAuth callback failed with ${callbackResponse.status}: ${await callbackResponse.text()}`,
     );
   }
-  const status = await completeAuthFromInput(SERVER_NAME, callbackUrl, { runtime: oauthRuntime });
-  if (status !== "authenticated") {
-    throw new Error(`OAuth completion returned status: ${status}`);
-  }
+  // Completion either authenticates or throws; the flow then reconnects below.
+  await completeAuthFromInput(SERVER_NAME, callbackUrl, { runtime: oauthRuntime });
 }
 
 async function connectWithAuth() {

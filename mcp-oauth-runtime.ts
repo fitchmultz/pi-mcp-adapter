@@ -15,8 +15,8 @@ import {
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { ServerEntry } from "./types.ts";
 
-/** Auth status for a server */
-export type AuthStatus = "authenticated" | "expired" | "not_authenticated";
+/** A completed authorization. Failures reject; there is no partial success to report. */
+export type AuthStatus = "authenticated";
 
 export interface McpOAuthRuntime {
   readonly signal: AbortSignal;
@@ -41,6 +41,7 @@ export type CallbackIssuer = {
   issParameterSupported?: boolean;
 };
 
+/** One pending browser authorization and the callback state it reserved. */
 export type PendingAuth = {
   serverName: string;
   authProvider: McpOAuthProvider;
@@ -50,14 +51,16 @@ export type PendingAuth = {
   callbackIssuer: CallbackIssuer;
   request?: OAuthRequest;
   authStorageOptions: AuthStorageOptions;
+  /** Callback state this flow reserved; completing or cancelling it requires the match. */
+  callbackState: string;
+  /** Cleanup deadline for a flow whose browser never returns. */
+  cleanupTimer: ReturnType<typeof setTimeout>;
 };
 
 export type RuntimeState = {
   controller: AbortController;
   generation: number;
   pendingAuths: Map<string, PendingAuth>;
-  pendingAuthStates: Map<string, string>;
-  pendingAuthCleanupTimers: Map<string, ReturnType<typeof setTimeout>>;
   pendingAuthentications: Map<string, Promise<AuthStatus>>;
   requests: Map<string, OAuthRequest>;
 };
@@ -74,8 +77,6 @@ export function createOAuthRuntime(signal?: AbortSignal): McpOAuthRuntime {
     controller,
     generation: 0,
     pendingAuths: new Map(),
-    pendingAuthStates: new Map(),
-    pendingAuthCleanupTimers: new Map(),
     pendingAuthentications: new Map(),
     requests: new Map(),
   });
@@ -137,6 +138,16 @@ export function hasPendingAuth(
   );
 }
 
+/** The callback state reserved by a server's pending flow, if it has one. */
+export function pendingAuthState(
+  runtime: McpOAuthRuntime,
+  serverName: string,
+  options: AuthStorageOptions = {},
+): string | undefined {
+  return getRuntimeState(runtime).pendingAuths.get(getPendingAuthKey(serverName, options))
+    ?.callbackState;
+}
+
 export async function clearPendingAuth(
   runtime: McpOAuthRuntime,
   serverName: string,
@@ -147,25 +158,30 @@ export async function clearPendingAuth(
   const key = getPendingAuthKey(serverName, fallbackStorageOptions);
   const pendingAuth = state.pendingAuths.get(key);
   const authStorageOptions = pendingAuth?.authStorageOptions ?? fallbackStorageOptions;
-  const pendingState = state.pendingAuthStates.get(key);
+  const pendingState = pendingAuth?.callbackState;
   if (isDifferentPendingState(oauthState, pendingState)) {
     return;
   }
 
-  const timer = state.pendingAuthCleanupTimers.get(key);
-  if (timer) {
-    clearTimeout(timer);
-    state.pendingAuthCleanupTimers.delete(key);
+  if (pendingAuth) {
+    clearTimeout(pendingAuth.cleanupTimer);
+    pendingAuth.authProvider.deactivate();
   }
-
-  pendingAuth?.authProvider.deactivate();
   state.pendingAuths.delete(key);
-  state.pendingAuthStates.delete(key);
-  const stateToRelease = pendingState ?? oauthState;
-  if (stateToRelease !== undefined && stateToRelease !== "") {
-    cancelPendingCallback(stateToRelease);
-    await clearMatchingStoredState(serverName, stateToRelease, authStorageOptions);
+  await releaseReservedState(serverName, pendingState ?? oauthState, authStorageOptions);
+}
+
+/** Drop the reserved callback and any stored state that still matches the released flow. */
+async function releaseReservedState(
+  serverName: string,
+  stateToRelease: string | undefined,
+  authStorageOptions: AuthStorageOptions,
+): Promise<void> {
+  if (stateToRelease === undefined || stateToRelease === "") {
+    return;
   }
+  cancelPendingCallback(stateToRelease);
+  await clearMatchingStoredState(serverName, stateToRelease, authStorageOptions);
 }
 
 function isDifferentPendingState(
@@ -249,8 +265,8 @@ export async function shutdownOAuth(runtime: McpOAuthRuntime = legacyRuntime): P
   }
   state.generation += 1;
   state.controller.abort(new Error("OAuth runtime stopped"));
-  for (const callbackState of Array.from(state.pendingAuthStates.values())) {
-    cancelPendingCallback(callbackState);
+  for (const pendingAuth of Array.from(state.pendingAuths.values())) {
+    cancelPendingCallback(pendingAuth.callbackState);
   }
   const results = await Promise.allSettled(
     Array.from(state.pendingAuths.values(), (pendingAuth) =>

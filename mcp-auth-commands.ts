@@ -44,7 +44,7 @@ async function runAuthentication(input: {
   const cwd = ctx.cwd;
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
   const { authenticate } = await import("./mcp-auth-flow.ts");
-  const status = await authenticate(serverName, serverUrl, definition, {
+  await authenticate(serverName, serverUrl, definition, {
     ...((authStorageOptions.baseDir ?? "").length > 0 ? { authStorageOptions } : {}),
     onAuthorizationUrl: (authorizationUrl) => {
       ui.notify(
@@ -60,15 +60,9 @@ async function runAuthentication(input: {
     signal.throwIfAborted();
   }
 
-  if (status === "authenticated") {
-    const message = `OAuth authentication successful for "${serverName}".`;
-    ui.notify(message, "info");
-    return { ok: true, message };
-  }
-
-  const message = `OAuth authentication failed for "${serverName}".`;
-  ui.notify(message, "error");
-  return { ok: false, message };
+  const message = `OAuth authentication successful for "${serverName}".`;
+  ui.notify(message, "info");
+  return { ok: true, message };
 }
 
 async function authenticationAttempt(
