@@ -139,7 +139,12 @@ export interface McpAdapterOptions {
   /** Synchronously transform a clone of the resolved config once per session_start, before registration/initialization.
    * The result is cloned for session ownership. Ambient config/trust and panels remain enabled unless config is supplied. */
   transformConfig?: (config: McpConfig, ctx: ExtensionContext) => McpConfig;
-  /** Parent directory for oversized text/raw results. Defaults to the system temp directory. */
+  /**
+   * Host-owned parent for saved results and UI history. Defaults to the system
+   * temp directory. Returned paths outlive adapter sessions; the host owns
+   * retention and deletion once readers no longer need them. Use a persistent
+   * directory when references must survive the OS's temporary-file cleanup.
+   */
   outputDirectory?: string;
   /** Awaited before dispatch and after its raw outcome. */
   onToolCall?: (event: McpToolCallEvent) => Promise<void>;

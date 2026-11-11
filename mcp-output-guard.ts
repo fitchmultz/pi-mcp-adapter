@@ -366,6 +366,10 @@ export function formatMcpResultReference(ref: string): string {
   return `[MCP result saved: ${JSON.stringify(ref)}. Inspect without repeating the call using mcp action "read-result" with this ref. Optionally select a JSON Pointer with path.]`;
 }
 
+/**
+ * Publish a private file to its reader. Successful paths are retained rather
+ * than tied to runtime cleanup: chat history can refer to them after a reload.
+ */
 async function saveArtifact(
   kind: string,
   text: string | Uint8Array,

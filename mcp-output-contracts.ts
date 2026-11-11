@@ -53,6 +53,7 @@ export interface GuardedMcpOutput {
   content: ContentBlock[];
   outputGuard?: McpOutputGuardDetails;
   mcpResult?: unknown;
+  /** Caller-owned saved file; session shutdown does not delete returned references. */
   resultRef?: string;
   resultWriteError?: string;
   payloadFiles?: McpPayloadFile[];
