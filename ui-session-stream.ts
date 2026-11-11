@@ -32,16 +32,19 @@ function withStreamEnvelope(
   result: CallToolResult,
   streamId: string | undefined,
   sequence: number,
+  terminal: boolean,
 ): CallToolResult;
 function withStreamEnvelope(
   result: UiStreamCallToolResult,
   streamId: string | undefined,
   sequence: number,
+  terminal: boolean,
 ): UiStreamCallToolResult;
 function withStreamEnvelope(
   result: CallToolResult | UiStreamCallToolResult,
   streamId: string | undefined,
   sequence: number,
+  terminal: boolean,
 ): CallToolResult | UiStreamCallToolResult {
   if (streamId === undefined || streamId === "") {
     return result;
@@ -50,14 +53,15 @@ function withStreamEnvelope(
     ? { ...result.structuredContent }
     : {};
   const rawEnvelope = structuredContent[UI_STREAM_STRUCTURED_CONTENT_KEY];
-  const envelope = isUiJsonObject(rawEnvelope)
-    ? { ...rawEnvelope }
-    : {
-        frameType: "final",
-        phase: "settled",
-        status: result.isError === true ? "error" : "ok",
-      };
-  structuredContent[UI_STREAM_STRUCTURED_CONTENT_KEY] = { ...envelope, streamId, sequence };
+  const supplied = isUiJsonObject(rawEnvelope) ? { ...rawEnvelope } : undefined;
+  const envelope = supplied ?? {
+    frameType: "final",
+    phase: "settled",
+    status: result.isError === true ? "error" : "ok",
+  };
+  // The result frame ends the stream: a server's own label cannot keep it looking unfinished.
+  const framed = terminal ? { ...envelope, frameType: "final" as const } : envelope;
+  structuredContent[UI_STREAM_STRUCTURED_CONTENT_KEY] = { ...framed, streamId, sequence };
   return { ...result, structuredContent };
 }
 
@@ -93,7 +97,7 @@ export class UiSessionStream {
           this.sequence += 1;
           sendUiStreamPatch(
             this.handle,
-            withStreamEnvelope(notification.result, this.streamId, this.sequence),
+            withStreamEnvelope(notification.result, this.streamId, this.sequence, false),
           );
         }
       });
@@ -146,7 +150,7 @@ export class UiSessionStream {
       return;
     }
     this.sequence += 1;
-    const framed = withStreamEnvelope(result, this.streamId, this.sequence);
+    const framed = withStreamEnvelope(result, this.streamId, this.sequence, !patch);
     if (patch) {
       this.handle.sendResultPatch(framed);
     } else {

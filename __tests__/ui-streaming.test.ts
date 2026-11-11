@@ -605,12 +605,50 @@ describe("UI Streaming", () => {
         "result-patch",
         "tool-result",
       ]);
+      // A server that labels its result frame "patch" must not leave the stream unterminated.
+      fresh.sendResultPatch({
+        content: [],
+        structuredContent: {
+          [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
+            streamId: fresh.streamId,
+            sequence: 3,
+            frameType: "patch",
+            phase: "detail",
+            status: "ok",
+          },
+        },
+      });
+      fresh.sendToolResult({
+        content: [{ type: "text", text: "settled" }],
+        structuredContent: {
+          [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
+            streamId: fresh.streamId,
+            sequence: 4,
+            frameType: "patch",
+            phase: "detail",
+            status: "ok",
+          },
+        },
+      });
+      await expect.poll(() => events.length).toBe(6);
+      const terminal = events[5];
+      assert(terminal !== undefined);
+      assert(
+        terminal.data !== null &&
+          typeof terminal.data === "object" &&
+          "structuredContent" in terminal.data,
+      );
+      expect(getVisualizationStreamEnvelope(terminal.data.structuredContent)).toMatchObject({
+        frameType: "final",
+        phase: "detail",
+        sequence: 4,
+      });
       const close = handle.close;
       close("stream-finished");
       expect(state.completedUiSessions[0]?.stream).toMatchObject({
         streamId: fresh.streamId,
         mode: "stream-first",
-        frames: 3,
+        frames: 5,
       });
     } finally {
       sse?.close();

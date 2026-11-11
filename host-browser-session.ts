@@ -31,8 +31,8 @@ export class HostBrowserSession {
   private readonly view: HostBrowserView;
   private readonly eventSource: EventSource;
   private readonly heartbeat: number;
-  private completionRequested = false;
-  private finished = false;
+  /** A completion is requested once and finished once; the reason is the request's. */
+  private phase: "live" | "completing" | "finished" = "live";
 
   constructor(
     bridge: AppBridge,
@@ -127,10 +127,10 @@ export class HostBrowserSession {
   }
 
   private async complete(reason: "done" | "cancel"): Promise<void> {
-    if (this.completionRequested || this.finished) {
+    if (this.phase !== "live") {
       return;
     }
-    this.completionRequested = true;
+    this.phase = "completing";
     try {
       await this.proxy.post("/proxy/ui/complete", { reason });
     } catch (error) {
@@ -140,10 +140,10 @@ export class HostBrowserSession {
   }
 
   private async finish(): Promise<void> {
-    if (this.finished) {
+    if (this.phase === "finished") {
       return;
     }
-    this.finished = true;
+    this.phase = "finished";
     window.clearInterval(this.heartbeat);
     this.eventSource.close();
     try {
