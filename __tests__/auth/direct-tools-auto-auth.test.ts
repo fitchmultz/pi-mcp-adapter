@@ -187,7 +187,7 @@ describe("direct tools auto auth", () => {
     const authCall = mocks.authenticate.mock.calls[0];
     assert.ok(authCall);
     expect(authCall.slice(0, 3)).toEqual(["demo", definition.url, definition]);
-    const authSignal = authCall[3]?.signal;
+    const authSignal = authCall[3].signal;
     expect(authSignal).toBeInstanceOf(AbortSignal);
     expect(authCall[3]).toEqual({
       authStorageOptions: state.authStorageOptions,
@@ -306,7 +306,7 @@ describe("direct tools auto auth", () => {
     const authCall = mocks.authenticate.mock.calls[0];
     assert.ok(authCall);
     expect(authCall.slice(0, 3)).toEqual(["demo", definition.url, definition]);
-    const authSignal = authCall[3]?.signal;
+    const authSignal = authCall[3].signal;
     expect(authSignal).toBeInstanceOf(AbortSignal);
     expect(authCall[3]).toEqual({
       authStorageOptions: state.authStorageOptions,

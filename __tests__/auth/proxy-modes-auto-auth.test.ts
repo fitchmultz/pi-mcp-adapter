@@ -101,7 +101,7 @@ function expectAuthentication(state: McpExtensionState): AbortSignal {
   const call = mocks.authenticate.mock.calls[0];
   assert.ok(call);
   expect(call.slice(0, 3)).toEqual(["demo", definition.url, definition]);
-  const signal = call[3]?.signal;
+  const signal = call[3].signal;
   expect(signal).toBeInstanceOf(AbortSignal);
   expect(call[3]).toEqual({
     authStorageOptions: state.authStorageOptions,

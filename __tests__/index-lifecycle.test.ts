@@ -1438,7 +1438,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(authentication[0].config).toBe(state.config);
     expect(authentication[0].ctx).toBeTypeOf("object");
     expect(authentication[0].signal).toBeInstanceOf(AbortSignal);
-    expect(authentication[0].runtime?.signal).toBeInstanceOf(AbortSignal);
+    expect(authentication[0].runtime.signal).toBeInstanceOf(AbortSignal);
     expect(mocks.reconnectServer).toHaveBeenCalledWith(state, expect.any(Object), "github", true);
     expect(mocks.openMcpAuthPanel).not.toHaveBeenCalled();
   });
@@ -1467,7 +1467,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(authentication[0].config).toBe(state.config);
     expect(authentication[0].ctx).toBeTypeOf("object");
     expect(authentication[0].signal).toBeInstanceOf(AbortSignal);
-    expect(authentication[0].runtime?.signal).toBeInstanceOf(AbortSignal);
+    expect(authentication[0].runtime.signal).toBeInstanceOf(AbortSignal);
     expect(mocks.reconnectServer).not.toHaveBeenCalled();
     expect(mocks.openMcpAuthPanel).not.toHaveBeenCalled();
   });
