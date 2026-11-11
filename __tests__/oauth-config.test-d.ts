@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { expect, it } from "vitest";
-import { extractOAuthConfig, startAuth } from "../mcp-auth-flow.ts";
+import {
+  createOAuthRuntime,
+  extractOAuthConfig,
+  shutdownOAuth,
+  startAuth,
+} from "../mcp-auth-flow.ts";
 import { McpOAuthProvider } from "../mcp-oauth-provider.ts";
 import sharedDocument from "../docs/client-metadata.json" with { type: "json" };
 
@@ -199,21 +204,26 @@ it("validates document URLs at extraction and direct-provider boundaries without
 });
 
 it("rejects non-string OAuth redirectUri values", async () => {
-  await assert.rejects(
-    () =>
-      startAuth(
-        "typed-redirect",
-        "https://api.example.com/mcp",
-        {
-          url: "https://api.example.com/mcp",
-          auth: "oauth",
-          // @ts-expect-error OAuth redirect URIs are strings, not port numbers.
-          oauth: { redirectUri: 3118 },
-        },
-        {},
-      ),
-    /redirectUri must be a string/,
-  );
+  const runtime = createOAuthRuntime();
+  try {
+    await assert.rejects(
+      () =>
+        startAuth(
+          "typed-redirect",
+          "https://api.example.com/mcp",
+          {
+            url: "https://api.example.com/mcp",
+            auth: "oauth",
+            // @ts-expect-error OAuth redirect URIs are strings, not port numbers.
+            oauth: { redirectUri: 3118 },
+          },
+          { runtime },
+        ),
+      /redirectUri must be a string/,
+    );
+  } finally {
+    await shutdownOAuth(runtime);
+  }
 });
 
 it("rejects non-string OAuth clientName and clientUri values", () => {
