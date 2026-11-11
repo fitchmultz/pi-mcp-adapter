@@ -42,7 +42,8 @@ class UiHttpServer {
   private readonly tools: UiToolProxy;
   private readonly server: http.Server;
   private readonly log: ReturnType<typeof logger.child>;
-  private completed = false;
+  /** The listener is open until its first completion, whenever that arrives. */
+  private phase: "open" | "closed" = "open";
   private lastHeartbeatAt = Date.now();
   private watchdog: NodeJS.Timeout | null = null;
 
@@ -88,7 +89,7 @@ class UiHttpServer {
         });
     }
     this.watchdog = setInterval(() => {
-      if (!this.completed && Date.now() - this.lastHeartbeatAt > ABANDONED_GRACE_MS) {
+      if (this.phase === "open" && Date.now() - this.lastHeartbeatAt > ABANDONED_GRACE_MS) {
         this.close("stale");
       }
     }, WATCHDOG_INTERVAL_MS);
@@ -153,18 +154,19 @@ class UiHttpServer {
   }
 
   private pushEvent(name: string, payload: unknown): void {
-    if (!this.completed) {
+    if (this.phase === "open") {
       this.events.push(name, payload);
     }
   }
 
+  /** The one completion transition; later closes are no-ops with respect to the session. */
   private markCompleted(reason: string): void {
-    if (this.completed) {
+    if (this.phase === "closed") {
       return;
     }
     this.log.debug("Session completed", { reason });
     this.pushEvent("session-complete", { reason });
-    this.completed = true;
+    this.phase = "closed";
     this.stopWatchdog();
     this.options.onComplete?.(reason);
   }
@@ -304,7 +306,7 @@ class UiHttpServer {
     }
     // A partial upload is not accepted until its authenticated body is complete.
     if (
-      this.completed &&
+      this.phase === "closed" &&
       (url.pathname === "/proxy/ui/message" || url.pathname === "/proxy/ui/context")
     ) {
       sendJson(res, 409, { ok: false, error: "UI session is complete; message was not accepted" });
