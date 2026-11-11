@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.37 - 2026-11-11
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- test: give the copied-directive checks 30 seconds (#218) ([6c89a16](https://github.com/fitchmultz/pi-mcp-adapter/commit/6c89a16e8b90a81393d1008990c111fd3e7a76fe))
+
+### What's Changed
+
+- test: give the copied-directive checks 30 seconds by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/218
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.36...v8.0.37
+
 ## 8.0.36 - 2026-11-10
 
 <!-- npm-release:unreleased:start -->
