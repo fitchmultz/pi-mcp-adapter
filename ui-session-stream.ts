@@ -90,6 +90,7 @@ export class UiSessionStream {
     this.streamToken = identity.streamToken;
   }
 
+  /** This session owns the listener until complete/replacement calls deactivate(). */
   register(): void {
     if (this.streamToken !== undefined) {
       this.state.manager.registerUiStreamListener(this.streamToken, (serverName, notification) => {

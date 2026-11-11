@@ -465,6 +465,7 @@ export function waitForCallback(oauthState: string): Promise<OAuthCallbackResult
         reject(new Error("OAuth callback timeout - authorization took too long"));
       }
     }, CALLBACK_TIMEOUT_MS);
+    timeout.unref();
 
     callbacks.set(oauthState, { phase: "awaiting-callback", validate, resolve, reject, timeout });
   });

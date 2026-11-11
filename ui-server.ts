@@ -16,12 +16,11 @@ import { UiProxyRoutes } from "./ui-proxy-routes.ts";
 import { UiToolProxy } from "./ui-tool-proxy.ts";
 import { parseBody, requestUrl, sendJson, sendText, validateTokenQuery } from "./ui-http.ts";
 import { isUiJsonObject } from "./ui-json.ts";
+import { UI_ABANDONED_GRACE_MS, UI_WATCHDOG_INTERVAL_MS } from "./ui-session-timing.ts";
 
 export type { UiServerHandle } from "./ui-server-contracts.ts";
 export type { UiServerOptions } from "./ui-server-options.ts";
 
-const ABANDONED_GRACE_MS = 60_000;
-const WATCHDOG_INTERVAL_MS = 5_000;
 const MOSHI_DISCOVERY_PORT_START = 8377;
 const MOSHI_DISCOVERY_PORT_END = 8396;
 let nextMoshiDiscoveryPort = MOSHI_DISCOVERY_PORT_START;
@@ -89,10 +88,10 @@ class UiHttpServer {
         });
     }
     this.watchdog = setInterval(() => {
-      if (this.phase === "open" && Date.now() - this.lastHeartbeatAt > ABANDONED_GRACE_MS) {
+      if (this.phase === "open" && Date.now() - this.lastHeartbeatAt > UI_ABANDONED_GRACE_MS) {
         this.close("stale");
       }
-    }, WATCHDOG_INTERVAL_MS);
+    }, UI_WATCHDOG_INTERVAL_MS);
     this.watchdog.unref();
     return this.listen();
   }

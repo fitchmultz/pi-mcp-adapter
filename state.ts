@@ -60,6 +60,10 @@ export interface McpExtensionState {
   approvedToolCalls: Map<string, true>;
   uiResourceHandler: UiResourceHandler;
   consentManager: ConsentManager;
+  /**
+   * Current HTTP UI session. Replacement closes the previous handle; completion
+   * clears only its own handle. Runtime cleanup closes whichever handle remains.
+   */
   uiServer: UiServerHandle | null;
   completedUiSessions: CompletedUiSession[];
   activeScripts: number;
