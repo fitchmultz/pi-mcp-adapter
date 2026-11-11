@@ -161,8 +161,8 @@ export class McpTraceWriter {
   private bytesWritten = 0;
   private eventsWritten = 0;
   private queue = Promise.resolve();
-  private disabled = false;
-  private initializationFailed = false;
+  /** Why tracing stopped, or undefined while it still records. */
+  private stopReason: "initialization" | "serialization" | "budget" | "append" | undefined;
   private persistenceError: unknown;
   private readonly fileReady: Promise<void>;
 
@@ -180,8 +180,7 @@ export class McpTraceWriter {
       .catch((error: unknown) => {
         // Tracing must never change MCP request/response behavior.
         this.persistenceError = error;
-        this.initializationFailed = true;
-        this.disabled = true;
+        this.stopReason = "initialization";
       });
   }
 
@@ -190,7 +189,7 @@ export class McpTraceWriter {
   }
 
   get isDisabled(): boolean {
-    return this.disabled;
+    return this.stopReason !== undefined;
   }
 
   get stats(): { bytes: number; events: number } {
@@ -198,19 +197,19 @@ export class McpTraceWriter {
   }
 
   write(event: McpTraceEvent): void {
-    if (this.disabled || this.eventsWritten >= this.maxEvents) {
+    if (this.isDisabled || this.eventsWritten >= this.maxEvents) {
       return;
     }
     let line: string;
     try {
       line = `${JSON.stringify(event)}\n`;
     } catch {
-      this.disabled = true;
+      this.stopReason = "serialization";
       return;
     }
     const bytes = Buffer.byteLength(line, "utf8");
     if (bytes > this.maxBytes - this.bytesWritten) {
-      this.disabled = true;
+      this.stopReason = "budget";
       return;
     }
 
@@ -219,7 +218,7 @@ export class McpTraceWriter {
     this.queue = this.queue
       .then(async () => {
         await this.fileReady;
-        if (this.initializationFailed) {
+        if (this.stopReason === "initialization") {
           return;
         }
         await this.append(this.options.filePath, line, { encoding: "utf8" });
@@ -228,7 +227,7 @@ export class McpTraceWriter {
       .catch((error: unknown) => {
         // Tracing must never change MCP request/response behavior.
         this.persistenceError ??= error;
-        this.disabled = true;
+        this.stopReason = "append";
       });
   }
 

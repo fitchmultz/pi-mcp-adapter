@@ -43,7 +43,8 @@ class MessageHistory implements UiMessageHistory {
     notifications: [],
     contexts: [],
   };
-  private failed = false;
+  /** Why durable history stopped accepting writes, or undefined while it accepts them. */
+  private failure: string | undefined;
   private readonly outputDirectory: string | undefined;
 
   constructor(outputDirectory: string | undefined) {
@@ -69,8 +70,8 @@ class MessageHistory implements UiMessageHistory {
 
   append = (...[category, value]: HistoryEntry): string | undefined => {
     try {
-      if (this.failed) {
-        throw new Error(this.messages.historyError);
+      if (this.failure !== undefined) {
+        throw new Error(this.failure);
       }
       const ref = this.historyRef();
       const line = JSON.stringify({ category, value }) + "\n";
@@ -80,8 +81,8 @@ class MessageHistory implements UiMessageHistory {
       this.messages.historyCount = (this.messages.historyCount ?? 0) + 1;
       return undefined;
     } catch (error) {
-      this.failed = true;
-      this.messages.historyError = error instanceof Error ? error.message : String(error);
+      this.failure = error instanceof Error ? error.message : String(error);
+      this.messages.historyError = this.failure;
       if (category === "intents") {
         this.messages.intents.push(value);
       } else {
