@@ -263,22 +263,12 @@ export async function executeAuthComplete(
 
   try {
     const previousConnection = state.manager.getConnection(serverName);
-    const status = await completeAuthFromInput(serverName, input, {
+    // Completion either authenticates or throws; there is no partial result to report.
+    await completeAuthFromInput(serverName, input, {
       authStorageOptions: state.authStorageOptions,
       runtime: state.oauthRuntime,
       ...(ownedSignal ? { signal: ownedSignal } : {}),
     });
-    if (status !== "authenticated") {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `OAuth authentication did not complete for "${serverName}".`,
-          },
-        ],
-        details: { mode: "auth-complete", error: "not_authenticated", server: serverName, status },
-      };
-    }
 
     if (previousConnection) {
       state.manager.retire(serverName, previousConnection);

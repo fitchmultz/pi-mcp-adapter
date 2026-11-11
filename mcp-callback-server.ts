@@ -99,25 +99,34 @@ export interface OAuthCallbackResult {
 
 export type ValidateOAuthCallback = (response: { iss?: string; error?: string }) => void;
 
-/** Pending authorization request */
-interface PendingAuth {
-  resolve: (result: OAuthCallbackResult) => void;
-  reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
-  validate?: ValidateOAuthCallback;
-}
+type CallbackOutcome = OAuthCallbackResult | { error: string; iss?: string };
+
+/**
+ * One callback state, from its flow's reservation until its waiter settles.
+ *
+ * A reservation lets the browser arrive before anyone waits; the flow then attaches a waiter. The
+ * phase says which of those is true, so a single record carries the callback either way.
+ */
+type CallbackEntry =
+  | {
+      phase: "reserved";
+      validate: ValidateOAuthCallback | undefined;
+      outcome?: CallbackOutcome;
+    }
+  | {
+      phase: "awaiting-callback";
+      validate: ValidateOAuthCallback | undefined;
+      resolve: (result: OAuthCallbackResult) => void;
+      reject: (error: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    };
 
 /** Server singleton state */
 let server: Server | undefined;
 let bindingPromise: Promise<void> | undefined;
 let stoppingPromise: Promise<void> | undefined;
 let callbackGeneration = 0;
-const pendingAuths = new Map<string, PendingAuth>();
-type ReservedAuth = {
-  validate: ValidateOAuthCallback | undefined;
-  result?: OAuthCallbackResult | { error: string; iss?: string };
-};
-const reservedAuthStates = new Map<string, ReservedAuth>();
+const callbacks = new Map<string, CallbackEntry>();
 
 /** Timeout for callback completion (5 minutes) */
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
@@ -145,12 +154,10 @@ function validateCallback(
   response: Parameters<ValidateOAuthCallback>[0],
   res: ServerResponse,
 ): boolean {
-  const pending = pendingAuths.get(state);
-  const reserved = reservedAuthStates.get(state);
+  const entry = callbacks.get(state);
   try {
-    const validate = pending?.validate ?? reserved?.validate;
-    if (validate) {
-      validate(response);
+    if (entry?.validate) {
+      entry.validate(response);
     } else if ((response.error ?? "") !== "") {
       throw new Error("Cannot verify the OAuth error callback issuer");
     }
@@ -158,11 +165,10 @@ function validateCallback(
   } catch (failure) {
     const message = failure instanceof Error ? failure.message : "Invalid OAuth callback";
     sendHtml(res, 400, HTML_ERROR(message));
-    if (pending) {
-      clearTimeout(pending.timeout);
-      pendingAuths.delete(state);
-      reservedAuthStates.delete(state);
-      pending.reject(new Error(message));
+    if (entry?.phase === "awaiting-callback") {
+      clearTimeout(entry.timeout);
+      callbacks.delete(state);
+      entry.reject(new Error(message));
     }
     return false;
   }
@@ -180,16 +186,14 @@ function receiveProviderError(
   res: ServerResponse,
 ): void {
   sendHtml(res, 200, HTML_ERROR(message));
-  const pending = pendingAuths.get(state);
-  const reserved = reservedAuthStates.get(state);
-  if (pending) {
-    reservedAuthStates.delete(state);
-    clearTimeout(pending.timeout);
-    pendingAuths.delete(state);
-    setTimeout(() => pending.reject(new Error(message)), 0);
-  } else if (reserved) {
+  const entry = callbacks.get(state);
+  if (entry?.phase === "awaiting-callback") {
+    clearTimeout(entry.timeout);
+    callbacks.delete(state);
+    setTimeout(() => entry.reject(new Error(message)), 0);
+  } else if (entry) {
     // Keep provider-controlled callback payloads out of tool output.
-    reserved.result = {
+    entry.outcome = {
       error:
         "OAuth authorization was denied or failed. Finish authorization in the browser, then retry auth-complete.",
       ...(iss !== null ? { iss } : {}),
@@ -202,18 +206,17 @@ function receiveAuthorizationCode(
   result: OAuthCallbackResult,
   res: ServerResponse,
 ): void {
-  const pending = pendingAuths.get(state);
-  if (!pending) {
-    const reserved = reservedAuthStates.get(state);
-    if (reserved) {
-      reserved.result = result;
+  const entry = callbacks.get(state);
+  if (entry?.phase !== "awaiting-callback") {
+    if (entry) {
+      entry.outcome = result;
     }
     sendHtml(res, 200, HTML_MANUAL_SUCCESS);
     return;
   }
-  clearTimeout(pending.timeout);
-  pendingAuths.delete(state);
-  pending.resolve(result);
+  clearTimeout(entry.timeout);
+  callbacks.delete(state);
+  entry.resolve(result);
   sendHtml(res, 200, HTML_SUCCESS);
 }
 
@@ -232,7 +235,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
     sendHtml(res, 400, HTML_ERROR("Missing required state parameter - potential CSRF attack"));
     return;
   }
-  if (!pendingAuths.has(state) && !reservedAuthStates.has(state)) {
+  if (!callbacks.has(state)) {
     sendHtml(res, 400, HTML_ERROR("Invalid or expired state parameter - potential CSRF attack"));
     return;
   }
@@ -318,7 +321,7 @@ function callbackEndpoint(options: EnsureCallbackServerOptions): CallbackEndpoin
 function reserveCallback(options: EnsureCallbackServerOptions): string | undefined {
   const state = options.oauthState;
   if (options.reserveState === true && state !== undefined && state !== "") {
-    reservedAuthStates.set(state, { validate: options.validate });
+    callbacks.set(state, { phase: "reserved", validate: options.validate });
     return state;
   }
   return undefined;
@@ -331,7 +334,7 @@ function reuseCallbackServer(endpoint: CallbackEndpoint): boolean {
   const { strictPort, requiredPort, requestedHost, requestedPath } = endpoint;
   const needsRebind = strictPort && getOAuthCallbackPort() !== requiredPort;
   if (needsRebind || callbackServerHost !== requestedHost) {
-    if (pendingAuths.size > 0 || reservedAuthStates.size > 0) {
+    if (callbacks.size > 0) {
       throw new Error(
         `OAuth callback server is running on ${callbackServerHost}:${getOAuthCallbackPort()}, but strict callback endpoint ${requestedHost}:${requiredPort} is required and cannot be switched while authorizations are pending`,
       );
@@ -341,7 +344,7 @@ function reuseCallbackServer(endpoint: CallbackEndpoint): boolean {
   if (getOAuthCallbackPath() === requestedPath) {
     return true;
   }
-  if (pendingAuths.size > 0 || reservedAuthStates.size > 0) {
+  if (callbacks.size > 0) {
     throw new Error(
       `OAuth callback server is using path ${getOAuthCallbackPath()}, but callback path ${requestedPath} is required and cannot be switched while authorizations are pending`,
     );
@@ -405,7 +408,7 @@ async function ensureCallbackServerLocked(
     candidateServer.unref();
   } catch (error) {
     if (reservedState !== undefined) {
-      reservedAuthStates.delete(reservedState);
+      callbacks.delete(reservedState);
     }
     await closeServer(candidateServer);
     if (endpoint.strictPort && isAddressInUse(error)) {
@@ -419,17 +422,18 @@ async function ensureCallbackServerLocked(
 }
 
 export function releaseCallbackServer(oauthState: string): void {
-  reservedAuthStates.delete(oauthState);
+  callbacks.delete(oauthState);
 }
 
 /** Consume a validated manual callback without releasing the flow's reservation. */
-export function takeCallbackResult(oauthState: string): ReservedAuth["result"] {
-  const reserved = reservedAuthStates.get(oauthState);
-  const result = reserved?.result;
-  if (reserved) {
-    delete reserved.result;
+export function takeCallbackResult(oauthState: string): CallbackOutcome | undefined {
+  const entry = callbacks.get(oauthState);
+  if (entry?.phase !== "reserved") {
+    return undefined;
   }
-  return result;
+  const outcome = entry.outcome;
+  delete entry.outcome;
+  return outcome;
 }
 
 /**
@@ -438,23 +442,22 @@ export function takeCallbackResult(oauthState: string): ReservedAuth["result"] {
  * authorization server sends one, the RFC 9207 `iss` parameter.
  */
 export function waitForCallback(oauthState: string): Promise<OAuthCallbackResult> {
-  const reserved = reservedAuthStates.get(oauthState);
-  reservedAuthStates.delete(oauthState);
-  if (reserved?.result) {
-    return "error" in reserved.result
-      ? Promise.reject(new Error(reserved.result.error))
-      : Promise.resolve(reserved.result);
+  const reserved = callbacks.get(oauthState);
+  callbacks.delete(oauthState);
+  const outcome = reserved?.phase === "reserved" ? reserved.outcome : undefined;
+  if (outcome) {
+    return "error" in outcome ? Promise.reject(new Error(outcome.error)) : Promise.resolve(outcome);
   }
   const validate = reserved?.validate;
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
-      if (pendingAuths.has(oauthState)) {
-        pendingAuths.delete(oauthState);
+      if (callbacks.get(oauthState)?.phase === "awaiting-callback") {
+        callbacks.delete(oauthState);
         reject(new Error("OAuth callback timeout - authorization took too long"));
       }
     }, CALLBACK_TIMEOUT_MS);
 
-    pendingAuths.set(oauthState, { resolve, reject, timeout, ...(validate ? { validate } : {}) });
+    callbacks.set(oauthState, { phase: "awaiting-callback", validate, resolve, reject, timeout });
   });
 }
 
@@ -462,12 +465,11 @@ export function waitForCallback(oauthState: string): Promise<OAuthCallbackResult
  * Cancel a pending authorization by state.
  */
 export function cancelPendingCallback(oauthState: string): void {
-  reservedAuthStates.delete(oauthState);
-  const pending = pendingAuths.get(oauthState);
-  if (pending) {
-    clearTimeout(pending.timeout);
-    pendingAuths.delete(oauthState);
-    pending.reject(new Error("Authorization cancelled"));
+  const entry = callbacks.get(oauthState);
+  callbacks.delete(oauthState);
+  if (entry?.phase === "awaiting-callback") {
+    clearTimeout(entry.timeout);
+    entry.reject(new Error("Authorization cancelled"));
   }
 }
 
@@ -498,14 +500,13 @@ export function stopCallbackServer(): Promise<void> {
     callbackServerHost = DEFAULT_OAUTH_CALLBACK_HOST;
     setOAuthCallbackPath(DEFAULT_OAUTH_CALLBACK_PATH);
 
-    // Reject all pending auths (defer to allow any pending operations to complete)
-    const pendingList = Array.from(pendingAuths.entries());
-    pendingAuths.clear();
-    reservedAuthStates.clear();
+    // Reject all waiters (defer to allow any pending operations to complete)
+    const waiting = [...callbacks.values()].filter((entry) => entry.phase === "awaiting-callback");
+    callbacks.clear();
     setTimeout(() => {
-      for (const [, pending] of pendingList) {
-        clearTimeout(pending.timeout);
-        pending.reject(new Error("OAuth callback server stopped"));
+      for (const entry of waiting) {
+        clearTimeout(entry.timeout);
+        entry.reject(new Error("OAuth callback server stopped"));
       }
     }, 0);
   })();

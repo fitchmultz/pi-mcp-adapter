@@ -430,7 +430,7 @@ export async function startAuth(
 
 async function setPendingAuth(
   context: StartContext,
-  pendingAuth: PendingAuth,
+  pendingAuth: Omit<PendingAuth, "callbackState" | "cleanupTimer">,
   oauthState: string,
 ): Promise<void> {
   const { runtime, serverName, signal, generation } = context;
@@ -441,8 +441,6 @@ async function setPendingAuth(
   if (generation !== state.generation) {
     throw new Error("OAuth runtime stopped");
   }
-  state.pendingAuths.set(key, pendingAuth);
-  state.pendingAuthStates.set(key, oauthState);
   const cleanupTimer = setTimeout(() => {
     clearPendingAuth(runtime, serverName, oauthState, pendingAuth.authStorageOptions).catch(
       (error: unknown) => {
@@ -451,5 +449,5 @@ async function setPendingAuth(
     );
   }, MANUAL_AUTH_TIMEOUT_MS);
   cleanupTimer.unref();
-  state.pendingAuthCleanupTimers.set(key, cleanupTimer);
+  state.pendingAuths.set(key, { ...pendingAuth, callbackState: oauthState, cleanupTimer });
 }
