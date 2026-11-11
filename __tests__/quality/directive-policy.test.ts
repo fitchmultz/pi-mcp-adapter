@@ -180,7 +180,8 @@ const managerFiles = [
 ];
 const managerSites = loadExceptionSites().filter((entry) => managerFiles.includes(entry.file));
 
-describe("manager operation inventory", () => {
+// A case starts up to six checker processes and two linter processes: a hosted macOS runner has taken 5.3 seconds.
+describe("manager operation inventory", { timeout: 30_000 }, () => {
   it.each(managerFiles)("accepts the actual native operations in %s", (file) => {
     const source = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8").replaceAll(
       '"./',
