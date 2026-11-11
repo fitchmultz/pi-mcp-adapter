@@ -25,17 +25,26 @@ const reserved = new Set([
   "ls",
   "mcp",
 ]);
+/**
+ * How a registered tool is exposed to Pi: pinned and active from startup, deferred so tool_search
+ * loads it, or withdrawn after it left the catalog. Pi cannot unregister a tool, so a withdrawn
+ * one is re-registered hidden.
+ */
+type Exposure =
+  | { kind: "pinned" }
+  | { kind: "deferred" }
+  | {
+      kind: "withdrawn";
+      pinned: boolean;
+      /** Whether the pin re-activates when it returns: active when it left, or still selected. */
+      resumes: boolean;
+    };
+
 type Registration = {
   name: string;
   fingerprint: string;
   definition: ReturnType<typeof catalogDefinition>;
-  hidden: boolean;
-  pinned: boolean;
-  /**
-   * Whether a withdrawn pin re-activates on return: it was active when it left, or a later session
-   * boundary reached a branch that did not record removing it.
-   */
-  activeWhenWithdrawn: boolean;
+  exposure: Exposure;
 };
 interface ToolLoader {
   sync: (
@@ -71,8 +80,9 @@ export function removedOnBranch(
 }
 
 /**
- * How re-registering a tool changes its pin; a first registration has no change. A pin returning
- * from withdrawal counts as gained only if `activeWhenWithdrawn`, so a deselection holds.
+ * How re-registering a tool changes its pin; a first registration has no change. A pin the tool
+ * already had counts again only when it resumes from withdrawal, so a deselection holds, and a
+ * tool that was not pinned counts as gained because it gains a pin it never had.
  */
 function pinChange(
   existing: Registration | undefined,
@@ -81,12 +91,14 @@ function pinChange(
   if (existing === undefined) {
     return undefined;
   }
-  if (existing.pinned && !pinned) {
+  const exposure = existing.exposure;
+  const wasPinned =
+    exposure.kind === "pinned" || (exposure.kind === "withdrawn" && exposure.pinned);
+  if (wasPinned && !pinned) {
     return "lost";
   }
-  return pinned && (!existing.pinned || (existing.hidden && existing.activeWhenWithdrawn))
-    ? "gained"
-    : undefined;
+  const resumes = exposure.kind === "withdrawn" && exposure.resumes;
+  return pinned && (!wasPinned || resumes) ? "gained" : undefined;
 }
 
 /**
@@ -148,7 +160,7 @@ class Loader implements ToolLoader {
     const fingerprint = this.fingerprint(item, instructions);
     const id = key(selection);
     const existing = this.registered.get(id);
-    if (existing?.fingerprint === fingerprint && !existing.hidden) {
+    if (existing?.fingerprint === fingerprint && existing.exposure.kind !== "withdrawn") {
       return undefined;
     }
     const definition = catalogDefinition(spec, instructions, this.dependencies, pinned);
@@ -157,9 +169,7 @@ class Loader implements ToolLoader {
       name,
       fingerprint,
       definition,
-      hidden: false,
-      pinned,
-      activeWhenWithdrawn: false,
+      exposure: pinned ? { kind: "pinned" } : { kind: "deferred" },
     });
     return pinChange(existing, pinned);
   }
@@ -175,8 +185,7 @@ class Loader implements ToolLoader {
     const pins = [...this.registered.values()]
       .filter(
         (item) =>
-          item.pinned &&
-          !item.hidden &&
+          item.exposure.kind === "pinned" &&
           registered.has(item.name) &&
           (gained.has(item.name) || !this.settled.has(item.name)),
       )
@@ -205,16 +214,19 @@ class Loader implements ToolLoader {
   private withdraw(available: Set<string>): void {
     const active = new Set(this.pi.getActiveTools());
     for (const [id, registration] of this.registered) {
-      if (available.has(id) || registration.hidden) {
+      if (available.has(id) || registration.exposure.kind === "withdrawn") {
         continue;
       }
-      registration.activeWhenWithdrawn = active.has(registration.name);
+      registration.exposure = {
+        kind: "withdrawn",
+        pinned: registration.exposure.kind === "pinned",
+        resumes: active.has(registration.name),
+      };
       const hidden: ToolDefinition<
         ReturnType<typeof catalogDefinition>["parameters"],
         Record<string, unknown>
       > = { ...registration.definition, exposure: "hidden" };
       this.pi.registerTool(hidden);
-      registration.hidden = true;
     }
   }
 
@@ -283,15 +295,15 @@ class Loader implements ToolLoader {
   };
 
   hasDeferred: ToolLoader["hasDeferred"] = () =>
-    [...this.registered.values()].some((item) => !item.hidden && !item.pinned);
+    [...this.registered.values()].some((item) => item.exposure.kind === "deferred");
 
   settlePins: ToolLoader["settlePins"] = () => {
     this.settled.clear();
     for (const registration of this.registered.values()) {
-      if (registration.hidden && registration.pinned) {
+      const exposure = registration.exposure;
+      if (exposure.kind === "withdrawn" && exposure.pinned) {
         // Decided now: a prompt sent while the pin is withdrawn records it removed.
-        registration.activeWhenWithdrawn =
-          this.dependencies.removedOnBranch?.(registration.name) !== true;
+        exposure.resumes = this.dependencies.removedOnBranch?.(registration.name) !== true;
       }
     }
     this.activatePins(new Set());
