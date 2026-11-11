@@ -15,7 +15,11 @@ import {
   type ElicitationValue,
   type FormProperty,
 } from "./elicitation-form-values.ts";
-import { collectValidField, type ElicitationUIContext } from "./elicitation-form-dialog.ts";
+import {
+  bindDialogSignal,
+  collectValidField,
+  type ElicitationUIContext,
+} from "./elicitation-form-dialog.ts";
 export { coerceAndValidateFormValues, type ElicitationValue } from "./elicitation-form-values.ts";
 export type { ElicitationUIContext } from "./elicitation-form-dialog.ts";
 
@@ -23,6 +27,8 @@ export interface ElicitationHandlerOptions {
   serverName: string;
   ui: ElicitationUIContext;
   allowUrl: boolean;
+  /** Dismisses every dialog this handler opens when the owning runtime stops. */
+  signal?: AbortSignal;
   onUrlAccepted?: (elicitationId: string) => void;
 }
 
@@ -45,9 +51,11 @@ export async function handleElicitationRequest(
   options: ElicitationHandlerOptions,
   request: ElicitRequest,
 ): Promise<ElicitResult> {
+  const ui =
+    options.signal === undefined ? options.ui : bindDialogSignal(options.ui, options.signal);
   return request.params.mode === "url"
-    ? handleUrlElicitation(options, request.params)
-    : handleFormElicitation(options, request.params);
+    ? handleUrlElicitation({ ...options, ui }, request.params)
+    : handleFormElicitation({ ...options, ui }, request.params);
 }
 
 export async function handleFormElicitation(

@@ -168,6 +168,47 @@ describe("tool approval", () => {
     await expect(pending).rejects.toBe(reason);
   });
 
+  it("dismisses the approval dialog when its operation aborts", async () => {
+    const { state, select } = await createState({ approveTools: true });
+    let dismissed = false;
+    // Mirror Pi's dialog behavior: an aborted dialog signal resolves the dialog as dismissed.
+    select.mockImplementation(async (_title, _choices, opts) => {
+      const signal = opts?.signal;
+      if (signal === undefined) {
+        throw new Error("test dialog expected a bound signal");
+      }
+      if (signal.aborted) {
+        dismissed = true;
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            dismissed = true;
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    });
+    const controller = new AbortController();
+    const reason = new Error("stopped");
+    reason.name = "AbortError";
+
+    const pending = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: {},
+      signal: controller.signal,
+    });
+    expect(select.mock.calls[0]?.[2]?.signal).toBeDefined();
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    expect(dismissed).toBe(true);
+  });
+
   it("marks gated tools in describe and search output without hiding them", async () => {
     const { state } = await createState({ approveTools: true });
 

@@ -79,11 +79,11 @@ export async function ensureToolCallApproved(
   const title = `MCP: ${sanitizeTerminalText(serverName)} wants to run ${sanitizeTerminalText(toolMeta.originalName)}`;
   const ownedSignal = combineAbortSignals(state.owner.signal, signal);
   const decision = await abortable(
-    state.ui.select(`${title}\n\nArguments:\n${preview}`, [
-      "Allow once",
-      "Allow for session",
-      "Deny",
-    ]),
+    state.ui.select(
+      `${title}\n\nArguments:\n${preview}`,
+      ["Allow once", "Allow for session", "Deny"],
+      ownedSignal ? { signal: ownedSignal } : {},
+    ),
     ownedSignal,
   );
 

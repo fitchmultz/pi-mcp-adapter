@@ -68,10 +68,10 @@ function configureRequests(
 function configureElicitation(
   manager: McpServerManager,
   ctx: ExtensionContext,
-  { config, ui }: McpExtensionState,
+  { config, owner, ui }: McpExtensionState,
 ): void {
   if (config.settings?.elicitation !== false && ctx.hasUI && ui) {
-    manager.setElicitationConfig({ ui, allowUrl: ctx.mode === "tui" });
+    manager.setElicitationConfig({ ui, allowUrl: ctx.mode === "tui", signal: owner.signal });
   }
 }
 

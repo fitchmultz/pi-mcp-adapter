@@ -39,6 +39,8 @@ export async function initializeMcp(
   options: McpInitializationOptions = {},
 ): Promise<McpExtensionState> {
   // Capture host getters before the first await; Pi invalidates them on reload.
+  // ctx.signal is the current agent run's signal (undefined between runs): it scopes per-run
+  // startup work below. Session-scoped background work binds to owner.signal alone.
   const initialSignal = ctx.signal;
   const hasUI = ctx.hasUI;
   const runtimeSignal = combineAbortSignals(owner.signal, initialSignal);
@@ -65,7 +67,7 @@ export async function initializeMcp(
     return state;
   }
   await bootstrapDirectTools(state, connected, runtimeSignal);
-  bindLifecycle(state, runtimeSignal);
+  bindLifecycle(state, owner.signal);
   publishMcpStatusSnapshot(state);
   return state;
 }

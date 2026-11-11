@@ -1,4 +1,4 @@
-import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionUIContext, ExtensionUIDialogOptions } from "@earendil-works/pi-coding-agent";
 import type { ElicitRequestFormParams } from "@modelcontextprotocol/client";
 import {
   coerceAndValidateFormValues,
@@ -14,6 +14,25 @@ import {
 export type ElicitationUIContext = Pick<ExtensionUIContext, "select" | "input" | "notify">;
 type FieldInput = { name: string; schema: FormProperty; current?: ElicitationValue };
 type FieldResult = { cancelled: true } | { cancelled: false; value: ElicitationValue };
+
+/**
+ * Bind every dialog this UI opens to `signal`, so an elicitation handler settles when its
+ * owning runtime stops instead of waiting for an answer that can no longer be delivered.
+ */
+export function bindDialogSignal(
+  ui: ElicitationUIContext,
+  signal: AbortSignal,
+): ElicitationUIContext {
+  const dialogOptions = (options?: ExtensionUIDialogOptions): ExtensionUIDialogOptions => {
+    const own = options?.signal;
+    return { ...options, signal: own === undefined ? signal : AbortSignal.any([own, signal]) };
+  };
+  return {
+    select: (title, choices, options) => ui.select(title, choices, dialogOptions(options)),
+    input: (title, placeholder, options) => ui.input(title, placeholder, dialogOptions(options)),
+    notify: (message, type) => ui.notify(message, type),
+  };
+}
 
 export async function collectValidField(
   ui: ElicitationUIContext,
