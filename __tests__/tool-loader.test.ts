@@ -187,6 +187,22 @@ describe("MCP catalog registration", () => {
     expect(h.active()).toContainEqual({ name: "demo_pinned" });
   });
 
+  it("re-activates a deferred tool that returns pinned after leaving the catalog", async () => {
+    const h = await host();
+    const loader = createToolLoader(h.api, {
+      getState: () => null,
+      getInitPromise: () => null,
+      removedOnBranch: () => true,
+    });
+    loader.sync(unpinned, cache());
+    expect(definition(h, "demo_pinned").exposure).toBe("deferred");
+    loader.sync({ mcpServers: {} }, null);
+    expect(definition(h, "demo_pinned").exposure).toBe("hidden");
+    // It never had a pin to lose, so its return is a gain even with a recorded removal.
+    loader.sync(config, cache());
+    expect(h.active()).toContainEqual({ name: "demo_pinned" });
+  });
+
   it("withdraws tools that leave the catalog and restores them when they return", async () => {
     const h = await host();
     let recorded = false;

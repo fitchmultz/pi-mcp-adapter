@@ -21,16 +21,22 @@ interface McpPanelInput {
   options?: { noticeLines?: string[]; authOnly?: boolean; keybindings?: PanelKeybindings };
 }
 
+/**
+ * What the next keypress edits. Name filtering is orthogonal: it stays applied while browsing and
+ * while searching descriptions.
+ */
+type PanelInputMode =
+  | { kind: "browse" }
+  | { kind: "description-search"; query: string }
+  | { kind: "confirm-discard"; selected: number };
+
 class McpPanel implements Component {
   private readonly noticeLines: string[];
   private readonly servers: PanelServer[];
   private cursorIndex = 0;
   private nameQuery = "";
-  private descSearchActive = false;
-  private descQuery = "";
+  private mode: PanelInputMode = { kind: "browse" };
   private dirty = false;
-  private confirmingDiscard = false;
-  private discardSelected = 1;
   private importNotice: string | null = null;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private visibleItems: VisibleItem[] = [];
@@ -85,8 +91,8 @@ class McpPanel implements Component {
   private rebuildVisibleItems(): void {
     this.visibleItems = buildVisibleItems({
       servers: this.servers,
-      descSearchActive: this.descSearchActive,
-      descQuery: this.descQuery,
+      descSearchActive: this.mode.kind === "description-search",
+      descQuery: this.mode.kind === "description-search" ? this.mode.query : "",
       nameQuery: this.nameQuery,
       authOnly: this.authOnly,
     });
@@ -124,7 +130,7 @@ class McpPanel implements Component {
     if ((this.connections.inFlight ?? "").length === 0) {
       this.connections.notice = null;
     }
-    if (this.confirmingDiscard) {
+    if (this.mode.kind === "confirm-discard") {
       this.handleDiscardInput(data);
       return;
     }
@@ -137,8 +143,8 @@ class McpPanel implements Component {
       this.done(this.buildResult());
       return;
     }
-    if (this.descSearchActive) {
-      this.handleDescriptionInput(data);
+    if (this.mode.kind === "description-search") {
+      this.handleDescriptionInput(data, this.mode);
       return;
     }
     this.handleBrowseInput(data);
@@ -163,16 +169,18 @@ class McpPanel implements Component {
     }
     return false;
   }
-  private handleDescriptionInput(data: string): void {
+  private handleDescriptionInput(
+    data: string,
+    { query }: { kind: "description-search"; query: string },
+  ): void {
     if (matchesKey(data, "escape") || this.keys.selectConfirm(data)) {
-      this.descSearchActive = false;
-      this.descQuery = "";
+      this.mode = { kind: "browse" };
       this.refreshSelection();
       return;
     }
     if (matchesKey(data, "backspace")) {
-      if (this.descQuery.length > 0) {
-        this.descQuery = this.descQuery.slice(0, -1);
+      if (query.length > 0) {
+        this.mode = { kind: "description-search", query: query.slice(0, -1) };
         this.refreshSelection();
       }
       return;
@@ -189,7 +197,7 @@ class McpPanel implements Component {
       return;
     }
     if (data.length === 1 && data.charCodeAt(0) >= 32) {
-      this.descQuery += data;
+      this.mode = { kind: "description-search", query: query + data };
       this.refreshSelection();
       return;
     }
@@ -231,8 +239,7 @@ class McpPanel implements Component {
       return;
     }
     if (this.dirty) {
-      this.confirmingDiscard = true;
-      this.discardSelected = 1;
+      this.mode = { kind: "confirm-discard", selected: 1 };
       return;
     }
     this.closeCancelled();
@@ -280,8 +287,7 @@ class McpPanel implements Component {
       if (this.authOnly) {
         return;
       }
-      this.descSearchActive = true;
-      this.descQuery = "";
+      this.mode = { kind: "description-search", query: "" };
       this.refreshSelection();
       return;
     }
@@ -357,18 +363,21 @@ class McpPanel implements Component {
   }
 
   private handleDiscardInput(data: string): void {
+    if (this.mode.kind !== "confirm-discard") {
+      return;
+    }
     if (matchesKey(data, "ctrl+c")) {
       this.cleanup();
       this.done({ cancelled: true, changes: new Map() });
       return;
     }
     if (matchesKey(data, "escape") || data.toLowerCase() === "n") {
-      this.confirmingDiscard = false;
+      this.mode = { kind: "browse" };
       return;
     }
     if (this.keys.selectConfirm(data)) {
       this.cleanup();
-      if (this.discardSelected === 0) {
+      if (this.mode.selected === 0) {
         this.done({ cancelled: true, changes: new Map() });
       } else {
         this.done(this.buildResult());
@@ -384,8 +393,11 @@ class McpPanel implements Component {
   }
 
   private handleDiscardNavigation(data: string): void {
+    if (this.mode.kind !== "confirm-discard") {
+      return;
+    }
     if (matchesKey(data, "left") || matchesKey(data, "right") || matchesKey(data, "tab")) {
-      this.discardSelected = this.discardSelected === 0 ? 1 : 0;
+      this.mode = { kind: "confirm-discard", selected: this.mode.selected === 0 ? 1 : 0 };
     }
   }
 
@@ -412,14 +424,14 @@ class McpPanel implements Component {
       cursorIndex: this.cursorIndex,
       noticeLines: this.noticeLines,
       authOnly: this.authOnly,
-      descSearchActive: this.descSearchActive,
-      descQuery: this.descQuery,
+      descSearchActive: this.mode.kind === "description-search",
+      descQuery: this.mode.kind === "description-search" ? this.mode.query : "",
       nameQuery: this.nameQuery,
       importNotice: this.importNotice,
       authNotice: this.connections.notice,
       authInFlight: this.connections.inFlight,
-      confirmingDiscard: this.confirmingDiscard,
-      discardSelected: this.discardSelected,
+      confirmingDiscard: this.mode.kind === "confirm-discard",
+      discardSelected: this.mode.kind === "confirm-discard" ? this.mode.selected : 1,
       dirty: this.dirty,
     }).render(width);
   }
