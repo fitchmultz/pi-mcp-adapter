@@ -100,7 +100,7 @@ The auth, runtime and panel scopes include the command authentication, status, o
 
 ## Automatic npm releases (maintainers)
 
-The `npm version` workflow queues main merges and opens a reviewed patch-version PR through the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases). The `npm release` workflow publishes after full CI (including extras) and retained-candidate qualification pass. Verify the matching npm and GitHub releases; workflow validation is not evidence of a real OIDC publication.
+The `npm version` workflow queues main merges and opens a reviewed patch-version PR through the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases). A version PR opens when a merge changes the package users install; a merge that changes only CI, tests or development tooling ships with the next release. The `npm release` workflow publishes after full CI (including extras) and retained-candidate qualification pass. Verify the matching npm and GitHub releases; workflow validation is not evidence of a real OIDC publication.
 
 Failed or unpublished candidates can retry daily at 12:17 UTC or through manual dispatch on `main`, without another bump. Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new release plans; cancel pending runs separately when needed.
 
