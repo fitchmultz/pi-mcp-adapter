@@ -137,21 +137,35 @@ type SetupOptions = {
 
 type StdioCommand = Awaited<ReturnType<typeof resolveStdioCommand>>;
 
+/**
+ * Which transport and auth flavour this connection attempt is on.
+ *
+ * A Streamable HTTP server that rejects the handshake falls back to the legacy SSE transport, and a
+ * server that answers with an OAuth challenge is retried with the provider attached. Those used to
+ * be one-way booleans, so the current attempt had to be reconstructed from three flags.
+ */
+type SetupAttempt = {
+  transport: "streamable-http" | "legacy-sse";
+  auth: "configured" | "implicit-oauth";
+};
+
 class ConnectionSetup {
+  private attempt: SetupAttempt;
   private oauthProvider = false;
   private authError: Error | undefined;
-  private legacySse = false;
   private readonly stderr = new StdioDiagnostics();
 
   private readonly options: SetupOptions;
   private client: ManagedClient;
-  private implicitOAuth: boolean;
   private readonly command: StdioCommand;
 
   constructor(options: SetupOptions, client: ManagedClient, implicitOAuth: boolean) {
     this.options = options;
     this.client = client;
-    this.implicitOAuth = implicitOAuth;
+    this.attempt = {
+      transport: "streamable-http",
+      auth: implicitOAuth ? "implicit-oauth" : "configured",
+    };
     this.command = {
       command: options.definition.command ?? "",
       args: options.definition.args ?? [],
@@ -197,8 +211,8 @@ class ConnectionSetup {
       definition,
       serverName: name,
       client: this.client,
-      legacySse: this.legacySse,
-      implicitOAuth: this.implicitOAuth,
+      legacySse: this.attempt.transport === "legacy-sse",
+      implicitOAuth: this.attempt.auth === "implicit-oauth",
       onAuthChallenge: (error) => {
         this.authError = error;
       },
@@ -223,7 +237,9 @@ class ConnectionSetup {
     const { factory, name, definition, runtime } = this.options;
     this.client = factory.callbacks.createClient(
       name,
-      this.legacySse ? { ...definition, protocolVersion: "legacy" } : definition,
+      this.attempt.transport === "legacy-sse"
+        ? { ...definition, protocolVersion: "legacy" }
+        : definition,
       runtime,
     );
     return this.traceTransport(this.createHttp());
@@ -245,13 +261,13 @@ class ConnectionSetup {
         typeof definition.url !== "string" ||
         definition.url.length === 0 ||
         signal?.aborted === true ||
-        this.legacySse ||
+        this.attempt.transport === "legacy-sse" ||
         !(error instanceof runtime.SdkHttpError) ||
         ![404, 405, 406, 415].includes(error.status)
       ) {
         throw error;
       }
-      this.legacySse = true;
+      this.attempt = { ...this.attempt, transport: "legacy-sse" };
       return await this.replaceClient();
     }
   }
@@ -287,7 +303,7 @@ class ConnectionSetup {
       if (!this.canActivateOAuth(error)) {
         throw error;
       }
-      this.implicitOAuth = true;
+      this.attempt = { ...this.attempt, auth: "implicit-oauth" };
       return { kind: "retry", transport: await this.replaceClient() };
     }
   }
@@ -298,7 +314,7 @@ class ConnectionSetup {
       typeof definition.url === "string" &&
       definition.url.length > 0 &&
       signal?.aborted !== true &&
-      !this.implicitOAuth &&
+      this.attempt.auth === "configured" &&
       definition.auth === undefined &&
       supportsOAuth(definition) &&
       runtime.isOAuthChallenge(error)

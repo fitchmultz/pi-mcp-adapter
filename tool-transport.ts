@@ -16,7 +16,13 @@ const interruptedToolCalls = new WeakSet<object>();
 export function isInterruptedToolCall(error: unknown): boolean {
   return error instanceof Error && interruptedToolCalls.has(error);
 }
-type ToolCallOutcome = { pending: boolean; cleanup: Set<() => void> };
+/**
+ * How far a tool request got, which is what decides whether an interruption leaves its outcome
+ * unknown. "answered" includes a server rejection: the call was refused, not left unresolved.
+ */
+export type ToolCallPhase = "not-sent" | "awaiting-response" | "answered";
+
+type ToolCallOutcome = { phase: ToolCallPhase; cleanup: Set<() => void> };
 const toolCallOutcome = new AsyncLocalStorage<ToolCallOutcome>();
 
 /** Interrupted outcome reporting is separate from the transport retry policy. */
@@ -24,12 +30,12 @@ export async function trackToolCallOutcome<T>(
   fn: () => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
-  const outcome: ToolCallOutcome = { pending: false, cleanup: new Set() };
+  const outcome: ToolCallOutcome = { phase: "not-sent", cleanup: new Set() };
   return toolCallOutcome.run(outcome, async () => {
     try {
       return await fn();
     } catch (error) {
-      if (outcome.pending && isInterruptedFailure(error, signal)) {
+      if (outcome.phase === "awaiting-response" && isInterruptedFailure(error, signal)) {
         // Abort reasons can be shared by calls that never reached dispatch.
         const interrupted = new Error(error.message, { cause: error });
         interruptedToolCalls.add(interrupted);
@@ -70,14 +76,21 @@ class ToolSend {
   constructor(id: string | number, http: boolean) {
     this.id = id;
     this.http = http;
-    if (!http && this.outcome) {
-      this.outcome.pending = true;
+    if (!http) {
+      // A stdio or socket send has no earlier point that proves dispatch.
+      this.phase("awaiting-response");
+    }
+  }
+
+  private phase(phase: ToolCallPhase): void {
+    if (this.outcome) {
+      this.outcome.phase = phase;
     }
   }
 
   beginFetch(toolPost: boolean): void {
-    if (toolPost && this.outcome) {
-      this.outcome.pending = true;
+    if (toolPost) {
+      this.phase("awaiting-response");
     }
   }
 
@@ -86,8 +99,9 @@ class ToolSend {
     toolPost: boolean,
     signal: AbortSignal | null | undefined,
   ): Response {
-    if (toolPost && !response.ok && response.status < 500 && this.outcome) {
-      this.outcome.pending = false;
+    if (toolPost && !response.ok && response.status < 500) {
+      // The server refused the request before processing it.
+      this.phase("answered");
     }
     if (!response.body || !observesBody(response, toolPost)) {
       return response;
@@ -150,8 +164,8 @@ class ToolSend {
         options.requestSignal,
       );
     } catch (error) {
-      if (!this.http && this.outcome) {
-        this.outcome.pending = false;
+      if (!this.http) {
+        this.phase("not-sent");
       }
       throw error;
     } finally {
@@ -327,7 +341,7 @@ class ToolTransportObserver {
     }
     pending.responseReceived = true;
     if (pending.outcome) {
-      pending.outcome.pending = false;
+      pending.outcome.phase = "answered";
     }
     this.requests.delete(pending.id);
     pending.finishSend?.();

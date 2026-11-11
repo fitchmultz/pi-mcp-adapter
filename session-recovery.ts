@@ -196,7 +196,11 @@ class RecoveryAttempt<T> {
     return !isServerDisabled(definition) && supportsOAuth(definition);
   }
 
-  private async terminalDispatch(fresh: ServerConnection): Promise<T> {
+  /**
+   * The single re-dispatch a call may take after recovery. It never recovers again: a second
+   * recoverable auth failure becomes an auth-required error instead of another retry.
+   */
+  private async replay(fresh: ServerConnection): Promise<T> {
     throwIfAborted(this.deps.signal);
     try {
       return await this.dispatch(fresh);
@@ -207,6 +211,10 @@ class RecoveryAttempt<T> {
       }
       throw error;
     }
+  }
+
+  private async reconnectAndReplay(connection: ServerConnection, error: Error): Promise<T> {
+    return this.replay(await this.reconnect(connection, error));
   }
 
   private async activateProvider(
@@ -245,9 +253,9 @@ class RecoveryAttempt<T> {
     const definition = this.deps.config.mcpServers[this.serverName];
     const current = this.deps.manager.getConnection(this.serverName);
     if (current && current !== failed && failed.oauthProvider !== false) {
-      return this.terminalDispatch(
-        current.status === "connected" ? current : await this.reconnect(current, error),
-      );
+      return current.status === "connected"
+        ? this.replay(current)
+        : this.reconnectAndReplay(current, error);
     }
     const activation = await this.activateProvider(failed, error);
     if (activation.kind === "result") {
@@ -271,7 +279,7 @@ class RecoveryAttempt<T> {
     if (!fresh || fresh === challenge.connection || fresh.status !== "connected") {
       throw new SessionRecoveryAuthRequiredError(this.serverName);
     }
-    return this.terminalDispatch(fresh);
+    return this.replay(fresh);
   }
 
   async run(): Promise<T> {
@@ -299,7 +307,7 @@ class RecoveryAttempt<T> {
         return this.recoverAuth(connection, error);
       }
       if (this.canRetryTransport(error, connection)) {
-        return this.terminalDispatch(connection);
+        return this.replay(connection);
       }
       if (!(error instanceof Error) || !isTerminatedSession(error, hadSessionId)) {
         throw error;
@@ -307,7 +315,7 @@ class RecoveryAttempt<T> {
       logger.debug(`MCP session for "${this.serverName}" expired; reconnecting`, {
         server: this.serverName,
       });
-      return this.terminalDispatch(await this.reconnect(connection, error));
+      return this.reconnectAndReplay(connection, error);
     }
   }
 
