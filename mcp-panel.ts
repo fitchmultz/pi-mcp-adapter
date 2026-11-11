@@ -439,6 +439,7 @@ class McpPanel implements Component {
     // Lines are rendered from state on every call; no layout is cached.
   }
 
+  /** Pi owns this panel; disposal releases its inactivity timer even without an answer. */
   dispose(): void {
     this.cleanup();
   }

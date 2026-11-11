@@ -2,6 +2,25 @@
 
 See [AGENTS.md](../AGENTS.md) for repository test conventions, the [strict quality standard](strict-quality-standard.md) for quality requirements, and [.github/workflows/ci.yml](../.github/workflows/ci.yml) for the full CI contract.
 
+## Runtime ownership
+
+The host runtime owns tool and command registrations across session changes.
+Handlers resolve current state when invoked; borrowed Pi UI and session handles
+must not be reused after their runtime owner stops. Session approvals belong to
+the adapter state and expire when it is rebuilt, including after a working-directory
+change.
+
+Shutdown snapshots metadata before stopping connection cleanup. Failure-expiry
+timers belong to that state's runtime owner; panel inactivity timers belong to the
+panel and are cleared on disposal. OAuth runtime shutdown and runtime-owner stop
+are repeat-safe because initialization failure, session replacement and final
+shutdown can converge on the same owner.
+
+Metadata snapshots, the native keyring constructor and optional Glimpse module
+availability are process caches, not session resources. Their contents survive
+session rebuilds; they do not own live MCP connections or authorize use of stale
+Pi handles.
+
 ## Local checks
 
 Use the npm version declared in `package.json`:

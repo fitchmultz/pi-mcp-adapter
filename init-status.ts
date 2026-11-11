@@ -25,6 +25,13 @@ function getFailureExpiryTimers(
   if (!timers) {
     timers = new Map();
     failureExpiryTimers.set(state, timers);
+    const ownedTimers = timers;
+    state.owner.addCleanup(() => {
+      for (const timer of ownedTimers.values()) {
+        clearTimeout(timer);
+      }
+      ownedTimers.clear();
+    });
   }
   return timers;
 }

@@ -44,6 +44,7 @@ describe("MCP failure state", () => {
 
     recordFailure(state, "demo", "failed");
     await owner.stop("session shutdown");
+    expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(60_000);
 
     expect(emit).not.toHaveBeenCalled();
