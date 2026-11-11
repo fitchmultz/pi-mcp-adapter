@@ -3,8 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpServerManager } from "../../server-manager.ts";
+import { ConnectionDisposal } from "../../connection-disposal.ts";
 
 const managers: McpServerManager[] = [];
 const servers: Server[] = [];
@@ -91,5 +92,20 @@ describe("McpServerManager Unix socket transport", () => {
     await expect(manager.connect("invalid", definition)).rejects.toThrow(
       "must configure exactly one of command, url, or socket",
     );
+  });
+
+  it("releases the claimed client when an attempt fails before connect", async () => {
+    const own = vi.spyOn(ConnectionDisposal.prototype, "own");
+    const release = vi.spyOn(ConnectionDisposal.prototype, "releaseWhenSettled");
+    const manager = new McpServerManager();
+    managers.push(manager);
+
+    await expect(
+      manager.connect("invalid", { socket: "/tmp/shared.sock", url: "https://example.test/mcp" }),
+    ).rejects.toThrow("must configure exactly one of command, url, or socket");
+
+    expect(own).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(release.mock.calls[0]?.[0]).toBe(own.mock.calls[0]?.[0]);
   });
 });

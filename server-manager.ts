@@ -50,6 +50,8 @@ export class McpServerManager {
   }
 
   setRuntimeSignal(signal: AbortSignal | undefined): void {
+    // The manager is constructed before its owning runtime exists; the session signal is
+    // bound once the runtime starts and scopes every connection attempt and request.
     this.lifecycle.runtimeSignal = signal;
   }
 

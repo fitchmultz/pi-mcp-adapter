@@ -30,6 +30,8 @@ export class ConnectionCallbacks {
   }
 
   clearServer(name: string): void {
+    // close(name) forgets the server's pending browser prompts: a completion notification
+    // arriving after close must not claim a live connection.
     this.acceptedUrlElicitations.delete(name);
   }
 
@@ -101,6 +103,8 @@ export class ConnectionCallbacks {
       },
     );
     client.serverName = serverName;
+    // The client is claimed into disposal here. ConnectionFactory releases the claim if the
+    // attempt fails before connect; after that, ConnectionDisposal owns the release.
     this.lifecycle.disposal.own(client);
     if (this.samplingConfig) {
       registerSamplingHandler(client, { ...this.samplingConfig, serverName }, (run) =>
@@ -153,6 +157,7 @@ export class ConnectionCallbacks {
       return;
     }
     const connection = this.lifecycle.getConnection(serverName);
+    // Re-check identity after the refresh await: a replaced connection's refresh is dropped.
     if (!connection || connection.client !== client || connection.status !== "connected") {
       return;
     }

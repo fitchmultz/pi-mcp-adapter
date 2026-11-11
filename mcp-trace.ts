@@ -283,7 +283,9 @@ export function isMcpTraceEnabled(
 /**
  * Compose the SDK's transport callbacks instead of replacing them. Protocol
  * assigns `onmessage` during connect, so the setter must keep the observer in
- * front of whichever callback the SDK installs.
+ * front of whichever callback the SDK installs. Third layer of transport-callback
+ * patching, after connection-http and tool-transport, before connection-handshake;
+ * every wrapper calls the previous handler and none are restored.
  */
 export function wrapTransportWithMcpTrace(
   transport: Transport,
