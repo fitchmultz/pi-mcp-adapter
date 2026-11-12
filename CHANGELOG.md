@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refuse to replace a project configuration created after the setup screen offered to scaffold it.
 - Finish pending stdio writes when their native transport closes, so an exited server cannot leave shutdown waiting for a drain event that will never arrive.
 - Keep only the current UI listener and viewer when multiple tools open apps at the same time.
+- Retain tool, resource, and prompt updates received while a server is still finishing initial discovery.
 
 ## 8.0.39 - 2026-11-12
 

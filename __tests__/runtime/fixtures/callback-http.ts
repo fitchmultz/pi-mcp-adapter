@@ -48,6 +48,11 @@ export interface CallbackHttpFixture {
   definition: ServerDefinition;
   methods: string[];
   notifications: string[];
+  updateCatalogs: (name?: string) => void;
+  holdNextCatalog: (catalog: "tools" | "resources" | "prompts") => {
+    started: Promise<null>;
+    release: () => void;
+  };
   calls: () => number;
   refreshes: () => number;
   streamReady: () => boolean;
@@ -82,6 +87,12 @@ export async function createCallbackHttpFixture(
   let delayed: { method: string; gate: PromiseWithResolvers<void> } | undefined;
   let started = false;
   let callCount = 0;
+  let updatedCatalogs: string | undefined;
+  const heldCatalogs = new Map<
+    string,
+    { started: PromiseWithResolvers<null>; done: PromiseWithResolvers<null> }
+  >();
+  const catalogHolds: PromiseWithResolvers<null>[] = [];
   let refreshCount = 0;
   let getCount = 0;
   let unauthorizedCount = 0;
@@ -242,12 +253,19 @@ export async function createCallbackHttpFixture(
       );
       return;
     }
+    const value = result(body);
+    const held = heldCatalogs.get(body.method);
+    if (held) {
+      heldCatalogs.delete(body.method);
+      held.started.resolve(null);
+      await held.done.promise;
+    }
     response
       .writeHead(200, {
         "content-type": "application/json",
         ...(options.session === true ? { "mcp-session-id": "synthetic-session" } : {}),
       })
-      .end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: result(body) }));
+      .end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: value }));
   }
 
   function result(body: z.infer<typeof JSONRPCRequestSchema>): unknown {
@@ -285,10 +303,21 @@ export async function createCallbackHttpFixture(
           resultType: "complete",
           ttlMs: 1000,
           cacheScope: "private",
-          tools: [{ name: "echo", inputSchema: { type: "object" } }],
+          tools: [{ name: updatedCatalogs ?? "echo", inputSchema: { type: "object" } }],
         };
       case "resources/list":
-        return { resultType: "complete", resources: [] };
+        return {
+          resultType: "complete",
+          resources:
+            updatedCatalogs !== undefined
+              ? [{ uri: `file://${updatedCatalogs}`, name: updatedCatalogs }]
+              : [],
+        };
+      case "prompts/list":
+        return {
+          resultType: "complete",
+          prompts: updatedCatalogs !== undefined ? [{ name: updatedCatalogs }] : [],
+        };
       case "completion/complete":
         return {
           resultType: "complete",
@@ -327,6 +356,16 @@ export async function createCallbackHttpFixture(
     definition,
     methods,
     notifications,
+    updateCatalogs: (catalogName = "updated") => {
+      updatedCatalogs = catalogName;
+    },
+    holdNextCatalog: (catalog) => {
+      const requestStarted = Promise.withResolvers<null>();
+      const done = Promise.withResolvers<null>();
+      heldCatalogs.set(`${catalog}/list`, { started: requestStarted, done });
+      catalogHolds.push(done);
+      return { started: requestStarted.promise, release: () => done.resolve(null) };
+    },
     calls: () => callCount,
     refreshes: () => refreshCount,
     streamReady: () => stream !== undefined,
@@ -382,6 +421,9 @@ export async function createCallbackHttpFixture(
     },
     close: async () => {
       delayed?.gate.resolve();
+      for (const held of catalogHolds) {
+        held.resolve(null);
+      }
       await http.close();
     },
   };

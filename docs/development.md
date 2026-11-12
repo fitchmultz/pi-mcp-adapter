@@ -26,6 +26,14 @@ startup requests, not the session. Completed connections keep their discovered
 metadata, and owner-scoped health checks still reconnect keep-alive servers and
 close idle connections.
 
+Native catalog refreshes can finish while another startup catalog is still
+loading or finish out of order. The manager reads the per-client SDK response
+cache, whose native invalidation generations reject stale writes, before
+publishing startup or callback catalog updates. Callback result arrays are not
+an authority for publication. Retired clients remain fenced out. The cache uses
+the SDK's in-memory store and default limits; catalog views read retained entries
+regardless of response TTL, without making another request.
+
 Metadata snapshots, the native keyring constructor and optional Glimpse module
 availability are process caches, not session resources. Their contents survive
 session rebuilds; they do not own live MCP connections or authorize use of stale

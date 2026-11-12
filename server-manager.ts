@@ -30,8 +30,11 @@ export class McpServerManager {
       (name, definition, signal, requestSignal) =>
         this.factory.create(name, definition, signal, requestSignal),
       () => this.factory.flushTrace(),
-      (name) => this.callbacks.clearServer(name),
-      () => this.callbacks.clear(),
+      {
+        publish: (connection) => this.callbacks.publish(connection),
+        close: (name) => this.callbacks.clearServer(name),
+        closeAll: () => this.callbacks.clear(),
+      },
     );
     this.callbacks = new ConnectionCallbacks(this.lifecycle);
     this.factory = new ConnectionFactory(this.lifecycle, this.callbacks, defaultCwd);

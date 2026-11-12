@@ -4,17 +4,16 @@ import type { ManagedClient } from "./connection-runtime.ts";
 import type { ServerSamplingConfig } from "./sampling-handler.ts";
 import type { ServerElicitationConfig } from "./elicitation-handler.ts";
 import type { ConnectionLifecycle } from "./connection-lifecycle.ts";
-import type { MetadataListChangedListener, UiStreamListener } from "./server-connection.ts";
-import {
-  type ServerDefinition,
-  type McpTool,
-  type McpResource,
-  type McpPrompt,
-  isNonInteractiveOAuth,
-} from "./types.ts";
+import type {
+  MetadataListChangedListener,
+  UiStreamListener,
+  ServerConnection,
+} from "./server-connection.ts";
+import { type ServerDefinition, isNonInteractiveOAuth } from "./types.ts";
 import { supportsOAuth } from "./mcp-oauth-runtime.ts";
 import { ADAPTER_VERSION } from "./utils.ts";
 import { logger } from "./logger.ts";
+import type { ConnectionCatalogs } from "./connection-catalogs.ts";
 
 export class ConnectionCallbacks {
   samplingConfig: ServerSamplingConfig | undefined;
@@ -22,11 +21,25 @@ export class ConnectionCallbacks {
   metadataListChangedListener: MetadataListChangedListener | undefined;
   private readonly acceptedUrlElicitations = new Map<string, Set<string>>();
   private readonly uiStreamListeners = new Map<string, UiStreamListener>();
+  private readonly catalogs = new WeakMap<Client, ConnectionCatalogs>();
 
   private readonly lifecycle: ConnectionLifecycle;
 
   constructor(lifecycle: ConnectionLifecycle) {
     this.lifecycle = lifecycle;
+  }
+
+  /** Adopt native accepted catalogs before the connection becomes visible. */
+  publish(connection: ServerConnection): void {
+    const catalogs = this.catalogs.get(connection.client);
+    const tools = catalogs?.tools();
+    const resources = catalogs?.resources();
+    const prompts = catalogs?.prompts();
+    Object.assign(connection, {
+      ...(tools === undefined ? {} : { tools }),
+      ...(resources === undefined ? {} : { resources }),
+      ...(prompts === undefined ? {} : { prompts, promptDiscoveryFailed: false }),
+    });
   }
 
   clearServer(name: string): void {
@@ -72,9 +85,11 @@ export class ConnectionCallbacks {
   ): ManagedClient {
     const { ManagedClient, registerSamplingHandler, registerElicitationHandler } = runtime;
     const capabilities = this.buildClientCapabilities(definition);
+    const catalogs = new runtime.ConnectionCatalogs();
     const client = new ManagedClient(
       { name: `pi-mcp-${serverName}`, version: ADAPTER_VERSION },
       {
+        responseCacheStore: catalogs,
         versionNegotiation: {
           mode:
             definition.protocolVersion ??
@@ -85,24 +100,25 @@ export class ConnectionCallbacks {
         ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
         listChanged: {
           tools: {
-            onChanged: (error: Error | null, tools: McpTool[] | null) => {
-              this.handleToolsListChanged(serverName, client, error, tools);
+            onChanged: (error: Error | null) => {
+              this.handleToolsListChanged(serverName, client, error);
             },
           },
           resources: {
-            onChanged: (error: Error | null, resources: McpResource[] | null) => {
-              this.handleResourcesListChanged(serverName, client, error, resources);
+            onChanged: (error: Error | null) => {
+              this.handleResourcesListChanged(serverName, client, error);
             },
           },
           prompts: {
-            onChanged: (error: Error | null, prompts: McpPrompt[] | null) => {
-              this.handlePromptsListChanged(serverName, client, error, prompts);
+            onChanged: (error: Error | null) => {
+              this.handlePromptsListChanged(serverName, client, error);
             },
           },
         },
       },
     );
     client.serverName = serverName;
+    this.catalogs.set(client, catalogs);
     // The client is claimed into disposal here. ConnectionFactory releases the claim if the
     // attempt fails before connect; after that, ConnectionDisposal owns the release.
     this.lifecycle.disposal.own(client);
@@ -143,16 +159,12 @@ export class ConnectionCallbacks {
     return client;
   }
 
-  private handleToolsListChanged(
-    serverName: string,
-    client: Client,
-    error: Error | null,
-    tools: McpTool[] | null,
-  ): void {
+  private handleToolsListChanged(serverName: string, client: Client, error: Error | null): void {
     if (error) {
       logger.debug(`MCP: tools/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
     }
+    const tools = this.catalogs.get(client)?.tools();
     if (!tools) {
       return;
     }
@@ -165,16 +177,12 @@ export class ConnectionCallbacks {
     this.metadataListChangedListener?.(serverName, "tools-list-changed");
   }
 
-  private handlePromptsListChanged(
-    serverName: string,
-    client: Client,
-    error: Error | null,
-    prompts: McpPrompt[] | null,
-  ): void {
+  private handlePromptsListChanged(serverName: string, client: Client, error: Error | null): void {
     if (error) {
       logger.debug(`MCP: prompts/list_changed refresh failed for ${serverName}: ${error.message}`);
       return;
     }
+    const prompts = this.catalogs.get(client)?.prompts();
     if (!prompts) {
       return;
     }
@@ -191,7 +199,6 @@ export class ConnectionCallbacks {
     serverName: string,
     client: Client,
     error: Error | null,
-    resources: McpResource[] | null,
   ): void {
     if (error) {
       logger.debug(
@@ -199,6 +206,7 @@ export class ConnectionCallbacks {
       );
       return;
     }
+    const resources = this.catalogs.get(client)?.resources();
     if (!resources) {
       return;
     }
