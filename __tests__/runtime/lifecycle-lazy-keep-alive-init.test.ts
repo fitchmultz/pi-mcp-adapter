@@ -54,8 +54,12 @@ vi.mock("../../metadata-cache.ts", () => ({
   loadMetadataCache: vi.fn<typeof Metadata.loadMetadataCache>(() => mocks.state.cache),
   reconstructToolMetadata: vi.fn<typeof Metadata.reconstructToolMetadata>(() => []),
   reconstructPromptMetadata: vi.fn<typeof Metadata.reconstructPromptMetadata>(() => []),
-  saveMetadataCache: vi.fn<typeof Metadata.saveMetadataCache>((cache) => {
+  saveMetadataCache: vi.fn<typeof Metadata.saveMetadataCache>((cache, enabled = true) => {
+    if (!enabled) {
+      return "disabled";
+    }
     mocks.state.cache = cache;
+    return "saved";
   }),
   serializeResources: vi.fn<typeof Metadata.serializeResources>(() => []),
   serializeTools: vi.fn<typeof Metadata.serializeTools>(() => []),
