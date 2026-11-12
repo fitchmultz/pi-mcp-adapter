@@ -119,6 +119,79 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
     expect(storedEntries()).toEqual({ [legacyKey]: JSON.stringify(legacyEntry) });
   });
 
+  it.each(["secure", "plaintext"])(
+    "promotes a live current %s grant before the historical grant",
+    (source) => {
+      const current = {
+        ...legacyEntry,
+        tokens: { accessToken: "CURRENT-GRANT", refreshToken: "CURRENT-REFRESH" },
+      };
+      const stale = { ...legacyEntry, tokens: { accessToken: "STALE-V4-GRANT" } };
+      writeFileSync(storePath, JSON.stringify({ [legacyKey]: JSON.stringify(stale) }));
+      if (source === "secure") {
+        writeFileSync(
+          storePath,
+          JSON.stringify({
+            ...storedEntries(),
+            [nameOnlyKey]: JSON.stringify(current),
+          }),
+        );
+      } else {
+        const path = getAuthEntryFilePath(server);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, JSON.stringify(current));
+      }
+
+      expect(migrateLegacyAuthEntry(identity)).toBe("existing");
+      expect(getAuthEntry(identity)).toEqual(current);
+      expect(storedEntry(ownedKey)).toEqual(current);
+      expect(storedEntries()[nameOnlyKey]).toBeUndefined();
+      expect(existsSync(getAuthEntryFilePath(server))).toBe(false);
+      updateTokens(identity, { accessToken: "CURRENT-UPDATED" });
+      expect(getAuthEntry(identity)).toEqual({
+        ...current,
+        tokens: { accessToken: "CURRENT-UPDATED" },
+      });
+      expect(storedEntry(legacyKey)).toEqual(stale);
+    },
+  );
+
+  it("ignores another URL's current grant when explicitly copying a matching historical grant", () => {
+    const other = {
+      ...legacyEntry,
+      serverUrl: identity.serverUrl + "/",
+      tokens: { accessToken: "OTHER-URL" },
+    };
+    writeFileSync(
+      storePath,
+      JSON.stringify({
+        [nameOnlyKey]: JSON.stringify(other),
+        [legacyKey]: JSON.stringify(legacyEntry),
+      }),
+    );
+    expect(migrateLegacyAuthEntry(identity)).toBe("copied");
+    expect(getAuthEntry(identity)).toEqual(legacyEntry);
+    updateTokens(identity, { accessToken: "UPDATED" });
+    expect(storedEntry(nameOnlyKey)).toEqual(other);
+    expect(storedEntry(legacyKey)).toEqual(legacyEntry);
+  });
+
+  it("keeps a mismatched historical grant untouched when promoting a live current grant", () => {
+    const other = { ...legacyEntry, serverUrl: identity.serverUrl + "/" };
+    const current = { ...legacyEntry, tokens: { accessToken: "CURRENT-GRANT" } };
+    writeFileSync(
+      storePath,
+      JSON.stringify({
+        [nameOnlyKey]: JSON.stringify(current),
+        [legacyKey]: JSON.stringify(other),
+      }),
+    );
+    expect(migrateLegacyAuthEntry(identity)).toBe("existing");
+    expect(getAuthEntry(identity)).toEqual(current);
+    updateTokens(identity, { accessToken: "UPDATED" });
+    expect(storedEntry(legacyKey)).toEqual(other);
+  });
+
   it("explicitly copies native credentials and bindings once, without modifying the source", () => {
     expect(
       migrateLegacyAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),

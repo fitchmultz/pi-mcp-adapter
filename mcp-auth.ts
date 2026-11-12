@@ -251,12 +251,16 @@ function getLegacyAuthBaseDir(): string {
   return override !== undefined && override.length > 0 ? override : getAgentPath("mcp-oauth");
 }
 
-/** Copy-only upgrade from the old service; an existing scoped record always wins. */
+/** Promote current credentials first; historical sources are copied only when absent. */
 export function migrateLegacyAuthEntry(
   identity: AuthIdentity,
   legacyDirectory = getLegacyAuthBaseDir(),
+  options?: AuthStorageOptions,
 ): "copied" | "existing" | "absent" {
-  if (readSecureAuthEntry(identity) !== undefined) {
+  if (
+    readSecureAuthEntry(identity) !== undefined ||
+    readAuthEntry(identity, options) !== undefined
+  ) {
     return "existing";
   }
   let entry = readSecureAuthEntry(identity, LEGACY_AUTH_SECRET_SERVICE, true);

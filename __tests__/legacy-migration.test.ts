@@ -186,6 +186,35 @@ describe("explicit pre-v5 state migration", () => {
     expect(existsSync(join(project, ".pi", "fitch-mcp-adapter"))).toBe(false);
   });
 
+  it("promotes configured current plaintext before copying an older plaintext grant", async () => {
+    write(
+      join(agent, "mcp.json"),
+      JSON.stringify({
+        mcpServers: { oauth: { url: "https://example.com/mcp" } },
+        settings: { oauthDir: ".pi/oauth" },
+      }),
+    );
+    const account = `sha256-${createHash("sha256").update("oauth").digest("hex")}`;
+    const directory = join(project, ".pi", "oauth");
+    const historical = join(directory, account, "tokens.json");
+    const active = join(directory, "fitch-mcp-adapter", account, "tokens.json");
+    const identity = { serverName: "oauth", serverUrl: "https://example.com/mcp" };
+    const current = { serverUrl: identity.serverUrl, tokens: { accessToken: "CURRENT-GRANT" } };
+    const stale = { serverUrl: identity.serverUrl, tokens: { accessToken: "STALE-V4-GRANT" } };
+    write(historical, JSON.stringify(stale));
+    write(active, JSON.stringify(current));
+    const { migrateLegacyState } = await import("../legacy-migration.ts");
+    const { getAuthEntry, updateTokens } = await import("../mcp-auth.ts");
+    expect(migrateLegacyState({ cwd: project }).credentials).toEqual([
+      { server: "oauth", status: "existing" },
+    ]);
+    expect(getAuthEntry(identity)).toEqual(current);
+    expect(existsSync(active)).toBe(false);
+    updateTokens(identity, { accessToken: "CURRENT-UPDATED" });
+    expect(getAuthEntry(identity)?.tokens?.accessToken).toBe("CURRENT-UPDATED");
+    expect(readFileSync(historical, "utf8")).toBe(JSON.stringify(stale));
+  });
+
   it("keeps a custom legacy directory intact through runtime reads, refresh and logout", async () => {
     write(
       join(agent, "mcp.json"),
