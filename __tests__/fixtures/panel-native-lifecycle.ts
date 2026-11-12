@@ -169,6 +169,10 @@ try {
     panel.handleInput(" ");
     panel.handleInput("\x13");
     await refreshStarted.promise;
+    // Key repeats and cancellation cannot overtake a save already awaiting live refresh.
+    panel.handleInput("\x13");
+    panel.handleInput("\x03");
+    panel.handleInput("\x1b");
     assert(tui.hasOverlay());
     assert.deepEqual(JSON.parse(await readFile(projectConfig, "utf8")), {
       mcpServers: { demo: { ...definition, directTools: true } },
