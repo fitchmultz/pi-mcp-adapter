@@ -112,6 +112,43 @@ describe("prompts with the real MCP SDK", () => {
     );
   });
 
+  it("resolves positional arguments after lazy discovery replaces cached arguments", async () => {
+    const manager = new McpServerManager();
+    managers.push(manager);
+    const cached: PromptMetadata = {
+      serverName: "real",
+      originalName: "brief",
+      commandName: formatPromptCommandName("brief", "real", "server"),
+      description: "Cached brief",
+      arguments: [{ name: "oldTopic", required: true }],
+    };
+    const state = buildState(manager, [cached]);
+    const { context, sendUserMessage } = commandHost();
+
+    await createPromptCommand(host.api, () => state, cached).handler("mcp", context);
+
+    expect(sendUserMessage).toHaveBeenCalledWith("Give me the brief on mcp for today.");
+  });
+
+  it("does not reject arguments using obsolete cached requirements before discovery", async () => {
+    const manager = new McpServerManager();
+    managers.push(manager);
+    const cached: PromptMetadata = {
+      serverName: "real",
+      originalName: "haiku",
+      commandName: formatPromptCommandName("haiku", "real", "server"),
+      description: "Cached haiku",
+      arguments: [{ name: "obsolete", required: true }],
+    };
+    const state = buildState(manager, [cached]);
+    const { context, notify, sendUserMessage } = commandHost();
+
+    await createPromptCommand(host.api, () => state, cached).handler("", context);
+
+    expect(sendUserMessage).toHaveBeenCalledWith(expect.stringContaining("Write a haiku"));
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it("preserves multi-turn role attribution", async () => {
     const manager = await createConnectedManager();
     const metadata = buildPromptMetadata(manager);

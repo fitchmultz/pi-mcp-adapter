@@ -274,21 +274,17 @@ export function createPromptCommand(
         notifyPromptError(ctx, "MCP not initialized");
         return;
       }
-      const prepared = preparePromptArguments(state, metadata, args, ctx);
-      if (!prepared) {
-        return;
-      }
       const { lazyConnect } = await import("./init.ts");
       const connected = await lazyConnect(state, metadata.serverName, ctx.signal);
       if (!connected) {
         notifyUnavailablePrompt(state, metadata.serverName, ctx);
         return;
       }
-      const refreshed = advertisedPrompt(state, prepared.live, ctx);
-      if (!refreshed) {
+      const prepared = preparePromptArguments(state, metadata, args, ctx);
+      if (!prepared) {
         return;
       }
-      const result = await fetchPrompt(state, refreshed, prepared.args, ctx);
+      const result = await fetchPrompt(state, prepared.live, prepared.args, ctx);
       if (!result) {
         return;
       }
