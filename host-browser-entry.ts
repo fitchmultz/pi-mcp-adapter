@@ -43,6 +43,7 @@ try {
 const session = new HostBrowserSession(bridge, proxy, view, {
   sessionToken: config.sessionToken,
   initialToolArgs: streamMode === "stream-first" ? undefined : config.toolArgs,
+  initialToolInputEventId: streamMode === "stream-first" ? undefined : config.toolInputEventId,
 });
 session.listen();
 await view.load(config.uiResourceToken);

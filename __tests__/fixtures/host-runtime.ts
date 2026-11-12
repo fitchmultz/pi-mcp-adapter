@@ -115,6 +115,7 @@ export async function openHost(
     confirm?: boolean;
     permissions?: UiResourcePermissions;
     onMessage?: UiServerOptions["onMessage"];
+    beforeHostLoad?: (handle: UiServerHandle) => void;
     beforeAppLoad?: (controls: {
       clock: BrowserClock;
       requests: HostRuntime["requests"];
@@ -153,6 +154,7 @@ export async function openHost(
     }
   });
 
+  options.beforeHostLoad?.(handle);
   const origin = `http://127.0.0.1:${handle.port}`;
   const page = await fetch(`${origin}/?session=${encodeURIComponent(handle.sessionToken)}`);
   expect(page.status).toBe(200);
@@ -243,7 +245,10 @@ export async function openHost(
     readonly connected: PromiseWithResolvers<void> = Promise.withResolvers();
     readonly completed = Promise.withResolvers<z.infer<typeof completionSchema>>();
     readonly interrupted: PromiseWithResolvers<void> = Promise.withResolvers();
-    readonly listeners = new Map<string, Array<(event: { data: string }) => void>>();
+    readonly listeners = new Map<
+      string,
+      Array<(event: { data: string; lastEventId: string }) => void>
+    >();
     readonly request: http.ClientRequest;
     closed = false;
     terminalEvents = 0;
@@ -268,8 +273,9 @@ export async function openHost(
             buffer = buffer.slice(end + 2);
             const name = frame.match(/^event:\s*(.*)$/m)?.[1];
             const data = frame.match(/^data:\s*(.*)$/m)?.[1];
+            const id = frame.match(/^id:\s*(.*)$/m)?.[1] ?? "";
             if (name !== undefined && name !== "" && data !== undefined) {
-              this.dispatch(name, data);
+              this.dispatch(name, data, id);
             }
           }
         });
@@ -285,16 +291,19 @@ export async function openHost(
       });
     }
 
-    addEventListener(name: string, listener: (event: { data: string }) => void): void {
+    addEventListener(
+      name: string,
+      listener: (event: { data: string; lastEventId: string }) => void,
+    ): void {
       const listeners = this.listeners.get(name) ?? [];
       listeners.push(listener);
       this.listeners.set(name, listeners);
     }
 
-    private dispatch(name: string, data: string): void {
+    private dispatch(name: string, data: string, lastEventId: string): void {
       this.receivedEvents.push(name);
       for (const listener of this.listeners.get(name) ?? []) {
-        listener({ data });
+        listener({ data, lastEventId });
       }
       if (name === "session-complete") {
         this.terminalEvents += 1;
@@ -307,7 +316,7 @@ export async function openHost(
         return;
       }
       for (const listener of this.listeners.get("error") ?? []) {
-        listener({ data: "" });
+        listener({ data: "", lastEventId: "" });
       }
       this.onerror?.();
       this.interrupted.resolve();

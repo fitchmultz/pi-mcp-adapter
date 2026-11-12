@@ -11,6 +11,7 @@ type SessionAddress = Pick<
 interface SessionChannel {
   hostContext: UiHostContext;
   push: (name: string, payload: unknown) => void;
+  sendInput: (args: Record<string, unknown>) => void;
   close: UiServerHandle["close"];
   getMessages: UiServerHandle["getSessionMessages"];
   getSummary: UiServerHandle["getStreamSummary"];
@@ -41,7 +42,7 @@ export class UiServerSessionHandle implements UiServerHandle {
   };
 
   sendToolInput = (args: Record<string, unknown>): void => {
-    this.#channel.push("tool-input", { arguments: args });
+    this.#channel.sendInput(args);
   };
 
   sendToolResult = (result: CallToolResult): void => {

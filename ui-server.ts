@@ -145,6 +145,11 @@ class UiHttpServer {
       {
         hostContext: this.hostContext,
         push: (name, payload) => this.pushEvent(name, payload),
+        sendInput: (args) => {
+          if (this.phase === "open") {
+            this.events.setToolInput(args);
+          }
+        },
         close: (reason) => this.close(reason ?? "closed"),
         getMessages: () => this.proxy.getMessages(),
         getSummary: () => this.events.getSummary(),
@@ -256,12 +261,14 @@ class UiHttpServer {
     }
     this.touchHeartbeat();
     const options = this.options;
+    const currentInput = this.events.getToolInput();
     const html = buildHostHtmlTemplate({
       sessionToken: this.sessionToken,
       uiResourceToken: this.resourceToken,
       serverName: options.serverName,
       toolName: options.toolName,
-      toolArgs: options.toolArgs,
+      toolArgs: currentInput?.arguments ?? options.toolArgs,
+      ...(currentInput !== undefined ? { toolInputEventId: currentInput.eventId } : {}),
       resource: options.resource,
       allowAttribute: buildAllowAttribute(options.resource.meta.permissions),
       requireToolConsent: options.consentManager.requiresPrompt(options.serverName),

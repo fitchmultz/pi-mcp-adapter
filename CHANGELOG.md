@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Finish panel saves once, keeping repeated save or cancel keys from closing the panel before live refresh completes.
 - Read credential-store diagnostics independently of panel status reads.
 - Deliver completed UI messages once when multiple callers retrieve them at the same time.
+- Reopen reused UI streams with the current call's arguments before its replayed result, without duplicating the input notification.
 
 ## 8.0.39 - 2026-11-12
 

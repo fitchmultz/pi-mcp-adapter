@@ -21,6 +21,7 @@ import {
   summarizeUiSessionResult,
   type UiSessionRequest,
 } from "../ui-session.ts";
+import { hostConfiguration } from "./fixtures/host-document.ts";
 
 function createMockResource(): UiResourceContent {
   return {
@@ -443,6 +444,60 @@ describe("UI Streaming", () => {
 
       expect(envelopes).toHaveLength(2);
       expect(envelopes.map((envelope) => envelope.frameType)).toEqual(["checkpoint", "patch"]);
+    });
+
+    it("reopens a reused streaming UI with current input before its latest checkpoint", async () => {
+      handle = await startUiServer(
+        createServerOptions({
+          toolArgs: { call: 1 },
+          hostContext: {
+            [UI_STREAM_HOST_CONTEXT_KEY]: {
+              mode: "eager",
+              streamId: "first",
+              intermediateResultPatches: false,
+              partialInput: false,
+            },
+          },
+        }),
+      );
+      handle.sendToolInput({ call: 2 });
+      handle.sendToolResult({
+        content: [],
+        structuredContent: {
+          [UI_STREAM_STRUCTURED_CONTENT_KEY]: {
+            streamId: "second",
+            sequence: 1,
+            frameType: "final",
+            phase: "settled",
+            status: "ok",
+          },
+        },
+      });
+      const page = hostConfiguration(await (await fetch(handle.url)).text());
+      expect(page.toolArgs).toEqual({ call: 2 });
+      const events: Array<{ name: string; data: unknown; id: string | undefined }> = [];
+      const url = `http://127.0.0.1:${handle.port}/events?session=${handle.sessionToken}`;
+      const fresh = await connectSSE(url, (name, data, id) => events.push({ name, data, id }));
+      try {
+        await expect.poll(() => events.at(-1)?.name).toBe("tool-result");
+        expect(events.map((event) => event.name)).toEqual(["tool-input", "tool-result"]);
+        expect(events[0]?.data).toEqual({ arguments: { call: 2 } });
+        const inputId = events[0]?.id;
+        assert(inputId !== undefined && inputId !== "");
+        expect(String(page.toolInputEventId)).toBe(inputId);
+        const resumedEvents: string[] = [];
+        const resumed = await connectSSE(url, (name) => resumedEvents.push(name), {
+          "Last-Event-ID": inputId,
+        });
+        try {
+          await expect.poll(() => resumedEvents.at(-1)).toBe("tool-result");
+          expect(resumedEvents).toEqual(["tool-result"]);
+        } finally {
+          resumed.close();
+        }
+      } finally {
+        fresh.close();
+      }
     });
 
     it("tracks stream summary", async () => {
