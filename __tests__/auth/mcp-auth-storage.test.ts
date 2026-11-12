@@ -10,7 +10,9 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -56,6 +58,137 @@ function readRecoveryStore(storePath: string): Record<string, string> {
   return z.record(z.string(), z.string()).parse(JSON.parse(readFileSync(storePath, "utf8")));
 }
 
+describe("cross-process credential locking", () => {
+  let home: string;
+  let store: string;
+  const firstUrl = "https://first.invalid/mcp";
+  const secondUrl = "https://second.invalid/mcp";
+  const worker = fileURLToPath(new URL("../fixtures/credential-lock-worker.ts", import.meta.url));
+  const busy =
+    "OAuth credential storage is busy in another process. Retry after its operation finishes.";
+  const original = {
+    tokens: { accessToken: "x".repeat(5000), refreshToken: "refresh" },
+    clientInfo: { clientId: "first-client" },
+    codeVerifier: "verifier",
+    oauthState: "state",
+    futureMetadata: { kept: true },
+    serverUrl: firstUrl,
+  };
+  const other = {
+    tokens: { accessToken: "second-token" },
+    clientInfo: { clientId: "second-client" },
+    serverUrl: secondUrl,
+  };
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "credential-lock-"));
+    store = join(home, "keyring.json");
+    writeFileSync(store, "{}");
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function environment() {
+    return {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      PI_CODING_AGENT_DIR: join(home, "agent"),
+      FITCH_MCP_OAUTH_DIR: join(home, "oauth"),
+      MCP_OAUTH_DIR: join(home, "old-oauth"),
+      PI_MCP_ADAPTER_FAKE_NATIVE_KEYRING: store,
+    };
+  }
+
+  function run(action: string, url = firstUrl) {
+    return spawnSync(process.execPath, [worker, action, url], {
+      env: {
+        ...environment(),
+        // The lock must not depend on which Pi or legacy-import directory is selected.
+        PI_CODING_AGENT_DIR: join(home, "other-agent"),
+        FITCH_MCP_OAUTH_DIR: join(home, "other-oauth"),
+      },
+      encoding: "utf8",
+    });
+  }
+
+  function successful(action: string) {
+    const result = run(action);
+    expect(result.status, result.stderr).toBe(0);
+    return z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout));
+  }
+
+  it("protects a chunked read from field updates, other-URL logout and migration, then permits updates after release", async () => {
+    expect(successful("seed")).toEqual({ entry: original, other });
+    const before = readFileSync(store, "utf8");
+    expect(Object.keys(readRecoveryStore(store)).some((key) => key.includes(".chunk."))).toBe(true);
+    const reader = spawn(process.execPath, [worker, "read"], {
+      env: { ...environment(), PI_MCP_ADAPTER_PAUSE_CHUNK_READ: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    reader.stdout.setEncoding("utf8");
+    reader.stderr.setEncoding("utf8");
+    reader.stdout.on("data", (data: string) => {
+      stdout += data;
+    });
+    reader.stderr.on("data", (data: string) => {
+      stderr += data;
+    });
+    const closed = once(reader, "close");
+    try {
+      const ready: unknown = await Promise.race([
+        once(reader.stdout, "data"),
+        closed.then(() => {
+          throw new Error(`Credential reader exited before pausing: ${stderr}`);
+        }),
+      ]);
+      expect(ready).toEqual(["reading-chunk\n"]);
+      const attempts = [
+        { action: "update", url: firstUrl, operation: "write" },
+        { action: "clear", url: firstUrl, operation: "write" },
+        { action: "client", url: secondUrl, operation: "write" },
+        { action: "logout", url: secondUrl, operation: "remove" },
+        { action: "migrate", url: firstUrl, operation: "write" },
+        { action: "read", url: secondUrl, operation: "read" },
+      ];
+      for (const attempt of attempts) {
+        const result = run(attempt.action, attempt.url);
+        expect(result.status, result.stderr).toBe(1);
+        const receipt: unknown = JSON.parse(result.stdout);
+        expect(receipt).toEqual({
+          error: {
+            code: "OAUTH_CREDENTIAL_STORE_UNAVAILABLE",
+            operation: attempt.operation,
+            message: busy,
+          },
+        });
+        expect(readFileSync(store, "utf8")).toBe(before);
+      }
+      expect(successful("inspect")).toEqual({ status: "unavailable", message: busy });
+      reader.stdin.end("x");
+      expect(await closed, stderr).toEqual([0, null]);
+      const readback: unknown = JSON.parse(stdout.slice("reading-chunk\n".length));
+      expect(readback).toEqual({ entry: original, other });
+      expect(readFileSync(store, "utf8")).toBe(before);
+    } finally {
+      reader.kill("SIGKILL");
+      await closed;
+    }
+    const { codeVerifier: _removed, ...cleared } = original;
+    expect(successful("clear")).toEqual({ entry: cleared, other });
+    expect(successful("update")).toEqual({
+      entry: { ...cleared, tokens: { accessToken: "updated-token" } },
+      other,
+    });
+    expect(Object.keys(readRecoveryStore(store)).some((key) => key.includes(".chunk."))).toBe(
+      false,
+    );
+  });
+});
+
 describe("OAuth credential-store diagnostics", () => {
   // Real adapter + published loader, simulated platform only; never an OS keychain.
   it.each(["missing", "unloadable", "working"])("diagnoses Android binding: %s", (mode) => {
@@ -68,6 +201,7 @@ describe("OAuth credential-store diagnostics", () => {
         "credential-payloads.ts",
         "credential-store-errors.ts",
         "keyring-store.ts",
+        "storage-lock.ts",
         "keyring-recovery.ts",
         "agent-dir.ts",
         "config.ts",

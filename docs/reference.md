@@ -14,7 +14,7 @@ For installation and a first task, start with the [README](../README.md). This g
 
 Use Pi 1.5.0 or later and Node.js 24 or later.
 
-Cache writes use Node's built-in [`node:sqlite`](https://nodejs.org/docs/latest-v24.x/api/sqlite.html) module for synchronous cross-process locking. This module is experimental in Node 24 and may emit an experimental warning on first use. Cache writes require it to be enabled, without `--no-experimental-sqlite`.
+Cache writes and persistent OAuth credential operations use Node's built-in [`node:sqlite`](https://nodejs.org/docs/latest-v24.x/api/sqlite.html) module for synchronous cross-process locking. This module is experimental in Node 24 and may emit an experimental warning on first use. These operations require it to be enabled, without `--no-experimental-sqlite`.
 
 Concurrent writes fail immediately with a database-lock error rather than overwriting another process's cache update. Lock databases remain on disk. Do not remove or replace them while an adapter process may use them.
 
