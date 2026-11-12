@@ -12,7 +12,7 @@ For installation and a first task, start with the [README](../README.md). This g
 
 ## Requirements
 
-Use Pi 1.5.0 or later and Node.js 24 or later.
+Use Pi 1.5.0 or later and Node.js `^24.22.3 || >=26.13.1`.
 
 Cache, config and onboarding writes and persistent OAuth credential operations use Node's built-in [`node:sqlite`](https://nodejs.org/docs/latest-v24.x/api/sqlite.html) module for cross-process locking. This module is experimental in Node 24 and may emit an experimental warning on first use. These operations require it to be enabled, without `--no-experimental-sqlite`.
 
