@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChildProcess } from "node:child_process";
 import type { ElicitRequest } from "@modelcontextprotocol/client";
 import type open from "open";
+import type { ElicitationUIContext } from "../../elicitation-handler.ts";
 import { createElicitationUi } from "./fixtures/elicitation-ui.ts";
 
 const mocks = vi.hoisted(() => ({
@@ -155,6 +156,53 @@ describe("MCP elicitation", () => {
         params,
       ),
     ).resolves.toEqual({ action: "cancel" });
+  });
+
+  it("dismisses open dialogs when the owning runtime signal aborts", async () => {
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const controller = new AbortController();
+    let dismissed = false;
+    // Mirror Pi's dialog behavior: an aborted dialog signal resolves the dialog as dismissed.
+    const awaitDismissal = async (signal: AbortSignal | undefined): Promise<void> => {
+      if (signal === undefined) {
+        throw new Error("test dialog expected a bound signal");
+      }
+      if (signal.aborted) {
+        dismissed = true;
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            dismissed = true;
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    };
+    const ui = {
+      select: vi.fn<ElicitationUIContext["select"]>(async (_title, _choices, opts) => {
+        await awaitDismissal(opts?.signal);
+      }),
+      input: vi.fn<ElicitationUIContext["input"]>(async () => "unused"),
+      notify: vi.fn<ElicitationUIContext["notify"]>(),
+    };
+
+    const pending = handleElicitationRequest(
+      { serverName: "demo", ui, allowUrl: false, signal: controller.signal },
+      request({
+        mode: "form",
+        message: "Choose",
+        requestedSchema: { type: "object", properties: {} },
+      }),
+    );
+    expect(ui.select).toHaveBeenCalled();
+    expect(ui.select.mock.calls[0]?.[2]?.signal).toBe(controller.signal);
+    controller.abort(new Error("session ended"));
+    await expect(pending).resolves.toEqual({ action: "cancel" });
+    expect(dismissed).toBe(true);
   });
 
   it("does not open URL elicitations that are declined or dismissed", async () => {

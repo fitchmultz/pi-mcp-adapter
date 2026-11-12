@@ -240,7 +240,9 @@ async function confirmSampling(
       "MCP sampling requires interactive approval. Set settings.samplingAutoApprove to true to allow it without UI.",
     );
   }
-  const approved = await options.ui.confirm(title, message);
+  const signal = options.getSignal();
+  const approved = await options.ui.confirm(title, message, signal ? { signal } : undefined);
+  throwIfAborted(signal);
   if (!approved) {
     throw new Error("MCP sampling request was declined");
   }

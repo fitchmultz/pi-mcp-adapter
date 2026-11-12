@@ -217,6 +217,56 @@ describe("sampling handler", () => {
     expect(requireValue(ui.confirm.mock.calls[1])[1]).toContain("Bonjour");
   });
 
+  it("dismisses the approval dialog when the turn aborts and surfaces the abort reason", async () => {
+    const { handleSamplingRequest } = await import("../../sampling-handler.ts");
+    const controller = new AbortController();
+    const reason = new Error("turn cancelled");
+    reason.name = "AbortError";
+    let dismissed = false;
+    // Mirror Pi's dialog behavior: an aborted dialog signal resolves confirm as not approved.
+    const confirm = vi.fn<Pick<ExtensionUIContext, "confirm">["confirm"]>(
+      async (_title, _message, opts) => {
+        const signal = opts?.signal;
+        if (signal === undefined) {
+          throw new Error("test dialog expected a bound signal");
+        }
+        if (signal.aborted) {
+          dismissed = true;
+          return false;
+        }
+        await new Promise<void>((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              dismissed = true;
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        return false;
+      },
+    );
+
+    const pending = handleSamplingRequest(
+      createOptions({
+        autoApprove: false,
+        ui: { confirm },
+        getSignal: () => controller.signal,
+      }),
+      createSamplingRequest({
+        messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+        maxTokens: 50,
+      }),
+    );
+    await expect.poll(() => confirm.mock.calls.length).toBeGreaterThan(0);
+    expect(confirm.mock.calls[0]?.[2]?.signal).toBe(controller.signal);
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    expect(dismissed).toBe(true);
+  });
+
   it("uses model preference hints before the current conversation model", async () => {
     await runBasicSampling(
       {

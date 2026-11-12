@@ -174,7 +174,7 @@ The two callbacks serve different boundaries: `beforeExecute` saves completed wo
 
 ### Runtime shutdown and replacement
 
-Pi owns session replacement and emits `session_shutdown`. The adapter aborts outgoing activity before awaiting cleanup, closes owned connections, health watchers, OAuth callbacks and UI servers, and reports persistence/cleanup failures. Actual sampling/elicitation and native send/auth tails remain owned through settlement, even when a public request has already been cancelled. Unfinished callbacks prevent idle connection closure; final shutdown joins transport work. Pending `beforeExecute`/`onToolCall` promises prevent a clean-shutdown success claim. No detached work is declared finished merely because the agent settled.
+Pi owns session replacement and emits `session_shutdown`. The adapter aborts outgoing activity before awaiting cleanup, closes owned connections, health watchers, OAuth callbacks and UI servers, and reports persistence/cleanup failures. Open approval, sampling and elicitation dialogs are bound to the runtime's session signal, so shutdown dismisses them instead of waiting for an answer; the cancelled dialog replies `cancel`. Actual sampling/elicitation and native send/auth tails remain owned through settlement, even when a public request has already been cancelled. Unfinished callbacks prevent idle connection closure; final shutdown joins transport work. Pending `beforeExecute`/`onToolCall` promises prevent a clean-shutdown success claim. No detached work is declared finished merely because the agent settled.
 
 The retired fork `session_checkpoint`/`acquireCheckpoint` APIs are no longer used. Host-supplied `beforeExecute` and raw `onToolCall` capture remain supported; the host still owns durable effect receipts and coherent workspace/session capture. No callback/process-memory recovery or automatic operation replay is promised.
 
@@ -451,7 +451,7 @@ Use `approveTools` when a tool should stay visible but not run without confirmat
 }
 ```
 
-When a matching tool is called from the proxy tool, a direct MCP tool, a resource call, or an MCP UI iframe, Pi asks: **Allow once**, **Allow for session**, or **Deny**. Session approvals are kept in memory only. In headless sessions, matching calls fail closed with an `approval_required` result instead of running. `excludeTools` still removes tools entirely; `approveTools` only gates visible tools at call time.
+When a matching tool is called from the proxy tool, a direct MCP tool, a resource call, or an MCP UI iframe, Pi asks: **Allow once**, **Allow for session**, or **Deny**. The dialog dismisses itself when its tool call or the session is cancelled. Session approvals are kept in memory only. In headless sessions, matching calls fail closed with an `approval_required` result instead of running. `excludeTools` still removes tools entirely; `approveTools` only gates visible tools at call time.
 
 ### Output Guard
 
@@ -518,7 +518,7 @@ Prompt results are flattened into one user message, preserving `[user]` and `[as
 
 ### MCP Elicitation
 
-When Pi exposes dialog-capable UI, the adapter advertises form elicitation support. Forms use Pi's stock `select()` and `input()` dialogs, validate the response, and provide a review/edit step before submission. Explicit refusal maps to MCP `decline`; dismissing a dialog maps to `cancel`.
+When Pi exposes dialog-capable UI, the adapter advertises form elicitation support. Forms use Pi's stock `select()` and `input()` dialogs, validate the response, and provide a review/edit step before submission. Explicit refusal maps to MCP `decline`; dismissing a dialog maps to `cancel`, and a dialog that is still open when the Pi session stops is dismissed automatically.
 
 URL mode is advertised only in TUI mode. The adapter displays the requesting server, target host, and full URL, and always requires consent before opening the browser. It also handles URL-required tool errors (`-32042`) and completion notifications; after completing the browser interaction, retry the original tool call.
 

@@ -229,6 +229,42 @@ it("keeps the SDK's callback reply HTTP send owned after the handler itself has 
   await closing;
 });
 
+it("stops the runtime while an elicitation dialog is still open", async () => {
+  const f = await wire({ inbound: true });
+  const h = await host();
+  let dismissed = false;
+  // Mirror Pi's dialog behavior: an aborted dialog signal resolves the dialog as dismissed.
+  h.ui.select.mockImplementation(async (_title, _choices, opts) => {
+    const signal = opts?.signal;
+    if (signal === undefined) {
+      throw new Error("test dialog expected a bound signal");
+    }
+    if (signal.aborted) {
+      dismissed = true;
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      signal.addEventListener(
+        "abort",
+        () => {
+          dismissed = true;
+          resolve();
+        },
+        { once: true },
+      );
+    });
+  });
+  const state = await runtime(f.config, h);
+  await expect.poll(f.streamReady).toBe(true);
+  const request = f.callback("elicitation/create", elicitationRequest);
+  await expect.poll(() => h.ui.select.mock.calls.length).toBeGreaterThan(0);
+  // Session shutdown must settle the dialog and drain the callback without waiting for
+  // an answer that can no longer be delivered.
+  await state.owner.stop("session shutdown");
+  expect(dismissed).toBe(true);
+  request.cancel();
+});
+
 it.each(["sampling", "elicitation"] as const)(
   "does not lose a cancelled %s callback tail on transport close",
   async function retainsCancelledCallbackTail(kind) {

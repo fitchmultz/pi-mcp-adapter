@@ -49,7 +49,11 @@ describe("initializeMcp elicitation config", () => {
       },
     });
 
-    expect(elicitation).toHaveBeenCalledWith({ ui: state.ui, allowUrl: true });
+    expect(elicitation).toHaveBeenCalledWith({
+      ui: state.ui,
+      allowUrl: true,
+      signal: state.owner.signal,
+    });
     expect(wire.clientCapabilities()).toMatchObject({ elicitation: { form: {}, url: {} } });
     await expect.poll(wire.streamReady).toBe(true);
     expect(await wire.callback("elicitation/create", elicitationRequest).response).toMatchObject({
@@ -88,7 +92,11 @@ describe("initializeMcp elicitation config", () => {
       config: { mcpServers: { demo: { ...wire.definition, lifecycle: "eager" } } },
     });
 
-    expect(elicitation).toHaveBeenCalledWith({ ui: state.ui, allowUrl: false });
+    expect(elicitation).toHaveBeenCalledWith({
+      ui: state.ui,
+      allowUrl: false,
+      signal: state.owner.signal,
+    });
     expect(wire.clientCapabilities()).toMatchObject({ elicitation: { form: {} } });
     expect(wire.clientCapabilities()).not.toHaveProperty("elicitation.url");
     await expect.poll(wire.streamReady).toBe(true);
@@ -121,6 +129,17 @@ describe("initializeMcp elicitation config", () => {
     await state.owner.stop("reload");
     expect(callbacks.getCurrentModel()).toBeUndefined();
     expect(callbacks.getSignal()?.aborted).toBe(true);
+  });
+
+  it("binds elicitation dialogs to the runtime owner's session signal", async () => {
+    const elicitation = vi.spyOn(McpServerManager.prototype, "setElicitationConfig");
+    const state = await host.initialize({ config: { mcpServers: {} } });
+    const callbacks = elicitation.mock.calls[0]?.[0];
+    assert(callbacks !== undefined);
+    expect(callbacks.signal).toBe(state.owner.signal);
+    expect(callbacks.signal?.aborted).toBe(false);
+    await state.owner.stop("reload");
+    expect(callbacks.signal?.aborted).toBe(true);
   });
 
   it("does not enable elicitation without UI or when disabled", async () => {
