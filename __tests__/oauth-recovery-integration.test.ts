@@ -200,7 +200,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome.reason.errors[0]).toBe(recorded.value);
     expect(outcome.reason.errors[1]).toBe(cleanup);
     expect(outcome.reason.cause).toBe(cleanup);
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect(f.exchanges).toHaveLength(0);
   });
 
@@ -222,7 +222,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome.reason.cause).toBe(cleanup);
     expect(f.http.some((request) => request.path.startsWith("/.well-known/"))).toBe(true);
     expect(f.exchanges).toHaveLength(0);
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
   });
 
   it("retains ordered errors and the cleanup cause when token persistence and completion cleanup fail", async () => {
@@ -245,7 +245,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome.reason.cause).toBe(cleanup);
     expect(f.exchanges).toHaveLength(1);
     expect(f.stored()?.tokens).toBeUndefined();
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect((await fetch(callback)).status).toBe(400);
   });
 
@@ -273,7 +273,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome.reason.errors[0]).toBe(primary);
     expect(outcome.reason.errors[1]).toBe(cleanup);
     expect(outcome.reason.cause).toBe(cleanup);
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect(f.exchanges).toHaveLength(0);
     expect(browser.open).not.toHaveBeenCalled();
   });
@@ -331,7 +331,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     );
     expect(outcome).toHaveProperty("status", "rejected");
     expect(outcome).toHaveProperty("reason.message", expect.not.stringContaining(marker));
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect(f.exchanges).toHaveLength(0);
   });
 
@@ -834,7 +834,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         const callbackB = await a.authorize(second.href);
         if (kind === "pending") {
           manualCompletions.push(await completeAuthFromInput(a.name, callbackA, optionsA));
-          secondPending = hasPendingAuth(b.name, storageB, a.runtime);
+          secondPending = hasPendingAuth(b.name, a.runtime, storageB);
           manualCompletions.push(await completeAuthFromInput(b.name, callbackB, optionsB));
         } else {
           callbackStatuses.push((await fetch(callbackA)).status);
@@ -860,8 +860,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         expect(requireValue(a.exchanges[0]).get("code_verifier")).not.toBe(
           requireValue(a.exchanges[1]).get("code_verifier"),
         );
-        expect(hasPendingAuth(a.name, storageA, a.runtime)).toBe(false);
-        expect(hasPendingAuth(b.name, storageB, a.runtime)).toBe(false);
+        expect(hasPendingAuth(a.name, a.runtime, storageA)).toBe(false);
+        expect(hasPendingAuth(b.name, a.runtime, storageB)).toBe(false);
       } finally {
         controller.abort(new Error("tuple test finished"));
         await Promise.all(outcomes);
@@ -883,7 +883,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         onAuthorizationUrl: () => controller.abort(new Error("cancel consent")),
       }),
     ).rejects.toThrow("cancel consent");
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect(f.request()?.issuer).toBe(f.origin);
     expect(f.request()?.challenge?.requiredScope).toBe("write");
     f.controls.issuerPath = "/changed";
@@ -936,7 +936,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(f.authorizations).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
     expect(f.stored()).toEqual(before);
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     f.controls.issuerPath = "";
     const restarting = f.start();
     await expect(restarting).resolves.toHaveProperty("authorizationUrl", expect.any(String));
@@ -1050,7 +1050,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         .toBe(true);
       controller.abort(new Error("caller cancelled"));
       expect((await call).details.error).toBe("aborted");
-      expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+      expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
       f.controls.releaseToken();
       await expect.poll(() => saveTokens.mock.calls.length).toBe(phase === "token" ? 1 : 0);
       const saves = await Promise.allSettled(
@@ -1110,7 +1110,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const controller = new AbortController();
     const result = await executeAuthStart(f.state, f.name, controller.signal);
     controller.abort(new Error("tool finished"));
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(true);
     const url = result.details.authorizationUrl;
     assert(typeof url === "string");
     const callback = await f.authorize(url);
@@ -1127,7 +1127,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(early.details.error).toBe("auth_complete_failed");
     expect(resultText(early)).toContain("No OAuth callback received yet");
     expect(resultText(early)).toContain("redirectUrl");
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(true);
     expect((await f.start()).authorizationUrl).toBe(authorizationUrl);
 
     const callback = new URL(await f.authorize(authorizationUrl));
@@ -1156,7 +1156,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     ]) {
       expect(JSON.stringify(completed)).not.toContain(secret);
     }
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect((await executeAuthComplete(f.state, f.name)).details.error).toBe("auth_complete_failed");
     expect((await fetch(callback)).status).toBe(400);
     expect(f.exchanges).toHaveLength(1);
@@ -1190,7 +1190,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         completeAuthFromInput(f.name, undefined, { runtime: f.runtime }),
       ).rejects.toThrow("No OAuth callback received yet");
       expect(f.exchanges).toHaveLength(0);
-      expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+      expect(hasPendingAuth(f.name, f.runtime)).toBe(true);
       expect((await fetch(callback)).status).toBe(200);
       expect(await completeAuthFromInput(f.name, undefined, { runtime: f.runtime })).toBe(
         "authenticated",
@@ -1214,7 +1214,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(JSON.stringify(result)).not.toContain(callback.href);
     expect(JSON.stringify(result)).not.toContain(requireValue(callback.searchParams.get("code")));
     expect(f.exchanges).toHaveLength(0);
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(true);
     expect((await fetch(callback)).status).toBe(200);
     expect((await executeAuthComplete(f.state, f.name)).details.authenticated).toBe(true);
   });
@@ -1231,7 +1231,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect((await fetch(await b.authorize(newer.authorizationUrl))).status).toBe(200);
     a.controls.releaseToken();
     expect((await older).status).toBe("rejected");
-    expect(hasPendingAuth(a.name, undefined, a.runtime)).toBe(true);
+    expect(hasPendingAuth(a.name, a.runtime)).toBe(true);
     expect(await completeAuthFromInput(a.name, undefined, { runtime: a.runtime })).toBe(
       "authenticated",
     );
@@ -1267,7 +1267,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       } finally {
         vi.useRealTimers();
       }
-      expect(hasPendingAuth(a.name, undefined, a.runtime)).toBe(false);
+      expect(hasPendingAuth(a.name, a.runtime)).toBe(false);
       expect((await fetch(callbackA)).status).toBe(400);
       expect((await executeAuthComplete(a.state, a.name)).details.authenticated).toBeUndefined();
       expect((await executeAuthComplete(b.state, b.name)).details.authenticated).toBe(true);
@@ -1301,7 +1301,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         assert(result.status === "rejected");
         const reason: unknown = result.reason;
         expect(String(reason)).not.toContain("UNTRUSTED_ISSUER");
-        expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(
+        expect(hasPendingAuth(f.name, f.runtime)).toBe(
           invalid.includes("state") || invalid === "missing-issuer",
         );
         expect(f.exchanges).toHaveLength(0);
@@ -1320,7 +1320,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const html = await response.text();
       expect(html).not.toContain("UNTRUSTED_ERROR_MARKER");
       expect(html).not.toContain("UNTRUSTED_ISSUER");
-      expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+      expect(hasPendingAuth(f.name, f.runtime)).toBe(true);
       expect(f.exchanges).toHaveLength(0);
     },
   );
@@ -1353,7 +1353,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         expect.not.stringContaining("UNTRUSTED_ERROR_MARKER"),
       );
       expect(browser.open).toHaveBeenCalledTimes(1);
-      expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+      expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
       expect(f.exchanges).toHaveLength(0);
     },
   );
@@ -1371,7 +1371,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     await expect(
       completeAuthFromInput(f.name, callback.href, { runtime: f.runtime }),
     ).rejects.toThrow(description);
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(true);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(true);
     expect(
       await completeAuthFromInput(f.name, await f.authorize(authorizationUrl), {
         runtime: f.runtime,
@@ -1396,7 +1396,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       authenticate(f.name, f.definition.url, f.definition, { runtime: f.runtime }),
     ).rejects.toThrow(description);
     expect(browser.open).toHaveBeenCalledTimes(1);
-    expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect(f.request()?.challenge?.requiredScope).toBe("write");
     expect(f.exchanges).toHaveLength(0);
   });
@@ -1418,8 +1418,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const rejected = await fetch(mixed);
     expect(rejected.status).toBe(400);
     expect(await rejected.text()).not.toContain("MARKER");
-    expect(hasPendingAuth(a.name, undefined, a.runtime)).toBe(true);
-    expect(hasPendingAuth(b.name, undefined, b.runtime)).toBe(true);
+    expect(hasPendingAuth(a.name, a.runtime)).toBe(true);
+    expect(hasPendingAuth(b.name, b.runtime)).toBe(true);
     expect((await fetch(callbackB)).status).toBe(200);
     expect(await completeAuthFromInput(b.name, callbackB.href, { runtime: b.runtime })).toBe(
       "authenticated",
@@ -1839,7 +1839,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       expect(f.exchanges).toHaveLength(0);
       expect(f.requests.filter((request) => request.method === "tools/call")).toHaveLength(1);
       expect(f.request()?.challenge?.requiredScope).toBe("write");
-      expect(hasPendingAuth(f.name, undefined, f.runtime)).toBe(false);
+      expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
       expect(f.stored()?.tokens?.scope).toBe("basic");
     },
   );

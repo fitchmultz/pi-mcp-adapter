@@ -25,8 +25,8 @@ import { combineAbortSignals } from "./runtime-owner.ts";
 import {
   clearPendingAuth,
   getPendingAuthKey,
-  getRuntime,
   getRuntimeState,
+  useRuntime,
   type AuthDiscovery,
   type AuthenticateOptions,
   type CallbackIssuer,
@@ -324,6 +324,9 @@ async function startInteractive(
       : undefined;
   const oauthState = generateState();
   const binding = issuerBinding(context);
+  // The callback reservation must precede provider construction: the provider
+  // snapshots the bound callback port, and a provider built before the
+  // reservation would register clients against a port nobody listens on.
   await reserveCallback(context, oauthState, binding, redirectCallback);
   let authProvider: McpOAuthProvider | undefined;
   try {
@@ -391,13 +394,13 @@ async function startInteractive(
 export async function startAuth(
   serverName: string,
   serverUrl: string,
-  definition?: ServerEntry,
-  options: AuthenticateOptions = {},
+  definition: ServerEntry | undefined,
+  options: AuthenticateOptions,
 ): Promise<{ authorizationUrl: string }> {
   if (isServerDisabled(definition)) {
     throw new Error(`MCP server "${serverName}" is disabled`);
   }
-  const runtime = getRuntime(options);
+  const runtime = useRuntime(options.runtime);
   const state = getRuntimeState(runtime);
   const context: StartContext = {
     serverName,

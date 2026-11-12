@@ -636,7 +636,7 @@ it.each([
     }
     expect(f.registrations).toHaveLength(0);
     expect(browser.open).not.toHaveBeenCalled();
-    expect(hasPendingAuth(f.name, {}, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect(f.stored()?.clientInfo).toMatchObject(clientInfo);
   },
 );
@@ -1371,7 +1371,7 @@ it.each(["proxy", "direct"])(
     expect(result.details.error).toBeUndefined();
     expect(f.exchanges).toHaveLength(2);
     expect(browser.open).not.toHaveBeenCalled();
-    expect(hasPendingAuth(f.name, {}, f.runtime)).toBe(false);
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
   },
 );
 

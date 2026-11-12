@@ -15,17 +15,22 @@ process.env.FITCH_MCP_OAUTH_DIR = TEST_DIR;
 
 import {
   authenticate,
+  createOAuthRuntime,
   startAuth,
   removeAuth,
   supportsOAuth,
   extractOAuthConfig,
   shutdownOAuth,
 } from "./mcp-auth-flow.ts";
+import type { McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import { getAuthEntry, updateTokens } from "./mcp-auth.ts";
 import type { ServerEntry } from "./types.ts";
 
 nodeDescribe("mcp-auth-flow", () => {
+  let runtime: McpOAuthRuntime;
+
   before(() => {
+    runtime = createOAuthRuntime();
     // Ensure clean state
     try {
       if (existsSync(TEST_DIR)) {
@@ -39,7 +44,7 @@ nodeDescribe("mcp-auth-flow", () => {
 
   after(async () => {
     // Shutdown OAuth and clean up
-    await shutdownOAuth();
+    await shutdownOAuth(runtime);
     try {
       if (existsSync(TEST_DIR)) {
         rmSync(TEST_DIR, { recursive: true, force: true });
@@ -100,7 +105,7 @@ nodeDescribe("mcp-auth-flow", () => {
     nodeIt("should remove all credentials", async () => {
       updateTokens("remove-test", { accessToken: "token" });
 
-      await removeAuth("remove-test");
+      await removeAuth("remove-test", { runtime });
 
       assert.strictEqual(getAuthEntry("remove-test"), undefined);
     });
@@ -108,17 +113,25 @@ nodeDescribe("mcp-auth-flow", () => {
 
   nodeDescribe("authenticate / completeAuth", () => {
     nodeIt("should throw if no server URL provided", async () => {
-      await assert.rejects(async () => await authenticate("no-url-test", ""), /Invalid URL/);
+      await assert.rejects(
+        async () => await authenticate("no-url-test", "", undefined, { runtime }),
+        /Invalid URL/,
+      );
     });
 
     nodeIt("should reject malformed OAuth redirectUri values", async () => {
       await assert.rejects(
         async () =>
-          await startAuth("bad-redirect", "https://api.example.com/mcp", {
-            url: "https://api.example.com/mcp",
-            auth: "oauth",
-            oauth: { redirectUri: "not a url" },
-          }),
+          await startAuth(
+            "bad-redirect",
+            "https://api.example.com/mcp",
+            {
+              url: "https://api.example.com/mcp",
+              auth: "oauth",
+              oauth: { redirectUri: "not a url" },
+            },
+            { runtime },
+          ),
         /Invalid OAuth redirectUri/,
       );
     });
@@ -126,11 +139,16 @@ nodeDescribe("mcp-auth-flow", () => {
     nodeIt("should reject non-local OAuth redirectUri values", async () => {
       await assert.rejects(
         async () =>
-          await startAuth("remote-redirect", "https://api.example.com/mcp", {
-            url: "https://api.example.com/mcp",
-            auth: "oauth",
-            oauth: { redirectUri: "https://example.com:3118/callback" },
-          }),
+          await startAuth(
+            "remote-redirect",
+            "https://api.example.com/mcp",
+            {
+              url: "https://api.example.com/mcp",
+              auth: "oauth",
+              oauth: { redirectUri: "https://example.com:3118/callback" },
+            },
+            { runtime },
+          ),
         /localhost or loopback/,
       );
     });
@@ -138,11 +156,16 @@ nodeDescribe("mcp-auth-flow", () => {
     nodeIt("should reject OAuth redirectUri values without an explicit port", async () => {
       await assert.rejects(
         async () =>
-          await startAuth("no-port-redirect", "https://api.example.com/mcp", {
-            url: "https://api.example.com/mcp",
-            auth: "oauth",
-            oauth: { redirectUri: "http://localhost/callback" },
-          }),
+          await startAuth(
+            "no-port-redirect",
+            "https://api.example.com/mcp",
+            {
+              url: "https://api.example.com/mcp",
+              auth: "oauth",
+              oauth: { redirectUri: "http://localhost/callback" },
+            },
+            { runtime },
+          ),
         /explicit numeric port/,
       );
     });
@@ -150,11 +173,16 @@ nodeDescribe("mcp-auth-flow", () => {
     nodeIt("should reject blank OAuth redirectUri values", async () => {
       await assert.rejects(
         async () =>
-          await startAuth("blank-redirect", "https://api.example.com/mcp", {
-            url: "https://api.example.com/mcp",
-            auth: "oauth",
-            oauth: { redirectUri: "  " },
-          }),
+          await startAuth(
+            "blank-redirect",
+            "https://api.example.com/mcp",
+            {
+              url: "https://api.example.com/mcp",
+              auth: "oauth",
+              oauth: { redirectUri: "  " },
+            },
+            { runtime },
+          ),
         /redirectUri must not be empty/,
       );
     });
@@ -162,11 +190,16 @@ nodeDescribe("mcp-auth-flow", () => {
     nodeIt("should reject OAuth redirectUri values with fragments", async () => {
       await assert.rejects(
         async () =>
-          await startAuth("fragment-redirect", "https://api.example.com/mcp", {
-            url: "https://api.example.com/mcp",
-            auth: "oauth",
-            oauth: { redirectUri: "http://localhost:3118/callback#fragment" },
-          }),
+          await startAuth(
+            "fragment-redirect",
+            "https://api.example.com/mcp",
+            {
+              url: "https://api.example.com/mcp",
+              auth: "oauth",
+              oauth: { redirectUri: "http://localhost:3118/callback#fragment" },
+            },
+            { runtime },
+          ),
         /redirectUri must not include a fragment/,
       );
     });
@@ -174,11 +207,16 @@ nodeDescribe("mcp-auth-flow", () => {
     nodeIt("should reject OAuth redirectUri values with username or password", async () => {
       await assert.rejects(
         async () =>
-          await startAuth("credential-redirect", "https://api.example.com/mcp", {
-            url: "https://api.example.com/mcp",
-            auth: "oauth",
-            oauth: { redirectUri: "http://user:pass@localhost:3118/callback" },
-          }),
+          await startAuth(
+            "credential-redirect",
+            "https://api.example.com/mcp",
+            {
+              url: "https://api.example.com/mcp",
+              auth: "oauth",
+              oauth: { redirectUri: "http://user:pass@localhost:3118/callback" },
+            },
+            { runtime },
+          ),
         /redirectUri must not include username or password/,
       );
     });

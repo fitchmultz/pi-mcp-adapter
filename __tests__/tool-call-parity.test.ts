@@ -103,7 +103,7 @@ describe("proxy and direct tool call parity", () => {
       });
       let authSignal: AbortSignal | undefined;
       mocks.authenticate.mockImplementation((_name, _url, _definition, options) => {
-        authSignal = options?.signal;
+        authSignal = options.signal;
         return authentication.promise;
       });
       const output =

@@ -1,6 +1,6 @@
 import { ConsentManager } from "../consent-manager.ts";
 import { McpLifecycleManager } from "../lifecycle.ts";
-import { createOAuthRuntime } from "../mcp-oauth-runtime.ts";
+import { createOAuthRuntime, hasPendingAuth } from "../mcp-oauth-runtime.ts";
 import { McpServerManager } from "../server-manager.ts";
 import { createMcpRuntimeOwner } from "../runtime-owner.ts";
 import type { McpExtensionState } from "../state.ts";
@@ -13,17 +13,20 @@ import { UiResourceHandler } from "../ui-resource-handler.ts";
 export function createTestState(overrides: Partial<McpExtensionState> = {}): McpExtensionState {
   const owner = overrides.owner ?? createMcpRuntimeOwner();
   const manager = overrides.manager ?? new McpServerManager();
+  const oauthRuntime = createOAuthRuntime(owner.signal);
   const state: McpExtensionState = {
     owner,
     manager,
-    lifecycle: new McpLifecycleManager(manager),
+    lifecycle: new McpLifecycleManager(manager, (serverName) =>
+      hasPendingAuth(serverName, oauthRuntime),
+    ),
     toolMetadata: new Map(),
     resourceCounts: new Map(),
     promptMetadata: new Map(),
     promptMetadataLive: new Set(),
     serverInstructions: new Map(),
     config: { mcpServers: {}, settings: {} },
-    oauthRuntime: createOAuthRuntime(owner.signal),
+    oauthRuntime,
     authStorageOptions: {},
     metadataCacheEnabled: false,
     failureTracker: new Map(),

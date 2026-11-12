@@ -25,6 +25,12 @@ import { McpStateCleanup } from "./host-state-cleanup.ts";
 import { updateStatusBar } from "./init-status.ts";
 
 export type McpInitializationOptions = McpAdapterOptions & {
+  /**
+   * OAuth runtime to attach instead of creating one owned by the extension
+   * state. An injected runtime's lifetime stays with its caller: the state's
+   * cleanup shuts down only runtimes it created itself, so the caller must
+   * stop an injected runtime with shutdownOAuth().
+   */
   oauthRuntime?: McpOAuthRuntime;
   statusEvents?: McpExtensionState["statusEvents"];
   resolvedConfig?: McpConfig;
@@ -112,7 +118,7 @@ export function createInitialState(
   manager.setTraceConfig(config.settings?.trace);
   manager.setAuthStorageOptions(authStorageOptions);
   const lifecycle = new McpLifecycleManager(manager, (serverName) =>
-    hasPendingAuth(serverName, undefined, oauthRuntime),
+    hasPendingAuth(serverName, oauthRuntime),
   );
   const state: McpExtensionState = {
     owner,

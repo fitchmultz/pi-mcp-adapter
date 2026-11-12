@@ -23,10 +23,16 @@ export interface McpOAuthRuntime {
 }
 
 export interface AuthenticateOptions {
+  /**
+   * Runtime that owns this flow's pending state, reservations, and abort
+   * lifetime. Every caller owns its runtime: create one with
+   * createOAuthRuntime() and stop it with shutdownOAuth(). There is no shared
+   * default, so an unowned runtime cannot outlive the host that started it.
+   */
+  runtime: McpOAuthRuntime;
   onAuthorizationUrl?: (authorizationUrl: string) => void | Promise<void>;
   authStorageOptions?: AuthStorageOptions;
   signal?: AbortSignal;
-  runtime?: McpOAuthRuntime;
 }
 
 export type AuthDiscovery = {
@@ -84,24 +90,11 @@ export function createOAuthRuntime(signal?: AbortSignal): McpOAuthRuntime {
   return runtime;
 }
 
-let legacyRuntime = createOAuthRuntime();
-activeRuntimes.delete(legacyRuntime);
-
-export function getLegacyRuntime(): McpOAuthRuntime {
-  return legacyRuntime;
-}
-
-export function getRuntime(options?: AuthenticateOptions): McpOAuthRuntime {
-  if (options?.runtime) {
-    options.runtime.signal.throwIfAborted();
-    activeRuntimes.add(options.runtime);
-    return options.runtime;
-  }
-  if (legacyRuntime.signal.aborted) {
-    legacyRuntime = createOAuthRuntime();
-  }
-  activeRuntimes.add(legacyRuntime);
-  return legacyRuntime;
+/** Register a caller-owned runtime for an auth operation and check it is alive. */
+export function useRuntime(runtime: McpOAuthRuntime): McpOAuthRuntime {
+  runtime.signal.throwIfAborted();
+  activeRuntimes.add(runtime);
+  return runtime;
 }
 
 export function getRuntimeState(runtime: McpOAuthRuntime): RuntimeState {
@@ -126,10 +119,10 @@ export type OAuthRequest = {
 
 export function hasPendingAuth(
   serverName: string,
+  runtime: McpOAuthRuntime,
   options?: AuthStorageOptions,
-  runtime?: McpOAuthRuntime,
 ): boolean {
-  const state = getRuntimeState(runtime ?? legacyRuntime);
+  const state = getRuntimeState(runtime);
   if (options) {
     return state.pendingAuths.has(getPendingAuthKey(serverName, options));
   }
@@ -148,6 +141,17 @@ export function pendingAuthState(
     ?.callbackState;
 }
 
+/**
+ * Clear a server's pending flow, or release only the caller's own reservation.
+ *
+ * A caller whose state differs from the pending flow's state owns a different
+ * flow — a failed start that reserved a callback before an older flow was
+ * replaced, or a stale callback/timer racing a newer flow. The pending entry
+ * stays untouched in that case, but the caller's own reservation is still
+ * released so a failed start cannot strand a reserved callback until process
+ * shutdown. Callers with no state of their own clear whichever flow is
+ * pending.
+ */
 export async function clearPendingAuth(
   runtime: McpOAuthRuntime,
   serverName: string,
@@ -157,18 +161,22 @@ export async function clearPendingAuth(
   const state = getRuntimeState(runtime);
   const key = getPendingAuthKey(serverName, fallbackStorageOptions);
   const pendingAuth = state.pendingAuths.get(key);
-  const authStorageOptions = pendingAuth?.authStorageOptions ?? fallbackStorageOptions;
   const pendingState = pendingAuth?.callbackState;
-  if (isDifferentPendingState(oauthState, pendingState)) {
-    return;
-  }
-
-  if (pendingAuth) {
+  const callerState = oauthState ?? "";
+  const callerOwnsPending =
+    callerState === "" || pendingState === undefined || pendingState === callerState;
+  if (pendingAuth && callerOwnsPending) {
     clearTimeout(pendingAuth.cleanupTimer);
     pendingAuth.authProvider.deactivate();
+    state.pendingAuths.delete(key);
+    await releaseReservedState(
+      serverName,
+      pendingState ?? oauthState,
+      pendingAuth.authStorageOptions,
+    );
+    return;
   }
-  state.pendingAuths.delete(key);
-  await releaseReservedState(serverName, pendingState ?? oauthState, authStorageOptions);
+  await releaseReservedState(serverName, oauthState, fallbackStorageOptions);
 }
 
 /** Drop the reserved callback and any stored state that still matches the released flow. */
@@ -182,13 +190,6 @@ async function releaseReservedState(
   }
   cancelPendingCallback(stateToRelease);
   await clearMatchingStoredState(serverName, stateToRelease, authStorageOptions);
-}
-
-function isDifferentPendingState(
-  oauthState: string | undefined,
-  pendingState: string | undefined,
-): boolean {
-  return (oauthState ?? "") !== "" && (pendingState ?? "") !== "" && pendingState !== oauthState;
 }
 
 async function clearMatchingStoredState(
@@ -237,28 +238,10 @@ export function supportsOAuth(definition: ServerEntry): boolean {
 }
 
 /**
- * Initialize the OAuth system on startup.
- * OAuth callback binding is lazy and starts from startAuth() only.
- */
-export async function initializeOAuth(
-  runtimeOrSignal?: McpOAuthRuntime | AbortSignal,
-): Promise<McpOAuthRuntime> {
-  if (runtimeOrSignal && "signal" in runtimeOrSignal) {
-    runtimeOrSignal.signal.throwIfAborted();
-    activeRuntimes.add(runtimeOrSignal);
-    return runtimeOrSignal;
-  }
-
-  await shutdownOAuth(legacyRuntime);
-  legacyRuntime = createOAuthRuntime(runtimeOrSignal);
-  return legacyRuntime;
-}
-
-/**
  * Shutdown one OAuth runtime. The callback server remains process-shared while
  * another runtime has pending/reserved callback state or is still active.
  */
-export async function shutdownOAuth(runtime: McpOAuthRuntime = legacyRuntime): Promise<void> {
+export async function shutdownOAuth(runtime: McpOAuthRuntime): Promise<void> {
   const state = getRuntimeState(runtime);
   if (state.controller.signal.aborted) {
     return;

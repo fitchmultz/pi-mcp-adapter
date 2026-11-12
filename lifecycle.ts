@@ -1,6 +1,5 @@
 import { isServerDisabled, type ServerDefinition } from "./types.ts";
 import type { McpServerManager } from "./server-manager.ts";
-import { hasPendingAuth } from "./mcp-oauth-runtime.ts";
 import { logger } from "./logger.ts";
 import { formatTerminalError, sanitizeTerminalText } from "./utils.ts";
 
@@ -23,9 +22,9 @@ export class McpLifecycleManager {
   private removeHealthAbortListener: (() => void) | undefined;
 
   private readonly manager: McpServerManager;
-  private readonly hasPendingAuthForServer: typeof hasPendingAuth;
+  private readonly hasPendingAuthForServer: (serverName: string) => boolean;
 
-  constructor(manager: McpServerManager, hasPendingAuthForServer = hasPendingAuth) {
+  constructor(manager: McpServerManager, hasPendingAuthForServer: (serverName: string) => boolean) {
     this.manager = manager;
     this.hasPendingAuthForServer = hasPendingAuthForServer;
   }

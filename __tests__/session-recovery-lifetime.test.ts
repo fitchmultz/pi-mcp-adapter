@@ -562,7 +562,7 @@ describe("native session replacement lifetime", () => {
       });
       const owner = createMcpRuntimeOwner();
       f.manager.setRuntimeSignal(owner.signal);
-      const lifecycle = new McpLifecycleManager(f.manager);
+      const lifecycle = new McpLifecycleManager(f.manager, () => false);
       owner.addCleanup(() => lifecycle.gracefulShutdown());
       const old = await f.manager.connect("local", f.definition);
       const closes = vi.spyOn(Client.prototype, "close");
