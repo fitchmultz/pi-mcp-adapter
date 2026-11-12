@@ -54,6 +54,7 @@ function repository(): string {
     "scripts/build-host-browser.mjs",
     "host-browser.bundle.js",
     "ui-stream-types.ts",
+    "ui-session-timing.ts",
     ...readdirSync(source).filter((name) => /^host-browser-.*\.ts$/u.test(name)),
   ]) {
     const destination = join(root, file);
