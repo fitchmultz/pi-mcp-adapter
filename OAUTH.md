@@ -324,7 +324,7 @@ A Node.js HTTP server runs on a loopback callback endpoint and handles the activ
 
 ## Token Storage
 
-Persistent OAuth entries are stored in service `fitch-mcp-adapter.oauth`, with the account `v2-sha256-<SHA-256 of the UTF-8 JSON array [serverName, serverUrl]>`, using macOS Keychain or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
+On supported Apple Silicon macOS and Linux hosts, persistent OAuth entries are stored in service `fitch-mcp-adapter.oauth`, with the account `v2-sha256-<SHA-256 of the UTF-8 JSON array [serverName, serverUrl]>`, using macOS Keychain or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
 
 Persistent reads, updates, migration, and logout use synchronous SQLite locks under `<OS home>/.fitch-mcp-adapter/locks/`. Each lock is keyed by the credential service and legacy name-based account. All URL-scoped records with the same server name share that lock with their legacy import sources. The lock namespace does not change with `PI_CODING_AGENT_DIR`, `settings.oauthDir`, or `FITCH_MCP_OAUTH_DIR`.
 
