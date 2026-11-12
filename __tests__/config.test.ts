@@ -1566,6 +1566,21 @@ describe("config discovery", () => {
     expect(starter.mcpServers).toEqual({});
   });
 
+  it("does not replace a project config created after the scaffold preview", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-stale-scaffold-"));
+    const { previewStarterProjectConfig, writeStarterProjectConfig } = await import("../config.ts");
+    expect(previewStarterProjectConfig(project).existed).toBe(false);
+    const filePath = join(project, ".mcp.json");
+    const existing =
+      '{"mcpServers":{"live":{"command":"live"}},"settings":{"toolPrefix":"none"}}\n';
+    writeFileSync(filePath, existing);
+
+    expect(() => writeStarterProjectConfig(project)).toThrow(
+      expect.objectContaining({ code: "EEXIST" }),
+    );
+    expect(readFileSync(filePath, "utf8")).toBe(existing);
+  });
+
   it("imports OpenCode servers from the global V1 config", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-global-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-opencode-global-project-"));

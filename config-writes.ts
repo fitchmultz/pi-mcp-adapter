@@ -6,6 +6,7 @@ import { getPiGlobalConfigPath, getProjectConfigPath } from "./config-paths.ts";
 import {
   readRawConfigObject,
   writeRawConfigObject,
+  createRawConfigObject,
   getServersObject,
   withServersObject,
   buildConfigWritePreview,
@@ -65,7 +66,7 @@ export function previewStarterProjectConfig(cwd = process.cwd()): ConfigWritePre
 export function writeStarterProjectConfig(cwd = process.cwd()): string {
   const targetPath = getProjectConfigPath(cwd);
   const raw = { mcpServers: buildStarterProjectConfig().mcpServers };
-  writeRawConfigObject(targetPath, raw);
+  createRawConfigObject(targetPath, raw);
   return targetPath;
 }
 
