@@ -75,8 +75,11 @@ export class ConnectionLifecycle {
     requestSignal?: AbortSignal,
   ) => Promise<ServerConnection>;
   private readonly flushTrace: () => Promise<void> | undefined;
-  private readonly onClose: (name: string) => void;
-  private readonly onCloseAll: () => void;
+  private readonly callbacks: {
+    publish: (connection: ServerConnection) => void;
+    close: (name: string) => void;
+    closeAll: () => void;
+  };
 
   constructor(
     createConnection: (
@@ -86,13 +89,11 @@ export class ConnectionLifecycle {
       requestSignal?: AbortSignal,
     ) => Promise<ServerConnection>,
     flushTrace: () => Promise<void> | undefined,
-    onClose: (name: string) => void,
-    onCloseAll: () => void,
+    callbacks: ConnectionLifecycle["callbacks"],
   ) {
     this.createConnection = createConnection;
     this.flushTrace = flushTrace;
-    this.onClose = onClose;
-    this.onCloseAll = onCloseAll;
+    this.callbacks = callbacks;
     this.disposal = new ConnectionDisposal(flushTrace);
   }
 
@@ -179,6 +180,7 @@ export class ConnectionLifecycle {
       throwIfAborted(options.signal);
       throw new Error(`MCP connection for ${name} was closed while connecting`);
     }
+    this.callbacks.publish(connection);
     this.connections.set(name, connection);
     return connection;
   }
@@ -274,7 +276,7 @@ export class ConnectionLifecycle {
     }
     // Remove the placeholder before awaiting cleanup; stale callers cannot resurrect it.
     this.connections.delete(name);
-    this.onClose(name);
+    this.callbacks.close(name);
     for (const item of owned) {
       item.status = "closed";
     }
@@ -312,7 +314,7 @@ export class ConnectionLifecycle {
     ]);
     const results = await Promise.allSettled([...names].map((name) => this.close(name)));
     const failures = cleanupFailures(results);
-    this.onCloseAll();
+    this.callbacks.closeAll();
     await this.disposal.drain();
     try {
       await this.flushTrace();

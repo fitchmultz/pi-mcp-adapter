@@ -175,6 +175,7 @@ export class ManagedClient extends Client {
 // Loaded only by the manager's connection path. Keep native constructors and
 // synchronous connection setup together, after the one asynchronous import.
 export { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+export { ConnectionCatalogs } from "./connection-catalogs.ts";
 export {
   SdkHttpError,
   StreamableHTTPClientTransport,

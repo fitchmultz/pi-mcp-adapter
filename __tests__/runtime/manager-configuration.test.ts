@@ -23,14 +23,59 @@ import {
 
 const captures = vi.hoisted(() => {
   const clientOptions: (ClientOptions | undefined)[] = [];
-  return { clientOptions, open: vi.fn<typeof open>() };
+  const deliveries: string[] = [];
+  return { clientOptions, deliveries, open: vi.fn<typeof open>() };
 });
 vi.mock("open", () => ({ default: captures.open }));
 vi.mock("@modelcontextprotocol/client", async (importOriginal) => {
   const sdk = await importOriginal<typeof ClientModule>();
   class CapturedClient extends sdk.Client {
     constructor(...args: ConstructorParameters<typeof sdk.Client>) {
-      super(...args);
+      const configured = args[1];
+      const lists = configured?.listChanged;
+      super(args[0], {
+        ...configured,
+        ...(lists
+          ? {
+              listChanged: {
+                ...lists,
+                ...(lists.tools
+                  ? {
+                      tools: {
+                        ...lists.tools,
+                        onChanged: (error, tools) => {
+                          lists.tools?.onChanged(error, tools);
+                          captures.deliveries.push("tools");
+                        },
+                      },
+                    }
+                  : {}),
+                ...(lists.resources
+                  ? {
+                      resources: {
+                        ...lists.resources,
+                        onChanged: (error, resources) => {
+                          lists.resources?.onChanged(error, resources);
+                          captures.deliveries.push("resources");
+                        },
+                      },
+                    }
+                  : {}),
+                ...(lists.prompts
+                  ? {
+                      prompts: {
+                        ...lists.prompts,
+                        onChanged: (error, prompts) => {
+                          lists.prompts?.onChanged(error, prompts);
+                          captures.deliveries.push("prompts");
+                        },
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+      });
       captures.clientOptions.push(args[1]);
     }
   }
@@ -47,6 +92,7 @@ beforeEach(async () => {
   vi.stubEnv("PI_CODING_AGENT_DIR", directory);
   vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "memory");
   captures.clientOptions.length = 0;
+  captures.deliveries.length = 0;
   captures.open.mockReset().mockImplementation(async () => new ChildProcess());
   native = await createTestExtensionContext();
 });
@@ -128,6 +174,95 @@ async function observedCwd(instance: McpServerManager, name: string) {
 }
 
 describe("McpServerManager configuration", () => {
+  describe.each(["tools", "resources", "prompts"] as const)("%s refresh ordering", (catalog) => {
+    it.each(["startup", "active"])(
+      "ignores an older response completed last during %s",
+      async (stage) => {
+        const fixture = await createCallbackHttpFixture(directory, {
+          legacy: true,
+          inbound: true,
+          capabilities: {
+            tools: { listChanged: true },
+            resources: { listChanged: true },
+            prompts: { listChanged: true },
+          },
+        });
+        cleanups.push(fixture.close);
+        const instance = manager();
+        if (stage === "startup") {
+          fixture.delay(catalog === "tools" ? "resources/list" : "tools/list");
+        }
+        const connecting = instance.connect("demo", fixture.definition);
+        let releaseOlder: (() => void) | undefined;
+        try {
+          await expect
+            .poll(() =>
+              stage === "startup"
+                ? fixture.started()
+                : instance.getConnection("demo")?.status === "connected",
+            )
+            .toBe(true);
+          await expect.poll(fixture.streamReady).toBe(true);
+          const older = fixture.holdNextCatalog(catalog);
+          releaseOlder = older.release;
+          fixture.updateCatalogs("v2");
+          fixture.notify(`notifications/${catalog}/list_changed`, {});
+          await older.started;
+          fixture.updateCatalogs("v3");
+          fixture.notify(`notifications/${catalog}/list_changed`, {});
+          await expect.poll(() => captures.deliveries.length).toBe(1);
+          older.release();
+          await expect.poll(() => captures.deliveries.length).toBe(2);
+          fixture.release();
+          const connection = await connecting;
+          expect(connection[catalog]).toEqual([expect.objectContaining({ name: "v3" })]);
+          expect(connection.promptDiscoveryFailed).not.toBe(true);
+        } finally {
+          releaseOlder?.();
+          fixture.release();
+          await connecting.catch(() => {
+            // Join native connection cleanup if an earlier assertion fails.
+          });
+        }
+      },
+    );
+  });
+
+  it.each(["tools", "resources", "prompts"] as const)(
+    "retains a native %s refresh that finishes before connection publication",
+    async (catalog) => {
+      const fixture = await createCallbackHttpFixture(directory, {
+        legacy: true,
+        inbound: true,
+        capabilities: {
+          tools: { listChanged: true },
+          resources: { listChanged: true },
+          prompts: { listChanged: true },
+        },
+      });
+      cleanups.push(fixture.close);
+      const instance = manager();
+      fixture.delay(catalog === "tools" ? "resources/list" : "tools/list");
+      const connecting = instance.connect("demo", fixture.definition);
+      try {
+        await expect.poll(fixture.started).toBe(true);
+        await expect.poll(fixture.streamReady).toBe(true);
+        fixture.updateCatalogs();
+        fixture.notify(`notifications/${catalog}/list_changed`, {});
+        await expect.poll(() => captures.deliveries).toContain(catalog);
+        expect(instance.getConnection("demo")).toBeUndefined();
+        fixture.release();
+        const connection = await connecting;
+        expect(connection[catalog]).toEqual([expect.objectContaining({ name: "updated" })]);
+      } finally {
+        fixture.release();
+        await connecting.catch(() => {
+          // Join a failed connection even when an earlier assertion stops the test.
+        });
+      }
+    },
+  );
+
   it("advertises sampling and registers the handler before connecting", async () => {
     const fixture = await wire();
     const instance = manager();
@@ -257,7 +392,16 @@ describe("McpServerManager configuration", () => {
   });
 
   it("refreshes cached lists and ignores notifications from replaced clients", async () => {
-    const fixture = await wire();
+    const fixture = await createCallbackHttpFixture(directory, {
+      legacy: true,
+      inbound: true,
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { listChanged: true },
+        prompts: { listChanged: true },
+      },
+    });
+    cleanups.push(fixture.close);
     const instance = manager();
     const metadataChanged = vi.fn<(name: string, reason: string) => void>();
     instance.setMetadataListChangedListener(metadataChanged);
@@ -265,27 +409,35 @@ describe("McpServerManager configuration", () => {
     const old = requireValue(options().listChanged);
     await instance.close("demo");
     await instance.connect("demo", fixture.definition);
-    const fresh = requireValue(options(1).listChanged);
+    await expect.poll(fixture.gets).toBe(2);
     const initial = requireValue(instance.getConnection("demo"));
     const initialTools = initial.tools;
     const initialResources = initial.resources;
-    const freshTools = [
-      { name: "fresh_tool", description: "Fresh tool", inputSchema: { type: "object" as const } },
-    ];
-    const freshResources = [{ uri: "file://fresh", name: "Fresh resource" }];
+    const initialPrompts = initial.prompts;
     requireValue(old.tools?.onChanged)(null, [
       { name: "stale_tool", inputSchema: { type: "object" } },
     ]);
     requireValue(old.resources?.onChanged)(null, [{ uri: "file://stale", name: "Stale resource" }]);
+    requireValue(old.prompts?.onChanged)(null, [{ name: "stale_prompt" }]);
     expect(instance.getConnection("demo")?.tools).toBe(initialTools);
     expect(instance.getConnection("demo")?.resources).toBe(initialResources);
+    expect(instance.getConnection("demo")?.prompts).toBe(initialPrompts);
     expect(metadataChanged).not.toHaveBeenCalled();
-    requireValue(fresh.tools?.onChanged)(null, freshTools);
-    requireValue(fresh.resources?.onChanged)(null, freshResources);
-    expect(instance.getConnection("demo")?.tools).toEqual(freshTools);
-    expect(instance.getConnection("demo")?.resources).toEqual(freshResources);
+    fixture.updateCatalogs();
+    for (const catalog of ["tools", "resources", "prompts"]) {
+      fixture.notify(`notifications/${catalog}/list_changed`, {});
+    }
+    await expect.poll(() => captures.deliveries.length).toBe(3);
+    expect(instance.getConnection("demo")?.tools).toEqual([
+      expect.objectContaining({ name: "updated" }),
+    ]);
+    expect(instance.getConnection("demo")?.resources).toEqual([
+      { uri: "file://updated", name: "updated" },
+    ]);
+    expect(instance.getConnection("demo")?.prompts).toEqual([{ name: "updated" }]);
     expect(metadataChanged).toHaveBeenCalledWith("demo", "tools-list-changed");
     expect(metadataChanged).toHaveBeenCalledWith("demo", "resources-list-changed");
+    expect(metadataChanged).toHaveBeenCalledWith("demo", "prompts-list-changed");
   });
 
   it("logs list-change callback errors without replacing cached metadata", async () => {
