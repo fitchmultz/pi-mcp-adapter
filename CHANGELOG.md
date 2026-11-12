@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.39 - 2026-11-12
+
+<!-- npm-release:unreleased:start -->
+
 - Isolate stored OAuth credentials by configured server name and exact URL, including migration, field clears, and logout.
+
+<!-- npm-release:unreleased:end -->
+
+- fix(lifetime): bind dialogs and health checks to the runtime owner signal (#231) ([4b2397b](https://github.com/fitchmultz/pi-mcp-adapter/commit/4b2397b0da818884448a18cbecee842b9368ff4a))
+
+### What's Changed
+
+- fix(lifetime): bind dialogs and health checks to the runtime owner signal (1/9) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/231
+- fix(connections): release claimed clients on pre-connect failure and write down ownership rules (2/9) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/232
+- fix(connections): key in-flight accounting by connection, not server name (3/9) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/234
+- fix(oauth): release failed-start callback reservations and require an owned runtime (4/9) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/235
+- docs(outputs): make saved-file retention caller-owned (5/9) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/236
+- fix(lifetime): share UI liveness timings and unref background timers (6/9) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/237
+- fix(host): order persistence before teardown and release session resources (7/9) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/238
+- fix(auth): scope stored credentials to server name and exact URL (8/9) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/239
+- fix(storage): serialize credential and cache transactions across processes (9/9) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/240
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.38...v8.0.39
 
 ## 8.0.38 - 2026-11-11
 
