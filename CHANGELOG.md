@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Resolve prompt arguments from live discovery on the first call, rather than an outdated cached argument list.
 - Keep callback failures handled when a callback cancels its own request before returning.
+- Keep session health checks and completed server discovery when an agent turn is cancelled during startup.
 
 ## 8.0.39 - 2026-11-12
 

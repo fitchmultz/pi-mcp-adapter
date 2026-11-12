@@ -171,9 +171,6 @@ export async function connectStartupServers(
   const results = await parallelLimit(startupServers, MAX_CONCURRENT_SERVER_CONNECTS, (entry) =>
     connectStartup(state, entry, signals.runtime),
   );
-  if (signals.initial?.aborted === true) {
-    return new Set();
-  }
   state.owner.throwIfInactive();
   const cache = getMetadataCacheUpdates(state);
   try {
