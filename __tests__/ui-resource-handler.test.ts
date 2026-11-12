@@ -57,8 +57,8 @@ describe("UiResourceHandler", () => {
           { method: "resources/read", session: "session-2" },
         ]);
         expect(reconnect).toHaveBeenCalledWith("server", config.mcpServers.server, stale);
-        expect(increment).toHaveBeenCalledWith("server");
-        expect(decrement).toHaveBeenCalledWith("server");
+        expect(increment).toHaveBeenCalledWith(stale);
+        expect(decrement).toHaveBeenCalledWith(stale);
       } finally {
         await manager.closeAll();
         await wire.close();

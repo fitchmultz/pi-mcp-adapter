@@ -595,7 +595,7 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(f.calls()).toHaveLength(2);
       expect(requireValue(f.calls()[0]).body.id).not.toBe(requireValue(f.calls()[1]).body.id);
       expect(f.requests.filter((r) => r.body.method === "server/discover")).toHaveLength(1);
-      expect(connection.inFlight).toBe(0);
+      expect(f.manager.inFlightCount(connection)).toBe(0);
     },
   );
 
@@ -624,7 +624,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(requireValue(f.calls()[0]).body.id).not.toBe(requireValue(f.calls()[1]).body.id);
     expect(f.manager.getConnection("local")?.client).toBe(connection.client);
     expect(f.requests.filter((r) => r.body.method === "server/discover")).toHaveLength(1);
-    expect(connection.inFlight).toBe(0);
+    expect(f.manager.inFlightCount(connection)).toBe(0);
   });
 
   it.each(
@@ -2096,7 +2096,7 @@ describe("published SDK v2 over real local HTTP", () => {
     requireValue(stream).destroy();
     await expect.poll(() => errors.length).toBe(1);
     expect(f.calls()).toHaveLength(1);
-    expect(connection.inFlight).toBe(0);
+    expect(f.manager.inFlightCount(connection)).toBe(0);
   });
 
   it("does not interrupt or replay an accepted sibling while recovering partial SSE loss", async () => {
@@ -2136,7 +2136,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(f.calls().filter((c) => c.body.params.arguments.sibling === true)).toHaveLength(1);
     expect(attempts).toBe(2);
     expect(f.manager.getConnection("local")?.client).toBe(connection.client);
-    expect(connection.inFlight).toBe(0);
+    expect(f.manager.inFlightCount(connection)).toBe(0);
   });
 
   it("does not attribute a nested catalog's lost response to the tool stream", async () => {

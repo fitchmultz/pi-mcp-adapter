@@ -67,7 +67,6 @@ function createConnection(status: ServerConnection["status"]): ServerConnection 
     tools: [],
     resources: [],
     prompts: [],
-    inFlight: 0,
     lastUsedAt: Date.now(),
   };
 }

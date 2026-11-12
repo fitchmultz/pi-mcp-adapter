@@ -418,7 +418,7 @@ describe("native session replacement lifetime", () => {
     const prompt = settle(f.manager.getPrompt("local", "prompt"));
     const resource = settle(f.manager.readResource("local", "test://document"));
     await expect.poll(() => held.length).toBe(2);
-    expect(old.inFlight).toBe(2);
+    expect(f.manager.inFlightCount(old)).toBe(2);
     const replacing = settle(f.manager.reconnect("local", f.definition, old));
     await expect.poll(() => discovery).toBeDefined();
     for (const e of held) {
@@ -431,10 +431,10 @@ describe("native session replacement lifetime", () => {
     }
     expect(await prompt).toMatchObject({ status: "fulfilled" });
     expect(await resource).toMatchObject({ status: "fulfilled" });
-    expect(old.inFlight).toBe(0);
+    expect(f.manager.inFlightCount(old)).toBe(0);
     result(requireValue(discovery), { tools });
     expect(await replacing).toMatchObject({ status: "fulfilled" });
-    expect(f.manager.getConnection("local")?.inFlight).toBe(0);
+    expect(f.manager.inFlightCount(requireValue(f.manager.getConnection("local")))).toBe(0);
   });
 
   it.each<"tools" | "resources" | "prompts">(["tools", "resources", "prompts"])(
@@ -533,7 +533,7 @@ describe("native session replacement lifetime", () => {
       expect(f.calls("trigger")).toHaveLength(1);
       expect(f.calls("effect")).toHaveLength(1);
       expect(f.sessions()).toBe(2);
-      expect(f.manager.getConnection("local")?.inFlight).toBe(0);
+      expect(f.manager.inFlightCount(requireValue(f.manager.getConnection("local")))).toBe(0);
     },
   );
 

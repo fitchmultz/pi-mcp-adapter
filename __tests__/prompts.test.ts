@@ -62,7 +62,6 @@ function baseState(promptMetadata: Map<string, PromptMetadata[]>): {
       },
     ],
     lastUsedAt: Date.now(),
-    inFlight: 0,
   };
   const getConnection = vi.spyOn(state.manager, "getConnection").mockReturnValue(connection);
   const getPrompt = vi.spyOn(state.manager, "getPrompt");

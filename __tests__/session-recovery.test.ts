@@ -30,7 +30,6 @@ function makeConnection(sessionId?: string): ServerConnection {
     resources: [],
     prompts: [],
     lastUsedAt: Date.now(),
-    inFlight: 0,
     status: "connected",
   };
 }

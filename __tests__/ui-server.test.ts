@@ -853,7 +853,18 @@ describe("UiServer", () => {
     });
 
     it("tracks in-flight requests", async () => {
-      const manager = createMockManager();
+      const connection = createConnection({
+        status: "connected",
+        client: createClient({
+          callTool: vi.fn<Client["callTool"]>().mockResolvedValue({
+            content: [{ type: "text", text: "result" }],
+          }),
+        }),
+        tools: [{ name: "some_tool", inputSchema: { type: "object" } }],
+      });
+      const manager = createMockManager({
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(connection),
+      });
       handle = await startUiServer(createServerOptions({ manager }));
 
       await request(`http://localhost:${handle.port}/proxy/tools/call`, {
@@ -864,8 +875,8 @@ describe("UiServer", () => {
         },
       });
 
-      expect(vi.spyOn(manager, "incrementInFlight")).toHaveBeenCalledWith("test-server");
-      expect(vi.spyOn(manager, "decrementInFlight")).toHaveBeenCalledWith("test-server");
+      expect(vi.spyOn(manager, "incrementInFlight")).toHaveBeenCalledWith(connection);
+      expect(vi.spyOn(manager, "decrementInFlight")).toHaveBeenCalledWith(connection);
       expect(vi.spyOn(manager, "touch")).toHaveBeenCalled();
     });
   });

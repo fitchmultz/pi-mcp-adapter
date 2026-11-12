@@ -179,7 +179,6 @@ export class ConnectionLifecycle {
       throwIfAborted(options.signal);
       throw new Error(`MCP connection for ${name} was closed while connecting`);
     }
-    connection.inFlight = this.connections.get(name)?.inFlight ?? 0;
     this.connections.set(name, connection);
     return connection;
   }
@@ -340,18 +339,23 @@ export class ConnectionLifecycle {
     }
   }
 
-  incrementInFlight(name: string): void {
-    const connection = this.connections.get(name);
-    if (connection) {
-      connection.inFlight += 1;
+  // In-flight counts belong to the connection a call was dispatched on. A replacement
+  // connection starts at zero, and a late settle on a retired connection must not touch it.
+  private readonly inFlightCounts = new WeakMap<ServerConnection, number>();
+
+  incrementInFlight(connection: ServerConnection): void {
+    this.inFlightCounts.set(connection, (this.inFlightCounts.get(connection) ?? 0) + 1);
+  }
+
+  decrementInFlight(connection: ServerConnection): void {
+    const count = this.inFlightCounts.get(connection);
+    if (count !== undefined && count > 0) {
+      this.inFlightCounts.set(connection, count - 1);
     }
   }
 
-  decrementInFlight(name: string): void {
-    const connection = this.connections.get(name);
-    if (connection && connection.inFlight !== 0) {
-      connection.inFlight--;
-    }
+  inFlightCount(connection: ServerConnection): number {
+    return this.inFlightCounts.get(connection) ?? 0;
   }
 
   isIdle(name: string, timeoutMs: number): boolean {
@@ -359,7 +363,7 @@ export class ConnectionLifecycle {
     if (!connection || connection.status !== "connected") {
       return false;
     }
-    if (connection.inFlight > 0) {
+    if (this.inFlightCount(connection) > 0) {
       return false;
     }
     // Background subscriptions keep their existing idle policy, but accepted requests and

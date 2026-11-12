@@ -139,13 +139,18 @@ describe("McpServerManager connections", () => {
     }
   });
 
-  it("carries in-flight work from the stale connection to the fresh connection", async () => {
+  it("keeps a replacement connection's in-flight count independent of the stale one", async () => {
     const { manager, def } = await setup();
     const stale = await manager.connect("remote", def);
-    stale.inFlight = 2;
+    manager.incrementInFlight(stale);
+    manager.incrementInFlight(stale);
     const fresh = await manager.reconnect("remote", def, stale);
     expect(fresh).not.toBe(stale);
-    expect(fresh.inFlight).toBe(2);
+    expect(manager.inFlightCount(fresh)).toBe(0);
+    expect(manager.inFlightCount(stale)).toBe(2);
+    manager.decrementInFlight(stale);
+    manager.decrementInFlight(stale);
+    expect(manager.inFlightCount(fresh)).toBe(0);
     expect(manager.getConnection("remote")).toBe(fresh);
   });
 
