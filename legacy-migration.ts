@@ -11,7 +11,7 @@ interface FileMigration {
   status: "absent" | "existing" | "would-copy" | "copied";
 }
 
-/** Run explicitly before starting v5. Never overwrite a destination or remove a source. */
+/** Preserve historical sources and existing destinations; consume current OAuth sources only after verified promotion. */
 export function migrateLegacyState({
   cwd = process.cwd(),
   dryRun = false,
