@@ -497,6 +497,176 @@ describe("buildHostHtmlTemplate", () => {
       );
     });
 
+    it.each(["eager", "stream-first"] as const)(
+      "reopens %s mode with current input once before the latest result",
+      async (mode) => {
+        const result = {
+          content: [],
+          structuredContent: {
+            "pi-mcp-adapter/stream": {
+              streamId: "second",
+              sequence: 1,
+              frameType: "final",
+              phase: "settled",
+              status: "ok",
+            },
+          },
+        };
+        const host = await openHost({
+          toolArgs: { call: 1 },
+          hostContext: {
+            "pi-mcp-adapter/stream": {
+              mode,
+              streamId: "first",
+              intermediateResultPatches: true,
+              partialInput: false,
+            },
+          },
+          beforeHostLoad: (handle) => {
+            handle.sendToolInput({ call: 2 });
+            handle.sendToolResult(result);
+          },
+        });
+        await initializeApp(host);
+        await vi.waitFor(() =>
+          expect(host.appMessages).toContainEqual({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: result,
+          }),
+        );
+        const notifications = () =>
+          host.appMessages.filter(
+            (message) => z.object({ method: z.string() }).safeParse(message).success,
+          );
+        expect(notifications()).toEqual([
+          {
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-input",
+            params: { arguments: { call: 2 } },
+          },
+          { jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result },
+        ]);
+        // Identical arguments in a new call are a new input, not a replay.
+        host.handle.sendToolInput({ call: 2 });
+        await vi.waitFor(() => expect(notifications()).toHaveLength(3));
+        expect(notifications().at(-1)).toEqual({
+          jsonrpc: "2.0",
+          method: "ui/notifications/tool-input",
+          params: { arguments: { call: 2 } },
+        });
+      },
+    );
+
+    it.each(["eager", "stream-first", "plain"] as const)(
+      "does not replay the prior call result while a reused %s call is pending",
+      async (mode) => {
+        const previous = {
+          content: [{ type: "text" as const, text: "previous result" }],
+          ...(mode === "plain"
+            ? {}
+            : {
+                structuredContent: {
+                  "pi-mcp-adapter/stream": {
+                    streamId: "first",
+                    sequence: 1,
+                    frameType: "final",
+                    phase: "settled",
+                    status: "ok",
+                  },
+                },
+              }),
+        };
+        const patch = { content: [{ type: "text" as const, text: "current progress" }] };
+        const host = await openHost({
+          toolArgs: { call: 1 },
+          hostContext:
+            mode === "plain"
+              ? {}
+              : {
+                  "pi-mcp-adapter/stream": {
+                    mode,
+                    streamId: "first",
+                    intermediateResultPatches: true,
+                    partialInput: false,
+                  },
+                },
+          beforeHostLoad: (handle) => {
+            handle.sendToolResult(previous);
+            handle.sendToolInput({ call: 2 });
+            handle.sendResultPatch(patch);
+          },
+        });
+        await initializeApp(host);
+        await vi.waitFor(() =>
+          expect(host.appMessages).toContainEqual({
+            jsonrpc: "2.0",
+            method: "notifications/pi-mcp-adapter/ui-result-patch",
+            params: patch,
+          }),
+        );
+        expect(
+          host.appMessages.filter(
+            (message) => z.object({ method: z.string() }).safeParse(message).success,
+          ),
+        ).toEqual([
+          {
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-input",
+            params: { arguments: { call: 2 } },
+          },
+          { jsonrpc: "2.0", method: "notifications/pi-mcp-adapter/ui-result-patch", params: patch },
+        ]);
+      },
+    );
+
+    it("does not replay older inputs after the current snapshot in a plain reused session", async () => {
+      const previous = { content: [{ type: "text" as const, text: "previous result" }] };
+      const current = { content: [{ type: "text" as const, text: "current result" }] };
+      const host = await openHost({
+        toolArgs: { call: 1 },
+        beforeHostLoad: (handle) => {
+          handle.sendToolInput({ call: 2 });
+          handle.sendToolResult(previous);
+          handle.sendToolInput({ call: 3 });
+          handle.sendToolResult(current);
+        },
+      });
+      await initializeApp(host);
+      await vi.waitFor(() =>
+        expect(host.appMessages).toContainEqual({
+          jsonrpc: "2.0",
+          method: "ui/notifications/tool-result",
+          params: current,
+        }),
+      );
+      const inputs = () =>
+        host.appMessages.filter(
+          (message) =>
+            z.object({ method: z.literal("ui/notifications/tool-input") }).safeParse(message)
+              .success,
+        );
+      expect(inputs()).toEqual([
+        {
+          jsonrpc: "2.0",
+          method: "ui/notifications/tool-input",
+          params: { arguments: { call: 3 } },
+        },
+      ]);
+      expect(host.appMessages).not.toContainEqual({
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-result",
+        params: previous,
+      });
+      host.handle.sendToolInput({ call: 3 });
+      await vi.waitFor(() => expect(inputs()).toHaveLength(2));
+      expect(inputs().at(-1)).toEqual({
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-input",
+        params: { arguments: { call: 3 } },
+      });
+    });
+
     it("registers the stream patch notification method", async () => {
       const host = await openHost();
       await initializeApp(host);

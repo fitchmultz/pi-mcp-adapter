@@ -70,6 +70,7 @@ export interface HostHtmlTemplateInput {
   serverName: string;
   toolName: string;
   toolArgs: Record<string, unknown>;
+  toolInputEventId?: number;
   resource: UiResourceContent;
   allowAttribute: string;
   requireToolConsent: boolean;
@@ -84,6 +85,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
     serverName: input.serverName,
     toolName: input.toolName,
     toolArgs: input.toolArgs,
+    toolInputEventId: input.toolInputEventId,
     hostContext: input.hostContext ?? {},
     allowAttribute: input.allowAttribute,
     requireToolConsent: input.requireToolConsent,

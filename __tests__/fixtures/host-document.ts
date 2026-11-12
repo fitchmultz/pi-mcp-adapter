@@ -7,6 +7,7 @@ export function hostConfiguration(html: string): {
   requireToolConsent: boolean;
   allowAttribute: string;
   toolArgs: Record<string, unknown>;
+  toolInputEventId?: number | undefined;
   hostContext: unknown;
 } {
   const dom = new JSDOM(html);
@@ -23,6 +24,7 @@ export function hostConfiguration(html: string): {
         requireToolConsent: z.boolean(),
         allowAttribute: z.string(),
         toolArgs: z.record(z.string(), z.unknown()),
+        toolInputEventId: z.number().int().positive().optional(),
         hostContext: z.unknown(),
       })
       .parse(value);

@@ -29,6 +29,7 @@ const eventSubjects = {
 interface HostSessionOptions {
   sessionToken: string;
   initialToolArgs: Record<string, unknown> | undefined;
+  initialToolInputEventId: number | undefined;
 }
 
 export class HostBrowserSession {
@@ -41,6 +42,7 @@ export class HostBrowserSession {
   private resolveReady: (() => void) | undefined;
   private initialized = false;
   private forwarding: Promise<void>;
+  private readonly initialToolInputEventId: number | undefined;
   /** A completion is requested once and finished once; the reason is the request's. */
   private phase: "live" | "completing" | "finished" = "live";
 
@@ -56,6 +58,7 @@ export class HostBrowserSession {
     this.ready = new Promise<void>((resolve) => {
       this.resolveReady = resolve;
     });
+    this.initialToolInputEventId = options.initialToolInputEventId;
     this.forwarding = this.ready
       .then(() =>
         this.initialized && options.initialToolArgs !== undefined
@@ -101,6 +104,14 @@ export class HostBrowserSession {
     for (const [name, subject] of Object.entries(eventSubjects)) {
       this.eventSource.addEventListener(name, (event: MessageEvent<string>) => {
         if (this.phase === "finished") {
+          return;
+        }
+        // The eager snapshot supersedes its input revision and all earlier input revisions.
+        if (
+          name === "tool-input" &&
+          this.initialToolInputEventId !== undefined &&
+          Number(event.lastEventId) <= this.initialToolInputEventId
+        ) {
           return;
         }
         this.forwarding = this.forwarding

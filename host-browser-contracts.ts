@@ -16,6 +16,7 @@ const hostConfigurationSchema = z.object({
   serverName: z.string(),
   toolName: z.string(),
   toolArgs: z.record(z.string(), z.unknown()),
+  toolInputEventId: z.number().int().positive().optional(),
   hostContext: z.unknown(),
   allowAttribute: z.string(),
   requireToolConsent: z.boolean(),

@@ -26,6 +26,7 @@ export class UiEventStream {
   private readonly eventLog: UiEvent[] = [];
   private nextId = 1;
   private summary: UiStreamSummary | undefined;
+  private toolInput: { event: UiEvent; arguments: Record<string, unknown> } | undefined;
 
   constructor(hostContext: UiHostContext) {
     const initial = hostContext["pi-mcp-adapter/stream"];
@@ -39,6 +40,23 @@ export class UiEventStream {
   }
 
   push(name: string, payload: unknown): void {
+    this.publish(name, payload);
+  }
+
+  setToolInput(args: Record<string, unknown>): void {
+    this.toolInput = {
+      event: this.publish("tool-input", { arguments: args }),
+      arguments: args,
+    };
+  }
+
+  getToolInput(): { arguments: Record<string, unknown>; eventId: number } | undefined {
+    return this.toolInput
+      ? { arguments: this.toolInput.arguments, eventId: this.toolInput.event.id }
+      : undefined;
+  }
+
+  private publish(name: string, payload: unknown): UiEvent {
     const entry = { id: this.nextId++, name, payload };
     this.eventLog.push(entry);
     this.updateSummary(payload);
@@ -51,6 +69,7 @@ export class UiEventStream {
         this.clients.delete(client);
       }
     }
+    return entry;
   }
 
   connect(res: ServerResponse, lastEventId: string | undefined): void {
@@ -62,17 +81,31 @@ export class UiEventStream {
     });
     res.write(": connected\n\n");
     this.clients.add(res);
-    const parsedLastId =
-      lastEventId !== undefined && lastEventId !== "" ? Number(lastEventId) : Number.NaN;
-    const checkpoint = this.latestCheckpointIndex();
-    const entries = Number.isFinite(parsedLastId)
-      ? this.eventLog.filter((entry) => entry.id > parsedLastId)
-      : this.eventLog.slice(Math.max(0, checkpoint));
-    for (const entry of entries) {
+    for (const entry of this.replay(lastEventId)) {
       if (!this.writeReplay(res, entry)) {
         return;
       }
     }
+  }
+
+  private replay(lastEventId: string | undefined): UiEvent[] {
+    const parsedLastId =
+      lastEventId !== undefined && lastEventId !== "" ? Number(lastEventId) : Number.NaN;
+    const checkpoint = this.latestCheckpointIndex();
+    const input = this.toolInput?.event;
+    const entries = Number.isFinite(parsedLastId)
+      ? this.eventLog.filter((entry) => entry.id > parsedLastId)
+      : this.eventLog
+          .slice(Math.max(0, checkpoint))
+          .filter((entry) => input === undefined || entry.id >= input.id);
+    if (
+      input &&
+      !entries.includes(input) &&
+      (!Number.isFinite(parsedLastId) || input.id > parsedLastId)
+    ) {
+      entries.unshift(input);
+    }
+    return entries;
   }
 
   disconnect(res: ServerResponse): void {

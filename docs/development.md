@@ -72,6 +72,15 @@ Onboarding state updates use the same transaction boundary and their own
 `mcp-onboarding.json.lock.sqlite` sidecar, so independent setup and hint updates
 cannot overwrite each other's flags.
 
+The UI event stream owns the current tool input and its SSE event ID. A reopened
+host gets those arguments in its HTML snapshot. Fresh replay starts at the current
+call's input or its latest checkpoint, whichever is newer, so prior-call results
+cannot follow the current snapshot. Replay retains the current input before that
+call's results. Eager hosts omit replayed input
+revisions at or before that snapshot; another call with identical
+arguments still delivers its new input event. Stream-first hosts continue to
+omit synthetic initial input and receive reused-call input through SSE.
+
 A panel's first save or cancellation closes its input phase immediately.
 The overlay remains visible while save persistence and live refresh finish,
 but key repeats and cancellation cannot start another completion or overtake it.
