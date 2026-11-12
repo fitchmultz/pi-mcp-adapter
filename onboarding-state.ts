@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { getAdapterPath } from "./agent-dir.ts";
+import { withStorageLock } from "./storage-lock.ts";
 
 export interface McpOnboardingState {
   version: 1;
@@ -41,6 +42,10 @@ export function loadOnboardingState(): McpOnboardingState {
 
 export function saveOnboardingState(state: McpOnboardingState): void {
   const path = getOnboardingStatePath();
+  withStorageLock(`${path}.lock.sqlite`, () => writeOnboardingState(path, state));
+}
+
+function writeOnboardingState(path: string, state: McpOnboardingState): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmpPath = `${path}.${process.pid}.tmp`;
   writeFileSync(tmpPath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
@@ -50,9 +55,12 @@ export function saveOnboardingState(state: McpOnboardingState): void {
 export function updateOnboardingState(
   updater: (state: McpOnboardingState) => McpOnboardingState,
 ): McpOnboardingState {
-  const next = updater(loadOnboardingState());
-  saveOnboardingState(next);
-  return next;
+  const path = getOnboardingStatePath();
+  return withStorageLock(`${path}.lock.sqlite`, () => {
+    const next = updater(loadOnboardingState());
+    writeOnboardingState(path, next);
+    return next;
+  });
 }
 
 export function markSharedConfigHintShown(): McpOnboardingState {
