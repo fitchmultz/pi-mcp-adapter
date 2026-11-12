@@ -8,6 +8,7 @@ import {
   isStrictScopeSuperset,
 } from "@modelcontextprotocol/client";
 import open from "open";
+import { isDeepStrictEqual } from "node:util";
 import {
   waitForCallback,
   cancelPendingCallback,
@@ -95,6 +96,11 @@ type CompletionContext = {
   oauthState: string | undefined;
   signal: AbortSignal;
 };
+
+const completions = new WeakMap<
+  PendingAuth,
+  { response: AuthorizationResponseInput; operation: Promise<AuthStatus> }
+>();
 
 function completionContext(serverName: string, options: AuthenticateOptions): CompletionContext {
   const runtime = useRuntime(options.runtime);
@@ -220,7 +226,33 @@ export async function completeAuth(
   options: AuthenticateOptions,
 ): Promise<AuthStatus> {
   const context = completionContext(serverName, options);
-  const response = completionResponse(context, authorizationCode);
+  const inFlight = completions.get(context.pendingAuth);
+  const response =
+    inFlight && authorizationCode === undefined
+      ? inFlight.response
+      : completionResponse(context, authorizationCode);
+  if (inFlight) {
+    validateCallbackIssuer(serverName, context.pendingAuth.callbackIssuer, response);
+    if (!isDeepStrictEqual(response, inFlight.response)) {
+      throw new Error(`A different OAuth callback is already completing for ${serverName}`);
+    }
+    return abortable(inFlight.operation, context.signal);
+  }
+  const operation = completeAuthOnce(context, response);
+  completions.set(context.pendingAuth, { response, operation });
+  try {
+    return await operation;
+  } catch (error) {
+    completions.delete(context.pendingAuth);
+    throw error;
+  }
+}
+
+async function completeAuthOnce(
+  context: CompletionContext,
+  response: AuthorizationResponseInput,
+): Promise<AuthStatus> {
+  const { serverName } = context;
   // RFC 9207: a server that advertises `iss` support but omits it keeps the flow open for a retry.
   let keepPendingForRetry =
     response.iss === undefined && context.pendingAuth.callbackIssuer.issParameterSupported === true;
@@ -303,34 +335,36 @@ async function authenticateOnce(
   definition: ServerEntry | undefined,
   options: AuthenticateOptions,
 ): Promise<AuthStatus> {
+  const { authorizationUrl } = await startAuth(serverName, serverUrl, definition, options);
+  return authorizationUrl === ""
+    ? "authenticated"
+    : authenticateBrowserFlow(serverName, serverUrl, authorizationUrl, options);
+}
+
+async function authenticateBrowserFlow(
+  serverName: string,
+  serverUrl: string,
+  authorizationUrl: string,
+  options: AuthenticateOptions,
+): Promise<AuthStatus> {
   const runtime = useRuntime(options.runtime);
   const authStorageOptions = options.authStorageOptions ?? {};
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
-  // Start auth flow
-  const { authorizationUrl } = await startAuth(serverName, serverUrl, definition, {
-    ...options,
-    signal,
-    runtime,
-  });
-
-  // If no auth URL needed, already authenticated
-  if (authorizationUrl === "") {
-    return "authenticated";
-  }
-
-  let oauthState: string | undefined;
+  let pendingAuth: PendingAuth | undefined;
   try {
     // Get the state that was already generated and stored in startAuth().
     // Keep this lookup and its abort check inside the cleanup boundary because
     // startAuth has already reserved callback state at this point.
-    oauthState = pendingAuthState(runtime, serverName, authStorageOptions);
+    pendingAuth = getRuntimeState(runtime).pendingAuths.get(
+      getPendingAuthKey(serverName, authStorageOptions),
+    );
     throwIfAborted(signal);
-    if (oauthState === undefined || oauthState === "") {
+    if (!pendingAuth) {
       throw new Error("OAuth state not found - this should not happen");
     }
 
     // Register the callback BEFORE opening the browser.
-    const callbackPromise = waitForCallback(oauthState);
+    const callbackPromise = waitForCallback(pendingAuth.callbackState);
     callbackPromise.catch(() => {
       // The callback is awaited after browser handoff; attach rejection ownership now.
     });
@@ -350,11 +384,19 @@ async function authenticateOnce(
       runtime,
     });
   } catch (error) {
-    if (oauthState !== undefined && oauthState !== "") {
-      cancelPendingCallback(oauthState);
+    const completion = pendingAuth && completions.get(pendingAuth);
+    if (completion && !signal.aborted) {
+      // Pasted completion can finish this same flow during browser handoff.
+      // Its retained outcome does not depend on when the callback waiter resumes.
+      return abortable(completion.operation, signal);
     }
     try {
-      await clearPendingAuth(runtime, { serverName, serverUrl }, oauthState, authStorageOptions);
+      await clearPendingAuth(
+        runtime,
+        { serverName, serverUrl },
+        pendingAuth?.callbackState,
+        authStorageOptions,
+      );
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "OAuth cancellation cleanup failed", {
         cause: cleanupError,
@@ -404,6 +446,16 @@ export async function removeAuth(
   const signal = combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal;
   throwIfAborted(signal);
   const authStorageOptions = options.authStorageOptions ?? {};
+  const starting = getRuntimeState(runtime).pendingStarts.get(
+    getPendingAuthKey(serverName, authStorageOptions),
+  );
+  if (starting?.serverUrl === serverUrl) {
+    starting.controller.abort(new Error("OAuth authorization cancelled"));
+    // The start's caller owns its failure; logout owns draining its cleanup
+    // before removing credentials that the start might already have written.
+    await Promise.allSettled([starting.operation]);
+    throwIfAborted(signal);
+  }
   const oauthState = await Promise.resolve(getOAuthState(identity, authStorageOptions));
   throwIfAborted(signal);
   if (oauthState !== undefined && oauthState !== "") {

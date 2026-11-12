@@ -1218,6 +1218,143 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect((await executeAuthComplete(f.state, f.name)).details.authenticated).toBe(true);
   });
 
+  it("lets pasted completion finish authentication already waiting for the browser", async () => {
+    const f = await fixture();
+    const shown = Promise.withResolvers<string>();
+    const handedOff = Promise.withResolvers<null>();
+    const authenticating = settled(
+      authenticate(f.name, f.definition.url, f.definition, {
+        runtime: f.runtime,
+        onAuthorizationUrl: async (url) => {
+          shown.resolve(url);
+          await handedOff.promise;
+        },
+      }),
+    );
+    const callback = await f.authorize(await shown.promise);
+    try {
+      expect(await completeAuthFromInput(f.name, callback, { runtime: f.runtime })).toBe(
+        "authenticated",
+      );
+    } finally {
+      handedOff.resolve(null);
+    }
+    expect(await authenticating).toEqual({ status: "fulfilled", value: "authenticated" });
+    expect(f.exchanges).toHaveLength(1);
+  });
+
+  it("shares concurrent starts before a pending browser flow is published", async () => {
+    const f = await fixture();
+    const [first, second] = await Promise.all([f.start(), f.start()]);
+    expect(first.authorizationUrl).toBe(second.authorizationUrl);
+    const callback = await f.authorize(first.authorizationUrl);
+    expect((await fetch(callback)).status).toBe(200);
+    expect(await completeAuthFromInput(f.name, undefined, { runtime: f.runtime })).toBe(
+      "authenticated",
+    );
+    expect(f.exchanges).toHaveLength(1);
+  });
+
+  it.each(["captured", "pasted"] as const)(
+    "shares concurrent %s completion without replaying the authorization code",
+    async (mode) => {
+      const f = await fixture();
+      const callback = await f.authorize((await f.start()).authorizationUrl);
+      expect((await fetch(callback)).status).toBe(200);
+      f.controls.holdToken = true;
+      const first = settled(
+        completeAuthFromInput(f.name, mode === "pasted" ? callback : undefined, {
+          runtime: f.runtime,
+        }),
+      );
+      await expect.poll(() => f.exchanges.length).toBe(1);
+      const second = settled(
+        completeAuthFromInput(f.name, mode === "pasted" ? callback : undefined, {
+          runtime: f.runtime,
+        }),
+      );
+      f.controls.releaseToken();
+      expect(await first).toEqual({ status: "fulfilled", value: "authenticated" });
+      expect(await second).toEqual({ status: "fulfilled", value: "authenticated" });
+      expect(f.exchanges).toHaveLength(1);
+    },
+  );
+
+  it("does not accept a different callback while a code exchange is in flight", async () => {
+    const f = await fixture();
+    const callback = await f.authorize((await f.start()).authorizationUrl);
+    f.controls.holdToken = true;
+    const completing = settled(completeAuthFromInput(f.name, callback, { runtime: f.runtime }));
+    await expect.poll(() => f.exchanges.length).toBe(1);
+    const different = new URL(callback);
+    different.searchParams.set("code", "different-code");
+    const result = await settled(
+      completeAuthFromInput(f.name, different.href, { runtime: f.runtime }),
+    );
+    f.controls.releaseToken();
+    expect(result).toHaveProperty("status", "rejected");
+    expect(await completing).toEqual({ status: "fulfilled", value: "authenticated" });
+    expect(f.exchanges).toHaveLength(1);
+  });
+
+  it("cancels an unpublished start before logout removes its credentials", async () => {
+    const f = await fixture();
+    f.controls.holdRegistration = true;
+    const starting = settled(f.start());
+    try {
+      await expect.poll(() => f.controls.registrationHeld).toBe(true);
+      await removeAuth({ serverName: f.name, serverUrl: f.definition.url }, { runtime: f.runtime });
+    } finally {
+      f.controls.releaseRegistration();
+    }
+    expect(await starting).toHaveProperty("status", "rejected");
+    expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
+    expect(f.stored()).toBeUndefined();
+  });
+
+  it("replaces an unpublished start without letting it replace the newer flow", async () => {
+    const older = await fixture();
+    const newer = await fixture("modern", older.name);
+    older.controls.holdRegistration = true;
+    const starting = settled(older.start());
+    await expect.poll(() => older.controls.registrationHeld).toBe(true);
+    const replacement = await startAuth(newer.name, newer.definition.url, newer.definition, {
+      runtime: older.runtime,
+    });
+    older.controls.releaseRegistration();
+    expect(await starting).toHaveProperty("status", "rejected");
+    const callback = await newer.authorize(replacement.authorizationUrl);
+    expect((await fetch(callback)).status).toBe(200);
+    expect(await completeAuthFromInput(older.name, undefined, { runtime: older.runtime })).toBe(
+      "authenticated",
+    );
+    expect(newer.exchanges).toHaveLength(1);
+    expect(older.stored()).toBeUndefined();
+  });
+
+  it("cancels a joining start caller without cancelling the shared start", async () => {
+    const f = await fixture();
+    f.controls.holdRegistration = true;
+    const starting = f.start();
+    await expect.poll(() => f.controls.registrationHeld).toBe(true);
+    const controller = new AbortController();
+    const joining = settled(
+      startAuth(f.name, f.definition.url, f.definition, {
+        runtime: f.runtime,
+        signal: controller.signal,
+      }),
+    );
+    controller.abort(new Error("joining caller cancelled"));
+    expect(await joining).toHaveProperty("reason.message", "joining caller cancelled");
+    f.controls.releaseRegistration();
+    const callback = await f.authorize((await starting).authorizationUrl);
+    expect((await fetch(callback)).status).toBe(200);
+    expect(await completeAuthFromInput(f.name, undefined, { runtime: f.runtime })).toBe(
+      "authenticated",
+    );
+    expect(f.exchanges).toHaveLength(1);
+  });
+
   it("keeps a newer captured flow when an older code exchange settles", async () => {
     const a = await fixture();
     const b = await fixture("legacy", a.name);

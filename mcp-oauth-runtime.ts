@@ -69,7 +69,14 @@ export type RuntimeState = {
   generation: number;
   pendingAuths: Map<string, PendingAuth>;
   pendingAuthentications: Map<string, Promise<AuthStatus>>;
+  pendingStarts: Map<string, PendingAuthStart>;
   requests: Map<string, OAuthRequest>;
+};
+
+export type PendingAuthStart = {
+  serverUrl: string;
+  controller: AbortController;
+  operation: Promise<{ authorizationUrl: string }>;
 };
 
 const runtimeStates = new WeakMap<McpOAuthRuntime, RuntimeState>();
@@ -85,6 +92,7 @@ export function createOAuthRuntime(signal?: AbortSignal): McpOAuthRuntime {
     generation: 0,
     pendingAuths: new Map(),
     pendingAuthentications: new Map(),
+    pendingStarts: new Map(),
     requests: new Map(),
   });
   activeRuntimes.add(runtime);
@@ -250,6 +258,11 @@ export async function shutdownOAuth(runtime: McpOAuthRuntime): Promise<void> {
   }
   state.generation += 1;
   state.controller.abort(new Error("OAuth runtime stopped"));
+  // A start owns its reservation before it can publish a pending browser flow.
+  // Its caller owns rejection; shutdown waits for its cancellation cleanup.
+  await Promise.allSettled(
+    Array.from(state.pendingStarts.values(), (starting) => starting.operation),
+  );
   for (const pendingAuth of Array.from(state.pendingAuths.values())) {
     cancelPendingCallback(pendingAuth.callbackState);
   }

@@ -33,6 +33,7 @@ import {
   type McpOAuthRuntime,
   type PendingAuth,
   type OAuthRequest,
+  type PendingAuthStart,
 } from "./mcp-oauth-runtime.ts";
 import { getOAuthRequest, bindOAuthRequestIssuer } from "./mcp-oauth-request.ts";
 import {
@@ -53,6 +54,7 @@ type StartContext = {
   authStorageOptions: AuthStorageOptions;
   signal: AbortSignal;
   generation: number;
+  flowSignal: AbortSignal;
 };
 
 function applyConfiguredScope(discovery: AuthDiscovery, config: McpOAuthConfig): AuthDiscovery {
@@ -260,7 +262,7 @@ function createInteractiveFlow(
       onDiscoveryState: binding.onDiscoveryState,
     },
     storageOptions: context.authStorageOptions,
-    runtimeSignal: context.runtime.signal,
+    runtimeSignal: context.flowSignal,
     initialState: initial.oauthState,
   });
   return {
@@ -424,30 +426,61 @@ export async function startAuth(
   }
   const runtime = useRuntime(options.runtime);
   const state = getRuntimeState(runtime);
+  const config = definition ? extractOAuthConfig(definition) : {};
+  const authStorageOptions = options.authStorageOptions ?? {};
+  const key = getPendingAuthKey(serverName, authStorageOptions);
+  const previous = state.pendingStarts.get(key);
+  if (previous?.serverUrl === serverUrl) {
+    return abortable(previous.operation, options.signal);
+  }
+  const controller = new AbortController();
+  const flowSignal = combineAbortSignals(runtime.signal, controller.signal) ?? runtime.signal;
   const context: StartContext = {
     serverName,
     serverUrl,
     definition,
     runtime,
-    config: definition ? extractOAuthConfig(definition) : {},
-    authStorageOptions: options.authStorageOptions ?? {},
-    signal: combineAbortSignals(runtime.signal, options.signal) ?? runtime.signal,
+    config,
+    authStorageOptions,
+    signal: combineAbortSignals(flowSignal, options.signal) ?? flowSignal,
+    flowSignal,
     generation: state.generation,
   };
+  previous?.controller.abort(new Error("OAuth flow replaced"));
+  const operation = startAuthOnce(context, previous);
+  const starting = { serverUrl, controller, operation };
+  state.pendingStarts.set(key, starting);
+  try {
+    return await operation;
+  } finally {
+    if (state.pendingStarts.get(key) === starting) {
+      state.pendingStarts.delete(key);
+    }
+  }
+}
+
+async function startAuthOnce(
+  context: StartContext,
+  previous: PendingAuthStart | undefined,
+): Promise<{ authorizationUrl: string }> {
+  if (previous) {
+    // Replacement waits for the old start to release its own callback reservation.
+    await Promise.allSettled([previous.operation]);
+  }
   throwIfAborted(context.signal);
   if (isNonInteractiveOAuth(context.config)) {
     return startNonInteractive(context);
   }
   const request = getOAuthRequest(
-    serverName,
-    serverUrl,
+    context.serverName,
+    context.serverUrl,
     getAuthBaseDir(context.authStorageOptions),
-    runtime,
+    context.runtime,
   );
-  const existing = state.pendingAuths.get(
-    getPendingAuthKey(serverName, context.authStorageOptions),
+  const existing = getRuntimeState(context.runtime).pendingAuths.get(
+    getPendingAuthKey(context.serverName, context.authStorageOptions),
   );
-  if (existing?.serverUrl === serverUrl) {
+  if (existing?.serverUrl === context.serverUrl) {
     return { authorizationUrl: existing.authorizationUrl };
   }
   return startInteractive(context, request);
