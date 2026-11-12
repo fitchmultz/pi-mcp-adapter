@@ -84,6 +84,7 @@ interface HostRuntime {
     request: http.ClientRequest;
     closed: boolean;
     terminalEvents: number;
+    receivedEvents: string[];
     disconnect: () => Promise<void>;
   };
   teardowns: Array<{ id: number | string; answered: boolean }>;
@@ -114,6 +115,11 @@ export async function openHost(
     confirm?: boolean;
     permissions?: UiResourcePermissions;
     onMessage?: UiServerOptions["onMessage"];
+    beforeAppLoad?: (controls: {
+      clock: BrowserClock;
+      requests: HostRuntime["requests"];
+      settleRequests: HostRuntime["settleRequests"];
+    }) => Promise<void>;
   } = {},
 ): Promise<HostRuntime> {
   const completions: string[] = [];
@@ -223,6 +229,7 @@ export async function openHost(
         .then(async (response) => {
           assert.equal(response.status, 200);
           await response.text();
+          await options.beforeAppLoad?.({ clock, requests, settleRequests });
           iframe.dispatchEvent(new window.Event("load"));
           iframeLoaded.resolve();
         })
@@ -240,6 +247,7 @@ export async function openHost(
     readonly request: http.ClientRequest;
     closed = false;
     terminalEvents = 0;
+    receivedEvents: string[] = [];
     onerror?: () => void;
 
     constructor(path: string) {
@@ -284,6 +292,7 @@ export async function openHost(
     }
 
     private dispatch(name: string, data: string): void {
+      this.receivedEvents.push(name);
       for (const listener of this.listeners.get(name) ?? []) {
         listener({ data });
       }
@@ -356,6 +365,8 @@ export async function openHost(
   };
 
   const context = dom.getInternalVMContext();
+  // Exercise the served ES2022 bundle without Node's newer Promise helper.
+  runInContext("delete Promise.withResolvers", context);
   Object.assign(window, {
     EventSource: LiveEventSource,
     fetch: browserFetch,

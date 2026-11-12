@@ -26,14 +26,6 @@ const bridge = new AppBridge(
 const proxy = new HostBrowserProxy(config.sessionToken);
 const actions = new HostBrowserActions(bridge, proxy, view, config);
 actions.listen();
-bridge.addEventListener("initialized", () => {
-  if (streamMode !== "stream-first") {
-    bridge.sendToolInput({ arguments: config.toolArgs }).catch((error: unknown) => {
-      view.showError("Failed to forward tool input: " + String(error));
-    });
-  }
-  view.setStatus(streamMode === "stream-first" ? "Streaming…" : "Connected");
-});
 bridge.addEventListener("sizechange", (size) => view.resize(size));
 
 // Connect before loading the app so its native initialize request cannot race us.
@@ -48,6 +40,9 @@ try {
   console.error("[host] Bridge connection failed:", error);
   view.showError("Failed to initialize AppBridge: " + String(error));
 }
-await view.load(config.uiResourceToken);
-const session = new HostBrowserSession(bridge, proxy, view, config.sessionToken);
+const session = new HostBrowserSession(bridge, proxy, view, {
+  sessionToken: config.sessionToken,
+  initialToolArgs: streamMode === "stream-first" ? undefined : config.toolArgs,
+});
 session.listen();
+await view.load(config.uiResourceToken);

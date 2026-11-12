@@ -175,6 +175,24 @@ it("keeps active heartbeats and the watchdog after the SSE connection is interru
   expect(host.completions).toEqual(["stale"]);
 });
 
+it("renews the server watchdog while the app iframe is still loading", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  const host = await openHost({
+    beforeAppLoad: async ({ clock, requests, settleRequests }) => {
+      for (let index = 0; index < 7; index += 1) {
+        clock.advance(10_000);
+        await settleRequests("/proxy/ui/heartbeat");
+        vi.advanceTimersByTime(10_000);
+      }
+      expect(requests("/proxy/ui/heartbeat").map((request) => request.status)).toEqual(
+        Array(7).fill(200),
+      );
+    },
+  });
+  expect(host.completions).toEqual([]);
+  expect(host.iframe.src).toContain("/ui-app?");
+});
+
 it("finishes without logging when teardown is not implemented", async () => {
   const host = await openHost();
   host.handle.close("replaced");

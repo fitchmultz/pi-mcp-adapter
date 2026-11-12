@@ -45,6 +45,13 @@ leave an untracked listener open. Optional viewer launches check that the sessio
 still owns that slot; a Glimpse window that finishes opening after replacement
 closes without taking ownership of the current viewer.
 
+The served host opens SSE and starts heartbeats before loading the app iframe.
+It waits for the native AppBridge `initialized` event before forwarding buffered
+events, sends eager-mode initial input first, and preserves SSE delivery order.
+Stream-first mode still omits that initial input. Completion drains initialized
+delivery before teardown; an app that never initialized can complete without
+waiting for initialization.
+
 ## Local checks
 
 Use the npm version declared in `package.json`:
