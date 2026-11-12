@@ -39,10 +39,14 @@ export function withAuthSecretLock<T>(
   const lockPath = join(homedir(), ".fitch-mcp-adapter", "locks", `${key}.sqlite`);
   const acquisition = { entered: false };
   try {
-    return withStorageLock(lockPath, () => {
-      acquisition.entered = true;
-      return operation();
-    });
+    return withStorageLock(
+      lockPath,
+      () => {
+        acquisition.entered = true;
+        return operation();
+      },
+      action === "read" ? "read" : "write",
+    );
   } catch (error) {
     if (acquisition.entered) {
       throw error;

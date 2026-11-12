@@ -10,9 +10,18 @@ export class StorageLockBusyError extends Error {
   }
 }
 
-function acquireStorageLock(database: DatabaseSync, lockPath: string): void {
+function acquireStorageLock(
+  database: DatabaseSync,
+  lockPath: string,
+  mode: "read" | "write",
+): void {
   try {
-    database.exec("BEGIN IMMEDIATE");
+    if (mode === "read") {
+      // DEFERRED alone takes no lock. Reading the schema also locks an empty database.
+      database.exec("BEGIN DEFERRED; SELECT name FROM sqlite_schema");
+    } else {
+      database.exec("BEGIN EXCLUSIVE");
+    }
   } catch (error) {
     // SQLite extended result codes retain the primary result in the low byte.
     if (
@@ -54,12 +63,16 @@ function releaseStorageLock(
 }
 
 /**
- * Runs a synchronous operation under a cross-process SQLite write transaction.
+ * Runs a synchronous operation under a shared read or exclusive write transaction.
  * Acquisition contention throws StorageLockBusyError; operation errors pass through.
  * All participants must use the same persistent
  * lock path; never unlink, replace, or open/close that database outside SQLite.
  */
-export function withStorageLock<T>(lockPath: string, operation: () => T): T {
+export function withStorageLock<T>(
+  lockPath: string,
+  operation: () => T,
+  mode: "read" | "write" = "write",
+): T {
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
   const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
   const database = new DatabaseSync(lockPath);
@@ -67,7 +80,7 @@ export function withStorageLock<T>(lockPath: string, operation: () => T): T {
   let primary: { error: unknown } | undefined;
   try {
     chmodSync(lockPath, 0o600);
-    acquireStorageLock(database, lockPath);
+    acquireStorageLock(database, lockPath, mode);
     acquired = true;
     return operation();
   } catch (error) {

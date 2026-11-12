@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -119,6 +120,106 @@ describe("cross-process credential locking", () => {
     return z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout));
   }
 
+  it("serves OAuth HTTP handshakes and tool calls while another process reads the same credential", async () => {
+    const http = spawn(process.execPath, [worker, "http"], {
+      env: environment(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let httpOutput = "";
+    let httpError = "";
+    http.stdout.setEncoding("utf8");
+    http.stderr.setEncoding("utf8");
+    http.stdout.on("data", (data: string) => {
+      httpOutput += data;
+    });
+    http.stderr.on("data", (data: string) => {
+      httpError += data;
+    });
+    const httpClosed = once(http, "close");
+    const announcement: unknown = await once(http.stdout, "data");
+    const [line] = z.tuple([z.string()]).parse(announcement);
+    const { url } = z.object({ url: z.string() }).parse(JSON.parse(line));
+    const reader = spawn(process.execPath, [worker, "read", url], {
+      env: { ...environment(), PI_MCP_ADAPTER_PAUSE_CHUNK_READ: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let readOutput = "";
+    reader.stdout.setEncoding("utf8");
+    reader.stdout.on("data", (data: string) => {
+      readOutput += data;
+    });
+    const readerClosed = once(reader, "close");
+    try {
+      const ready: unknown = await once(reader.stdout, "data");
+      expect(ready).toEqual(["reading-chunk\n"]);
+      http.stdin.end("x");
+      expect(await httpClosed, httpError).toEqual([0, null]);
+      const result: unknown = JSON.parse(httpOutput.slice(line.length));
+      expect(result).toMatchObject({
+        first: { content: [{ type: "text", text: "authorized" }] },
+        second: { content: [{ type: "text", text: "authorized" }] },
+      });
+      const { methods } = z.object({ methods: z.array(z.string()) }).parse(result);
+      expect(methods.filter((method) => method === "tools/call")).toHaveLength(2);
+      expect(run("clear", url).status).toBe(1);
+      reader.stdin.end("x");
+      expect(await readerClosed).toEqual([0, null]);
+      const readback: unknown = JSON.parse(readOutput.slice("reading-chunk\n".length));
+      expect(readback).toMatchObject({ entry: { tokens: { accessToken: "x".repeat(5000) } } });
+    } finally {
+      http.kill("SIGKILL");
+      reader.kill("SIGKILL");
+      await httpClosed;
+      await readerClosed;
+    }
+  });
+
+  it("rechecks and imports missing scoped credentials only after acquiring an exclusive lock", async () => {
+    successful("seed");
+    const { path } = z.object({ path: z.string() }).parse(successful("legacy-source"));
+    const locks = join(home, ".fitch-mcp-adapter", "locks");
+    const files = readdirSync(locks);
+    expect(files).toHaveLength(1);
+    const lockPath = join(locks, z.string().parse(files[0]));
+    const holder = spawn(
+      process.execPath,
+      [
+        fileURLToPath(new URL("../fixtures/storage-lock-worker.ts", import.meta.url)),
+        "lock",
+        lockPath,
+        "read",
+      ],
+      { env: environment(), stdio: ["pipe", "pipe", "pipe"] },
+    );
+    holder.stdout.setEncoding("utf8");
+    const closed = once(holder, "close");
+    try {
+      const ready: unknown = await once(holder.stdout, "data");
+      expect(ready).toEqual(["locked\n"]);
+      const before = readFileSync(store, "utf8");
+      const read = run("read");
+      expect(read.status, read.stderr).toBe(1);
+      const receipt: unknown = JSON.parse(read.stdout);
+      expect(receipt).toMatchObject({ error: { operation: "write", message: busy } });
+      expect(successful("inspect")).toEqual({
+        status: "present",
+        entry: { serverUrl: firstUrl, tokens: { accessToken: "legacy-token" } },
+      });
+      expect(readFileSync(store, "utf8")).toBe(before);
+      expect(existsSync(path)).toBe(true);
+      holder.stdin.end("x");
+      expect(await closed).toEqual([0, null]);
+      expect(successful("read")).toEqual({
+        entry: { serverUrl: firstUrl, tokens: { accessToken: "legacy-token" } },
+        other,
+      });
+      expect(existsSync(path)).toBe(false);
+    } finally {
+      holder.kill("SIGKILL");
+      await closed;
+    }
+  });
+
   it("protects a chunked read from field updates, other-URL logout and migration, then permits updates after release", async () => {
     expect(successful("seed")).toEqual({ entry: original, other });
     const before = readFileSync(store, "utf8");
@@ -152,7 +253,6 @@ describe("cross-process credential locking", () => {
         { action: "client", url: secondUrl, operation: "write" },
         { action: "logout", url: secondUrl, operation: "remove" },
         { action: "migrate", url: firstUrl, operation: "write" },
-        { action: "read", url: secondUrl, operation: "read" },
       ];
       for (const attempt of attempts) {
         const result = run(attempt.action, attempt.url);
@@ -167,7 +267,8 @@ describe("cross-process credential locking", () => {
         });
         expect(readFileSync(store, "utf8")).toBe(before);
       }
-      expect(successful("inspect")).toEqual({ status: "unavailable", message: busy });
+      expect(successful("inspect")).toEqual({ status: "present", entry: original });
+      expect(successful("read")).toEqual({ entry: original, other });
       reader.stdin.end("x");
       expect(await closed, stderr).toEqual([0, null]);
       const readback: unknown = JSON.parse(stdout.slice("reading-chunk\n".length));

@@ -36,10 +36,15 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function startWorker(kind: string, argument = "") {
+function startWorker(kind: string, argument = "", mode: "read" | "write" = "write") {
   const child = spawn(
     process.execPath,
-    [fileURLToPath(new URL("./fixtures/storage-lock-worker.ts", import.meta.url)), kind, argument],
+    [
+      fileURLToPath(new URL("./fixtures/storage-lock-worker.ts", import.meta.url)),
+      kind,
+      argument,
+      mode,
+    ],
     { stdio: ["pipe", "pipe", "pipe"], env: process.env },
   );
   let stderr = "";
@@ -61,6 +66,23 @@ function startWorker(kind: string, argument = "") {
 }
 
 describe("synchronous storage locking", () => {
+  it("shares reads on a zero-byte database while excluding writers until release", async () => {
+    const path = join(root, "read-lock.sqlite");
+    const reader = startWorker("lock", path, "read");
+    try {
+      await reader.ready;
+      expect(statSync(path).size).toBe(0);
+      expect(withStorageLock(path, () => "shared", "read")).toBe("shared");
+      expect(() => withStorageLock(path, () => "write")).toThrow(StorageLockBusyError);
+      reader.child.stdin.end("x");
+      expect(await reader.exited, reader.stderr()).toEqual([0, null]);
+      expect(withStorageLock(path, () => "exclusive")).toBe("exclusive");
+    } finally {
+      reader.child.kill("SIGKILL");
+      await reader.exited;
+    }
+  });
+
   it("does not load SQLite when the cache modules are imported", () => {
     const imported = spawnSync(
       process.execPath,
@@ -91,6 +113,7 @@ describe("synchronous storage locking", () => {
       }
       expect(failure).toBeInstanceOf(StorageLockBusyError);
       expect(failure).toMatchObject({ cause: { code: "ERR_SQLITE_ERROR", errcode: 5 } });
+      expect(() => withStorageLock(path, () => "read", "read")).toThrow(StorageLockBusyError);
       expect(ran).toBe(false);
       expect(worker.child.kill("SIGKILL")).toBe(true);
       await worker.exited;

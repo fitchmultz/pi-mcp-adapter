@@ -313,7 +313,12 @@ export function getAuthEntry(
   identity: AuthIdentity,
   options?: AuthStorageOptions,
 ): AuthEntry | undefined {
-  return withCredentialLock(identity, "read", () => readAuthEntry(identity, options));
+  const scoped = withCredentialLock(identity, "read", () => readSecureAuthEntry(identity));
+  if (scoped !== undefined) {
+    return matchesIdentity(scoped, identity) ? scoped : undefined;
+  }
+  // Migration writes. Release the read lock, then recheck the destination under a write lock.
+  return withCredentialLock(identity, "write", () => readAuthEntry(identity, options));
 }
 
 export function getAuthForUrl(

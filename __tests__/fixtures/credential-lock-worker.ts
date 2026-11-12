@@ -1,6 +1,8 @@
 import { registerHooks } from "node:module";
-import { writeSync } from "node:fs";
+import { mkdirSync, readSync, writeFileSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import assert from "node:assert/strict";
+import { dirname } from "node:path";
 
 // Even a broken fixture resolution must never reach the user's native keyring.
 process.dlopen = () => {
@@ -26,8 +28,65 @@ const identity = {
 };
 const other = { ...identity, serverUrl: "https://second.invalid/mcp" };
 const action = process.argv[2];
+
+async function verifyHttpReads(): Promise<void> {
+  const { McpServerManager } = await import("../../server-manager.ts");
+  const { MachineHttpServer, machineJson, machineMessageSchema, machineResult, readMachineBody } =
+    await import("./oauth-machine-wire.ts");
+  const methods: string[] = [];
+  const token = "x".repeat(5000);
+  const http = new MachineHttpServer(async (request, response) => {
+    if (request.method !== "POST") {
+      response.writeHead(405).end();
+      return;
+    }
+    assert.equal(request.headers.authorization, `Bearer ${token}`);
+    const message = machineMessageSchema.parse(JSON.parse(await readMachineBody(request)));
+    methods.push(message.method);
+    if (!("id" in message)) {
+      response.writeHead(202).end();
+      return;
+    }
+    machineJson(response, {
+      jsonrpc: "2.0",
+      id: message.id,
+      result: machineResult(message.method, "concurrent-read", "authorized"),
+    });
+  });
+  const manager = new McpServerManager();
+  try {
+    const url = `${await http.listen()}/mcp`;
+    auth.saveAuthEntry({ ...identity, serverUrl: url }, { tokens: { accessToken: token } });
+    writeSync(1, `${JSON.stringify({ url })}\n`);
+    assert.equal(readSync(0, Buffer.alloc(1), 0, 1, null), 1);
+    const connection = await manager.connect(identity.serverName, { url, auth: "oauth" });
+    const first = await connection.client.callTool({ name: "echo", arguments: {} });
+    const second = await connection.client.callTool({ name: "echo", arguments: {} });
+    writeSync(1, JSON.stringify({ first, second, methods }));
+  } finally {
+    await manager.closeAll();
+    await http.close();
+  }
+}
+
 try {
-  if (action === "seed") {
+  if (action === "http") {
+    await verifyHttpReads();
+    process.exit(0);
+  } else if (action === "legacy-source") {
+    auth.removeAuthEntry(identity);
+    const path = auth.getAuthEntryFilePath(identity.serverName);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        serverUrl: identity.serverUrl,
+        tokens: { accessToken: "legacy-token" },
+      }),
+    );
+    writeSync(1, JSON.stringify({ path }));
+    process.exit(0);
+  } else if (action === "seed") {
     auth.saveAuthEntry(identity, {
       tokens: { accessToken: "x".repeat(5000), refreshToken: "refresh" },
       clientInfo: { clientId: "first-client" },

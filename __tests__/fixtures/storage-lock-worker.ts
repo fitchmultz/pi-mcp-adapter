@@ -19,7 +19,11 @@ if (kind === "import") {
   if (path === undefined) {
     throw new Error("Expected a lock path");
   }
-  withStorageLock(path, pause);
+  const mode = process.argv[4] ?? "write";
+  if (mode !== "read" && mode !== "write") {
+    throw new Error(`Invalid storage lock mode: ${mode}`);
+  }
+  withStorageLock(path, pause, mode);
 } else if (kind === "metadata") {
   const input: unknown = JSON.parse(process.argv[3] ?? "");
   const cache = projectMetadataCache(input);
