@@ -7,6 +7,7 @@ import {
   readRawConfigObject,
   writeRawConfigObject,
   createRawConfigObject,
+  withConfigWrite,
   getServersObject,
   withServersObject,
   buildConfigWritePreview,
@@ -35,6 +36,13 @@ export function ensureCompatibilityImports(
   overridePath?: string,
 ): { path: string; added: ImportKind[] } {
   const targetPath = getPiGlobalConfigPath(overridePath);
+  return withConfigWrite(targetPath, () => updateCompatibilityImports(targetPath, importKinds));
+}
+
+function updateCompatibilityImports(
+  targetPath: string,
+  importKinds: ImportKind[],
+): { path: string; added: ImportKind[] } {
   const raw = readRawConfigObject(targetPath);
   const currentImports = isUnknownArray(raw.imports)
     ? raw.imports.filter((value): value is string => typeof value === "string")
@@ -87,6 +95,10 @@ export function writeSharedServerEntry(
   serverName: string,
   entry: ServerEntry,
 ): string {
+  return withConfigWrite(filePath, () => updateSharedServerEntry(filePath, serverName, entry));
+}
+
+function updateSharedServerEntry(filePath: string, serverName: string, entry: ServerEntry): string {
   const raw = readRawConfigObject(filePath);
   const servers = getServersObject(raw, filePath);
   servers[serverName] = entry;
@@ -97,6 +109,8 @@ export function writeSharedServerEntry(
 export function writeDirectToolsConfig(
   changes: Map<string, true | string[] | false>,
   provenance: Map<string, ServerProvenance>,
+  /** Reports each completed file write, including writes before a later file fails. */
+  onPersisted?: (serverNames: readonly string[]) => void,
 ): void {
   const byPath = new Map<string, { name: string; value: true | string[] | false }[]>();
 
@@ -114,20 +128,28 @@ export function writeDirectToolsConfig(
   }
 
   for (const [filePath, entries] of byPath) {
-    const raw = readRawConfigObject(filePath);
-    const servers = getServersObject(raw, filePath);
-
-    for (const { name, value } of entries) {
-      // Keep inherited connection details in their source file.
-      const existing = servers[name];
-      if (existing !== undefined && !isConfigObject(existing)) {
-        throw new Error(`Invalid MCP config at ${filePath}: server "${name}" must be an object`);
-      }
-      servers[name] = { ...existing, directTools: value };
-    }
-
-    writeRawConfigObject(filePath, withServersObject(raw, servers));
+    withConfigWrite(filePath, () => updateDirectTools(filePath, entries));
+    onPersisted?.(entries.map((entry) => entry.name));
   }
+}
+
+function updateDirectTools(
+  filePath: string,
+  entries: { name: string; value: true | string[] | false }[],
+): void {
+  const raw = readRawConfigObject(filePath);
+  const servers = getServersObject(raw, filePath);
+
+  for (const { name, value } of entries) {
+    // Keep inherited connection details in their source file.
+    const existing = servers[name];
+    if (existing !== undefined && !isConfigObject(existing)) {
+      throw new Error(`Invalid MCP config at ${filePath}: server "${name}" must be an object`);
+    }
+    servers[name] = { ...existing, directTools: value };
+  }
+
+  writeRawConfigObject(filePath, withServersObject(raw, servers));
 }
 
 export function resolveConfiguredOAuthDir(raw: unknown, cwd = process.cwd()): string | undefined {

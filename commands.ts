@@ -294,6 +294,41 @@ function buildMcpPanelCallbacks(
   };
 }
 
+/** Returns whether saved changes need a reload instead of an in-session refresh. */
+async function savePanelDirectTools(input: {
+  changes: McpPanelResult["changes"];
+  provenance: ReturnType<typeof getServerProvenance>;
+  ui: Pick<ExtensionContext["ui"], "notify">;
+  refresh: ((changes: McpPanelResult["changes"]) => void | Promise<void>) | undefined;
+}): Promise<boolean> {
+  const { changes, provenance, ui, refresh } = input;
+  const saved = new Set<string>();
+  try {
+    writeDirectToolsConfig(changes, provenance, (serverNames) => {
+      for (const name of serverNames) {
+        saved.add(name);
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const persisted = saved.size > 0;
+    const outcome = persisted
+      ? "Some direct tools were saved, but remaining changes failed"
+      : "Failed to save direct tools";
+    ui.notify(`${outcome}: ${message}`, "error");
+    return persisted;
+  }
+  try {
+    await refresh?.(changes);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ui.notify(`Direct tools updated, but live refresh failed: ${message}`, "error");
+    return true;
+  }
+  ui.notify("Direct tools updated for this session.", "info");
+  return false;
+}
+
 export async function openMcpPanel(input: {
   state: McpExtensionState;
   pi: ExtensionAPI;
@@ -346,14 +381,13 @@ export async function openMcpPanel(input: {
           (async () => {
             try {
               if (!result.cancelled && result.changes.size > 0) {
-                writeDirectToolsConfig(result.changes, provenanceMap);
-                await onDirectToolsConfigChanged?.(result.changes);
-                ctx.ui.notify("Direct tools updated for this session.", "info");
+                configChanged = await savePanelDirectTools({
+                  changes: result.changes,
+                  provenance: provenanceMap,
+                  ui: ctx.ui,
+                  refresh: onDirectToolsConfigChanged,
+                });
               }
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              ctx.ui.notify(`Direct tools updated, but live refresh failed: ${message}`, "error");
-              configChanged = true;
             } finally {
               done(result);
             }

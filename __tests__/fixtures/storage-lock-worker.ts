@@ -3,6 +3,7 @@ import { withStorageLock } from "../../storage-lock.ts";
 import { projectMetadataCache } from "../../metadata-cache-format.ts";
 import { saveMetadataCache } from "../../metadata-cache.ts";
 import { saveCacheEntry } from "../../npx-resolution-cache.ts";
+import { writeSharedServerEntry } from "../../config-writes.ts";
 
 function pause(): void {
   writeSync(1, "locked\n");
@@ -52,6 +53,18 @@ if (kind === "import") {
     },
     resolvedAt: Date.now(),
     isJs: true,
+  });
+} else if (kind === "config") {
+  const path = process.argv[3];
+  if (path === undefined) {
+    throw new Error("Expected a config path");
+  }
+  writeSharedServerEntry(path, "external", {
+    get command() {
+      // The config has been read; hold the mutation until the parent finishes its attempt.
+      pause();
+      return "external-command";
+    },
   });
 } else {
   throw new Error(`Unknown storage worker kind: ${kind ?? "missing"}`);

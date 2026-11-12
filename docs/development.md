@@ -52,6 +52,13 @@ Stream-first mode still omits that initial input. Completion drains initialized
 delivery before teardown; an app that never initialized can complete without
 waiting for initialization.
 
+Config writers hold an exclusive native SQLite lock across their fresh read,
+field update and write. The persistent `<config-path>.lock.sqlite` sidecar is
+shared by the runtime, CLI and standalone example installers. Do not remove or
+replace that sidecar while a writer is active. A competing write fails before
+changing the config; retry after the other writer finishes. Project scaffolding
+uses exclusive creation and never replaces an existing `.mcp.json`.
+
 ## Local checks
 
 Use the npm version declared in `package.json`:

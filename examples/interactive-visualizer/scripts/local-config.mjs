@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { chmodSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,24 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 export const distServer = path.join(root, "dist", "server.js");
 export const configPath = path.join(getAgentDir(), "fitch-mcp-adapter", "mcp.json");
 export const serverName = "interactive-visualizer";
+
+/**
+ * The example is independently runnable, so it uses native SQLite rather than importing
+ * the adapter. Its sidecar matches the adapter's persistent config-writer lock.
+ * @param {() => Promise<void>} operation
+ */
+export async function mutateConfig(operation) {
+  mkdirSync(path.dirname(configPath), { recursive: true });
+  const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
+  const database = new DatabaseSync(`${path.resolve(configPath)}.lock.sqlite`);
+  try {
+    chmodSync(`${path.resolve(configPath)}.lock.sqlite`, 0o600);
+    database.exec("BEGIN EXCLUSIVE");
+    await operation();
+  } finally {
+    database.close();
+  }
+}
 
 // These commands own one entry, not validation of unrelated server definitions.
 // Object schemas return a copy that omits an own "__proto__" key, so the commands

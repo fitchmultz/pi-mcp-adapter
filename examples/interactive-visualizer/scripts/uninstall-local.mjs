@@ -1,7 +1,13 @@
 import { writeFile } from "node:fs/promises";
-import { configPath, isInstalledExample, loadConfig, serverName } from "./local-config.mjs";
+import {
+  configPath,
+  isInstalledExample,
+  loadConfig,
+  mutateConfig,
+  serverName,
+} from "./local-config.mjs";
 
-try {
+async function uninstall() {
   const config = await loadConfig();
   if (config === undefined) {
     console.log(`No MCP config found at ${configPath}`);
@@ -21,10 +27,15 @@ try {
       console.log(`Removed ${serverName} from ${configPath}`);
     }
   }
-} catch (error) {
+}
+
+/** @param {unknown} error */
+function reportUninstallError(error) {
   if (error instanceof Error && "code" in error && error.code === "ENOENT") {
     console.log(`No MCP config found at ${configPath}`);
-  } else {
-    throw error;
+    return;
   }
+  return Promise.reject(error);
 }
+
+await mutateConfig(uninstall).catch(reportUninstallError);

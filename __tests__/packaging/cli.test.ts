@@ -112,6 +112,39 @@ describe("cli init helper", () => {
     expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"))).toBe(false);
   });
 
+  it("re-reads the config at commit rather than overwriting changes made during discovery", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-fresh-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-fresh-project-"));
+    process.env.HOME = home;
+    process.chdir(project);
+    writeJson(join(home, ".cursor", "mcp.json"), { mcpServers: {} });
+    const configPath = join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json");
+    writeJson(configPath, { mcpServers: {} });
+    const main = await loadMain();
+    const status = await main(
+      ["init"],
+      (line) => {
+        if (line.includes("Detected host configs to import")) {
+          writeJson(configPath, {
+            imports: ["codex"],
+            settings: { extra: true },
+            mcpServers: { added: { command: "keep" } },
+          });
+        }
+      },
+      () => {
+        throw new Error("Unexpected CLI diagnostic");
+      },
+    );
+    expect(status).toBe(0);
+    const raw: unknown = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(raw).toEqual({
+      imports: ["codex", "cursor"],
+      settings: { extra: true },
+      mcpServers: { added: { command: "keep" } },
+    });
+  });
+
   it("loads existing Pi config as JSONC and lists .agents standard paths", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-cli-jsonc-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-cli-jsonc-project-"));

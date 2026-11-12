@@ -20,6 +20,12 @@ import { createTestExtensionContext } from "./test-extension-context.ts";
 import { resolveNpxBinary } from "../npx-resolver.ts";
 import { logger } from "../logger.ts";
 import { createCallbackHttpFixture } from "./runtime/fixtures/callback-http.ts";
+import {
+  ensureCompatibilityImports,
+  writeSharedServerEntry,
+  writeDirectToolsConfig,
+} from "../config-writes.ts";
+import { writeProjectServerDisabledOverride } from "../config-disabled.ts";
 
 let root: string;
 const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -67,6 +73,44 @@ function startWorker(kind: string, argument = "", mode: "read" | "write" = "writ
 }
 
 describe("synchronous storage locking", () => {
+  it("owns the config read-modify-write window across processes and every override writer", async () => {
+    const path = join(root, ".pi", "fitch-mcp-adapter", "mcp.json");
+    mkdirSync(join(root, ".pi", "fitch-mcp-adapter"), { recursive: true });
+    writeFileSync(path, '{"mcpServers":{"existing":{"command":"retained"}},"extra":true}\n');
+    const worker = startWorker("config", path);
+    try {
+      await worker.ready;
+      expect(() => writeSharedServerEntry(path, "local", { command: "local" })).toThrow(
+        StorageLockBusyError,
+      );
+      expect(() => ensureCompatibilityImports(["cursor"], path)).toThrow(StorageLockBusyError);
+      expect(() =>
+        writeDirectToolsConfig(
+          new Map([["existing", true]]),
+          new Map([["existing", { path, kind: "project" }]]),
+        ),
+      ).toThrow(StorageLockBusyError);
+      expect(() => writeProjectServerDisabledOverride(undefined, root, "existing", true)).toThrow(
+        StorageLockBusyError,
+      );
+      worker.child.stdin.end("x");
+      expect(await worker.exited, worker.stderr()).toEqual([0, null]);
+      writeSharedServerEntry(path, "local", { command: "local" });
+      const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
+      expect(raw).toEqual({
+        mcpServers: {
+          existing: { command: "retained" },
+          external: { command: "external-command" },
+          local: { command: "local" },
+        },
+        extra: true,
+      });
+    } finally {
+      worker.child.kill("SIGKILL");
+      await worker.exited;
+    }
+  });
+
   it("shares reads on a zero-byte database while excluding writers until release", async () => {
     const path = join(root, "read-lock.sqlite");
     const reader = startWorker("lock", path, "read");
