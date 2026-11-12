@@ -13,7 +13,7 @@ import type * as Glimpse from "../glimpse-ui.ts";
 import type * as Child from "node:child_process";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeUiMessages } from "../proxy-modes.ts";
-import { maybeStartUiSession } from "../ui-session.ts";
+import { maybeStartUiSession, summarizeUiSessionResult } from "../ui-session.ts";
 
 const glimpseMocks = vi.hoisted(() => ({
   isGlimpseAvailable: vi.fn<typeof Glimpse.isGlimpseAvailable>(() => true),
@@ -88,6 +88,119 @@ afterEach(() => {
 });
 
 describe("remote MCP UI viewers", () => {
+  it("does not return a superseded UI while its browser launch is pending", async () => {
+    process.env.MCP_UI_VIEWER = "browser";
+    const { state } = await makeState();
+    const launched = Promise.withResolvers<null>();
+    state.openBrowser.mockImplementationOnce(async () => {
+      await launched.promise;
+    });
+    const request = {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    };
+    const opening = maybeStartUiSession(state, request);
+    await expect.poll(() => state.openBrowser.mock.calls.length).toBe(1);
+    const current = await maybeStartUiSession(state, { ...request, toolName: "other" });
+    assert.ok(current);
+    try {
+      launched.resolve(null);
+      expect(await opening).toBeNull();
+      expect(summarizeUiSessionResult(await opening)).toEqual({
+        message: "Interactive UI was unavailable; returning the tool result inline.",
+        uiOpen: false,
+      });
+      expect(current.isActive()).toBe(true);
+    } finally {
+      launched.resolve(null);
+      await opening;
+      current.close("test-cleanup");
+    }
+  });
+
+  it.each(["browser", "none"])(
+    "does not advertise a replaced %s UI after a runtime has already returned",
+    async (viewer) => {
+      process.env.MCP_UI_VIEWER = viewer;
+      const { state, callTool } = await makeState();
+      const request = {
+        serverName: "demo",
+        toolName: "app",
+        toolArgs: {},
+        uiResourceUri: "ui://app",
+      };
+      const first = await maybeStartUiSession(state, request);
+      assert.ok(first);
+      const accepted = Promise.withResolvers<null>();
+      const deliver = Promise.withResolvers<null>();
+      state.onToolCall = async (event) => {
+        if (event.phase === "after") {
+          accepted.resolve(null);
+          await deliver.promise;
+        }
+      };
+      const calling = executeCall(state, { toolName: "demo_app", args: {} });
+      await accepted.promise;
+      const current = await maybeStartUiSession(state, { ...request, toolName: "other" });
+      assert.ok(current);
+      try {
+        deliver.resolve(null);
+        const result = await calling;
+        expect(result.details.uiOpen).toBe(false);
+        expect(result.details.uiUrl).toBeUndefined();
+        expect(textOf(result)).toContain("tool output");
+        expect(textOf(result)).toContain("ended or was replaced");
+        expect(callTool).toHaveBeenCalledOnce();
+        expect(first.isActive()).toBe(false);
+        expect(summarizeUiSessionResult(first)).toEqual({
+          message: "Interactive UI ended or was replaced; returning the tool result inline.",
+          uiOpen: false,
+        });
+        expect(summarizeUiSessionResult(current).uiUrl).toBe(current.url);
+      } finally {
+        deliver.resolve(null);
+        await calling;
+        current.close("test-cleanup");
+      }
+    },
+  );
+
+  it("closes a late Glimpse window without replacing the current session's viewer", async () => {
+    process.env.MCP_UI_VIEWER = "glimpse";
+    const { state } = await makeState();
+    const firstWindow = { close: vi.fn<() => void>() };
+    const currentWindow = { close: vi.fn<() => void>() };
+    const lateWindow = Promise.withResolvers<typeof firstWindow>();
+    glimpseMocks.openGlimpseWindow
+      .mockImplementationOnce(async () => lateWindow.promise)
+      .mockResolvedValueOnce(currentWindow);
+    const request = {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    };
+    const opening = maybeStartUiSession(state, request);
+    await expect.poll(() => glimpseMocks.openGlimpseWindow.mock.calls.length).toBe(1);
+    const current = await maybeStartUiSession(state, { ...request, toolName: "other" });
+    assert.ok(current);
+    try {
+      lateWindow.resolve(firstWindow);
+      expect(await opening).toBeNull();
+      expect(firstWindow.close).toHaveBeenCalledOnce();
+      expect(currentWindow.close).not.toHaveBeenCalled();
+      expect(state.openBrowser).not.toHaveBeenCalled();
+      current.close("test-cleanup");
+      expect(currentWindow.close).toHaveBeenCalledOnce();
+    } finally {
+      lateWindow.resolve(firstWindow);
+      await opening;
+      current.close("test-cleanup");
+    }
+  });
+
   it("settles an aborted call while browser opening is pending", async () => {
     process.env.MCP_UI_VIEWER = "browser";
     const { state, callTool } = await makeState();

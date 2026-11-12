@@ -34,6 +34,12 @@ export function summarizeUiSessionResult(
       uiOpen: false,
     };
   }
+  if (!uiSession.isActive()) {
+    return {
+      message: "Interactive UI ended or was replaced; returning the tool result inline.",
+      uiOpen: false,
+    };
+  }
   if (!uiSession.windowOpen) {
     const action = uiSession.reused
       ? "Updated the suppressed MCP UI session."
@@ -100,7 +106,7 @@ class UiSession {
     });
   }
 
-  async start(): Promise<UiSessionRuntime> {
+  async start(): Promise<UiSessionRuntime | null> {
     throwIfAborted(this.signal);
     const existing = this.state.uiServer;
     const request = this.request;
@@ -120,7 +126,7 @@ class UiSession {
     return this.open();
   }
 
-  private async open(): Promise<UiSessionRuntime> {
+  private async open(): Promise<UiSessionRuntime | null> {
     const state = this.state;
     const request = this.request;
     const resource = await state.uiResourceHandler.readUiResource(
@@ -129,7 +135,6 @@ class UiSession {
       { config: state.config, signal: this.signal, onNeedsAuth: request.onNeedsAuth },
     );
     throwIfAborted(this.signal);
-    this.replaceExisting();
     const identity = createUiStreamIdentity(request.streamMode);
     const hostContext: UiHostContext | undefined =
       request.streamMode !== undefined && identity.streamId !== undefined
@@ -164,6 +169,8 @@ class UiSession {
       throwIfAborted(this.signal);
       throw new Error("MCP UI session became stale before registration");
     }
+    // Listener startup yields: replace the slot's current owner only when we can publish ours.
+    this.replaceExisting();
     const stream = new UiSessionStream(state, request, handle, { ...identity, reused: false });
     this.stream = stream;
     stream.register();
@@ -176,6 +183,9 @@ class UiSession {
       isActive: () => stream.isActive(),
     });
     throwIfAborted(this.signal);
+    if (!stream.isActive()) {
+      return null;
+    }
     handle.viewer = viewer.viewer;
     handle.windowOpen = viewer.windowOpen;
     return stream.runtime(viewer.viewer, viewer.windowOpen);

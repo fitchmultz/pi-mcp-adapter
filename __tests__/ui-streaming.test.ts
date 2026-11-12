@@ -16,7 +16,11 @@ import {
 import { UiBoundaryWire, connectUiBoundaryWire } from "./fixtures/strict-ui-boundaries-wire.ts";
 import type { UiResourceContent } from "../types.ts";
 import { createTestState } from "./test-state.ts";
-import { maybeStartUiSession, type UiSessionRequest } from "../ui-session.ts";
+import {
+  maybeStartUiSession,
+  summarizeUiSessionResult,
+  type UiSessionRequest,
+} from "../ui-session.ts";
 
 function createMockResource(): UiResourceContent {
   return {
@@ -652,6 +656,72 @@ describe("UI Streaming", () => {
       });
     } finally {
       sse?.close();
+      state.uiServer?.close("test-cleanup");
+      await manager.closeAll();
+      await wire.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("replaces the currently published listener when concurrent UI resource reads finish together", async () => {
+    vi.stubEnv("MCP_UI_VIEWER", "none");
+    const wire = new UiBoundaryWire();
+    const manager = await connectUiBoundaryWire(wire);
+    const state = createTestState({
+      manager,
+      config: { mcpServers: { "test-server": wire.definition() }, settings: {} },
+    });
+    const read = state.uiResourceHandler.readUiResource.bind(state.uiResourceHandler);
+    const resourcesReady = Promise.withResolvers<null>();
+    let reads = 0;
+    vi.spyOn(state.uiResourceHandler, "readUiResource").mockImplementation(async (...args) => {
+      const resource = await read(...args);
+      reads += 1;
+      if (reads === 2) {
+        resourcesReady.resolve(null);
+      }
+      await resourcesReady.promise;
+      return resource;
+    });
+    const runtimes: Array<NonNullable<Awaited<ReturnType<typeof maybeStartUiSession>>>> = [];
+    try {
+      const request = {
+        serverName: "test-server",
+        toolName: "some_tool",
+        toolArgs: {},
+        uiResourceUri: "ui://test/widget",
+      } satisfies UiSessionRequest;
+      const opened = await Promise.all([
+        maybeStartUiSession(state, request),
+        maybeStartUiSession(state, request),
+      ]);
+      for (const runtime of opened) {
+        if (runtime) {
+          runtimes.push(runtime);
+        }
+      }
+      expect(opened.filter((runtime) => runtime === null)).toHaveLength(1);
+      expect(
+        opened.map(summarizeUiSessionResult).filter((summary) => summary.uiUrl === undefined),
+      ).toHaveLength(1);
+      const reachable = await Promise.allSettled(
+        runtimes.map(async (runtime) => {
+          const url = new URL(runtime.url);
+          url.pathname = "/health";
+          url.hostname = "127.0.0.1";
+          return (await fetch(url)).status;
+        }),
+      );
+      expect(reachable.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(reachable.filter((result) => result.status === "fulfilled")).toEqual([
+        { status: "fulfilled", value: 200 },
+      ]);
+      expect(runtimes.filter((runtime) => runtime.isActive())).toHaveLength(1);
+      expect(runtimes.find((runtime) => runtime.isActive())?.url).toBe(state.uiServer?.url);
+    } finally {
+      for (const runtime of runtimes) {
+        runtime.close("test-cleanup");
+      }
       state.uiServer?.close("test-cleanup");
       await manager.closeAll();
       await wire.close();

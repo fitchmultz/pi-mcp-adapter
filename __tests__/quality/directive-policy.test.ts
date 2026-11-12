@@ -174,6 +174,7 @@ describe("directive policy", () => {
 const managerFiles = [
   "connection-factory.ts",
   "connection-http.ts",
+  "connection-stdio.ts",
   "connection-runtime.ts",
   "connection-oauth-ownership.ts",
   "tool-transport.ts",

@@ -16,6 +16,11 @@ panel and are cleared on disposal. OAuth runtime shutdown and runtime-owner stop
 are repeat-safe because initialization failure, session replacement and final
 shutdown can converge on the same owner.
 
+A stdio send remains owned until it completes or the native transport reports
+actual process and pipe closure. Native MCP client 2.4.0 can otherwise leave a
+send waiting for `drain` after the pipe has closed. HTTP authentication tails,
+callbacks and other client operations still drain through their existing owners.
+
 Cancelling the agent turn that started initialization stops its remaining
 startup requests, not the session. Completed connections keep their discovered
 metadata, and owner-scoped health checks still reconnect keep-alive servers and
@@ -25,6 +30,12 @@ Metadata snapshots, the native keyring constructor and optional Glimpse module
 availability are process caches, not session resources. Their contents survive
 session rebuilds; they do not own live MCP connections or authorize use of stale
 Pi handles.
+
+UI listener startup can overlap. A completed listener replaces the current UI
+slot immediately before publishing its own handle, so a later startup cannot
+leave an untracked listener open. Optional viewer launches check that the session
+still owns that slot; a Glimpse window that finishes opening after replacement
+closes without taking ownership of the current viewer.
 
 ## Local checks
 
