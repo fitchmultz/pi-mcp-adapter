@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Share overlapping OAuth starts and callback completion, and finish cancellation cleanup before logout or shutdown can leave credentials behind.
 - Finish panel saves once, keeping repeated save or cancel keys from closing the panel before live refresh completes.
 - Read credential-store diagnostics independently of panel status reads.
+- Deliver completed UI messages once when multiple callers retrieve them at the same time.
 
 ## 8.0.39 - 2026-11-12
 
