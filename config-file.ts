@@ -71,6 +71,12 @@ export function writeRawConfigObject(filePath: string, raw: Record<string, unkno
   renameSync(tmpPath, filePath);
 }
 
+/** Scaffold a new file without replacing a config created since setup discovery. */
+export function createRawConfigObject(filePath: string, raw: Record<string, unknown>): void {
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, serializeRawConfig(raw), { encoding: "utf-8", flag: "wx" });
+}
+
 export function getServersObject(
   raw: Record<string, unknown>,
   filePath: string,
