@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import type * as Native from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { abortable } from "../abort.ts";
@@ -75,6 +76,31 @@ describe("AbortSignal propagation", () => {
     const inFlight = abortable(pending.promise, controller.signal);
     controller.abort(new Error("user cancelled"));
     await expect(inFlight).rejects.toThrow("user cancelled");
+  });
+
+  it("owns an already-started rejection even when cancellation precedes observation", () => {
+    const moduleUrl = new URL("../abort.ts", import.meta.url).href;
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+          import assert from "node:assert/strict";
+          import { abortable } from ${JSON.stringify(moduleUrl)};
+          const controller = new AbortController();
+          const cancellation = new Error("cancelled by callback");
+          async function callback() {
+            controller.abort(cancellation);
+            throw new Error("callback failed");
+          }
+          await assert.rejects(abortable(callback(), controller.signal), cancellation);
+          await new Promise(setImmediate);
+        `,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(child.status, child.stderr).toBe(0);
   });
 
   it("direct tools pass AbortSignal to MCP callTool and settle while the native SDK cache read is held", async () => {

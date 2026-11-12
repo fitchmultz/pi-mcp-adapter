@@ -11,7 +11,6 @@ export async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): P
   if (!signal) {
     return promise;
   }
-  throwIfAborted(signal);
   return await new Promise<T>((resolve, reject) => {
     let settled = false;
     const cleanup = () => signal.removeEventListener("abort", onAbort);
@@ -50,5 +49,10 @@ export async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): P
       .catch((error: unknown) => {
         reject(error);
       });
+    // The operation has already started. Own its rejection even if it cancelled
+    // the signal synchronously, before abortable received its promise.
+    if (signal.aborted) {
+      onAbort();
+    }
   });
 }
