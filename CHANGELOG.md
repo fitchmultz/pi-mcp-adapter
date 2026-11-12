@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Resolve prompt arguments from live discovery on the first call, rather than an outdated cached argument list.
+
 ## 8.0.39 - 2026-11-12
 
 <!-- npm-release:unreleased:start -->
