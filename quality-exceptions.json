@@ -282,6 +282,19 @@
   },
   {
     "id": "QX-010",
+    "file": "connection-stdio.ts",
+    "rule": "unicorn/prefer-add-event-listener",
+    "scope": {
+      "type": "FunctionDeclaration",
+      "name": "createStdioConnection"
+    },
+    "path": ["body", "body", 6, "expression", "left"],
+    "nodeType": "MemberExpression",
+    "operation": "transport.onclose",
+    "guards": []
+  },
+  {
+    "id": "QX-010",
     "file": "tool-transport.ts",
     "rule": "unicorn/prefer-add-event-listener",
     "scope": {

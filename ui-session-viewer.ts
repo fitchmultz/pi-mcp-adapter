@@ -53,6 +53,7 @@ class UiViewer {
   }
 
   async open(): Promise<ViewerResult> {
+    this.assertActive();
     const { state, handle } = this.context;
     const preference = this.preference;
     if (preference === "none" || preference === "off" || preference === "disabled") {
@@ -64,6 +65,7 @@ class UiViewer {
       return { viewer: "suppressed", windowOpen: false };
     }
     const remoteLikely = this.remoteByEnv || (await hasActiveRemoteLogin());
+    this.assertActive();
     const glimpseDetected = !this.remoteByEnv && isGlimpseAvailable();
     const useGlimpse = this.useGlimpse(glimpseDetected);
     if (useGlimpse) {
@@ -81,7 +83,7 @@ class UiViewer {
   }
 
   private async openLocalWindow(remoteLikely: boolean): Promise<ViewerResult> {
-    const { state, request, handle, signal, isActive } = this.context;
+    const { request, handle, isActive } = this.context;
     try {
       const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden}iframe{width:100%;height:100%;border:none}</style></head><body><iframe src="${handle.url}"></iframe></body></html>`;
       const glimpseWindow = await openGlimpseWindow(html, {
@@ -94,10 +96,9 @@ class UiViewer {
           }
         },
       });
-      if (!state.owner.isActive() || signal.aborted) {
+      if (!isActive() || this.context.signal.aborted || !this.context.state.owner.isActive()) {
         glimpseWindow.close();
-        throwIfAborted(signal);
-        throw new Error("MCP Glimpse window became stale before registration");
+        this.assertActive();
       }
       activeGlimpseWindow = glimpseWindow;
       if (remoteLikely) {
@@ -105,6 +106,7 @@ class UiViewer {
       }
       return { viewer: "glimpse", windowOpen: true };
     } catch (error) {
+      this.assertActive();
       this.log.debug("Glimpse unavailable, using browser", {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -122,7 +124,7 @@ class UiViewer {
 
   private async openBrowser(): Promise<string | null> {
     const { state, handle, signal } = this.context;
-    throwIfAborted(signal);
+    this.assertActive();
     try {
       await state.openBrowser(handle.url);
       throwIfAborted(signal);
@@ -137,6 +139,15 @@ class UiViewer {
       }
       state.ui?.notify(`MCP UI browser open failed: ${message}`, "warning");
       return message;
+    }
+  }
+
+  private assertActive(): void {
+    const { state, signal, isActive } = this.context;
+    throwIfAborted(signal);
+    state.owner.throwIfInactive();
+    if (!isActive()) {
+      throw new Error("MCP UI session was replaced before viewer registration");
     }
   }
 

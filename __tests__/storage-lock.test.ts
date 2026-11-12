@@ -19,6 +19,7 @@ import { createTestState } from "./test-state.ts";
 import { createTestExtensionContext } from "./test-extension-context.ts";
 import { resolveNpxBinary } from "../npx-resolver.ts";
 import { logger } from "../logger.ts";
+import { createCallbackHttpFixture } from "./runtime/fixtures/callback-http.ts";
 
 let root: string;
 const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -274,25 +275,16 @@ describe("cache read/merge/write exclusion", () => {
 
   it("reports startup failures and accepts remaining results while metadata saving is busy", async () => {
     const host = await createTestExtensionContext();
-    const fixture = fileURLToPath(
-      new URL("./fixtures/lazy-startup-mcp-server.mjs", import.meta.url),
-    );
-    const definition = (name: string) => ({
-      command: process.execPath,
-      args: [fixture],
-      env: {
-        MCP_STARTUP_FIXTURE_EVENTS: join(root, "events.jsonl"),
-        MCP_STARTUP_FIXTURE_NAME: name,
-      },
-    });
+    const first = await createCallbackHttpFixture(root, { legacy: true });
+    const last = await createCallbackHttpFixture(root, { legacy: true });
     const state = createTestState({
       metadataCacheEnabled: true,
       ui: host.context.ui,
       config: {
         mcpServers: {
-          first: definition("first"),
+          first: first.definition,
           broken: { command: process.execPath, args: ["-e", "process.exit(1)"] },
-          last: definition("last"),
+          last: last.definition,
         },
       },
     });
@@ -325,6 +317,8 @@ describe("cache read/merge/write exclusion", () => {
       await worker.exited;
       await state.owner.stop("test complete");
       await state.manager.closeAll();
+      await first.close();
+      await last.close();
       await host.dispose();
     }
   });

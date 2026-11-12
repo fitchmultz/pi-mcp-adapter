@@ -2,7 +2,7 @@ import type * as ConnectionRuntime from "./connection-runtime.ts";
 import type { ServerDefinition } from "./types.ts";
 import { resolveNpxBinary } from "./npx-resolver.ts";
 import { resolveConfigPath, resolveCommandSecretsRecord } from "./utils.ts";
-import { throwIfAborted } from "./abort.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 import { logger } from "./logger.ts";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
@@ -84,6 +84,20 @@ export function createStdioConnection(
     stderr: definition.debug === true ? "inherit" : "pipe",
   });
   transport.stderr?.on("data", (chunk: Buffer | string) => diagnostics.append(chunk));
+  const closed = new AbortController();
+  const onclose = transport.onclose;
+  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: native Transport exposes a callback, not EventTarget.
+  transport.onclose = () => {
+    closed.abort(new Error("MCP stdio transport closed"));
+    onclose?.();
+  };
+  const send = transport.send.bind(transport);
+  transport.send = async (message) => {
+    closed.signal.throwIfAborted();
+    // The native writer can wait for drain after its pipe has closed. Actual
+    // onclose ends that stdio-only wait; other client operations still drain.
+    await abortable(send(message), closed.signal);
+  };
   return transport;
 }
 

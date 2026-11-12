@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep callback failures handled when a callback cancels its own request before returning.
 - Keep session health checks and completed server discovery when an agent turn is cancelled during startup.
 - Refuse to replace a project configuration created after the setup screen offered to scaffold it.
+- Finish pending stdio writes when their native transport closes, so an exited server cannot leave shutdown waiting for a drain event that will never arrive.
+- Keep only the current UI listener and viewer when multiple tools open apps at the same time.
 
 ## 8.0.39 - 2026-11-12
 
