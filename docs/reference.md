@@ -472,7 +472,7 @@ Tune the limits with the object form:
 }
 ```
 
-Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — to disable the guard and restore raw output behavior. Recovery notices remain visible even when a configured cap is too small to fit them. Saved files are created with mode `0600` under the system temp directory (or the SDK host's `outputDirectory`) and are not cleaned up automatically; note that spilled MCP output may contain sensitive data.
+Set `"outputGuard": false` — or the env kill switch `MCP_OUTPUT_GUARD=0` — to disable the guard and restore raw output behavior. Recovery notices remain visible even when a configured cap is too small to fit them. Saved files are created with mode `0600` under the system temp directory (or the SDK host's `outputDirectory`). Returned result, payload and UI-history paths belong to the reader or embedding host, which owns their retention and deletion. Closing a UI session, reloading the adapter or shutting down Pi does not delete them: existing chat history can still refer to those files. Delete only files whose references you no longer need. The OS may remove files in its temp directory; use a persistent `outputDirectory` when references must survive that cleanup. Spilled MCP output and UI history may contain sensitive data.
 
 Read a retained result without repeating the MCP operation:
 

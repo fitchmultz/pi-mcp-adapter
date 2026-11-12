@@ -93,7 +93,10 @@ class MessageHistory implements UiMessageHistory {
   };
 }
 
-/** Private append-only history; failed writes stay owned in memory, never silently discarded. */
+/**
+ * Private append-only history. Returned history paths belong to the reader,
+ * not the UI session; failed writes stay in memory for recovery.
+ */
 export function createUiMessageHistory(outputDirectory?: string): UiMessageHistory {
   return new MessageHistory(outputDirectory);
 }

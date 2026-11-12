@@ -146,7 +146,10 @@ export function parseUiPromptHandoff(prompt: string): UiPromptHandoff | undefine
  * Collected during the session and available when it ends.
  */
 export interface UiSessionMessages {
-  /** Private JSONL history, readable with the normal paged result reader. */
+  /**
+   * Private JSONL history, readable with the normal paged result reader.
+   * Retained independently of the UI session; its reader/host owns deletion.
+   */
   historyRef?: string;
   historyBytes?: number;
   historyCount?: number;
