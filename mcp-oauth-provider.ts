@@ -226,8 +226,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
   async clientInformation(
     context?: OAuthClientInformationContext,
   ): Promise<StoredOAuthClientInformation | undefined> {
+    this.throwIfInactive();
     const issuer = context?.issuer ?? this.discoveredIssuer;
     const stored = await Promise.resolve(getAuthForUrl(this.identity, this.storageOptions));
+    this.throwIfInactive();
     this.assertStoredIssuerBindings(stored, issuer);
     // Rejected discovery must not become the runtime's issuer binding.
     if (this.flowDiscoveryState) {
@@ -350,8 +352,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
    * Returns undefined if no tokens exist or if the server URL has changed.
    */
   async tokens(context?: OAuthClientInformationContext): Promise<StoredOAuthTokens | undefined> {
+    // Legacy cancellation notifications still need their stored bearer token
+    // after the request signal aborts. Only provider shutdown ends this read.
+    this.lifetimeSignal.throwIfAborted();
     // Use getAuthForUrl to validate tokens are for the current server URL.
     const entry = await Promise.resolve(getAuthForUrl(this.identity, this.storageOptions));
+    this.lifetimeSignal.throwIfAborted();
     if (!entry?.tokens) {
       return undefined;
     }

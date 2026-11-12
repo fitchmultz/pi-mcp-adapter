@@ -34,6 +34,16 @@ an authority for publication. Retired clients remain fenced out. The cache uses
 the SDK's in-memory store and default limits; catalog views read retained entries
 regardless of response TTL, without making another request.
 
+The OAuth runtime shares concurrent starts for the same server and storage
+directory. A start for another URL cancels and waits for the earlier start.
+Logout cancels an unpublished start before removing its credentials, and
+shutdown waits for start cleanup before stopping the callback server.
+Concurrent completions of the same callback share one code exchange. A different
+callback cannot replace an exchange already in progress. A joining caller's
+cancellation stops its wait without cancelling the shared operation.
+Pasted completion also finishes an authentication waiting for the browser,
+including while its URL notification is still in progress.
+
 Metadata snapshots, the native keyring constructor and optional Glimpse module
 availability are process caches, not session resources. Their contents survive
 session rebuilds; they do not own live MCP connections or authorize use of stale

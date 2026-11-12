@@ -215,6 +215,34 @@ describe("McpOAuthProvider addClientAuthentication", () => {
     expect([...headers.entries()]).toEqual([]);
   });
 
+  it.each(["client", "tokens"] as const)(
+    "does not stamp %s credentials when deactivated during a read",
+    async (kind) => {
+      const identity = { serverName: `inactive-read-${kind}`, serverUrl };
+      saveAuthEntry(identity, {
+        clientInfo: { clientId: "my-client" },
+        tokens: { accessToken: "access-token" },
+      });
+      const provider = new McpOAuthProvider({
+        ...identity,
+        config: { clientId: "my-client" },
+        callbacks: {
+          onRedirect: async () => {
+            // This read-only provider check does not open a browser.
+          },
+        },
+      });
+      const context = { issuer: "https://auth.example.com" };
+      const reading =
+        kind === "client" ? provider.clientInformation(context) : provider.tokens(context);
+      provider.deactivate();
+      await expect(reading).rejects.toThrow("OAuth flow is no longer active");
+      const stored = getAuthForUrl(identity);
+      expect(stored?.clientInfo?.issuer).toBeUndefined();
+      expect(stored?.tokens?.issuer).toBeUndefined();
+    },
+  );
+
   it("does not persist a pre-registered issuer stub after deactivation", async () => {
     const provider = new McpOAuthProvider({
       serverName: "inactive-client-info",

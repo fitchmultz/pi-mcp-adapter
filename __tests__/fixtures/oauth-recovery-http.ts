@@ -52,6 +52,9 @@ type RecoveryControls = {
   discoveryHeld: boolean;
   holdToken: boolean;
   releaseToken: () => void;
+  holdRegistration: boolean;
+  registrationHeld: boolean;
+  releaseRegistration: () => void;
   holdCatalog: boolean;
   releaseCatalog: () => void;
   catalogHeld: boolean;
@@ -115,6 +118,9 @@ export class OAuthRecoveryHttp {
     discoveryHeld: false,
     holdToken: false,
     releaseToken: noop,
+    holdRegistration: false,
+    registrationHeld: false,
+    releaseRegistration: noop,
     holdCatalog: false,
     releaseCatalog: noop,
     catalogHeld: false,
@@ -186,11 +192,16 @@ export class OAuthRecoveryHttp {
     }
     const body = await readBody(request);
     if (url.pathname === "/register") {
-      json(
-        response,
-        { client_id: "fixture", ...OAuthClientMetadataSchema.parse(JSON.parse(body)) },
-        201,
-      );
+      const registration = {
+        client_id: "fixture",
+        ...OAuthClientMetadataSchema.parse(JSON.parse(body)),
+      };
+      if (this.controls.holdRegistration) {
+        this.controls.registrationHeld = true;
+        this.controls.releaseRegistration = () => json(response, registration, 201);
+      } else {
+        json(response, registration, 201);
+      }
       return;
     }
     if (url.pathname === "/token") {
