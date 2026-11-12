@@ -57,6 +57,44 @@ describe("explicit pre-v5 state migration", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it.each(["https://${FITCH_MIGRATION_HOST}/mcp", "https://$env:FITCH_MIGRATION_HOST/mcp"])(
+    "copies credentials under the resolved configured URL: %s",
+    async (url) => {
+      vi.stubEnv("FITCH_MIGRATION_HOST", "resolved.example.com");
+      write(join(agent, "mcp.json"), JSON.stringify({ mcpServers: { oauth: { url } } }));
+      const account = `sha256-${createHash("sha256").update("oauth").digest("hex")}`;
+      const source = join(agent, "mcp-oauth", account, "tokens.json");
+      const identity = { serverName: "oauth", serverUrl: "https://resolved.example.com/mcp" };
+      const entry = { serverUrl: identity.serverUrl, tokens: { accessToken: "legacy-token" } };
+      write(source, JSON.stringify(entry));
+      const { migrateLegacyState } = await import("../legacy-migration.ts");
+      const { getAuthEntry } = await import("../mcp-auth.ts");
+      expect(migrateLegacyState({ cwd: project }).credentials).toEqual([
+        { server: "oauth", status: "copied" },
+      ]);
+      expect(getAuthEntry(identity)).toEqual(entry);
+      expect(readFileSync(source, "utf8")).toBe(JSON.stringify(entry));
+      expect(migrateLegacyState({ cwd: project }).credentials).toEqual([
+        { server: "oauth", status: "existing" },
+      ]);
+    },
+  );
+
+  it("reports unresolved migration URLs instead of counting credentials as absent", async () => {
+    vi.stubEnv("FITCH_MISSING_MIGRATION_HOST", "");
+    delete process.env.FITCH_MISSING_MIGRATION_HOST;
+    write(
+      join(agent, "mcp.json"),
+      JSON.stringify({
+        mcpServers: { oauth: { url: "https://${FITCH_MISSING_MIGRATION_HOST}/mcp" } },
+      }),
+    );
+    const { migrateLegacyState } = await import("../legacy-migration.ts");
+    expect(() => migrateLegacyState({ cwd: project })).toThrow(
+      /Missing environment variable.*FITCH_MISSING_MIGRATION_HOST/,
+    );
+  });
+
   it("ignores pre-v5 defaults while retaining shared standard MCP discovery", async () => {
     write(join(agent, "mcp.json"), globalConfig);
     write(join(project, ".pi", "mcp.json"), projectConfig);

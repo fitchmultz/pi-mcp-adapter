@@ -286,6 +286,55 @@ describe("commands onboarding", () => {
     },
   );
 
+  it.each(["https://${FITCH_LOGOUT_HOST}/mcp", "https://$env:FITCH_LOGOUT_HOST/mcp"])(
+    "logs out the resolved URL without clearing another URL: %s",
+    async (url) => {
+      vi.stubEnv("FITCH_LOGOUT_HOST", "resolved.example.com");
+      vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-resolved-logout-"));
+      const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");
+      const { logoutServer } = await import("../../commands.ts");
+      const identity = {
+        serverName: "interpolated",
+        serverUrl: "https://resolved.example.com/mcp",
+      };
+      const other = { ...identity, serverUrl: identity.serverUrl + "/" };
+      saveAuthEntry(identity, { tokens: { accessToken: "resolved-token" } });
+      saveAuthEntry(other, { tokens: { accessToken: "other-token" } });
+      const state = await createState({
+        config: { mcpServers: { interpolated: { url, auth: "oauth" } } },
+      });
+      expect((await logoutServer("interpolated", state, host.context)).ok).toBe(true);
+      expect(getAuthEntry(identity)).toBeUndefined();
+      expect(getAuthEntry(other)?.tokens?.accessToken).toBe("other-token");
+    },
+  );
+
+  it.each([undefined, "https://${FITCH_MISSING_LOGOUT_HOST}/mcp"])(
+    "reports logout failure without a resolvable URL: %s",
+    async (url) => {
+      vi.stubEnv("FITCH_MISSING_LOGOUT_HOST", "");
+      delete process.env.FITCH_MISSING_LOGOUT_HOST;
+      vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-unresolved-logout-"));
+      const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");
+      const { logoutServer } = await import("../../commands.ts");
+      const identity = { serverName: "unresolved", serverUrl: "https://preserved.example.com/mcp" };
+      saveAuthEntry(identity, { tokens: { accessToken: "preserved-token" } });
+      const state = await createState({
+        config: {
+          mcpServers: { unresolved: { ...(url === undefined ? {} : { url }), auth: "oauth" } },
+        },
+      });
+      const result = await logoutServer("unresolved", state, host.context);
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/URL/);
+      expect(getAuthEntry(identity)?.tokens?.accessToken).toBe("preserved-token");
+      expect(host.context.ui.notify).not.toHaveBeenCalledWith(
+        expect.stringContaining("OAuth credentials cleared"),
+        "info",
+      );
+    },
+  );
+
   it("clears OAuth credentials, cancels pending auth, and closes the server on logout", async () => {
     vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-commands-logout-"));
     const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");

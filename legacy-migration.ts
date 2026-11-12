@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { getAdapterPath, getAgentPath } from "./agent-dir.ts";
 import { getProjectPiConfigPath, loadMcpConfig, resolveConfiguredOAuthDir } from "./config.ts";
 import { migrateLegacyAuthEntry } from "./mcp-auth.ts";
+import { resolveServerUrl } from "./utils.ts";
 
 interface FileMigration {
   source: string;
@@ -70,15 +71,13 @@ function migrateLegacyCredentials(
       ? envLegacyDirectory
       : (resolveConfiguredOAuthDir(config.settings?.oauthDir, cwd) ?? getAgentPath("mcp-oauth"));
   for (const [server, definition] of Object.entries(config.mcpServers)) {
-    if (typeof definition.url !== "string") {
+    const serverUrl = resolveServerUrl(definition);
+    if (serverUrl === undefined) {
       continue;
     }
     credentials.push({
       server,
-      status: migrateLegacyAuthEntry(
-        { serverName: server, serverUrl: definition.url },
-        legacyDirectory,
-      ),
+      status: migrateLegacyAuthEntry({ serverName: server, serverUrl }, legacyDirectory),
     });
   }
   return credentials;
