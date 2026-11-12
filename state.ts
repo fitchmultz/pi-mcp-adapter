@@ -57,6 +57,7 @@ export interface McpExtensionState {
   failureTracker: Map<string, number>;
   failureMessages: Map<string, string>;
   /** Session-only approvals keyed by server and original tool name. */
+  /** Approvals last for this adapter state, including until a working-directory rebuild. */
   approvedToolCalls: Map<string, true>;
   uiResourceHandler: UiResourceHandler;
   consentManager: ConsentManager;

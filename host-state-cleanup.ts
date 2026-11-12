@@ -33,6 +33,7 @@ export class McpStateCleanup {
       failures.push(error);
     }
     try {
+      // Snapshot live connections before owner cleanup can retire them.
       flush?.(this.state);
     } catch (error) {
       failures.push(error);

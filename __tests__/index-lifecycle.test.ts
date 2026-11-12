@@ -1183,6 +1183,10 @@ describe("mcpAdapter session lifecycle", () => {
 
     mocks.shutdownOAuth.mockClear();
 
+    const owner = requireValue(mocks.initializeMcp.mock.calls[0]?.[2]);
+    mocks.flushMetadataCache.mockImplementation(() => {
+      expect(owner.isActive()).toBe(true);
+    });
     await sessionShutdown();
 
     expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);

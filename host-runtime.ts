@@ -36,6 +36,11 @@ async function awaitWithTimeout<T>(promise: Promise<T>): Promise<T | typeof INIT
   }
 }
 
+/**
+ * Owns registrations for the host's lifetime. Pi registrations survive session
+ * swaps, so handlers borrow current state at invocation rather than capture a
+ * session's UI, manager or approval map.
+ */
 export class McpHostRuntime implements McpAdapterHost {
   private readonly session = new HostSession();
   configPath: string | undefined;
@@ -195,11 +200,14 @@ export class McpHostRuntime implements McpAdapterHost {
     const owner = this.owner;
     const oauthRuntime = this.oauthRuntime;
     this.session.end();
+    this.sessionManager = undefined;
     this.oauthRuntime = null;
+    // Persist live connection metadata before stopping transport cleanup.
+    const stopState = this.shutdownState(state, "session_shutdown");
     const stopOwner = owner?.stop("MCP extension session shutdown") ?? Promise.resolve();
     const results = await Promise.allSettled([
       stopOwner,
-      this.shutdownState(state, "session_shutdown"),
+      stopState,
       oauthRuntime ? shutdownOAuth(oauthRuntime) : Promise.resolve(),
     ]);
     const failures: unknown[] = results.flatMap((result): unknown[] =>
@@ -235,12 +243,13 @@ export class McpHostRuntime implements McpAdapterHost {
     const oauthRuntime = createOAuthRuntime(owner.signal);
     const generation = this.session.begin(owner);
     this.oauthRuntime = oauthRuntime;
+    const stopPreviousState = this.shutdownState(previousState, "session_restart");
     const stopPrevious =
       previousOwner?.stop("MCP extension session restarted") ?? Promise.resolve();
     try {
       await Promise.all([
         stopPrevious,
-        this.shutdownState(previousState, "session_restart"),
+        stopPreviousState,
         previousOAuthRuntime ? shutdownOAuth(previousOAuthRuntime) : Promise.resolve(),
       ]);
     } catch (error) {
