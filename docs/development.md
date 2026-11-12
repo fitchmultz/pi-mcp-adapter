@@ -75,6 +75,9 @@ cannot overwrite each other's flags.
 A panel's first save or cancellation closes its input phase immediately.
 The overlay remains visible while save persistence and live refresh finish,
 but key repeats and cancellation cannot start another completion or overtake it.
+Panel status and failure-message callbacks derive credential-store diagnostics
+independently. The public callbacks retain their existing signatures; callers
+can ask for either value first without preparing a diagnostic cache.
 
 ## Local checks
 
