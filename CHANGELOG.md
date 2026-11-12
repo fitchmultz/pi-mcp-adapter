@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.40 - 2026-11-12
+
+<!-- npm-release:unreleased:start -->
+
 - Resolve prompt arguments from live discovery on the first call, rather than an outdated cached argument list.
 - Keep callback failures handled when a callback cancels its own request before returning.
 - Keep session health checks and completed server discovery when an agent turn is cancelled during startup.
@@ -22,6 +26,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Read credential-store diagnostics independently of panel status reads.
 - Deliver completed UI messages once when multiple callers retrieve them at the same time.
 - Reopen reused UI streams with the current call's arguments before its replayed result, without duplicating the input notification.
+
+<!-- npm-release:unreleased:end -->
+
+- Resolve prompt arguments after live discovery (1/1) (#242) ([57e0e29](https://github.com/fitchmultz/pi-mcp-adapter/commit/57e0e297c670381f755999d4ab0d6b80d24efa79))
+
+### What's Changed
+
+- Resolve prompt arguments after live discovery (1/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/242
+- Handle callback rejection when cancellation happens first (2/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/243
+- Keep server lifecycle running after startup cancellation (3/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/245
+- Preserve project configuration created during setup (4/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/246
+- Keep UI and transport work bound to their owning lifetimes (5/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/247
+- Retain catalog updates received during connection startup (6/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/248
+- Deliver UI updates after app initialization without delaying heartbeats (7/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/249
+- Protect configuration updates across processes and installers (8/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/250
+- Preserve independent onboarding updates across processes (9/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/251
+- Coordinate OAuth starts, completion, and logout (10/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/252
+- Finish panel saves once before accepting more input (11/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/253
+- Read panel credential diagnostics without a status-read prerequisite (12/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/254
+- Deliver completed UI messages once across concurrent reads (13/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/255
+- Restore current tool input when reopening a reused UI stream (14/14) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/256
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.39...v8.0.40
 
 ## 8.0.39 - 2026-11-12
 
