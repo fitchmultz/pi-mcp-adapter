@@ -2,7 +2,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { getAdapterPath } from "./agent-dir.ts";
-import { withStorageLock } from "./storage-lock.ts";
+import { StorageLockBusyError, withStorageLock } from "./storage-lock.ts";
 import { createHash } from "node:crypto";
 import {
   type CachedPrompt,
@@ -92,34 +92,42 @@ export function saveMetadataCache(
   cache: MetadataCache,
   enabled = true,
   selectedServers: Iterable<string> = [],
-): void {
+): "saved" | "busy" | "disabled" {
   if (!enabled) {
-    return;
+    return "disabled";
   }
   const cachePath = getMetadataCachePath();
   const dir = dirname(cachePath);
   mkdirSync(dir, { recursive: true });
 
-  withStorageLock(`${cachePath}.lock.sqlite`, () => {
-    const merged = {
-      version: CACHE_VERSION,
-      servers: { ...readExistingServers(cachePath), ...cache.servers },
-    };
-    const protectedServers = new Set([...selectedServers, ...Object.keys(cache.servers)]);
-    const now = Date.now();
-    for (const [name, entry] of Object.entries(merged.servers)) {
-      if (protectedServers.has(name) || !isCacheEntry(entry)) {
-        continue;
+  try {
+    withStorageLock(`${cachePath}.lock.sqlite`, () => {
+      const merged = {
+        version: CACHE_VERSION,
+        servers: { ...readExistingServers(cachePath), ...cache.servers },
+      };
+      const protectedServers = new Set([...selectedServers, ...Object.keys(cache.servers)]);
+      const now = Date.now();
+      for (const [name, entry] of Object.entries(merged.servers)) {
+        if (protectedServers.has(name) || !isCacheEntry(entry)) {
+          continue;
+        }
+        if (entry.cachedAt > now || now - entry.cachedAt > CACHE_MAX_AGE_MS) {
+          delete merged.servers[name];
+        }
       }
-      if (entry.cachedAt > now || now - entry.cachedAt > CACHE_MAX_AGE_MS) {
-        delete merged.servers[name];
-      }
-    }
 
-    const tmpPath = `${cachePath}.${process.pid}.tmp`;
-    writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
-    renameSync(tmpPath, cachePath);
-  });
+      const tmpPath = `${cachePath}.${process.pid}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
+      renameSync(tmpPath, cachePath);
+    });
+    return "saved";
+  } catch (error) {
+    if (error instanceof StorageLockBusyError) {
+      return "busy";
+    }
+    throw error;
+  }
 }
 
 export function computeServerHash(definition: ServerEntry): string {

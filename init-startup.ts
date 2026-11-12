@@ -18,7 +18,8 @@ import {
 import { isAbortError } from "./runtime-owner.ts";
 import { logger } from "./logger.ts";
 import {
-  MetadataCacheUpdates,
+  type MetadataCacheUpdates,
+  getMetadataCacheUpdates,
   collectMetadataCacheUpdate,
   notifyToolMetadataUpdated,
   markKeepAliveAfterConnect,
@@ -174,7 +175,7 @@ export async function connectStartupServers(
     return new Set();
   }
   state.owner.throwIfInactive();
-  const cache = new MetadataCacheUpdates();
+  const cache = getMetadataCacheUpdates(state);
   try {
     for (const result of results) {
       acceptStartupResult(state, result, cache, signals.initial);

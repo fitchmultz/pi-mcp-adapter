@@ -2,6 +2,31 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
+export class StorageLockBusyError extends Error {
+  override readonly name = "StorageLockBusyError";
+
+  constructor(lockPath: string, cause: unknown) {
+    super(`Storage lock is busy: ${lockPath}`, { cause });
+  }
+}
+
+function acquireStorageLock(database: DatabaseSync, lockPath: string): void {
+  try {
+    database.exec("BEGIN IMMEDIATE");
+  } catch (error) {
+    // SQLite extended result codes retain the primary result in the low byte.
+    if (
+      error instanceof Error &&
+      "errcode" in error &&
+      typeof error.errcode === "number" &&
+      (error.errcode & 0xff) === 5
+    ) {
+      throw new StorageLockBusyError(lockPath, error);
+    }
+    throw error;
+  }
+}
+
 function releaseStorageLock(
   database: DatabaseSync,
   acquired: boolean,
@@ -30,7 +55,8 @@ function releaseStorageLock(
 
 /**
  * Runs a synchronous operation under a cross-process SQLite write transaction.
- * Contention throws immediately. All participants must use the same persistent
+ * Acquisition contention throws StorageLockBusyError; operation errors pass through.
+ * All participants must use the same persistent
  * lock path; never unlink, replace, or open/close that database outside SQLite.
  */
 export function withStorageLock<T>(lockPath: string, operation: () => T): T {
@@ -41,7 +67,7 @@ export function withStorageLock<T>(lockPath: string, operation: () => T): T {
   let primary: { error: unknown } | undefined;
   try {
     chmodSync(lockPath, 0o600);
-    database.exec("BEGIN IMMEDIATE");
+    acquireStorageLock(database, lockPath);
     acquired = true;
     return operation();
   } catch (error) {

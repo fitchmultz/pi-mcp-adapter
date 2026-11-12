@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import { asObjectRecord } from "./mcp-output-values.ts";
 import { getAdapterPath } from "./agent-dir.ts";
-import { withStorageLock } from "./storage-lock.ts";
+import { StorageLockBusyError, withStorageLock } from "./storage-lock.ts";
 
 export interface NpxCacheEntry {
   resolvedBin: string;
@@ -49,13 +49,21 @@ export function loadCacheEntry(key: string): NpxCacheEntry | undefined {
   };
 }
 
-export function saveCacheEntry(key: string, entry: NpxCacheEntry): void {
+export function saveCacheEntry(key: string, entry: NpxCacheEntry): "saved" | "busy" {
   const cachePath = getAdapterPath("mcp-npx-cache.json");
   mkdirSync(dirname(cachePath), { recursive: true });
-  withStorageLock(`${cachePath}.lock.sqlite`, () => {
-    const entries = { ...readEntries(cachePath), [key]: entry };
-    const tmpPath = `${cachePath}.${process.pid}.tmp`;
-    writeFileSync(tmpPath, JSON.stringify({ version: 1, entries }, null, 2), "utf-8");
-    renameSync(tmpPath, cachePath);
-  });
+  try {
+    withStorageLock(`${cachePath}.lock.sqlite`, () => {
+      const entries = { ...readEntries(cachePath), [key]: entry };
+      const tmpPath = `${cachePath}.${process.pid}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify({ version: 1, entries }, null, 2), "utf-8");
+      renameSync(tmpPath, cachePath);
+    });
+    return "saved";
+  } catch (error) {
+    if (error instanceof StorageLockBusyError) {
+      return "busy";
+    }
+    throw error;
+  }
 }

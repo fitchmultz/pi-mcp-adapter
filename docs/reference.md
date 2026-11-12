@@ -16,7 +16,9 @@ Use Pi 1.5.0 or later and Node.js 24 or later.
 
 Cache writes and persistent OAuth credential operations use Node's built-in [`node:sqlite`](https://nodejs.org/docs/latest-v24.x/api/sqlite.html) module for synchronous cross-process locking. This module is experimental in Node 24 and may emit an experimental warning on first use. These operations require it to be enabled, without `--no-experimental-sqlite`.
 
-Concurrent writes fail immediately with a database-lock error rather than overwriting another process's cache update. Lock databases remain on disk. Do not remove or replace them while an adapter process may use them.
+Lock acquisition fails immediately on contention. A busy cache logs a not-saved warning without aborting server startup or binary resolution. Pending metadata stays with the adapter state for the next normal save opportunity. Other cache I/O errors still propagate. Credential operations fail closed with a busy-storage message.
+
+Lock databases remain on disk. Do not remove or replace them while an adapter process may use them.
 
 Lock databases require a filesystem with working [SQLite locks](https://www.sqlite.org/lockingv3.html). Network filesystems may not provide reliable locking.
 
