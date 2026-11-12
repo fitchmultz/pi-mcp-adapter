@@ -15,6 +15,7 @@ import { parseInvocation, parsePackageSpec } from "./npx-invocation.ts";
 import { loadCacheEntry, saveCacheEntry, type NpxCacheEntry } from "./npx-resolution-cache.ts";
 import { throwIfAborted } from "./abort.ts";
 import crossSpawn from "cross-spawn";
+import { logger } from "./logger.ts";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 interface PackageManifest {
@@ -56,25 +57,25 @@ export async function resolveNpxBinary(
     return { binPath: cached.resolvedBin, extraArgs: parsed.extraArgs, isJs: cached.isJs };
   }
 
-  const resolved = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
-  if (resolved) {
-    saveCacheEntry(cacheKey, resolved);
-    return { binPath: resolved.resolvedBin, extraArgs: parsed.extraArgs, isJs: resolved.isJs };
+  let resolved = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
+  if (!resolved) {
+    // Slow path: force npx cache population.
+    await forceNpxCache(parsed.packageSpec, signal);
+    resolved = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
   }
-
-  // Slow path: force npx cache population
-  await forceNpxCache(parsed.packageSpec, signal);
-  const resolvedAfterInstall = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
-  if (resolvedAfterInstall) {
-    saveCacheEntry(cacheKey, resolvedAfterInstall);
-    return {
-      binPath: resolvedAfterInstall.resolvedBin,
-      extraArgs: parsed.extraArgs,
-      isJs: resolvedAfterInstall.isJs,
-    };
+  if (!resolved) {
+    return null;
   }
+  saveResolvedBinary(cacheKey, resolved);
+  return { binPath: resolved.resolvedBin, extraArgs: parsed.extraArgs, isJs: resolved.isJs };
+}
 
-  return null;
+function saveResolvedBinary(cacheKey: string, resolved: NpxCacheEntry): void {
+  if (saveCacheEntry(cacheKey, resolved) === "busy") {
+    logger.warn(
+      "MCP: npx cache not saved because another process holds its lock; using the resolved binary",
+    );
+  }
 }
 
 function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEntry | null {

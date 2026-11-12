@@ -15,7 +15,7 @@ import { join } from "path";
 import { getAdapterPath, getAgentPath } from "./agent-dir.ts";
 import { resolveConfiguredOAuthDir } from "./config.ts";
 
-import { getAuthSecretStore, type AuthSecretStore } from "./keyring-store.ts";
+import { getAuthSecretStore, withAuthSecretLock, type AuthSecretStore } from "./keyring-store.ts";
 import {
   linuxKeyringRecoveryAuthSecretStore,
   shouldAttemptLinuxKeyringRecovery,
@@ -56,6 +56,19 @@ export type {
 
 const AUTH_SECRET_SERVICE = "fitch-mcp-adapter.oauth";
 const LEGACY_AUTH_SECRET_SERVICE = "pi-mcp-adapter.oauth";
+
+function withCredentialLock<T>(
+  identity: AuthIdentity,
+  action: OAuthCredentialStoreError["operation"],
+  operation: () => T,
+): T {
+  return withAuthSecretLock(
+    AUTH_SECRET_SERVICE,
+    getLegacyAuthEntryAccount(identity.serverName),
+    action,
+    operation,
+  );
+}
 
 export function getAuthStorageOptions(oauthDir: unknown, cwd = process.cwd()): AuthStorageOptions {
   const baseDir = resolveConfiguredOAuthDir(oauthDir, cwd);
@@ -257,6 +270,16 @@ export function migrateLegacyAuthEntry(
   legacyDirectory = getLegacyAuthBaseDir(),
   options?: AuthStorageOptions,
 ): "copied" | "existing" | "absent" {
+  return withCredentialLock(identity, "write", () =>
+    copyLegacyAuthEntry(identity, legacyDirectory, options),
+  );
+}
+
+function copyLegacyAuthEntry(
+  identity: AuthIdentity,
+  legacyDirectory: string,
+  options?: AuthStorageOptions,
+): "copied" | "existing" | "absent" {
   if (
     readSecureAuthEntry(identity) !== undefined ||
     readAuthEntry(identity, options) !== undefined
@@ -290,7 +313,12 @@ export function getAuthEntry(
   identity: AuthIdentity,
   options?: AuthStorageOptions,
 ): AuthEntry | undefined {
-  return readAuthEntry(identity, options);
+  const scoped = withCredentialLock(identity, "read", () => readSecureAuthEntry(identity));
+  if (scoped !== undefined) {
+    return matchesIdentity(scoped, identity) ? scoped : undefined;
+  }
+  // Migration writes. Release the read lock, then recheck the destination under a write lock.
+  return withCredentialLock(identity, "write", () => readAuthEntry(identity, options));
 }
 
 export function getAuthForUrl(
@@ -306,7 +334,9 @@ export function inspectAuthForUrl(
   options?: AuthStorageOptions,
 ): OAuthCredentialStatus {
   try {
-    const entry = readAuthEntry(identity, options, { migrateLegacy: false });
+    const entry = withCredentialLock(identity, "read", () =>
+      readAuthEntry(identity, options, { migrateLegacy: false }),
+    );
     return entry === undefined ? { status: "absent" } : { status: "present", entry };
   } catch (error) {
     if (error instanceof OAuthCredentialStoreError) {
@@ -325,14 +355,24 @@ export function saveAuthEntry(
   entry: Readonly<AuthEntry>,
   options?: AuthStorageOptions,
 ): void {
+  withCredentialLock(identity, "write", () => writeAuthEntry(identity, entry, options));
+}
+
+function writeAuthEntry(
+  identity: AuthIdentity,
+  entry: Readonly<AuthEntry>,
+  options?: AuthStorageOptions,
+): void {
   writeSecureAuthEntry(identity, entry);
   consumeMatchingLegacy(identity, options);
 }
 
 /** Consume matching automatic-import sources so logout cannot restore them. */
 export function removeAuthEntry(identity: AuthIdentity, options?: AuthStorageOptions): void {
-  removeSecureAuthEntry(identity);
-  consumeMatchingLegacy(identity, options);
+  withCredentialLock(identity, "remove", () => {
+    removeSecureAuthEntry(identity);
+    consumeMatchingLegacy(identity, options);
+  });
 }
 
 export function updateTokens(
@@ -340,9 +380,11 @@ export function updateTokens(
   tokens: StoredTokens,
   options?: AuthStorageOptions,
 ): void {
-  const entry = getAuthEntry(identity, options) ?? {};
-  entry.tokens = tokens;
-  saveAuthEntry(identity, entry, options);
+  withCredentialLock(identity, "write", () => {
+    const entry = readAuthEntry(identity, options) ?? {};
+    entry.tokens = tokens;
+    writeAuthEntry(identity, entry, options);
+  });
 }
 
 export function updateClientInfo(
@@ -350,9 +392,11 @@ export function updateClientInfo(
   clientInfo: StoredClientInfo,
   options?: AuthStorageOptions,
 ): void {
-  const entry = getAuthEntry(identity, options) ?? {};
-  entry.clientInfo = clientInfo;
-  saveAuthEntry(identity, entry, options);
+  withCredentialLock(identity, "write", () => {
+    const entry = readAuthEntry(identity, options) ?? {};
+    entry.clientInfo = clientInfo;
+    writeAuthEntry(identity, entry, options);
+  });
 }
 
 export function getOAuthState(
@@ -371,11 +415,13 @@ function clearField(
   field: "codeVerifier" | "oauthState" | "clientInfo" | "tokens",
   options?: AuthStorageOptions,
 ): void {
-  const entry = getAuthEntry(identity, options);
-  if (entry) {
-    delete entry[field];
-    saveAuthEntry(identity, entry, options);
-  }
+  withCredentialLock(identity, "write", () => {
+    const entry = readAuthEntry(identity, options);
+    if (entry) {
+      delete entry[field];
+      writeAuthEntry(identity, entry, options);
+    }
+  });
 }
 
 export function clearCodeVerifier(identity: AuthIdentity, options?: AuthStorageOptions): void {

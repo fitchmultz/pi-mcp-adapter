@@ -326,6 +326,14 @@ A Node.js HTTP server runs on a loopback callback endpoint and handles the activ
 
 Persistent OAuth entries are stored in service `fitch-mcp-adapter.oauth`, with the account `v2-sha256-<SHA-256 of the UTF-8 JSON array [serverName, serverUrl]>`, using macOS Keychain, Windows Credential Manager, or Linux Secret Service/libsecret through `@napi-rs/keyring`. The stored entry contains tokens, dynamic client information, legacy verifier/state fields when present, and the server URL binding.
 
+Persistent reads, updates, migration, and logout use synchronous SQLite locks under `<OS home>/.fitch-mcp-adapter/locks/`. Each lock is keyed by the credential service and legacy name-based account. All URL-scoped records with the same server name share that lock with their legacy import sources. The lock namespace does not change with `PI_CODING_AGENT_DIR`, `settings.oauthDir`, or `FITCH_MCP_OAUTH_DIR`.
+
+Scoped credential reads and status inspection use shared locks, so concurrent readers can proceed together. Updates, migration, and logout use exclusive locks through the complete read, modification, chunk write, and cleanup. Shared readers and exclusive writers exclude each other, so another process cannot remove chunks while they are being read. A missing scoped record releases its read lock before acquiring an exclusive lock, rechecking the destination, and importing matching legacy credentials.
+
+Conflicts between readers and writers, or between writers, fail immediately with "OAuth credential storage is busy in another process. Retry after its operation finishes." The adapter does not wait or retry automatically.
+
+These locks serialize local credential storage operations, not authorization-server requests. Two processes can still send token refresh requests concurrently before attempting to save their results. Lock databases contain no credentials and remain on disk. Do not remove or replace them while an adapter process may use them. See the [Node SQLite and filesystem requirements](docs/reference.md#requirements).
+
 The adapter fails closed when the OS credential store is unavailable. On headless Linux, configure an unlocked Secret Service-compatible keyring before using persistent OAuth; the adapter does not silently fall back to plaintext token files.
 
 Final runtime shutdown joins owned SDK operations, including background GET/reconnect provider work and cancellation tails. Per-server cancellation stays prompt; closing the runtime waits for actual provider promises, not just the cancelled public request. Granted scopes and issuer bindings remain in the native OS credential store. Active browser flows and callback memory are not serialized, and no operation is replayed to recover them. Hosts must preserve and unlock the actual private credential store on replacement compute; a Linux kernel keyring alone does not prove persistent Secret Service storage.

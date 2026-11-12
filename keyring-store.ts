@@ -1,6 +1,10 @@
 import type * as keyring from "@napi-rs/keyring";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import { withStorageLock } from "./storage-lock.ts";
+import { OAuthCredentialStoreError } from "./credential-store-errors.ts";
 
 const require = createRequire(import.meta.url);
 const TEST_AUTH_STORE_ENV = "PI_MCP_ADAPTER_TEST_AUTH_STORE";
@@ -16,6 +20,44 @@ export interface AuthSecretStore {
 
 let KeyringEntryClass: KeyringEntryConstructor | undefined;
 const memoryAuthEntries = new Map<string, string>();
+
+/** One name's legacy source and URL-scoped records share an OS-user lock. */
+export function withAuthSecretLock<T>(
+  service: string,
+  legacyAccount: string,
+  action: OAuthCredentialStoreError["operation"],
+  operation: () => T,
+): T {
+  const backend = process.env[TEST_AUTH_STORE_ENV];
+  if (backend === "memory" || backend === "unavailable" || backend === "keyrevoked") {
+    // These stores are process-local; they share no keyring records with other processes.
+    return operation();
+  }
+  const key = createHash("sha256")
+    .update(JSON.stringify([service, legacyAccount]))
+    .digest("hex");
+  const lockPath = join(homedir(), ".fitch-mcp-adapter", "locks", `${key}.sqlite`);
+  const acquisition = { entered: false };
+  try {
+    return withStorageLock(
+      lockPath,
+      () => {
+        acquisition.entered = true;
+        return operation();
+      },
+      action === "read" ? "read" : "write",
+    );
+  } catch (error) {
+    if (acquisition.entered) {
+      throw error;
+    }
+    throw new OAuthCredentialStoreError(
+      "Failed to acquire the shared OAuth credential lock",
+      action,
+      error,
+    );
+  }
+}
 
 function memoryAuthSecretStore(service: string): AuthSecretStore {
   return {

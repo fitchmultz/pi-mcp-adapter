@@ -94,14 +94,31 @@ export class MetadataCacheUpdates {
       return;
     }
     const servers = Object.fromEntries(this.entries);
-    this.entries.clear();
     this.existing = undefined;
-    saveMetadataCache(
+    const result = saveMetadataCache(
       { version: 1, servers },
       state.metadataCacheEnabled,
       Object.keys(state.config.mcpServers),
     );
+    if (result === "saved") {
+      this.entries.clear();
+    } else if (result === "busy") {
+      logger.warn(
+        "MCP: metadata cache not saved because another process holds its lock; updates remain pending",
+      );
+    }
   }
+}
+
+const metadataCacheUpdates = new WeakMap<Readonly<McpExtensionState>, MetadataCacheUpdates>();
+
+export function getMetadataCacheUpdates(state: Readonly<McpExtensionState>): MetadataCacheUpdates {
+  let updates = metadataCacheUpdates.get(state);
+  if (!updates) {
+    updates = new MetadataCacheUpdates();
+    metadataCacheUpdates.set(state, updates);
+  }
+  return updates;
 }
 
 export function collectMetadataCacheUpdate(
@@ -173,7 +190,7 @@ export function updateMetadataCache(
   serverName: string,
   options: { preserveEmptyResources?: boolean } = {},
 ): void {
-  const updates = new MetadataCacheUpdates();
+  const updates = getMetadataCacheUpdates(state);
   collectMetadataCacheUpdate(state, serverName, updates, options);
   updates.save(state);
 }
@@ -198,7 +215,7 @@ export function notifyToolMetadataUpdated(
 }
 
 export function flushMetadataCache(state: McpExtensionState): void {
-  const updates = new MetadataCacheUpdates();
+  const updates = getMetadataCacheUpdates(state);
   try {
     for (const [name, connection] of state.manager.getAllConnections()) {
       if (connection.status === "connected") {

@@ -43,6 +43,9 @@ function isAndroidKeyringLoadFailure(error: unknown): boolean {
 }
 
 export function formatOAuthCredentialStoreUnavailable(error: OAuthCredentialStoreError): string {
+  if (causeChainContains(error, /database is locked|SQLITE_BUSY/)) {
+    return "OAuth credential storage is busy in another process. Retry after its operation finishes.";
+  }
   if (isAndroidKeyringLoadFailure(error)) {
     return error.message;
   }
