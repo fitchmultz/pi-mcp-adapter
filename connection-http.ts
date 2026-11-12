@@ -128,6 +128,7 @@ class HttpConnection {
               reconnect();
             }
           }, delay);
+          timer.unref();
           return () => clearTimeout(timer);
         },
         ...(supportsOAuth(definition) && !isNonInteractiveOAuth(definition.oauth)

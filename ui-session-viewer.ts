@@ -8,6 +8,7 @@ import { isAbortError } from "./runtime-owner.ts";
 import { throwIfAborted } from "./abort.ts";
 import { logger } from "./logger.ts";
 
+/** One process-wide optional viewer; session replacement closes it before opening another. */
 let activeGlimpseWindow: { close: () => void } | null = null;
 
 export function closeActiveUiWindow(): void {

@@ -9,6 +9,7 @@ import {
 } from "./host-browser-contracts.ts";
 import type { HostBrowserProxy } from "./host-browser-proxy.ts";
 import type { HostBrowserView } from "./host-browser-view.ts";
+import { UI_HEARTBEAT_INTERVAL_MS } from "./ui-session-timing.ts";
 
 const patchParamsSchema = z.record(z.string(), z.unknown());
 
@@ -48,7 +49,7 @@ export class HostBrowserSession {
       this.proxy
         .advisory("/proxy/ui/heartbeat", {})
         .catch((error: unknown) => this.reportLifecycleError(error));
-    }, 10000);
+    }, UI_HEARTBEAT_INTERVAL_MS);
   }
 
   listen(): void {

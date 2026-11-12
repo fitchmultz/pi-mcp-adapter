@@ -6,6 +6,8 @@ import { describe as nodeDescribe, it as nodeIt, beforeEach, afterEach } from "n
 import assert from "node:assert";
 import { validateAuthorizationResponseIssuer } from "@modelcontextprotocol/client";
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   ensureCallbackServer,
   waitForCallback,
@@ -236,6 +238,19 @@ nodeDescribe("mcp-callback-server", () => {
   });
 
   nodeDescribe("waitForCallback / callback handling", () => {
+    nodeIt("does not keep a process alive solely for an unanswered callback", async () => {
+      await promisify(execFile)(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `import { ensureCallbackServer, waitForCallback } from "./mcp-callback-server.ts";
+           await ensureCallbackServer();
+           void waitForCallback("unanswered").catch(() => {});`,
+        ],
+        { cwd: import.meta.dirname, timeout: 5000 },
+      );
+    });
     nodeIt("should resolve with code on successful callback", async () => {
       await ensureCallbackServer();
 
