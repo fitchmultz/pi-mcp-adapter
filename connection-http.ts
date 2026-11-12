@@ -299,6 +299,9 @@ class HttpConnection {
   create(): { transport: Transport; oauthProvider: boolean } {
     const { transport, provider } = this;
     const { runtime } = this.options;
+    // First layer of transport-callback patching; the fixed order is http (here) →
+    // tool-transport → mcp-trace → connection-handshake. Every wrapper must call the
+    // previous handler, and none are ever restored; the SDK chains what it finds at connect.
     if (provider) {
       const send = transport.send.bind(transport);
       transport.send = (message, sendOptions) =>

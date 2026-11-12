@@ -53,6 +53,8 @@ export class McpLifecycleManager {
     if (isServerDisabled(definition)) {
       return;
     }
+    // The lifecycle keeps its own registry of definitions, captured at registration time;
+    // a changed definition must be re-registered, not edited in place.
     this.allServers.set(name, definition);
     if (settings?.idleTimeout !== undefined) {
       this.serverSettings.set(name, settings);

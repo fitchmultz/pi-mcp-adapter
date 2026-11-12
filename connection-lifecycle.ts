@@ -13,6 +13,9 @@ class ConnectionAttempt {
   readonly controller = new AbortController();
   private waiters = 0;
 
+  // A shared attempt is cancelled only when its last waiter has given up, so one caller's
+  // abort never tears down an attempt another caller is still waiting on.
+
   wait(
     promise: Promise<ServerConnection>,
     signal: AbortSignal | undefined,
@@ -43,11 +46,24 @@ class ConnectionAttempt {
 
 type PendingConnection = { promise: Promise<ServerConnection>; attempt: ConnectionAttempt };
 
+/**
+ * Owns the live ServerConnection per server name and the bookkeeping for replacing it.
+ *
+ * Ownership map: `connections` holds the current connection per name, `pendingConnections`
+ * dedupes concurrent connect attempts, and `disposal.retired` keeps closed connections owned
+ * until their accepted work settles; `disposal` also claims every created client, and the
+ * module-scope `clientOperations` tracks each client's request and callback promises. A
+ * connection moves between these collections only through connect, reconnect and close.
+ * Borrowers must re-check `connections.get(name)` identity after every await: a close or
+ * replacement may have swapped the connection underneath them.
+ */
 export class ConnectionLifecycle {
   private readonly connections = new Map<string, ServerConnection>();
   private readonly pendingConnections = new Map<string, PendingConnection>();
   private readonly reconnectPromises = new Map<string, Promise<ServerConnection>>();
   private readonly closePromises = new Map<string, Promise<void>>();
+  // Bumped by every close(name); establish() discards an attempt whose generation no longer
+  // matches, fencing work that raced a close.
   readonly closeGenerations = new Map<string, number>();
   readonly disposal: ConnectionDisposal;
   runtimeSignal: AbortSignal | undefined;

@@ -29,6 +29,8 @@ export class ConnectionHandshake {
     const { signal, client, requestOptions } = this;
     throwIfAborted(signal);
     const send = this.transport.send.bind(this.transport);
+    // Last layer of transport-callback patching (http → tool-transport → mcp-trace → here);
+    // this wrapper chains the previous send and is never restored.
     this.transport.send = (...args) => client.ownSend(() => send(...args));
     let abortCleanup: Promise<void> | undefined;
     const closeTransport = () => {

@@ -308,6 +308,8 @@ class ToolTransportObserver {
 
   attach(): void {
     const onmessage = this.transport.onmessage;
+    // Second layer of transport-callback patching, after connection-http and before
+    // mcp-trace; every wrapper calls the previous handler and none are restored.
     // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: preserve native Transport delivery and the previous receiver.
     this.transport.onmessage = (message, extra) => {
       this.receive(message);

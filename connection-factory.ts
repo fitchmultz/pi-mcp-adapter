@@ -96,32 +96,55 @@ export class ConnectionFactory {
     validateServerProtocolConfig(definition);
     const runtime = await import("./connection-runtime.ts");
     throwIfAborted(signal);
+    // createClient claims the client into disposal. From here until setup.connect takes over,
+    // the factory owns that claim: any failure below must release it, or the never-connected
+    // client survives until final closeAll.
     const client = this.callbacks.createClient(name, definition, runtime);
-    const trace = this.trace(definition);
-    const implicitOAuth =
-      typeof definition.url === "string" &&
-      definition.url.length > 0 &&
-      supportsOAuth(definition) &&
-      runtime.getOAuthRequest(
-        name,
-        resolveServerUrl(definition) ?? "",
-        getAuthBaseDir(this.authStorageOptions),
-        this.oauthRuntime,
-      ) !== undefined;
-    const configuredTransports = [definition.command, definition.url, definition.socket].filter(
-      (value) => typeof value === "string" && value.length > 0,
-    );
-    if (configuredTransports.length !== 1) {
-      throw new Error(`Server ${name} must configure exactly one of command, url, or socket`);
+    let connect: () => Promise<ServerConnection>;
+    try {
+      const trace = this.trace(definition);
+      const implicitOAuth =
+        typeof definition.url === "string" &&
+        definition.url.length > 0 &&
+        supportsOAuth(definition) &&
+        runtime.getOAuthRequest(
+          name,
+          resolveServerUrl(definition) ?? "",
+          getAuthBaseDir(this.authStorageOptions),
+          this.oauthRuntime,
+        ) !== undefined;
+      const configuredTransports = [definition.command, definition.url, definition.socket].filter(
+        (value) => typeof value === "string" && value.length > 0,
+      );
+      if (configuredTransports.length !== 1) {
+        throw new Error(`Server ${name} must configure exactly one of command, url, or socket`);
+      }
+      const setup = new ConnectionSetup(
+        { factory: this, runtime, name, definition, signal, requestSignal, trace },
+        client,
+        implicitOAuth,
+      );
+      const resolving = setup.resolveCommand();
+      const built = resolving ? setup.prepare(await resolving) : setup.prepare();
+      // connect() takes over the claim from here: its own failure path closes and releases
+      // the client, so this catch must only see failures from before connect() starts.
+      connect = () => setup.connect(built);
+    } catch (error) {
+      // Release a client claimed for an attempt that failed before connect() took over. The
+      // attempt's transport either was never built or failed to build inside prepare(); an
+      // unbuilt transport never started and holds nothing to close. Cleanup failures aggregate
+      // with the original failure, matching ConnectionSetup.failSetup.
+      const results = await Promise.allSettled([Promise.resolve().then(() => client.close())]);
+      this.lifecycle.disposal.releaseWhenSettled(client);
+      const failures = cleanupFailures(results);
+      if (failures.length > 0) {
+        throw new AggregateError([error, ...failures], "MCP connection setup failed", {
+          cause: error,
+        });
+      }
+      throw error;
     }
-    const setup = new ConnectionSetup(
-      { factory: this, runtime, name, definition, signal, requestSignal, trace },
-      client,
-      implicitOAuth,
-    );
-    const resolving = setup.resolveCommand();
-    const transport = resolving ? setup.prepare(await resolving) : setup.prepare();
-    return setup.connect(transport);
+    return connect();
   }
 }
 
