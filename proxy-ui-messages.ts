@@ -147,8 +147,20 @@ function renderInlineSessions(
     },
   };
 }
+const deliveries = new WeakMap<McpExtensionState, Promise<ProxyToolResult>>();
+
 export async function executeUiMessages(state: McpExtensionState): Promise<ProxyToolResult> {
-  return new UiMessageDelivery(state).execute();
+  const previous = deliveries.get(state);
+  const deliver = () => new UiMessageDelivery(state).execute();
+  const promise = previous ? previous.then(deliver, deliver) : deliver();
+  deliveries.set(state, promise);
+  try {
+    return await promise;
+  } finally {
+    if (deliveries.get(state) === promise) {
+      deliveries.delete(state);
+    }
+  }
 }
 class UiMessageDelivery {
   private readonly pending: CompletedUiSession[];
