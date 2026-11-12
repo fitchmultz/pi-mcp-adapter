@@ -37,6 +37,7 @@ class McpPanel implements Component {
   private nameQuery = "";
   private mode: PanelInputMode = { kind: "browse" };
   private dirty = false;
+  private phase: "open" | "closing" | "disposed" = "open";
   private importNotice: string | null = null;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private visibleItems: VisibleItem[] = [];
@@ -76,8 +77,7 @@ class McpPanel implements Component {
       clearTimeout(this.inactivityTimeout);
     }
     this.inactivityTimeout = setTimeout(() => {
-      this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.closeCancelled();
     }, McpPanel.INACTIVITY_MS);
   }
 
@@ -125,6 +125,9 @@ class McpPanel implements Component {
   }
 
   handleInput(data: string): void {
+    if (this.phase !== "open") {
+      return;
+    }
     this.resetInactivityTimeout();
     this.importNotice = null;
     if ((this.connections.inFlight ?? "").length === 0) {
@@ -139,8 +142,7 @@ class McpPanel implements Component {
       return;
     }
     if (matchesKey(data, "ctrl+s")) {
-      this.cleanup();
-      this.done(this.buildResult());
+      this.complete(this.buildResult());
       return;
     }
     if (this.mode.kind === "description-search") {
@@ -151,8 +153,16 @@ class McpPanel implements Component {
   }
 
   private closeCancelled(): void {
+    this.complete({ cancelled: true, changes: new Map() });
+  }
+
+  private complete(result: McpPanelResult): void {
+    if (this.phase !== "open") {
+      return;
+    }
+    this.phase = "closing";
     this.cleanup();
-    this.done({ cancelled: true, changes: new Map() });
+    this.done(result);
   }
   private refreshSelection(): void {
     this.rebuildVisibleItems();
@@ -367,8 +377,7 @@ class McpPanel implements Component {
       return;
     }
     if (matchesKey(data, "ctrl+c")) {
-      this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.closeCancelled();
       return;
     }
     if (matchesKey(data, "escape") || data.toLowerCase() === "n") {
@@ -376,17 +385,15 @@ class McpPanel implements Component {
       return;
     }
     if (this.keys.selectConfirm(data)) {
-      this.cleanup();
       if (this.mode.selected === 0) {
-        this.done({ cancelled: true, changes: new Map() });
+        this.closeCancelled();
       } else {
-        this.done(this.buildResult());
+        this.complete(this.buildResult());
       }
       return;
     }
     if (data.toLowerCase() === "y") {
-      this.cleanup();
-      this.done({ cancelled: true, changes: new Map() });
+      this.closeCancelled();
       return;
     }
     this.handleDiscardNavigation(data);
@@ -441,6 +448,7 @@ class McpPanel implements Component {
 
   /** Pi owns this panel; disposal releases its inactivity timer even without an answer. */
   dispose(): void {
+    this.phase = "disposed";
     this.cleanup();
   }
 }

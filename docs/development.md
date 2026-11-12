@@ -72,6 +72,10 @@ Onboarding state updates use the same transaction boundary and their own
 `mcp-onboarding.json.lock.sqlite` sidecar, so independent setup and hint updates
 cannot overwrite each other's flags.
 
+A panel's first save or cancellation closes its input phase immediately.
+The overlay remains visible while save persistence and live refresh finish,
+but key repeats and cancellation cannot start another completion or overtake it.
+
 ## Local checks
 
 Use the npm version declared in `package.json`:
