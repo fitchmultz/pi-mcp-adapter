@@ -16,6 +16,11 @@ panel and are cleared on disposal. OAuth runtime shutdown and runtime-owner stop
 are repeat-safe because initialization failure, session replacement and final
 shutdown can converge on the same owner.
 
+Cancelling the agent turn that started initialization stops its remaining
+startup requests, not the session. Completed connections keep their discovered
+metadata, and owner-scoped health checks still reconnect keep-alive servers and
+close idle connections.
+
 Metadata snapshots, the native keyring constructor and optional Glimpse module
 availability are process caches, not session resources. Their contents survive
 session rebuilds; they do not own live MCP connections or authorize use of stale

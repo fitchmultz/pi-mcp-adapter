@@ -63,10 +63,9 @@ export async function initializeMcp(
     initial: initialSignal,
     runtime: runtimeSignal,
   });
-  if (initialSignal?.aborted === true) {
-    return state;
+  if (initialSignal?.aborted !== true) {
+    await bootstrapDirectTools(state, connected, runtimeSignal);
   }
-  await bootstrapDirectTools(state, connected, runtimeSignal);
   bindLifecycle(state, owner.signal);
   publishMcpStatusSnapshot(state);
   return state;
