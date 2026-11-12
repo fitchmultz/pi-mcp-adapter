@@ -26,12 +26,21 @@ const eventSubjects = {
   "host-context": null,
 };
 
+interface HostSessionOptions {
+  sessionToken: string;
+  initialToolArgs: Record<string, unknown> | undefined;
+}
+
 export class HostBrowserSession {
   private readonly bridge: AppBridge;
   private readonly proxy: HostBrowserProxy;
   private readonly view: HostBrowserView;
   private readonly eventSource: EventSource;
   private readonly heartbeat: number;
+  private readonly ready: Promise<void>;
+  private resolveReady: (() => void) | undefined;
+  private initialized = false;
+  private forwarding: Promise<void>;
   /** A completion is requested once and finished once; the reason is the request's. */
   private phase: "live" | "completing" | "finished" = "live";
 
@@ -39,12 +48,33 @@ export class HostBrowserSession {
     bridge: AppBridge,
     proxy: HostBrowserProxy,
     view: HostBrowserView,
-    sessionToken: string,
+    options: HostSessionOptions,
   ) {
     this.bridge = bridge;
     this.proxy = proxy;
     this.view = view;
-    this.eventSource = new EventSource("/events?session=" + encodeURIComponent(sessionToken));
+    this.ready = new Promise<void>((resolve) => {
+      this.resolveReady = resolve;
+    });
+    this.forwarding = this.ready
+      .then(() =>
+        this.initialized && options.initialToolArgs !== undefined
+          ? this.bridge.sendToolInput({ arguments: options.initialToolArgs })
+          : undefined,
+      )
+      .catch((error: unknown) => {
+        this.view.showError(`Failed to forward tool input: ${String(error)}`);
+      });
+    this.bridge.addEventListener("initialized", () => {
+      if (this.phase !== "finished") {
+        this.initialized = true;
+        this.resolveReady?.();
+        this.view.setStatus(options.initialToolArgs === undefined ? "Streaming…" : "Connected");
+      }
+    });
+    this.eventSource = new EventSource(
+      "/events?session=" + encodeURIComponent(options.sessionToken),
+    );
     this.heartbeat = window.setInterval(() => {
       this.proxy
         .advisory("/proxy/ui/heartbeat", {})
@@ -70,12 +100,17 @@ export class HostBrowserSession {
   private bindEvents(): void {
     for (const [name, subject] of Object.entries(eventSubjects)) {
       this.eventSource.addEventListener(name, (event: MessageEvent<string>) => {
-        this.forwardEvent(name, event.data).catch((error: unknown) => {
-          if (subject !== null) {
-            this.view.showError(`Failed to forward ${subject}: ${String(error)}`);
-          }
-          // Malformed context updates are non-terminal, as in the original host.
-        });
+        if (this.phase === "finished") {
+          return;
+        }
+        this.forwarding = this.forwarding
+          .then(() => (this.initialized ? this.forwardEvent(name, event.data) : undefined))
+          .catch((error: unknown) => {
+            if (subject !== null) {
+              this.view.showError(`Failed to forward ${subject}: ${String(error)}`);
+            }
+            // Malformed context updates are non-terminal, as in the original host.
+          });
       });
     }
     this.eventSource.addEventListener("error", () => this.view.setStatus("Connection lost", true));
@@ -147,6 +182,9 @@ export class HostBrowserSession {
     this.phase = "finished";
     window.clearInterval(this.heartbeat);
     this.eventSource.close();
+    // Completion before initialization cancels buffered delivery; otherwise drain accepted frames.
+    this.resolveReady?.();
+    await this.forwarding;
     try {
       await this.bridge.teardownResource({});
     } catch (error) {

@@ -36,6 +36,33 @@ function createMinimalInput(overrides: Partial<HostHtmlTemplateInput> = {}): Hos
   };
 }
 
+async function initializeApp(host: Awaited<ReturnType<typeof openHost>>): Promise<void> {
+  host.dispatchWindow({
+    jsonrpc: "2.0",
+    id: "initialize",
+    method: "ui/initialize",
+    params: {
+      protocolVersion: LATEST_PROTOCOL_VERSION,
+      appInfo: { name: "native-test-peer", version: "1" },
+      appCapabilities: {},
+    },
+  });
+  await vi.waitFor(() =>
+    expect(
+      host.appMessages.some(
+        (message) =>
+          z
+            .object({
+              id: z.literal("initialize"),
+              result: McpUiInitializeResultSchema,
+            })
+            .safeParse(message).success,
+      ),
+    ).toBe(true),
+  );
+  host.dispatchWindow({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+}
+
 describe("buildHostHtmlTemplate", () => {
   describe("structure", () => {
     it("generates valid HTML document", () => {
@@ -472,6 +499,7 @@ describe("buildHostHtmlTemplate", () => {
 
     it("registers the stream patch notification method", async () => {
       const host = await openHost();
+      await initializeApp(host);
       // A valid JSON result may use an own "__proto__" key; the app receives the original.
       const patch = {
         ["__proto__"]: { own: "result key" },
@@ -501,7 +529,7 @@ describe("buildHostHtmlTemplate", () => {
     });
 
     it.each(["stream-first", "eager"] as const)(
-      "delivers initial tool input only in eager mode (%s)",
+      "buffers early frames until initialization and sends initial tool input only in eager mode (%s)",
       async (mode) => {
         const toolArgs = { marker: "initial tool input" };
         const host = await openHost({
@@ -515,30 +543,33 @@ describe("buildHostHtmlTemplate", () => {
             },
           },
         });
-        host.dispatchWindow({
-          jsonrpc: "2.0",
-          id: "initialize",
-          method: "ui/initialize",
-          params: {
-            protocolVersion: LATEST_PROTOCOL_VERSION,
-            appInfo: { name: "native-test-peer", version: "1" },
-            appCapabilities: {},
-          },
-        });
+        const patch = { content: [], structuredContent: { progress: "early" } };
+        const result: Parameters<typeof host.handle.sendToolResult>[0] = {
+          content: [{ type: "text", text: "complete" }],
+        };
+        host.handle.sendResultPatch(patch);
+        host.handle.sendToolResult(result);
         await vi.waitFor(() =>
-          expect(
-            host.appMessages.some(
-              (message) =>
-                z
-                  .object({
-                    id: z.literal("initialize"),
-                    result: McpUiInitializeResultSchema,
-                  })
-                  .safeParse(message).success,
-            ),
-          ).toBe(true),
+          expect(host.eventSource.receivedEvents).toEqual(["result-patch", "tool-result"]),
         );
-        host.dispatchWindow({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+        expect(host.appMessages).toEqual([]);
+        await initializeApp(host);
+        await vi.waitFor(() =>
+          expect(host.appMessages).toContainEqual({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: result,
+          }),
+        );
+        const methods = host.appMessages.flatMap((message) => {
+          const parsed = z.object({ method: z.string() }).safeParse(message);
+          return parsed.success ? [parsed.data.method] : [];
+        });
+        expect(methods).toEqual([
+          ...(mode === "eager" ? ["ui/notifications/tool-input"] : []),
+          "notifications/pi-mcp-adapter/ui-result-patch",
+          "ui/notifications/tool-result",
+        ]);
         await vi.waitFor(() =>
           expect(host.element("status").textContent).toBe(
             mode === "stream-first" ? "Streaming…" : "Connected",
@@ -565,6 +596,19 @@ describe("buildHostHtmlTemplate", () => {
             params: { arguments: { marker: "subsequent input" } },
           }),
         );
+        host.handle.sendToolResult({ content: [{ type: "text", text: "last before close" }] });
+        host.handle.close("done");
+        await host.teardownStarted;
+        const ending = host.appMessages.slice(-2);
+        expect(ending).toEqual([
+          {
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: { content: [{ type: "text", text: "last before close" }] },
+          },
+          expect.objectContaining({ method: "ui/resource-teardown" }),
+        ]);
+        host.respondToTeardowns();
       },
     );
   });
