@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.42 - 2026-11-12
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- docs: limit OAuth storage guidance to macOS and Linux (#260) ([3ea9a54](https://github.com/fitchmultz/pi-mcp-adapter/commit/3ea9a540f3a02535ba33f9c8f9005b597150fbd8))
+
+### What's Changed
+
+- docs: limit OAuth storage guidance to macOS and Linux by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/260
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.41...v8.0.42
+
 ## 8.0.41 - 2026-11-12
 
 <!-- npm-release:unreleased:start -->
