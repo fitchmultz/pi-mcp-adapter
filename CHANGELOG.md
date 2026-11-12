@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.41 - 2026-11-12
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: require patched Node security releases (#258) ([de6ea92](https://github.com/fitchmultz/pi-mcp-adapter/commit/de6ea9208d0726a50ae56268fc3ae5a93ce5f0a6))
+
+### What's Changed
+
+- fix: require patched Node security releases by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/258
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.40...v8.0.41
+
 ## 8.0.40 - 2026-11-12
 
 <!-- npm-release:unreleased:start -->
