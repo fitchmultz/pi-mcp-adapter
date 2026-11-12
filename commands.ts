@@ -5,6 +5,7 @@ import {
   isNonInteractiveOAuth,
   type McpConfig,
   type McpPanelCallbacks,
+  type McpPanelConnectionStatus,
   type McpPanelResult,
   type ImportKind,
 } from "./types.ts";
@@ -193,19 +194,22 @@ export async function openMcpSetup(input: {
   );
 }
 
+interface PanelCredentialStatus {
+  status: McpPanelConnectionStatus;
+  failureMessage: string | null;
+}
+
 function inspectPanelCredentials(
   state: McpExtensionState,
   serverName: string,
   serverUrl: string,
-  authStatusFailures: Map<string, string>,
-): ReturnType<McpPanelCallbacks["getConnectionStatus"]> | undefined {
+): PanelCredentialStatus | undefined {
   const authStatus = inspectAuthForUrl({ serverName, serverUrl }, state.authStorageOptions);
   if (authStatus.status === "unavailable") {
-    authStatusFailures.set(serverName, authStatus.message);
-    return "failed";
+    return { status: "failed", failureMessage: authStatus.message };
   }
   if (authStatus.status === "absent" || !authStatus.entry.tokens) {
-    return "needs-auth";
+    return { status: "needs-auth", failureMessage: getFailureMessage(state, serverName) };
   }
   return;
 }
@@ -214,13 +218,12 @@ function panelCredentialStatus(
   state: McpExtensionState,
   serverName: string,
   definition: McpConfig["mcpServers"][string] | undefined,
-  authStatusFailures: Map<string, string>,
-): ReturnType<McpPanelCallbacks["getConnectionStatus"]> | undefined {
+): PanelCredentialStatus | undefined {
   let serverUrl: string | undefined;
   try {
     serverUrl = definition ? resolveServerUrl(definition) : undefined;
   } catch {
-    return "failed";
+    return { status: "failed", failureMessage: getFailureMessage(state, serverName) };
   }
   if (
     definition?.auth === "oauth" &&
@@ -229,7 +232,7 @@ function panelCredentialStatus(
     definition.oauth !== false &&
     !isNonInteractiveOAuth(definition.oauth)
   ) {
-    return inspectPanelCredentials(state, serverName, serverUrl, authStatusFailures);
+    return inspectPanelCredentials(state, serverName, serverUrl);
   }
 
   return;
@@ -240,11 +243,6 @@ function buildMcpPanelCallbacks(
   config: McpConfig,
   ctx: ExtensionContext,
 ): McpPanelCallbacks {
-  // Panel-only diagnostics keep status inspection from mutating connection
-  // failure state while allowing the existing panel failure UI to show why the
-  // credential store could not be inspected.
-  const authStatusFailures = new Map<string, string>();
-
   return {
     reconnect: (serverName, afterAuth) => reconnectServer(state, ctx, serverName, afterAuth),
     canAuthenticate: (serverName: string) => {
@@ -260,21 +258,15 @@ function buildMcpPanelCallbacks(
         runtime: state.oauthRuntime,
       }),
     getConnectionStatus: (serverName: string) => {
-      authStatusFailures.delete(serverName);
       const definition = config.mcpServers[serverName];
       if (isServerDisabled(definition)) {
         return "disabled";
       }
       const transport = state.manager.getConnection(serverName)?.status;
       // Stored-credential diagnostics outrank the connection stage for OAuth servers.
-      const credentialStatus = panelCredentialStatus(
-        state,
-        serverName,
-        definition,
-        authStatusFailures,
-      );
+      const credentialStatus = panelCredentialStatus(state, serverName, definition);
       if (credentialStatus !== undefined) {
-        return credentialStatus;
+        return credentialStatus.status;
       }
       return panelStatus(
         serverStage({
@@ -285,8 +277,13 @@ function buildMcpPanelCallbacks(
         }),
       );
     },
-    getFailureMessage: (serverName: string) =>
-      authStatusFailures.get(serverName) ?? getFailureMessage(state, serverName),
+    getFailureMessage: (serverName: string) => {
+      const definition = config.mcpServers[serverName];
+      const credentials = isServerDisabled(definition)
+        ? undefined
+        : panelCredentialStatus(state, serverName, definition);
+      return credentials?.failureMessage ?? getFailureMessage(state, serverName);
+    },
     refreshCacheAfterReconnect: (serverName: string) => {
       const freshCache = loadMetadataCache(state.metadataCacheEnabled);
       return freshCache?.servers[serverName] ?? null;

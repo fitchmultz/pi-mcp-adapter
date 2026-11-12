@@ -94,6 +94,31 @@ afterEach(async () => {
 });
 
 describe("commands onboarding", () => {
+  it("returns OAuth storage diagnostics without requiring a preceding status read", async () => {
+    vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "unavailable");
+    const native = await vi.importActual<typeof PanelModule>("../../mcp-panel.ts");
+    const diagnostics: Array<string | null | undefined> = [];
+    mocks.createMcpPanel.mockImplementationOnce((input) => {
+      diagnostics.push(input.callbacks.getFailureMessage?.("oauth"));
+      expect(input.callbacks.getConnectionStatus("oauth")).toBe("failed");
+      diagnostics.push(input.callbacks.getFailureMessage?.("oauth"));
+      const panel = native.createMcpPanel(input);
+      panel.dispose();
+      input.done(panelResult);
+      return panel;
+    });
+    const { openMcpPanel } = await import("../../commands.ts");
+    await openMcpPanel({
+      state: await createState({
+        config: { mcpServers: { oauth: { url: "https://example.test/mcp", auth: "oauth" } } },
+      }),
+      pi: host.api,
+      ctx: { ...host.context, cwd: process.cwd() },
+    });
+    expect(diagnostics[1]).toContain("OAuth credential store unavailable");
+    expect(diagnostics[0]).toBe(diagnostics[1]);
+  });
+
   it("opens setup mode when no MCP servers are configured", async () => {
     vi.stubEnv("HOME", temporaryDirectory("pi-mcp-commands-home-"));
     const { openMcpPanel } = await import("../../commands.ts");

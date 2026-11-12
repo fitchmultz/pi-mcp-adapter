@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep onboarding hints and setup completion from overwriting each other across processes.
 - Share overlapping OAuth starts and callback completion, and finish cancellation cleanup before logout or shutdown can leave credentials behind.
 - Finish panel saves once, keeping repeated save or cancel keys from closing the panel before live refresh completes.
+- Read credential-store diagnostics independently of panel status reads.
 
 ## 8.0.39 - 2026-11-12
 
