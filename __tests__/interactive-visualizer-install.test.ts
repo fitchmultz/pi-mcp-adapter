@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withStorageLock } from "../storage-lock.ts";
 
 const example = fileURLToPath(new URL("../examples/interactive-visualizer/", import.meta.url));
 const disappearingConfig = fileURLToPath(
@@ -76,6 +77,27 @@ afterEach(() => {
 });
 
 describe("standalone interactive visualizer installation", () => {
+  it("shares the adapter's config lock before reading or writing an install", () => {
+    const f = fixture("agent");
+    const path = join(f.cwd, "agent", "fitch-mcp-adapter", "mcp.json");
+    writeConfig(path, initial);
+    const original = readFileSync(path);
+    withStorageLock(`${path}.lock.sqlite`, () => {
+      const install = f.run("install");
+      expect(install.status).not.toBe(0);
+      expect(install.stderr).toContain("database is locked");
+      const uninstall = f.run("uninstall");
+      expect(uninstall.status).not.toBe(0);
+      expect(uninstall.stderr).toContain("database is locked");
+      expect(readFileSync(path)).toEqual(original);
+    });
+    expect(f.run("install")).toMatchObject({ status: 0, stderr: "" });
+    expect(readConfig(path)).toEqual({
+      ...initial,
+      mcpServers: { ...initial.mcpServers, [serverName]: installedEntry },
+    });
+  });
+
   it.each([
     { mode: "default", configured: undefined, agent: "home/.pi/agent" },
     { mode: "absolute", configured: "  $ROOT/custom-agent  ", agent: "custom-agent" },

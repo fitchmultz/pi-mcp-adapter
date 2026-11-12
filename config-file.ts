@@ -8,11 +8,17 @@ import {
   renameSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { parseJsonConfig } from "./config-imports.ts";
 import { isConfigObject } from "./config-validation.ts";
 import { buildUnifiedDiff } from "./config-diff.ts";
 import type { ConfigWritePreview } from "./config-contracts.ts";
+import { withStorageLock } from "./storage-lock.ts";
+
+/** Hold the same persistent lock across every read, merge and replacement of a config file. */
+export function withConfigWrite<T>(filePath: string, operation: () => T): T {
+  return withStorageLock(`${resolve(filePath)}.lock.sqlite`, operation);
+}
 
 function serializeRawConfig(raw: Record<string, unknown>): string {
   return `${JSON.stringify(raw, null, 2)}\n`;

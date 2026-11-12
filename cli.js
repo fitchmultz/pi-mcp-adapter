@@ -163,12 +163,6 @@ function printDiscovery(log, imports) {
   }
 }
 
-/** @param {{ imports?: unknown }} config */
-function writePiConfig(config) {
-  fs.mkdirSync(path.dirname(PI_CONFIG_PATH), { recursive: true });
-  fs.writeFileSync(PI_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
-}
-
 /**
  * @param {PiConfig} config
  * @param {string[]} importsToAdd
@@ -205,8 +199,6 @@ async function runInit(argv, log = console.log) {
     return 0;
   }
 
-  const nextConfig = extendPiConfig(existingConfig, importsToAdd, discoverySettingChanged);
-
   if (importsToAdd.length > 0) {
     log(`\nDetected host configs to import into Pi: ${importsToAdd.join(", ")}`);
   }
@@ -221,7 +213,15 @@ async function runInit(argv, log = console.log) {
     return 0;
   }
 
-  writePiConfig(nextConfig);
+  const { withConfigWrite, writeRawConfigObject } = await import("./dist/config-file.js");
+  withConfigWrite(PI_CONFIG_PATH, () => {
+    const current = loadPiConfig();
+    const currentImports = new Set(current.imports);
+    const additions = foundImports
+      .map((entry) => entry.kind)
+      .filter((kind) => !currentImports.has(kind));
+    writeRawConfigObject(PI_CONFIG_PATH, extendPiConfig(current, additions, discoverHostConfigs));
+  });
   log(`Updated ${PI_CONFIG_PATH}`);
   log(
     "Pi will now keep reading standard MCP configs automatically, while these imports cover host-specific config formats.",

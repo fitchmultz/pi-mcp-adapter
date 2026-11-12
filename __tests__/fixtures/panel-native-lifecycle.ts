@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   createAgentSessionServices,
   createAgentSessionFromServices,
@@ -185,10 +186,78 @@ try {
   }
   assert.equal(disposed, 5);
 
+  // A real held config sidecar must not be reported as a persisted update.
+  const configLock = new DatabaseSync(`${projectConfig}.lock.sqlite`);
+  try {
+    configLock.exec("BEGIN EXCLUSIVE");
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: { demo: definition } }));
+    const before = await readFile(projectConfig, "utf8");
+    events.length = 0;
+    shown = Promise.withResolvers();
+    const blockedSave = openMcpPanel({
+      state,
+      pi: extension,
+      ctx,
+      onDirectToolsConfigChanged: () => {
+        events.push("refresh");
+      },
+    });
+    await shown.promise;
+    assert(panel?.handleInput !== undefined);
+    panel.handleInput(" ");
+    panel.handleInput("\x13");
+    assert.deepEqual(await blockedSave, { configChanged: false });
+    assert.equal(await readFile(projectConfig, "utf8"), before);
+    assert.equal(tui?.hasOverlay(), false);
+    assert.equal(events.length, 2);
+    assert.match(events[0] ?? "", /^error: Failed to save direct tools: Storage lock is busy:/);
+    assert.equal(events[1], "disposed");
+
+    // An earlier successful file remains saved if a later file is blocked.
+    const globalConfig = join(directory, "fitch-mcp-adapter", "mcp.json");
+    await writeFile(globalConfig, JSON.stringify({ mcpServers: { first: definition } }));
+    state.config = { mcpServers: { first: definition, demo: definition } };
+    await writeFile(
+      cachePath,
+      JSON.stringify({ version: 2, servers: { first: cachedServer, demo: cachedServer } }),
+    );
+    events.length = 0;
+    shown = Promise.withResolvers();
+    const partialSave = openMcpPanel({
+      state,
+      pi: extension,
+      ctx,
+      onDirectToolsConfigChanged: () => {
+        events.push("refresh");
+      },
+    });
+    await shown.promise;
+    panel.handleInput(" ");
+    panel.handleInput("\x1b[B");
+    panel.handleInput(" ");
+    panel.handleInput("\x13");
+    assert.deepEqual(await partialSave, { configChanged: true });
+    assert.deepEqual(JSON.parse(await readFile(globalConfig, "utf8")), {
+      mcpServers: { first: { ...definition, directTools: true } },
+    });
+    assert.equal(await readFile(projectConfig, "utf8"), before);
+    assert.equal(events.length, 2);
+    assert.match(
+      events[0] ?? "",
+      /^error: Some direct tools were saved, but remaining changes failed: Storage lock is busy:/,
+    );
+    assert.equal(events[1], "disposed");
+    assert.equal(tui.hasOverlay(), false);
+  } finally {
+    configLock.close();
+    state.config = { mcpServers: { demo: definition } };
+  }
+  assert.equal(disposed, 7);
+
   manager.fail = true;
   await assert.rejects(openMcpPanel({ state, pi: extension, ctx }), (error) => error === failure);
-  assert.equal(tui?.hasOverlay(), false);
-  assert.equal(disposed, 5);
+  assert.equal(tui.hasOverlay(), false);
+  assert.equal(disposed, 7);
   console.log("NATIVE_PANEL_LIFECYCLE_PASS");
 } finally {
   mode.stop();

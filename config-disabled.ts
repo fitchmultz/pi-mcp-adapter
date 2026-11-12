@@ -6,7 +6,7 @@ import { isConfigObject, isUnknownArray, isImportKind } from "./config-validatio
 import { getProjectPiConfigPath, getConfigSources } from "./config-paths.ts";
 import { parseJsonConfig, readValidatedConfig } from "./config-imports.ts";
 import { mergeConfigs, expandImports } from "./config-merge.ts";
-import { writeRawConfigObject, getServersKey } from "./config-file.ts";
+import { withConfigWrite, writeRawConfigObject, getServersKey } from "./config-file.ts";
 
 function readProjectOverride(filePath: string): Record<string, unknown> {
   if (!existsSync(filePath)) {
@@ -85,6 +85,18 @@ function projectServerOverrides(
 
 /** Persist only the local disabled field; inherited definitions and credentials remain in their source. */
 export function writeProjectServerDisabledOverride(
+  overridePath: string | undefined,
+  cwd: string,
+  serverName: string,
+  disabled: boolean,
+): ServerDisabledOverrideResult {
+  const filePath = getProjectPiConfigPath(cwd);
+  return withConfigWrite(filePath, () =>
+    updateProjectServerDisabledOverride(overridePath, cwd, serverName, disabled),
+  );
+}
+
+function updateProjectServerDisabledOverride(
   overridePath: string | undefined,
   cwd: string,
   serverName: string,
