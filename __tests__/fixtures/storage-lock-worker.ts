@@ -4,6 +4,7 @@ import { projectMetadataCache } from "../../metadata-cache-format.ts";
 import { saveMetadataCache } from "../../metadata-cache.ts";
 import { saveCacheEntry } from "../../npx-resolution-cache.ts";
 import { writeSharedServerEntry } from "../../config-writes.ts";
+import { updateOnboardingState } from "../../onboarding-state.ts";
 
 function pause(): void {
   writeSync(1, "locked\n");
@@ -65,6 +66,11 @@ if (kind === "import") {
       pause();
       return "external-command";
     },
+  });
+} else if (kind === "onboarding") {
+  updateOnboardingState((state) => {
+    pause();
+    return { ...state, sharedConfigHintShown: true };
   });
 } else {
   throw new Error(`Unknown storage worker kind: ${kind ?? "missing"}`);

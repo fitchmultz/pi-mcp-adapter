@@ -58,6 +58,9 @@ shared by the runtime, CLI and standalone example installers. Do not remove or
 replace that sidecar while a writer is active. A competing write fails before
 changing the config; retry after the other writer finishes. Project scaffolding
 uses exclusive creation and never replaces an existing `.mcp.json`.
+Onboarding state updates use the same transaction boundary and their own
+`mcp-onboarding.json.lock.sqlite` sidecar, so independent setup and hint updates
+cannot overwrite each other's flags.
 
 ## Local checks
 

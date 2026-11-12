@@ -8,6 +8,8 @@ A minimal MCP server example for `@fitchmultz/pi-mcp-adapter` that demonstrates:
 
 ## Install locally
 
+Use the adapter's [Node.js requirements](../../docs/reference.md#requirements), including enabled native SQLite for config-write locking.
+
 ```bash
 cd examples/interactive-visualizer
 npm install
@@ -15,7 +17,7 @@ npm run build
 npm run install-local
 ```
 
-The helper writes only `<Pi agent dir>/fitch-mcp-adapter/mcp.json` (`~/.pi/agent/fitch-mcp-adapter/mcp.json` by default, honoring `PI_CODING_AGENT_DIR`). Restart Pi; `show_chart` will be available via the MCP proxy.
+The helper updates its server entry in `<Pi agent dir>/fitch-mcp-adapter/mcp.json` (`~/.pi/agent/fitch-mcp-adapter/mcp.json` by default, honoring `PI_CODING_AGENT_DIR`). Its persistent `mcp.json.lock.sqlite` sidecar coordinates changes with other adapter writers. A busy writer exits without changing the config; retry after the other writer finishes. Restart Pi; `show_chart` will be available via the MCP proxy.
 
 ## Usage
 

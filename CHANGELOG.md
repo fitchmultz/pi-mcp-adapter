@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retain tool, resource, and prompt updates received while a server is still finishing initial discovery.
 - Wait for app initialization before forwarding ordered UI updates, while keeping slow-loading apps alive with heartbeats.
 - Preserve independent config edits across adapter processes, CLI setup, and the standalone example installers.
+- Keep onboarding hints and setup completion from overwriting each other across processes.
 
 ## 8.0.39 - 2026-11-12
 

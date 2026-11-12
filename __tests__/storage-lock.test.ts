@@ -26,6 +26,7 @@ import {
   writeDirectToolsConfig,
 } from "../config-writes.ts";
 import { writeProjectServerDisabledOverride } from "../config-disabled.ts";
+import { loadOnboardingState, markSetupCompleted } from "../onboarding-state.ts";
 
 let root: string;
 const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -73,6 +74,30 @@ function startWorker(kind: string, argument = "", mode: "read" | "write" = "writ
 }
 
 describe("synchronous storage locking", () => {
+  it("keeps independent onboarding updates when another process has already read the state", async () => {
+    const worker = startWorker("onboarding");
+    try {
+      await worker.ready;
+      expect(() => markSetupCompleted()).toThrow(StorageLockBusyError);
+      expect(loadOnboardingState()).toEqual({
+        version: 1,
+        sharedConfigHintShown: false,
+        setupCompleted: false,
+      });
+      worker.child.stdin.end("x");
+      expect(await worker.exited, worker.stderr()).toEqual([0, null]);
+      markSetupCompleted();
+      expect(loadOnboardingState()).toEqual({
+        version: 1,
+        sharedConfigHintShown: true,
+        setupCompleted: true,
+      });
+    } finally {
+      worker.child.kill("SIGKILL");
+      await worker.exited;
+    }
+  });
+
   it("owns the config read-modify-write window across processes and every override writer", async () => {
     const path = join(root, ".pi", "fitch-mcp-adapter", "mcp.json");
     mkdirSync(join(root, ".pi", "fitch-mcp-adapter"), { recursive: true });
