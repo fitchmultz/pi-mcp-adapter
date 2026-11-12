@@ -46,7 +46,10 @@ describe("Pi agent dir paths", () => {
       join(agentDir, "fitch-mcp-adapter", "mcp-onboarding.json"),
     );
 
-    saveAuthEntry("demo", { tokens: { accessToken: "token" } }, "https://example.com/mcp");
+    saveAuthEntry(
+      { serverName: "demo", serverUrl: "https://example.com/mcp" },
+      { tokens: { accessToken: "token" } },
+    );
     expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
     expect(
       getAuthEntryFilePath("demo").startsWith(join(agentDir, "fitch-mcp-adapter", "mcp-oauth")),
@@ -81,7 +84,10 @@ describe("Pi agent dir paths", () => {
 
     const { getAuthEntryFilePath, saveAuthEntry } = await import("../mcp-auth.ts");
 
-    saveAuthEntry("demo", { tokens: { accessToken: "token" } }, "https://example.com/mcp");
+    saveAuthEntry(
+      { serverName: "demo", serverUrl: "https://example.com/mcp" },
+      { tokens: { accessToken: "token" } },
+    );
     expect(existsSync(getAuthEntryFilePath("demo"))).toBe(false);
     expect(getAuthEntryFilePath("demo").startsWith(oauthDir)).toBe(true);
     expect(existsSync(join(oauthDir, "demo", "tokens.json"))).toBe(false);

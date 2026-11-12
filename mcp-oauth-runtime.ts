@@ -11,6 +11,7 @@ import {
   getOAuthState,
   clearOAuthState,
   type AuthStorageOptions,
+  type AuthIdentity,
 } from "./mcp-auth.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { ServerEntry } from "./types.ts";
@@ -154,34 +155,35 @@ export function pendingAuthState(
  */
 export async function clearPendingAuth(
   runtime: McpOAuthRuntime,
-  serverName: string,
+  identity: AuthIdentity,
   oauthState?: string,
   fallbackStorageOptions: AuthStorageOptions = {},
 ): Promise<void> {
   const state = getRuntimeState(runtime);
+  const { serverName } = identity;
   const key = getPendingAuthKey(serverName, fallbackStorageOptions);
   const pendingAuth = state.pendingAuths.get(key);
   const pendingState = pendingAuth?.callbackState;
   const callerState = oauthState ?? "";
   const callerOwnsPending =
     callerState === "" || pendingState === undefined || pendingState === callerState;
-  if (pendingAuth && callerOwnsPending) {
+  if (pendingAuth && pendingAuth.serverUrl === identity.serverUrl && callerOwnsPending) {
     clearTimeout(pendingAuth.cleanupTimer);
     pendingAuth.authProvider.deactivate();
     state.pendingAuths.delete(key);
     await releaseReservedState(
-      serverName,
+      identity,
       pendingState ?? oauthState,
       pendingAuth.authStorageOptions,
     );
     return;
   }
-  await releaseReservedState(serverName, oauthState, fallbackStorageOptions);
+  await releaseReservedState(identity, oauthState, fallbackStorageOptions);
 }
 
 /** Drop the reserved callback and any stored state that still matches the released flow. */
 async function releaseReservedState(
-  serverName: string,
+  identity: AuthIdentity,
   stateToRelease: string | undefined,
   authStorageOptions: AuthStorageOptions,
 ): Promise<void> {
@@ -189,17 +191,17 @@ async function releaseReservedState(
     return;
   }
   cancelPendingCallback(stateToRelease);
-  await clearMatchingStoredState(serverName, stateToRelease, authStorageOptions);
+  await clearMatchingStoredState(identity, stateToRelease, authStorageOptions);
 }
 
 async function clearMatchingStoredState(
-  serverName: string,
+  identity: AuthIdentity,
   state: string,
   options: AuthStorageOptions,
 ): Promise<void> {
-  const stored = await Promise.resolve(getOAuthState(serverName, options));
+  const stored = await Promise.resolve(getOAuthState(identity, options));
   if (stored === state) {
-    clearOAuthState(serverName, options);
+    clearOAuthState(identity, options);
     await Promise.resolve();
   }
 }
@@ -253,7 +255,7 @@ export async function shutdownOAuth(runtime: McpOAuthRuntime): Promise<void> {
   }
   const results = await Promise.allSettled(
     Array.from(state.pendingAuths.values(), (pendingAuth) =>
-      clearPendingAuth(runtime, pendingAuth.serverName, undefined, pendingAuth.authStorageOptions),
+      clearPendingAuth(runtime, pendingAuth, undefined, pendingAuth.authStorageOptions),
     ),
   );
   const failures: unknown[] = [];

@@ -103,11 +103,20 @@ nodeDescribe("mcp-auth-flow", () => {
 
   nodeDescribe("removeAuth", () => {
     nodeIt("should remove all credentials", async () => {
-      updateTokens("remove-test", { accessToken: "token" });
+      updateTokens(
+        { serverName: "remove-test", serverUrl: "https://api.example.com/mcp" },
+        { accessToken: "token" },
+      );
 
-      await removeAuth("remove-test", { runtime });
+      await removeAuth(
+        { serverName: "remove-test", serverUrl: "https://api.example.com/mcp" },
+        { runtime },
+      );
 
-      assert.strictEqual(getAuthEntry("remove-test"), undefined);
+      assert.strictEqual(
+        getAuthEntry({ serverName: "remove-test", serverUrl: "https://api.example.com/mcp" }),
+        undefined,
+      );
     });
   });
 

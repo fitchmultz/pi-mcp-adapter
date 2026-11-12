@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { getAdapterPath, getAgentPath } from "./agent-dir.ts";
 import { getProjectPiConfigPath, loadMcpConfig, resolveConfiguredOAuthDir } from "./config.ts";
-import { migrateLegacyAuthEntry } from "./mcp-auth.ts";
+import { getAuthStorageOptions, migrateLegacyAuthEntry } from "./mcp-auth.ts";
+import { resolveServerUrl } from "./utils.ts";
 
 interface FileMigration {
   source: string;
@@ -10,7 +11,7 @@ interface FileMigration {
   status: "absent" | "existing" | "would-copy" | "copied";
 }
 
-/** Run explicitly before starting v5. Never overwrite a destination or remove a source. */
+/** Preserve historical sources and existing destinations; consume current OAuth sources only after verified promotion. */
 export function migrateLegacyState({
   cwd = process.cwd(),
   dryRun = false,
@@ -69,11 +70,20 @@ function migrateLegacyCredentials(
     envLegacyDirectory !== undefined && envLegacyDirectory !== ""
       ? envLegacyDirectory
       : (resolveConfiguredOAuthDir(config.settings?.oauthDir, cwd) ?? getAgentPath("mcp-oauth"));
+  const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
   for (const [server, definition] of Object.entries(config.mcpServers)) {
-    if (typeof definition.url !== "string") {
+    const serverUrl = resolveServerUrl(definition);
+    if (serverUrl === undefined) {
       continue;
     }
-    credentials.push({ server, status: migrateLegacyAuthEntry(server, legacyDirectory) });
+    credentials.push({
+      server,
+      status: migrateLegacyAuthEntry(
+        { serverName: server, serverUrl },
+        legacyDirectory,
+        authStorageOptions,
+      ),
+    });
   }
   return credentials;
 }

@@ -235,7 +235,7 @@ describe("McpOAuthProvider addClientAuthentication", () => {
       }),
     ).rejects.toThrow("OAuth flow is no longer active");
 
-    expect(getAuthForUrl("inactive-client-info", serverUrl)).toBeUndefined();
+    expect(getAuthForUrl({ serverName: "inactive-client-info", serverUrl })).toBeUndefined();
   });
 });
 
@@ -260,7 +260,7 @@ describe("McpOAuthProvider discovery state", () => {
 
   it("back-stamps legacy client information and tokens with the discovered issuer", async () => {
     saveAuthEntry(
-      "legacy-binding",
+      { serverName: "legacy-binding", serverUrl },
       {
         clientInfo: {
           clientId: "legacy-client",
@@ -273,7 +273,6 @@ describe("McpOAuthProvider discovery state", () => {
         },
         serverUrl,
       },
-      serverUrl,
     );
     const provider = new McpOAuthProvider({
       serverName: "legacy-binding",
@@ -304,7 +303,7 @@ describe("McpOAuthProvider discovery state", () => {
       access_token: "legacy-access",
       issuer: "https://auth.example.com",
     });
-    expect(getAuthForUrl("legacy-binding", serverUrl)).toMatchObject({
+    expect(getAuthForUrl({ serverName: "legacy-binding", serverUrl })).toMatchObject({
       clientInfo: { issuer: "https://auth.example.com" },
       tokens: { issuer: "https://auth.example.com" },
     });
@@ -312,7 +311,7 @@ describe("McpOAuthProvider discovery state", () => {
 
   it("rejects stored credentials when the issuer changes before refresh", async () => {
     saveAuthEntry(
-      "changed-issuer",
+      { serverName: "changed-issuer", serverUrl },
       {
         clientInfo: {
           clientId: "bound-client",
@@ -327,7 +326,6 @@ describe("McpOAuthProvider discovery state", () => {
         },
         serverUrl,
       },
-      serverUrl,
     );
     const provider = new McpOAuthProvider({
       serverName: "changed-issuer",
@@ -360,7 +358,7 @@ describe("McpOAuthProvider discovery state", () => {
 
   it("does not stamp unbound tokens when client information has a different issuer", async () => {
     saveAuthEntry(
-      "partial-client-binding",
+      { serverName: "partial-client-binding", serverUrl },
       {
         clientInfo: {
           clientId: "bound-client",
@@ -371,7 +369,6 @@ describe("McpOAuthProvider discovery state", () => {
         tokens: { accessToken: "legacy-access", refreshToken: "legacy-refresh" },
         serverUrl,
       },
-      serverUrl,
     );
     const provider = new McpOAuthProvider({
       serverName: "partial-client-binding",
@@ -388,12 +385,14 @@ describe("McpOAuthProvider discovery state", () => {
     await expect(provider.tokens()).rejects.toThrow(
       "clear credentials before authenticating again",
     );
-    expect(getAuthForUrl("partial-client-binding", serverUrl)?.tokens?.issuer).toBeUndefined();
+    expect(
+      getAuthForUrl({ serverName: "partial-client-binding", serverUrl })?.tokens?.issuer,
+    ).toBeUndefined();
   });
 
   it("does not stamp unbound client information when tokens have a different issuer", async () => {
     saveAuthEntry(
-      "partial-token-binding",
+      { serverName: "partial-token-binding", serverUrl },
       {
         clientInfo: {
           clientId: "legacy-client",
@@ -407,7 +406,6 @@ describe("McpOAuthProvider discovery state", () => {
         },
         serverUrl,
       },
-      serverUrl,
     );
     const provider = new McpOAuthProvider({
       serverName: "partial-token-binding",
@@ -424,7 +422,9 @@ describe("McpOAuthProvider discovery state", () => {
     await expect(provider.clientInformation()).rejects.toThrow(
       "clear credentials before authenticating again",
     );
-    expect(getAuthForUrl("partial-token-binding", serverUrl)?.clientInfo?.issuer).toBeUndefined();
+    expect(
+      getAuthForUrl({ serverName: "partial-token-binding", serverUrl })?.clientInfo?.issuer,
+    ).toBeUndefined();
   });
 
   it("persists a pre-registered issuer binding without the config secret", async () => {
@@ -453,7 +453,7 @@ describe("McpOAuthProvider discovery state", () => {
       client_secret: "config-secret",
       issuer: "https://auth.example.com",
     });
-    expect(getAuthForUrl("pre-registered-binding", serverUrl)?.clientInfo).toEqual({
+    expect(getAuthForUrl({ serverName: "pre-registered-binding", serverUrl })?.clientInfo).toEqual({
       clientId: "config-client",
       issuer: "https://auth.example.com",
       configPreRegistered: true,
@@ -462,7 +462,7 @@ describe("McpOAuthProvider discovery state", () => {
 
   it("fails closed when a pre-registered client issuer changes", async () => {
     saveAuthEntry(
-      "pre-registered-issuer-change",
+      { serverName: "pre-registered-issuer-change", serverUrl },
       {
         clientInfo: {
           clientId: "config-client",
@@ -471,7 +471,6 @@ describe("McpOAuthProvider discovery state", () => {
         },
         serverUrl,
       },
-      serverUrl,
     );
     const provider = new McpOAuthProvider({
       serverName: "pre-registered-issuer-change",
@@ -496,9 +495,9 @@ describe("McpOAuthProvider discovery state", () => {
     await expect(provider.clientInformation()).rejects.toThrow(
       "clear credentials before authenticating again",
     );
-    expect(getAuthForUrl("pre-registered-issuer-change", serverUrl)?.clientInfo?.issuer).toBe(
-      "https://old-auth.example.com",
-    );
+    expect(
+      getAuthForUrl({ serverName: "pre-registered-issuer-change", serverUrl })?.clientInfo?.issuer,
+    ).toBe("https://old-auth.example.com");
   });
 
   it("round-trips callback-leg discovery state and invalidates it independently", async () => {
@@ -632,12 +631,11 @@ describe("McpOAuthProvider authorization fallback", () => {
   it("throws before redirecting when only stale URL-bound state exists", async () => {
     let redirected = false;
     saveAuthEntry(
-      "redirect-stale-url",
+      { serverName: "redirect-stale-url", serverUrl: "https://old.example.com/mcp" },
       {
         oauthState: "state-abc",
         serverUrl: "https://old.example.com/mcp",
       },
-      "https://old.example.com/mcp",
     );
     const provider = new McpOAuthProvider({
       serverName: "redirect-stale-url",

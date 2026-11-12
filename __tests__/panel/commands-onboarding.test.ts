@@ -286,15 +286,63 @@ describe("commands onboarding", () => {
     },
   );
 
+  it.each(["https://${FITCH_LOGOUT_HOST}/mcp", "https://$env:FITCH_LOGOUT_HOST/mcp"])(
+    "logs out the resolved URL without clearing another URL: %s",
+    async (url) => {
+      vi.stubEnv("FITCH_LOGOUT_HOST", "resolved.example.com");
+      vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-resolved-logout-"));
+      const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");
+      const { logoutServer } = await import("../../commands.ts");
+      const identity = {
+        serverName: "interpolated",
+        serverUrl: "https://resolved.example.com/mcp",
+      };
+      const other = { ...identity, serverUrl: identity.serverUrl + "/" };
+      saveAuthEntry(identity, { tokens: { accessToken: "resolved-token" } });
+      saveAuthEntry(other, { tokens: { accessToken: "other-token" } });
+      const state = await createState({
+        config: { mcpServers: { interpolated: { url, auth: "oauth" } } },
+      });
+      expect((await logoutServer("interpolated", state, host.context)).ok).toBe(true);
+      expect(getAuthEntry(identity)).toBeUndefined();
+      expect(getAuthEntry(other)?.tokens?.accessToken).toBe("other-token");
+    },
+  );
+
+  it.each([undefined, "https://${FITCH_MISSING_LOGOUT_HOST}/mcp"])(
+    "reports logout failure without a resolvable URL: %s",
+    async (url) => {
+      vi.stubEnv("FITCH_MISSING_LOGOUT_HOST", "");
+      delete process.env.FITCH_MISSING_LOGOUT_HOST;
+      vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-unresolved-logout-"));
+      const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");
+      const { logoutServer } = await import("../../commands.ts");
+      const identity = { serverName: "unresolved", serverUrl: "https://preserved.example.com/mcp" };
+      saveAuthEntry(identity, { tokens: { accessToken: "preserved-token" } });
+      const state = await createState({
+        config: {
+          mcpServers: { unresolved: { ...(url === undefined ? {} : { url }), auth: "oauth" } },
+        },
+      });
+      const result = await logoutServer("unresolved", state, host.context);
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/URL/);
+      expect(getAuthEntry(identity)?.tokens?.accessToken).toBe("preserved-token");
+      expect(host.context.ui.notify).not.toHaveBeenCalledWith(
+        expect.stringContaining("OAuth credentials cleared"),
+        "info",
+      );
+    },
+  );
+
   it("clears OAuth credentials, cancels pending auth, and closes the server on logout", async () => {
     vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-commands-logout-"));
     const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");
     const { waitForCallback } = await import("../../mcp-callback-server.ts");
     const { logoutServer } = await import("../../commands.ts");
     saveAuthEntry(
-      "oauth-server",
+      { serverName: "oauth-server", serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken: "token", refreshToken: "refresh" }, oauthState: "pending-state" },
-      "https://example.com/mcp",
     );
     const pendingCallback = waitForCallback("pending-state");
     const state = await createState({
@@ -306,7 +354,9 @@ describe("commands onboarding", () => {
       logoutServer("oauth-server", state, { ...host.context, cwd: process.cwd() }),
     ]);
     expect(result.ok).toBe(true);
-    expect(getAuthEntry("oauth-server")).toBeUndefined();
+    expect(
+      getAuthEntry({ serverName: "oauth-server", serverUrl: "https://example.com/mcp" }),
+    ).toBeUndefined();
     expect(close).toHaveBeenCalledWith("oauth-server");
     expect(host.context.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("OAuth credentials cleared"),
@@ -318,8 +368,14 @@ describe("commands onboarding", () => {
     vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-commands-oauth-"));
     const { updateTokens } = await import("../../mcp-auth.ts");
     const { openMcpPanel } = await import("../../commands.ts");
-    updateTokens("legacy", { accessToken: "legacy-token" });
-    updateTokens("stale", { accessToken: "stale-token" }, "https://old.example.com/mcp");
+    updateTokens(
+      { serverName: "legacy", serverUrl: "https://api.example.com/mcp" },
+      { accessToken: "legacy-token" },
+    );
+    updateTokens(
+      { serverName: "stale", serverUrl: "https://old.example.com/mcp" },
+      { accessToken: "stale-token" },
+    );
     await openMcpPanel({
       state: await createState({
         config: {
@@ -340,7 +396,10 @@ describe("commands onboarding", () => {
   it("panel reconnect force-clears stale needs-auth state", async () => {
     vi.stubEnv("HOME", temporaryDirectory("pi-mcp-commands-reconnect-"));
     const { updateTokens } = await import("../../mcp-auth.ts");
-    updateTokens("notion", { accessToken: "token" }, "https://mcp.notion.com/mcp");
+    updateTokens(
+      { serverName: "notion", serverUrl: "https://mcp.notion.com/mcp" },
+      { accessToken: "token" },
+    );
     const definition = { url: "https://mcp.notion.com/mcp", auth: "oauth" } as const;
     const client = new Client({ name: "panel-test", version: "1" });
     let currentConnection: ServerConnection | undefined = {

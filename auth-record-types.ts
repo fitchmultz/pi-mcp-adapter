@@ -49,6 +49,12 @@ export function isAuthEntry(value: unknown): value is AuthEntry {
   return schemas.entry.safeParse(value).success;
 }
 
+/** Credentials belong to one configured name and exact, unnormalized URL. */
+export interface AuthIdentity {
+  readonly serverName: string;
+  readonly serverUrl: string;
+}
+
 export interface AuthStorageOptions {
   /** Legacy plaintext import directory. Persistent secrets no longer use this as their store. */
   baseDir?: string;

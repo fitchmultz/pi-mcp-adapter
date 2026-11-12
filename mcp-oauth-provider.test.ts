@@ -21,7 +21,7 @@ import {
   setOAuthCallbackPort,
   type McpOAuthConfig,
 } from "./mcp-oauth-provider.ts";
-import { getAuthForUrl, saveAuthEntry } from "./mcp-auth.ts";
+import { clearAllCredentials, getAuthForUrl, saveAuthEntry } from "./mcp-auth.ts";
 import {
   UnauthorizedError,
   type OAuthClientInformationFull,
@@ -163,7 +163,7 @@ nodeDescribe("McpOAuthProvider", () => {
 
       // Save client info directly
       saveAuthEntry(
-        serverName,
+        { serverName, serverUrl },
         {
           clientInfo: {
             clientId: "stored-client",
@@ -173,7 +173,6 @@ nodeDescribe("McpOAuthProvider", () => {
           },
           serverUrl,
         },
-        serverUrl,
       );
 
       const info = await provider.clientInformation();
@@ -182,11 +181,12 @@ nodeDescribe("McpOAuthProvider", () => {
     });
 
     nodeIt("should return undefined when URL doesn't match", async () => {
+      clearAllCredentials({ serverName, serverUrl });
       const provider = createProvider();
 
       // Save client info with different URL
       saveAuthEntry(
-        serverName,
+        { serverName, serverUrl: "https://different.com" },
         {
           clientInfo: {
             clientId: "stored-client",
@@ -194,7 +194,6 @@ nodeDescribe("McpOAuthProvider", () => {
           },
           serverUrl: "https://different.com",
         },
-        "https://different.com",
       );
 
       const info = await provider.clientInformation();
@@ -206,7 +205,7 @@ nodeDescribe("McpOAuthProvider", () => {
 
       // Save client info with expired secret
       saveAuthEntry(
-        serverName,
+        { serverName, serverUrl },
         {
           clientInfo: {
             clientId: "stored-client",
@@ -215,7 +214,6 @@ nodeDescribe("McpOAuthProvider", () => {
           },
           serverUrl,
         },
-        serverUrl,
       );
 
       const info = await provider.clientInformation();
@@ -229,7 +227,7 @@ nodeDescribe("McpOAuthProvider", () => {
         // (SEP-2352 stamp-and-resave): {clientId, issuer} with the marker.
         const provider = createProvider();
         saveAuthEntry(
-          serverName,
+          { serverName, serverUrl },
           {
             clientInfo: {
               clientId: "config-client",
@@ -238,7 +236,6 @@ nodeDescribe("McpOAuthProvider", () => {
             },
             serverUrl,
           },
-          serverUrl,
         );
 
         assert.strictEqual(await provider.clientInformation(), undefined);
@@ -250,7 +247,7 @@ nodeDescribe("McpOAuthProvider", () => {
       async () => {
         const provider = createProvider();
         saveAuthEntry(
-          serverName,
+          { serverName, serverUrl },
           {
             clientInfo: {
               clientId: "config-client",
@@ -258,7 +255,6 @@ nodeDescribe("McpOAuthProvider", () => {
             },
             serverUrl,
           },
-          serverUrl,
         );
 
         assert.strictEqual(await provider.clientInformation(), undefined);
@@ -270,7 +266,7 @@ nodeDescribe("McpOAuthProvider", () => {
       async () => {
         const provider = createProvider();
         saveAuthEntry(
-          serverName,
+          { serverName, serverUrl },
           {
             clientInfo: {
               clientId: "public-client",
@@ -279,7 +275,6 @@ nodeDescribe("McpOAuthProvider", () => {
             },
             serverUrl,
           },
-          serverUrl,
         );
 
         const info = await provider.clientInformation();
@@ -293,7 +288,7 @@ nodeDescribe("McpOAuthProvider", () => {
 
       // Save different client info
       saveAuthEntry(
-        serverName,
+        { serverName, serverUrl },
         {
           clientInfo: {
             clientId: "stored-client",
@@ -301,7 +296,6 @@ nodeDescribe("McpOAuthProvider", () => {
           },
           serverUrl,
         },
-        serverUrl,
       );
 
       const info = await provider.clientInformation();
@@ -326,7 +320,7 @@ nodeDescribe("McpOAuthProvider", () => {
       const storedInfo = await provider.clientInformation();
       assert.strictEqual(storedInfo?.client_id, "new-client");
       assert.strictEqual(storedInfo.client_secret, "new-secret");
-      assert.deepStrictEqual(getAuthForUrl(serverName, serverUrl)?.clientInfo?.redirectUris, [
+      assert.deepStrictEqual(getAuthForUrl({ serverName, serverUrl })?.clientInfo?.redirectUris, [
         "http://localhost:3118/callback",
       ]);
     });
@@ -351,7 +345,7 @@ nodeDescribe("McpOAuthProvider", () => {
         });
 
         assert.deepStrictEqual(
-          getAuthForUrl("redirect-fallback", serverUrl)?.clientInfo?.redirectUris,
+          getAuthForUrl({ serverName: "redirect-fallback", serverUrl })?.clientInfo?.redirectUris,
           ["http://localhost:3118/custom"],
         );
       },
@@ -371,7 +365,7 @@ nodeDescribe("McpOAuthProvider", () => {
           },
         });
         saveAuthEntry(
-          "stale-redirect-client",
+          { serverName: "stale-redirect-client", serverUrl },
           {
             clientInfo: {
               clientId: "stored-client",
@@ -380,7 +374,6 @@ nodeDescribe("McpOAuthProvider", () => {
             },
             serverUrl,
           },
-          serverUrl,
         );
 
         const info = await provider.clientInformation();
@@ -425,18 +418,18 @@ nodeDescribe("McpOAuthProvider", () => {
     });
 
     nodeIt("should return undefined when URL doesn't match", async () => {
+      clearAllCredentials({ serverName, serverUrl });
       const provider = createProvider();
 
       // Save tokens with different URL
       saveAuthEntry(
-        serverName,
+        { serverName, serverUrl: "https://different.com" },
         {
           tokens: {
             accessToken: "token",
           },
           serverUrl: "https://different.com",
         },
-        "https://different.com",
       );
 
       const stored = await provider.tokens();
@@ -500,12 +493,11 @@ nodeDescribe("McpOAuthProvider", () => {
           },
         });
         saveAuthEntry(
-          "redirect-url-bound",
+          { serverName: "redirect-url-bound", serverUrl: "https://different.example.com" },
           {
             oauthState: "stale-state",
             serverUrl: "https://different.example.com",
           },
-          "https://different.example.com",
         );
 
         await assert.rejects(
@@ -535,7 +527,7 @@ nodeDescribe("McpOAuthProvider", () => {
 
       const verifier = await provider.codeVerifier();
       assert.strictEqual(verifier, "verifier-abc-123");
-      assert.strictEqual(getAuthForUrl("code-verifier-test", serverUrl), undefined);
+      assert.strictEqual(getAuthForUrl({ serverName: "code-verifier-test", serverUrl }), undefined);
     });
 
     nodeIt("should throw when no code verifier", async () => {
@@ -565,12 +557,11 @@ nodeDescribe("McpOAuthProvider", () => {
         },
       });
       saveAuthEntry(
-        "code-verifier-url-bound",
+        { serverName: "code-verifier-url-bound", serverUrl: "https://different.example.com" },
         {
           codeVerifier: "stale-verifier",
           serverUrl: "https://different.example.com",
         },
-        "https://different.example.com",
       );
 
       await assert.rejects(async () => provider.codeVerifier(), /No code verifier saved/);
@@ -594,7 +585,7 @@ nodeDescribe("McpOAuthProvider", () => {
 
       const state = await provider.state();
       assert.strictEqual(state, "state-xyz-789");
-      assert.strictEqual(getAuthForUrl("state-test-save", serverUrl), undefined);
+      assert.strictEqual(getAuthForUrl({ serverName: "state-test-save", serverUrl }), undefined);
     });
 
     nodeIt("should throw UnauthorizedError when no state is saved", async () => {
@@ -628,12 +619,11 @@ nodeDescribe("McpOAuthProvider", () => {
         },
       });
       saveAuthEntry(
-        "state-url-bound",
+        { serverName: "state-url-bound", serverUrl: "https://different.example.com" },
         {
           oauthState: "stale-state",
           serverUrl: "https://different.example.com",
         },
-        "https://different.example.com",
       );
 
       await assert.rejects(

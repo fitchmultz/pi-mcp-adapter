@@ -337,7 +337,7 @@ async function fixture(config: SigningFixtureConfig = {}, pair = key()) {
   origin = await server.listen();
   const definition: ServerEntry & { url: string } = { url: `${origin}/mcp`, auth: "oauth", oauth };
   const start = () => startAuth(name, definition.url, definition, { runtime });
-  const stored = () => getAuthForUrl(name, definition.url);
+  const stored = () => getAuthForUrl({ serverName: name, serverUrl: definition.url });
   cleanups.push(async () => {
     const testName = expect.getState().currentTestName;
     if (process.env.JWT_PROOF_FILE !== undefined) {
@@ -363,7 +363,7 @@ async function fixture(config: SigningFixtureConfig = {}, pair = key()) {
     }
     await manager.closeAll();
     await shutdownOAuth(runtime);
-    clearAllCredentials(name);
+    clearAllCredentials({ serverName: name, serverUrl: definition.url });
     await server.close();
   });
   if (oauth.grantType === "authorization_code" && oauth.redirectUri === undefined) {
@@ -662,7 +662,7 @@ it.each(["client", "tokens"])(
       skipIssuerMetadataValidation: true,
     });
     saveAuthEntry(
-      f.name,
+      { serverName: f.name, serverUrl: f.definition.url },
       {
         clientInfo: {
           clientId: f.id,
@@ -675,7 +675,6 @@ it.each(["client", "tokens"])(
           issuer: binding === "tokens" ? "https://old.example" : f.origin,
         },
       },
-      f.definition.url,
     );
     const before = f.stored();
     await expect(f.start()).rejects.toThrow("issuer changed");
@@ -1093,12 +1092,11 @@ it.each(["configured", "opaque-dcr"])(
     if (kind === "opaque-dcr") {
       delete f.oauth.clientId;
       saveAuthEntry(
-        f.name,
+        { serverName: f.name, serverUrl: f.definition.url },
         {
           clientInfo: { clientId: f.id, issuer: f.origin, redirectUris: [] },
           tokens: { accessToken: "old", issuer: f.origin },
         },
-        f.definition.url,
       );
     }
     expect(await f.start()).toEqual({ authorizationUrl: "" });
@@ -1117,7 +1115,7 @@ it.each(["shared", "secret"])(
       privateKeyJwt: { privateKey: `!touch '${marker}'; printf sentinel`, algorithm: "ES256" },
     });
     saveAuthEntry(
-      f.name,
+      { serverName: f.name, serverUrl: f.definition.url },
       {
         clientInfo: {
           clientId: kind === "shared" ? sharedDocument.client_id : "stored",
@@ -1129,7 +1127,6 @@ it.each(["shared", "secret"])(
         },
         tokens: { accessToken: "old", issuer: f.origin },
       },
-      f.definition.url,
     );
     const before = f.stored();
     await expect(f.start()).rejects.toThrow(/privateKeyJwt/);

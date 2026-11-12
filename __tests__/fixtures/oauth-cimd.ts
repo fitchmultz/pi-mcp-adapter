@@ -160,7 +160,7 @@ export class CimdFixture {
   }
 
   stored(): ReturnType<typeof getAuthForUrl> {
-    return getAuthForUrl(this.name, this.definition.url);
+    return getAuthForUrl({ serverName: this.name, serverUrl: this.definition.url });
   }
 
   login(): ReturnType<typeof authenticate> {
@@ -221,7 +221,7 @@ export class CimdFixture {
     }
     await this.manager.closeAll();
     await shutdownOAuth(this.#runtime);
-    clearAllCredentials(this.name);
+    clearAllCredentials({ serverName: this.name, serverUrl: this.definition.url });
     await this.#http.close();
   }
 

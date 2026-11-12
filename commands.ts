@@ -199,7 +199,7 @@ function inspectPanelCredentials(
   serverUrl: string,
   authStatusFailures: Map<string, string>,
 ): ReturnType<McpPanelCallbacks["getConnectionStatus"]> | undefined {
-  const authStatus = inspectAuthForUrl(serverName, serverUrl, state.authStorageOptions);
+  const authStatus = inspectAuthForUrl({ serverName, serverUrl }, state.authStorageOptions);
   if (authStatus.status === "unavailable") {
     authStatusFailures.set(serverName, authStatus.message);
     return "failed";

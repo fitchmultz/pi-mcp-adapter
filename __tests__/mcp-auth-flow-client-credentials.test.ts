@@ -292,13 +292,12 @@ describe("mcp-auth-flow explicit auth", () => {
     const { getAuthForUrl, saveAuthEntry } = await import("../mcp-auth.ts");
 
     saveAuthEntry(
-      "stale-client-credentials",
+      { serverName: "stale-client-credentials", serverUrl: "https://api.example.com/mcp" },
       {
         clientInfo: { clientId: "stale-client" },
         codeVerifier: "stale-verifier",
         oauthState: "stale-state",
       },
-      "https://api.example.com/mcp",
     );
 
     const status = await authenticate(
@@ -313,7 +312,10 @@ describe("mcp-auth-flow explicit auth", () => {
     );
 
     expect(status).toBe("authenticated");
-    const stored = getAuthForUrl("stale-client-credentials", "https://api.example.com/mcp");
+    const stored = getAuthForUrl({
+      serverName: "stale-client-credentials",
+      serverUrl: "https://api.example.com/mcp",
+    });
     expect(stored?.clientInfo?.clientId).toBe("fresh-service-client");
     expect(stored?.tokens?.accessToken).toBe("service-access");
     expect(stored?.codeVerifier).toBeUndefined();
@@ -368,18 +370,16 @@ describe("mcp-auth-flow explicit auth", () => {
     const { getOAuthState, updateClientInfo, updateTokens } = await import("../mcp-auth.ts");
 
     updateClientInfo(
-      "expired",
+      { serverName: "expired", serverUrl: "https://api.example.com/mcp" },
       { clientId: "client", redirectUris: ["http://localhost:19876/callback"] },
-      "https://api.example.com/mcp",
     );
     updateTokens(
-      "expired",
+      { serverName: "expired", serverUrl: "https://api.example.com/mcp" },
       {
         accessToken: "old-access",
         refreshToken: "old-refresh",
         expiresAt: Date.now() / 1000 - 60,
       },
-      "https://api.example.com/mcp",
     );
 
     const status = await authenticate(
@@ -397,7 +397,9 @@ describe("mcp-auth-flow explicit auth", () => {
     const callbackBinding = mocks.ensureCallbackServer.mock.calls[0]?.[0];
     expect(callbackBinding).toMatchObject({ strictPort: false, reserveState: true });
     expect(callbackBinding?.oauthState).toBeTypeOf("string");
-    expect(getOAuthState("expired")).toBeUndefined();
+    expect(
+      getOAuthState({ serverName: "expired", serverUrl: "https://api.example.com/mcp" }),
+    ).toBeUndefined();
   });
 
   it("re-registers dynamic OAuth clients when only stale client info is stored", async () => {
@@ -416,13 +418,12 @@ describe("mcp-auth-flow explicit auth", () => {
     const { getAuthForUrl, getOAuthState, saveAuthEntry } = await import("../mcp-auth.ts");
 
     saveAuthEntry(
-      "stale",
+      { serverName: "stale", serverUrl: "https://api.example.com/mcp" },
       {
         clientInfo: { clientId: "stale-client" },
         codeVerifier: "old-verifier",
         oauthState: "old-state",
       },
-      "https://api.example.com/mcp",
     );
 
     const result = await startAuth(
@@ -436,10 +437,12 @@ describe("mcp-auth-flow explicit auth", () => {
     );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
-    const stored = getAuthForUrl("stale", "https://api.example.com/mcp");
+    const stored = getAuthForUrl({ serverName: "stale", serverUrl: "https://api.example.com/mcp" });
     expect(stored?.clientInfo?.clientId).toBe("fresh-client");
     expect(stored?.codeVerifier).toBeUndefined();
-    expect(getOAuthState("stale")).not.toBe("old-state");
+    expect(
+      getOAuthState({ serverName: "stale", serverUrl: "https://api.example.com/mcp" }),
+    ).not.toBe("old-state");
   });
 
   it("keeps same-name pending OAuth flows isolated while sharing secure-store credentials by server name", async () => {
@@ -487,8 +490,18 @@ describe("mcp-auth-flow explicit auth", () => {
       { authStorageOptions: authStorageOptionsB, runtime: runtimeB },
     );
 
-    expect(getOAuthState("shared", authStorageOptionsA)).toBeUndefined();
-    expect(getOAuthState("shared", authStorageOptionsB)).toBeUndefined();
+    expect(
+      getOAuthState(
+        { serverName: "shared", serverUrl: "https://api.example.com/mcp" },
+        authStorageOptionsA,
+      ),
+    ).toBeUndefined();
+    expect(
+      getOAuthState(
+        { serverName: "shared", serverUrl: "https://api.example.com/mcp" },
+        authStorageOptionsB,
+      ),
+    ).toBeUndefined();
 
     await completeAuthFromInput("shared", "code-b", {
       authStorageOptions: authStorageOptionsB,
@@ -496,12 +509,16 @@ describe("mcp-auth-flow explicit auth", () => {
     });
 
     expect(
-      getAuthForUrl("shared", "https://api.example.com/mcp", authStorageOptionsA)?.tokens
-        ?.accessToken,
+      getAuthForUrl(
+        { serverName: "shared", serverUrl: "https://api.example.com/mcp" },
+        authStorageOptionsA,
+      )?.tokens?.accessToken,
     ).toBe("token-b");
     expect(
-      getAuthForUrl("shared", "https://api.example.com/mcp", authStorageOptionsB)?.tokens
-        ?.accessToken,
+      getAuthForUrl(
+        { serverName: "shared", serverUrl: "https://api.example.com/mcp" },
+        authStorageOptionsB,
+      )?.tokens?.accessToken,
     ).toBe("token-b");
     await shutdownOAuth(runtimeA);
     await shutdownOAuth(runtimeB);
@@ -524,18 +541,16 @@ describe("mcp-auth-flow explicit auth", () => {
     const { getAuthForUrl, updateClientInfo, updateTokens } = await import("../mcp-auth.ts");
 
     updateClientInfo(
-      "tokened",
+      { serverName: "tokened", serverUrl: "https://api.example.com/mcp" },
       {
         clientId: "stored-client",
         clientSecret: "stored-secret",
         redirectUris: ["http://localhost:19876/callback"],
       },
-      "https://api.example.com/mcp",
     );
     updateTokens(
-      "tokened",
+      { serverName: "tokened", serverUrl: "https://api.example.com/mcp" },
       { accessToken: "access", refreshToken: "refresh" },
-      "https://api.example.com/mcp",
     );
 
     await startAuth(
@@ -548,9 +563,10 @@ describe("mcp-auth-flow explicit auth", () => {
       { runtime },
     );
 
-    expect(getAuthForUrl("tokened", "https://api.example.com/mcp")?.clientInfo?.clientId).toBe(
-      "stored-client",
-    );
+    expect(
+      getAuthForUrl({ serverName: "tokened", serverUrl: "https://api.example.com/mcp" })?.clientInfo
+        ?.clientId,
+    ).toBe("stored-client");
   });
 
   it("re-registers dynamic OAuth clients when cached redirect URIs are stale", async () => {
@@ -569,7 +585,7 @@ describe("mcp-auth-flow explicit auth", () => {
     const { getAuthForUrl, saveAuthEntry } = await import("../mcp-auth.ts");
 
     saveAuthEntry(
-      "stale-redirect",
+      { serverName: "stale-redirect", serverUrl: "https://api.example.com/mcp" },
       {
         clientInfo: {
           clientId: "stale-client",
@@ -580,7 +596,6 @@ describe("mcp-auth-flow explicit auth", () => {
         codeVerifier: "old-verifier",
         oauthState: "old-state",
       },
-      "https://api.example.com/mcp",
     );
 
     const result = await startAuth(
@@ -595,7 +610,10 @@ describe("mcp-auth-flow explicit auth", () => {
     );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
-    const stored = getAuthForUrl("stale-redirect", "https://api.example.com/mcp");
+    const stored = getAuthForUrl({
+      serverName: "stale-redirect",
+      serverUrl: "https://api.example.com/mcp",
+    });
     expect(stored?.clientInfo?.clientId).toBe("fresh-client");
     expect(stored?.clientInfo?.redirectUris).toEqual(["http://localhost:3118/callback"]);
     expect(stored?.tokens).toBeUndefined();
@@ -628,17 +646,15 @@ describe("mcp-auth-flow explicit auth", () => {
     const { getAuthForUrl, updateClientInfo, updateTokens } = await import("../mcp-auth.ts");
 
     updateClientInfo(
-      "missing-redirect-metadata",
+      { serverName: "missing-redirect-metadata", serverUrl: "https://api.example.com/mcp" },
       {
         clientId: "legacy-client",
         clientSecret: "legacy-secret",
       },
-      "https://api.example.com/mcp",
     );
     updateTokens(
-      "missing-redirect-metadata",
+      { serverName: "missing-redirect-metadata", serverUrl: "https://api.example.com/mcp" },
       { accessToken: "old-access", refreshToken: "old-refresh" },
-      "https://api.example.com/mcp",
     );
 
     const result = await startAuth(
@@ -652,7 +668,10 @@ describe("mcp-auth-flow explicit auth", () => {
     );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
-    const stored = getAuthForUrl("missing-redirect-metadata", "https://api.example.com/mcp");
+    const stored = getAuthForUrl({
+      serverName: "missing-redirect-metadata",
+      serverUrl: "https://api.example.com/mcp",
+    });
     expect(stored?.clientInfo?.clientId).toBe("fresh-client");
     expect(stored?.clientInfo?.redirectUris).toEqual(["http://localhost:19876/callback"]);
     expect(stored?.tokens).toBeUndefined();
@@ -698,7 +717,10 @@ describe("mcp-auth-flow explicit auth", () => {
     );
 
     expect(result.authorizationUrl).toBe("https://auth.example.com/authorize");
-    const stored = getAuthForUrl("malformed-redirect-metadata", "https://api.example.com/mcp");
+    const stored = getAuthForUrl({
+      serverName: "malformed-redirect-metadata",
+      serverUrl: "https://api.example.com/mcp",
+    });
     expect(stored?.clientInfo?.clientId).toBe("fresh-client");
     expect(stored?.clientInfo?.redirectUris).toEqual(["http://localhost:19876/callback"]);
     expect(stored?.tokens).toBeUndefined();
@@ -718,9 +740,8 @@ describe("mcp-auth-flow explicit auth", () => {
     const { getAuthForUrl, updateClientInfo } = await import("../mcp-auth.ts");
 
     updateClientInfo(
-      "registered",
+      { serverName: "registered", serverUrl: "https://api.example.com/mcp" },
       { clientId: "stored-dynamic-client" },
-      "https://api.example.com/mcp",
     );
 
     await startAuth(
@@ -734,9 +755,10 @@ describe("mcp-auth-flow explicit auth", () => {
       { runtime },
     );
 
-    expect(getAuthForUrl("registered", "https://api.example.com/mcp")?.clientInfo?.clientId).toBe(
-      "stored-dynamic-client",
-    );
+    expect(
+      getAuthForUrl({ serverName: "registered", serverUrl: "https://api.example.com/mcp" })
+        ?.clientInfo?.clientId,
+    ).toBe("stored-dynamic-client");
     const callbackBinding = mocks.ensureCallbackServer.mock.calls[0]?.[0];
     expect(callbackBinding).toMatchObject({ strictPort: true, reserveState: true });
     expect(callbackBinding?.oauthState).toBeTypeOf("string");
@@ -772,7 +794,9 @@ describe("mcp-auth-flow explicit auth", () => {
     const callbackCall = mocks.waitForCallback.mock.calls[0];
     assert(callbackCall !== undefined);
     expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(callbackCall[0]);
-    expect(getOAuthState("browser-fail")).toBeUndefined();
+    expect(
+      getOAuthState({ serverName: "browser-fail", serverUrl: "https://api.example.com/mcp" }),
+    ).toBeUndefined();
   });
 
   it("clears a pending manual flow when cancellation happens after callback registration", async () => {
@@ -811,7 +835,9 @@ describe("mcp-auth-flow explicit auth", () => {
     expect(mocks.waitForCallback).toHaveBeenCalledTimes(1);
     expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(expect.any(String));
     expect(hasPendingAuth("cancel-manual", runtime)).toBe(false);
-    expect(getOAuthState("cancel-manual")).toBeUndefined();
+    expect(
+      getOAuthState({ serverName: "cancel-manual", serverUrl: "https://api.example.com/mcp" }),
+    ).toBeUndefined();
   });
 
   it("blocks a detached SDK token write after authentication cancellation", async () => {
@@ -859,7 +885,10 @@ describe("mcp-auth-flow explicit auth", () => {
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
-    expect(getAuthForUrl("cancel-token", "https://api.example.com/mcp")?.tokens).toBeUndefined();
+    expect(
+      getAuthForUrl({ serverName: "cancel-token", serverUrl: "https://api.example.com/mcp" })
+        ?.tokens,
+    ).toBeUndefined();
   });
 
   it("adds configured authorization URL parameters", async () => {
@@ -1156,7 +1185,9 @@ describe("mcp-auth-flow explicit auth", () => {
       { runtime },
     );
     expect(oauthState).toBeDefined();
-    expect(getOAuthState("direct-complete")).toBeUndefined();
+    expect(
+      getOAuthState({ serverName: "direct-complete", serverUrl: "https://api.example.com/mcp" }),
+    ).toBeUndefined();
 
     await expect(completeAuth("direct-complete", "auth-code", { runtime })).resolves.toBe(
       "authenticated",
@@ -1182,7 +1213,9 @@ describe("mcp-auth-flow explicit auth", () => {
       scope: "mcp:read",
     });
     expect(mocks.cancelPendingCallback).toHaveBeenCalledWith(oauthState);
-    expect(getOAuthState("direct-complete")).toBeUndefined();
+    expect(
+      getOAuthState({ serverName: "direct-complete", serverUrl: "https://api.example.com/mcp" }),
+    ).toBeUndefined();
   });
 
   it("prefers a configured scope over discovery for start and completion", async () => {

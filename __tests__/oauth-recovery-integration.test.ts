@@ -155,9 +155,8 @@ async function collidingAuthBindings(kind: "pending" | "single-flight") {
   for (const f of [a, b]) {
     f.definition.auth = "oauth";
     updateTokens(
-      f.name,
+      { serverName: f.name, serverUrl: a.definition.url },
       { accessToken: "basic-token", scope: "basic", issuer: a.origin },
-      a.definition.url,
     );
     const connection = await f.connect();
     await expect(connection.client.callTool({ name: "write" })).rejects.toBeInstanceOf(
@@ -890,7 +889,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     await expect(f.start()).rejects.toThrow("issuer changed");
     expect(f.exchanges).toHaveLength(0);
     expect(f.authorizations).toHaveLength(0);
-    await removeAuth(f.name, { runtime: f.runtime });
+    await removeAuth({ serverName: f.name, serverUrl: f.definition.url }, { runtime: f.runtime });
     expect(f.request()).toBeUndefined();
   });
 
@@ -1256,7 +1255,10 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         callbackA = await a.authorize((await a.start()).authorizationUrl);
         expect((await fetch(callbackA)).status).toBe(200);
         if (cleanup === "logout") {
-          await removeAuth(a.name, { runtime: a.runtime });
+          await removeAuth(
+            { serverName: a.name, serverUrl: a.definition.url },
+            { runtime: a.runtime },
+          );
         }
         if (cleanup === "shutdown") {
           await shutdownOAuth(a.runtime);
@@ -1693,7 +1695,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       getOAuthRequest(b.name, b.definition.url, getAuthBaseDir(), a.runtime)?.challenge
         ?.requiredScope,
     ).toBe("write");
-    await removeAuth(a.name, { runtime: a.runtime });
+    await removeAuth({ serverName: a.name, serverUrl: a.definition.url }, { runtime: a.runtime });
     expect(a.request()).toBeUndefined();
     expect(
       getOAuthRequest(b.name, b.definition.url, getAuthBaseDir(), a.runtime)?.challenge
@@ -1711,9 +1713,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     for (const f of [a, b]) {
       f.definition.auth = "oauth";
       updateTokens(
-        f.name,
+        { serverName: f.name, serverUrl: a.definition.url },
         { accessToken: "basic-token", scope: "basic", issuer: a.origin },
-        a.definition.url,
       );
       const connection = await f.connect();
       await expect(connection.client.callTool({ name: "write" })).rejects.toBeInstanceOf(
@@ -1727,7 +1728,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(
       getOAuthRequest(b.name, a.definition.url, "/c", a.runtime)?.challenge?.requiredScope,
     ).toBe("admin");
-    await removeAuth(a.name, { runtime: a.runtime });
+    await removeAuth({ serverName: a.name, serverUrl: a.definition.url }, { runtime: a.runtime });
     expect(
       getOAuthRequest(b.name, a.definition.url, "/c", a.runtime)?.challenge?.requiredScope,
     ).toBe("admin");

@@ -163,21 +163,20 @@ function bindRecoveryFixture(
     request: () => getOAuthRequest(name, definition.url, getAuthBaseDir(), runtime),
     seed: (scope: string | undefined, refresh = false) =>
       updateTokens(
-        name,
+        { serverName: name, serverUrl: definition.url },
         {
           accessToken: scope?.includes("write") === true ? "wide-token" : "basic-token",
           ...(scope !== undefined ? { scope } : {}),
           ...(refresh ? { refreshToken: "refresh-basic" } : {}),
           issuer: wire.origin,
         },
-        definition.url,
       ),
-    stored: () => getAuthForUrl(name, definition.url),
+    stored: () => getAuthForUrl({ serverName: name, serverUrl: definition.url }),
     async dispose(this: void): Promise<void> {
       wire.controls.releaseEffect();
       await manager.closeAll();
       await shutdownOAuth(runtime);
-      clearAllCredentials(name);
+      clearAllCredentials({ serverName: name, serverUrl: definition.url });
       await native.dispose();
       await wire.close();
     },

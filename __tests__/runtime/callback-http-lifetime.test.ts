@@ -144,7 +144,9 @@ it("joins refresh persistence and reconstructs a new client without replaying ca
   await expect.poll(f.started).toBe(true);
   f.release();
   await pending;
-  expect(getAuthForUrl(f.name, f.url)?.tokens?.refreshToken).toBe("SYNTHETIC-REFRESH-UPDATED");
+  expect(getAuthForUrl({ serverName: f.name, serverUrl: f.url })?.tokens?.refreshToken).toBe(
+    "SYNTHETIC-REFRESH-UPDATED",
+  );
   await state.owner.stop();
   const before = f.calls();
   const restored = await runtime(f.config);
@@ -500,7 +502,9 @@ it.each([false, true])(
     expect(stopped).not.toHaveBeenCalled();
     gate.resolve();
     await stopping;
-    expect(getAuthForUrl(f.name, f.url)?.tokens?.refreshToken).toBe("SYNTHETIC-REFRESH");
+    expect(getAuthForUrl({ serverName: f.name, serverUrl: f.url })?.tokens?.refreshToken).toBe(
+      "SYNTHETIC-REFRESH",
+    );
   },
 );
 
@@ -566,8 +570,10 @@ it("clears completed URL IDs only after the last actual completion notification"
 it("reconstructs implicit OAuth challenge caches on a fresh runtime without replay", async () => {
   const f = await wire({ oauth: true });
   delete f.definition.auth;
-  const saved = requireValue(requireValue(getAuthForUrl(f.name, f.url)).tokens);
-  updateTokens(f.name, { ...saved, scope: "synthetic.read" }, f.url);
+  const saved = requireValue(
+    requireValue(getAuthForUrl({ serverName: f.name, serverUrl: f.url })).tokens,
+  );
+  updateTokens({ serverName: f.name, serverUrl: f.url }, { ...saved, scope: "synthetic.read" });
   const state = await runtime(f.config);
   expect(f.unauthorized()).toBe(1);
   await state.owner.stop();
@@ -575,7 +581,7 @@ it("reconstructs implicit OAuth challenge caches on a fresh runtime without repl
   expect(f.unauthorized()).toBe(2);
   expect(f.calls()).toBe(0);
   expect(f.refreshes()).toBe(0);
-  expect(getAuthForUrl(f.name, f.url)?.tokens).toMatchObject({
+  expect(getAuthForUrl({ serverName: f.name, serverUrl: f.url })?.tokens).toMatchObject({
     issuer: f.origin,
     scope: "synthetic.read",
   });

@@ -145,11 +145,19 @@ async function removeCredentials(
   const signal = state.owner.signal;
   try {
     const { removeAuth } = await import("./mcp-auth-flow.ts");
-    await removeAuth(serverName, {
-      authStorageOptions: state.authStorageOptions,
-      signal,
-      runtime: state.oauthRuntime,
-    });
+    const definition = state.config.mcpServers[serverName];
+    const serverUrl = definition ? resolveServerUrl(definition) : undefined;
+    if (serverUrl === undefined) {
+      throw new Error("Cannot clear OAuth credentials without a configured MCP server URL");
+    }
+    await removeAuth(
+      { serverName, serverUrl },
+      {
+        authStorageOptions: state.authStorageOptions,
+        signal,
+        runtime: state.oauthRuntime,
+      },
+    );
   } catch (error) {
     if (isAbortError(error, signal)) {
       throw error;

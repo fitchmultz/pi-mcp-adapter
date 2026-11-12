@@ -2,6 +2,10 @@
 
 [Install the current package](../README.md#install). For pre-v5 state, follow the migration steps below **before restarting Pi**.
 
+## URL-scoped OAuth credentials
+
+OAuth storage keys include the configured server name and exact URL. Existing name-only entries in the current credential service are imported automatically only when their stored URL matches. The adapter verifies the scoped copy before removing the matching source. An existing scoped login wins, and records with missing or different URLs stay untouched. Logout removes only that name and URL's login and matching automatic-import sources.
+
 ## Upgrading from 8.0.34
 
 Releases after 8.0.34 remove `mcp_script`, the bundled `mcp-scripting` skill, the `scriptMode` setting, and the `defaultScriptTimeoutMs` factory option. Use Pi's `codemode` tool for loops and dependent calls: its scripts call deferred typed tools directly and reach gateway actions, including `read-result` and `read-resource`, through `tools.mcp`. The adapter ignores a leftover `scriptMode` setting and no longer reads `defaultScriptTimeoutMs`; remove both. A package entry that hid the skill with `"skills": []` keeps working.
@@ -35,6 +39,6 @@ If Pi's package bin is not on your `PATH`, use `npx --package @fitchmultz/pi-mcp
 
 Migration copies v4's global `mcp.json`, `mcp-cache.json`, `mcp-onboarding.json` and `mcp-npx-cache.json` into `<Pi agent dir>/fitch-mcp-adapter/`, and the current project's `.pi/mcp.json` into `.pi/fitch-mcp-adapter/mcp.json`. Existing destinations are reported and left unchanged, without merging. Repeat in each project that has an old override. Use the same `PI_CODING_AGENT_DIR` as your Pi installation.
 
-For configured HTTP servers, migration copies an existing OAuth entry from the old OS credential namespace or legacy token file only when the new namespace has no entry. It preserves URL/issuer bindings, client registration and tokens, verifies the copy, and never prints plaintext credentials. All old sources remain untouched. A configured `settings.oauthDir` uses a `fitch-mcp-adapter/` child directory during normal operation, keeping the original import files separate. Dry-run lists file actions without reading the keychain or writing anything; repeated migration skips already-copied destinations.
+For configured HTTP servers, migration first promotes any matching current-service name-only or current plaintext credential and reports it as existing. Otherwise, migration copies an entry from the old OS credential namespace or legacy token file only when its stored URL exactly matches the configured URL. It preserves URL/issuer bindings, client registration and tokens, verifies the copy, and never prints plaintext credentials. Historical sources remain untouched; promoted current sources are removed after verification. A configured `settings.oauthDir` uses a `fitch-mcp-adapter/` child directory during normal operation, keeping the original import files separate. Dry-run lists file actions without reading the keychain or writing anything; repeated migration skips already-copied destinations.
 
 Normal startup never falls back to old adapter-owned defaults or the old credential namespace, so logout cannot resurrect old credentials. Migration copies an existing provider grant; it does not create an independent grant. Sign in again if you need a separate provider grant. Shared standard MCP files and explicit `configPath`/imports retain their behavior. See [OAuth storage](../OAUTH.md#token-storage).
