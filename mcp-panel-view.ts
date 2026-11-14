@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ServerState, ToolState, VisibleItem } from "./mcp-panel-model.ts";
 import {
   DEFAULT_THEME,
@@ -324,43 +324,11 @@ export class PanelView {
   }
 
   private wrapText(text: string, width: number): string[] {
-    const max = Math.max(8, width);
-    const words = text.split(/\s+/).filter(Boolean);
-    const lines: string[] = [];
-    let current = "";
-    const splitLongWord = (word: string): string => {
-      let rest = word;
-      while (visibleWidth(rest) > max) {
-        let take = "";
-        let index = 0;
-        while (index < rest.length && visibleWidth(take + rest.charAt(index)) <= max) {
-          take += rest.charAt(index);
-          index++;
-        }
-        if (take.length === 0) {
-          take = rest.charAt(0);
-        }
-        lines.push(take);
-        rest = rest.slice(take.length);
-      }
-      return rest;
-    };
-
-    for (const word of words) {
-      const candidate = current.length > 0 ? `${current} ${word}` : word;
-      if (visibleWidth(candidate) <= max) {
-        current = candidate;
-      } else {
-        if (current.length > 0) {
-          lines.push(current);
-        }
-        current = splitLongWord(word);
-      }
+    const normalized = text.trim().replace(/\s+/g, " ");
+    if (normalized.length === 0) {
+      return [text];
     }
-    if (current.length > 0) {
-      lines.push(current);
-    }
-    return lines.length > 0 ? lines : [text];
+    return wrapTextWithAnsi(normalized, Math.max(8, width));
   }
 
   private renderConnectionStatus(server: ServerState): string {

@@ -990,7 +990,7 @@ Record the repository and adopted version; supported runtimes and package manage
 
 **pi-mcp-adapter adoption:**
 
-- Standard: 5.2. Node.js `^24.22.3 || >=26.13.1`; official Pi 1.5.0 or newer and the maintained Pi fork. Package manager: npm 12.2.0.
+- Standard: 5.2. Node.js `^24.22.3 || >=26.13.1`; official Pi 1.5.2 or newer and the maintained Pi fork. Package manager: npm 12.2.0.
 - Tools: Oxlint 1.91.0, oxlint-tsgolint 7.0.2006, Oxfmt 0.76.0, TypeScript 7.0.2, and oxc-parser 0.157.0. Latest stable quality releases were resolved from npm on 5 November 2026. Host qualification selects the latest official release and maintained fork independently.
 - Coverage: `.oxlintrc.json`, `.oxfmtrc.json`, `tsconfig.json`, `tsconfig.build.json`, `tsconfig.declarations.json`, and `examples/interactive-visualizer/tsconfig.json`. Production tooling uses the production profile. Tests, conformance drivers and native compatibility fixtures use the test profile. Dedicated negative type tests are compiler-checked and also run by Vitest.
 - Acceptance: `npm run check` after root and example clean installs. It runs builds, full native lint, formatting, all four compiler projects, policy and directive checks, generator freshness, Vitest, Node OAuth tests and conformance. [.github/workflows/ci.yml](../.github/workflows/ci.yml) owns hosted acceptance.

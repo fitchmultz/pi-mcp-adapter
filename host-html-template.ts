@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { UiHostContext, UiResourceContent, UiResourceCsp } from "./types.ts";
 
@@ -94,7 +94,7 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
   // server caches it for a year, so its content digest versions the URL: a browser
   // never links this host against an earlier cached asset lacking its imports.
   const sdkBundle = readFileSync(new URL("./app-bridge.bundle.js", import.meta.url));
-  const sdkUrl = `/app-bridge.bundle.js?v=${createHash("sha256").update(sdkBundle).digest("base64url")}`;
+  const sdkUrl = `/app-bridge.bundle.js?v=${hash("sha256", sdkBundle, "base64url")}`;
   const importMap = safeInlineJSON({
     imports: {
       // A custom bridge replaces only AppBridge and PostMessageTransport.

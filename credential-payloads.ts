@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import type { AuthEntry, AuthIdentity } from "./auth-record-types.ts";
 import { OAuthCredentialStoreError } from "./credential-store-errors.ts";
 import type { AuthSecretStore } from "./keyring-store.ts";
@@ -21,16 +21,14 @@ export function getAuthEntryAccount(identity: AuthIdentity): string {
   if (typeof identity.serverName !== "string" || typeof identity.serverUrl !== "string") {
     throw new Error("MCP credential identity requires a server name and exact URL");
   }
-  return `v2-sha256-${createHash("sha256")
-    .update(JSON.stringify([identity.serverName, identity.serverUrl]), "utf8")
-    .digest("hex")}`;
+  return `v2-sha256-${hash("sha256", JSON.stringify([identity.serverName, identity.serverUrl]), "hex")}`;
 }
 
 export function getLegacyAuthEntryAccount(serverName: unknown): string {
   if (typeof serverName !== "string") {
     throw new Error(`Invalid MCP server name: ${JSON.stringify(serverName)}`);
   }
-  return `sha256-${createHash("sha256").update(serverName, "utf8").digest("hex")}`;
+  return `sha256-${hash("sha256", serverName, "hex")}`;
 }
 
 export function parseJsonPayload(serverName: string, payload: string, source: string): unknown {
@@ -132,7 +130,7 @@ function createChunkManifest(payload: string): AuthEntryChunkManifest {
   return {
     [AUTH_CHUNK_MANIFEST_KEY]: 1,
     chunkCount: Math.ceil(payload.length / AUTH_SECRET_CHUNK_SIZE),
-    chunkDigest: createHash("sha256").update(payload, "utf8").digest("hex").slice(0, 16),
+    chunkDigest: hash("sha256", payload, "hex").slice(0, 16),
   };
 }
 
