@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.43 - 2026-11-14
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Raise the Pi floor to 1.5.2 and use native wrapTextWithAnsi and crypto.hash (#262) ([282cc19](https://github.com/fitchmultz/pi-mcp-adapter/commit/282cc194a41e134acda95e91fc4060237c662f22))
+
+### What's Changed
+
+- Raise the Pi floor to 1.5.2 and use native wrapTextWithAnsi and crypto.hash by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/262
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.42...v8.0.43
+
 ## 8.0.42 - 2026-11-12
 
 <!-- npm-release:unreleased:start -->
