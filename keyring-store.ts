@@ -2,7 +2,7 @@ import type * as keyring from "@napi-rs/keyring";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { withStorageLock } from "./storage-lock.ts";
 import { OAuthCredentialStoreError } from "./credential-store-errors.ts";
 
@@ -33,9 +33,7 @@ export function withAuthSecretLock<T>(
     // These stores are process-local; they share no keyring records with other processes.
     return operation();
   }
-  const key = createHash("sha256")
-    .update(JSON.stringify([service, legacyAccount]))
-    .digest("hex");
+  const key = hash("sha256", JSON.stringify([service, legacyAccount]), "hex");
   const lockPath = join(homedir(), ".fitch-mcp-adapter", "locks", `${key}.sqlite`);
   const acquisition = { entered: false };
   try {

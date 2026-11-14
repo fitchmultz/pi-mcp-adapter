@@ -1,4 +1,4 @@
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ConfigWritePreview, McpDiscoverySummary } from "./config.ts";
 import type { ImportKind } from "./types.ts";
 import type { Action, SetupPanelCallbacks } from "./mcp-setup-contract.ts";
@@ -7,24 +7,8 @@ export function wrapSetupText(text: string, width: number): string[] {
   if (width <= 8) {
     return [text];
   }
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    const candidate = current.length > 0 ? `${current} ${word}` : word;
-    if (visibleWidth(candidate) <= width) {
-      current = candidate;
-      continue;
-    }
-    if (current.length > 0) {
-      lines.push(current);
-    }
-    current = word;
-  }
-  if (current.length > 0) {
-    lines.push(current);
-  }
-  return lines.length > 0 ? lines : [""];
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return normalized.length > 0 ? wrapTextWithAnsi(normalized, width) : [""];
 }
 
 interface PreviewState {

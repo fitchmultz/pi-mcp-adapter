@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSyn
 import { dirname } from "node:path";
 import { getAdapterPath } from "./agent-dir.ts";
 import { StorageLockBusyError, withStorageLock } from "./storage-lock.ts";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import {
   type CachedPrompt,
   type CachedResource,
@@ -150,7 +150,7 @@ export function computeServerHash(definition: ServerEntry): string {
     excludeTools: definition.excludeTools,
   };
   const normalized = stableStringify(identity);
-  return createHash("sha256").update(normalized).digest("hex");
+  return hash("sha256", normalized, "hex");
 }
 
 export function isServerCacheValid(
