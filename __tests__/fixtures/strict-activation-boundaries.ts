@@ -68,9 +68,9 @@ function bindActivationFixture(native: Awaited<ReturnType<typeof createTestExten
       for (const wire of wires) {
         await wire.close();
       }
-      await native.dispose();
       vi.restoreAllMocks();
       vi.unstubAllEnvs();
+      await native.dispose();
     },
   };
 }

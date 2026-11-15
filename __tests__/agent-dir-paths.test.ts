@@ -95,4 +95,41 @@ describe("Pi agent dir paths", () => {
       existsSync(join(agentDir, "fitch-mcp-adapter", "mcp-oauth", "demo", "tokens.json")),
     ).toBe(false);
   });
+
+  it("isolates createTestExtensionContext from user ~/.pi/agent when PI_CODING_AGENT_DIR is unset and preserves stubEnv cleanup", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-home-"));
+    const explicitDir = mkdtempSync(join(tmpdir(), "pi-mcp-agent-dir-explicit-"));
+    process.env.HOME = home;
+    delete process.env.PI_CODING_AGENT_DIR;
+
+    const { getAgentDir } = await import("../agent-dir.ts");
+    const { getMetadataCachePath, saveMetadataCache } = await import("../metadata-cache.ts");
+    const { createTestExtensionContext } = await import("./test-extension-context.ts");
+    const { createActivationFixture } = await import("./fixtures/strict-activation-boundaries.ts");
+
+    const isolated = await createTestExtensionContext();
+    const isolatedCachePath = getMetadataCachePath();
+    expect(isolatedCachePath.startsWith(join(home, ".pi", "agent"))).toBe(false);
+    saveMetadataCache({ version: 2, servers: {} });
+    expect(existsSync(isolatedCachePath)).toBe(true);
+    expect(existsSync(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp-cache.json"))).toBe(
+      false,
+    );
+    await isolated.dispose();
+    expect(process.env.PI_CODING_AGENT_DIR).toBeUndefined();
+    expect(existsSync(isolatedCachePath)).toBe(false);
+
+    process.env.PI_CODING_AGENT_DIR = explicitDir;
+    const preserved = await createTestExtensionContext();
+    expect(getMetadataCachePath()).toBe(join(explicitDir, "fitch-mcp-adapter", "mcp-cache.json"));
+    await preserved.dispose();
+    expect(process.env.PI_CODING_AGENT_DIR).toBe(explicitDir);
+
+    const activation = await createActivationFixture();
+    const activationDir = activation.directory;
+    expect(getAgentDir()).toBe(activationDir);
+    await activation.dispose();
+    expect(getAgentDir()).toBe(explicitDir);
+    expect(existsSync(activationDir)).toBe(false);
+  });
 });
