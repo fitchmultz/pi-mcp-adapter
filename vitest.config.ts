@@ -14,7 +14,6 @@ export default defineConfig({
     environment: "node",
     env: {
       PI_MCP_ADAPTER_TEST_AUTH_STORE: "memory",
-      PI_MCP_ADAPTER_TEST_DEFAULT_AGENT_DIR: defaultTestAgentDir,
       PI_CODING_AGENT_DIR: defaultTestAgentDir,
     },
     include: ["__tests__/**/*.test.ts", "__tests__/**/*.test-d.ts"],

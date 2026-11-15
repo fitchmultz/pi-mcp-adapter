@@ -27,19 +27,12 @@ export async function createTestExtensionContext(
 }> {
   const directory = await mkdtemp(join(tmpdir(), "pi-mcp-test-context-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-  const defaultVitestAgentDir = process.env.PI_MCP_ADAPTER_TEST_DEFAULT_AGENT_DIR;
-  const ownsAgentDir =
-    previousAgentDir === undefined ||
-    (defaultVitestAgentDir !== undefined && previousAgentDir === defaultVitestAgentDir);
+  const ownsAgentDir = previousAgentDir === undefined;
   const restoreAgentDir = () => {
     if (!ownsAgentDir || process.env.PI_CODING_AGENT_DIR !== directory) {
       return;
     }
-    if (previousAgentDir === undefined) {
-      delete process.env.PI_CODING_AGENT_DIR;
-    } else {
-      process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-    }
+    delete process.env.PI_CODING_AGENT_DIR;
   };
   if (ownsAgentDir) {
     process.env.PI_CODING_AGENT_DIR = directory;
