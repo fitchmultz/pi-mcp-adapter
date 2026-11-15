@@ -26,6 +26,24 @@ export async function createTestExtensionContext(
   dispose: () => Promise<void>;
 }> {
   const directory = await mkdtemp(join(tmpdir(), "pi-mcp-test-context-"));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const defaultVitestAgentDir = process.env.PI_MCP_ADAPTER_TEST_DEFAULT_AGENT_DIR;
+  const ownsAgentDir =
+    previousAgentDir === undefined ||
+    (defaultVitestAgentDir !== undefined && previousAgentDir === defaultVitestAgentDir);
+  const restoreAgentDir = () => {
+    if (!ownsAgentDir || process.env.PI_CODING_AGENT_DIR !== directory) {
+      return;
+    }
+    if (previousAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    }
+  };
+  if (ownsAgentDir) {
+    process.env.PI_CODING_AGENT_DIR = directory;
+  }
   try {
     const settingsManager = SettingsManager.inMemory();
     let api: ExtensionAPI | undefined;
@@ -67,6 +85,7 @@ export async function createTestExtensionContext(
         resourceLoader,
         dispose: async () => {
           session.dispose();
+          restoreAgentDir();
           await rm(directory, { recursive: true, force: true });
         },
       };
@@ -75,6 +94,7 @@ export async function createTestExtensionContext(
       throw error;
     }
   } catch (error) {
+    restoreAgentDir();
     await rm(directory, { recursive: true, force: true });
     throw error;
   }
