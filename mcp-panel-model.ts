@@ -12,7 +12,7 @@ import {
   type ServerCacheEntry,
   type CachedTool,
 } from "./metadata-cache.ts";
-import { fuzzyScore } from "./mcp-panel-text.ts";
+import { matchesFuzzy } from "./mcp-panel-text.ts";
 function estimateTokens(tool: CachedTool): number {
   const schemaLen = JSON.stringify(tool.inputSchema ?? {}).length;
   const descLen = tool.description?.length ?? 0;
@@ -160,11 +160,9 @@ function matchesTool(tool: ToolState, serverName: string, query: PanelQuery): bo
   if (query.text.length === 0) {
     return true;
   }
-  const score =
-    query.mode === "name"
-      ? Math.max(fuzzyScore(query.text, tool.name), fuzzyScore(query.text, serverName) * 0.6)
-      : fuzzyScore(query.text, tool.description);
-  return score > 0;
+  return query.mode === "name"
+    ? matchesFuzzy(query.text, tool.name) || matchesFuzzy(query.text, serverName)
+    : matchesFuzzy(query.text, tool.description);
 }
 
 function getServerItems(
@@ -174,7 +172,7 @@ function getServerItems(
   authOnly: boolean,
 ): VisibleItem[] {
   if (query.text.length > 0 && authOnly) {
-    return query.mode === "name" && fuzzyScore(query.text, server.name) > 0
+    return query.mode === "name" && matchesFuzzy(query.text, server.name)
       ? [{ type: "server", serverIndex }]
       : [];
   }

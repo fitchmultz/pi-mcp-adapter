@@ -1,5 +1,6 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
+import { randomBytes } from "node:crypto";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { Transport, JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
 import type { McpTraceSettings, ServerEntry } from "./config-types.ts";
@@ -244,7 +245,7 @@ export class McpTraceWriter {
 export function createMcpTraceWriter(
   sessionCwd: string | undefined,
   settings: McpTraceSettings = {},
-  randomSuffix = Math.random().toString(36).slice(2, 10),
+  randomSuffix = randomBytes(4).toString("hex"),
 ): McpTraceWriter {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const configuredPath = settings.file;
