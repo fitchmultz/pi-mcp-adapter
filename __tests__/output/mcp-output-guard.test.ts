@@ -230,6 +230,26 @@ describe("guardMcpOutput", () => {
     }
   });
 
+  it("cuts the single-line head on a character boundary", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-guard-single-line-utf8-"));
+    try {
+      const text = "€".repeat(5_000);
+      const guarded = await guardMcpOutput([{ type: "text", text }], {
+        outputDirectory,
+        maxBytes: 1024,
+        rawMcpResult: { content: [{ type: "text", text }] },
+      });
+
+      const first = guarded.content[0];
+      assert.ok(first?.type === "text");
+      expect(first.text).not.toContain("\uFFFD");
+      expect(Buffer.byteLength(first.text)).toBeLessThanOrEqual(1024);
+      expect(guarded.outputGuard?.returnedBytes).toBeLessThanOrEqual(1024);
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps prefixes and suffixes inside the saved full output", async () => {
     const guarded = await guardMcpOutput([{ type: "text", text: "body" }], {
       prefix: "Error: ",

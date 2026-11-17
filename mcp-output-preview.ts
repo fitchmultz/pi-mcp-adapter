@@ -1,6 +1,7 @@
 import type { McpOutputGuardDetails } from "./mcp-output-contracts.ts";
 import type { ContentBlock } from "./types.ts";
 import { formatSize, truncateHead } from "@earendil-works/pi-coding-agent";
+import { StringDecoder } from "node:string_decoder";
 
 interface TruncatedOutputInput {
   text: string;
@@ -27,7 +28,9 @@ export function truncatedOutput({
   // Pi yields nothing when a single line alone exceeds the budget; keep a byte-bounded head instead.
   const head =
     preview.firstLineExceedsLimit && previewBudget.maxBytes > 0
-      ? Buffer.from(text, "utf8").subarray(0, previewBudget.maxBytes).toString("utf8")
+      ? new StringDecoder("utf8").write(
+          Buffer.from(text, "utf8").subarray(0, previewBudget.maxBytes),
+        )
       : preview.content;
   const finalText = `${head}\n\n${notice}`;
   const finalStats = textStats(finalText + referenceSuffix);
