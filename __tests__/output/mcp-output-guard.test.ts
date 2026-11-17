@@ -211,6 +211,25 @@ describe("guardMcpOutput", () => {
     expect(returnedText).not.toContain("entry-29");
   });
 
+  it("keeps a head preview when one line alone exceeds the byte budget", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-guard-single-line-"));
+    try {
+      const text = JSON.stringify({ a: "x".repeat(20_000) });
+      const guarded = await guardMcpOutput([{ type: "text", text }], {
+        outputDirectory,
+        maxBytes: 1024,
+        rawMcpResult: { content: [{ type: "text", text }] },
+      });
+
+      const first = guarded.content[0];
+      assert.ok(first?.type === "text");
+      expect(first.text.startsWith('{"a":"xxx')).toBe(true);
+      expect(Buffer.byteLength(first.text)).toBeLessThanOrEqual(1024);
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps prefixes and suffixes inside the saved full output", async () => {
     const guarded = await guardMcpOutput([{ type: "text", text: "body" }], {
       prefix: "Error: ",
