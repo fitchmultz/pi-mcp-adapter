@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.44 - 2026-11-17
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- test: isolate Vitest and test extension contexts from user ~/.pi/agent (#264) ([e392d9f](https://github.com/fitchmultz/pi-mcp-adapter/commit/e392d9fd632a9f458129a5b693db89877436d5a8))
+
+### What's Changed
+
+- test: isolate Vitest and test extension contexts from user ~/.pi/agent by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/264
+- Use Pi-provided helpers instead of local copies by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/265
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.43...v8.0.44
+
 ## 8.0.43 - 2026-11-14
 
 <!-- npm-release:unreleased:start -->
