@@ -1,8 +1,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { z } from "zod";
 import {
   SERVER_STREAM_RESULT_PATCH_METHOD,
@@ -11,8 +10,7 @@ import {
   type ServerStreamResultPatchNotification,
 } from "../../../ui-stream-types.ts";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const appHtml = readFileSync(join(__dirname, "..", "dist", "app.html"), "utf-8");
+const appHtml = readFileSync(join(import.meta.dirname, "..", "dist", "app.html"), "utf-8");
 
 const server = new McpServer({
   name: "interactive-visualizer",

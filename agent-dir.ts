@@ -1,20 +1,7 @@
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { join } from "node:path";
 
-export function getAgentDir(): string {
-  const configured = process.env.PI_CODING_AGENT_DIR?.trim();
-  if (configured === undefined || configured === "") {
-    return join(homedir(), ".pi", "agent");
-  }
-  if (configured === "~") {
-    return homedir();
-  }
-  if (configured.startsWith("~/")) {
-    return resolve(homedir(), configured.slice(2));
-  }
-  return resolve(configured);
-}
-
+/** Adapter-owned state lives under the Pi agent directory; Pi owns how that directory resolves. */
 export function getAgentPath(...segments: string[]): string {
   return join(getAgentDir(), ...segments);
 }

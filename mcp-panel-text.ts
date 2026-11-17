@@ -1,4 +1,5 @@
 import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
+import { fuzzyMatch } from "@earendil-works/pi-tui";
 interface PanelTheme {
   border: string;
   title: string;
@@ -54,25 +55,9 @@ export function rainbowProgress(filled: number, total: number): string {
   return dots.join(" ");
 }
 
-export function fuzzyScore(query: string, text: string): number {
-  const lq = query.toLowerCase();
-  const lt = text.toLowerCase();
-  if (lt.includes(lq)) {
-    return 100 + (lq.length / lt.length) * 50;
-  }
-  let score = 0;
-  let qi = 0;
-  let consecutive = 0;
-  for (let i = 0; i < lt.length && qi < lq.length; i++) {
-    if (lt[i] === lq[qi]) {
-      score += 10 + consecutive;
-      consecutive += 5;
-      qi++;
-    } else {
-      consecutive = 0;
-    }
-  }
-  return qi === lq.length ? score : 0;
+/** Panel search acceptance; pi-tui's matcher keeps behavior consistent with Pi's own pickers. */
+export function matchesFuzzy(query: string, text: string): boolean {
+  return fuzzyMatch(query, text).matches;
 }
 
 export function sanitizeDisplayText(text: string | null | undefined): string {
