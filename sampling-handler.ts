@@ -95,6 +95,9 @@ function validateSamplingFeatures(params: CreateMessageRequest["params"]): void 
   }
 }
 
+/** OpenAI models that reject `temperature` on the Responses and Codex Responses APIs. */
+const TEMPERATURE_REJECTING_MODEL_IDS = new Set(["gpt-6-astra", "gpt-6.2-astra", "gpt-6.2-sol"]);
+
 function samplingCompletionOptions(
   model: Model<Api>,
   params: CreateMessageRequest["params"],
@@ -104,7 +107,7 @@ function samplingCompletionOptions(
     model.compat && "supportsTemperature" in model.compat
       ? model.compat.supportsTemperature !== false
       : !(
-          model.id === "gpt-6-astra" &&
+          TEMPERATURE_REJECTING_MODEL_IDS.has(model.id) &&
           (model.api === "openai-responses" || model.api === "openai-codex-responses")
         );
   return {
