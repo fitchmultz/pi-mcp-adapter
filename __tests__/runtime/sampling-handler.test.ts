@@ -166,23 +166,24 @@ describe("sampling handler", () => {
     });
   });
 
-  it.each(["openai-responses", "openai-codex-responses"] as const)(
-    "omits Astra's rejected temperature in nested %s sampling",
-    async (api) => {
-      const { handleSamplingRequest } = await import("../../sampling-handler.ts");
-      const astra = { ...model, provider: "openai", id: "gpt-6-astra", api };
-      await handleSamplingRequest(
-        createOptions({ getCurrentModel: () => astra }),
-        createSamplingRequest({
-          messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
-          maxTokens: 50,
-          temperature: 0.2,
-        }),
-      );
-      expect(requireValue(mocks.complete.mock.calls[0])[2]).not.toHaveProperty("temperature");
-      expect(requireValue(mocks.complete.mock.calls[0])[2]).toHaveProperty("maxTokens", 50);
-    },
-  );
+  it.each(
+    ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"].flatMap((id) =>
+      (["openai-responses", "openai-codex-responses"] as const).map((api) => ({ id, api })),
+    ),
+  )("omits the temperature $id rejects in nested $api sampling", async ({ id, api }) => {
+    const { handleSamplingRequest } = await import("../../sampling-handler.ts");
+    const current = { ...model, provider: "openai", id, api };
+    await handleSamplingRequest(
+      createOptions({ getCurrentModel: () => current }),
+      createSamplingRequest({
+        messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+        maxTokens: 50,
+        temperature: 0.2,
+      }),
+    );
+    expect(requireValue(mocks.complete.mock.calls[0])[2]).not.toHaveProperty("temperature");
+    expect(requireValue(mocks.complete.mock.calls[0])[2]).toHaveProperty("maxTokens", 50);
+  });
 
   it("requires UI approval unless auto-approve is enabled", async () => {
     const { handleSamplingRequest } = await import("../../sampling-handler.ts");
