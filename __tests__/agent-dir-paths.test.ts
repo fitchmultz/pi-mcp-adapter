@@ -33,7 +33,7 @@ describe("Pi agent dir paths", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     delete process.env.FITCH_MCP_OAUTH_DIR;
 
-    const { getAgentDir } = await import("@earendil-works/pi-coding-agent");
+    const { getAgentDir } = await import("../agent-dir.ts");
     const { getPiGlobalConfigPath } = await import("../config.ts");
     const { getMetadataCachePath } = await import("../metadata-cache.ts");
     const { getOnboardingStatePath } = await import("../onboarding-state.ts");
@@ -69,7 +69,7 @@ describe("Pi agent dir paths", () => {
     process.env.HOME = home;
     process.env.PI_CODING_AGENT_DIR = "~/custom-pi-agent";
 
-    const { getAgentDir } = await import("@earendil-works/pi-coding-agent");
+    const { getAgentDir } = await import("../agent-dir.ts");
 
     expect(getAgentDir()).toBe(join(home, "custom-pi-agent"));
   });
@@ -102,7 +102,7 @@ describe("Pi agent dir paths", () => {
     process.env.HOME = home;
     delete process.env.PI_CODING_AGENT_DIR;
 
-    const { getAgentDir } = await import("@earendil-works/pi-coding-agent");
+    const { getAgentDir } = await import("../agent-dir.ts");
     const { getMetadataCachePath, saveMetadataCache } = await import("../metadata-cache.ts");
     const { createTestExtensionContext } = await import("./test-extension-context.ts");
     const { createActivationFixture } = await import("./fixtures/strict-activation-boundaries.ts");

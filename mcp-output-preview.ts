@@ -24,7 +24,12 @@ export function truncatedOutput({
   const notice = formatTruncationNotice(stats, fullOutputPath, writeError);
   const previewBudget = reserveBudget(maxBytes, maxLines, notice + referenceSuffix);
   const preview = truncateHead(text, previewBudget);
-  const finalText = `${preview.content}\n\n${notice}`;
+  // Pi yields nothing when a single line alone exceeds the budget; keep a byte-bounded head instead.
+  const head =
+    preview.firstLineExceedsLimit && previewBudget.maxBytes > 0
+      ? Buffer.from(text, "utf8").subarray(0, previewBudget.maxBytes).toString("utf8")
+      : preview.content;
+  const finalText = `${head}\n\n${notice}`;
   const finalStats = textStats(finalText + referenceSuffix);
   return {
     content: [{ type: "text" as const, text: finalText }, ...imageBlocks],
