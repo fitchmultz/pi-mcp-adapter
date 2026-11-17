@@ -24,14 +24,11 @@ export function truncatedOutput({
 }: TruncatedOutputInput): { content: ContentBlock[]; outputGuard: McpOutputGuardDetails } {
   const notice = formatTruncationNotice(stats, fullOutputPath, writeError);
   const previewBudget = reserveBudget(maxBytes, maxLines, notice + referenceSuffix);
-  const preview = truncateHead(text, previewBudget);
-  // Pi yields nothing when a single line alone exceeds the budget; keep a byte-bounded head instead.
-  const head =
-    preview.firstLineExceedsLimit && previewBudget.maxBytes > 0
-      ? new StringDecoder("utf8").write(
-          Buffer.from(text, "utf8").subarray(0, previewBudget.maxBytes),
-        )
-      : preview.content;
+  // Preserve a partial final line within the byte budget; Pi then enforces the line budget.
+  const byteHead = new StringDecoder("utf8").write(
+    Buffer.from(text, "utf8").subarray(0, previewBudget.maxBytes),
+  );
+  const head = truncateHead(byteHead, previewBudget).content;
   const finalText = `${head}\n\n${notice}`;
   const finalStats = textStats(finalText + referenceSuffix);
   return {
