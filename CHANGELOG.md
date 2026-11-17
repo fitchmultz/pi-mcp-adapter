@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.45 - 2026-11-17
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- ci: release through direct signed version commits (PEA-211) (#267) ([18fc584](https://github.com/fitchmultz/pi-mcp-adapter/commit/18fc5849b18c6932c6d6ce0a94c26a0e62661640))
+
+### What's Changed
+
+- ci: release through direct signed version commits (PEA-211) (1/1) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/267
+- Omit temperature for GPT-6.2 Astra, GPT-6.2 Sol and GPT-6.1 Sol in MCP sampling (DOT-214) (1/1) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/268
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.44...v8.0.45
+
 ## 8.0.44 - 2026-11-17
 
 <!-- npm-release:unreleased:start -->
