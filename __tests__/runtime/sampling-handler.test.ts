@@ -167,7 +167,7 @@ describe("sampling handler", () => {
   });
 
   it.each(
-    ["gpt-6-astra", "gpt-6.2-astra", "gpt-6.2-sol"].flatMap((id) =>
+    ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"].flatMap((id) =>
       (["openai-responses", "openai-codex-responses"] as const).map((api) => ({ id, api })),
     ),
   )("omits the temperature $id rejects in nested $api sampling", async ({ id, api }) => {
