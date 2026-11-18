@@ -13,6 +13,23 @@ import {
   type McpToolCallEvent,
   type ServerStreamResultPatchNotification,
 } from "@fitchmultz/pi-mcp-adapter/types";
+import {
+  authenticate,
+  completeAuthFromInput,
+  createOAuthRuntime,
+  getAuthStorageOptions,
+  McpServerManager,
+  removeAuth,
+  shutdownOAuth,
+  startAuth,
+  supportsOAuth,
+  type AuthenticateOptions,
+  type AuthIdentity,
+  type AuthStatus,
+  type AuthStorageOptions,
+  type McpOAuthRuntime,
+  type ServerConnection,
+} from "@fitchmultz/pi-mcp-adapter/runtime";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const config: McpConfig = { mcpServers: {} };
@@ -62,4 +79,34 @@ createMcpAdapter(options)("invalid host");
 adapter("invalid host");
 // @ts-expect-error The /types export must retain function return types.
 const invalidPrompt: number = extractUiPromptText({ prompt: "hello" });
-void [extension, defaultExtension, channel, snapshot, prompt, patch, invalidPrompt];
+const oauthRuntime: McpOAuthRuntime = createOAuthRuntime();
+const authStorage: AuthStorageOptions = getAuthStorageOptions(undefined, "/tmp");
+const authIdentity: AuthIdentity = { serverName: "atlas", serverUrl: "https://example.com/mcp" };
+const authOpts: AuthenticateOptions = { runtime: oauthRuntime, authStorageOptions: authStorage };
+const oauthSupported: boolean = supportsOAuth({ url: authIdentity.serverUrl });
+const manager: McpServerManager = new McpServerManager("/tmp");
+const checkRuntimeSurface = (conn?: ServerConnection, status?: AuthStatus) => {
+  // @ts-expect-error The /runtime authenticate export must require an explicit OAuth runtime.
+  const opts: Parameters<typeof authenticate>[3] = {};
+  void [conn, status, opts, authOpts];
+};
+void [
+  extension,
+  defaultExtension,
+  channel,
+  snapshot,
+  prompt,
+  patch,
+  invalidPrompt,
+  oauthRuntime,
+  authStorage,
+  authIdentity,
+  oauthSupported,
+  manager,
+  authenticate,
+  startAuth,
+  completeAuthFromInput,
+  removeAuth,
+  shutdownOAuth,
+  checkRuntimeSurface,
+];

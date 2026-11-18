@@ -142,6 +142,38 @@ With `configPath` and no `config`, the adapter keeps normal file merge behavior,
 
 Set `createMcpAdapter({ outputDirectory: "/workspace/internal/mcp-output" })` to keep oversized tool/resource text and raw MCP JSON beneath a host-owned directory. The directory is created on the first spill; each file still uses a random subdirectory/name and mode `0600`. Relative paths resolve from the process working directory when written; prefer an absolute path for hosts that change directories. This runtime option works with either configuration mode and does not change live results, output limits, or cleanup. The host owns retention, access, and any redaction of saved copies; files may contain sensitive data. Omitting it keeps the system temp directory.
 
+### Runtime subpath
+
+Standalone Node services that manage MCP connections outside a Pi host runtime can import `@fitchmultz/pi-mcp-adapter/runtime`:
+
+```ts
+import {
+  authenticate,
+  completeAuthFromInput,
+  createOAuthRuntime,
+  getAuthStorageOptions,
+  McpServerManager,
+  removeAuth,
+  shutdownOAuth,
+  startAuth,
+  supportsOAuth,
+  type AuthenticateOptions,
+  type AuthIdentity,
+  type AuthStatus,
+  type AuthStorageOptions,
+  type McpOAuthRuntime,
+  type ServerConnection,
+} from "@fitchmultz/pi-mcp-adapter/runtime";
+
+const runtime = createOAuthRuntime();
+const authStorageOptions = getAuthStorageOptions("/srv/my-service/oauth", process.cwd());
+const manager = new McpServerManager(process.cwd());
+manager.setAuthStorageOptions(authStorageOptions);
+manager.setOAuthRuntime(runtime);
+```
+
+`new McpServerManager(defaultCwd)` sets the default working directory for spawned stdio servers and relative trace files. Callers own the OAuth runtime lifecycle: create a runtime with `createOAuthRuntime()`, pass it explicitly via `AuthenticateOptions.runtime` (and `manager.setOAuthRuntime(runtime)` for managed connections; there is no shared default runtime), and close it with `await shutdownOAuth(runtime)` alongside `await manager.closeAll()`. `getAuthStorageOptions(oauthDir, cwd)` selects the parent of a `fitch-mcp-adapter/` legacy plaintext import directory (resolving relative `oauthDir` values against `cwd`, or keeping the Pi agent directory when `oauthDir` is omitted or blank). Persistent credentials always use the OS credential store service with per-OS-user locks under `~/.fitch-mcp-adapter/locks/`, independent of `oauthDir`.
+
 ### Session configuration
 
 Use `createMcpAdapter({ transformConfig: (config, ctx) => ... })` to add session-specific servers or settings in memory. The synchronous hook runs once per `session_start`, including reloads and new sessions, after normal config merging and project trust checks, before tool/metadata registration and initialization. It receives a fresh config clone and the current `ExtensionContext`; its result is cloned for session ownership. No config files are rewritten. Without an explicit `config`, normal status, setup, disable/enable, and auth panels remain available. With `config`, the hook transforms that isolated snapshot and its panel limitations still apply.
