@@ -529,11 +529,51 @@ mcp({
 });
 ```
 
-`path` is an RFC 6901 JSON Pointer; `fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count **characters in the selected, pretty-printed JSON**, starting at zero—not rows, lines, or bytes. Readback defaults to 12,000 characters and remains bounded by the output byte/line caps. Continue with `details.nextOffset` until it is `null`. Readback requires an existing adapter output artifact in this host's output directory; it never calls the server again.
+`path` is an RFC 6901 JSON Pointer from the root of the saved file, not from the displayed preview or a Pi result wrapper.
+
+| Saved file                     | Pointer roots                                                                                                        |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| MCP tool result (`resultRef`)  | `/structuredContent` for structured data, or `/content/0/text` for the text of the first block if it is a text block |
+| Resource result (`resultRef`)  | `/contents` for the resource list carried by the protocol                                                            |
+| Rendered output (`outputPath`) | Omit `path` and `fields` to page the saved text. There is no MCP envelope.                                           |
+
+If a server puts JSON inside a text block, a pointer selects the entire string, not a field inside it. For example, `/content/0/text` selects the string that might contain `{"rows":[...]}`. `/rows` does not address that data in the saved envelope.
+
+`fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count characters in the selected, pretty-printed JSON or in plain text, starting at zero. Readback defaults to 12,000 characters and stays within the output guard's byte and line limits. Continue with `details.nextOffset` until it is `null`. A failed read, including a missing pointer, returns a tool error. Readback requires an existing adapter artifact in this host's output directory and never calls the server again.
 
 ### Multi-call work
 
 Use Pi's `codemode` tool for loops, filters, and dependent tool calls. Its scripts call any registered catalog tool, deferred or loaded, as `await tools.<flat_name>(args)`, and find unlisted tools with `searchTools`, `describeTool`, and `describeNamespace`. Gateway actions stay available as `tools.mcp({ action, ... })`, including `read-result` and `read-resource`. Each nested call runs through Pi's tool pipeline and the adapter's normal execution path, so authentication, approvals, filters, `beforeExecute`, `onToolCall`, output guards, and cancellation apply to it. Enable `codemode` with `+codemode` in `defaultTools` or `--tools`.
+
+Direct tools without a server-declared output schema and default gateway calls still return display text. Direct tools with a declared schema keep their [existing structured result](#mcp-output-schemas) or overflow receipt. Use the gateway with `format: "structured"` **on the original call** if your script needs the provider payload or a saved reference:
+
+```js
+const result = await tools.mcp({
+  action: "call",
+  server: "docs",
+  tool: "list_rows",
+  args: {},
+  format: "structured",
+});
+```
+
+When the provider result fits, `result.mcpResult` holds its original blocks and any `structuredContent`, without protocol `_meta` fields. If the result does not fit, `mcpResult` is absent and `result.mcpAdapter.omitted` is `true`. When present, `result.mcpAdapter.resultRef` names the complete saved protocol envelope. `result.mcpAdapter.outputPath` names saved rendered text instead. The format option does not change what Pi displays or what the adapter saves.
+
+Set `format: "structured"` on `read-result` to get `{ text, ref, path?, offset, nextOffset, totalCharacters }` without a continuation notice in `text`. Without that option, the script gets display text as before. Failed reads reject in either format. If the call returned a `resultRef`, join the page text before decoding a JSON selection:
+
+```js
+const ref = result.mcpAdapter.resultRef;
+const path = "/content/0/text";
+let offset = 0;
+let selected = "";
+do {
+  const page = await tools.mcp({ action: "read-result", ref, path, offset, format: "structured" });
+  selected += page.text;
+  offset = page.nextOffset;
+} while (offset !== null);
+const originalText = JSON.parse(selected);
+// Only decode originalText as JSON if this server's text payload is JSON.
+```
 
 ### MCP Resources
 
@@ -808,7 +848,7 @@ In interactive sessions, you can also authenticate from `/mcp` with `ctrl+a` or 
 
 ### MCP output schemas
 
-Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls. Typed direct tools also expose that schema and bounded `structuredContent` to native Pi composition. Human text/images remain complementary. Oversized, absent, or not-run structured results return an `mcpAdapter` receipt (`omitted`, optional `resultRef`/`error`) instead of fabricating a server-schema value. Only the protocol's structured field is exposed: private details and `_meta` are not copied. Native content-only result-hook redaction drops structured output, as intended. Any JSON structured value—including `null`, `false`, and `0`—is rendered as text, including alongside non-empty content or images. The raw result remains available for saved-result readback.
+Advertised tool `outputSchema` values support JSON Schema draft-07 and 2020-12. Unstamped schemas use the SDK's 2020-12 default. Returned `structuredContent` is validated against the advertised schema for both proxy and direct-tool calls. Direct tools that declare a schema keep that schema and return the bounded provider value to native Pi composition. The value does not include adapter details or top-level `_meta`. Oversized, absent, or not-run structured results return an `mcpAdapter` receipt with `omitted` and, when available, `resultRef` or `error`. See [Multi-call work](#multi-call-work) for tools without a declared schema. A result hook that replaces only the display content drops structured output. JSON values including `null`, `false`, and `0` are also rendered as text, even alongside other text or images. The raw result remains available for saved-result readback.
 
 ## How It Works
 
