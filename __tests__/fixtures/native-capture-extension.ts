@@ -41,7 +41,7 @@ export function createNativeCaptureExtension({
       name: "fixture_writer",
       label: "Writer",
       description: "Finish a workspace write",
-      parameters: Type.Object({}),
+      parameters: Type.Object({}, { additionalProperties: false }),
       async execute(_id, _args, signal) {
         await fetch(new URL("/writer", url), { method: "POST", signal: signal ?? null });
         writeFileSync(workspaceFile, "writer finished");

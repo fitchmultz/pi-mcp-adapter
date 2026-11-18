@@ -336,20 +336,19 @@ export async function openMcpPanel(input: {
     | undefined;
 }): Promise<PanelFlowResult> {
   const { state, pi, ctx, configOverridePath, onDirectToolsConfigChanged } = input;
+  if (!ctx.hasUI) {
+    return { configChanged: false };
+  }
   if (!ctx.isProjectTrusted() || ctx.mode !== "tui") {
-    if (ctx.hasUI) {
-      await showStatus(state, ctx);
-    }
+    await showStatus(state, ctx);
     return { configChanged: false };
   }
   if (state.programmaticConfig === true) {
-    if (ctx.hasUI) {
-      ctx.ui.notify(
-        "MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.",
-        "info",
-      );
-      await showStatus(state, ctx);
-    }
+    ctx.ui.notify(
+      "MCP status is shown from the in-memory SDK config; configuration discovery is unavailable.",
+      "info",
+    );
+    await showStatus(state, ctx);
     return { configChanged: false };
   }
   if (Object.keys(state.config.mcpServers).length === 0) {

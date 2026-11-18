@@ -9,8 +9,11 @@ import type {
   SetupPanelOptions,
 } from "./mcp-setup-contract.ts";
 import { getSetupActions, getDetectedPaths } from "./mcp-setup-actions.ts";
+import { PANEL_PAGE_SIZE } from "./mcp-panel-view.ts";
 import { SetupView } from "./mcp-setup-view.ts";
 export type { SetupPanelCallbacks, SetupPanelOptions } from "./mcp-setup-contract.ts";
+
+const SETUP_ACTIONS_PAGE_SIZE = 7;
 
 interface McpSetupPanelInput {
   discovery: McpDiscoverySummary;
@@ -116,13 +119,14 @@ export class McpSetupPanel implements Component {
 
   private handleActionInput(data: string): void {
     const actions = getSetupActions(this.discovery, this.screen);
-    if (this.keys.selectUp(data)) {
-      this.actionCursor = Math.max(0, this.actionCursor - 1);
-      this.tui.requestRender();
-      return;
-    }
-    if (this.keys.selectDown(data)) {
-      this.actionCursor = Math.min(actions.length - 1, this.actionCursor + 1);
+    const moved = this.moveListCursor(
+      data,
+      this.actionCursor,
+      actions.length,
+      SETUP_ACTIONS_PAGE_SIZE,
+    );
+    if (moved !== undefined) {
+      this.actionCursor = moved;
       this.tui.requestRender();
       return;
     }
@@ -136,13 +140,9 @@ export class McpSetupPanel implements Component {
 
   private handleImportsInput(data: string): void {
     const imports = this.discovery.imports;
-    if (this.keys.selectUp(data)) {
-      this.importCursor = Math.max(0, this.importCursor - 1);
-      this.tui.requestRender();
-      return;
-    }
-    if (this.keys.selectDown(data)) {
-      this.importCursor = Math.min(imports.length - 1, this.importCursor + 1);
+    const moved = this.moveListCursor(data, this.importCursor, imports.length, PANEL_PAGE_SIZE);
+    if (moved !== undefined) {
+      this.importCursor = moved;
       this.tui.requestRender();
       return;
     }
@@ -166,13 +166,9 @@ export class McpSetupPanel implements Component {
 
   private handlePathsInput(data: string): void {
     const paths = getDetectedPaths(this.discovery);
-    if (this.keys.selectUp(data)) {
-      this.pathCursor = Math.max(0, this.pathCursor - 1);
-      this.tui.requestRender();
-      return;
-    }
-    if (this.keys.selectDown(data)) {
-      this.pathCursor = Math.min(paths.length - 1, this.pathCursor + 1);
+    const moved = this.moveListCursor(data, this.pathCursor, paths.length, PANEL_PAGE_SIZE);
+    if (moved !== undefined) {
+      this.pathCursor = moved;
       this.tui.requestRender();
       return;
     }
@@ -186,6 +182,21 @@ export class McpSetupPanel implements Component {
         this.notice = { text: `Opened ${selected}`, tone: "success" };
       }).catch((error: unknown) => this.reportError(error));
     }
+  }
+
+  private moveListCursor(
+    data: string,
+    cursor: number,
+    count: number,
+    pageSize: number,
+  ): number | undefined {
+    if (this.keys.selectUp(data)) {
+      return Math.max(0, cursor - 1);
+    }
+    if (this.keys.selectDown(data)) {
+      return Math.min(count - 1, cursor + 1);
+    }
+    return this.keys.selectPage(data, cursor, count, pageSize);
   }
 
   private async runAction(action: Action): Promise<void> {

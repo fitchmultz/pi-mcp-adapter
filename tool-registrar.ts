@@ -9,13 +9,19 @@ import type { JsonValue } from "@earendil-works/pi-ai";
 import { toolErrorOverride } from "./error-signal.ts";
 
 function outputReceipt() {
-  return Type.Object({
-    mcpAdapter: Type.Object({
-      omitted: Type.Literal(true),
-      resultRef: Type.Optional(Type.String()),
-      error: Type.Optional(Type.String()),
-    }),
-  });
+  return Type.Object(
+    {
+      mcpAdapter: Type.Object(
+        {
+          omitted: Type.Literal(true),
+          resultRef: Type.Optional(Type.String()),
+          error: Type.Optional(Type.String()),
+        },
+        { additionalProperties: false },
+      ),
+    },
+    { additionalProperties: false },
+  );
 }
 /** Overflow/not-run outcomes are receipts, never a fabricated server-schema result. */
 export function nativeMcpOutputSchema(

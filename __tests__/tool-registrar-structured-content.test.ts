@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveMcpResultContent } from "../tool-registrar.ts";
+import { Value } from "typebox/value";
+import { nativeMcpOutputSchema, resolveMcpResultContent } from "../tool-registrar.ts";
 
 describe("resolveMcpResultContent", () => {
   it("preserves human and structured content together", () => {
@@ -72,5 +73,21 @@ describe("resolveMcpResultContent", () => {
 
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({ type: "text" });
+  });
+});
+
+describe("nativeMcpOutputSchema", () => {
+  it("accepts exact adapter omission receipts and rejects extra properties", () => {
+    const schema = nativeMcpOutputSchema({
+      type: "object",
+      properties: { count: { type: "number" } },
+      required: ["count"],
+      additionalProperties: false,
+    });
+
+    expect(Value.Check(schema, { count: 1 })).toBe(true);
+    expect(Value.Check(schema, { mcpAdapter: { omitted: true, resultRef: "ref-1" } })).toBe(true);
+    expect(Value.Check(schema, { mcpAdapter: { omitted: true, unexpected: true } })).toBe(false);
+    expect(Value.Check(schema, { mcpAdapter: { omitted: true }, extra: true })).toBe(false);
   });
 });

@@ -22,13 +22,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PI_AUTOMATION_REF: e007829ba45938fbb3bdab83e5152771369bb656 # main
+  PI_AUTOMATION_REF: 3e744f52412c3669bd781ed5ea3e21567798352e # main
 
 jobs:
   resolve:
-    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@e007829ba45938fbb3bdab83e5152771369bb656 # main
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3e744f52412c3669bd781ed5ea3e21567798352e # main
     with:
-      automation-ref: e007829ba45938fbb3bdab83e5152771369bb656 # main
+      automation-ref: 3e744f52412c3669bd781ed5ea3e21567798352e # main
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
@@ -64,7 +64,7 @@ jobs:
         run: |
           PM="$(jq -er .packageManager automation/package.json)"
           npm install --global "$PM"
-      - uses: fitchmultz/.github/.github/actions/setup-linux-dns@e007829ba45938fbb3bdab83e5152771369bb656 # main
+      - uses: fitchmultz/.github/.github/actions/setup-linux-dns@3e744f52412c3669bd781ed5ea3e21567798352e # main
       - name: Install native TUI prerequisites
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome.sources
@@ -78,8 +78,14 @@ jobs:
           ref: ${{ needs.resolve.outputs.fork-ref }}
           path: fork
           persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: fork-cache
+        with:
+          path: ${{ runner.temp }}/fork-package
+          key: pi-fork-${{ runner.os }}-${{ runner.arch }}-${{ steps.fork.outputs.commit }}-${{ env.PI_AUTOMATION_REF }}-${{ hashFiles('fork/package-lock.json') }}
       - name: Build fork once
         id: fork-build
+        if: steps.fork-cache.outputs.cache-hit != 'true'
         working-directory: fork
         env:
           FORK_REF: ${{ steps.fork.outputs.commit }}
@@ -98,7 +104,7 @@ jobs:
           PM="$(jq -er .packageManager extension/package.json)"
           npm install --global "$PM"
       - name: Qualify official Pi
-        if: ${{ !cancelled() && steps.fork-build.outcome == 'success' && steps.extension-npm.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.fork-cache.outputs.cache-hit == 'true' || steps.fork-build.outcome == 'success') && steps.extension-npm.outcome == 'success' }}
         env:
           version: ${{ needs.resolve.outputs.official-version }}
           GH_TOKEN: ${{ github.token }}
@@ -106,7 +112,7 @@ jobs:
           node automation/scripts/qualify.mjs --repo pi-mcp-adapter --source "$GITHUB_WORKSPACE/extension" \
             --host official --target "$version" --output "$RUNNER_TEMP/official-evidence"
       - name: Qualify fork Pi
-        if: ${{ !cancelled() && steps.fork-build.outcome == 'success' && steps.extension-npm.outcome == 'success' }}
+        if: ${{ !cancelled() && (steps.fork-cache.outputs.cache-hit == 'true' || steps.fork-build.outcome == 'success') && steps.extension-npm.outcome == 'success' }}
         env:
           PI_COMPAT_FORK_REF: ${{ steps.fork.outputs.commit }}
         run: |

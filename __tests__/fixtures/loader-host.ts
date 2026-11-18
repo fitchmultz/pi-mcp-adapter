@@ -11,7 +11,7 @@ export function loaderFixtureTool(
     name,
     label: name,
     description: name,
-    parameters: Type.Object({}),
+    parameters: Type.Object({}, { additionalProperties: false }),
     ...(namespace ? { namespace } : {}),
     async execute() {
       return { content: [], details: {} };

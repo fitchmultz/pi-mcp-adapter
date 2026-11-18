@@ -7,6 +7,9 @@ import {
   sanitizeDisplayText,
   sanitizeRowContent,
 } from "./mcp-panel-text.ts";
+
+export const PANEL_PAGE_SIZE = 12;
+
 export interface PanelViewState {
   servers: readonly ServerState[];
   visibleItems: readonly VisibleItem[];
@@ -113,12 +116,11 @@ export class PanelView {
       return [layout.emptyRow(), layout.row(fg(this.t.hint, italic(message))), layout.emptyRow()];
     }
     const total = this.state.visibleItems.length;
-    const maxVisible = 12;
     const start = Math.max(
       0,
-      Math.min(this.state.cursorIndex - Math.floor(maxVisible / 2), total - maxVisible),
+      Math.min(this.state.cursorIndex - Math.floor(PANEL_PAGE_SIZE / 2), total - PANEL_PAGE_SIZE),
     );
-    const end = Math.min(start + maxVisible, total);
+    const end = Math.min(start + PANEL_PAGE_SIZE, total);
     const lines = [layout.emptyRow()];
     for (let index = start; index < end; index++) {
       const item = this.state.visibleItems[index];
@@ -127,7 +129,7 @@ export class PanelView {
       }
     }
     lines.push(layout.emptyRow());
-    if (total > maxVisible) {
+    if (total > PANEL_PAGE_SIZE) {
       const progress = Math.round(((this.state.cursorIndex + 1) / total) * 10);
       lines.push(
         layout.row(
