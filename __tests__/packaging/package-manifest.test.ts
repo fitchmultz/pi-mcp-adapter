@@ -47,6 +47,7 @@ describe("package.json files", () => {
     expect(packageJson.exports).toEqual({
       ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
       "./types": { types: "./dist/public-types.d.ts", default: "./dist/public-types.js" },
+      "./runtime": { types: "./dist/public-runtime.d.ts", default: "./dist/public-runtime.js" },
     });
     expect(packageJson.files).toContain("dist");
     expect((packageJson.files ?? []).filter((entry) => entry.endsWith(".ts"))).toEqual([]);
