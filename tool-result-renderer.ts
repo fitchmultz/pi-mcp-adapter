@@ -77,7 +77,7 @@ class CollapsibleText implements Component {
     this.footerText = new Text(footer, 0, 0);
   }
 
-  render(width: number): string[] {
+  render(width: number): ReturnType<Component["render"]> {
     if (this.expanded) {
       return this.fullText.render(width);
     }
