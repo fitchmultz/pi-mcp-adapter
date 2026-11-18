@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.48 - 2026-11-18
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- feat: export public ./runtime subpath for standalone manager and OAuth callers (1/3) (#271) ([33a9604](https://github.com/fitchmultz/pi-mcp-adapter/commit/33a9604c6469e82436d3515fdcf3dde3d32a190e))
+
+### What's Changed
+
+- feat: export public ./runtime subpath for standalone manager and OAuth callers (1/3) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/271
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.47...v8.0.48
+
 ## 8.0.47 - 2026-11-18
 
 <!-- npm-release:unreleased:start -->
