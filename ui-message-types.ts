@@ -82,10 +82,14 @@ export type {
 } from "./ui-stream-types.ts";
 
 /**
- * Extract prompt text from either legacy MCP UI message shapes or native AppBridge user messages.
+ * Extract chat text from a legacy prompt or a native AppBridge message.
+ * Advisory intents and notifications are not chat requests, regardless of extra fields.
  */
 export function extractUiPromptText(params: UiMessageParams): string | undefined {
-  if (params.type === "prompt" || (params.prompt !== undefined && params.prompt !== "")) {
+  if (params.type === "notify" || isUiIntentMessage(params)) {
+    return undefined;
+  }
+  if (params.type === "prompt" || Boolean(params.prompt)) {
     const prompt = params.prompt ?? textFromUiValue(params.message);
     return prompt === "" ? undefined : prompt;
   }
@@ -96,6 +100,10 @@ export function extractUiPromptText(params: UiMessageParams): string | undefined
   }
 
   return undefined;
+}
+
+export function isUiIntentMessage(params: UiMessageParams): boolean {
+  return params.type === "intent" || Boolean(params.intent);
 }
 
 /**

@@ -3,13 +3,7 @@ import type { ConsentManager } from "./consent-manager.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { SessionRecoveryDeps } from "./session-recovery.ts";
-import type {
-  McpConfig,
-  UiHostContext,
-  UiMessageParams,
-  UiModelContextParams,
-  UiResourceContent,
-} from "./types.ts";
+import type { McpConfig, UiHostContext, UiMessageParams, UiResourceContent } from "./types.ts";
 
 export interface UiServerOptions {
   serverName: string;
@@ -34,6 +28,5 @@ export interface UiServerOptions {
   sessionToken?: string;
   port?: number;
   onMessage?: (params: UiMessageParams) => Promise<void> | void;
-  onContextUpdate?: (params: UiModelContextParams) => Promise<void> | void;
   onComplete?: (reason: string) => void;
 }

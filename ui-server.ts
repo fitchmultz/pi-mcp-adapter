@@ -152,6 +152,7 @@ class UiHttpServer {
         },
         close: (reason) => this.close(reason ?? "closed"),
         getMessages: () => this.proxy.getMessages(),
+        takeModelContext: () => this.proxy.takeModelContext(),
         getSummary: () => this.events.getSummary(),
       },
     );

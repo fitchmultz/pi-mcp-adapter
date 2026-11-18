@@ -54,7 +54,7 @@ export function summarizeUiSessionResult(
   return {
     message: uiSession.reused
       ? "Updated the open UI."
-      : "Interactive UI is open. I'll respond to your prompts and intents as you interact with it.",
+      : "Interactive UI is open. The app can send chat requests; other activity stays in UI history.",
     uiOpen: true,
     uiViewer: uiSession.viewer,
     uiUrl: uiSession.url,
@@ -159,8 +159,7 @@ class UiSession {
       consentManager: state.consentManager,
       ...(request.onNeedsAuth ? { onNeedsAuth: request.onNeedsAuth } : {}),
       ...(hostContext !== undefined ? { hostContext } : {}),
-      onMessage: (params) => events.message(params),
-      onContextUpdate: (params) => events.context(params),
+      onMessage: (params) => events.message(params, this.handle),
       onComplete: (reason) => this.complete(reason),
     });
     this.handle = handle;
