@@ -15,12 +15,20 @@ import {
 } from "@fitchmultz/pi-mcp-adapter/types";
 import {
   authenticate,
+  completeAuthFromInput,
   createOAuthRuntime,
   getAuthStorageOptions,
   McpServerManager,
+  removeAuth,
   shutdownOAuth,
+  startAuth,
+  supportsOAuth,
+  type AuthenticateOptions,
+  type AuthIdentity,
+  type AuthStatus,
   type AuthStorageOptions,
   type McpOAuthRuntime,
+  type ServerConnection,
 } from "@fitchmultz/pi-mcp-adapter/runtime";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -73,11 +81,14 @@ adapter("invalid host");
 const invalidPrompt: number = extractUiPromptText({ prompt: "hello" });
 const oauthRuntime: McpOAuthRuntime = createOAuthRuntime();
 const authStorage: AuthStorageOptions = getAuthStorageOptions(undefined, "/tmp");
+const authIdentity: AuthIdentity = { serverName: "atlas", serverUrl: "https://example.com/mcp" };
+const authOpts: AuthenticateOptions = { runtime: oauthRuntime, authStorageOptions: authStorage };
+const oauthSupported: boolean = supportsOAuth({ url: authIdentity.serverUrl });
 const manager: McpServerManager = new McpServerManager("/tmp");
-const checkInvalidAuthenticate = () => {
+const checkRuntimeSurface = (conn?: ServerConnection, status?: AuthStatus) => {
   // @ts-expect-error The /runtime authenticate export must require an explicit OAuth runtime.
   const opts: Parameters<typeof authenticate>[3] = {};
-  void opts;
+  void [conn, status, opts, authOpts];
 };
 void [
   extension,
@@ -89,8 +100,13 @@ void [
   invalidPrompt,
   oauthRuntime,
   authStorage,
+  authIdentity,
+  oauthSupported,
   manager,
   authenticate,
+  startAuth,
+  completeAuthFromInput,
+  removeAuth,
   shutdownOAuth,
-  checkInvalidAuthenticate,
+  checkRuntimeSurface,
 ];

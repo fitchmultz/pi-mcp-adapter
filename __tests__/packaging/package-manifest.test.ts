@@ -42,7 +42,7 @@ describe("package.json files", () => {
     expect(packageJson.files).toContain("OAUTH.md");
   });
 
-  it("exports only the compiled runtime and its declarations", () => {
+  it("exports only the compiled runtime and its declarations", async () => {
     expect(packageJson.types).toBe("./dist/index.d.ts");
     expect(packageJson.exports).toEqual({
       ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
@@ -51,6 +51,18 @@ describe("package.json files", () => {
     });
     expect(packageJson.files).toContain("dist");
     expect((packageJson.files ?? []).filter((entry) => entry.endsWith(".ts"))).toEqual([]);
+    const runtimeExports: Record<string, unknown> = await import("../../dist/public-runtime.js");
+    expect(Object.keys(runtimeExports).toSorted()).toEqual([
+      "McpServerManager",
+      "authenticate",
+      "completeAuthFromInput",
+      "createOAuthRuntime",
+      "getAuthStorageOptions",
+      "removeAuth",
+      "shutdownOAuth",
+      "startAuth",
+      "supportsOAuth",
+    ]);
   });
 });
 
