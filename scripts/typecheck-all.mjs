@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 import { join } from "node:path";
 import process from "node:process";
+import { parseArgs } from "node:util";
 import { runChecks } from "./run-checks.mjs";
 
-const extraArgs = process.argv.slice(2);
-const skipBuild = extraArgs.includes("--skip-build");
-if (extraArgs.some((arg) => arg !== "--skip-build")) {
-  throw new Error("Usage: node scripts/typecheck-all.mjs [--skip-build]");
-}
+const {
+  values: { "skip-build": skipBuild },
+} = parseArgs({
+  options: { "skip-build": { type: "boolean", default: false } },
+  strict: true,
+  allowPositionals: false,
+});
 
 const projects = [
   { name: "root", args: ["--noEmit"] },
