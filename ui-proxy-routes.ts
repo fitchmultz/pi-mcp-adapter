@@ -5,9 +5,11 @@ import { isUiMessageParams, isUiModelContextParams } from "./ui-message-schema.t
 import {
   createUiModelContextUpdate,
   extractUiPromptText,
+  isUiIntentMessage,
   type UiDisplayMode,
   type UiHostContext,
   type UiMessageParams,
+  type UiModelContextUpdate,
   type UiSessionMessages,
 } from "./types.ts";
 import { isUiJsonObject } from "./ui-json.ts";
@@ -24,6 +26,7 @@ export class UiProxyRoutes {
   private readonly history: ReturnType<typeof createUiMessageHistory>;
   private readonly log: ReturnType<typeof logger.child>;
   private currentDisplayMode: UiDisplayMode;
+  private pendingModelContext: UiModelContextUpdate | undefined;
 
   constructor(
     options: UiServerOptions,
@@ -43,6 +46,12 @@ export class UiProxyRoutes {
     return { ...this.history.messages };
   }
 
+  takeModelContext(): UiModelContextUpdate | undefined {
+    const update = this.pendingModelContext;
+    this.pendingModelContext = undefined;
+    return update;
+  }
+
   async handle(pathname: string, params: unknown, res: ServerResponse): Promise<boolean> {
     switch (pathname) {
       case "/proxy/ui/consent":
@@ -52,7 +61,7 @@ export class UiProxyRoutes {
         await this.message(params, res);
         break;
       case "/proxy/ui/context":
-        await this.context(params, res);
+        this.context(params, res);
         break;
       case "/proxy/ui/open-link":
         openLink(params, res);
@@ -103,7 +112,7 @@ export class UiProxyRoutes {
       this.log.debug("UI prompt received", { prompt: prompt.slice(0, 100) });
       return warning;
     }
-    if (params.type === "intent" || Boolean(params.intent)) {
+    if (isUiIntentMessage(params)) {
       return this.recordIntent(params);
     }
     if (
@@ -131,12 +140,13 @@ export class UiProxyRoutes {
     return warning;
   }
 
-  private async context(params: unknown, res: ServerResponse): Promise<void> {
+  private context(params: unknown, res: ServerResponse): void {
     if (!isUiModelContextParams(params)) {
       sendJson(res, 400, { ok: false, error: "Invalid update-model-context params" });
       return;
     }
     const update = createUiModelContextUpdate(params);
+    this.pendingModelContext = update;
     const messages = this.history.messages;
     if (update) {
       messages.contexts.push(update);
@@ -148,7 +158,6 @@ export class UiProxyRoutes {
       hasContent: Boolean(params.content),
       hasUpdate: Boolean(update),
     });
-    await this.options.onContextUpdate?.(params);
     sendJson(res, 200, { ok: true, result: {} });
   }
 

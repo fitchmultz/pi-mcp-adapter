@@ -18,6 +18,7 @@ import { McpHostCommands } from "./host-commands.ts";
 import { HostSession } from "./host-session.ts";
 import { McpStateCleanup } from "./host-state-cleanup.ts";
 import { McpHostTools } from "./host-tools.ts";
+import { takeUiModelContextMessage } from "./ui-session-events.ts";
 
 const INIT_WAIT_TIMEOUT_MS = 30_000;
 const INIT_WAIT_TIMED_OUT = Symbol("init-wait-timed-out");
@@ -125,10 +126,13 @@ export class McpHostRuntime implements McpAdapterHost {
         this.syncToolSurface();
       }
     });
-    this.pi.on("before_agent_start", async (_event, ctx) => {
+    this.pi.on("before_agent_start", async (event, ctx) => {
       if (ctx.cwd !== this.runtimeCwd) {
         await this.startSession(ctx);
       }
+      const message =
+        event.messageType === "user" ? takeUiModelContextMessage(this.state?.uiServer) : undefined;
+      return message ? { message } : undefined;
     });
     this.pi.on("session_shutdown", () => this.shutdown());
   }

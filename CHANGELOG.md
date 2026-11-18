@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.49 - 2026-11-18
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: distinguish MCP app chat from background activity (PEA-217) (1/1) (#273) ([db9d1ea](https://github.com/fitchmultz/pi-mcp-adapter/commit/db9d1ea8f26c78957f7847466c65268cb236f203))
+
+### What's Changed
+
+- fix: distinguish MCP app chat from background activity (PEA-217) (1/1) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/273
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.48...v8.0.49
+
 ## 8.0.48 - 2026-11-18
 
 <!-- npm-release:unreleased:start -->

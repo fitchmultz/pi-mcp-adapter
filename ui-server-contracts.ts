@@ -1,6 +1,11 @@
 import type { CallToolResult } from "@modelcontextprotocol/client";
 
-import type { UiHostContext, UiSessionMessages, UiStreamSummary } from "./types.ts";
+import type {
+  UiHostContext,
+  UiModelContextUpdate,
+  UiSessionMessages,
+  UiStreamSummary,
+} from "./types.ts";
 
 export interface UiServerHandle {
   url: string;
@@ -18,5 +23,7 @@ export interface UiServerHandle {
   sendHostContext: (context: UiHostContext) => void;
   /** Get accumulated messages from this session */
   getSessionMessages: () => UiSessionMessages;
+  /** Consume the latest pending context for the next user or app chat request. */
+  takeModelContext: () => UiModelContextUpdate | undefined;
   getStreamSummary: () => UiStreamSummary | undefined;
 }

@@ -724,19 +724,19 @@ MCP servers can ship interactive UIs via [MCP Apps](https://github.com/modelcont
 
 **Native rendering:** On macOS, if [Glimpse](https://github.com/hazat/glimpse) is installed (`pi install npm:glimpseui`), UIs open in a native WKWebView window instead of a browser tab. Set `MCP_UI_VIEWER=browser` to force the browser, `MCP_UI_VIEWER=glimpse` to require native rendering, or `MCP_UI_VIEWER=none` (also accepts `off` / `disabled`) to suppress the window entirely — the tool still runs and its inline result is returned to the agent, but no browser or native window opens. This is useful for headless setups, CI, or users who want the tool output delivered inline as text only. When suppressed, a one-line info notification shows the UI URL so it can still be opened manually if needed.
 
-**Bidirectional communication:** The UI talks back. When it sends a prompt or intent, the message is stored and `triggerTurn()` wakes the agent. The agent retrieves messages via `mcp({ action: "ui-messages" })` and responds, enabling conversational UIs where the app and agent collaborate in real-time.
+**App chat and background activity:** MCP Apps `ui/message` text and legacy prompts are passed to Pi as app-originated chat requests. A chat request can start a turn when Pi is idle or queue during a run. It is not a message from the user: the protocol's `role: "user"` carries no proof of a user gesture. Apps can send a named chat request as `intent\n{json}` in a text block. Legacy intents, including receipts for app tool calls and links, stay in UI history and never start an agent turn. They describe app activity, not user approval. `ui/update-model-context` does not start a turn either. Only the latest pending update is attached to the next user prompt or app chat request from the active UI session; an empty update clears it.
 
 **Session reuse:** When the agent calls the same tool again while its UI is already open, the adapter pushes the new result to the existing window instead of replacing it. This enables live updates — the agent can refine a chart, add data, or respond to user input without losing the current view. Different tools still replace the session as before.
 
 **Message types from UI:**
 
-| Type      | Purpose                                      |
-| --------- | -------------------------------------------- |
-| `prompt`  | User message that triggers an agent response |
-| `intent`  | Structured action with name + params         |
-| `notify`  | Fire-and-forget notification                 |
-| `message` | Generic message payload                      |
-| (custom)  | Any other type forwarded as intent           |
+| Legacy type | Purpose                                   |
+| ----------- | ----------------------------------------- |
+| `prompt`    | App chat request that can trigger a turn  |
+| `intent`    | Named app activity recorded in UI history |
+| `notify`    | Fire-and-forget notification              |
+| `message`   | Generic message payload                   |
+| (custom)    | Any other type forwarded as legacy intent |
 
 **Retrieving UI messages:**
 
