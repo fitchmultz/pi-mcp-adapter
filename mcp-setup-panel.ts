@@ -9,11 +9,8 @@ import type {
   SetupPanelOptions,
 } from "./mcp-setup-contract.ts";
 import { getSetupActions, getDetectedPaths } from "./mcp-setup-actions.ts";
-import { PANEL_PAGE_SIZE } from "./mcp-panel-view.ts";
-import { SetupView } from "./mcp-setup-view.ts";
+import { COMPACT_ACTION_ROWS, SetupView } from "./mcp-setup-view.ts";
 export type { SetupPanelCallbacks, SetupPanelOptions } from "./mcp-setup-contract.ts";
-
-const SETUP_ACTIONS_PAGE_SIZE = 7;
 
 interface McpSetupPanelInput {
   discovery: McpDiscoverySummary;
@@ -119,12 +116,7 @@ export class McpSetupPanel implements Component {
 
   private handleActionInput(data: string): void {
     const actions = getSetupActions(this.discovery, this.screen);
-    const moved = this.moveListCursor(
-      data,
-      this.actionCursor,
-      actions.length,
-      SETUP_ACTIONS_PAGE_SIZE,
-    );
+    const moved = this.moveListCursor(data, this.actionCursor, actions.length, COMPACT_ACTION_ROWS);
     if (moved !== undefined) {
       this.actionCursor = moved;
       this.tui.requestRender();
@@ -140,7 +132,12 @@ export class McpSetupPanel implements Component {
 
   private handleImportsInput(data: string): void {
     const imports = this.discovery.imports;
-    const moved = this.moveListCursor(data, this.importCursor, imports.length, PANEL_PAGE_SIZE);
+    const moved = this.moveListCursor(
+      data,
+      this.importCursor,
+      imports.length,
+      Math.max(1, imports.length - 1),
+    );
     if (moved !== undefined) {
       this.importCursor = moved;
       this.tui.requestRender();
@@ -166,7 +163,12 @@ export class McpSetupPanel implements Component {
 
   private handlePathsInput(data: string): void {
     const paths = getDetectedPaths(this.discovery);
-    const moved = this.moveListCursor(data, this.pathCursor, paths.length, PANEL_PAGE_SIZE);
+    const moved = this.moveListCursor(
+      data,
+      this.pathCursor,
+      paths.length,
+      Math.max(1, paths.length - 1),
+    );
     if (moved !== undefined) {
       this.pathCursor = moved;
       this.tui.requestRender();
