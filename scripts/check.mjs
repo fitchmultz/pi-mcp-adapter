@@ -5,15 +5,14 @@ function npmCheck(name, requires = []) {
   return { name, command: "npm", args: ["run", name], requires };
 }
 
-const quality = [
-  npmCheck("format:check"),
-  npmCheck("lint"),
-  npmCheck("typecheck:all"),
+const qualityBeforeTypecheck = [npmCheck("format:check"), npmCheck("lint")];
+const qualityAfterTypecheck = [
   npmCheck("check:directives"),
   npmCheck("check:policy"),
   npmCheck("check:cache-schema"),
   npmCheck("check:browser"),
 ];
+const quality = [...qualityBeforeTypecheck, npmCheck("typecheck:all"), ...qualityAfterTypecheck];
 const tests = [npmCheck("test:vitest"), npmCheck("test:oauth")];
 const mode = process.argv[2];
 const plans = {
@@ -38,8 +37,14 @@ const plans = {
       command: "npm",
       args: ["run", "--prefix", "examples/interactive-visualizer", "build"],
     },
-    npmCheck("build"),
-    ...quality,
+    { name: "build", command: process.execPath, args: ["scripts/build.mjs"] },
+    ...qualityBeforeTypecheck,
+    {
+      name: "typecheck:remaining",
+      command: process.execPath,
+      args: ["scripts/typecheck-all.mjs", "--skip-build"],
+    },
+    ...qualityAfterTypecheck,
     npmCheck("test:vitest", ["example build", "build"]),
     npmCheck("test:oauth"),
     npmCheck("test:conformance"),

@@ -1,34 +1,43 @@
-import { matchesKey } from "@earendil-works/pi-tui";
+import { getSelectPageIndex, KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 
 /** The `tui.select.*` keybinding ids the adapter panels resolve. */
-export type PanelSelectKeybinding = "tui.select.up" | "tui.select.down" | "tui.select.confirm";
+export type PanelSelectKeybinding =
+  | "tui.select.up"
+  | "tui.select.down"
+  | "tui.select.confirm"
+  | "tui.select.pageUp"
+  | "tui.select.pageDown";
 
-/** Structural subset of pi-tui's `KeybindingsManager` (which satisfies it). */
-export interface PanelKeybindings {
-  matches: (data: string, keybinding: PanelSelectKeybinding) => boolean;
-}
+/** Keybindings manager accepted by adapter panels (`@earendil-works/pi-tui` or Pi's subclass). */
+export type PanelKeybindings = KeybindingsManager;
 
 /**
  * Key matchers for list navigation: user's `tui.select.*` bindings when a
- * manager is provided, otherwise the previous hardcoded defaults.
+ * manager is provided, otherwise pi-tui's `TUI_KEYBINDINGS` defaults.
  */
 export interface PanelKeys {
   selectUp: (data: string) => boolean;
   selectDown: (data: string) => boolean;
   selectConfirm: (data: string) => boolean;
+  selectPage: (
+    data: string,
+    selectedIndex: number,
+    itemCount: number,
+    pageSize: number,
+  ) => number | undefined;
 }
 
+const defaultKeybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+
 export function createPanelKeys(keybindings?: PanelKeybindings): PanelKeys {
-  if (keybindings) {
-    return {
-      selectUp: (data) => keybindings.matches(data, "tui.select.up"),
-      selectDown: (data) => keybindings.matches(data, "tui.select.down"),
-      selectConfirm: (data) => keybindings.matches(data, "tui.select.confirm"),
-    };
-  }
+  const active = keybindings ?? defaultKeybindings;
   return {
-    selectUp: (data) => matchesKey(data, "up"),
-    selectDown: (data) => matchesKey(data, "down"),
-    selectConfirm: (data) => matchesKey(data, "return"),
+    selectUp: (data) => active.matches(data, "tui.select.up"),
+    selectDown: (data) => active.matches(data, "tui.select.down"),
+    selectConfirm: (data) => active.matches(data, "tui.select.confirm"),
+    selectPage: (data, selectedIndex, itemCount, pageSize) =>
+      itemCount === 0
+        ? undefined
+        : getSelectPageIndex(active, data, selectedIndex, itemCount, pageSize),
   };
 }

@@ -9,7 +9,7 @@ import {
   buildVisibleItems,
   type VisibleItem,
 } from "./mcp-panel-model.ts";
-import { PanelView } from "./mcp-panel-view.ts";
+import { PANEL_PAGE_SIZE, PanelView } from "./mcp-panel-view.ts";
 
 interface McpPanelInput {
   config: McpConfig;
@@ -175,6 +175,16 @@ class McpPanel implements Component {
     }
     if (this.keys.selectDown(data)) {
       this.moveCursor(1);
+      return true;
+    }
+    const paged = this.keys.selectPage(
+      data,
+      this.cursorIndex,
+      this.visibleItems.length,
+      PANEL_PAGE_SIZE,
+    );
+    if (paged !== undefined) {
+      this.cursorIndex = paged;
       return true;
     }
     return false;

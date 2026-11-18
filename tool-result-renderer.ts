@@ -54,7 +54,7 @@ const COLLAPSED_RENDER_CHAR_SLACK = 8;
 class CollapsibleText implements Component {
   private readonly fullText: Text;
   private readonly footerText: Text;
-  private collapsedText: { charBudget: number; fullyIncluded: boolean; text: Text } | null = null;
+  private collapsedCache: { width: number; lines: string[] } | undefined;
 
   private readonly text: string;
   private readonly expanded: boolean;
@@ -82,31 +82,26 @@ class CollapsibleText implements Component {
       return this.fullText.render(width);
     }
 
-    const safeWidth = Math.max(1, Math.floor(width));
-    const charBudget = safeWidth * (this.maxCollapsedLines + 1) * COLLAPSED_RENDER_CHAR_SLACK;
-    if (!this.collapsedText || this.collapsedText.charBudget !== charBudget) {
+    if (this.collapsedCache?.width !== width) {
+      const safeWidth = Math.max(1, Math.floor(width));
+      const charBudget = safeWidth * (this.maxCollapsedLines + 1) * COLLAPSED_RENDER_CHAR_SLACK;
       const prefix = this.text.length > charBudget ? this.text.slice(0, charBudget) : this.text;
-      this.collapsedText = {
-        charBudget,
-        fullyIncluded: prefix === this.text,
-        text: new Text(prefix, 0, 0),
-      };
+      const preview = truncateToVisualLines(prefix, this.maxCollapsedLines, width, 0, "start");
+      const previewLines = prefix.length === 0 ? [""] : preview.visualLines;
+      const lines =
+        !this.preTruncated && prefix === this.text && preview.skippedCount === 0
+          ? previewLines
+          : [...previewLines, ...this.footerText.render(width)];
+      this.collapsedCache = { width, lines };
     }
 
-    const lines = this.collapsedText.text.render(width);
-    if (
-      !this.preTruncated &&
-      this.collapsedText.fullyIncluded &&
-      lines.length <= this.maxCollapsedLines
-    ) {
-      return lines;
-    }
-
-    return [...lines.slice(0, this.maxCollapsedLines), ...this.footerText.render(width)];
+    return this.collapsedCache.lines;
   }
 
   invalidate(): void {
-    // Text owns its width cache; the stored input and collapsed prefix are immutable.
+    this.fullText.invalidate();
+    this.footerText.invalidate();
+    this.collapsedCache = undefined;
   }
 }
 

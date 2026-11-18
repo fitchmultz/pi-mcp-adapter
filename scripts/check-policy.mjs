@@ -368,7 +368,7 @@ function verifyAcceptanceWorkflow() {
   }
   const build = "${{ !cancelled() && steps.build.outcome == 'success' }}";
   const fork =
-    "${{ !cancelled() && steps.fork-build.outcome == 'success' && steps.extension-npm.outcome == 'success' }}";
+    "${{ !cancelled() && (steps.fork-cache.outputs.cache-hit == 'true' || steps.fork-build.outcome == 'success') && steps.extension-npm.outcome == 'success' }}";
   /** @type {ReadonlyArray<readonly [string, string]>} */
   const required = [
     ["run: npm run check:quality", "${{ !cancelled() && steps.host.outcome == 'success' }}"],

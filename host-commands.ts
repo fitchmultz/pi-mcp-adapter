@@ -129,8 +129,12 @@ export class McpHostCommands {
 
   private async setup({ state, ctx, owner, original }: Command): Promise<void> {
     owner?.throwIfInactive();
+    if (!ctx.hasUI) {
+      return;
+    }
     if (this.host.programmaticConfig) {
-      ctx.ui.notify(
+      this.notify(
+        ctx,
         "MCP setup is unavailable when config is supplied by createMcpAdapter().",
         "info",
       );
@@ -151,37 +155,47 @@ export class McpHostCommands {
 
   private async logout({ state, ctx, owner, rest }: Command): Promise<void> {
     if (rest.length === 0) {
-      if (ctx.hasUI) {
-        ctx.ui.notify("Usage: /mcp logout <server>", "error");
-      }
+      this.notify(ctx, "Usage: /mcp logout <server>", "error");
       return;
     }
     owner?.throwIfInactive();
     await commands.logoutServer(rest, state, ctx);
   }
 
+  private notify(
+    ctx: ExtensionContext,
+    message: string,
+    level: "info" | "warning" | "error",
+  ): void {
+    if (ctx.hasUI) {
+      ctx.ui.notify(message, level);
+    }
+  }
+
   private setDisabled({ state, ctx, owner, rest }: Command, disabled: boolean): void {
     const subcommand = disabled ? "disable" : "enable";
     if (!ctx.isProjectTrusted()) {
-      ctx.ui.notify(
+      this.notify(
+        ctx,
         "Project MCP changes are unavailable until this project is trusted.",
         "warning",
       );
       return;
     }
     if (this.host.programmaticConfig) {
-      ctx.ui.notify(
+      this.notify(
+        ctx,
         `/mcp ${subcommand} is unavailable when config is supplied by createMcpAdapter().`,
         "info",
       );
       return;
     }
     if (rest.length === 0) {
-      ctx.ui.notify(`Usage: /mcp ${subcommand} <server>`, "error");
+      this.notify(ctx, `Usage: /mcp ${subcommand} <server>`, "error");
       return;
     }
     if (!state.config.mcpServers[rest]) {
-      ctx.ui.notify(`Server "${rest}" not found in effective config`, "error");
+      this.notify(ctx, `Server "${rest}" not found in effective config`, "error");
       return;
     }
     owner?.throwIfInactive();
@@ -194,7 +208,7 @@ export class McpHostCommands {
     const message = result.changed
       ? `${disabled ? "Disabled" : "Enabled"} server "${rest}" in ${result.path} — run /reload to apply`
       : `Server "${rest}" is already ${disabled ? "disabled" : "enabled"}`;
-    ctx.ui.notify(message, "info");
+    this.notify(ctx, message, "info");
   }
 
   private async status({ state, ctx, owner, original }: Command): Promise<void> {

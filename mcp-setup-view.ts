@@ -31,7 +31,7 @@ const DEFAULT_THEME: SetupTheme = {
 
 const MIN_PANEL_WIDTH = 24;
 const COMPACT_WIDTH = 60;
-const COMPACT_ACTION_ROWS = 7;
+export const COMPACT_ACTION_ROWS = 7;
 const DESKTOP_PREVIEW_WIDTH = 74;
 
 function fg(code: string, text: string): string {

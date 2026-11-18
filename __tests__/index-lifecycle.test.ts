@@ -1566,4 +1566,59 @@ describe("mcpAdapter session lifecycle", () => {
       consoleError.mockRestore();
     }
   });
+
+  it("skips UI calls in headless /mcp commands", async () => {
+    const state = createState();
+    state.config.mcpServers = { global: { url: "https://example.test/mcp" } };
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers, command: registeredCommand } = await createPi();
+    mcpAdapter(api);
+
+    await handlers.get("session_start")({}, { hasUI: false, cwd: "/tmp/project" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const mcp = registeredCommand("mcp");
+    await mcp.handler("setup", { hasUI: false, cwd: "/tmp/project" });
+    await mcp.handler("disable missing", { hasUI: false, cwd: "/tmp/project" });
+    await mcp.handler("disable global", {
+      hasUI: false,
+      cwd: "/tmp/project",
+      isProjectTrusted: () => false,
+    });
+    await mcp.handler("disable global", { hasUI: false, cwd: "/tmp/project" });
+
+    expect(mocks.openMcpSetup).not.toHaveBeenCalled();
+    expect(mocks.writeProjectServerDisabledOverride).toHaveBeenCalledWith(
+      undefined,
+      "/tmp/project",
+      "global",
+      true,
+    );
+  });
+
+  it("skips ui.notify on failed initialization when hasUI is false", async () => {
+    mocks.initializeMcp.mockRejectedValue(new Error("init boom"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {
+      // The assertion below owns the expected initialization diagnostic.
+    });
+
+    try {
+      const { default: mcpAdapter } = await import("../index.ts");
+      const { api, handlers, command: registeredCommand } = await createPi();
+      mcpAdapter(api);
+
+      await handlers.get("session_start")({}, { hasUI: false });
+      await nextTurn();
+
+      await expect(
+        registeredCommand("mcp").handler("status", { hasUI: false }),
+      ).resolves.toBeUndefined();
+      expect(mocks.executeStatus).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
 });

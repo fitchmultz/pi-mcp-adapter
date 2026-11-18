@@ -475,4 +475,26 @@ describe("commands onboarding", () => {
     expect(state.toolMetadata.get("notion")?.[0]?.name).toBe("notion_search");
     expect(callbacks.getConnectionStatus("notion")).toBe("connected");
   });
+
+  it("skips the interactive panel when hasUI is false", async () => {
+    const state = await createState({
+      config: { mcpServers: { demo: { url: "https://example.com/mcp" } } },
+    });
+    const { openMcpPanel } = await import("../../commands.ts");
+    const custom = vi.spyOn(host.context.ui, "custom");
+    const result = await openMcpPanel({
+      state,
+      pi: host.api,
+      ctx: {
+        ...host.context,
+        hasUI: false,
+        mode: "tui",
+        cwd: process.cwd(),
+      },
+    });
+
+    expect(result).toEqual({ configChanged: false });
+    expect(custom).not.toHaveBeenCalled();
+    expect(mocks.createMcpPanel).not.toHaveBeenCalled();
+  });
 });

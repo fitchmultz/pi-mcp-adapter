@@ -394,15 +394,17 @@ export class McpHostRuntime implements McpAdapterHost {
         owner?.throwIfInactive();
         this.session.adopt(initialized);
       } catch (error) {
-        ctx.ui.notify(
-          `MCP initialization failed: ${error instanceof Error ? error.message : String(error)}`,
-          "error",
-        );
+        if (ctx.hasUI) {
+          ctx.ui.notify(
+            `MCP initialization failed: ${error instanceof Error ? error.message : String(error)}`,
+            "error",
+          );
+        }
         return null;
       }
     }
     const state = this.session.currentState;
-    if (!state) {
+    if (!state && ctx.hasUI) {
       ctx.ui.notify(unavailableStateMessage(this.session), "error");
     }
     return state;

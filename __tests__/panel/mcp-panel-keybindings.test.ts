@@ -11,6 +11,8 @@ const CTRL_P = "\x10";
 const CTRL_N = "\x0e";
 const UP = "\x1b[A";
 const DOWN = "\x1b[B";
+const PAGE_UP = "\x1b[5~";
+const PAGE_DOWN = "\x1b[6~";
 const ENTER = "\r";
 
 function createEmacsKeybindings(): KeybindingsManager {
@@ -97,6 +99,9 @@ describe("panel-keys", () => {
     expect(keys.selectDown(DOWN)).toBe(true);
     expect(keys.selectDown(CTRL_N)).toBe(false);
     expect(keys.selectConfirm(ENTER)).toBe(true);
+    expect(keys.selectPage(PAGE_DOWN, 0, 25, 12)).toBe(12);
+    expect(keys.selectPage(PAGE_UP, 15, 25, 12)).toBe(3);
+    expect(keys.selectPage(PAGE_DOWN, 0, 0, 12)).toBeUndefined();
   });
 
   it("respects rebinding that removes a default key", () => {
@@ -170,6 +175,37 @@ describe("mcp-panel custom keybindings", () => {
     await Promise.resolve();
     // Cursor did not move: still authenticates the first server.
     expect(callbacks.authenticate).toHaveBeenLastCalledWith("alpha");
+    panel.dispose();
+  });
+
+  it("pages through large server lists using tui.select page bindings", async () => {
+    const callbacks = createAuthCallbacks();
+    const servers: McpConfig["mcpServers"] = {};
+    for (let index = 0; index < 20; index++) {
+      servers[`server-${String(index).padStart(2, "0")}`] = {
+        url: `https://s${index}.example.com/mcp`,
+        auth: "oauth",
+      };
+    }
+    const panel = createMcpPanel({
+      config: { mcpServers: servers },
+      cache: null,
+      provenance: new Map(),
+      callbacks,
+      tui: { requestRender: noop },
+      done: noop,
+      options: { authOnly: true },
+    });
+
+    panel.handleInput(PAGE_DOWN);
+    panel.handleInput(ENTER);
+    await Promise.resolve();
+    expect(callbacks.authenticate).toHaveBeenLastCalledWith("server-12");
+
+    panel.handleInput(PAGE_UP);
+    panel.handleInput(ENTER);
+    await Promise.resolve();
+    expect(callbacks.authenticate).toHaveBeenLastCalledWith("server-00");
     panel.dispose();
   });
 });
@@ -272,6 +308,37 @@ describe("mcp-setup-panel custom keybindings", () => {
     expect(output).toContain("2. ~/.agents/mcp.json");
     expect(output).toContain("3. ~/.agents/mcp/mcp.json");
     expect(output).toContain("6. .pi/fitch-mcp-adapter/mcp.json");
+    panel.dispose();
+  });
+
+  it("pages setup actions with pageDown and pageUp", async () => {
+    const callbacks = createSetupCallbacks();
+    const done = vi.fn<() => void>();
+    const panel = createMcpSetupPanel({
+      discovery: createEmptyDiscovery(),
+      callbacks,
+      options: {
+        mode: "setup",
+        onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
+      },
+      tui: { requestRender: noop },
+      done,
+    });
+
+    // 9 actions total with page size 7: 0 -> 7 -> 0 -> 1 (scaffold-project).
+    panel.handleInput(PAGE_DOWN);
+    panel.handleInput(PAGE_UP);
+    panel.handleInput(DOWN);
+    panel.handleInput(ENTER);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(callbacks.scaffoldProjectConfig).toHaveBeenCalledTimes(1);
+
+    // Page twice from 0 -> 7 -> 8 (close).
+    panel.handleInput(PAGE_DOWN);
+    panel.handleInput(PAGE_DOWN);
+    panel.handleInput(ENTER);
+    expect(done).toHaveBeenCalledTimes(1);
     panel.dispose();
   });
 });
