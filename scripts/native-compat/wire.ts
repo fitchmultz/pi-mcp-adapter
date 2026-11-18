@@ -106,6 +106,7 @@ export class WireFixture {
             },
             { name: "text_json", description: "Fixture JSON in text", inputSchema: schema },
             { name: "plain_tsv", description: "Fixture plain TSV", inputSchema: schema },
+            { name: "approval_echo", description: "Fixture approval gate", inputSchema: schema },
             {
               name: "app_only",
               description: "Not model-callable",

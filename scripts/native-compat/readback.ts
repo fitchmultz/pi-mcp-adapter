@@ -20,6 +20,22 @@ const codedSchema = z.object({
   large: z.object({ mcpAdapter: z.object({ omitted: z.literal(true), resultRef: z.string() }) }),
   selected: z.object({ text: z.string(), offset: z.literal(0), nextOffset: z.null() }),
   defaultPage: z.string(),
+  denied: z
+    .object({
+      mcpAdapter: z
+        .object({
+          omitted: z.literal(true),
+          error: z.literal("approval_required"),
+          message: z.string(),
+        })
+        .strict(),
+    })
+    .strict(),
+  defaultDenial: z.string(),
+  providerError: z.object({
+    isError: z.literal(true),
+    mcpAdapter: z.object({ error: z.literal("tool_error"), omitted: z.literal(false) }),
+  }),
   largeSelection: z.object({ ids: z.array(z.number()), noteLength: z.number(), pages: z.number() }),
   rejected: z.string(),
 });
@@ -56,6 +72,15 @@ export async function verifyMcpReadback(
   const ref = z.object({ resultRef: z.string() }).parse(direct.details).resultRef;
   const good = await native.run("mcp", { action: "read-result", ref, path: "/content/0/text" });
   const bad = await native.run("mcp", { action: "read-result", ref, path: "/rows" });
+  const blocked = {
+    action: "call",
+    server: "local",
+    tool: "approval_echo",
+    args: { value: "must-not-run" },
+  };
+  const deniedNative = await native.run("mcp", { ...blocked, format: "structured" });
+  assert.equal(deniedNative.isError, false);
+  assert.match(textOf(deniedNative).join("\n"), /approval-gated.*interactive session/);
   const coded = await native.run("codemode", {
     code: `
       const call = (value) => tools.mcp({ action: "call", server: "local", tool: "text_json", args: { value }, format: "structured" });
@@ -79,7 +104,11 @@ export async function verifyMcpReadback(
       let rejected;
       try { await read(ref, "/rows", 0); }
       catch (error) { rejected = error.message; }
-      return { inline, large, selected, defaultPage, largeSelection, rejected };`,
+      const blocked = ${JSON.stringify(blocked)};
+      const denied = await tools.mcp({ ...blocked, format: "structured" });
+      const defaultDenial = await tools.mcp(blocked);
+      const providerError = await tools.mcp({ ...blocked, tool: "echo", args: { value: "fail" }, format: "structured" });
+      return { inline, large, selected, defaultPage, largeSelection, rejected, denied, defaultDenial, providerError };`,
   });
 
   const [directText] = textOf(good);
@@ -97,11 +126,17 @@ export async function verifyMcpReadback(
     error: "result_read_failed",
   });
   assert.equal(coded.isError, false, textOf(coded).join("\n"));
+  assert.equal(coded.nestedCalls?.calls.at(-1)?.status, "error");
   const [, output] = textOf(coded);
   assert.ok(output !== undefined);
-  const { inline, large, selected, defaultPage, largeSelection, rejected } = codedSchema.parse(
-    JSON.parse(output),
-  );
+  assert.deepEqual(fixture.wire.effects.slice(effectsBefore), [
+    "direct",
+    "inline-json",
+    "large-json",
+    "fail",
+  ]);
+  const { inline, large, selected, defaultPage, largeSelection, rejected, denied, defaultDenial } =
+    codedSchema.parse(JSON.parse(output));
   assert.equal(inline.mcpResult.content[0].text, '{"rows":[{"id":7}],"note":"inline-json"}');
   assert.equal(selected.text, JSON.stringify(inline.mcpResult.content[0].text));
   assert.equal(defaultPage, selected.text);
@@ -109,15 +144,12 @@ export async function verifyMcpReadback(
   assert.equal(largeSelection.noteLength, 20_000);
   assert.ok(largeSelection.pages > 1);
   assert.match(rejected, /JSON Pointer .*\/rows/);
+  assert.equal(denied.mcpAdapter.message, defaultDenial);
+  assert.match(defaultDenial, /approval-gated.*interactive session/);
   const retained = artifactSchema.parse(
     JSON.parse(await readFile(large.mcpAdapter.resultRef, "utf8")),
   );
   assert.equal(retained.content[0].text, `{"rows":[{"id":7}],"note":"${"雪".repeat(20_000)}"}`);
-  assert.deepEqual(fixture.wire.effects.slice(effectsBefore), [
-    "direct",
-    "inline-json",
-    "large-json",
-  ]);
   console.log(
     "[native-tools] MCP protocol envelope, codemode ref/page, and failed readback passed",
   );

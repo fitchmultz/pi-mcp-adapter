@@ -51,12 +51,13 @@ export const mcpScriptOutputSchema = Type.Object({
     ),
   ),
   mcpAdapter: Type.Object({
-    omitted: Type.Boolean({ description: "The provider result did not fit inline." }),
+    omitted: Type.Boolean({ description: "No provider result is available inline." }),
     resultRef: Type.Optional(Type.String({ description: "Saved MCP protocol envelope." })),
     outputPath: Type.Optional(
       Type.String({ description: "Saved rendered text, not an MCP envelope." }),
     ),
     error: Type.Optional(Type.String()),
+    message: Type.Optional(Type.String({ description: "Human-readable diagnostic." })),
   }),
   isError: Type.Optional(Type.Literal(true)),
 });
@@ -144,21 +145,25 @@ export function withMcpScriptOutput(
   result: AgentToolResult<Record<string, unknown>>,
 ): AgentToolResult<Record<string, unknown>> {
   const { details } = result;
-  if (details.mcpResult === undefined) {
-    return result;
-  }
+  const receipt = receiptFields(details);
   const payload = inlinePayload(details.mcpResult);
   const outputPath = asObjectRecord(details.outputGuard)?.fullOutputPath;
+  const diagnostic = result.content[0];
   return {
     ...result,
     structuredContent: {
       ...(payload !== undefined ? { mcpResult: payload } : {}),
       mcpAdapter: {
         omitted: payload === undefined,
-        ...receiptFields(details),
+        ...receipt,
         ...(typeof outputPath === "string" ? { outputPath } : {}),
+        ...(payload === undefined && receipt.error !== undefined && diagnostic?.type === "text"
+          ? { message: diagnostic.text }
+          : {}),
       },
-      ...(result.isError === true ? { isError: true } : {}),
+      ...(result.isError === true || toolErrorOverride(details) !== undefined
+        ? { isError: true }
+        : {}),
     },
   };
 }

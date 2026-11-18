@@ -168,6 +168,12 @@ async function beforeGateway(
   }
 }
 
+function formatGatewayResult(params: GatewayArguments, result: GatewayResult): GatewayResult {
+  return params.action === "call" && params.format === "structured"
+    ? withMcpScriptOutput(result)
+    : result;
+}
+
 export async function executeGateway(
   pi: ExtensionAPI,
   host: McpAdapterHost,
@@ -178,7 +184,7 @@ export async function executeGateway(
   await beforeGateway(host, options.beforeExecute, { id: toolCallId, ctx, action: params.action });
   const ready = await host.getToolState(signal);
   if ("content" in ready) {
-    return ready;
+    return formatGatewayResult(params, ready);
   }
   const proxy = await import("./proxy-modes.ts");
   const beforeExecute = options.beforeExecute;
@@ -208,7 +214,5 @@ export async function executeGateway(
     beforeDispatch,
     sync: () => host.syncToolSurface(),
   });
-  return params.action === "call" && params.format === "structured"
-    ? withMcpScriptOutput(result)
-    : result;
+  return formatGatewayResult(params, result);
 }

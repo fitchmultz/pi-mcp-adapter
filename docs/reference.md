@@ -531,11 +531,12 @@ mcp({
 
 `path` is an RFC 6901 JSON Pointer from the root of the saved file, not from the displayed preview or a Pi result wrapper.
 
-| Saved file                     | Pointer roots                                                                                                        |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| MCP tool result (`resultRef`)  | `/structuredContent` for structured data, or `/content/0/text` for the text of the first block if it is a text block |
-| Resource result (`resultRef`)  | `/contents` for the resource list carried by the protocol                                                            |
-| Rendered output (`outputPath`) | Omit `path` and `fields` to page the saved text. There is no MCP envelope.                                           |
+| Saved file                                | Pointer roots                                                                                                        |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| MCP tool result (`resultRef`)             | `/structuredContent` for structured data, or `/content/0/text` for the text of the first block if it is a text block |
+| Resource result (`resultRef`)             | `/contents` for the resource list carried by the protocol                                                            |
+| Rendered output (`outputPath`)            | Omit `path` and `fields` to page the saved text. There is no MCP envelope.                                           |
+| UI history (`resultRef` or `historyRefs`) | Omit `path` and `fields` to page grouped text or the original JSONL events. There is no MCP envelope.                |
 
 If a server puts JSON inside a text block, a pointer selects the entire string, not a field inside it. For example, `/content/0/text` selects the string that might contain `{"rows":[...]}`. `/rows` does not address that data in the saved envelope.
 
@@ -558,6 +559,8 @@ const result = await tools.mcp({
 ```
 
 When the provider result fits, `result.mcpResult` holds its original blocks and any `structuredContent`, without protocol `_meta` fields. If the result does not fit, `mcpResult` is absent and `result.mcpAdapter.omitted` is `true`. When present, `result.mcpAdapter.resultRef` names the complete saved protocol envelope. `result.mcpAdapter.outputPath` names saved rendered text instead. The format option does not change what Pi displays or what the adapter saves.
+
+If the adapter returns a diagnostic instead of a provider result, `mcpAdapter.omitted` is `true` and `mcpAdapter.error` gives the code, such as `approval_required`. Read `mcpAdapter.message` for the explanation when present. The receipt includes `isError: true` only when Pi marks the call as a tool error. Argument validation and other failures that reject in Pi before the adapter returns a result still reject in codemode.
 
 Set `format: "structured"` on `read-result` to get `{ text, ref, path?, offset, nextOffset, totalCharacters }` without a continuation notice in `text`. Without that option, the script gets display text as before. Failed reads reject in either format. If the call returned a `resultRef`, join the page text before decoding a JSON selection:
 
