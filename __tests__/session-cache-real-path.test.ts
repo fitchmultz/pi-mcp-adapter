@@ -103,7 +103,7 @@ async function harness(
   await writeFile(
     configPath,
     JSON.stringify({
-      mcpServers: initialServers ?? { demo: definition },
+      mcpServers: initialServers ?? { demo: { ...definition, url: "" } },
       settings: { sampling: false, elicitation: false },
     }),
   );

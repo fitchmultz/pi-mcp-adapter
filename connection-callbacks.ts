@@ -11,7 +11,7 @@ import type {
 } from "./server-connection.ts";
 import { type ServerDefinition, isNonInteractiveOAuth } from "./types.ts";
 import { supportsOAuth } from "./mcp-oauth-runtime.ts";
-import { ADAPTER_VERSION } from "./utils.ts";
+import { ADAPTER_VERSION, hasServerUrl } from "./utils.ts";
 import { logger } from "./logger.ts";
 import type { ConnectionCatalogs } from "./connection-catalogs.ts";
 
@@ -91,9 +91,7 @@ export class ConnectionCallbacks {
       {
         responseCacheStore: catalogs,
         versionNegotiation: {
-          mode:
-            definition.protocolVersion ??
-            (typeof definition.url === "string" && definition.url.length > 0 ? "auto" : "legacy"),
+          mode: definition.protocolVersion ?? (hasServerUrl(definition) ? "auto" : "legacy"),
         },
         // ponytail: reject catalogs over 1024 pages; raise this native cap if a real catalog needs more.
         listMaxPages: 1024,

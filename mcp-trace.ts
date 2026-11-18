@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { Transport, JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/client";
 import type { McpTraceSettings, ServerEntry } from "./config-types.ts";
+import { hasServerUrl } from "./utils.ts";
 export type { McpTraceSettings } from "./config-types.ts";
 
 export const MCP_TRACE_SCHEMA_VERSION = 1;
@@ -379,7 +380,5 @@ export function traceTransportKind(
   if (constructorName.includes("streamable")) {
     return "streamable-http";
   }
-  return typeof definition.url === "string" && definition.url !== ""
-    ? "streamable-http"
-    : "unknown";
+  return hasServerUrl(definition) ? "streamable-http" : "unknown";
 }

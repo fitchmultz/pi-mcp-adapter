@@ -217,15 +217,22 @@ export function resolveCommandSecretsRecord(
   );
 }
 
+export function hasServerUrl(definition: Pick<ServerEntry, "url">): boolean {
+  return typeof definition.url === "string" && definition.url.trim() !== "";
+}
+
 export function resolveServerUrl(definition: Pick<ServerEntry, "url">): string | undefined {
   const configuredUrl: unknown = definition.url;
-  if (configuredUrl === null || configuredUrl === undefined) {
+  if (
+    configuredUrl === null ||
+    configuredUrl === undefined ||
+    (typeof configuredUrl === "string" && !hasServerUrl(definition))
+  ) {
     return undefined;
   }
   if (typeof configuredUrl !== "string") {
     throw new Error("MCP server URL must be a string");
   }
-
   const missing = getMissingEnvVars(configuredUrl);
   if (missing.length > 0) {
     throw new Error(

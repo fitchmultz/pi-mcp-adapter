@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -113,6 +114,56 @@ describe("config discovery", () => {
       oauthDir: ".pi/oauth",
     });
   });
+
+  it.each([{}, { url: "" }, { url: " \t" }, { url: null }])(
+    "uses a Pi stdio override rather than inherited HTTP connection details (%j)",
+    async (override) => {
+      const home = mkdtempSync(join(tmpdir(), "pi-mcp-config-home-"));
+      process.env.HOME = home;
+      const stdio = {
+        command: process.execPath,
+        args: [fileURLToPath(new URL("./fixtures/tools-only-server.mjs", import.meta.url))],
+      };
+      writeJson(join(home, ".config", "mcp", "mcp.json"), {
+        mcpServers: {
+          bridge: {
+            url: "https://example.invalid/mcp",
+            headers: { "X-Example": "http-only" },
+            oauth: { clientId: "remote-client" },
+            idleTimeout: 15,
+          },
+        },
+      });
+      writeJson(join(home, ".pi", "agent", "fitch-mcp-adapter", "mcp.json"), {
+        mcpServers: { bridge: { ...stdio, ...override } },
+      });
+      const { loadMcpConfig } = await import("../config.ts");
+      const { computeServerHash, isServerCacheValid } = await import("../metadata-cache.ts");
+      const { McpServerManager } = await import("../server-manager.ts");
+      const definition = loadMcpConfig(undefined, home).mcpServers.bridge;
+      assert(definition);
+      expect(definition).toEqual({ ...stdio, ...override, idleTimeout: 15 });
+
+      const manager = new McpServerManager(home);
+      try {
+        const connection = await manager.connect("bridge", definition);
+        expect(connection.tools.map((tool) => tool.name)).toEqual(["noop"]);
+        expect(
+          isServerCacheValid(
+            {
+              configHash: computeServerHash(stdio),
+              tools: connection.tools,
+              resources: [],
+              cachedAt: Date.now(),
+            },
+            definition,
+          ),
+        ).toBe(true);
+      } finally {
+        await manager.closeAll();
+      }
+    },
+  );
 
   it.each([
     { mcpServers: { invalid: { command: 42 } } },

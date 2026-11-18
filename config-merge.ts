@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
 import { loadImportedConfig, extractServers } from "./config-imports.ts";
+import { hasServerUrl } from "./utils.ts";
 
 export function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
   const imports = mergeImports(base.imports, next.imports);
@@ -40,7 +41,10 @@ function inheritableServerFields(
   if (!existing) {
     return base;
   }
-  if (typeof definition.url === "string" && definition.url !== existing.url) {
+  if (
+    base.url !== existing.url ||
+    (definition.url !== undefined && definition.url !== existing.url)
+  ) {
     for (const field of URL_BOUND_AUTH_FIELDS) {
       delete base[field];
     }
@@ -75,12 +79,14 @@ function transportBase(existing: ServerEntry | undefined, definition: ServerEntr
     ] as const) {
       delete base[field];
     }
-  } else if (
-    existing?.socket !== undefined &&
-    existing.socket !== "" &&
-    (typeof definition.command === "string" || typeof definition.url === "string")
-  ) {
-    delete base.socket;
+  } else {
+    const hasCommand = typeof definition.command === "string" && definition.command !== "";
+    if (hasCommand) {
+      delete base.url;
+    }
+    if ((base.socket ?? "") !== "" && (hasCommand || hasServerUrl(definition))) {
+      delete base.socket;
+    }
   }
   return base;
 }
