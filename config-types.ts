@@ -75,8 +75,8 @@ export interface ServerEntry {
   protocolVersion?: "auto" | "legacy";
   /** Trust explicit readOnlyHint/idempotentHint annotations for one modern transport retry. Defaults to false. */
   retryOnTransportFailure?: boolean;
-  // HTTP fields
-  url?: string;
+  /** HTTP endpoint. Null and blank strings clear an inherited URL. */
+  url?: string | null;
   headers?: Record<string, string>;
   /**
    * Authentication type:

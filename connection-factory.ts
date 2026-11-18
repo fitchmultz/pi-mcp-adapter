@@ -12,7 +12,12 @@ import {
   type McpPrompt,
   validateServerProtocolConfig,
 } from "./types.ts";
-import { normalizeRequestTimeoutMs, resolveConfigPath, resolveServerUrl } from "./utils.ts";
+import {
+  hasServerUrl,
+  normalizeRequestTimeoutMs,
+  resolveConfigPath,
+  resolveServerUrl,
+} from "./utils.ts";
 import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import {
@@ -104,8 +109,6 @@ export class ConnectionFactory {
     try {
       const trace = this.trace(definition);
       const implicitOAuth =
-        typeof definition.url === "string" &&
-        definition.url.length > 0 &&
         supportsOAuth(definition) &&
         this.oauthRuntime !== undefined &&
         runtime.getOAuthRequest(
@@ -114,10 +117,10 @@ export class ConnectionFactory {
           getAuthBaseDir(this.authStorageOptions),
           this.oauthRuntime,
         ) !== undefined;
-      const configuredTransports = [definition.command, definition.url, definition.socket].filter(
+      const localTransports = [definition.command, definition.socket].filter(
         (value) => typeof value === "string" && value.length > 0,
       );
-      if (configuredTransports.length !== 1) {
+      if (localTransports.length + Number(hasServerUrl(definition)) !== 1) {
         throw new Error(`Server ${name} must configure exactly one of command, url, or socket`);
       }
       const setup = new ConnectionSetup(
@@ -215,12 +218,12 @@ class ConnectionSetup {
         signal,
         ...command,
       });
-    } else if (typeof definition.url === "string" && definition.url.length > 0) {
+    } else if (hasServerUrl(definition)) {
       transport = this.createHttp();
     } else {
       transport = new runtime.UnixSocketClientTransport(resolveConfigPath(definition.socket) ?? "");
     }
-    if (typeof definition.url !== "string" || definition.url.length === 0) {
+    if (!hasServerUrl(definition)) {
       runtime.trackToolTransport(transport);
     }
     const traced = this.traceTransport(transport);
@@ -282,8 +285,7 @@ class ConnectionSetup {
     } catch (error) {
       // Only handshake failures establish that HTTP is unsupported.
       if (
-        typeof definition.url !== "string" ||
-        definition.url.length === 0 ||
+        !hasServerUrl(definition) ||
         signal?.aborted === true ||
         this.attempt.transport === "legacy-sse" ||
         !(error instanceof runtime.SdkHttpError) ||
@@ -335,8 +337,6 @@ class ConnectionSetup {
   private canActivateOAuth(error: unknown): boolean {
     const { definition, signal, runtime } = this.options;
     return (
-      typeof definition.url === "string" &&
-      definition.url.length > 0 &&
       signal?.aborted !== true &&
       this.attempt.auth === "configured" &&
       definition.auth === undefined &&

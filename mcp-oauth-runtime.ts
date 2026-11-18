@@ -15,6 +15,7 @@ import {
 } from "./mcp-auth.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import type { ServerEntry } from "./types.ts";
+import { hasServerUrl } from "./utils.ts";
 
 /** A completed authorization. Failures reject; there is no partial success to report. */
 export type AuthStatus = "authenticated";
@@ -223,7 +224,7 @@ async function clearMatchingStoredState(
  */
 export function supportsOAuth(definition: ServerEntry): boolean {
   // OAuth requires a URL
-  if (definition.url === undefined || definition.url === "") {
+  if (!hasServerUrl(definition)) {
     return false;
   }
 

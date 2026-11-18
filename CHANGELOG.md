@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Stdio MCP bridges can discover tools and reuse cached metadata when their override has a blank URL or replaces a shared HTTP endpoint (DOT-221).
+
 ## 8.0.50 - 2026-11-18
 
 <!-- npm-release:unreleased:start -->

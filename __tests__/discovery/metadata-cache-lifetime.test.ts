@@ -50,6 +50,13 @@ afterEach(() => {
 });
 
 describe("metadata cache lifetime", () => {
+  it.each(["", " \t", null])("reuses a command-only cache entry with inactive URL %j", (url) => {
+    const cached = entry();
+    const stdio = { ...definition, url };
+    expect(isServerCacheValid(cached, stdio)).toBe(true);
+    expect(computeServerHash(stdio)).toBe(cached.configHash);
+  });
+
   it("prunes expired and future-dated records while protecting current servers and unknown data", () => {
     const stale = entry(Date.now() - week - 1000);
     const future = entry(Date.now() + week);

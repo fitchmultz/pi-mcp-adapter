@@ -111,6 +111,8 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 
 The Pi agent dir defaults to `~/.pi/agent` and honors `PI_CODING_AGENT_DIR`. The owned `fitch-mcp-adapter/` root also contains `mcp-cache.json`, `mcp-onboarding.json`, `mcp-npx-cache.json`, and the `mcp-oauth/` legacy import directory.
 
+To switch a shared HTTP server to stdio in Pi, set `command` in the higher-priority file. The override drops the inherited URL and its credentials. A `url` of `null`, `""`, or only whitespace also clears an inherited URL. Do not set both a nonblank `url` and a `command` in the same entry.
+
 For imported or shared global servers, Pi saves only `directTools` selections in its own config, without copying connection details or credentials from the source file.
 
 ### SDK configuration

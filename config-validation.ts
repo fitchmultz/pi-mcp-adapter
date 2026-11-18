@@ -104,7 +104,7 @@ const serverFields = {
   protocolVersion: (value: unknown): value is "auto" | "legacy" =>
     value === "auto" || value === "legacy",
   retryOnTransportFailure: isBoolean,
-  url: isString,
+  url: isNullableString,
   headers: isStringRecord,
   auth: (value: unknown): value is "oauth" | "bearer" | false =>
     value === "oauth" || value === "bearer" || value === false,
