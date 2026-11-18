@@ -6,6 +6,7 @@ import { z } from "zod";
 import { NativeFixture, type NativeSession } from "./fixture.ts";
 import { verifyCli } from "./cli-proof.ts";
 import { instructions, largeOutput } from "./wire.ts";
+import { verifyMcpReadback, verifyPlainTextCodemode } from "./readback.ts";
 
 const probeSchema = z.object({
   outcome: z.object({
@@ -240,6 +241,8 @@ const fixture = await NativeFixture.create(process.cwd());
 try {
   let native = await fixture.make();
   const anchor = await verifyComposition(fixture, native);
+  await verifyPlainTextCodemode(native);
+  await verifyMcpReadback(fixture, native);
   native = await verifySelection(
     fixture,
     native,

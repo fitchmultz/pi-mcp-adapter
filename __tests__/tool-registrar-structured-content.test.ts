@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Value } from "typebox/value";
-import { nativeMcpOutputSchema, resolveMcpResultContent } from "../tool-registrar.ts";
+import { nativeMcpOutputSchema } from "../mcp-script-output.ts";
+import { resolveMcpResultContent } from "../tool-registrar.ts";
 
 describe("resolveMcpResultContent", () => {
   it("preserves human and structured content together", () => {

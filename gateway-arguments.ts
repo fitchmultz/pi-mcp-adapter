@@ -31,6 +31,7 @@ export type GatewayArguments = {
   ref?: string;
   path?: string;
   fields?: string[];
+  format?: "structured";
 };
 
 const requirements: Partial<Record<GatewayArguments["action"], string[]>> = {
@@ -98,12 +99,19 @@ export const gatewayParameters = Type.Object(
     ),
     path: Type.Optional(
       Type.String({
-        description: "JSON Pointer into a saved result, e.g. /structuredContent/rows.",
+        description:
+          "JSON Pointer from the saved artifact root, e.g. /structuredContent/rows or /content/0/text. JSON encoded in a text block is a string, not a nested object.",
       }),
     ),
     fields: Type.Optional(
       Type.Array(Type.String(), {
         description: "Immediate object fields to retain when reading a saved result.",
+      }),
+    ),
+    format: Type.Optional(
+      Type.Literal("structured", {
+        description:
+          "Opt in to machine-readable output in codemode for call or read-result. Omit for display text.",
       }),
     ),
   },
@@ -122,6 +130,11 @@ export const gatewayParameters = Type.Object(
           properties: { action: { enum: ["search", "list", "connect", "resources"] } },
         }),
         Type.Unsafe({ properties: { limit: { maximum: MAX_PAGE_SIZE } } }),
+        Type.Unknown(),
+      ),
+      Type.Dependent(
+        Type.Unsafe({ required: ["format"] }),
+        Type.Unsafe({ properties: { action: { enum: ["call", "read-result"] } } }),
         Type.Unknown(),
       ),
     ],

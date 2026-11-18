@@ -14,6 +14,7 @@ import {
   resolveMcpOutputGuardOptions,
   readMcpResult,
 } from "./mcp-output-guard.ts";
+import { withMcpScriptOutput } from "./mcp-script-output.ts";
 
 type GatewayResult = Awaited<ReturnType<typeof Proxy.executeCall>>;
 type Dispatch = {
@@ -138,7 +139,7 @@ async function dispatchGateway(
   }
 }
 
-function readResult(ready: McpExtensionState, params: GatewayArguments) {
+function readResult(ready: McpExtensionState, params: GatewayArguments): Promise<GatewayResult> {
   return readMcpResult(
     {
       ref: required(params.ref, params.action, "ref"),
@@ -146,6 +147,7 @@ function readResult(ready: McpExtensionState, params: GatewayArguments) {
       ...(params.fields ? { fields: params.fields } : {}),
       ...(params.offset !== undefined ? { offset: params.offset } : {}),
       ...(params.limit !== undefined ? { limit: params.limit } : {}),
+      ...(params.format !== undefined ? { format: params.format } : {}),
     },
     resolveMcpOutputGuardOptions(ready.config.settings, ready.outputDirectory),
   );
@@ -166,6 +168,12 @@ async function beforeGateway(
   }
 }
 
+function formatGatewayResult(params: GatewayArguments, result: GatewayResult): GatewayResult {
+  return params.action === "call" && params.format === "structured"
+    ? withMcpScriptOutput(result)
+    : result;
+}
+
 export async function executeGateway(
   pi: ExtensionAPI,
   host: McpAdapterHost,
@@ -176,7 +184,7 @@ export async function executeGateway(
   await beforeGateway(host, options.beforeExecute, { id: toolCallId, ctx, action: params.action });
   const ready = await host.getToolState(signal);
   if ("content" in ready) {
-    return ready;
+    return formatGatewayResult(params, ready);
   }
   const proxy = await import("./proxy-modes.ts");
   const beforeExecute = options.beforeExecute;
@@ -197,7 +205,7 @@ export async function executeGateway(
     }
     host.syncToolSurface();
   }
-  return dispatchGateway(params, {
+  const result = await dispatchGateway(params, {
     proxy,
     ready,
     signal,
@@ -206,4 +214,5 @@ export async function executeGateway(
     beforeDispatch,
     sync: () => host.syncToolSurface(),
   });
+  return formatGatewayResult(params, result);
 }
