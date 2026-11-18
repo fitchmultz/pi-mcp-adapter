@@ -135,7 +135,7 @@ function verifyLintConfig() {
     },
   };
   const exceptions = readFileSync(join(root, "docs/quality-exceptions.md"), "utf8");
-  for (const id of ["QX-017", "QX-019"]) {
+  for (const id of ["QX-017", "QX-019", "QX-032"]) {
     if (!exceptions.includes(`## ${id}:`)) {
       throw new Error(`Missing quality exception record: ${id}`);
     }
@@ -400,9 +400,39 @@ function verifyAcceptanceWorkflow() {
   }
 }
 
+function verifyToolchainBackend() {
+  const pkg = z
+    .object({ devDependencies: z.record(z.string(), z.string()) })
+    .parse(readJson("package.json"));
+  const deps = pkg.devDependencies;
+  const required = {
+    typescript: "Canonical TypeScript compiler devDependency",
+    oxlint: "Oxlint devDependency",
+    oxfmt: "Oxfmt devDependency",
+    tsrs: "Type-aware lint backend devDependency tsrs",
+  };
+  for (const [name, label] of Object.entries(required)) {
+    if (deps[name] === undefined || deps[name] === "") {
+      throw new Error(`${label} is missing`);
+    }
+  }
+  if (deps["oxlint-tsgolint"] !== undefined) {
+    throw new Error("Unexpected oxlint-tsgolint alongside tsrs backend exception QX-032");
+  }
+  if (!existsSync(join(root, "node_modules"))) {
+    return;
+  }
+  for (const artifact of ["node_modules/tsrs/package.json", "node_modules/.bin/tsrs-lint"]) {
+    if (!existsSync(join(root, artifact))) {
+      throw new Error(`Missing installed tsrs lint backend artifact: ${artifact}`);
+    }
+  }
+}
+
 const checks = {
   "lint policy": verifyLintConfig,
   "formatter policy": verifyFormatterConfig,
+  "toolchain backend": verifyToolchainBackend,
   "nested configs": () => verifyNestedConfigs(repositoryFiles()),
   "ignored sources": verifyIgnoredSources,
   "compiler projects": () => verifyCompilerCoverage(repositoryFiles()),

@@ -392,6 +392,38 @@ describe("quality policy", () => {
       (root: string) => write(root, "other.d.ts", "export {};\n"),
       "Declaration is absent from the declaration project",
     ],
+    [
+      "removed TypeScript compiler dependency",
+      (root: string) =>
+        updateJson(root, "package.json", (config) => {
+          const devDependencies = recordSchema.parse(config.devDependencies);
+          delete devDependencies.typescript;
+          return { ...config, devDependencies };
+        }),
+      "Canonical TypeScript compiler devDependency is missing",
+    ],
+    [
+      "removed tsrs lint backend",
+      (root: string) =>
+        updateJson(root, "package.json", (config) => {
+          const devDependencies = recordSchema.parse(config.devDependencies);
+          delete devDependencies.tsrs;
+          return { ...config, devDependencies };
+        }),
+      "Type-aware lint backend devDependency tsrs is missing",
+    ],
+    [
+      "unrecorded oxlint-tsgolint alongside tsrs",
+      (root: string) =>
+        updateJson(root, "package.json", (config) => {
+          const devDependencies = recordSchema.parse(config.devDependencies);
+          return {
+            ...config,
+            devDependencies: { ...devDependencies, "oxlint-tsgolint": "7.0.2007" },
+          };
+        }),
+      "Unexpected oxlint-tsgolint alongside tsrs backend exception QX-032",
+    ],
   ])("rejects %s", (_name, mutate, diagnostic) => {
     const root = repository();
     mutate(root);
@@ -400,20 +432,23 @@ describe("quality policy", () => {
     expect(result.stderr).toContain(diagnostic);
   });
 
-  it.each(["QX-017", "QX-019"])("requires the %s configuration exception record", (id) => {
-    const root = repository();
-    write(
-      root,
-      "docs/quality-exceptions.md",
-      readFileSync(join(root, "docs/quality-exceptions.md"), "utf8").replace(
-        `## ${id}:`,
-        "## Unrecorded:",
-      ),
-    );
-    const result = check(root);
-    expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain(`Missing quality exception record: ${id}`);
-  });
+  it.each(["QX-017", "QX-019", "QX-032"])(
+    "requires the %s configuration exception record",
+    (id) => {
+      const root = repository();
+      write(
+        root,
+        "docs/quality-exceptions.md",
+        readFileSync(join(root, "docs/quality-exceptions.md"), "utf8").replace(
+          `## ${id}:`,
+          "## Unrecorded:",
+        ),
+      );
+      const result = check(root);
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toContain(`Missing quality exception record: ${id}`);
+    },
+  );
 
   it("rejects an expanded Node registration allowance", () => {
     const root = repository();

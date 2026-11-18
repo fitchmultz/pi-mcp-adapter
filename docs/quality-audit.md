@@ -8,8 +8,11 @@ This audit applies guide 5.2 to `fitchmultz/pi-mcp-adapter`, starting at
 remain untouched. The full guide is [the adopted standard](strict-quality-standard.md).
 
 The Appendix A rules and Oxfmt options already match the guide. They remain fully
-enabled. Oxlint is upgraded to 1.91.0; Oxfmt 0.76.0, oxlint-tsgolint 7.0.2006 and
-oxc-parser 0.157.0 are the current stable releases resolved from npm on 5 November 2026. No semantic tool patch or diagnostic filter is used.
+enabled. On `chore/tsrs-lint` (starting from `3ba9228891c4ef81780fdeeecdebcc094874dd3b`),
+the quality toolchain uses `oxlint@1.94.0`, `tsrs@7.1.0-beta.tsrs2` (`tsrs-lint`
+replacing `oxlint-tsgolint` under [QX-032](quality-exceptions.md#qx-032-replace-oxlint-tsgolint-with-tsrs-as-the-type-aware-lint-backend),
+with embedded `typescriptVersion: 7.1.0-beta`), `oxfmt@0.79.0`, `typescript@7.0.2`,
+and `oxc-parser@0.157.0`. No semantic tool patch or diagnostic filter is used.
 
 ## Removed exceptions and exclusions
 
@@ -37,7 +40,8 @@ maintained implementation.
 
 ## Retained rule exceptions
 
-There are 34 operation-bound directives and two configuration allowances.
+There are 34 operation-bound directives, two configuration allowances, and one
+toolchain backend exception (`QX-032`).
 These are not grandfathered lint findings. Removing each requires changing a
 supported API, hiding the same operation, or introducing the concrete extra
 machinery below. [The detailed decisions](quality-exceptions.md) include the
@@ -82,10 +86,11 @@ acceptance. Line numbers below identify the directive itself.
 | QX-031  | `typescript/no-base-to-string`        | [`__tests__/fixtures/mcp-code-server.mjs:43`](../__tests__/fixtures/mcp-code-server.mjs#L43)                       | The raw echo fixture intentionally uses native JavaScript coercion for arbitrary JSON values. JSON.stringify changes output, while a compliant coercion reimplementation duplicates native semantics.                                                              |
 | QX-7001 | `unicorn/no-thenable`                 | [`__tests__/catalog-metadata.test.ts:53`](../__tests__/catalog-metadata.test.ts#L53)                               | JSON Schema uses a noncallable then keyword. Renaming it or changing to another schema form removes the raw-descriptor preservation case; it is not a Promise thenable.                                                                                            |
 
-| ID     | Configuration scope                                                                                                                               | Concrete constraint                                                                                                                                                                                                                                                                |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| QX-017 | `.oxlintrc.json:433-453`, sampling `typescript/no-deprecated` override for `sampling-handler.ts` and `__tests__/runtime/sampling-handler.test.ts` | The SDK deprecates five sampling types while retaining the protocol. Removing sampling makes unchanged remote callbacks fail with method-not-found; migrating the remote server is outside the adapter's control. Wrong-origin, unlisted and out-of-scope deprecations still fail. |
-| QX-019 | `.oxlintrc.json:302-328`, `typescript/no-floating-promises` override for the four root Node OAuth suites                                          | Node owns test registration promises. Awaiting registrations changes module evaluation and hook order. Only native `nodeIt` and `nodeDescribe` imports are allowed; all six required invalid-work controls run in normal acceptance.                                               |
+| ID     | Configuration scope                                                                                                                               | Concrete constraint                                                                                                                                                                                                                                                                                                                                |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| QX-017 | `.oxlintrc.json:433-453`, sampling `typescript/no-deprecated` override for `sampling-handler.ts` and `__tests__/runtime/sampling-handler.test.ts` | The SDK deprecates five sampling types while retaining the protocol. Removing sampling makes unchanged remote callbacks fail with method-not-found; migrating the remote server is outside the adapter's control. Wrong-origin, unlisted and out-of-scope deprecations still fail.                                                                 |
+| QX-019 | `.oxlintrc.json:302-328`, `typescript/no-floating-promises` override for the four root Node OAuth suites                                          | Node owns test registration promises. Awaiting registrations changes module evaluation and hook order. Only native `nodeIt` and `nodeDescribe` imports are allowed; all six required invalid-work controls run in normal acceptance.                                                                                                               |
+| QX-032 | `package.json` / `package-lock.json` (`tsrs@7.1.0-beta.tsrs2` replacing `oxlint-tsgolint`), enforced by `scripts/check-policy.mjs`                | Maintainer-directed efficiency adoption: under matched `oxlint@1.94.0` A/B runs on this repo, `tsrs` was 3.72x faster (`0.25 s` vs `0.93 s`) with 2.35x / 805.84 MiB lower peak RSS (`598.95 MiB` vs `1,404.80 MiB`). Canonical `tsc@7.0.2` remains required; `oxlint-tsgolint` cross-checks remain runnable on demand via `OXLINT_TSGOLINT_PATH`. |
 
 ## Retained profile and output exclusions
 
@@ -156,32 +161,54 @@ conformance baseline and is not evidence for baseline-free acceptance.
 
 Termux builds, four compiler projects, formatting, policy, directive and OAuth
 checks ran. Published semantic lint cannot execute there because
-`@oxlint-tsgolint/android-arm64/tsgolint` is absent. The original local Vitest run
-also reported associated lint-control failures and two timeouts. Native M1
+an `android-arm64` binary is absent from npm optional dependencies (both previously
+for `oxlint-tsgolint` and currently for `tsrs`). The original local Vitest run also
+reported associated lint-control failures and two timeouts. Native macOS/Linux
 verification is the applicable quality-tool result, not Android runtime proof.
 
-The complete native M1 check passes at commit
+The earlier adoption baseline passed the complete native M1 check at commit
 `3962aff1dc991313eb8e3dab5e4a5347d8248ba1`, tree
-`0d36df458774891052713a557c2c9aed976bffca`. This record's final result update
-is documentation-only. After clean root and example installs, `npm run check`
-ran with npm 12.2.0 explicitly first on PATH, Node 24.22.1, official Pi 1.5.0,
-Oxlint 1.91.0 and oxlint-tsgolint 7.0.2006. The latter release appeared during
-adoption; its native policy and exception controls are requalified by this run.
+`0d36df458774891052713a557c2c9aed976bffca` (Node 24.22.1, official Pi 1.5.0,
+Oxlint 1.91.0, oxlint-tsgolint 7.0.2006, Oxfmt 0.76.0).
 
-| Gate                  | Command                                                                                                                                                | Result                                                                                                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native lint           | `npm run lint` (`oxlint --deny-warnings .`)                                                                                                            | Passed, 401 source files, 228 rules, zero warnings and errors under the recorded exceptions.                                                                                |
-| Formatting            | `npm run format:check` (`oxfmt --check .`)                                                                                                             | Passed, 438 files. The native fix/format/idempotence controls also pass.                                                                                                    |
-| Compiler projects     | `npm run typecheck:all`                                                                                                                                | All four projects pass, including real handwritten declaration checking.                                                                                                    |
-| Root build            | `npm run build`                                                                                                                                        | Passed, including schema freshness.                                                                                                                                         |
-| Example build         | `npm run --prefix examples/interactive-visualizer build`                                                                                               | Passed.                                                                                                                                                                     |
-| Vitest                | `npm run test:vitest`                                                                                                                                  | 130 files, 1,916 tests pass. Includes the native policy, structural, semantic, framework, directive and Node-registration controls.                                         |
-| Node OAuth            | `npm run test:oauth`                                                                                                                                   | 90 tests pass; none skipped.                                                                                                                                                |
-| Policy and directives | `npm run check:policy`; `npm run check:directives`                                                                                                     | Both pass. Hidden-source mutations fail as intended.                                                                                                                        |
-| Generator freshness   | `npm run check:cache-schema`; `npm run check:browser`                                                                                                  | Both pass. Standalone bridge freshness passes in Vitest.                                                                                                                    |
-| Packed official host  | `PI_COMPAT_HOST=official PI_COMPAT_EXPECTED_VERSION=1.5.0 node scripts/compat-host.mjs`; same environment with `node scripts/compat-package-smoke.mjs` | Passed. Packed npm install, native SDK reload, bundled CLI, commands without physical peers, nested tool cancellation/redaction and selection persistence run successfully. |
-| Protocol conformance  | `npm run test:conformance`                                                                                                                             | Passed all 26 scenarios using the stable referee source with the reviewed IdP fixture correction. No assertions or scenarios are skipped.                                   |
-| Aggregate             | `npm run check`                                                                                                                                        | Passed every required stage, including baseline-free conformance.                                                                                                           |
+On `chore/tsrs-lint` (starting from commit `3ba9228891c4ef81780fdeeecdebcc094874dd3b`,
+Darwin `arm64` `Mitchs-M5-MBP`, Node `v24.22.3`, npm `12.2.3`), `oxlint@1.94.0` +
+`tsrs@7.1.0-beta.tsrs2` + `oxfmt@0.79.0` were qualified with `typescript@7.0.2`
+retained as the canonical compiler:
+
+- Matched same-`oxlint@1.94.0` A/B benchmark (median of 3 warm `/usr/bin/time -l` runs):
+  `tsrs@7.1.0-beta.tsrs2` was **3.72x faster** (`0.25 s` vs `0.93 s` against
+  `oxlint-tsgolint@7.0.2007` via `OXLINT_TSGOLINT_PATH`) with **2.35x / 805.84 MiB
+  lower peak RSS** (`598.95 MiB` vs `1,404.80 MiB`). Compared to the pre-upgrade
+  `oxlint@1.91.0` + `oxlint-tsgolint@7.0.2006` baseline (`1.04 s` median wall time,
+  `1,451.20 MiB` median peak RSS), `tsrs` was **4.16x faster** with **2.42x / 852.25 MiB
+  lower peak RSS**.
+- Both `npm run typecheck:all` (`tsc@7.0.2`) and `./node_modules/.bin/tsrs --noEmit`
+  passed across all four tsconfig projects; missing-backend fail-closed behavior was
+  verified for both invalid `OXLINT_TSGOLINT_PATH` and absent backend packages.
+- `npm run check:quality`, `npm run lint` (`401` source files, `228` rules),
+  `npm run format:check` (`437` files), `npm run check:policy`, `npm run check:directives`,
+  `npm run build`, `npm run test:oauth` (91 tests), `__tests__/quality/*.test.ts`
+  (6 files, 198 tests), and `env -u PI_PACKAGE_DIR npm run test:vitest:compat`
+  (128 files, 1,956 tests) all pass on the updated tree. `npm run test:conformance`,
+  `__tests__/interactive-visualizer-server.test.ts`, and hosted multi-host compat
+  were not run locally on `chore/tsrs-lint` and remain owned by PR CI execution.
+
+| Gate                  | Command                                                                                                                                                | Result                                                                                                                                                             |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Native lint           | `npm run lint` (`oxlint --deny-warnings .`)                                                                                                            | Passed, 401 source files, 228 rules, zero warnings and errors under the recorded exceptions (`oxlint@1.94.0` + `tsrs@7.1.0-beta.tsrs2`).                           |
+| Formatting            | `npm run format:check` (`oxfmt --check .`)                                                                                                             | Passed, 437 files (`oxfmt@0.79.0`). The native fix/format/idempotence controls also pass.                                                                          |
+| Compiler projects     | `npm run typecheck:all`                                                                                                                                | All four projects pass (`tsc@7.0.2`), including real handwritten declaration checking; `./node_modules/.bin/tsrs --noEmit` also passes across all four projects.   |
+| Root build            | `npm run build`                                                                                                                                        | Passed, including schema freshness.                                                                                                                                |
+| Example build         | `npm run --prefix examples/interactive-visualizer build`                                                                                               | Passed.                                                                                                                                                            |
+| Vitest (quality)      | `./node_modules/.bin/vitest run __tests__/quality/*.test.ts`                                                                                           | 6 files / 198 tests pass on `chore/tsrs-lint` (policy, structural, semantic, framework, directive, cache-schema, missing-backend, and Node-registration controls). |
+| Vitest (compat)       | `env -u PI_PACKAGE_DIR npm run test:vitest:compat`                                                                                                     | 128 files / 1,956 tests pass on `chore/tsrs-lint` (excluding `interactive-visualizer-server.test.ts` per script contract; unsets session `PI_PACKAGE_DIR`).        |
+| Node OAuth            | `npm run test:oauth`                                                                                                                                   | 91 tests passed on `chore/tsrs-lint`.                                                                                                                              |
+| Policy and directives | `npm run check:policy`; `npm run check:directives`                                                                                                     | Both pass. Hidden-source, backend-dependency, and exception-record mutations fail as intended.                                                                     |
+| Generator freshness   | `npm run check:cache-schema`; `npm run check:browser`                                                                                                  | Both pass. Standalone bridge freshness passes in Vitest.                                                                                                           |
+| Packed official host  | `PI_COMPAT_HOST=official PI_COMPAT_EXPECTED_VERSION=1.5.0 node scripts/compat-host.mjs`; same environment with `node scripts/compat-package-smoke.mjs` | Passed on `3962aff`; hosted PR CI owns multi-host qualification on `chore/tsrs-lint`.                                                                              |
+| Protocol conformance  | `npm run test:conformance`                                                                                                                             | Passed all 26 scenarios on `3962aff`; unrun locally on `chore/tsrs-lint` (covered by PR CI).                                                                       |
+| Aggregate             | `npm run check`                                                                                                                                        | Passed on `3962aff`; `chore/tsrs-lint` verified `check:quality`, `build`, `test:oauth`, and `test:vitest:compat` locally, with conformance + host compat on PR CI. |
 
 The supplied guide and adopted copy also match exactly after Oxfmt formatting,
 excluding the repository's Appendix B adoption record. `git diff --check` passes.

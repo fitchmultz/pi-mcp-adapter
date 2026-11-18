@@ -146,3 +146,57 @@ it("rejects unformatted source and keeps fix then format idempotent", () => {
   const linted = native(root, "oxlint", ["--deny-warnings", "."]);
   expect(linted.status, `${linted.stdout}\n${linted.stderr}`).toBe(0);
 });
+
+it("fails closed when the type-aware lint backend is missing or invalid", () => {
+  const invalidOverrideRoot = repository("probe.ts", "export const value = 1;\n");
+  const invalidOverride = spawnSync(
+    process.execPath,
+    [resolve("node_modules/oxlint/bin/oxlint"), "--deny-warnings", "."],
+    {
+      cwd: invalidOverrideRoot,
+      encoding: "utf8",
+      env: { ...process.env, OXLINT_TSGOLINT_PATH: join(invalidOverrideRoot, "missing-backend") },
+    },
+  );
+  expect(invalidOverride.status, `${invalidOverride.stdout}\n${invalidOverride.stderr}`).toBe(1);
+  expect(`${invalidOverride.stdout}\n${invalidOverride.stderr}`).toContain(
+    "Failed to find tsgolint executable",
+  );
+
+  const missingBackendRoot = mkdtempSync(join(tmpdir(), "adapter-missing-backend-"));
+  roots.push(missingBackendRoot);
+  for (const config of [".oxlintrc.json", "tsconfig.json", "package.json"]) {
+    copyFileSync(resolve(config), join(missingBackendRoot, config));
+  }
+  mkdirSync(join(missingBackendRoot, "node_modules"), { recursive: true });
+  symlinkSync(
+    resolve("node_modules/oxlint"),
+    join(missingBackendRoot, "node_modules/oxlint"),
+    "junction",
+  );
+  symlinkSync(
+    resolve("node_modules/@oxlint"),
+    join(missingBackendRoot, "node_modules/@oxlint"),
+    "junction",
+  );
+  symlinkSync(
+    resolve("node_modules/@types"),
+    join(missingBackendRoot, "node_modules/@types"),
+    "junction",
+  );
+  writeFileSync(join(missingBackendRoot, "probe.ts"), "export const value = 1;\n");
+  const envWithoutBackend: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: dirname(process.execPath),
+  };
+  delete envWithoutBackend.OXLINT_TSGOLINT_PATH;
+  const missingBackend = spawnSync(
+    process.execPath,
+    [join(missingBackendRoot, "node_modules/oxlint/bin/oxlint"), "--deny-warnings", "."],
+    { cwd: missingBackendRoot, encoding: "utf8", env: envWithoutBackend },
+  );
+  expect(missingBackend.status, `${missingBackend.stdout}\n${missingBackend.stderr}`).toBe(1);
+  expect(`${missingBackend.stdout}\n${missingBackend.stderr}`).toContain(
+    "Failed to find type-aware linter executable",
+  );
+});
