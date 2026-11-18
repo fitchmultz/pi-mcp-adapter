@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.50 - 2026-11-18
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: expose retained MCP results to codemode (PEA-219, PEA-218) (1/1) (#272) ([cf37ed4](https://github.com/fitchmultz/pi-mcp-adapter/commit/cf37ed4e0f082037ed7d2a6099a5f9236e79327a))
+
+### What's Changed
+
+- fix: expose retained MCP results to codemode (PEA-219, PEA-218) (1/1) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/272
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.49...v8.0.50
+
 ## 8.0.49 - 2026-11-18
 
 <!-- npm-release:unreleased:start -->
