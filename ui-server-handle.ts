@@ -1,7 +1,12 @@
 import { CallToolResultSchema } from "@modelcontextprotocol/core";
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import type { UiServerHandle } from "./ui-server-contracts.ts";
-import type { UiHostContext, UiSessionMessages, UiStreamSummary } from "./types.ts";
+import type {
+  UiHostContext,
+  UiModelContextUpdate,
+  UiSessionMessages,
+  UiStreamSummary,
+} from "./types.ts";
 import type { UiStreamCallToolResult } from "./ui-stream-types.ts";
 
 type SessionAddress = Pick<
@@ -14,6 +19,7 @@ interface SessionChannel {
   sendInput: (args: Record<string, unknown>) => void;
   close: UiServerHandle["close"];
   getMessages: UiServerHandle["getSessionMessages"];
+  takeModelContext: UiServerHandle["takeModelContext"];
   getSummary: UiServerHandle["getStreamSummary"];
 }
 
@@ -64,6 +70,10 @@ export class UiServerSessionHandle implements UiServerHandle {
 
   getSessionMessages = (): UiSessionMessages => {
     return this.#channel.getMessages();
+  };
+
+  takeModelContext = (): UiModelContextUpdate | undefined => {
+    return this.#channel.takeModelContext();
   };
 
   getStreamSummary = (): UiStreamSummary | undefined => {

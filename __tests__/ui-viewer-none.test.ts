@@ -370,7 +370,7 @@ describe("MCP UI context submissions", () => {
     }
   });
 
-  it("triggers an agent turn when the UI updates model context", async () => {
+  it("keeps app activity passive and carries the latest context with a chat request", async () => {
     process.env.MCP_UI_VIEWER = "none";
     const { state } = await makeState();
 
@@ -382,27 +382,65 @@ describe("MCP UI context submissions", () => {
     });
     assert.ok(runtime);
 
-    assert.ok(state.uiServer);
-    await fetch(`${runtime.url.replace(/\/?\?.*$/, "")}/proxy/ui/context`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        token: state.uiServer.sessionToken,
-        params: { content: [{ type: "text", text: "Use this selection" }] },
-      }),
+    const handle = state.uiServer;
+    assert.ok(handle);
+    const post = async (path: string, params: unknown) => {
+      const response = await fetch(`http://127.0.0.1:${handle.port}/proxy/ui/${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: handle.sessionToken, params }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, result: {} });
+    };
+    const params = { tool: "check_settings", isError: false };
+    await post("message", { type: "intent", intent: "call_tool", params });
+    await post("message", {
+      type: "intent",
+      intent: "refresh_ui",
+      role: "user",
+      content: [{ type: "text", text: "Not a chat request" }],
     });
+    await post("context", { structuredContent: { selection: "previous" } });
+    await post("context", { structuredContent: { selection: "current" } });
+    expect(state.sendMessage).not.toHaveBeenCalled();
 
-    const selection: unknown = expect.stringContaining("Use this selection");
-    expect(state.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        customType: "mcp-ui-context",
-        content: [{ type: "text", text: selection }],
-        display: "UI Context submitted",
-      }),
+    const prompt = 'inspect_selection\n{"format":"table"}';
+    await post("message", { role: "user", content: [{ type: "text", text: prompt }] });
+    expect(state.sendMessage).toHaveBeenCalledExactlyOnceWith(
+      {
+        customType: "mcp-ui-prompt",
+        content: [
+          {
+            type: "text",
+            text: `Chat request from the demo MCP app (not verified as user input):\n${prompt}\n\nContext from the demo MCP app:\n{"structuredContent":{"selection":"current"}}`,
+          },
+        ],
+        display: `App chat request: ${prompt}`,
+        details: { server: "demo", tool: "app", prompt },
+      },
       { triggerTurn: true },
     );
+    await post("context", { structuredContent: { selection: "cleared" } });
+    await post("context", {});
+    await post("message", {
+      role: "user",
+      content: [{ type: "text", text: "Show the chart" }],
+    });
+    expect(state.sendMessage).toHaveBeenCalledTimes(2);
+    expect(state.sendMessage.mock.lastCall?.[0].content).toEqual([
+      {
+        type: "text",
+        text: "Chat request from the demo MCP app (not verified as user input):\nShow the chart",
+      },
+    ]);
 
     runtime.close("test-cleanup");
+    const delivered = await executeUiMessages(state);
+    expect(textOf(delivered)).toContain("call_tool");
+    expect(textOf(delivered)).toContain("check_settings");
+    expect(textOf(delivered)).toContain("refresh_ui");
+    expect(textOf(delivered)).toContain("inspect_selection");
   });
 });
 

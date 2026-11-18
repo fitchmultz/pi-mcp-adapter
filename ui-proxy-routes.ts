@@ -5,9 +5,11 @@ import { isUiMessageParams, isUiModelContextParams } from "./ui-message-schema.t
 import {
   createUiModelContextUpdate,
   extractUiPromptText,
+  isUiIntentMessage,
   type UiDisplayMode,
   type UiHostContext,
   type UiMessageParams,
+  type UiModelContextUpdate,
   type UiSessionMessages,
 } from "./types.ts";
 import { isUiJsonObject } from "./ui-json.ts";
@@ -24,6 +26,7 @@ export class UiProxyRoutes {
   private readonly history: ReturnType<typeof createUiMessageHistory>;
   private readonly log: ReturnType<typeof logger.child>;
   private currentDisplayMode: UiDisplayMode;
+  private pendingModelContext: UiModelContextUpdate | undefined;
 
   constructor(
     options: UiServerOptions,
@@ -41,6 +44,12 @@ export class UiProxyRoutes {
 
   getMessages(): UiSessionMessages {
     return { ...this.history.messages };
+  }
+
+  takeModelContext(): UiModelContextUpdate | undefined {
+    const update = this.pendingModelContext;
+    this.pendingModelContext = undefined;
+    return update;
   }
 
   async handle(pathname: string, params: unknown, res: ServerResponse): Promise<boolean> {
@@ -103,7 +112,7 @@ export class UiProxyRoutes {
       this.log.debug("UI prompt received", { prompt: prompt.slice(0, 100) });
       return warning;
     }
-    if (params.type === "intent" || Boolean(params.intent)) {
+    if (isUiIntentMessage(params)) {
       return this.recordIntent(params);
     }
     if (
@@ -137,6 +146,7 @@ export class UiProxyRoutes {
       return;
     }
     const update = createUiModelContextUpdate(params);
+    this.pendingModelContext = update;
     const messages = this.history.messages;
     if (update) {
       messages.contexts.push(update);
