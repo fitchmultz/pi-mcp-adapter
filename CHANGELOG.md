@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.47 - 2026-11-18
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- chore: adopt oxlint 1.94.0, tsrs 7.1.0-beta.tsrs2, and oxfmt 0.79.0 (#270) ([bb84d8d](https://github.com/fitchmultz/pi-mcp-adapter/commit/bb84d8d68744522f68b9b2c68d56936ded39bb63))
+
+### What's Changed
+
+- chore: adopt oxlint 1.94.0, tsrs 7.1.0-beta.tsrs2, and oxfmt 0.79.0 by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/270
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.46...v8.0.47
+
 ## 8.0.46 - 2026-11-18
 
 <!-- npm-release:unreleased:start -->
