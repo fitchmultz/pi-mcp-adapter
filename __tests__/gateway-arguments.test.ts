@@ -15,6 +15,13 @@ it("advertises explicit actions and validates each action's required fields", ()
   expect(Value.Check(gatewayParameters, { action: "read-result", ref: "saved", limit: 2000 })).toBe(
     true,
   );
+  expect(parseGatewayArguments({ action: "call", tool: "demo", format: "structured" }).format).toBe(
+    "structured",
+  );
+  expect(
+    parseGatewayArguments({ action: "read-result", ref: "saved", format: "structured" }).format,
+  ).toBe("structured");
+  expect(Value.Check(gatewayParameters, { action: "status", format: "structured" })).toBe(false);
   expect(Value.Check(gatewayParameters, { action: "list", server: "demo", limit: 101 })).toBe(
     false,
   );

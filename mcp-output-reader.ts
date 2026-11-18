@@ -10,33 +10,35 @@ import {
   type McpOutputGuardOptions,
 } from "./mcp-output-contracts.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
+import type { McpReadPage } from "./mcp-script-output.ts";
 
 export interface ReadMcpResultInput {
   ref: string;
-  /** RFC 6901 JSON Pointer. Omit to read the entire retained result. */
+  /** RFC 6901 JSON Pointer from the saved artifact root. Omit for the entire artifact. */
   path?: string;
   fields?: string[];
   /** Zero-based character offset in the selected, pretty-printed value. */
   offset?: number;
   /** Maximum characters, additionally bounded by the configured output limits. */
   limit?: number;
+  format?: "structured";
 }
 
+type ReadPageDetails = Omit<McpReadPage, "text">;
+type PageContent = { type: "text"; text: string };
+
 type ReadMcpResultSuccess = {
-  content: Array<{ type: "text"; text: string }>;
-  details: {
-    ref: string;
-    offset: number;
-    nextOffset: number | null;
-    totalCharacters: number;
-    path?: string;
+  content: PageContent[];
+  structuredContent?: McpReadPage;
+  details: ReadPageDetails & {
     error?: undefined;
     message?: undefined;
   };
 };
 
 type ReadMcpResultFailure = {
-  content: ReadMcpResultSuccess["content"];
+  content: PageContent[];
+  isError: true;
   details: {
     error: "result_read_failed";
     message: string;
@@ -74,6 +76,7 @@ export async function readMcpResult(
     return {
       content: [{ type: "text" as const, text: message }],
       details: { error: "result_read_failed", message },
+      isError: true,
     };
   }
 }
@@ -89,20 +92,7 @@ async function readPlainOutputPage(
   const { page, total } = await readPlainResult(ref, window);
   const end = offset + page.length;
   const nextOffset = end < total ? end : null;
-  return {
-    content: [
-      { type: "text" as const, text: page },
-      ...(nextOffset !== null
-        ? [
-            {
-              type: "text" as const,
-              text: `[MCP result page: ${offset}–${end} of ${total} characters. Continue with offset: ${end}.]`,
-            },
-          ]
-        : []),
-    ],
-    details: { ref, offset, nextOffset, totalCharacters: total },
-  };
+  return readPageResult(page, { ref, offset, nextOffset, totalCharacters: total }, input.format);
 }
 
 /** Validated offset/limit for a plain output page, tightened under the guard caps. */
@@ -155,32 +145,45 @@ function pageRenderedResult(
   const { offset, limit } = renderedReadWindow(input, rendered);
   const maxBytes = options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES;
   const maxLines = options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES;
-  const notice = (end: number) =>
-    `[MCP result page: ${offset}–${end} of ${rendered.length} characters. Continue with offset: ${end}.]`;
   const window = { offset, limit };
   let end = renderedPageEnd(rendered, window, maxBytes, maxLines);
   if (end < rendered.length) {
     // The final offset cannot need more digits than the total length. Include the block separator.
-    end = renderedPageEnd(
-      rendered,
-      window,
-      maxBytes - byteLength(notice(rendered.length)) - 1,
-      maxLines - 1,
-    );
+    const longestNotice = pageNotice(offset, rendered.length, rendered.length);
+    end = renderedPageEnd(rendered, window, maxBytes - byteLength(longestNotice) - 1, maxLines - 1);
   }
-  const nextOffset = end < rendered.length ? end : null;
-  return {
-    content: [
-      { type: "text" as const, text: rendered.slice(offset, end) },
-      ...(nextOffset !== null ? [{ type: "text" as const, text: notice(end) }] : []),
-    ],
-    details: {
+  return readPageResult(
+    rendered.slice(offset, end),
+    {
       ref,
       offset,
-      nextOffset,
+      nextOffset: end < rendered.length ? end : null,
       totalCharacters: rendered.length,
       ...(typeof input.path === "string" ? { path: input.path } : {}),
     },
+    input.format,
+  );
+}
+
+function pageNotice(offset: number, nextOffset: number, total: number): string {
+  return `[MCP result page: ${offset}–${nextOffset} of ${total} characters. Continue with offset: ${nextOffset}.]`;
+}
+
+function readPageResult(
+  text: string,
+  details: ReadPageDetails,
+  format: unknown,
+): ReadMcpResultSuccess {
+  const { offset, nextOffset, totalCharacters } = details;
+  return {
+    content: [
+      { type: "text", text },
+      ...(nextOffset === null
+        ? []
+        : [{ type: "text" as const, text: pageNotice(offset, nextOffset, totalCharacters) }]),
+    ],
+    details,
+    ...(format === "structured" ? { structuredContent: { ...details, text } } : {}),
   };
 }
 
@@ -243,13 +246,13 @@ function applyJsonPointer(value: unknown, path: unknown): unknown {
     const record = asObjectRecord(current);
     if (isUnknownArray(current)) {
       if (!/^(0|[1-9]\d*)$/.test(key) || !Object.hasOwn(current, key)) {
-        throw new Error(`JSON Pointer does not exist: ${path}`);
+        throw new Error(`JSON Pointer does not exist in the saved artifact: ${path}`);
       }
       current = current[Number(key)];
     } else if (record !== undefined && Object.hasOwn(record, key)) {
       current = record[key];
     } else {
-      throw new Error(`JSON Pointer does not exist: ${path}`);
+      throw new Error(`JSON Pointer does not exist in the saved artifact: ${path}`);
     }
   }
   return current;

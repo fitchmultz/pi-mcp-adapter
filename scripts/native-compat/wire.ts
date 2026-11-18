@@ -35,6 +35,25 @@ export class WireFixture {
     const call = CallToolRequestSchema.parse(message);
     const { value } = argumentsSchema.parse(call.params.arguments);
     this.effects.push(value);
+    if (call.params.name === "plain_tsv") {
+      return {
+        resultType: "complete",
+        content: [{ type: "text", text: `id\tlabel\n7\t${value}` }],
+      };
+    }
+    if (call.params.name === "text_json") {
+      const payload = {
+        rows: [{ id: 7 }],
+        note: value === "large-json" ? "雪".repeat(20_000) : value,
+      };
+      return {
+        resultType: "complete",
+        content: [
+          { type: "text", text: JSON.stringify(payload), _meta: { private: "SYNTHETIC-BLOCK" } },
+        ],
+        _meta: { private: "SYNTHETIC-SECRET" },
+      };
+    }
     if (value === "hold") {
       this.held = response;
       this.hold.resolve();
@@ -85,6 +104,9 @@ export class WireFixture {
               outputSchema: schema,
               annotations: { readOnlyHint: true },
             },
+            { name: "text_json", description: "Fixture JSON in text", inputSchema: schema },
+            { name: "plain_tsv", description: "Fixture plain TSV", inputSchema: schema },
+            { name: "approval_echo", description: "Fixture approval gate", inputSchema: schema },
             {
               name: "app_only",
               description: "Not model-callable",

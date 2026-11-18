@@ -118,7 +118,7 @@ export class NativeFixture {
             lifecycle: eager ? "eager" : "lazy",
           },
         },
-        settings: { sampling: false, elicitation: false },
+        settings: { sampling: false, elicitation: false, approveTools: ["approval_echo"] },
       },
       outputDirectory: join(this.root, "output"),
       onToolCall: async (event) => {

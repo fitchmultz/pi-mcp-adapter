@@ -8,7 +8,7 @@ import {
 } from "./metadata-cache.ts";
 import type { McpExtensionState } from "./state.ts";
 import { createMcpDirectToolCallRenderer, renderMcpToolResult } from "./tool-result-renderer.ts";
-import { nativeMcpOutputSchema } from "./tool-registrar.ts";
+import { nativeMcpOutputSchema } from "./mcp-script-output.ts";
 import {
   isServerDisabled,
   type DirectToolSpec,

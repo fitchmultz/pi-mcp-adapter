@@ -13,6 +13,7 @@ import {
   type MetadataCache,
 } from "./metadata-cache.ts";
 import { toolErrorOverride } from "./error-signal.ts";
+import { mcpReadPageSchema, mcpScriptOutputSchema } from "./mcp-script-output.ts";
 import { renderMcpToolResult, renderMcpProxyToolCall } from "./tool-result-renderer.ts";
 import { gatewayParameters, prepareGatewayArguments } from "./gateway-arguments.ts";
 import { executeGateway } from "./host-gateway.ts";
@@ -84,6 +85,7 @@ export class McpHostTools {
         "MCP server operations, resources, saved result readback, and fallback tool calls",
       renderCall: renderMcpProxyToolCall,
       parameters: Type.Unsafe<Record<string, unknown>>(gatewayParameters),
+      outputSchema: Type.Union([mcpReadPageSchema, mcpScriptOutputSchema]),
       prepareArguments: prepareGatewayArguments,
       renderResult: renderMcpToolResult,
       execute,
