@@ -14,7 +14,7 @@ import {
   resolveMcpOutputGuardOptions,
   readMcpResult,
 } from "./mcp-output-guard.ts";
-import { withMcpScriptOutput, type McpReadPage } from "./mcp-script-output.ts";
+import { withMcpScriptOutput } from "./mcp-script-output.ts";
 
 type GatewayResult = Awaited<ReturnType<typeof Proxy.executeCall>>;
 type Dispatch = {
@@ -139,25 +139,18 @@ async function dispatchGateway(
   }
 }
 
-async function readResult(
-  ready: McpExtensionState,
-  params: GatewayArguments,
-): Promise<GatewayResult> {
-  const result = await readMcpResult(
+function readResult(ready: McpExtensionState, params: GatewayArguments): Promise<GatewayResult> {
+  return readMcpResult(
     {
       ref: required(params.ref, params.action, "ref"),
       ...(params.path !== undefined ? { path: params.path } : {}),
       ...(params.fields ? { fields: params.fields } : {}),
       ...(params.offset !== undefined ? { offset: params.offset } : {}),
       ...(params.limit !== undefined ? { limit: params.limit } : {}),
+      ...(params.format !== undefined ? { format: params.format } : {}),
     },
     resolveMcpOutputGuardOptions(ready.config.settings, ready.outputDirectory),
   );
-  if (params.format !== "structured" || result.isError === true) {
-    return result;
-  }
-  const structuredContent: McpReadPage = { ...result.details, text: result.content[0].text };
-  return { ...result, structuredContent };
 }
 
 async function beforeGateway(

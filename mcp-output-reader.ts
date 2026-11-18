@@ -21,14 +21,15 @@ export interface ReadMcpResultInput {
   offset?: number;
   /** Maximum characters, additionally bounded by the configured output limits. */
   limit?: number;
+  format?: "structured";
 }
 
 type ReadPageDetails = Omit<McpReadPage, "text">;
 type PageContent = { type: "text"; text: string };
 
 type ReadMcpResultSuccess = {
-  content: [PageContent, ...PageContent[]];
-  isError?: never;
+  content: PageContent[];
+  structuredContent?: McpReadPage;
   details: ReadPageDetails & {
     error?: undefined;
     message?: undefined;
@@ -91,7 +92,7 @@ async function readPlainOutputPage(
   const { page, total } = await readPlainResult(ref, window);
   const end = offset + page.length;
   const nextOffset = end < total ? end : null;
-  return readPageResult(page, { ref, offset, nextOffset, totalCharacters: total });
+  return readPageResult(page, { ref, offset, nextOffset, totalCharacters: total }, input.format);
 }
 
 /** Validated offset/limit for a plain output page, tightened under the guard caps. */
@@ -151,20 +152,28 @@ function pageRenderedResult(
     const longestNotice = pageNotice(offset, rendered.length, rendered.length);
     end = renderedPageEnd(rendered, window, maxBytes - byteLength(longestNotice) - 1, maxLines - 1);
   }
-  return readPageResult(rendered.slice(offset, end), {
-    ref,
-    offset,
-    nextOffset: end < rendered.length ? end : null,
-    totalCharacters: rendered.length,
-    ...(typeof input.path === "string" ? { path: input.path } : {}),
-  });
+  return readPageResult(
+    rendered.slice(offset, end),
+    {
+      ref,
+      offset,
+      nextOffset: end < rendered.length ? end : null,
+      totalCharacters: rendered.length,
+      ...(typeof input.path === "string" ? { path: input.path } : {}),
+    },
+    input.format,
+  );
 }
 
 function pageNotice(offset: number, nextOffset: number, total: number): string {
   return `[MCP result page: ${offset}–${nextOffset} of ${total} characters. Continue with offset: ${nextOffset}.]`;
 }
 
-function readPageResult(text: string, details: ReadPageDetails): ReadMcpResultSuccess {
+function readPageResult(
+  text: string,
+  details: ReadPageDetails,
+  format: unknown,
+): ReadMcpResultSuccess {
   const { offset, nextOffset, totalCharacters } = details;
   return {
     content: [
@@ -174,6 +183,7 @@ function readPageResult(text: string, details: ReadPageDetails): ReadMcpResultSu
         : [{ type: "text" as const, text: pageNotice(offset, nextOffset, totalCharacters) }]),
     ],
     details,
+    ...(format === "structured" ? { structuredContent: { ...details, text } } : {}),
   };
 }
 
