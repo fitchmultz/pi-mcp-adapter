@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.51 - 2026-11-18
+
+<!-- npm-release:unreleased:start -->
+
 - Stdio MCP bridges can discover tools and reuse cached metadata when their override has a blank URL or replaces a shared HTTP endpoint (DOT-221).
+
+<!-- npm-release:unreleased:end -->
+
+- fix: accept readonly TUI render rows from upcoming Pi (PIF-212) (1/1) (#274) ([0820b1d](https://github.com/fitchmultz/pi-mcp-adapter/commit/0820b1d4fcac2d5c4f17a2e8319d47accaef8d04))
+
+### What's Changed
+
+- fix: accept readonly TUI render rows from upcoming Pi (PIF-212) (1/1) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/274
+- Fix stdio MCP discovery when an override clears the URL (DOT-221) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/275
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.50...v8.0.51
 
 ## 8.0.50 - 2026-11-18
 
