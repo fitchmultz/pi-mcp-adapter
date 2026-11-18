@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.46 - 2026-11-18
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- chore: use native tui/schema primitives, deduplicate checks, and cache CI fork builds (#269) ([267ec9b](https://github.com/fitchmultz/pi-mcp-adapter/commit/267ec9b062c22231c734f88bc33cdc36bcf41441))
+
+### What's Changed
+
+- chore: use native tui/schema primitives, deduplicate checks, and cache CI fork builds by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/269
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.45...v8.0.46
+
 ## 8.0.45 - 2026-11-17
 
 <!-- npm-release:unreleased:start -->
