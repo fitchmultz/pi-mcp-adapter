@@ -166,9 +166,9 @@ describe("lazy MCP gateways through real Pi SDK", () => {
     });
     const h = await harness({
       servers: {
-        visualizer: {
+        selection: {
           command: process.execPath,
-          args: [resolve("examples/interactive-visualizer/dist/server.js")],
+          args: [join(import.meta.dirname, "fixtures/app-context-server.mjs")],
         },
       },
     });
@@ -177,9 +177,8 @@ describe("lazy MCP gateways through real Pi SDK", () => {
         name: "mcp",
         arguments: {
           action: "call",
-          server: "visualizer",
-          tool: "show_chart",
-          args: { type: "bar", title: "Demo", labels: "Q1", datasets: "[]" },
+          server: "selection",
+          tool: "open_selector",
         },
       },
     ]);
@@ -232,8 +231,7 @@ describe("lazy MCP gateways through real Pi SDK", () => {
     const [context] = contextMessages();
     expect(context).toMatchObject({
       display: false,
-      content:
-        'Context from the visualizer MCP app:\n{"structuredContent":{"selection":"current"}}',
+      content: 'Context from the selection MCP app:\n{"structuredContent":{"selection":"current"}}',
     });
     await h.session.prompt("Continue");
     expect(contextMessages()).toEqual([context]);
