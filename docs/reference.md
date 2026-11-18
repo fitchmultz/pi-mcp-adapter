@@ -166,13 +166,13 @@ import {
 } from "@fitchmultz/pi-mcp-adapter/runtime";
 
 const runtime = createOAuthRuntime();
-const authStorageOptions = getAuthStorageOptions(undefined, process.env.HOME);
-const manager = new McpServerManager(process.env.HOME);
+const authStorageOptions = getAuthStorageOptions("/srv/my-service/oauth", process.cwd());
+const manager = new McpServerManager(process.cwd());
 manager.setAuthStorageOptions(authStorageOptions);
 manager.setOAuthRuntime(runtime);
 ```
 
-Callers own the OAuth runtime lifecycle: create a runtime with `createOAuthRuntime()`, pass it explicitly via `AuthenticateOptions.runtime` (and `manager.setOAuthRuntime(runtime)` for managed connections; there is no shared default runtime), and close it with `await shutdownOAuth(runtime)` alongside `await manager.closeAll()`. Use `getAuthStorageOptions(oauthDir, agentRoot)` with `manager.setAuthStorageOptions(...)` and `AuthenticateOptions.authStorageOptions` to scope legacy plaintext credential imports and OS credential-store locking to the owning home or agent directory.
+`new McpServerManager(defaultCwd)` sets the default working directory for spawned stdio servers and relative trace files. Callers own the OAuth runtime lifecycle: create a runtime with `createOAuthRuntime()`, pass it explicitly via `AuthenticateOptions.runtime` (and `manager.setOAuthRuntime(runtime)` for managed connections; there is no shared default runtime), and close it with `await shutdownOAuth(runtime)` alongside `await manager.closeAll()`. `getAuthStorageOptions(oauthDir, cwd)` selects the parent of a `fitch-mcp-adapter/` legacy plaintext import directory (resolving relative `oauthDir` values against `cwd`, or keeping the Pi agent directory when `oauthDir` is omitted or blank). Persistent credentials always use the OS credential store service with per-OS-user locks under `~/.fitch-mcp-adapter/locks/`, independent of `oauthDir`.
 
 ### Session configuration
 
