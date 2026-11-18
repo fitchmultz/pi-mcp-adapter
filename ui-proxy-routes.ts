@@ -61,7 +61,7 @@ export class UiProxyRoutes {
         await this.message(params, res);
         break;
       case "/proxy/ui/context":
-        await this.context(params, res);
+        this.context(params, res);
         break;
       case "/proxy/ui/open-link":
         openLink(params, res);
@@ -140,7 +140,7 @@ export class UiProxyRoutes {
     return warning;
   }
 
-  private async context(params: unknown, res: ServerResponse): Promise<void> {
+  private context(params: unknown, res: ServerResponse): void {
     if (!isUiModelContextParams(params)) {
       sendJson(res, 400, { ok: false, error: "Invalid update-model-context params" });
       return;
@@ -158,7 +158,6 @@ export class UiProxyRoutes {
       hasContent: Boolean(params.content),
       hasUpdate: Boolean(update),
     });
-    await this.options.onContextUpdate?.(params);
     sendJson(res, 200, { ok: true, result: {} });
   }
 

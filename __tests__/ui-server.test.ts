@@ -1318,9 +1318,8 @@ describe("UiServer", () => {
   });
 
   describe("POST /proxy/ui/context", () => {
-    it("stores and forwards context updates", async () => {
-      const onContextUpdate = vi.fn<NonNullable<UiServerOptions["onContextUpdate"]>>();
-      handle = await startUiServer(createServerOptions({ onContextUpdate }));
+    it("stores context updates", async () => {
+      handle = await startUiServer(createServerOptions());
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/context`, {
         method: "POST",
@@ -1331,9 +1330,6 @@ describe("UiServer", () => {
       });
 
       expect(res.status).toBe(200);
-      expect(onContextUpdate).toHaveBeenCalledWith({
-        content: [{ type: "text", text: "some context data" }],
-      });
       expect(handle.getSessionMessages().contexts).toEqual([
         {
           payload: { content: [{ type: "text", text: "some context data" }] },
@@ -1343,9 +1339,8 @@ describe("UiServer", () => {
       ]);
     });
 
-    it("preserves context extensions in the callback and retained payload", async () => {
-      const onContextUpdate = vi.fn<NonNullable<UiServerOptions["onContextUpdate"]>>();
-      handle = await startUiServer(createServerOptions({ onContextUpdate, port: 0 }));
+    it("preserves context extensions and key order in the retained payload", async () => {
+      handle = await startUiServer(createServerOptions({ port: 0 }));
       // Valid JSON may put unknown keys first and use an own "__proto__" key.
       const params = {
         vendor: { opaque: [null, 7, true] },
@@ -1366,12 +1361,13 @@ describe("UiServer", () => {
         body: { token: handle.sessionToken, params },
       });
       expect(res.status).toBe(200);
-      expect(onContextUpdate).toHaveBeenCalledExactlyOnceWith(params);
-      // Serialized text also proves key order, which deep equality ignores.
-      expect(JSON.stringify(onContextUpdate.mock.calls[0]?.[0])).toBe(JSON.stringify(params));
-      expect(handle.getSessionMessages().contexts).toEqual([
-        { payload: params, summary: JSON.stringify(params), truncated: false },
-      ]);
+      const [context] = handle.getSessionMessages().contexts;
+      expect(context).toEqual({
+        payload: params,
+        summary: JSON.stringify(params),
+        truncated: false,
+      });
+      expect(JSON.stringify(context?.payload)).toBe(JSON.stringify(params));
     });
 
     it.each([
@@ -1379,8 +1375,7 @@ describe("UiServer", () => {
       { content: [{ type: "text", text: 42 }] },
       { structuredContent: [] },
     ])("rejects malformed context updates: %j", async (params) => {
-      const onContextUpdate = vi.fn<NonNullable<UiServerOptions["onContextUpdate"]>>();
-      handle = await startUiServer(createServerOptions({ onContextUpdate }));
+      handle = await startUiServer(createServerOptions());
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/context`, {
         method: "POST",
@@ -1392,7 +1387,6 @@ describe("UiServer", () => {
 
       expect(res.status).toBe(400);
       expect(res.body).toEqual({ ok: false, error: "Invalid update-model-context params" });
-      expect(onContextUpdate).not.toHaveBeenCalled();
       expect(handle.getSessionMessages().contexts).toEqual([]);
     });
 

@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   createAssistantMessageEventStream,
   getCurrentTools,
@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { JSONObjectSchema } from "@modelcontextprotocol/core";
 import { gatewayParameters } from "../../gateway-arguments.ts";
+import type { McpConfig } from "../../types.ts";
 import { requireValue } from "../fixtures/extension-lifecycle.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -20,7 +21,9 @@ afterEach(async () => {
   }
 });
 
-async function harness(options: { tools?: string[]; excludeTools?: string[] } = {}) {
+async function harness(
+  options: { tools?: string[]; excludeTools?: string[]; servers?: McpConfig["mcpServers"] } = {},
+) {
   const sdk = await import("@earendil-works/pi-coding-agent");
   const root = await mkdtemp(join(tmpdir(), "mcp-lazy-gateways-"));
   const agentDir = join(root, "agent");
@@ -47,7 +50,7 @@ async function harness(options: { tools?: string[]; excludeTools?: string[] } = 
   await writeFile(
     wrapper,
     `import { createMcpAdapter } from ${JSON.stringify(resolve("dist/index.js"))};
-    export default createMcpAdapter({ config: { mcpServers: {} } });`,
+    export default createMcpAdapter({ config: { mcpServers: ${JSON.stringify(options.servers ?? {})} } });`,
   );
   const settingsManager = sdk.SettingsManager.inMemory();
   const loaderOptions = {
@@ -156,6 +159,87 @@ async function harness(options: { tools?: string[]; excludeTools?: string[] } = 
 }
 
 describe("lazy MCP gateways through real Pi SDK", () => {
+  it("attaches only the latest pending app context once, on the next user prompt", async () => {
+    vi.stubEnv("MCP_UI_VIEWER", "none");
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    const h = await harness({
+      servers: {
+        visualizer: {
+          command: process.execPath,
+          args: [resolve("examples/interactive-visualizer/dist/server.js")],
+        },
+      },
+    });
+    const [launch] = await h.request([
+      {
+        name: "mcp",
+        arguments: {
+          action: "call",
+          server: "visualizer",
+          tool: "show_chart",
+          args: { type: "bar", title: "Demo", labels: "Q1", datasets: "[]" },
+        },
+      },
+    ]);
+    const output = requireValue(launch);
+    expect(output.isError).toBe(false);
+    const { uiUrl } = JSONObjectSchema.parse(output.details);
+    if (typeof uiUrl !== "string") {
+      throw new Error("Missing app URL");
+    }
+    const view = new URL(uiUrl);
+    const endpoint = new URL("/proxy/ui/context", view);
+    const postSelection = async (selection: string) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: requireValue(view.searchParams.get("session")),
+          params: { structuredContent: { selection } },
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, result: {} });
+    };
+
+    const contextMessages = () =>
+      h.session.messages.filter(
+        (message) => message.role === "custom" && message.customType === "mcp-ui-context",
+      );
+    const observe = vi.fn<() => void>();
+    const unsubscribe = h.session.subscribe((event) => {
+      if (event.type === "agent_start") {
+        observe();
+      }
+    });
+    onTestFinished(unsubscribe);
+    await postSelection("obsolete");
+    await postSelection("current");
+    await h.session.waitForIdle();
+    expect(observe).not.toHaveBeenCalled();
+    expect(contextMessages()).toEqual([]);
+
+    await h.session.sendCustomMessage(
+      { customType: "unrelated", content: "Unrelated extension request", display: false },
+      { triggerTurn: true },
+    );
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(contextMessages()).toEqual([]);
+
+    await h.session.prompt("Use the current selection");
+    const [context] = contextMessages();
+    expect(context).toMatchObject({
+      display: false,
+      content:
+        'Context from the visualizer MCP app:\n{"structuredContent":{"selection":"current"}}',
+    });
+    await h.session.prompt("Continue");
+    expect(contextMessages()).toEqual([context]);
+    expect(observe).toHaveBeenCalledTimes(3);
+  }, 20_000);
+
   it("declares the gateway from startup with its complete schema", async () => {
     const h = await harness();
     expect(h.active()).toEqual(["mcp"]);
