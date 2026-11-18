@@ -363,7 +363,7 @@ export function formatMcpPayloadFile(file: McpPayloadFile): string {
 }
 
 export function formatMcpResultReference(ref: string): string {
-  return `[MCP result saved: ${JSON.stringify(ref)}. Use mcp "read-result" with this ref, without repeating the call. Point into the saved protocol envelope: /structuredContent for structured data, /content/0/text for a tool's first text block, or /contents for resource reads. JSON inside a text block is a string.]`;
+  return `[MCP result saved: ${JSON.stringify(ref)}. Inspect without repeating the call using mcp action "read-result" with this ref. Optionally select a JSON Pointer with path.]`;
 }
 
 /**
