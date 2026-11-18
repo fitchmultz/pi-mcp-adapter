@@ -54,7 +54,7 @@ const COLLAPSED_RENDER_CHAR_SLACK = 8;
 class CollapsibleText implements Component {
   private readonly fullText: Text;
   private readonly footerText: Text;
-  private collapsedCache: { width: number; lines: string[] } | undefined;
+  private collapsedCache: { width: number; lines: ReturnType<Component["render"]> } | undefined;
 
   private readonly text: string;
   private readonly expanded: boolean;
@@ -77,7 +77,7 @@ class CollapsibleText implements Component {
     this.footerText = new Text(footer, 0, 0);
   }
 
-  render(width: number): string[] {
+  render(width: number): ReturnType<Component["render"]> {
     if (this.expanded) {
       return this.fullText.render(width);
     }
