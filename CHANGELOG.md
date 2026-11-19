@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.52 - 2026-11-19
+
+<!-- npm-release:unreleased:start -->
+
 - Add global and per-server `uiViewer` (`"auto"`, `"browser"`, `"glimpse"`, `"none"`) and `uiToolConsent` (`"once-per-server"`, `"always"`, `"never"`) configuration options so MCP App UI auto-opening and UI tool-call consent prompts can be customized per server without affecting other servers.
+
+<!-- npm-release:unreleased:end -->
+
+- feat: add global and per-server uiViewer and uiToolConsent settings (DOT-230) (#276) ([6b03d55](https://github.com/fitchmultz/pi-mcp-adapter/commit/6b03d55cd1312ae03e6797b59dc579de9c34deb9))
+
+### What's Changed
+
+- feat: add global and per-server uiViewer and uiToolConsent config (DOT-230) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/276
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.51...v8.0.52
 
 ## 8.0.51 - 2026-11-18
 
