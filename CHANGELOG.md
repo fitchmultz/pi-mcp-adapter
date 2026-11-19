@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add global and per-server `uiViewer` (`"auto"`, `"browser"`, `"glimpse"`, `"none"`) and `uiToolConsent` (`"once-per-server"`, `"always"`, `"never"`) configuration options so MCP App UI auto-opening and UI tool-call consent prompts can be customized per server without affecting other servers.
+
 ## 8.0.51 - 2026-11-18
 
 <!-- npm-release:unreleased:start -->

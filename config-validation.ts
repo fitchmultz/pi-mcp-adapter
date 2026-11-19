@@ -8,6 +8,8 @@ import type {
   McpOutputGuardSettings,
   ImportKind,
   ToolPrefix,
+  McpUiViewer,
+  McpUiToolConsent,
 } from "./config-types.ts";
 
 export function isConfigObject(value: unknown): value is Record<string, unknown> {
@@ -33,6 +35,10 @@ const isFalseOrString = (value: unknown): value is false | string =>
   value === false || isString(value);
 const isToolPrefix = (value: unknown): value is ToolPrefix =>
   value === "none" || value === "server" || value === "mcp" || value === "short";
+const isUiViewer = (value: unknown): value is McpUiViewer =>
+  value === "auto" || value === "browser" || value === "glimpse" || value === "none";
+const isUiToolConsent = (value: unknown): value is McpUiToolConsent =>
+  value === "once-per-server" || value === "always" || value === "never";
 
 // Check each declared field without stripping extension properties or rebuilding the input.
 // The mapped type requires a validator for every optional property in the public contract.
@@ -121,6 +127,8 @@ const serverFields = {
   includeTools: isStringArray,
   excludeTools: isStringArray,
   approveTools: isToolSelection,
+  uiViewer: isUiViewer,
+  uiToolConsent: isUiToolConsent,
   debug: isBoolean,
   trace: isBoolean,
   disabled: (value: unknown): value is boolean | string => isBoolean(value) || isString(value),
@@ -160,6 +168,8 @@ const settingsFields = {
   requestTimeoutMs: isNumber,
   directTools: isBoolean,
   approveTools: isToolSelection,
+  uiViewer: isUiViewer,
+  uiToolConsent: isUiToolConsent,
   disableProxyTool: isBoolean,
   freezeDirectTools: isBoolean,
   autoAuth: isBoolean,

@@ -108,6 +108,10 @@ export interface ServerEntry {
   excludeTools?: string[];
   // Require interactive approval before calling matching MCP tools/resources.
   approveTools?: boolean | string[];
+  /** Override settings.uiViewer for MCP App UI windows from this server. */
+  uiViewer?: McpUiViewer;
+  /** Override settings.uiToolConsent for MCP App UI tool calls from this server. */
+  uiToolConsent?: McpUiToolConsent;
   // Debug
   debug?: boolean; // Show server stderr (default: false)
   /** Enable metadata-only JSONL protocol tracing for this server. */
@@ -130,6 +134,8 @@ export interface McpOutputGuardSettings {
 export type ToolPrefix = "server" | "none" | "short" | "mcp";
 export type HostConfigDiscovery = "off" | "on";
 export type McpFooterStatus = "full" | "compact" | "off";
+export type McpUiViewer = "auto" | "browser" | "glimpse" | "none";
+export type McpUiToolConsent = "once-per-server" | "always" | "never";
 
 export interface McpTraceSettings {
   /** Enable tracing for all servers unless a server sets trace to false. */
@@ -155,6 +161,10 @@ export interface McpSettings {
   directTools?: boolean;
   /** Default approval gate for matching tools/resources; per-server settings override it. */
   approveTools?: boolean | string[];
+  /** Default viewer for MCP App UI windows (default: "auto"). Per-server uiViewer overrides this; MCP_UI_VIEWER overrides both. */
+  uiViewer?: McpUiViewer;
+  /** Default consent policy for MCP App UI tool calls (default: "once-per-server"). Per-server uiToolConsent overrides this. */
+  uiToolConsent?: McpUiToolConsent;
   disableProxyTool?: boolean;
   /** Freeze direct-tool registration after the initial sync. Automatic metadata updates
    * (reconnects, lazy-connect, tool-list-changed) won't rebuild the system prompt,

@@ -176,8 +176,12 @@ describe("config discovery", () => {
     { mcpServers: { invalid: { oauth: { clientId: 42 } } } },
     { mcpServers: { invalid: { oauth: { privateKeyJwt: { privateKey: "key" } } } } },
     { mcpServers: { invalid: { oauth: { crossAppAccess: { idpUrl: "https://idp.test" } } } } },
+    { mcpServers: { invalid: { uiViewer: "window" } } },
+    { mcpServers: { invalid: { uiToolConsent: "ask" } } },
     { settings: { toolPrefix: "unknown" } },
     { settings: { autoAuth: "true" } },
+    { settings: { uiViewer: "tab" } },
+    { settings: { uiToolConsent: "prompt" } },
     { settings: { outputGuard: { maxBytes: "100" } } },
     { settings: { trace: { enabled: "true" } } },
     { settings: { trace: { file: 42 } } },
@@ -205,6 +209,29 @@ describe("config discovery", () => {
     } finally {
       warning.mockRestore();
     }
+  });
+
+  it("merges global and per-server uiViewer and uiToolConsent settings", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-ui-config-home-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-mcp-ui-config-project-"));
+    process.env.HOME = home;
+    writeJson(join(home, ".config", "mcp", "mcp.json"), {
+      settings: { uiViewer: "browser", uiToolConsent: "once-per-server" },
+      mcpServers: {
+        datadog: { url: "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp" },
+      },
+    });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: {
+        datadog: { uiViewer: "none", uiToolConsent: "always" },
+      },
+    });
+    const { loadMcpConfig } = await import("../config.ts");
+    const merged = loadMcpConfig(undefined, project);
+    expect(merged.settings?.uiViewer).toBe("browser");
+    expect(merged.settings?.uiToolConsent).toBe("once-per-server");
+    expect(merged.mcpServers.datadog?.uiViewer).toBe("none");
+    expect(merged.mcpServers.datadog?.uiToolConsent).toBe("always");
   });
 
   it("retains legacy values through precedence, cloning and metadata identity without rewriting disk", async () => {

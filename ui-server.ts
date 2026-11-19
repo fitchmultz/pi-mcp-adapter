@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { buildAllowAttribute } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { buildHostHtmlTemplate, buildCspMetaContent } from "./host-html-template.ts";
+import { resolveUiToolConsent } from "./consent-manager.ts";
 import { logger } from "./logger.ts";
 import { formatAuthRequiredMessage } from "./utils.ts";
 import { SessionRecoveryAuthRequiredError } from "./session-recovery.ts";
@@ -263,6 +264,7 @@ class UiHttpServer {
     this.touchHeartbeat();
     const options = this.options;
     const currentInput = this.events.getToolInput();
+    const consentPolicy = resolveUiToolConsent(options.config, options.serverName);
     const html = buildHostHtmlTemplate({
       sessionToken: this.sessionToken,
       uiResourceToken: this.resourceToken,
@@ -272,7 +274,7 @@ class UiHttpServer {
       ...(currentInput !== undefined ? { toolInputEventId: currentInput.eventId } : {}),
       resource: options.resource,
       allowAttribute: buildAllowAttribute(options.resource.meta.permissions),
-      requireToolConsent: options.consentManager.requiresPrompt(options.serverName),
+      requireToolConsent: options.consentManager.requiresPrompt(options.serverName, consentPolicy),
       hostContext: this.hostContext,
     });
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });

@@ -2,6 +2,7 @@ import type { ServerResponse } from "node:http";
 import type { CallToolRequest } from "@modelcontextprotocol/client";
 import type { ServerConnection } from "./server-manager.ts";
 import type { UiServerOptions } from "./ui-server-options.ts";
+import { resolveUiToolConsent } from "./consent-manager.ts";
 import { withSessionRecovery } from "./session-recovery.ts";
 import {
   ensureToolCallApproved,
@@ -37,7 +38,8 @@ export class UiToolProxy {
 
   async call(params: unknown, res: ServerResponse): Promise<void> {
     const options = this.options;
-    options.consentManager.ensureApproved(options.serverName);
+    const consentPolicy = resolveUiToolConsent(options.config, options.serverName);
+    options.consentManager.ensureApproved(options.serverName, consentPolicy);
     const args = parseToolCall(params);
     if (!args) {
       sendJson(res, 400, { ok: false, error: "Invalid tools/call params" });
