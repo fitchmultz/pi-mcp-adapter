@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { materializeUiMessages } from "../ui-message-history.ts";
 import { startUiServer, type UiServerOptions, type UiServerHandle } from "../ui-server.ts";
+import { ConsentManager } from "../consent-manager.ts";
 import type { McpServerManager } from "../server-manager.ts";
 import type { Client } from "@modelcontextprotocol/client";
 import assert from "node:assert/strict";
@@ -688,7 +689,142 @@ describe("UiServer", () => {
       });
 
       expect(res.status).toBe(403);
-      expect(vi.spyOn(consentManager, "ensureApproved")).toHaveBeenCalledWith("test-server");
+      expect(vi.spyOn(consentManager, "ensureApproved")).toHaveBeenCalledWith(
+        "test-server",
+        "once-per-server",
+      );
+    });
+
+    it("allows UI tool calls without consent prompt when uiToolConsent is 'always'", async () => {
+      const mockClient = createClient();
+      vi.spyOn(mockClient, "callTool").mockResolvedValue({
+        content: [{ type: "text", text: "metric data" }],
+      });
+      const manager = createMockManager({
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: mockClient,
+            tools: [{ name: "some_tool", inputSchema: { type: "object" } }],
+          }),
+        ),
+      });
+      const config: McpConfig = {
+        mcpServers: { "test-server": { command: "demo", uiToolConsent: "always" } },
+      };
+      handle = await startUiServer(
+        createServerOptions({
+          manager,
+          config,
+          consentManager: new ConsentManager(),
+        }),
+      );
+
+      const host = await request(handle.url);
+      assert(typeof host.body === "string");
+      expect(hostConfiguration(host.body).requireToolConsent).toBe(false);
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: {} },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(vi.spyOn(mockClient, "callTool")).toHaveBeenCalledTimes(1);
+    });
+
+    it("still enforces approveTools when uiToolConsent is 'always'", async () => {
+      const mockClient = createClient();
+      vi.spyOn(mockClient, "callTool").mockResolvedValue({
+        content: [{ type: "text", text: "never" }],
+      });
+      const manager = createMockManager({
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: mockClient,
+            tools: [{ name: "some_tool", inputSchema: { type: "object" } }],
+          }),
+        ),
+      });
+      const config: McpConfig = {
+        mcpServers: {
+          "test-server": { command: "demo", uiToolConsent: "always", approveTools: true },
+        },
+      };
+      const context = await createTestExtensionContext();
+      cleanups.push(context.dispose);
+      vi.spyOn(context.context.ui, "select").mockResolvedValue("Deny");
+      const state = createTestState({ config, manager, ui: context.context.ui });
+      handle = await startUiServer(
+        createServerOptions({
+          manager,
+          config,
+          state,
+          consentManager: new ConsentManager(),
+        }),
+      );
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: {} },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        ok: true,
+        result: {
+          details: { error: "approval_denied", server: "test-server", tool: "some_tool" },
+        },
+      });
+      expect(vi.spyOn(mockClient, "callTool")).not.toHaveBeenCalled();
+    });
+
+    it("blocks UI tool calls and consent endpoint when uiToolConsent is 'never'", async () => {
+      const mockClient = createClient();
+      vi.spyOn(mockClient, "callTool").mockResolvedValue({
+        content: [{ type: "text", text: "never" }],
+      });
+      const manager = createMockManager({
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: mockClient,
+            tools: [{ name: "some_tool", inputSchema: { type: "object" } }],
+          }),
+        ),
+      });
+      const config: McpConfig = {
+        settings: { uiToolConsent: "always" },
+        mcpServers: { "test-server": { command: "demo", uiToolConsent: "never" } },
+      };
+      handle = await startUiServer(createServerOptions({ manager, config }));
+
+      const host = await request(handle.url);
+      assert(typeof host.body === "string");
+      expect(hostConfiguration(host.body).requireToolConsent).toBe(false);
+
+      const consentRes = await request(`http://localhost:${handle.port}/proxy/ui/consent`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params: { approved: true } },
+      });
+      expect(consentRes.status).toBe(403);
+
+      const callRes = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: {} },
+        },
+      });
+      expect(callRes.status).toBe(403);
+      expect(vi.spyOn(mockClient, "callTool")).not.toHaveBeenCalled();
     });
 
     it("returns 503 when server not connected", async () => {

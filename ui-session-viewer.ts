@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import net from "node:net";
+import type { McpConfig, McpUiViewer } from "./config-types.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { UiServerHandle } from "./ui-server-contracts.ts";
 import type { UiSessionRequest, UiSessionViewer } from "./ui-session-contracts.ts";
@@ -29,6 +30,35 @@ interface ViewerResult {
   viewer: UiSessionViewer;
   windowOpen: boolean;
 }
+interface ViewerPreference {
+  readonly source: "env" | "config";
+  readonly value: string;
+}
+
+function resolveConfiguredViewer(
+  config: McpConfig | undefined,
+  serverName: string,
+): McpUiViewer | undefined {
+  if (!config) {
+    return undefined;
+  }
+  return config.mcpServers[serverName]?.uiViewer ?? config.settings?.uiViewer;
+}
+
+function resolveViewerPreference(
+  config: McpConfig | undefined,
+  serverName: string,
+): ViewerPreference | undefined {
+  const envValue = process.env.MCP_UI_VIEWER?.trim().toLowerCase();
+  if (envValue !== undefined && envValue !== "") {
+    return { source: "env", value: envValue };
+  }
+  const configured = resolveConfiguredViewer(config, serverName);
+  if (configured === undefined || configured === "auto") {
+    return undefined;
+  }
+  return { source: "config", value: configured };
+}
 
 export async function openUiViewer(context: ViewerContext): Promise<ViewerResult> {
   const viewer = new UiViewer(context);
@@ -40,11 +70,12 @@ class UiViewer {
   private readonly context: ViewerContext;
   private readonly remoteByEnv =
     Boolean(process.env.SSH_CONNECTION) || Boolean(process.env.SSH_TTY);
-  private readonly preference = process.env.MCP_UI_VIEWER?.toLowerCase();
+  private readonly preference: ViewerPreference | undefined;
   private readonly log: ReturnType<typeof logger.child>;
 
   constructor(context: ViewerContext) {
     this.context = context;
+    this.preference = resolveViewerPreference(context.state.config, context.request.serverName);
     this.log = logger.child({
       component: "UiSession",
       server: context.request.serverName,
@@ -56,12 +87,16 @@ class UiViewer {
     this.assertActive();
     const { state, handle } = this.context;
     const preference = this.preference;
-    if (preference === "none" || preference === "off" || preference === "disabled") {
-      state.ui?.notify(
-        `MCP UI window suppressed (MCP_UI_VIEWER=${preference}). Open manually: ${handle.url}`,
-        "info",
-      );
-      this.log.info(`Suppressing MCP UI window (MCP_UI_VIEWER=${preference})`, { url: handle.url });
+    if (
+      preference !== undefined &&
+      (preference.value === "none" || preference.value === "off" || preference.value === "disabled")
+    ) {
+      const label =
+        preference.source === "env"
+          ? `MCP_UI_VIEWER=${preference.value}`
+          : `uiViewer=${preference.value}`;
+      state.ui?.notify(`MCP UI window suppressed (${label}). Open manually: ${handle.url}`, "info");
+      this.log.info(`Suppressing MCP UI window (${label})`, { url: handle.url });
       return { viewer: "suppressed", windowOpen: false };
     }
     const remoteLikely = this.remoteByEnv || (await hasActiveRemoteLogin());
@@ -76,9 +111,9 @@ class UiViewer {
   }
 
   private useGlimpse(detected: boolean): boolean {
+    const preference = this.preference?.value;
     return (
-      !this.remoteByEnv &&
-      (this.preference === "glimpse" || (this.preference !== "browser" && detected))
+      !this.remoteByEnv && (preference === "glimpse" || (preference !== "browser" && detected))
     );
   }
 

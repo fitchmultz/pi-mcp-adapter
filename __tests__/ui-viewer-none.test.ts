@@ -525,4 +525,68 @@ describe("MCP_UI_VIEWER=none", () => {
 
     state.uiServer?.close("test-cleanup");
   });
+
+  it("suppresses UI window via per-server uiViewer='none' without MCP_UI_VIEWER env", async () => {
+    const { state } = await makeState();
+    state.config.mcpServers.demo = { ...state.config.mcpServers.demo, uiViewer: "none" };
+
+    const runtime = await maybeStartUiSession(state, {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    });
+
+    expect(runtime).toMatchObject({ viewer: "suppressed", windowOpen: false });
+    expect(state.openBrowser).not.toHaveBeenCalled();
+    expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
+    expect(state.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("MCP UI window suppressed (uiViewer=none)"),
+      "info",
+    );
+    runtime?.close("test-cleanup");
+  });
+
+  it("applies settings.uiViewer globally and lets per-server uiViewer override it", async () => {
+    const { state } = await makeState();
+    state.config.settings = { ...state.config.settings, uiViewer: "none" };
+
+    const suppressed = await maybeStartUiSession(state, {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    });
+    expect(suppressed).toMatchObject({ viewer: "suppressed", windowOpen: false });
+    suppressed?.close("test-cleanup");
+
+    state.config.mcpServers.demo = { ...state.config.mcpServers.demo, uiViewer: "browser" };
+    const browser = await maybeStartUiSession(state, {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    });
+    expect(browser).toMatchObject({ viewer: "browser", windowOpen: true });
+    expect(state.openBrowser).toHaveBeenCalledTimes(1);
+    expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
+    browser?.close("test-cleanup");
+  });
+
+  it("lets MCP_UI_VIEWER env override configured uiViewer", async () => {
+    process.env.MCP_UI_VIEWER = "browser";
+    const { state } = await makeState();
+    state.config.mcpServers.demo = { ...state.config.mcpServers.demo, uiViewer: "none" };
+
+    const runtime = await maybeStartUiSession(state, {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    });
+
+    expect(runtime).toMatchObject({ viewer: "browser", windowOpen: true });
+    expect(state.openBrowser).toHaveBeenCalledTimes(1);
+    runtime?.close("test-cleanup");
+  });
 });

@@ -1,4 +1,16 @@
+import type { McpConfig, McpUiToolConsent } from "./config-types.ts";
 import { logger } from "./logger.ts";
+
+export function resolveUiToolConsent(
+  config: McpConfig | undefined,
+  serverName: string,
+): McpUiToolConsent {
+  return (
+    config?.mcpServers[serverName]?.uiToolConsent ??
+    config?.settings?.uiToolConsent ??
+    "once-per-server"
+  );
+}
 
 export class ConsentManager {
   private readonly decisions = new Map<string, boolean>();
@@ -8,7 +20,10 @@ export class ConsentManager {
     return this.decisions.size > 0;
   }
 
-  requiresPrompt(serverName: string): boolean {
+  requiresPrompt(serverName: string, policy: McpUiToolConsent = "once-per-server"): boolean {
+    if (policy === "always" || policy === "never") {
+      return false;
+    }
     return this.decisions.get(serverName) !== true;
   }
 
@@ -17,7 +32,13 @@ export class ConsentManager {
     this.log.debug(`Consent ${approved ? "granted" : "denied"}`, { server: serverName });
   }
 
-  ensureApproved(serverName: string): void {
+  ensureApproved(serverName: string, policy: McpUiToolConsent = "once-per-server"): void {
+    if (policy === "always") {
+      return;
+    }
+    if (policy === "never") {
+      throw new Error(`Tool calls from UI are denied by configuration for "${serverName}"`);
+    }
     const decision = this.decisions.get(serverName);
     if (decision === true) {
       return;

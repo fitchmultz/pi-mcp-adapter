@@ -1,5 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { UiServerOptions } from "./ui-server-options.ts";
+import { resolveUiToolConsent } from "./consent-manager.ts";
 import { createUiMessageHistory } from "./ui-message-history.ts";
 import { isUiMessageParams, isUiModelContextParams } from "./ui-message-schema.ts";
 import {
@@ -82,6 +83,18 @@ export class UiProxyRoutes {
   }
 
   private consent(params: unknown, res: ServerResponse): void {
+    const consentPolicy = resolveUiToolConsent(this.options.config, this.options.serverName);
+    if (consentPolicy === "never") {
+      sendJson(res, 403, {
+        ok: false,
+        error: `Tool calls from UI are denied by configuration for "${this.options.serverName}"`,
+      });
+      return;
+    }
+    if (consentPolicy === "always") {
+      sendJson(res, 200, { ok: true, result: { approved: true } });
+      return;
+    }
     const approved = Boolean(isUiJsonObject(params) ? params.approved : undefined);
     this.options.consentManager.registerDecision(this.options.serverName, approved);
     sendJson(res, 200, { ok: true, result: { approved } });
