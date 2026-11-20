@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.53 - 2026-11-20
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- feat(output): suppress untruncated saved-result footer and add readAll (PEA-221) (#277) ([f00a138](https://github.com/fitchmultz/pi-mcp-adapter/commit/f00a1387169f2df15bc0667e24077e61dd3bab94))
+
+### What's Changed
+
+- feat(output): suppress untruncated saved-result footer and add readAll (PEA-221) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/277
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.52...v8.0.53
+
 ## 8.0.52 - 2026-11-19
 
 <!-- npm-release:unreleased:start -->
