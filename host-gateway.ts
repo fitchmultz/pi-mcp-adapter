@@ -148,6 +148,7 @@ function readResult(ready: McpExtensionState, params: GatewayArguments): Promise
       ...(params.offset !== undefined ? { offset: params.offset } : {}),
       ...(params.limit !== undefined ? { limit: params.limit } : {}),
       ...(params.format !== undefined ? { format: params.format } : {}),
+      ...(params.readAll !== undefined ? { readAll: params.readAll } : {}),
     },
     resolveMcpOutputGuardOptions(ready.config.settings, ready.outputDirectory),
   );

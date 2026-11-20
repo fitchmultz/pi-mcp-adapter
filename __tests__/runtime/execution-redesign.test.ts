@@ -365,7 +365,7 @@ describe("MCP execution redesign", () => {
     const ref = result.details.resultRef;
     expect(ref).toEqual(expect.any(String));
     assert.ok(typeof ref === "string");
-    expect(text(result)).toContain(ref);
+    expect(text(result)).not.toContain("[MCP result saved:");
     expect(JSON.parse(await readFile(ref, "utf8"))).toEqual(raw);
     const page = await output.readMcpResult(
       { ref, path: "/structuredContent/rows", fields: ["id"] },

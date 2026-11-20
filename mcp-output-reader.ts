@@ -1,5 +1,5 @@
 // mcp-output-reader.ts - Paged reads over retained MCP output artifacts.
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { readPlainResult, type PlainReadWindow } from "./plain-result-reader.ts";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
@@ -7,6 +7,7 @@ import { byteLength } from "./mcp-output-preview.ts";
 import {
   DEFAULT_MCP_OUTPUT_MAX_BYTES,
   DEFAULT_MCP_OUTPUT_MAX_LINES,
+  DEFAULT_MCP_READ_ALL_MAX_BYTES,
   type McpOutputGuardOptions,
 } from "./mcp-output-contracts.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
@@ -22,6 +23,8 @@ export interface ReadMcpResultInput {
   /** Maximum characters, additionally bounded by the configured output limits. */
   limit?: number;
   format?: "structured";
+  /** Return the entire selected result in structuredContent (requires format: "structured", no offset/limit). */
+  readAll?: boolean;
 }
 
 type ReadPageDetails = Omit<McpReadPage, "text">;
@@ -59,18 +62,19 @@ export async function readMcpResult(
     if (input === undefined || typeof input.ref !== "string") {
       throw new Error("ref must be a retained MCP result path");
     }
+    const readAll = validateReadAll(input);
     const ref = await resolveReadRef(input.ref, options);
     // Plain output pages without flattening a complete UI history into memory.
-    if (
-      basename(ref).startsWith("output-") &&
-      input.path === undefined &&
-      input.fields === undefined
-    ) {
+    if (isPlainOutputRequest(ref, input)) {
       // Awaited so this try block converts paging failures into the error envelope.
-      return await readPlainOutputPage(ref, input, options);
+      return readAll
+        ? await readPlainOutputAll(ref, options)
+        : await readPlainOutputPage(ref, input, options);
     }
     const rendered = await selectRenderedValue(ref, input);
-    return pageRenderedResult(ref, rendered, input, options);
+    return readAll
+      ? readAllRenderedResult(ref, rendered, input, options)
+      : pageRenderedResult(ref, rendered, input, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -79,6 +83,92 @@ export async function readMcpResult(
       isError: true,
     };
   }
+}
+
+function isPlainOutputRequest(ref: string, input: Record<string, unknown>): boolean {
+  return (
+    basename(ref).startsWith("output-") && input.path === undefined && input.fields === undefined
+  );
+}
+
+/** Validate readAll and its incompatible paging/format combinations. */
+function validateReadAll(input: Record<string, unknown>): boolean {
+  if (input.readAll === undefined || input.readAll === false) {
+    return false;
+  }
+  if (input.readAll !== true) {
+    throw new Error("readAll must be a boolean");
+  }
+  if (input.format !== "structured") {
+    throw new Error('readAll requires format: "structured"');
+  }
+  if (input.offset !== undefined || input.limit !== undefined) {
+    throw new Error("readAll cannot be combined with offset or limit");
+  }
+  return true;
+}
+
+function assertWithinReadAllLimit(bytes: number, maxBytes: number): void {
+  if (bytes > maxBytes) {
+    throw new Error(
+      `Selected MCP result is ${bytes} bytes, exceeding the readAll limit of ${maxBytes} bytes. Narrow the selection with path/fields or page through it with offset/limit.`,
+    );
+  }
+}
+
+function readAllPreviewNotice(previewChars: number, totalChars: number): string {
+  return `[MCP result readAll: full ${totalChars} characters returned in structuredContent; preview truncated at ${previewChars} of ${totalChars} characters.]`;
+}
+
+function boundedReadAllContent(rendered: string, options: McpOutputGuardOptions): PageContent[] {
+  const maxBytes = options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES;
+  const maxLines = options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES;
+  const window = { offset: 0, limit: rendered.length };
+  let end = renderedPageEnd(rendered, window, maxBytes, maxLines);
+  if (end >= rendered.length) {
+    return [{ type: "text", text: rendered }];
+  }
+  const longestNotice = readAllPreviewNotice(rendered.length, rendered.length);
+  end = renderedPageEnd(rendered, window, maxBytes - byteLength(longestNotice) - 1, maxLines - 1);
+  return [
+    { type: "text", text: rendered.slice(0, end) },
+    { type: "text", text: readAllPreviewNotice(end, rendered.length) },
+  ];
+}
+
+/** Return the entire selected result in structuredContent while bounding model-facing content. */
+function readAllRenderedResult(
+  ref: string,
+  rendered: string,
+  input: Record<string, unknown>,
+  options: McpOutputGuardOptions,
+): ReadMcpResultSuccess {
+  const maxBytes = options.readAllMaxBytes ?? DEFAULT_MCP_READ_ALL_MAX_BYTES;
+  assertWithinReadAllLimit(byteLength(rendered), maxBytes);
+  const details: ReadPageDetails = {
+    ref,
+    offset: 0,
+    nextOffset: null,
+    totalCharacters: rendered.length,
+    ...(typeof input.path === "string" && input.path !== "" ? { path: input.path } : {}),
+  };
+  return {
+    content: boundedReadAllContent(rendered, options),
+    details,
+    structuredContent: { ...details, text: rendered },
+  };
+}
+
+/** Stat a plain output artifact before loading it for a bounded readAll response. */
+async function readPlainOutputAll(
+  ref: string,
+  options: McpOutputGuardOptions,
+): Promise<ReadMcpResultSuccess> {
+  const maxBytes = options.readAllMaxBytes ?? DEFAULT_MCP_READ_ALL_MAX_BYTES;
+  const { size } = await stat(ref);
+  assertWithinReadAllLimit(size, maxBytes);
+  const rendered = await readFile(ref, "utf8");
+  return readAllRenderedResult(ref, rendered, {}, options);
 }
 
 /** Page a plain output artifact directly through the paged reader. */

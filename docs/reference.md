@@ -508,7 +508,7 @@ Oversized MCP tool/resource results are guarded by default so a single huge resp
 - Inline text output is capped at **50 KiB / 2,000 lines** (matching Pi's built-in `bash` guard). Larger output is truncated to a head preview and the full text is saved to a temp file whose path is included in the result, so the agent can `read`/`grep` it.
 - **Image content blocks pass through unchanged** — only text output is guarded. Images are delivered to the provider as native image content.
 - In gateway and direct modes, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results use a compact summary and retain the full raw JSON in a file.
-- Structured data, media, resources, extra protocol fields, and oversized results include a model-visible **result reference** to the saved raw result. Tiny plain-text results remain inline without an artifact. `structuredContent` is shown even when the server also returns content blocks.
+- Structured data, media, resources, extra protocol fields, and oversized results retain a saved raw result in `details.resultRef` (and `mcpAdapter.resultRef` for structured codemode calls). An inline model-visible **result reference** footer is appended only when output is truncated or the raw result contains extra unrendered top-level envelope fields. Tiny plain-text results remain inline without an artifact. `structuredContent` is shown even when the server also returns content blocks.
 
 Tune the limits with the object form:
 
@@ -568,7 +568,7 @@ When the provider result fits, `result.mcpResult` holds its original blocks and 
 
 If the adapter returns a diagnostic instead of a provider result, `mcpAdapter.omitted` is `true` and `mcpAdapter.error` gives the code, such as `approval_required`. Read `mcpAdapter.message` for the explanation when present. The receipt includes `isError: true` only when Pi marks the call as a tool error. Argument validation and other failures that reject in Pi before the adapter returns a result still reject in codemode.
 
-Set `format: "structured"` on `read-result` to get `{ text, ref, path?, offset, nextOffset, totalCharacters }` without a continuation notice in `text`. Without that option, the script gets display text as before. Failed reads reject in either format. If the call returned a `resultRef`, join the page text before decoding a JSON selection:
+Set `format: "structured"` on `read-result` to get `{ text, ref, path?, offset, nextOffset, totalCharacters }` without a continuation notice in `text`. Pass `readAll: true` with `format: "structured"` (and without `offset` or `limit`) to return the entire selected value in one call (`offset: 0`, `nextOffset: null`), bounded to 4 MiB by default while keeping model-facing display text within the normal output limits; selections over the limit fail with `result_read_failed` so the script can narrow with `path`/`fields` or page with `offset`/`limit`. Without `format: "structured"`, the script gets display text as before. Failed reads reject in either format. If the call returned a `resultRef`, read it in one call or join pages before decoding a JSON selection:
 
 ```js
 const ref = result.mcpAdapter.resultRef;

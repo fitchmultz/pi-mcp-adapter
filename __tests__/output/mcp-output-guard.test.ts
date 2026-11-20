@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { guardMcpOutput, resolveMcpOutputGuardOptions } from "../../mcp-output-guard.ts";
+import {
+  DEFAULT_MCP_READ_ALL_MAX_BYTES,
+  guardMcpOutput,
+  readMcpResult,
+  resolveMcpOutputGuardOptions,
+  retainMcpResult,
+  saveMcpOutputStream,
+} from "../../mcp-output-guard.ts";
 
 describe("guardMcpOutput", () => {
   it("includes readback notices in the output budget and returned byte count", async () => {
@@ -38,14 +45,75 @@ describe("guardMcpOutput", () => {
       rawMcpResult,
     });
 
-    expect(guarded.content[0]).toEqual({ type: "text", text: "small result" });
+    expect(guarded.content).toEqual([{ type: "text", text: "small result" }]);
     assert.ok(typeof guarded.resultRef === "string");
-    const notice = guarded.content[1];
-    assert.ok(notice?.type === "text");
-    expect(notice).toEqual({ type: "text", text: notice.text });
-    expect(notice.text).toContain(guarded.resultRef);
     expect(guarded.outputGuard).toBeUndefined();
     expect(guarded.mcpResult).toBe(rawMcpResult);
+  });
+
+  it("keeps borderline maxBytes - 100 responses with structuredContent untruncated and footer-free", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-guard-borderline-"));
+    try {
+      const maxBytes = 4096;
+      const text = "a".repeat(maxBytes - 100);
+      const guarded = await guardMcpOutput([{ type: "text", text }], {
+        outputDirectory,
+        maxBytes,
+        rawMcpResult: { content: [{ type: "text", text }], structuredContent: { ok: true } },
+      });
+
+      expect(guarded.outputGuard).toBeUndefined();
+      expect(guarded.content).toEqual([{ type: "text", text }]);
+      expect(guarded.resultRef).toEqual(expect.any(String));
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("still emits an inline result reference for untruncated responses with extra top-level fields", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-guard-vendor-"));
+    try {
+      const rawMcpResult = {
+        content: [{ type: "text", text: "done" }],
+        vendorField: { cursor: "abc" },
+      };
+      const guarded = await guardMcpOutput([{ type: "text", text: "done" }], {
+        outputDirectory,
+        rawMcpResult,
+      });
+
+      expect(guarded.outputGuard).toBeUndefined();
+      assert.ok(typeof guarded.resultRef === "string");
+      expect(guarded.content).toHaveLength(2);
+      const notice = guarded.content[1];
+      assert.ok(notice?.type === "text");
+      expect(notice.text).toContain("[MCP result saved:");
+      expect(notice.text).toContain(guarded.resultRef);
+
+      const retained = await retainMcpResult(rawMcpResult, { outputDirectory, detailsMaxBytes: 1 });
+      const viaRetained = await guardMcpOutput([{ type: "text", text: "done" }], {
+        outputDirectory,
+        retainedMcpResult: retained,
+      });
+      expect(viaRetained.outputGuard).toBeUndefined();
+      expect(viaRetained.content).toHaveLength(2);
+      const retainedNotice = viaRetained.content[1];
+      assert.ok(retainedNotice?.type === "text");
+      expect(retainedNotice.text).toContain(retained.resultRef);
+
+      const malformed = await guardMcpOutput([{ type: "text", text: "raw" }], {
+        outputDirectory,
+        rawMcpResult: "malformed-envelope",
+      });
+      expect(malformed.outputGuard).toBeUndefined();
+      assert.ok(typeof malformed.resultRef === "string");
+      expect(malformed.content).toHaveLength(2);
+      const malformedNotice = malformed.content[1];
+      assert.ok(malformedNotice?.type === "text");
+      expect(malformedNotice.text).toContain(malformed.resultRef);
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
+    }
   });
 
   it("merges prefixes and suffixes into small text output", async () => {
@@ -300,6 +368,7 @@ describe("resolveMcpOutputGuardOptions", () => {
       maxBytes: 50 * 1024,
       maxLines: 2000,
       detailsMaxBytes: 16 * 1024,
+      readAllMaxBytes: DEFAULT_MCP_READ_ALL_MAX_BYTES,
     });
   });
 
@@ -329,6 +398,172 @@ describe("resolveMcpOutputGuardOptions", () => {
       } else {
         process.env.MCP_OUTPUT_GUARD = previous;
       }
+    }
+  });
+});
+
+describe("readMcpResult readAll", () => {
+  it("validates readAll format and paging incompatibility at runtime", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-readall-validate-"));
+    try {
+      const saved = await retainMcpResult({ structuredContent: { ok: true } }, { outputDirectory });
+      assert.ok(typeof saved.resultRef === "string");
+      const ref = saved.resultRef;
+
+      const noFormat = await readMcpResult({ ref, readAll: true }, { outputDirectory });
+      assert.ok("isError" in noFormat);
+      expect(noFormat.isError).toBe(true);
+      expect(noFormat.details).toMatchObject({
+        error: "result_read_failed",
+        message: 'readAll requires format: "structured"',
+      });
+
+      const withOffset = await readMcpResult(
+        { ref, format: "structured", readAll: true, offset: 0 },
+        { outputDirectory },
+      );
+      assert.ok("isError" in withOffset);
+      expect(withOffset.isError).toBe(true);
+      expect(withOffset.details).toMatchObject({
+        error: "result_read_failed",
+        message: "readAll cannot be combined with offset or limit",
+      });
+
+      const withLimit = await readMcpResult(
+        { ref, format: "structured", readAll: true, limit: 100 },
+        { outputDirectory },
+      );
+      assert.ok("isError" in withLimit);
+      expect(withLimit.isError).toBe(true);
+      expect(withLimit.details).toMatchObject({
+        error: "result_read_failed",
+        message: "readAll cannot be combined with offset or limit",
+      });
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the full multi-page selection in structuredContent while bounding content", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-readall-full-"));
+    try {
+      const rows = Array.from({ length: 2200 }, (_, i) => ({
+        id: i,
+        payload: `row-${i}-${"x".repeat(30)}`,
+      }));
+      const saved = await retainMcpResult(
+        { structuredContent: { rows } },
+        { outputDirectory, detailsMaxBytes: 1 },
+      );
+      assert.ok(typeof saved.resultRef === "string");
+      const expected = JSON.stringify(rows, null, 2);
+      expect(Buffer.byteLength(expected, "utf8")).toBeGreaterThan(50 * 1024);
+      expect(expected.split("\n").length).toBeGreaterThan(2000);
+
+      const full = await readMcpResult(
+        {
+          ref: saved.resultRef,
+          path: "/structuredContent/rows",
+          format: "structured",
+          readAll: true,
+        },
+        { outputDirectory },
+      );
+      assert.ok(full.details.error === undefined, full.details.message);
+      assert.ok(!("isError" in full));
+      const resolvedRef = await realpath(saved.resultRef);
+      expect(full.structuredContent).toEqual({
+        text: expected,
+        ref: resolvedRef,
+        path: "/structuredContent/rows",
+        offset: 0,
+        nextOffset: null,
+        totalCharacters: expected.length,
+      });
+      expect(full.details).toEqual({
+        ref: resolvedRef,
+        path: "/structuredContent/rows",
+        offset: 0,
+        nextOffset: null,
+        totalCharacters: expected.length,
+      });
+      const visible = full.content.map((block) => block.text).join("\n");
+      expect(Buffer.byteLength(visible, "utf8")).toBeLessThanOrEqual(50 * 1024);
+      expect(visible.split("\n").length).toBeLessThanOrEqual(2000);
+      expect(visible).toContain("preview truncated");
+
+      const plainText = Array.from(
+        { length: 2200 },
+        (_, i) => `plain-line-${i}-${"y".repeat(30)}`,
+      ).join("\n");
+      const plainArtifact = await saveMcpOutputStream(
+        (async function* () {
+          yield plainText;
+        })(),
+        outputDirectory,
+      );
+      assert.ok(typeof plainArtifact.path === "string");
+      const plainFull = await readMcpResult(
+        { ref: plainArtifact.path, format: "structured", readAll: true },
+        { outputDirectory },
+      );
+      assert.ok(plainFull.details.error === undefined, plainFull.details.message);
+      assert.ok(!("isError" in plainFull));
+      const resolvedPlainRef = await realpath(plainArtifact.path);
+      expect(plainFull.structuredContent).toEqual({
+        text: plainText,
+        ref: resolvedPlainRef,
+        offset: 0,
+        nextOffset: null,
+        totalCharacters: plainText.length,
+      });
+      const plainVisible = plainFull.content.map((block) => block.text).join("\n");
+      expect(Buffer.byteLength(plainVisible, "utf8")).toBeLessThanOrEqual(50 * 1024);
+      expect(plainVisible.split("\n").length).toBeLessThanOrEqual(2000);
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails cleanly when readAll exceeds readAllMaxBytes on both mcp-result and output artifacts", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-readall-limit-"));
+    try {
+      const bigPayload = "z".repeat(4096);
+      const saved = await retainMcpResult(
+        { structuredContent: { bigPayload } },
+        { outputDirectory, detailsMaxBytes: 1 },
+      );
+      assert.ok(typeof saved.resultRef === "string");
+      const jsonRejected = await readMcpResult(
+        { ref: saved.resultRef, path: "/structuredContent", format: "structured", readAll: true },
+        { outputDirectory, readAllMaxBytes: 1024 },
+      );
+      assert.ok("isError" in jsonRejected);
+      expect(jsonRejected.isError).toBe(true);
+      expect(jsonRejected.details.error).toBe("result_read_failed");
+      expect(jsonRejected.details.message).toContain("1024 bytes");
+      expect(jsonRejected.details.message).toContain("path/fields");
+      expect(jsonRejected.details.message).toContain("offset/limit");
+
+      const plainArtifact = await saveMcpOutputStream(
+        (async function* () {
+          yield bigPayload;
+        })(),
+        outputDirectory,
+      );
+      assert.ok(typeof plainArtifact.path === "string");
+      const plainRejected = await readMcpResult(
+        { ref: plainArtifact.path, format: "structured", readAll: true },
+        { outputDirectory, readAllMaxBytes: 1024 },
+      );
+      assert.ok("isError" in plainRejected);
+      expect(plainRejected.isError).toBe(true);
+      expect(plainRejected.details.error).toBe("result_read_failed");
+      expect(plainRejected.details.message).toContain("4096 bytes");
+      expect(plainRejected.details.message).toContain("1024 bytes");
+      expect(plainRejected.details.message).toContain("offset/limit");
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
     }
   });
 });

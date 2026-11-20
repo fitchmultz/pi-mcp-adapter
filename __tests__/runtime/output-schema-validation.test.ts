@@ -82,10 +82,8 @@ describe("MCP output schema validation", () => {
       text: JSON.stringify({ values: ["ok", 1] }, null, 2),
     });
     const ref = result.details.resultRef;
-    const block = result.content[2];
     assert.ok(typeof ref === "string");
-    assert.ok(block?.type === "text");
-    expect(block.text).toContain(ref);
+    expect(result.content).toHaveLength(2);
   });
 
   it.each([

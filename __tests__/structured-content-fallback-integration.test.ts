@@ -46,7 +46,8 @@ describe("structuredContent fallback — direct tool executor", () => {
       host.runner.createToolContext("id", state.owner.signal),
     );
     expect(firstText(result)).toBe(JSON.stringify(structured, null, 2));
-    expect(textOf(result)).toContain(result.details.resultRef);
+    expect(result.content).toHaveLength(1);
+    expect(result.details.resultRef).toEqual(expect.any(String));
     expect(textOf(result)).not.toContain("(empty result)");
     expect(result.structuredContent).toEqual(structured);
   });

@@ -37,6 +37,13 @@ const codedSchema = z.object({
     mcpAdapter: z.object({ error: z.literal("tool_error"), omitted: z.literal(false) }),
   }),
   largeSelection: z.object({ ids: z.array(z.number()), noteLength: z.number(), pages: z.number() }),
+  largeReadAll: z.object({
+    ids: z.array(z.number()),
+    noteLength: z.number(),
+    offset: z.literal(0),
+    nextOffset: z.null(),
+    totalCharacters: z.number(),
+  }),
   rejected: z.string(),
 });
 
@@ -101,6 +108,21 @@ export async function verifyMcpReadback(
       }
       const provider = JSON.parse(JSON.parse(text));
       const largeSelection = { ids: provider.rows.map(row => row.id), noteLength: provider.note.length, pages };
+      const full = await tools.mcp({
+        action: "read-result",
+        ref: large.mcpAdapter.resultRef,
+        path,
+        format: "structured",
+        readAll: true,
+      });
+      const fullProvider = JSON.parse(JSON.parse(full.text));
+      const largeReadAll = {
+        ids: fullProvider.rows.map(row => row.id),
+        noteLength: fullProvider.note.length,
+        offset: full.offset,
+        nextOffset: full.nextOffset,
+        totalCharacters: full.totalCharacters,
+      };
       let rejected;
       try { await read(ref, "/rows", 0); }
       catch (error) { rejected = error.message; }
@@ -108,7 +130,7 @@ export async function verifyMcpReadback(
       const denied = await tools.mcp({ ...blocked, format: "structured" });
       const defaultDenial = await tools.mcp(blocked);
       const providerError = await tools.mcp({ ...blocked, tool: "echo", args: { value: "fail" }, format: "structured" });
-      return { inline, large, selected, defaultPage, largeSelection, rejected, denied, defaultDenial, providerError };`,
+      return { inline, large, selected, defaultPage, largeSelection, largeReadAll, rejected, denied, defaultDenial, providerError };`,
   });
 
   const [directText] = textOf(good);
@@ -135,14 +157,31 @@ export async function verifyMcpReadback(
     "large-json",
     "fail",
   ]);
-  const { inline, large, selected, defaultPage, largeSelection, rejected, denied, defaultDenial } =
-    codedSchema.parse(JSON.parse(output));
+  const {
+    inline,
+    large,
+    selected,
+    defaultPage,
+    largeSelection,
+    largeReadAll,
+    rejected,
+    denied,
+    defaultDenial,
+  } = codedSchema.parse(JSON.parse(output));
   assert.equal(inline.mcpResult.content[0].text, '{"rows":[{"id":7}],"note":"inline-json"}');
   assert.equal(selected.text, JSON.stringify(inline.mcpResult.content[0].text));
   assert.equal(defaultPage, selected.text);
   assert.deepEqual(largeSelection.ids, [7]);
   assert.equal(largeSelection.noteLength, 20_000);
   assert.ok(largeSelection.pages > 1);
+  assert.deepEqual(largeReadAll.ids, [7]);
+  assert.equal(largeReadAll.noteLength, 20_000);
+  assert.equal(largeReadAll.offset, 0);
+  assert.equal(largeReadAll.nextOffset, null);
+  assert.equal(
+    largeReadAll.totalCharacters,
+    JSON.stringify(`{"rows":[{"id":7}],"note":"${"雪".repeat(20_000)}"}`).length,
+  );
   assert.match(rejected, /JSON Pointer .*\/rows/);
   assert.equal(denied.mcpAdapter.message, defaultDenial);
   assert.match(defaultDenial, /approval-gated.*interactive session/);

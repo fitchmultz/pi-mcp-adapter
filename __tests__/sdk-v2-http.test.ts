@@ -1117,8 +1117,7 @@ describe("published SDK v2 over real local HTTP", () => {
           .filter((block) => block.type === "text")
           .map((block) => block.text)
           .join("\n");
-        const reference = /\[MCP result saved: (".*?")\./.exec(text)?.[1];
-        savedRef = z.string().parse(JSON.parse(requireValue(reference)));
+        savedRef = z.object({ resultRef: z.string() }).parse(response.details).resultRef;
         savedText = text;
         next = { name: "mcp", arguments: { action: "status" } };
       } else if (stage === 3) {
@@ -1170,7 +1169,8 @@ describe("published SDK v2 over real local HTTP", () => {
       tool.inputSchema,
     );
     expect(savedRef).toBeDefined();
-    expect(savedText).toContain('mcp action "read-result"');
+    expect(savedText).not.toContain("[MCP result saved:");
+    expect(savedText).toContain(JSON.stringify({ value: "typed" }, null, 2));
     const readback = requireValue(toolResults(session.messages).at(-1));
     expect(readback.isError).toBe(false);
     expect(JSON.parse(textBlock(readback.content[0]))).toEqual({ value: "typed" });
@@ -2431,8 +2431,8 @@ describe("published SDK v2 over real local HTTP", () => {
     const { state } = await f.connect({ requestTimeoutMs: 500.5 });
     const output = await call(state, entry);
     expect(output.ok, JSON.stringify(output)).toBe(true);
-    expect(output.content[0]).toEqual({ type: "text", text: "null" });
-    expect(textBlock(output.content[1])).toContain(z.string().parse(output.details.resultRef));
+    expect(output.content).toEqual([{ type: "text", text: "null" }]);
+    expect(z.string().parse(output.details.resultRef).length).toBeGreaterThan(0);
   });
 
   it("discovers every tool when changing catalog pages reuse the same cursor", async () => {
