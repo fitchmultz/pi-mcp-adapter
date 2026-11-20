@@ -54,7 +54,7 @@ const COLLAPSED_RENDER_CHAR_SLACK = 8;
 class CollapsibleText implements Component {
   private readonly fullText: Text;
   private readonly footerText: Text;
-  private collapsedCache: { width: number; lines: ReturnType<Component["render"]> } | undefined;
+  private collapsedCache: { width: number; lines: readonly string[] } | undefined;
 
   private readonly text: string;
   private readonly expanded: boolean;
@@ -77,7 +77,7 @@ class CollapsibleText implements Component {
     this.footerText = new Text(footer, 0, 0);
   }
 
-  render(width: number): ReturnType<Component["render"]> {
+  render(width: number): readonly string[] {
     if (this.expanded) {
       return this.fullText.render(width);
     }
@@ -129,7 +129,7 @@ class CollapsedToolCall implements Component {
   private readonly styledArguments: string;
   // Pi renders a card's children on every frame and reuses its own rows while they return the
   // same strings, so the arguments are wrapped once per width.
-  private cache: { width: number; lines: string[] } | undefined;
+  private cache: { width: number; lines: readonly string[] } | undefined;
 
   constructor(styledTitle: string, styledArguments: string, footer: string) {
     this.title = new Text(styledTitle, 0, 0);
@@ -137,7 +137,7 @@ class CollapsedToolCall implements Component {
     this.styledArguments = styledArguments;
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     if (this.cache?.width !== width) {
       const footer = this.footer.render(width);
       const preview = truncateToVisualLines(
