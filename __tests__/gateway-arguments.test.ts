@@ -21,6 +21,52 @@ it("advertises explicit actions and validates each action's required fields", ()
   expect(
     parseGatewayArguments({ action: "read-result", ref: "saved", format: "structured" }).format,
   ).toBe("structured");
+  expect(
+    parseGatewayArguments({
+      action: "read-result",
+      ref: "saved",
+      format: "structured",
+      readAll: true,
+    }).readAll,
+  ).toBe(true);
+  expect(
+    Value.Check(gatewayParameters, { action: "read-result", ref: "saved", readAll: true }),
+  ).toBe(false);
+  expect(
+    Value.Check(gatewayParameters, {
+      action: "call",
+      tool: "demo",
+      format: "structured",
+      readAll: true,
+    }),
+  ).toBe(false);
+  expect(
+    Value.Check(gatewayParameters, {
+      action: "read-result",
+      ref: "saved",
+      format: "structured",
+      readAll: true,
+      offset: 0,
+    }),
+  ).toBe(false);
+  expect(
+    Value.Check(gatewayParameters, {
+      action: "read-result",
+      ref: "saved",
+      format: "structured",
+      readAll: true,
+      limit: 100,
+    }),
+  ).toBe(false);
+  expect(
+    Value.Check(gatewayParameters, {
+      action: "read-result",
+      ref: "saved",
+      readAll: false,
+      offset: 0,
+      limit: 100,
+    }),
+  ).toBe(true);
   expect(Value.Check(gatewayParameters, { action: "status", format: "structured" })).toBe(false);
   expect(Value.Check(gatewayParameters, { action: "list", server: "demo", limit: 101 })).toBe(
     false,

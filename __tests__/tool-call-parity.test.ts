@@ -6,7 +6,7 @@ import { executeCall } from "../proxy-modes.ts";
 import type * as Auth from "../mcp-auth-flow.ts";
 import { createTestExtensionContext } from "./test-extension-context.ts";
 import { createTestState } from "./test-state.ts";
-import { firstText, proxyRuntimeState } from "./fixtures/proxy-runtime.ts";
+import { proxyRuntimeState } from "./fixtures/proxy-runtime.ts";
 import {
   MachineHttpServer,
   machineJson,
@@ -161,9 +161,8 @@ describe("proxy and direct tool call parity", () => {
     expect(proxy.details.mcpResult).toEqual(MCP_RESULT);
     const resultRef: unknown = expect.any(String);
     expect(proxy.details).toEqual({ mode: "call", ...direct.details, resultRef });
-    expect(direct.content.slice(0, 2)).toEqual(proxy.content.slice(0, 2));
-    expect(firstText({ content: direct.content.slice(-1) })).toContain(direct.details.resultRef);
-    expect(firstText({ content: proxy.content.slice(-1) })).toContain(proxy.details.resultRef);
+    expect(direct.content).toEqual(proxy.content);
+    expect(direct.content).toHaveLength(2);
   });
 
   it("does not format the input schema on the success path", async () => {

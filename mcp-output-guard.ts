@@ -21,6 +21,15 @@ import {
 } from "./mcp-output-contracts.ts";
 import { summarizeMcpResult } from "./mcp-output-summary.ts";
 
+const RENDERED_ENVELOPE_KEYS = new Set([
+  "content",
+  "contents",
+  "isError",
+  "structuredContent",
+  "_meta",
+]);
+const retainedEnvelopeMeta = new WeakMap<RetainedMcpResult, boolean>();
+
 export type {
   McpOutputGuardDetails,
   McpResultSummary,
@@ -81,23 +90,18 @@ export async function guardMcpOutput(
   content: ContentBlock[],
   options: McpOutputGuardOptions = {},
 ): Promise<GuardedMcpOutput> {
-  const normalizedContent = withEmptyTextFallback(
-    content.length > 0
-      ? sanitizeContent(content)
-      : [{ type: "text" as const, text: options.emptyTextFallback ?? "(empty result)" }],
-    options.emptyTextFallback,
-  );
-
+  const normalizedContent = normalizeGuardedContent(content, options.emptyTextFallback);
   const retained = await resolveRetainedResult(options);
   const reference = referenceForRetained(retained);
-  const withReference = (blocks: ContentBlock[]) =>
-    reference !== undefined && reference !== ""
-      ? [...blocks, { type: "text" as const, text: reference }]
-      : blocks;
+  const needsInlineReferenceWhenUntruncated = needsUntruncatedInlineReference(options, retained);
   const affixes = { prefix: options.prefix ?? "", suffix: options.suffix ?? "" };
   if (options.enabled === false) {
     return {
-      content: withReference(addAffixes(normalizedContent, affixes.prefix, affixes.suffix)),
+      content: appendReference(
+        addAffixes(normalizedContent, affixes.prefix, affixes.suffix),
+        reference,
+        needsInlineReferenceWhenUntruncated,
+      ),
       ...retained,
     };
   }
@@ -105,16 +109,65 @@ export async function guardMcpOutput(
   const { content: guardedContent, outputGuard } = await boundedTextOutput(normalizedContent, {
     ...affixes,
     reference,
+    includeReferenceWhenUntruncated: needsInlineReferenceWhenUntruncated,
     maxBytes: options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES,
     maxLines: options.maxLines ?? DEFAULT_MCP_OUTPUT_MAX_LINES,
     outputDirectory: options.outputDirectory,
   });
 
+  const includeReference = outputGuard !== undefined || needsInlineReferenceWhenUntruncated;
   return {
-    content: withReference(guardedContent),
+    content: appendReference(guardedContent, reference, includeReference),
     ...(outputGuard ? { outputGuard } : {}),
     ...retained,
   };
+}
+
+function normalizeGuardedContent(
+  content: ContentBlock[],
+  emptyTextFallback: string | undefined,
+): ContentBlock[] {
+  const initial =
+    content.length > 0
+      ? sanitizeContent(content)
+      : [{ type: "text" as const, text: emptyTextFallback ?? "(empty result)" }];
+  return withEmptyTextFallback(initial, emptyTextFallback);
+}
+
+function needsUntruncatedInlineReference(
+  options: McpOutputGuardOptions,
+  retained: RetainedMcpResult,
+): boolean {
+  if (retained.resultWriteError !== undefined) {
+    return true;
+  }
+  if (options.rawMcpResult !== undefined) {
+    return hasUnrenderedEnvelopeFields(options.rawMcpResult);
+  }
+  return retainedEnvelopeMeta.get(retained) ?? hasUnrenderedEnvelopeFields(retained.mcpResult);
+}
+
+function appendReference(
+  blocks: ContentBlock[],
+  reference: string | undefined,
+  includeReference: boolean,
+): ContentBlock[] {
+  if (!includeReference || reference === undefined || reference === "") {
+    return blocks;
+  }
+  return [...blocks, { type: "text" as const, text: reference }];
+}
+
+/** True when raw carries top-level fields not rendered inline, or is not a plain object. */
+function hasUnrenderedEnvelopeFields(raw: unknown): boolean {
+  if (raw === undefined) {
+    return false;
+  }
+  const record = asObjectRecord(raw);
+  if (record === undefined || isUnknownArray(raw)) {
+    return true;
+  }
+  return Object.keys(record).some((key) => !RENDERED_ENVELOPE_KEYS.has(key));
 }
 
 /** Use the caller-provided retention or retain the raw result through the details guard. */
@@ -139,6 +192,7 @@ interface BoundedOutputContext {
   prefix: string;
   suffix: string;
   reference: string | undefined;
+  includeReferenceWhenUntruncated: boolean;
   maxBytes: number;
   maxLines: number;
   outputDirectory: string | undefined;
@@ -158,14 +212,14 @@ async function boundedTextOutput(
   const stats = textStats(composedOutput);
   const referenceSuffix =
     ctx.reference !== undefined && ctx.reference !== "" ? `\n${ctx.reference}` : "";
-  const totalStats = textStats(
-    composedOutput !== "" ? composedOutput + referenceSuffix : (ctx.reference ?? ""),
-  );
+  const untruncatedStats = ctx.includeReferenceWhenUntruncated
+    ? textStats(composedOutput !== "" ? composedOutput + referenceSuffix : (ctx.reference ?? ""))
+    : stats;
 
   let guardedContent: ContentBlock[] = addAffixes(normalizedContent, ctx.prefix, ctx.suffix);
   let outputGuard: McpOutputGuardDetails | undefined;
 
-  if (totalStats.bytes > ctx.maxBytes || totalStats.lines > ctx.maxLines) {
+  if (untruncatedStats.bytes > ctx.maxBytes || untruncatedStats.lines > ctx.maxLines) {
     const artifact = await saveArtifact("output", composedOutput, ctx.outputDirectory);
     ({ content: guardedContent, outputGuard } = truncatedOutput({
       text: composedOutput,
@@ -328,13 +382,15 @@ export async function retainMcpResult(
     saveArtifact("mcp-result", raw, options.outputDirectory),
   ]);
   const payloadFiles = rawPayloadFiles.filter((file): file is McpPayloadFile => file !== undefined);
-  return retainedResultEnvelope({
+  const envelope = retainedResultEnvelope({
     result,
     rawBytes,
     artifact,
     payloadFiles,
     summarize: oversized,
   });
+  retainedEnvelopeMeta.set(envelope, hasUnrenderedEnvelopeFields(result));
+  return envelope;
 }
 
 function retainedResultEnvelope(ctx: {

@@ -32,6 +32,7 @@ export type GatewayArguments = {
   path?: string;
   fields?: string[];
   format?: "structured";
+  readAll?: boolean;
 };
 
 const requirements: Partial<Record<GatewayArguments["action"], string[]>> = {
@@ -114,6 +115,12 @@ export const gatewayParameters = Type.Object(
           "Opt in to machine-readable output in codemode for call or read-result. Omit for display text.",
       }),
     ),
+    readAll: Type.Optional(
+      Type.Boolean({
+        description:
+          'Return the entire selected saved result in one codemode read-result call (requires format: "structured"; cannot combine with offset or limit).',
+      }),
+    ),
   },
   {
     additionalProperties: false,
@@ -135,6 +142,18 @@ export const gatewayParameters = Type.Object(
       Type.Dependent(
         Type.Unsafe({ required: ["format"] }),
         Type.Unsafe({ properties: { action: { enum: ["call", "read-result"] } } }),
+        Type.Unknown(),
+      ),
+      Type.Dependent(
+        Type.Unsafe({ properties: { readAll: { const: true } }, required: ["readAll"] }),
+        Type.Unsafe({
+          required: ["format"],
+          properties: {
+            action: { const: "read-result" },
+            format: { const: "structured" },
+          },
+          not: { anyOf: [{ required: ["offset"] }, { required: ["limit"] }] },
+        }),
         Type.Unknown(),
       ),
     ],
