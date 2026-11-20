@@ -12,7 +12,6 @@ import {
   DEFAULT_MCP_DETAILS_MAX_BYTES,
   DEFAULT_MCP_OUTPUT_MAX_BYTES,
   DEFAULT_MCP_OUTPUT_MAX_LINES,
-  DEFAULT_MCP_READ_ALL_MAX_BYTES,
   type McpOutputGuardDetails,
   type McpResultSummary,
   type McpOutputGuardOptions,
@@ -43,10 +42,7 @@ export type {
 export function resolveMcpOutputGuardOptions(
   settings?: McpSettings,
   outputDirectory?: string,
-): Pick<
-  McpOutputGuardOptions,
-  "enabled" | "detailsMaxBytes" | "readAllMaxBytes" | "outputDirectory"
-> &
+): Pick<McpOutputGuardOptions, "enabled" | "detailsMaxBytes" | "outputDirectory"> &
   Required<Pick<McpOutputGuardOptions, "maxBytes" | "maxLines">> {
   const configured = settings?.outputGuard;
   const tuning = typeof configured === "object" ? configured : undefined;
@@ -59,22 +55,12 @@ export function resolveMcpOutputGuardOptions(
 
 /** Fall back to the documented defaults for every unset guard limit. */
 function outputGuardLimits(
-  tuning:
-    | {
-        maxBytes?: unknown;
-        maxLines?: unknown;
-        detailsMaxBytes?: unknown;
-        readAllMaxBytes?: unknown;
-      }
-    | undefined,
-): Required<
-  Pick<McpOutputGuardOptions, "maxBytes" | "maxLines" | "detailsMaxBytes" | "readAllMaxBytes">
-> {
+  tuning: { maxBytes?: unknown; maxLines?: unknown; detailsMaxBytes?: unknown } | undefined,
+): Required<Pick<McpOutputGuardOptions, "maxBytes" | "maxLines" | "detailsMaxBytes">> {
   return {
     maxBytes: positiveInt(tuning?.maxBytes) ?? DEFAULT_MCP_OUTPUT_MAX_BYTES,
     maxLines: positiveInt(tuning?.maxLines) ?? DEFAULT_MCP_OUTPUT_MAX_LINES,
     detailsMaxBytes: positiveInt(tuning?.detailsMaxBytes) ?? DEFAULT_MCP_DETAILS_MAX_BYTES,
-    readAllMaxBytes: positiveInt(tuning?.readAllMaxBytes) ?? DEFAULT_MCP_READ_ALL_MAX_BYTES,
   };
 }
 
@@ -152,6 +138,9 @@ function needsUntruncatedInlineReference(
   options: McpOutputGuardOptions,
   retained: RetainedMcpResult,
 ): boolean {
+  if (retained.resultWriteError !== undefined) {
+    return true;
+  }
   if (options.rawMcpResult !== undefined) {
     return hasUnrenderedEnvelopeFields(options.rawMcpResult);
   }
@@ -488,7 +477,6 @@ export {
   DEFAULT_MCP_OUTPUT_MAX_BYTES,
   DEFAULT_MCP_OUTPUT_MAX_LINES,
   DEFAULT_MCP_DETAILS_MAX_BYTES,
-  DEFAULT_MCP_READ_ALL_MAX_BYTES,
 } from "./mcp-output-contracts.ts";
 
 function safeStringify(value: unknown): string {

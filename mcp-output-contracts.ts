@@ -3,7 +3,6 @@ import type { ContentBlock } from "./types.ts";
 export const DEFAULT_MCP_OUTPUT_MAX_BYTES = 50 * 1024;
 export const DEFAULT_MCP_OUTPUT_MAX_LINES = 2000;
 export const DEFAULT_MCP_DETAILS_MAX_BYTES = 16 * 1024;
-export const DEFAULT_MCP_READ_ALL_MAX_BYTES = 4 * 1024 * 1024;
 
 export interface McpOutputGuardDetails {
   truncated: true;
@@ -40,7 +39,6 @@ export interface McpOutputGuardOptions {
   maxBytes?: number;
   maxLines?: number;
   detailsMaxBytes?: number;
-  readAllMaxBytes?: number;
   /**
    * Raw MCP result to expose as details.mcpResult. Kept raw when its JSON
    * fits detailsMaxBytes (or when the guard is disabled); otherwise replaced

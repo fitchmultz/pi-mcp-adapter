@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  DEFAULT_MCP_READ_ALL_MAX_BYTES,
   guardMcpOutput,
   readMcpResult,
   resolveMcpOutputGuardOptions,
@@ -113,6 +112,36 @@ describe("guardMcpOutput", () => {
       expect(malformedNotice.text).toContain(malformed.resultRef);
     } finally {
       await rm(outputDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the save-failure notice inline when retaining an untruncated response fails", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "mcp-guard-write-err-"));
+    try {
+      const blockingFile = join(tempDir, "not-a-directory");
+      await writeFile(blockingFile, "occupied", "utf8");
+      const rawMcpResult = {
+        content: [{ type: "text", text: "small result" }],
+        structuredContent: { ok: true },
+      };
+
+      for (const enabled of [true, false]) {
+        const guarded = await guardMcpOutput([{ type: "text", text: "small result" }], {
+          enabled,
+          outputDirectory: blockingFile,
+          rawMcpResult,
+        });
+        expect(guarded.outputGuard).toBeUndefined();
+        expect(guarded.resultRef).toBeUndefined();
+        assert.ok(typeof guarded.resultWriteError === "string" && guarded.resultWriteError !== "");
+        expect(guarded.content).toHaveLength(2);
+        const notice = guarded.content[1];
+        assert.ok(notice?.type === "text");
+        expect(notice.text).toContain("[MCP result could not be saved:");
+        expect(notice.text).toContain(guarded.resultWriteError);
+      }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 
@@ -368,7 +397,6 @@ describe("resolveMcpOutputGuardOptions", () => {
       maxBytes: 50 * 1024,
       maxLines: 2000,
       detailsMaxBytes: 16 * 1024,
-      readAllMaxBytes: DEFAULT_MCP_READ_ALL_MAX_BYTES,
     });
   });
 
@@ -520,48 +548,6 @@ describe("readMcpResult readAll", () => {
       const plainVisible = plainFull.content.map((block) => block.text).join("\n");
       expect(Buffer.byteLength(plainVisible, "utf8")).toBeLessThanOrEqual(50 * 1024);
       expect(plainVisible.split("\n").length).toBeLessThanOrEqual(2000);
-    } finally {
-      await rm(outputDirectory, { recursive: true, force: true });
-    }
-  });
-
-  it("fails cleanly when readAll exceeds readAllMaxBytes on both mcp-result and output artifacts", async () => {
-    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-readall-limit-"));
-    try {
-      const bigPayload = "z".repeat(4096);
-      const saved = await retainMcpResult(
-        { structuredContent: { bigPayload } },
-        { outputDirectory, detailsMaxBytes: 1 },
-      );
-      assert.ok(typeof saved.resultRef === "string");
-      const jsonRejected = await readMcpResult(
-        { ref: saved.resultRef, path: "/structuredContent", format: "structured", readAll: true },
-        { outputDirectory, readAllMaxBytes: 1024 },
-      );
-      assert.ok("isError" in jsonRejected);
-      expect(jsonRejected.isError).toBe(true);
-      expect(jsonRejected.details.error).toBe("result_read_failed");
-      expect(jsonRejected.details.message).toContain("1024 bytes");
-      expect(jsonRejected.details.message).toContain("path/fields");
-      expect(jsonRejected.details.message).toContain("offset/limit");
-
-      const plainArtifact = await saveMcpOutputStream(
-        (async function* () {
-          yield bigPayload;
-        })(),
-        outputDirectory,
-      );
-      assert.ok(typeof plainArtifact.path === "string");
-      const plainRejected = await readMcpResult(
-        { ref: plainArtifact.path, format: "structured", readAll: true },
-        { outputDirectory, readAllMaxBytes: 1024 },
-      );
-      assert.ok("isError" in plainRejected);
-      expect(plainRejected.isError).toBe(true);
-      expect(plainRejected.details.error).toBe("result_read_failed");
-      expect(plainRejected.details.message).toContain("4096 bytes");
-      expect(plainRejected.details.message).toContain("1024 bytes");
-      expect(plainRejected.details.message).toContain("offset/limit");
     } finally {
       await rm(outputDirectory, { recursive: true, force: true });
     }

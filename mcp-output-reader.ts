@@ -1,5 +1,5 @@
 // mcp-output-reader.ts - Paged reads over retained MCP output artifacts.
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { readPlainResult, type PlainReadWindow } from "./plain-result-reader.ts";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
@@ -7,7 +7,6 @@ import { byteLength } from "./mcp-output-preview.ts";
 import {
   DEFAULT_MCP_OUTPUT_MAX_BYTES,
   DEFAULT_MCP_OUTPUT_MAX_LINES,
-  DEFAULT_MCP_READ_ALL_MAX_BYTES,
   type McpOutputGuardOptions,
 } from "./mcp-output-contracts.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
@@ -108,14 +107,6 @@ function validateReadAll(input: Record<string, unknown>): boolean {
   return true;
 }
 
-function assertWithinReadAllLimit(bytes: number, maxBytes: number): void {
-  if (bytes > maxBytes) {
-    throw new Error(
-      `Selected MCP result is ${bytes} bytes, exceeding the readAll limit of ${maxBytes} bytes. Narrow the selection with path/fields or page through it with offset/limit.`,
-    );
-  }
-}
-
 function readAllPreviewNotice(previewChars: number, totalChars: number): string {
   return `[MCP result readAll: full ${totalChars} characters returned in structuredContent; preview truncated at ${previewChars} of ${totalChars} characters.]`;
 }
@@ -143,8 +134,6 @@ function readAllRenderedResult(
   input: Record<string, unknown>,
   options: McpOutputGuardOptions,
 ): ReadMcpResultSuccess {
-  const maxBytes = options.readAllMaxBytes ?? DEFAULT_MCP_READ_ALL_MAX_BYTES;
-  assertWithinReadAllLimit(byteLength(rendered), maxBytes);
   const details: ReadPageDetails = {
     ref,
     offset: 0,
@@ -159,14 +148,11 @@ function readAllRenderedResult(
   };
 }
 
-/** Stat a plain output artifact before loading it for a bounded readAll response. */
+/** Read a plain output artifact in full for a structured readAll response. */
 async function readPlainOutputAll(
   ref: string,
   options: McpOutputGuardOptions,
 ): Promise<ReadMcpResultSuccess> {
-  const maxBytes = options.readAllMaxBytes ?? DEFAULT_MCP_READ_ALL_MAX_BYTES;
-  const { size } = await stat(ref);
-  assertWithinReadAllLimit(size, maxBytes);
   const rendered = await readFile(ref, "utf8");
   return readAllRenderedResult(ref, rendered, {}, options);
 }
