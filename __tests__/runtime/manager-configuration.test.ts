@@ -203,6 +203,9 @@ describe("McpServerManager configuration", () => {
             )
             .toBe(true);
           await expect.poll(fixture.streamReady).toBe(true);
+          // Startup discovery lists every catalog concurrently; wait for the fixture to
+          // observe that initial request so the hold catches only the list_changed refresh.
+          await expect.poll(() => fixture.methods).toContain(`${catalog}/list`);
           const older = fixture.holdNextCatalog(catalog);
           releaseOlder = older.release;
           fixture.updateCatalogs("v2");
