@@ -26,14 +26,6 @@ interface ViewerContext {
   signal: AbortSignal;
   isActive: () => boolean;
 }
-interface ViewerResult {
-  viewer: UiSessionViewer;
-  windowOpen: boolean;
-}
-interface ViewerPreference {
-  readonly source: "env" | "config";
-  readonly value: string;
-}
 
 function resolveConfiguredViewer(
   config: McpConfig | undefined,
@@ -48,19 +40,24 @@ function resolveConfiguredViewer(
 function resolveViewerPreference(
   config: McpConfig | undefined,
   serverName: string,
-): ViewerPreference | undefined {
+): string | undefined {
   const envValue = process.env.MCP_UI_VIEWER?.trim().toLowerCase();
   if (envValue !== undefined && envValue !== "") {
-    return { source: "env", value: envValue };
+    return envValue;
   }
   const configured = resolveConfiguredViewer(config, serverName);
   if (configured === undefined || configured === "auto") {
     return undefined;
   }
-  return { source: "config", value: configured };
+  return configured;
 }
 
-export async function openUiViewer(context: ViewerContext): Promise<ViewerResult> {
+export function isUiViewerDisabled(config: McpConfig | undefined, serverName: string): boolean {
+  const preference = resolveViewerPreference(config, serverName);
+  return preference === "none" || preference === "off" || preference === "disabled";
+}
+
+export async function openUiViewer(context: ViewerContext): Promise<UiSessionViewer> {
   const viewer = new UiViewer(context);
   return viewer.open();
 }
@@ -70,7 +67,7 @@ class UiViewer {
   private readonly context: ViewerContext;
   private readonly remoteByEnv =
     Boolean(process.env.SSH_CONNECTION) || Boolean(process.env.SSH_TTY);
-  private readonly preference: ViewerPreference | undefined;
+  private readonly preference: string | undefined;
   private readonly log: ReturnType<typeof logger.child>;
 
   constructor(context: ViewerContext) {
@@ -83,22 +80,8 @@ class UiViewer {
     });
   }
 
-  async open(): Promise<ViewerResult> {
+  async open(): Promise<UiSessionViewer> {
     this.assertActive();
-    const { state, handle } = this.context;
-    const preference = this.preference;
-    if (
-      preference !== undefined &&
-      (preference.value === "none" || preference.value === "off" || preference.value === "disabled")
-    ) {
-      const label =
-        preference.source === "env"
-          ? `MCP_UI_VIEWER=${preference.value}`
-          : `uiViewer=${preference.value}`;
-      state.ui?.notify(`MCP UI window suppressed (${label}). Open manually: ${handle.url}`, "info");
-      this.log.info(`Suppressing MCP UI window (${label})`, { url: handle.url });
-      return { viewer: "suppressed", windowOpen: false };
-    }
     const remoteLikely = this.remoteByEnv || (await hasActiveRemoteLogin());
     this.assertActive();
     const glimpseDetected = !this.remoteByEnv && isGlimpseAvailable();
@@ -107,17 +90,17 @@ class UiViewer {
       return this.openLocalWindow(remoteLikely);
     }
     await this.browserWithHint(remoteLikely);
-    return { viewer: "browser", windowOpen: true };
+    return "browser";
   }
 
   private useGlimpse(detected: boolean): boolean {
-    const preference = this.preference?.value;
+    const preference = this.preference;
     return (
       !this.remoteByEnv && (preference === "glimpse" || (preference !== "browser" && detected))
     );
   }
 
-  private async openLocalWindow(remoteLikely: boolean): Promise<ViewerResult> {
+  private async openLocalWindow(remoteLikely: boolean): Promise<UiSessionViewer> {
     const { request, handle, isActive } = this.context;
     try {
       const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden}iframe{width:100%;height:100%;border:none}</style></head><body><iframe src="${handle.url}"></iframe></body></html>`;
@@ -139,14 +122,14 @@ class UiViewer {
       if (remoteLikely) {
         await this.emitRemoteHint(null, true);
       }
-      return { viewer: "glimpse", windowOpen: true };
+      return "glimpse";
     } catch (error) {
       this.assertActive();
       this.log.debug("Glimpse unavailable, using browser", {
         error: error instanceof Error ? error.message : String(error),
       });
       await this.browserWithHint(remoteLikely);
-      return { viewer: "browser", windowOpen: true };
+      return "browser";
     }
   }
 

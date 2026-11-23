@@ -14,7 +14,7 @@ import type {
 } from "./ui-session-contracts.ts";
 import { createUiStreamIdentity, UiSessionStream } from "./ui-session-stream.ts";
 import { UiSessionEvents } from "./ui-session-events.ts";
-import { closeActiveUiWindow, openUiViewer } from "./ui-session-viewer.ts";
+import { closeActiveUiWindow, isUiViewerDisabled, openUiViewer } from "./ui-session-viewer.ts";
 
 export type {
   UiSessionRequest,
@@ -22,6 +22,7 @@ export type {
   UiSessionResultSummary,
   UiSessionViewer,
 } from "./ui-session-contracts.ts";
+export { isUiViewerDisabled } from "./ui-session-viewer.ts";
 
 const MAX_COMPLETED_SESSIONS = 10;
 
@@ -40,17 +41,6 @@ export function summarizeUiSessionResult(
       uiOpen: false,
     };
   }
-  if (!uiSession.windowOpen) {
-    const action = uiSession.reused
-      ? "Updated the suppressed MCP UI session."
-      : "MCP UI window was suppressed.";
-    return {
-      message: `${action} Open manually: ${uiSession.url}`,
-      uiOpen: false,
-      uiViewer: uiSession.viewer,
-      uiUrl: uiSession.url,
-    };
-  }
   return {
     message: uiSession.reused
       ? "Updated the open UI."
@@ -67,6 +57,10 @@ export async function maybeStartUiSession(
 ): Promise<UiSessionRuntime | null> {
   const signal =
     combineAbortSignals(state.owner.signal, request.signal) ?? new AbortController().signal;
+  throwIfAborted(signal);
+  if (isUiViewerDisabled(state.config, request.serverName)) {
+    return null;
+  }
   const session = new UiSession(state, request, signal);
   try {
     return await session.start();
@@ -121,7 +115,7 @@ class UiSession {
       });
       existing.sendToolInput(request.toolArgs);
       stream.register();
-      return stream.runtime(existing.viewer ?? "browser", existing.windowOpen ?? true);
+      return stream.runtime(existing.viewer ?? "browser");
     }
     return this.open();
   }
@@ -185,9 +179,8 @@ class UiSession {
     if (!stream.isActive()) {
       return null;
     }
-    handle.viewer = viewer.viewer;
-    handle.windowOpen = viewer.windowOpen;
-    return stream.runtime(viewer.viewer, viewer.windowOpen);
+    handle.viewer = viewer;
+    return stream.runtime(viewer);
   }
 
   private replaceExisting(): void {

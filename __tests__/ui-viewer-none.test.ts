@@ -75,7 +75,11 @@ async function makeState() {
   onTestFinished(() => {
     state.uiServer?.close("test-cleanup");
   });
-  return { state, callTool: vi.spyOn(connection.client, "callTool") };
+  return {
+    state,
+    callTool: vi.spyOn(connection.client, "callTool"),
+    readResource: vi.spyOn(connection.client, "readResource"),
+  };
 }
 
 afterEach(() => {
@@ -120,52 +124,49 @@ describe("remote MCP UI viewers", () => {
     }
   });
 
-  it.each(["browser", "none"])(
-    "does not advertise a replaced %s UI after a runtime has already returned",
-    async (viewer) => {
-      process.env.MCP_UI_VIEWER = viewer;
-      const { state, callTool } = await makeState();
-      const request = {
-        serverName: "demo",
-        toolName: "app",
-        toolArgs: {},
-        uiResourceUri: "ui://app",
-      };
-      const first = await maybeStartUiSession(state, request);
-      assert.ok(first);
-      const accepted = Promise.withResolvers<null>();
-      const deliver = Promise.withResolvers<null>();
-      state.onToolCall = async (event) => {
-        if (event.phase === "after") {
-          accepted.resolve(null);
-          await deliver.promise;
-        }
-      };
-      const calling = executeCall(state, { toolName: "demo_app", args: {} });
-      await accepted.promise;
-      const current = await maybeStartUiSession(state, { ...request, toolName: "other" });
-      assert.ok(current);
-      try {
-        deliver.resolve(null);
-        const result = await calling;
-        expect(result.details.uiOpen).toBe(false);
-        expect(result.details.uiUrl).toBeUndefined();
-        expect(textOf(result)).toContain("tool output");
-        expect(textOf(result)).toContain("ended or was replaced");
-        expect(callTool).toHaveBeenCalledOnce();
-        expect(first.isActive()).toBe(false);
-        expect(summarizeUiSessionResult(first)).toEqual({
-          message: "Interactive UI ended or was replaced; returning the tool result inline.",
-          uiOpen: false,
-        });
-        expect(summarizeUiSessionResult(current).uiUrl).toBe(current.url);
-      } finally {
-        deliver.resolve(null);
-        await calling;
-        current.close("test-cleanup");
+  it("does not advertise a replaced browser UI after a runtime has already returned", async () => {
+    process.env.MCP_UI_VIEWER = "browser";
+    const { state, callTool } = await makeState();
+    const request = {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    };
+    const first = await maybeStartUiSession(state, request);
+    assert.ok(first);
+    const accepted = Promise.withResolvers<null>();
+    const deliver = Promise.withResolvers<null>();
+    state.onToolCall = async (event) => {
+      if (event.phase === "after") {
+        accepted.resolve(null);
+        await deliver.promise;
       }
-    },
-  );
+    };
+    const calling = executeCall(state, { toolName: "demo_app", args: {} });
+    await accepted.promise;
+    const current = await maybeStartUiSession(state, { ...request, toolName: "other" });
+    assert.ok(current);
+    try {
+      deliver.resolve(null);
+      const result = await calling;
+      expect(result.details.uiOpen).toBe(false);
+      expect(result.details.uiUrl).toBeUndefined();
+      expect(textOf(result)).toContain("tool output");
+      expect(textOf(result)).toContain("ended or was replaced");
+      expect(callTool).toHaveBeenCalledOnce();
+      expect(first.isActive()).toBe(false);
+      expect(summarizeUiSessionResult(first)).toEqual({
+        message: "Interactive UI ended or was replaced; returning the tool result inline.",
+        uiOpen: false,
+      });
+      expect(summarizeUiSessionResult(current).uiUrl).toBe(current.url);
+    } finally {
+      deliver.resolve(null);
+      await calling;
+      current.close("test-cleanup");
+    }
+  });
 
   it("closes a late Glimpse window without replacing the current session's viewer", async () => {
     process.env.MCP_UI_VIEWER = "glimpse";
@@ -244,7 +245,7 @@ describe("remote MCP UI viewers", () => {
       uiResourceUri: "ui://app",
     });
 
-    expect(runtime).toMatchObject({ viewer: "browser", windowOpen: true });
+    expect(runtime).toMatchObject({ viewer: "browser" });
     expect(state.openBrowser).toHaveBeenCalledWith(expect.stringContaining("http://localhost:"));
     expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
@@ -272,7 +273,7 @@ describe("remote MCP UI viewers", () => {
       uiResourceUri: "ui://app",
     });
 
-    expect(runtime).toMatchObject({ viewer: "glimpse", windowOpen: true });
+    expect(runtime).toMatchObject({ viewer: "glimpse" });
     expect(state.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("MCP UI opened on this host"),
       "info",
@@ -288,7 +289,7 @@ describe("remote MCP UI viewers", () => {
 
 describe("MCP UI context submissions", () => {
   it("rejects an authenticated message whose upload finishes after UI completion", async () => {
-    process.env.MCP_UI_VIEWER = "none";
+    process.env.MCP_UI_VIEWER = "browser";
     const root = await mkdtemp(join(tmpdir(), "mcp-ui-late-message-"));
     const { state } = await makeState();
     state.outputDirectory = root;
@@ -371,7 +372,7 @@ describe("MCP UI context submissions", () => {
   });
 
   it("keeps app activity passive and carries the latest context with a chat request", async () => {
-    process.env.MCP_UI_VIEWER = "none";
+    process.env.MCP_UI_VIEWER = "browser";
     const { state } = await makeState();
 
     const runtime = await maybeStartUiSession(state, {
@@ -445,9 +446,9 @@ describe("MCP UI context submissions", () => {
 });
 
 describe("MCP_UI_VIEWER=none", () => {
-  it.each(["none", "off", "disabled"])("suppresses window opening for %s", async (value) => {
+  it.each(["none", "off", "disabled"])("disables UI completely for %s", async (value) => {
     process.env.MCP_UI_VIEWER = value;
-    const { state } = await makeState();
+    const { state, readResource } = await makeState();
 
     const runtime = await maybeStartUiSession(state, {
       serverName: "demo",
@@ -456,26 +457,18 @@ describe("MCP_UI_VIEWER=none", () => {
       uiResourceUri: "ui://app",
     });
 
-    expect(runtime).toMatchObject({ viewer: "suppressed", windowOpen: false });
-    expect(runtime?.url).toContain("http://localhost:");
+    expect(runtime).toBeNull();
+    expect(state.uiServer).toBeNull();
+    expect(readResource).not.toHaveBeenCalled();
     expect(state.openBrowser).not.toHaveBeenCalled();
     expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
-    expect(state.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("MCP UI window suppressed"),
-      "info",
-    );
-    expect(state.ui.notify).toHaveBeenCalledWith(
-      expect.not.stringContaining("Tool still ran"),
-      "info",
-    );
-
-    runtime?.close("test-cleanup");
+    expect(state.ui.notify).not.toHaveBeenCalled();
   });
 
-  it("reports suppressed UI state in proxy tool results", async () => {
+  it("omits UI session, notification, and footer in proxy tool results", async () => {
     process.env.MCP_UI_VIEWER = "none";
-    const { state } = await makeState();
+    const { state, readResource } = await makeState();
 
     const result = await executeCall(state, {
       toolName: "demo_app",
@@ -483,19 +476,19 @@ describe("MCP_UI_VIEWER=none", () => {
       serverOverride: "demo",
     });
 
-    expect(textOf(result)).toContain("tool output");
-    expect(textOf(result)).toContain("MCP UI window was suppressed");
-    expect(textOf(result)).not.toContain("open in your browser");
-    expect(result.details).toMatchObject({ uiOpen: false, uiViewer: "suppressed" });
-    expect(result.details.uiUrl).toContain("http://localhost:");
+    expect(textOf(result)).toBe("tool output");
+    expect(result.details.uiOpen).toBeUndefined();
+    expect(result.details.uiViewer).toBeUndefined();
+    expect(result.details.uiUrl).toBeUndefined();
+    expect(state.uiServer).toBeNull();
+    expect(readResource).not.toHaveBeenCalled();
     expect(state.openBrowser).not.toHaveBeenCalled();
-
-    state.uiServer?.close("test-cleanup");
+    expect(state.ui.notify).not.toHaveBeenCalled();
   });
 
-  it("reports suppressed UI state in direct tool results", async () => {
+  it("omits UI session, notification, and footer in direct tool results", async () => {
     process.env.MCP_UI_VIEWER = "none";
-    const { state } = await makeState();
+    const { state, readResource } = await makeState();
     const execute = createDirectToolExecutor(
       () => state,
       () => null,
@@ -516,35 +509,50 @@ describe("MCP_UI_VIEWER=none", () => {
       host.runner.createToolContext("call-1", state.owner.signal),
     );
 
-    expect(textOf(result)).toContain("tool output");
-    expect(textOf(result)).toContain("MCP UI window was suppressed");
-    expect(textOf(result)).not.toContain("open in your browser");
-    expect(result.details).toMatchObject({ uiOpen: false, uiViewer: "suppressed" });
-    expect(result.details.uiUrl).toContain("http://localhost:");
+    expect(textOf(result)).toBe("tool output");
+    expect(result.details.uiOpen).toBeUndefined();
+    expect(result.details.uiViewer).toBeUndefined();
+    expect(result.details.uiUrl).toBeUndefined();
+    expect(state.uiServer).toBeNull();
+    expect(readResource).not.toHaveBeenCalled();
     expect(state.openBrowser).not.toHaveBeenCalled();
-
-    state.uiServer?.close("test-cleanup");
+    expect(state.ui.notify).not.toHaveBeenCalled();
   });
 
-  it("suppresses UI window via per-server uiViewer='none' without MCP_UI_VIEWER env", async () => {
-    const { state } = await makeState();
-    state.config.mcpServers.demo = { ...state.config.mcpServers.demo, uiViewer: "none" };
-
-    const runtime = await maybeStartUiSession(state, {
+  it("disables UI silently via per-server uiViewer='none' without closing another open UI", async () => {
+    const { state, readResource } = await makeState();
+    const activeOther = await maybeStartUiSession(state, {
       serverName: "demo",
-      toolName: "app",
+      toolName: "other",
       toolArgs: {},
       uiResourceUri: "ui://app",
     });
+    assert.ok(activeOther);
+    const activeServer = state.uiServer;
+    state.ui.notify.mockClear();
+    readResource.mockClear();
+    state.openBrowser.mockClear();
+    glimpseMocks.openGlimpseWindow.mockClear();
 
-    expect(runtime).toMatchObject({ viewer: "suppressed", windowOpen: false });
+    state.config.mcpServers.demo = { ...state.config.mcpServers.demo, uiViewer: "none" };
+
+    const result = await executeCall(state, {
+      toolName: "demo_app",
+      args: {},
+      serverOverride: "demo",
+    });
+
+    expect(textOf(result)).toBe("tool output");
+    expect(result.details.uiOpen).toBeUndefined();
+    expect(result.details.uiViewer).toBeUndefined();
+    expect(result.details.uiUrl).toBeUndefined();
+    expect(activeOther.isActive()).toBe(true);
+    expect(state.uiServer).toBe(activeServer);
+    expect(readResource).not.toHaveBeenCalled();
     expect(state.openBrowser).not.toHaveBeenCalled();
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
-    expect(state.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("MCP UI window suppressed (uiViewer=none)"),
-      "info",
-    );
-    runtime?.close("test-cleanup");
+    expect(state.ui.notify).not.toHaveBeenCalled();
+    activeOther.close("test-cleanup");
   });
 
   it("applies settings.uiViewer globally and lets per-server uiViewer override it", async () => {
@@ -557,8 +565,9 @@ describe("MCP_UI_VIEWER=none", () => {
       toolArgs: {},
       uiResourceUri: "ui://app",
     });
-    expect(suppressed).toMatchObject({ viewer: "suppressed", windowOpen: false });
-    suppressed?.close("test-cleanup");
+    expect(suppressed).toBeNull();
+    expect(state.uiServer).toBeNull();
+    expect(state.ui.notify).not.toHaveBeenCalled();
 
     state.config.mcpServers.demo = { ...state.config.mcpServers.demo, uiViewer: "browser" };
     const browser = await maybeStartUiSession(state, {
@@ -567,7 +576,7 @@ describe("MCP_UI_VIEWER=none", () => {
       toolArgs: {},
       uiResourceUri: "ui://app",
     });
-    expect(browser).toMatchObject({ viewer: "browser", windowOpen: true });
+    expect(browser).toMatchObject({ viewer: "browser" });
     expect(state.openBrowser).toHaveBeenCalledTimes(1);
     expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
     browser?.close("test-cleanup");
@@ -585,7 +594,7 @@ describe("MCP_UI_VIEWER=none", () => {
       uiResourceUri: "ui://app",
     });
 
-    expect(runtime).toMatchObject({ viewer: "browser", windowOpen: true });
+    expect(runtime).toMatchObject({ viewer: "browser" });
     expect(state.openBrowser).toHaveBeenCalledTimes(1);
     runtime?.close("test-cleanup");
   });

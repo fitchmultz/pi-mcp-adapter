@@ -566,7 +566,7 @@ describe("UI Streaming", () => {
   });
 
   it("delivers opaque native notifications through fresh and reused session streams in order", async () => {
-    vi.stubEnv("MCP_UI_VIEWER", "none");
+    vi.stubEnv("MCP_UI_VIEWER", "browser");
     const wire = new UiBoundaryWire();
     const manager = await connectUiBoundaryWire(wire);
     const state = createTestState({
@@ -719,7 +719,7 @@ describe("UI Streaming", () => {
   });
 
   it("replaces the currently published listener when concurrent UI resource reads finish together", async () => {
-    vi.stubEnv("MCP_UI_VIEWER", "none");
+    vi.stubEnv("MCP_UI_VIEWER", "browser");
     const wire = new UiBoundaryWire();
     const manager = await connectUiBoundaryWire(wire);
     const state = createTestState({

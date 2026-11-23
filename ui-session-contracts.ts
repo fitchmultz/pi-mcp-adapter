@@ -12,7 +12,7 @@ export interface UiSessionRequest {
   onNeedsAuth?: SessionRecoveryDeps["onNeedsAuth"];
 }
 
-export type UiSessionViewer = "browser" | "glimpse" | "suppressed";
+export type UiSessionViewer = "browser" | "glimpse";
 
 export interface UiSessionRuntime {
   serverName: string;
@@ -24,7 +24,6 @@ export interface UiSessionRuntime {
   requestMeta?: Record<string, unknown>;
   url: string;
   viewer: UiSessionViewer;
-  windowOpen: boolean;
   isActive: () => boolean;
   sendToolResult: (result: CallToolResult) => void;
   sendResultPatch: (result: CallToolResult) => void;

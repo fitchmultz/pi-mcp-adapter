@@ -31,7 +31,6 @@ export class UiServerSessionHandle implements UiServerHandle {
   readonly serverName: string;
   readonly toolName: string;
   declare viewer?: NonNullable<UiServerHandle["viewer"]>;
-  declare windowOpen?: boolean;
   readonly #channel: SessionChannel;
 
   constructor(address: SessionAddress, channel: SessionChannel) {
