@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.54 - 2026-11-23
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- chore: raise Pi support floor to 1.6.0 (PEA-222) (#278) ([829600f](https://github.com/fitchmultz/pi-mcp-adapter/commit/829600f4c0bca5f850195a234e1033ec18c91bb4))
+
+### What's Changed
+
+- chore: bump Pi floor to 1.6.0 and simplify render types (PEA-222) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/278
+- ci: refresh the shared automation pin to 1f78bd6 (PEA-225) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/279
+- ci: pin shared automation to 788061a and pass RELEASE_APP_PRIVATE_KEY by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/281
+- test(runtime): wait for startup catalog list before holding refresh (MCP-201) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/280
+- fix(ui): disable MCP UI completely when uiViewer is none by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/282
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.53...v8.0.54
+
 ## 8.0.53 - 2026-11-20
 
 <!-- npm-release:unreleased:start -->
