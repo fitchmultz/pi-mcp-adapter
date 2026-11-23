@@ -116,7 +116,7 @@ export class UiSessionStream {
     return this.active && this.state.uiServer === this.handle;
   }
 
-  runtime(viewer: UiSessionViewer, windowOpen: boolean): UiSessionRuntime {
+  runtime(viewer: UiSessionViewer): UiSessionRuntime {
     const request = this.request;
     return {
       serverName: request.serverName,
@@ -132,7 +132,6 @@ export class UiSessionStream {
       ...(request.streamMode !== undefined ? { streamMode: request.streamMode } : {}),
       url: this.handle.url,
       viewer,
-      windowOpen,
       isActive: () => this.isActive(),
       sendToolResult: (result) => this.sendResult(result, false),
       sendResultPatch: (result) => this.sendResult(result, true),

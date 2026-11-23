@@ -108,7 +108,7 @@ export interface ServerEntry {
   excludeTools?: string[];
   // Require interactive approval before calling matching MCP tools/resources.
   approveTools?: boolean | string[];
-  /** Override settings.uiViewer for MCP App UI windows from this server. */
+  /** Override settings.uiViewer for MCP App UI from this server ("none" disables MCP App UI completely). */
   uiViewer?: McpUiViewer;
   /** Override settings.uiToolConsent for MCP App UI tool calls from this server. */
   uiToolConsent?: McpUiToolConsent;
@@ -161,7 +161,7 @@ export interface McpSettings {
   directTools?: boolean;
   /** Default approval gate for matching tools/resources; per-server settings override it. */
   approveTools?: boolean | string[];
-  /** Default viewer for MCP App UI windows (default: "auto"). Per-server uiViewer overrides this; MCP_UI_VIEWER overrides both. */
+  /** Default viewer for MCP App UI (default: "auto"; "none" disables MCP App UI completely). Per-server uiViewer overrides this; MCP_UI_VIEWER overrides both. */
   uiViewer?: McpUiViewer;
   /** Default consent policy for MCP App UI tool calls (default: "once-per-server"). Per-server uiToolConsent overrides this. */
   uiToolConsent?: McpUiToolConsent;

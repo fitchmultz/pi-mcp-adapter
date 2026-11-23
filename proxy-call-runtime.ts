@@ -63,6 +63,7 @@ export async function runToolCall(request: CallRequest): Promise<ProxyToolResult
 }
 class ToolCallRuntime {
   private uiSession: UiSessionRuntime | null = null;
+  private uiAttempted = false;
   private beforeDispatchPending = false;
   private captureFailure: McpToolCallEvent | undefined;
   private readonly configuredOptions: RequestOptions | undefined;
@@ -116,8 +117,10 @@ class ToolCallRuntime {
     if (
       (target.resourceUri ?? "").length === 0 &&
       target.uiResourceUri !== undefined &&
-      target.uiResourceUri.length > 0
+      target.uiResourceUri.length > 0 &&
+      !this.deps.ui.isUiViewerDisabled(state.config, serverName)
     ) {
+      this.uiAttempted = true;
       this.uiSession = await abortable(
         this.deps.ui.maybeStartUiSession(state, {
           serverName,
@@ -249,10 +252,9 @@ class ToolCallRuntime {
       const result = await this.dispatch(operation);
       return await toolCallResult(result, {
         target,
-        uiSummary:
-          (target.uiResourceUri ?? "").length > 0
-            ? this.deps.ui.summarizeUiSessionResult(this.uiSession)
-            : undefined,
+        uiSummary: this.uiAttempted
+          ? this.deps.ui.summarizeUiSessionResult(this.uiSession)
+          : undefined,
         detailsBase: options.detailsBase,
         outputGuardOptions: this.outputGuardOptions,
         schemaSuffix: () => this.schemaSuffix(),

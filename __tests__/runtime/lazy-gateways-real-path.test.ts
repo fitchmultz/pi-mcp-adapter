@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   createAssistantMessageEventStream,
@@ -160,9 +160,18 @@ async function harness(
 
 describe("lazy MCP gateways through real Pi SDK", () => {
   it("attaches only the latest pending app context once, on the next user prompt", async () => {
-    vi.stubEnv("MCP_UI_VIEWER", "none");
-    onTestFinished(() => {
+    const stubBin = await mkdtemp(join(tmpdir(), "mcp-noop-browser-"));
+    for (const command of ["open", "xdg-open"]) {
+      const scriptPath = join(stubBin, command);
+      await writeFile(scriptPath, "#!/bin/sh\nexit 0\n");
+      await chmod(scriptPath, 0o755);
+    }
+    vi.stubEnv("MCP_UI_VIEWER", "browser");
+    vi.stubEnv("BROWSER", "");
+    vi.stubEnv("PATH", `${stubBin}${delimiter}${process.env.PATH ?? ""}`);
+    onTestFinished(async () => {
       vi.unstubAllEnvs();
+      await rm(stubBin, { recursive: true, force: true });
     });
     const h = await harness({
       servers: {
@@ -236,6 +245,39 @@ describe("lazy MCP gateways through real Pi SDK", () => {
     await h.session.prompt("Continue");
     expect(contextMessages()).toEqual([context]);
     expect(observe).toHaveBeenCalledTimes(3);
+  }, 20_000);
+
+  it("skips MCP UI cleanly when per-server uiViewer is none", async () => {
+    const h = await harness({
+      servers: {
+        selection: {
+          command: process.execPath,
+          args: [join(import.meta.dirname, "fixtures/app-context-server.mjs")],
+          uiViewer: "none",
+        },
+      },
+    });
+    const [launch] = await h.request([
+      {
+        name: "mcp",
+        arguments: {
+          action: "call",
+          server: "selection",
+          tool: "open_selector",
+        },
+      },
+    ]);
+    const output = requireValue(launch);
+    expect(output.isError).toBe(false);
+    const details = JSONObjectSchema.parse(output.details);
+    expect(details.uiOpen).toBeUndefined();
+    expect(details.uiViewer).toBeUndefined();
+    expect(details.uiUrl).toBeUndefined();
+    const text = output.content
+      .map((entry) => (entry.type === "text" ? entry.text : ""))
+      .join("\n");
+    expect(text).not.toContain("suppressed");
+    expect(text).not.toContain("Open manually");
   }, 20_000);
 
   it("declares the gateway from startup with its complete schema", async () => {
