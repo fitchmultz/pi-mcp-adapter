@@ -1,6 +1,6 @@
 {
   "name": "@fitchmultz/pi-mcp-adapter",
-  "version": "8.0.54",
+  "version": "8.0.55",
   "description": "Token-efficient MCP adapter for the Pi coding agent",
   "type": "module",
   "types": "./dist/index.d.ts",

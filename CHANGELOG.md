@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.55 - 2026-11-24
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: preserve frozen direct MCP tools across same-config cwd restarts (MCP-202) (#283) ([24b5464](https://github.com/fitchmultz/pi-mcp-adapter/commit/24b546435512cbcaa0e0a8a95d1394b12bef5254))
+
+### What's Changed
+
+- fix: preserve frozen direct MCP tools across same-config cwd restarts (MCP-202) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/283
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.54...v8.0.55
+
 ## 8.0.54 - 2026-11-23
 
 <!-- npm-release:unreleased:start -->
