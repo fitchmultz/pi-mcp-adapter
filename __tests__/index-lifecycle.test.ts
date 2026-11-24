@@ -1623,6 +1623,10 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   it("restarts the MCP session on cwd change while keeping frozen direct tools intact when effective config is unchanged", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {
+      // Suppress stdout in test output while asserting no stdout log was written.
+    });
+    try {
     const config: McpConfig = {
       mcpServers: { demo: { command: "demo", directTools: true } },
       settings: { freezeDirectTools: true },
@@ -1644,6 +1648,8 @@ describe("mcpAdapter session lifecycle", () => {
     await nextTurn();
 
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+    // Routine freeze activation must not log to stdout and corrupt the interactive TUI.
+    expect(consoleLog).not.toHaveBeenCalled();
     expect(api.getActiveTools()).toContain("demo_search");
     const firstOwner = requireValue(mocks.initializeMcp.mock.calls[0]?.[2]);
     spies.registerTool.mockClear();
@@ -1697,6 +1703,9 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(3);
     expect(spies.registerTool).toHaveBeenCalled();
     expect(api.getActiveTools()).toContain("extra_ping");
+    } finally {
+      consoleLog.mockRestore();
+    }
   });
 
   it("skips tool surface mutation on model_select when freezeDirectTools is true", async () => {
