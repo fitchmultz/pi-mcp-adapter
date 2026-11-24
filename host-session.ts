@@ -188,7 +188,11 @@ export function hasRelativeSessionPathSettings(
   ) {
     return true;
   }
-  return isRelativeConfigPath(config.settings?.trace?.file);
+  const trace = config.settings?.trace;
+  if (trace?.enabled === true) {
+    return trace.file === undefined || isRelativeConfigPath(trace.file);
+  }
+  return isRelativeConfigPath(trace?.file);
 }
 
 /** Whether a `cwd` transition can keep the running session and update stdio `defaultCwd` in place. */

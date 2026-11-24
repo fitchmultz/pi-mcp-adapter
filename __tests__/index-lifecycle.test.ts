@@ -1839,6 +1839,29 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(3);
   });
 
+  it("restarts the MCP session on cwd change when tracing is enabled with the default cwd-relative path", async () => {
+    const tracedConfig: McpConfig = {
+      mcpServers: {
+        remote: { url: "https://remote.example.test/mcp" },
+      },
+      settings: {
+        trace: { enabled: true },
+      },
+    };
+    mocks.loadMcpConfig.mockImplementation(() => structuredClone(tracedConfig));
+    mocks.initializeMcp.mockImplementation(async () => createState());
+    const { default: adapter } = await import("../index.ts");
+    const { api, handlers } = await createPi();
+    adapter(api);
+    await handlers.get("session_start")({}, { cwd: "/workspace/a" });
+    await nextTurn();
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+
+    await handlers.emitBeforeAgentStart({ cwd: "/workspace/b" });
+    await nextTurn();
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+  });
+
   it("skips tool surface mutation on model_select when freezeDirectTools is true", async () => {
     const config: McpConfig = {
       mcpServers: { demo: { command: "demo", directTools: true } },
