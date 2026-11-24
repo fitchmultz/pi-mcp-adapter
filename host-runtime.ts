@@ -395,7 +395,7 @@ export class McpHostRuntime implements McpAdapterHost {
     init.updateStatusBar(state);
     if (!this.directToolsFrozen && state.config.settings?.freezeDirectTools === true) {
       this.directToolsFrozen = true;
-      logger.info(
+      logger.debug(
         'MCP: direct tools frozen after initial sync — reconnects won\'t rebuild the system prompt; use mcp({ action: "connect", server: "server" }) to rediscover',
       );
     }
