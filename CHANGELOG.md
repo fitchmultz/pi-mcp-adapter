@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.56 - 2026-11-24
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- docs(agents): remove stale live-runtime activation hold from AGENTS.md (#284) ([30a36da](https://github.com/fitchmultz/pi-mcp-adapter/commit/30a36daf9ad0408aba56cfef275ac43da9fb21e6))
+
+### What's Changed
+
+- docs(agents): remove stale live-runtime activation hold from AGENTS.md by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/284
+- fix: log freezeDirectTools activation at debug level to prevent TUI stdout leak by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/285
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.55...v8.0.56
+
 ## 8.0.55 - 2026-11-24
 
 <!-- npm-release:unreleased:start -->
