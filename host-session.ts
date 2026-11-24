@@ -1,14 +1,28 @@
 import { isDeepStrictEqual } from "node:util";
-import { isAbsolute } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { cloneMcpConfig, isPathInsideProject, loadMcpConfig } from "./config.ts";
-import { isServerDisabled } from "./config-protocol.ts";
-import { resolveConfiguredOAuthDir } from "./config-writes.ts";
-import { getMetadataCachePath } from "./metadata-cache.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
-import type { McpAdapterOptions, McpConfig, ServerEntry } from "./types.ts";
-import { hasServerUrl, resolveConfigPath } from "./utils.ts";
+import type { McpConfig } from "./types.ts";
+
+export interface FrozenToolsSnapshot {
+  readonly config: McpConfig;
+  readonly configPath: string | undefined;
+  readonly cacheEnabled: boolean | undefined;
+}
+
+/** Whether a cwd-driven session restart can keep already-frozen tool declarations untouched. */
+export function canPreserveFrozenTools(
+  wasFrozen: boolean,
+  previous: FrozenToolsSnapshot,
+  next: FrozenToolsSnapshot,
+): boolean {
+  return (
+    wasFrozen &&
+    next.config.settings?.freezeDirectTools === true &&
+    next.cacheEnabled === previous.cacheEnabled &&
+    next.configPath === previous.configPath &&
+    isDeepStrictEqual(next.config, previous.config)
+  );
+}
 
 /**
  * Phases of one adapter session.
@@ -103,143 +117,5 @@ export class HostSession {
     this.state = null;
     this.initPromise = null;
     this.failure = null;
-  }
-}
-
-function isRelativeConfigPath(value: string | null | undefined): boolean {
-  const trimmed = value?.trim();
-  if (trimmed === undefined || trimmed === "") {
-    return false;
-  }
-  const resolved = resolveConfigPath(trimmed);
-  return resolved === undefined || !isAbsolute(resolved);
-}
-
-function isStdioServerCwdDependent(definition: ServerEntry): boolean {
-  if (
-    isServerDisabled(definition) ||
-    hasServerUrl(definition) ||
-    typeof definition.command !== "string" ||
-    definition.command.length === 0
-  ) {
-    return false;
-  }
-  const explicitCwd = resolveConfigPath(definition.cwd);
-  return explicitCwd === undefined || !isAbsolute(explicitCwd);
-}
-
-/** Whether any enabled stdio server inherits or resolves `cwd` relative to the session cwd. */
-export function hasCwdDependentStdioServer(config: McpConfig): boolean {
-  return Object.values(config.mcpServers).some(isStdioServerCwdDependent);
-}
-
-export interface ActiveSessionCwdState {
-  readonly runtimeCwd: string | undefined;
-  readonly runtimeCacheEnabled: boolean | undefined;
-  readonly configPath: string | undefined;
-  readonly config: McpConfig;
-  readonly hasState: boolean;
-  readonly hasInitPromise: boolean;
-}
-
-export interface ResolvedSessionCwdInput {
-  readonly config: McpConfig;
-  readonly configPath: string | undefined;
-  readonly cacheEnabled: boolean;
-}
-
-/** Resolve effective config, config path, and metadata cache enablement for a session context. */
-export function resolveSessionCwdInput(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  options: McpAdapterOptions,
-  sessionConfig: McpConfig | undefined,
-): ResolvedSessionCwdInput {
-  let config: McpConfig;
-  let configPath: string | undefined;
-  if (sessionConfig !== undefined) {
-    configPath = undefined;
-    config = cloneMcpConfig(sessionConfig);
-  } else {
-    const flag = pi.getFlag("mcp-config");
-    configPath = options.configPath ?? (typeof flag === "string" ? flag : undefined);
-    config = loadMcpConfig(configPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
-  }
-  config = options.transformConfig
-    ? cloneMcpConfig(options.transformConfig(cloneMcpConfig(config), ctx))
-    : config;
-  const cacheEnabled =
-    ctx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
-  return { config, configPath, cacheEnabled };
-}
-
-/**
- * Whether switching session `cwd` invalidates relative global paths (`settings.oauthDir` or
- * `settings.trace.file`) that require reinitializing auth/trace state.
- */
-export function hasRelativeSessionPathSettings(
-  config: McpConfig,
-  previousCwd: string | undefined,
-  nextCwd: string,
-): boolean {
-  const oauthDir = config.settings?.oauthDir;
-  if (
-    resolveConfiguredOAuthDir(oauthDir, previousCwd) !==
-    resolveConfiguredOAuthDir(oauthDir, nextCwd)
-  ) {
-    return true;
-  }
-  const trace = config.settings?.trace;
-  if (trace?.enabled === true) {
-    return trace.file === undefined || isRelativeConfigPath(trace.file);
-  }
-  return isRelativeConfigPath(trace?.file);
-}
-
-/** Whether a `cwd` transition can keep the running session and update stdio `defaultCwd` in place. */
-export function canReuseSessionForCwd(
-  current: ActiveSessionCwdState,
-  resolved: ResolvedSessionCwdInput,
-  nextCwd: string,
-): boolean {
-  if (
-    resolved.cacheEnabled !== current.runtimeCacheEnabled ||
-    resolved.configPath !== current.configPath ||
-    !isDeepStrictEqual(resolved.config, current.config)
-  ) {
-    return false;
-  }
-  if (!current.hasState && current.hasInitPromise && hasCwdDependentStdioServer(resolved.config)) {
-    return false;
-  }
-  return !hasRelativeSessionPathSettings(resolved.config, current.runtimeCwd, nextCwd);
-}
-
-/**
- * Expire directory-scoped session approvals and UI consent, update `state.manager`'s default stdio
- * `cwd` in place, and close only already-connected stdio servers whose working directory depends on
- * the session `cwd`, so they respawn under `nextCwd` on next use without tearing down unrelated
- * connections or resetting frozen tool declarations.
- */
-export async function updateManagerCwdInPlace(
-  state: McpExtensionState,
-  nextCwd: string,
-): Promise<void> {
-  state.approvedToolCalls.clear();
-  state.consentManager.clear();
-  state.manager.setDefaultCwd(nextCwd);
-  const namesToClose = new Set<string>();
-  for (const [name, definition] of Object.entries(state.config.mcpServers)) {
-    if (isStdioServerCwdDependent(definition)) {
-      namesToClose.add(name);
-    }
-  }
-  for (const [name, connection] of state.manager.getAllConnections()) {
-    if (isStdioServerCwdDependent(connection.definition)) {
-      namesToClose.add(name);
-    }
-  }
-  if (namesToClose.size > 0) {
-    await Promise.allSettled(Array.from(namesToClose, (name) => state.manager.close(name)));
   }
 }

@@ -3,8 +3,8 @@ import type * as Init from "./init.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { McpAdapterHost } from "./host-contract.ts";
 import type { McpAdapterOptions, McpConfig, PromptMetadata } from "./types.ts";
-import { cloneMcpConfig } from "./config.ts";
-import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
+import { cloneMcpConfig, loadMcpConfig, isPathInsideProject } from "./config.ts";
+import { getMetadataCachePath, loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { createMcpRuntimeOwner, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { createOAuthRuntime, shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
@@ -15,13 +15,7 @@ import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-lo
 import { logger } from "./logger.ts";
 import { abortable } from "./abort.ts";
 import { McpHostCommands } from "./host-commands.ts";
-import {
-  canReuseSessionForCwd,
-  HostSession,
-  resolveSessionCwdInput,
-  type ResolvedSessionCwdInput,
-  updateManagerCwdInPlace,
-} from "./host-session.ts";
+import { canPreserveFrozenTools, HostSession } from "./host-session.ts";
 import { McpStateCleanup } from "./host-state-cleanup.ts";
 import { McpHostTools } from "./host-tools.ts";
 import { takeUiModelContextMessage } from "./ui-session-events.ts";
@@ -140,7 +134,7 @@ export class McpHostRuntime implements McpAdapterHost {
     });
     this.pi.on("before_agent_start", async (event, ctx) => {
       if (ctx.cwd !== this.runtimeCwd) {
-        await this.syncSessionForCwd(ctx);
+        await this.startSession(ctx, { preserveFrozenTools: this.directToolsFrozen });
       }
       const message =
         event.messageType === "user" ? takeUiModelContextMessage(this.state?.uiServer) : undefined;
@@ -224,6 +218,7 @@ export class McpHostRuntime implements McpAdapterHost {
     this.oauthRuntime = null;
     this.runtimeCwd = undefined;
     this.runtimeCacheEnabled = undefined;
+    this.directToolsFrozen = false;
     // Persist live connection metadata before stopping transport cleanup.
     const stopState = this.shutdownState(state, "session_shutdown");
     const stopOwner = owner?.stop("MCP extension session shutdown") ?? Promise.resolve();
@@ -240,50 +235,33 @@ export class McpHostRuntime implements McpAdapterHost {
     }
   }
 
-  private resolveSessionInput(ctx: ExtensionContext): ResolvedSessionCwdInput {
-    return resolveSessionCwdInput(this.pi, ctx, this.options, this.sessionConfig);
-  }
-
-  private async syncSessionForCwd(ctx: ExtensionContext): Promise<void> {
-    if (
-      this.runtimeCwd === undefined ||
-      this.runtimeCacheEnabled === undefined ||
-      (this.state === null && this.initPromise === null)
-    ) {
-      await this.startSession(ctx);
-      return;
+  private resolveConfig(ctx: ExtensionContext): McpConfig {
+    let config: McpConfig;
+    if (this.sessionConfig !== undefined) {
+      this.configPath = undefined;
+      config = cloneMcpConfig(this.sessionConfig);
+    } else {
+      const flag = this.pi.getFlag("mcp-config");
+      this.configPath = this.options.configPath ?? (typeof flag === "string" ? flag : undefined);
+      config = loadMcpConfig(this.configPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
     }
-    const resolved = this.resolveSessionInput(ctx);
-    if (
-      canReuseSessionForCwd(
-        {
-          runtimeCwd: this.runtimeCwd,
-          runtimeCacheEnabled: this.runtimeCacheEnabled,
-          configPath: this.configPath,
-          config: this.config,
-          hasState: this.state !== null,
-          hasInitPromise: this.initPromise !== null,
-        },
-        resolved,
-        ctx.cwd,
-      )
-    ) {
-      this.runtimeCwd = ctx.cwd;
-      if (this.state !== null) {
-        await updateManagerCwdInPlace(this.state, ctx.cwd);
-      }
-      return;
-    }
-    await this.startSession(ctx, resolved);
+    return this.options.transformConfig
+      ? cloneMcpConfig(this.options.transformConfig(cloneMcpConfig(config), ctx))
+      : config;
   }
 
   private async startSession(
     ctx: ExtensionContext,
-    preResolved?: ResolvedSessionCwdInput,
+    options?: { readonly preserveFrozenTools?: boolean },
   ): Promise<void> {
+    const wasFrozen = options?.preserveFrozenTools === true;
+    const previous = {
+      config: this.config,
+      configPath: this.configPath,
+      cacheEnabled: this.runtimeCacheEnabled,
+    };
     this.runtimeCwd = ctx.cwd;
-    this.runtimeCacheEnabled = undefined;
-    this.directToolsFrozen = false;
+    this.directToolsFrozen = wasFrozen;
     const previousState = this.state;
     const previousOwner = this.owner;
     const previousOAuthRuntime = this.oauthRuntime;
@@ -308,13 +286,20 @@ export class McpHostRuntime implements McpAdapterHost {
     if (!this.session.owns(owner, generation)) {
       return;
     }
-    const resolved = preResolved ?? this.resolveSessionInput(ctx);
-    this.configPath = resolved.configPath;
-    this.config = resolved.config;
-    this.runtimeCacheEnabled = resolved.cacheEnabled;
-    this.registerPromptCommands(resolveCachedPrompts(resolved.config, resolved.cacheEnabled));
-    const cache = loadMetadataCache(resolved.cacheEnabled);
-    this.syncCatalog(resolved.config, cache);
+    const runtimeConfig = this.resolveConfig(ctx);
+    this.config = runtimeConfig;
+    const cacheEnabled =
+      ctx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
+    this.runtimeCacheEnabled = cacheEnabled;
+    const keepFrozenTools = canPreserveFrozenTools(wasFrozen, previous, {
+      config: runtimeConfig,
+      configPath: this.configPath,
+      cacheEnabled,
+    });
+    this.directToolsFrozen = keepFrozenTools;
+    this.registerPromptCommands(resolveCachedPrompts(runtimeConfig, cacheEnabled));
+    const cache = loadMetadataCache(cacheEnabled);
+    this.syncCatalogIfUnfrozen(runtimeConfig, cache);
     const init = await import("./init.ts");
     this.initModule = init;
     if (!this.session.owns(owner, generation)) {
@@ -325,11 +310,17 @@ export class McpHostRuntime implements McpAdapterHost {
       ctx,
       owner,
       oauthRuntime,
-      runtimeConfig: resolved.config,
+      runtimeConfig,
       generation,
     });
-    if (this.shouldAwaitInitialization(resolved.config, cache)) {
+    if (this.shouldAwaitInitialization(runtimeConfig, cache)) {
       await initialization;
+    }
+  }
+
+  private syncCatalogIfUnfrozen(config: McpConfig, cache: MetadataCache | null): void {
+    if (!this.directToolsFrozen) {
+      this.syncCatalog(config, cache);
     }
   }
 
@@ -398,9 +389,11 @@ export class McpHostRuntime implements McpAdapterHost {
     }
     owner.throwIfInactive();
     this.syncPromptCommands();
-    this.syncToolSurface();
+    if (!this.directToolsFrozen) {
+      this.syncToolSurface();
+    }
     init.updateStatusBar(state);
-    if (state.config.settings?.freezeDirectTools === true) {
+    if (!this.directToolsFrozen && state.config.settings?.freezeDirectTools === true) {
       this.directToolsFrozen = true;
       logger.info(
         'MCP: direct tools frozen after initial sync — reconnects won\'t rebuild the system prompt; use mcp({ action: "connect", server: "server" }) to rediscover',
