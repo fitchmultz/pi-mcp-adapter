@@ -1808,6 +1808,8 @@ describe("mcpAdapter session lifecycle", () => {
         ["remote", createConnection({ definition: requireValue(stdioConfig.mcpServers.remote) })],
       ]),
     );
+    state.approvedToolCalls.set("remote\0ping", true);
+    state.consentManager.registerDecision("remote", true);
     spies.registerTool.mockClear();
     spies.setActiveTools.mockClear();
 
@@ -1817,6 +1819,8 @@ describe("mcpAdapter session lifecycle", () => {
     expect(setDefaultCwd).toHaveBeenCalledWith("/workspace/b");
     expect(close).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledWith("local");
+    expect(state.approvedToolCalls.size).toBe(0);
+    expect(state.consentManager.hasDecisions()).toBe(false);
     expect(spies.registerTool).not.toHaveBeenCalled();
     expect(spies.setActiveTools).not.toHaveBeenCalled();
 

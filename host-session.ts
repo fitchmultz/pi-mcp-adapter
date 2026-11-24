@@ -211,14 +211,17 @@ export function canReuseSessionForCwd(
 }
 
 /**
- * Update `state.manager`'s default stdio `cwd` in place and close only already-connected stdio
- * servers whose working directory depends on the session `cwd`, so they respawn under `nextCwd`
- * on next use without tearing down unrelated connections or resetting frozen tool declarations.
+ * Expire directory-scoped session approvals and UI consent, update `state.manager`'s default stdio
+ * `cwd` in place, and close only already-connected stdio servers whose working directory depends on
+ * the session `cwd`, so they respawn under `nextCwd` on next use without tearing down unrelated
+ * connections or resetting frozen tool declarations.
  */
 export async function updateManagerCwdInPlace(
   state: McpExtensionState,
   nextCwd: string,
 ): Promise<void> {
+  state.approvedToolCalls.clear();
+  state.consentManager.clear();
   state.manager.setDefaultCwd(nextCwd);
   const closers: Promise<void>[] = [];
   for (const [name, connection] of state.manager.getAllConnections()) {
