@@ -1,5 +1,28 @@
+import { isDeepStrictEqual } from "node:util";
 import type { McpExtensionState } from "./state.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
+import type { McpConfig } from "./types.ts";
+
+export interface FrozenToolsSnapshot {
+  readonly config: McpConfig;
+  readonly configPath: string | undefined;
+  readonly cacheEnabled: boolean | undefined;
+}
+
+/** Whether a cwd-driven session restart can keep already-frozen tool declarations untouched. */
+export function canPreserveFrozenTools(
+  wasFrozen: boolean,
+  previous: FrozenToolsSnapshot,
+  next: FrozenToolsSnapshot,
+): boolean {
+  return (
+    wasFrozen &&
+    next.config.settings?.freezeDirectTools === true &&
+    next.cacheEnabled === previous.cacheEnabled &&
+    next.configPath === previous.configPath &&
+    isDeepStrictEqual(next.config, previous.config)
+  );
+}
 
 /**
  * Phases of one adapter session.

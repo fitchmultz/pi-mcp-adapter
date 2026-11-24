@@ -1621,4 +1621,145 @@ describe("mcpAdapter session lifecycle", () => {
       consoleError.mockRestore();
     }
   });
+
+  it("restarts the MCP session on cwd change while keeping frozen direct tools intact when effective config is unchanged", async () => {
+    const config: McpConfig = {
+      mcpServers: { demo: { command: "demo", directTools: true } },
+      settings: { freezeDirectTools: true },
+    };
+    mocks.loadMcpConfig.mockImplementation(() => structuredClone(config));
+    mocks.initializeMcp.mockImplementation(async () => {
+      const state = createState();
+      state.config = structuredClone(config);
+      state.toolMetadata.set("demo", [
+        { name: "demo_search", originalName: "search", description: "Search" },
+      ]);
+      return state;
+    });
+
+    const { default: adapter } = await import("../index.ts");
+    const { api, spies, handlers, tool: registeredTool } = await createPi();
+    adapter(api);
+    await handlers.get("session_start")({}, { cwd: "/workspace/a" });
+    await nextTurn();
+
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+    expect(api.getActiveTools()).toContain("demo_search");
+    const firstOwner = requireValue(mocks.initializeMcp.mock.calls[0]?.[2]);
+    spies.registerTool.mockClear();
+    spies.setActiveTools.mockClear();
+    mocks.loadMetadataCache.mockClear();
+
+    // Same effective config in a sibling cwd: session restarts cleanly (resetting all cwd-bound state),
+    // while frozen tool declarations stay untouched so the model's prompt prefix cache stays warm.
+    mocks.initializeMcp.mockImplementationOnce(async () => {
+      const state = createState();
+      state.config = structuredClone(config);
+      state.toolMetadata.set("demo", [
+        { name: "demo_search", originalName: "search", description: "Search v2" },
+        { name: "demo_extra", originalName: "extra", description: "Extra" },
+      ]);
+      return state;
+    });
+    await handlers.emitBeforeAgentStart({ cwd: "/workspace/b" });
+    await nextTurn();
+
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+    expect(firstOwner.isActive()).toBe(false);
+    expect(spies.registerTool).not.toHaveBeenCalled();
+    expect(spies.setActiveTools).not.toHaveBeenCalled();
+    expect(registeredTool("demo_search").description).toBe("Search");
+    expect(api.getActiveTools()).not.toContain("demo_extra");
+
+    // Changed effective config in another cwd: unfreezes and resyncs tool declarations for the new project.
+    const nextConfig: McpConfig = {
+      mcpServers: {
+        demo: { command: "demo", directTools: true },
+        extra: { url: "https://extra.example.test/mcp", directTools: true },
+      },
+      settings: { freezeDirectTools: true },
+    };
+    mocks.loadMcpConfig.mockImplementation(() => structuredClone(nextConfig));
+    mocks.initializeMcp.mockImplementationOnce(async () => {
+      const state = createState();
+      state.config = structuredClone(nextConfig);
+      state.toolMetadata.set("demo", [
+        { name: "demo_search", originalName: "search", description: "Search" },
+      ]);
+      state.toolMetadata.set("extra", [
+        { name: "extra_ping", originalName: "ping", description: "Ping" },
+      ]);
+      return state;
+    });
+    await handlers.emitBeforeAgentStart({ cwd: "/workspace/c" });
+    await nextTurn();
+
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(3);
+    expect(spies.registerTool).toHaveBeenCalled();
+    expect(api.getActiveTools()).toContain("extra_ping");
+  });
+
+  it("skips tool surface mutation on model_select when freezeDirectTools is true", async () => {
+    const config: McpConfig = {
+      mcpServers: { demo: { command: "demo", directTools: true } },
+      settings: { freezeDirectTools: true },
+    };
+    const state = createState();
+    state.config = structuredClone(config);
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search" },
+    ]);
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: adapter } = await import("../index.ts");
+    const { api, spies, handlers, tool: registeredTool } = await createPi();
+    adapter(api);
+    await handlers.get("session_start")({}, {});
+    await nextTurn();
+
+    expect(api.getActiveTools()).toContain("demo_search");
+    spies.registerTool.mockClear();
+    spies.setActiveTools.mockClear();
+    mocks.loadMetadataCache.mockClear();
+
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search v2" },
+      { name: "demo_extra", originalName: "extra", description: "Extra" },
+    ]);
+    await handlers.emitModelSelect();
+
+    expect(spies.registerTool).not.toHaveBeenCalled();
+    expect(spies.setActiveTools).not.toHaveBeenCalled();
+    expect(mocks.loadMetadataCache).not.toHaveBeenCalled();
+    expect(registeredTool("demo_search").description).toBe("Search");
+    expect(api.getActiveTools()).not.toContain("demo_extra");
+  });
+
+  it("still syncs the tool surface on model_select when freezeDirectTools is disabled", async () => {
+    const config: McpConfig = {
+      mcpServers: { demo: { command: "demo", directTools: true } },
+    };
+    const state = createState();
+    state.config = structuredClone(config);
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search" },
+    ]);
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: adapter } = await import("../index.ts");
+    const { api, spies, handlers } = await createPi();
+    adapter(api);
+    await handlers.get("session_start")({}, {});
+    await nextTurn();
+
+    spies.registerTool.mockClear();
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search v2" },
+    ]);
+    await handlers.emitModelSelect();
+
+    expect(spies.registerTool).toHaveBeenCalled();
+  });
 });
