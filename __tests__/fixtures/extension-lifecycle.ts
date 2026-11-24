@@ -27,6 +27,7 @@ function bindLifecycleHost(fixture: Awaited<ReturnType<typeof createTestExtensio
   const api = fixture.api;
   const spies = {
     registerTool: vi.spyOn(api, "registerTool"),
+    setActiveTools: vi.spyOn(api, "setActiveTools"),
     registerCommand: vi.spyOn(api, "registerCommand"),
     appendEntry: vi.spyOn(api, "appendEntry"),
     getFlag: vi.spyOn(api, "getFlag"),
@@ -65,6 +66,32 @@ function bindLifecycleHost(fixture: Awaited<ReturnType<typeof createTestExtensio
             break;
         }
       };
+    },
+    async emitBeforeAgentStart(context: ContextOverrides = {}) {
+      assert(
+        fixture.runner.hasHandlers("before_agent_start"),
+        "Missing native before_agent_start registration",
+      );
+      overrides = context;
+      return fixture.runner.emitBeforeAgentStart(
+        { messageType: "user", prompt: "test" },
+        { cwd: context.cwd ?? process.cwd() },
+      );
+    },
+    async emitModelSelect(context: ContextOverrides = {}) {
+      assert(
+        fixture.runner.hasHandlers("model_select"),
+        "Missing native model_select registration",
+      );
+      overrides = context;
+      const [first, second] = fixture.context.modelRegistry.getAll();
+      const model = requireValue(second ?? first);
+      await fixture.runner.emit({
+        type: "model_select",
+        model,
+        previousModel: first,
+        source: "set",
+      });
     },
   };
 

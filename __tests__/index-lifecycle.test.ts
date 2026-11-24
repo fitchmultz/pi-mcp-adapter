@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
@@ -1620,5 +1623,206 @@ describe("mcpAdapter session lifecycle", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("keeps the running session and frozen direct tools when before_agent_start changes to a cwd with identical config", async () => {
+    const config: McpConfig = {
+      mcpServers: { demo: { command: "demo", directTools: true } },
+      settings: { freezeDirectTools: true },
+    };
+    const state = createState();
+    state.config = structuredClone(config);
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search" },
+    ]);
+    const gracefulShutdown = vi.spyOn(state.lifecycle, "gracefulShutdown");
+    mocks.loadMcpConfig.mockImplementation(() => structuredClone(config));
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: adapter } = await import("../index.ts");
+    const { api, spies, handlers, tool: registeredTool } = await createPi();
+    adapter(api);
+    await handlers.get("session_start")({}, { cwd: "/workspace/a" });
+    await nextTurn();
+
+    const owner = requireValue(mocks.initializeMcp.mock.calls[0]?.[2]);
+    expect(api.getActiveTools()).toContain("demo_search");
+    spies.registerTool.mockClear();
+    spies.setActiveTools.mockClear();
+    mocks.loadMcpConfig.mockClear();
+
+    await handlers.emitBeforeAgentStart({ cwd: "/workspace/b" });
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+    expect(mocks.shutdownOAuth).not.toHaveBeenCalled();
+    expect(gracefulShutdown).not.toHaveBeenCalled();
+    expect(owner.isActive()).toBe(true);
+    expect(spies.registerTool).not.toHaveBeenCalled();
+    expect(spies.setActiveTools).not.toHaveBeenCalled();
+    expect(mocks.loadMcpConfig).toHaveBeenCalledTimes(1);
+
+    // runtimeCwd is updated, so a subsequent turn in /workspace/b does not re-read config.
+    await handlers.emitBeforeAgentStart({ cwd: "/workspace/b" });
+    expect(mocks.loadMcpConfig).toHaveBeenCalledTimes(1);
+
+    // directToolsFrozen remains intact after the unchanged cwd transition.
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search v2" },
+      { name: "demo_extra", originalName: "extra", description: "Extra" },
+    ]);
+    await requireValue(state.onToolMetadataUpdated)("demo", "tools-list-changed");
+    expect(spies.registerTool).not.toHaveBeenCalled();
+    expect(spies.setActiveTools).not.toHaveBeenCalled();
+    expect(registeredTool("demo_search").description).toBe("Search");
+    expect(api.getActiveTools()).not.toContain("demo_extra");
+  });
+
+  it("restarts on before_agent_start when a new cwd introduces a project .mcp.json or changes cache trust", async () => {
+    const realConfig = await vi.importActual<typeof Config>("../config.ts");
+    mocks.loadMcpConfig.mockImplementation(realConfig.loadMcpConfig);
+    mocks.isPathInsideProject.mockImplementation(realConfig.isPathInsideProject);
+
+    const root = await mkdtemp(join(tmpdir(), "pi-mcp-cwd-change-"));
+    try {
+      const globalConfigPath = join(root, "global-mcp.json");
+      const dirA = join(root, "dir-a");
+      const dirB = join(root, "dir-b");
+      const dirC = join(root, "dir-c");
+      await Promise.all([mkdir(dirA), mkdir(dirB), mkdir(dirC)]);
+      await writeFile(
+        globalConfigPath,
+        JSON.stringify({
+          mcpServers: { demo: { command: "demo", directTools: true } },
+          settings: { freezeDirectTools: true },
+        }),
+      );
+      await writeFile(
+        join(dirC, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: { project_extra: { command: "project-extra" } },
+        }),
+      );
+
+      const states: ReturnType<typeof createState>[] = [];
+      mocks.initializeMcp.mockImplementation(async (_pi, _ctx, _owner, options) => {
+        const next = createState();
+        next.config = requireValue(options?.resolvedConfig);
+        states.push(next);
+        return next;
+      });
+
+      const { createMcpAdapter } = await import("../index.ts");
+      const { api, handlers } = await createPi();
+      createMcpAdapter({ configPath: globalConfigPath })(api);
+
+      await handlers.get("session_start")({}, { cwd: dirA, isProjectTrusted: () => true });
+      await nextTurn();
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+      const firstOwner = requireValue(mocks.initializeMcp.mock.calls[0]?.[2]);
+
+      // Sibling directory with no .mcp.json resolves to the same effective config.
+      await handlers.emitBeforeAgentStart({ cwd: dirB, isProjectTrusted: () => true });
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+      expect(firstOwner.isActive()).toBe(true);
+      expect(mocks.shutdownOAuth).not.toHaveBeenCalled();
+
+      // Entering dirC adds a project .mcp.json server, so the session must restart.
+      await handlers.emitBeforeAgentStart({ cwd: dirC, isProjectTrusted: () => true });
+      await nextTurn();
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+      expect(firstOwner.isActive()).toBe(false);
+      expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);
+      expect(
+        requireValue(mocks.initializeMcp.mock.calls[1]?.[3]?.resolvedConfig).mcpServers,
+      ).toHaveProperty("project_extra");
+
+      // Changing effective cacheEnabled (untrusted project containing the cache path) restarts too.
+      const dirD = join(root, "dir-d");
+      await mkdir(dirD);
+      mocks.getMetadataCachePath.mockReturnValue(join(dirD, "mcp-cache.json"));
+      await handlers.emitBeforeAgentStart({ cwd: dirD, isProjectTrusted: () => true });
+      await nextTurn();
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(3);
+
+      const dirE = join(root, "dir-e");
+      await mkdir(dirE);
+      mocks.getMetadataCachePath.mockReturnValue(join(dirE, "mcp-cache.json"));
+      await handlers.emitBeforeAgentStart({ cwd: dirE, isProjectTrusted: () => false });
+      await nextTurn();
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(4);
+      expect(mocks.initializeMcp.mock.calls[3]?.[3]?.resolvedConfig).toEqual(
+        mocks.initializeMcp.mock.calls[2]?.[3]?.resolvedConfig,
+      );
+      expect(states).toHaveLength(4);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips tool surface mutation on model_select when freezeDirectTools is true", async () => {
+    const config: McpConfig = {
+      mcpServers: { demo: { command: "demo", directTools: true } },
+      settings: { freezeDirectTools: true },
+    };
+    const state = createState();
+    state.config = structuredClone(config);
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search" },
+    ]);
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: adapter } = await import("../index.ts");
+    const { api, spies, handlers, tool: registeredTool } = await createPi();
+    adapter(api);
+    await handlers.get("session_start")({}, {});
+    await nextTurn();
+
+    expect(api.getActiveTools()).toContain("demo_search");
+    spies.registerTool.mockClear();
+    spies.setActiveTools.mockClear();
+    mocks.loadMetadataCache.mockClear();
+
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search v2" },
+      { name: "demo_extra", originalName: "extra", description: "Extra" },
+    ]);
+    await handlers.emitModelSelect();
+
+    expect(spies.registerTool).not.toHaveBeenCalled();
+    expect(spies.setActiveTools).not.toHaveBeenCalled();
+    expect(mocks.loadMetadataCache).not.toHaveBeenCalled();
+    expect(registeredTool("demo_search").description).toBe("Search");
+    expect(api.getActiveTools()).not.toContain("demo_extra");
+  });
+
+  it("still syncs the tool surface on model_select when freezeDirectTools is disabled", async () => {
+    const config: McpConfig = {
+      mcpServers: { demo: { command: "demo", directTools: true } },
+    };
+    const state = createState();
+    state.config = structuredClone(config);
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search" },
+    ]);
+    mocks.loadMcpConfig.mockReturnValue(config);
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: adapter } = await import("../index.ts");
+    const { api, spies, handlers } = await createPi();
+    adapter(api);
+    await handlers.get("session_start")({}, {});
+    await nextTurn();
+
+    spies.registerTool.mockClear();
+    state.toolMetadata.set("demo", [
+      { name: "demo_search", originalName: "search", description: "Search" },
+      { name: "demo_extra", originalName: "extra", description: "Extra" },
+    ]);
+    await handlers.emitModelSelect();
+
+    expect(spies.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "demo_extra" }),
+    );
+    expect(api.getActiveTools()).toContain("demo_extra");
   });
 });

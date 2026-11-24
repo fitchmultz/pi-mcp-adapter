@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type * as Init from "./init.ts";
 import type { McpExtensionState } from "./state.ts";
@@ -53,6 +54,7 @@ export class McpHostRuntime implements McpAdapterHost {
   private readonly sessionConfig: McpConfig | undefined;
   private oauthRuntime: McpOAuthRuntime | null = null;
   private runtimeCwd: string | undefined;
+  private runtimeCacheEnabled: boolean | undefined;
   private initModule: typeof Init | undefined;
   private readonly promptCommands = new Set<string>();
   private readonly envRaw = process.env.MCP_DIRECT_TOOLS;
@@ -122,13 +124,18 @@ export class McpHostRuntime implements McpAdapterHost {
       this.activateToolSearch();
     });
     this.pi.on("model_select", () => {
-      if (this.state) {
-        this.syncToolSurface();
+      if (!this.state) {
+        return;
       }
+      if (this.directToolsFrozen) {
+        logger.debug("MCP: model_select tool surface sync skipped — directTools frozen");
+        return;
+      }
+      this.syncToolSurface();
     });
     this.pi.on("before_agent_start", async (event, ctx) => {
       if (ctx.cwd !== this.runtimeCwd) {
-        await this.startSession(ctx);
+        await this.syncSessionForCwd(ctx);
       }
       const message =
         event.messageType === "user" ? takeUiModelContextMessage(this.state?.uiServer) : undefined;
@@ -145,6 +152,10 @@ export class McpHostRuntime implements McpAdapterHost {
       const definition = this.state.config.mcpServers[name];
       if (definition) {
         this.state.config.mcpServers[name] = { ...definition, directTools: value };
+      }
+      const runtimeDefinition = this.config.mcpServers[name];
+      if (runtimeDefinition) {
+        this.config.mcpServers[name] = { ...runtimeDefinition, directTools: value };
       }
     }
   }
@@ -206,6 +217,8 @@ export class McpHostRuntime implements McpAdapterHost {
     this.session.end();
     this.sessionManager = undefined;
     this.oauthRuntime = null;
+    this.runtimeCwd = undefined;
+    this.runtimeCacheEnabled = undefined;
     // Persist live connection metadata before stopping transport cleanup.
     const stopState = this.shutdownState(state, "session_shutdown");
     const stopOwner = owner?.stop("MCP extension session shutdown") ?? Promise.resolve();
@@ -222,23 +235,52 @@ export class McpHostRuntime implements McpAdapterHost {
     }
   }
 
-  private resolveConfig(ctx: ExtensionContext): McpConfig {
+  private resolveSessionInput(ctx: ExtensionContext): ResolvedSessionInput {
     let config: McpConfig;
+    let configPath: string | undefined;
     if (this.sessionConfig !== undefined) {
-      this.configPath = undefined;
+      configPath = undefined;
       config = cloneMcpConfig(this.sessionConfig);
     } else {
       const flag = this.pi.getFlag("mcp-config");
-      this.configPath = this.options.configPath ?? (typeof flag === "string" ? flag : undefined);
-      config = loadMcpConfig(this.configPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
+      configPath = this.options.configPath ?? (typeof flag === "string" ? flag : undefined);
+      config = loadMcpConfig(configPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
     }
-    return this.options.transformConfig
+    config = this.options.transformConfig
       ? cloneMcpConfig(this.options.transformConfig(cloneMcpConfig(config), ctx))
       : config;
+    const cacheEnabled =
+      ctx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
+    return { config, configPath, cacheEnabled };
   }
 
-  private async startSession(ctx: ExtensionContext): Promise<void> {
+  private async syncSessionForCwd(ctx: ExtensionContext): Promise<void> {
+    const active =
+      this.runtimeCwd !== undefined &&
+      this.runtimeCacheEnabled !== undefined &&
+      (this.state !== null || this.initPromise !== null);
+    if (!active) {
+      await this.startSession(ctx);
+      return;
+    }
+    const resolved = this.resolveSessionInput(ctx);
+    if (
+      resolved.cacheEnabled === this.runtimeCacheEnabled &&
+      resolved.configPath === this.configPath &&
+      isDeepStrictEqual(resolved.config, this.config)
+    ) {
+      this.runtimeCwd = ctx.cwd;
+      return;
+    }
+    await this.startSession(ctx, resolved);
+  }
+
+  private async startSession(
+    ctx: ExtensionContext,
+    preResolved?: ResolvedSessionInput,
+  ): Promise<void> {
     this.runtimeCwd = ctx.cwd;
+    this.runtimeCacheEnabled = undefined;
     this.directToolsFrozen = false;
     const previousState = this.state;
     const previousOwner = this.owner;
@@ -264,13 +306,13 @@ export class McpHostRuntime implements McpAdapterHost {
     if (!this.session.owns(owner, generation)) {
       return;
     }
-    const runtimeConfig = this.resolveConfig(ctx);
-    this.config = runtimeConfig;
-    const cacheEnabled =
-      ctx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
-    this.registerPromptCommands(resolveCachedPrompts(runtimeConfig, cacheEnabled));
-    const cache = loadMetadataCache(cacheEnabled);
-    this.syncCatalog(runtimeConfig, cache);
+    const resolved = preResolved ?? this.resolveSessionInput(ctx);
+    this.configPath = resolved.configPath;
+    this.config = resolved.config;
+    this.runtimeCacheEnabled = resolved.cacheEnabled;
+    this.registerPromptCommands(resolveCachedPrompts(resolved.config, resolved.cacheEnabled));
+    const cache = loadMetadataCache(resolved.cacheEnabled);
+    this.syncCatalog(resolved.config, cache);
     const init = await import("./init.ts");
     this.initModule = init;
     if (!this.session.owns(owner, generation)) {
@@ -281,10 +323,10 @@ export class McpHostRuntime implements McpAdapterHost {
       ctx,
       owner,
       oauthRuntime,
-      runtimeConfig,
+      runtimeConfig: resolved.config,
       generation,
     });
-    if (this.shouldAwaitInitialization(runtimeConfig, cache)) {
+    if (this.shouldAwaitInitialization(resolved.config, cache)) {
       await initialization;
     }
   }
@@ -476,6 +518,12 @@ type Initialization = {
   oauthRuntime: McpOAuthRuntime;
   runtimeConfig: McpConfig;
   generation: number;
+};
+
+type ResolvedSessionInput = {
+  config: McpConfig;
+  configPath: string | undefined;
+  cacheEnabled: boolean;
 };
 
 /** Why no state is available; a recorded initialization failure keeps its reason. */
