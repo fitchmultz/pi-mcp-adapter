@@ -8,7 +8,7 @@ import { getMetadataCachePath } from "./metadata-cache.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpAdapterOptions, McpConfig, ServerEntry } from "./types.ts";
-import { resolveConfigPath } from "./utils.ts";
+import { hasServerUrl, resolveConfigPath } from "./utils.ts";
 
 /**
  * Phases of one adapter session.
@@ -118,8 +118,9 @@ function isRelativeConfigPath(value: string | null | undefined): boolean {
 function isStdioServerCwdDependent(definition: ServerEntry): boolean {
   if (
     isServerDisabled(definition) ||
-    definition.url !== undefined ||
-    definition.command === undefined
+    hasServerUrl(definition) ||
+    typeof definition.command !== "string" ||
+    definition.command.length === 0
   ) {
     return false;
   }
@@ -227,13 +228,18 @@ export async function updateManagerCwdInPlace(
   state.approvedToolCalls.clear();
   state.consentManager.clear();
   state.manager.setDefaultCwd(nextCwd);
-  const closers: Promise<void>[] = [];
-  for (const [name, connection] of state.manager.getAllConnections()) {
-    if (isStdioServerCwdDependent(connection.definition)) {
-      closers.push(state.manager.close(name));
+  const namesToClose = new Set<string>();
+  for (const [name, definition] of Object.entries(state.config.mcpServers)) {
+    if (isStdioServerCwdDependent(definition)) {
+      namesToClose.add(name);
     }
   }
-  if (closers.length > 0) {
-    await Promise.allSettled(closers);
+  for (const [name, connection] of state.manager.getAllConnections()) {
+    if (isStdioServerCwdDependent(connection.definition)) {
+      namesToClose.add(name);
+    }
+  }
+  if (namesToClose.size > 0) {
+    await Promise.allSettled(Array.from(namesToClose, (name) => state.manager.close(name)));
   }
 }

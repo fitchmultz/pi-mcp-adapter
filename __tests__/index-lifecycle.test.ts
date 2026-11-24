@@ -1777,6 +1777,8 @@ describe("mcpAdapter session lifecycle", () => {
     const stdioConfig: McpConfig = {
       mcpServers: {
         local: { command: "node", args: ["server.js"] },
+        override: { command: "node", args: ["override.js"], url: "" },
+        pending: { command: "node", args: ["pending.js"] },
         pinned: { command: "node", args: ["pinned.js"], cwd: "/opt/fixed" },
         remote: { url: "https://remote.example.test/mcp" },
       },
@@ -1804,6 +1806,10 @@ describe("mcpAdapter session lifecycle", () => {
     vi.spyOn(state.manager, "getAllConnections").mockReturnValue(
       new Map([
         ["local", createConnection({ definition: requireValue(stdioConfig.mcpServers.local) })],
+        [
+          "override",
+          createConnection({ definition: requireValue(stdioConfig.mcpServers.override) }),
+        ],
         ["pinned", createConnection({ definition: requireValue(stdioConfig.mcpServers.pinned) })],
         ["remote", createConnection({ definition: requireValue(stdioConfig.mcpServers.remote) })],
       ]),
@@ -1817,8 +1823,10 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
     expect(firstOwner.isActive()).toBe(true);
     expect(setDefaultCwd).toHaveBeenCalledWith("/workspace/b");
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(3);
     expect(close).toHaveBeenCalledWith("local");
+    expect(close).toHaveBeenCalledWith("override");
+    expect(close).toHaveBeenCalledWith("pending");
     expect(state.approvedToolCalls.size).toBe(0);
     expect(state.consentManager.hasDecisions()).toBe(false);
     expect(spies.registerTool).not.toHaveBeenCalled();
