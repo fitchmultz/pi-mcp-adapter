@@ -62,6 +62,10 @@ export class McpServerManager {
     this.factory.defaultRequestTimeoutMs = normalizeRequestTimeoutMs(timeoutMs);
   }
 
+  setDefaultCwd(cwd: string | undefined): void {
+    this.factory.defaultCwd = cwd;
+  }
+
   setTraceConfig(settings: McpTraceSettings | undefined): void {
     this.factory.traceSettings = settings;
   }

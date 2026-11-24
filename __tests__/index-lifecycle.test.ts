@@ -19,6 +19,7 @@ import type * as Proxy from "../proxy-modes.ts";
 import type * as Utils from "../utils.ts";
 import { createTestState } from "./test-state.ts";
 import { createLifecycleHost, requireValue } from "./fixtures/extension-lifecycle.ts";
+import { createConnection } from "./fixtures/strict-ui-boundaries-manager.ts";
 
 const mocks = vi.hoisted(() => ({
   initializeMcp: vi.fn<typeof Init.initializeMcp>(),
@@ -1627,7 +1628,10 @@ describe("mcpAdapter session lifecycle", () => {
 
   it("keeps the running session and frozen direct tools when before_agent_start changes to a cwd with identical config", async () => {
     const config: McpConfig = {
-      mcpServers: { demo: { command: "demo", directTools: true } },
+      mcpServers: {
+        demo: { url: "https://demo.example.test/mcp", directTools: true },
+        pinned: { command: "pinned", cwd: "/opt/fixed-mcp-server" },
+      },
       settings: { freezeDirectTools: true },
     };
     const state = createState();
@@ -1691,7 +1695,7 @@ describe("mcpAdapter session lifecycle", () => {
       await writeFile(
         globalConfigPath,
         JSON.stringify({
-          mcpServers: { demo: { command: "demo", directTools: true } },
+          mcpServers: { demo: { url: "https://demo.example.test/mcp", directTools: true } },
           settings: { freezeDirectTools: true },
         }),
       );
@@ -1712,7 +1716,18 @@ describe("mcpAdapter session lifecycle", () => {
 
       const { createMcpAdapter } = await import("../index.ts");
       const { api, handlers } = await createPi();
-      createMcpAdapter({ configPath: globalConfigPath })(api);
+      createMcpAdapter({
+        configPath: globalConfigPath,
+        // Isolate from any user-global ~/.mcp.json or ~/.agents configs on the test machine.
+        transformConfig: (cfg) => ({
+          ...cfg,
+          mcpServers: Object.fromEntries(
+            Object.entries(cfg.mcpServers).filter(
+              ([name]) => name === "demo" || name === "project_extra",
+            ),
+          ),
+        }),
+      })(api);
 
       await handlers.get("session_start")({}, { cwd: dirA, isProjectTrusted: () => true });
       await nextTurn();
@@ -1756,6 +1771,68 @@ describe("mcpAdapter session lifecycle", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("updates stdio defaultCwd and closes only connected cwd-inheriting stdio servers without restarting, while restarting on relative oauthDir", async () => {
+    const stdioConfig: McpConfig = {
+      mcpServers: {
+        local: { command: "node", args: ["server.js"] },
+        pinned: { command: "node", args: ["pinned.js"], cwd: "/opt/fixed" },
+        remote: { url: "https://remote.example.test/mcp" },
+      },
+      settings: { freezeDirectTools: true },
+    };
+    mocks.loadMcpConfig.mockImplementation(() => structuredClone(stdioConfig));
+    let currentState: ReturnType<typeof createState> | undefined;
+    mocks.initializeMcp.mockImplementation(async () => {
+      const next = createState();
+      next.config = structuredClone(stdioConfig);
+      currentState = next;
+      return next;
+    });
+
+    const { default: adapter } = await import("../index.ts");
+    const { api, spies, handlers } = await createPi();
+    adapter(api);
+    await handlers.get("session_start")({}, { cwd: "/workspace/a" });
+    await nextTurn();
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+    const state = requireValue(currentState);
+    const firstOwner = requireValue(mocks.initializeMcp.mock.calls[0]?.[2]);
+    const setDefaultCwd = vi.spyOn(state.manager, "setDefaultCwd");
+    const close = vi.spyOn(state.manager, "close").mockResolvedValue();
+    vi.spyOn(state.manager, "getAllConnections").mockReturnValue(
+      new Map([
+        ["local", createConnection({ definition: requireValue(stdioConfig.mcpServers.local) })],
+        ["pinned", createConnection({ definition: requireValue(stdioConfig.mcpServers.pinned) })],
+        ["remote", createConnection({ definition: requireValue(stdioConfig.mcpServers.remote) })],
+      ]),
+    );
+    spies.registerTool.mockClear();
+    spies.setActiveTools.mockClear();
+
+    await handlers.emitBeforeAgentStart({ cwd: "/workspace/b" });
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+    expect(firstOwner.isActive()).toBe(true);
+    expect(setDefaultCwd).toHaveBeenCalledWith("/workspace/b");
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledWith("local");
+    expect(spies.registerTool).not.toHaveBeenCalled();
+    expect(spies.setActiveTools).not.toHaveBeenCalled();
+
+    // Relative settings.oauthDir also restarts even when servers are HTTP-only.
+    const relativeOauthConfig: McpConfig = {
+      mcpServers: { remote: { url: "https://remote.example.test/mcp" } },
+      settings: { oauthDir: "./.oauth-store" },
+    };
+    mocks.loadMcpConfig.mockImplementation(() => structuredClone(relativeOauthConfig));
+    await handlers.emitBeforeAgentStart({ cwd: "/workspace/c" });
+    await nextTurn();
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
+
+    await handlers.emitBeforeAgentStart({ cwd: "/workspace/d" });
+    await nextTurn();
+    expect(mocks.initializeMcp).toHaveBeenCalledTimes(3);
   });
 
   it("skips tool surface mutation on model_select when freezeDirectTools is true", async () => {

@@ -1,5 +1,14 @@
+import { isDeepStrictEqual } from "node:util";
+import { isAbsolute } from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { cloneMcpConfig, isPathInsideProject, loadMcpConfig } from "./config.ts";
+import { isServerDisabled } from "./config-protocol.ts";
+import { resolveConfiguredOAuthDir } from "./config-writes.ts";
+import { getMetadataCachePath } from "./metadata-cache.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
+import type { McpAdapterOptions, McpConfig, ServerEntry } from "./types.ts";
+import { resolveConfigPath } from "./utils.ts";
 
 /**
  * Phases of one adapter session.
@@ -94,5 +103,130 @@ export class HostSession {
     this.state = null;
     this.initPromise = null;
     this.failure = null;
+  }
+}
+
+function isRelativeConfigPath(value: string | null | undefined): boolean {
+  const trimmed = value?.trim();
+  if (trimmed === undefined || trimmed === "") {
+    return false;
+  }
+  const resolved = resolveConfigPath(trimmed);
+  return resolved === undefined || !isAbsolute(resolved);
+}
+
+function isStdioServerCwdDependent(definition: ServerEntry): boolean {
+  if (
+    isServerDisabled(definition) ||
+    definition.url !== undefined ||
+    definition.command === undefined
+  ) {
+    return false;
+  }
+  const explicitCwd = resolveConfigPath(definition.cwd);
+  return explicitCwd === undefined || !isAbsolute(explicitCwd);
+}
+
+/** Whether any enabled stdio server inherits or resolves `cwd` relative to the session cwd. */
+export function hasCwdDependentStdioServer(config: McpConfig): boolean {
+  return Object.values(config.mcpServers).some(isStdioServerCwdDependent);
+}
+
+export interface ActiveSessionCwdState {
+  readonly runtimeCwd: string | undefined;
+  readonly runtimeCacheEnabled: boolean | undefined;
+  readonly configPath: string | undefined;
+  readonly config: McpConfig;
+  readonly hasState: boolean;
+  readonly hasInitPromise: boolean;
+}
+
+export interface ResolvedSessionCwdInput {
+  readonly config: McpConfig;
+  readonly configPath: string | undefined;
+  readonly cacheEnabled: boolean;
+}
+
+/** Resolve effective config, config path, and metadata cache enablement for a session context. */
+export function resolveSessionCwdInput(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  options: McpAdapterOptions,
+  sessionConfig: McpConfig | undefined,
+): ResolvedSessionCwdInput {
+  let config: McpConfig;
+  let configPath: string | undefined;
+  if (sessionConfig !== undefined) {
+    configPath = undefined;
+    config = cloneMcpConfig(sessionConfig);
+  } else {
+    const flag = pi.getFlag("mcp-config");
+    configPath = options.configPath ?? (typeof flag === "string" ? flag : undefined);
+    config = loadMcpConfig(configPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
+  }
+  config = options.transformConfig
+    ? cloneMcpConfig(options.transformConfig(cloneMcpConfig(config), ctx))
+    : config;
+  const cacheEnabled =
+    ctx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
+  return { config, configPath, cacheEnabled };
+}
+
+/**
+ * Whether switching session `cwd` invalidates relative global paths (`settings.oauthDir` or
+ * `settings.trace.file`) that require reinitializing auth/trace state.
+ */
+export function hasRelativeSessionPathSettings(
+  config: McpConfig,
+  previousCwd: string | undefined,
+  nextCwd: string,
+): boolean {
+  const oauthDir = config.settings?.oauthDir;
+  if (
+    resolveConfiguredOAuthDir(oauthDir, previousCwd) !==
+    resolveConfiguredOAuthDir(oauthDir, nextCwd)
+  ) {
+    return true;
+  }
+  return isRelativeConfigPath(config.settings?.trace?.file);
+}
+
+/** Whether a `cwd` transition can keep the running session and update stdio `defaultCwd` in place. */
+export function canReuseSessionForCwd(
+  current: ActiveSessionCwdState,
+  resolved: ResolvedSessionCwdInput,
+  nextCwd: string,
+): boolean {
+  if (
+    resolved.cacheEnabled !== current.runtimeCacheEnabled ||
+    resolved.configPath !== current.configPath ||
+    !isDeepStrictEqual(resolved.config, current.config)
+  ) {
+    return false;
+  }
+  if (!current.hasState && current.hasInitPromise && hasCwdDependentStdioServer(resolved.config)) {
+    return false;
+  }
+  return !hasRelativeSessionPathSettings(resolved.config, current.runtimeCwd, nextCwd);
+}
+
+/**
+ * Update `state.manager`'s default stdio `cwd` in place and close only already-connected stdio
+ * servers whose working directory depends on the session `cwd`, so they respawn under `nextCwd`
+ * on next use without tearing down unrelated connections or resetting frozen tool declarations.
+ */
+export async function updateManagerCwdInPlace(
+  state: McpExtensionState,
+  nextCwd: string,
+): Promise<void> {
+  state.manager.setDefaultCwd(nextCwd);
+  const closers: Promise<void>[] = [];
+  for (const [name, connection] of state.manager.getAllConnections()) {
+    if (isStdioServerCwdDependent(connection.definition)) {
+      closers.push(state.manager.close(name));
+    }
+  }
+  if (closers.length > 0) {
+    await Promise.allSettled(closers);
   }
 }

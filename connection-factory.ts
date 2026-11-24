@@ -51,7 +51,7 @@ export class ConnectionFactory {
 
   readonly lifecycle: ConnectionLifecycle;
   readonly callbacks: ConnectionCallbacks;
-  readonly defaultCwd: string | undefined;
+  defaultCwd: string | undefined;
 
   constructor(
     lifecycle: ConnectionLifecycle,

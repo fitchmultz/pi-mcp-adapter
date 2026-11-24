@@ -1,11 +1,10 @@
-import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type * as Init from "./init.ts";
 import type { McpExtensionState } from "./state.ts";
 import type { McpAdapterHost } from "./host-contract.ts";
 import type { McpAdapterOptions, McpConfig, PromptMetadata } from "./types.ts";
-import { cloneMcpConfig, loadMcpConfig, isPathInsideProject } from "./config.ts";
-import { getMetadataCachePath, loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
+import { cloneMcpConfig } from "./config.ts";
+import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 import { createPromptCommand, resolveCachedPrompts } from "./prompts.ts";
 import { createMcpRuntimeOwner, isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { createOAuthRuntime, shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
@@ -16,7 +15,13 @@ import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-lo
 import { logger } from "./logger.ts";
 import { abortable } from "./abort.ts";
 import { McpHostCommands } from "./host-commands.ts";
-import { HostSession } from "./host-session.ts";
+import {
+  canReuseSessionForCwd,
+  HostSession,
+  resolveSessionCwdInput,
+  type ResolvedSessionCwdInput,
+  updateManagerCwdInPlace,
+} from "./host-session.ts";
 import { McpStateCleanup } from "./host-state-cleanup.ts";
 import { McpHostTools } from "./host-tools.ts";
 import { takeUiModelContextMessage } from "./ui-session-events.ts";
@@ -235,41 +240,38 @@ export class McpHostRuntime implements McpAdapterHost {
     }
   }
 
-  private resolveSessionInput(ctx: ExtensionContext): ResolvedSessionInput {
-    let config: McpConfig;
-    let configPath: string | undefined;
-    if (this.sessionConfig !== undefined) {
-      configPath = undefined;
-      config = cloneMcpConfig(this.sessionConfig);
-    } else {
-      const flag = this.pi.getFlag("mcp-config");
-      configPath = this.options.configPath ?? (typeof flag === "string" ? flag : undefined);
-      config = loadMcpConfig(configPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
-    }
-    config = this.options.transformConfig
-      ? cloneMcpConfig(this.options.transformConfig(cloneMcpConfig(config), ctx))
-      : config;
-    const cacheEnabled =
-      ctx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), ctx.cwd);
-    return { config, configPath, cacheEnabled };
+  private resolveSessionInput(ctx: ExtensionContext): ResolvedSessionCwdInput {
+    return resolveSessionCwdInput(this.pi, ctx, this.options, this.sessionConfig);
   }
 
   private async syncSessionForCwd(ctx: ExtensionContext): Promise<void> {
-    const active =
-      this.runtimeCwd !== undefined &&
-      this.runtimeCacheEnabled !== undefined &&
-      (this.state !== null || this.initPromise !== null);
-    if (!active) {
+    if (
+      this.runtimeCwd === undefined ||
+      this.runtimeCacheEnabled === undefined ||
+      (this.state === null && this.initPromise === null)
+    ) {
       await this.startSession(ctx);
       return;
     }
     const resolved = this.resolveSessionInput(ctx);
     if (
-      resolved.cacheEnabled === this.runtimeCacheEnabled &&
-      resolved.configPath === this.configPath &&
-      isDeepStrictEqual(resolved.config, this.config)
+      canReuseSessionForCwd(
+        {
+          runtimeCwd: this.runtimeCwd,
+          runtimeCacheEnabled: this.runtimeCacheEnabled,
+          configPath: this.configPath,
+          config: this.config,
+          hasState: this.state !== null,
+          hasInitPromise: this.initPromise !== null,
+        },
+        resolved,
+        ctx.cwd,
+      )
     ) {
       this.runtimeCwd = ctx.cwd;
+      if (this.state !== null) {
+        await updateManagerCwdInPlace(this.state, ctx.cwd);
+      }
       return;
     }
     await this.startSession(ctx, resolved);
@@ -277,7 +279,7 @@ export class McpHostRuntime implements McpAdapterHost {
 
   private async startSession(
     ctx: ExtensionContext,
-    preResolved?: ResolvedSessionInput,
+    preResolved?: ResolvedSessionCwdInput,
   ): Promise<void> {
     this.runtimeCwd = ctx.cwd;
     this.runtimeCacheEnabled = undefined;
@@ -518,12 +520,6 @@ type Initialization = {
   oauthRuntime: McpOAuthRuntime;
   runtimeConfig: McpConfig;
   generation: number;
-};
-
-type ResolvedSessionInput = {
-  config: McpConfig;
-  configPath: string | undefined;
-  cacheEnabled: boolean;
 };
 
 /** Why no state is available; a recorded initialization failure keeps its reason. */
