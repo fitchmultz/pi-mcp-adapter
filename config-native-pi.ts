@@ -139,8 +139,45 @@ function collectExactDirectNames(keys: readonly string[], ctx: NativeEntryContex
   return exact;
 }
 
+function matchesNativeToolPattern(pattern: string, toolName: string): boolean {
+  const source = pattern
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${source}$`).test(toolName);
+}
+
+function hasUnrepresentableToolExposure(entries: ReadonlyArray<[string, NativeExposure]>): boolean {
+  const hiddenPatterns = entries
+    .filter(([key, exp]) => exp === "hidden" && key.includes("*"))
+    .map(([key]) => key);
+  const exactVisible = entries
+    .filter(([key, exp]) => exp !== "hidden" && !key.includes("*"))
+    .map(([key]) => key);
+  if (
+    hiddenPatterns.some((pattern) =>
+      exactVisible.some((name) => matchesNativeToolPattern(pattern, name)),
+    )
+  ) {
+    return true;
+  }
+  let seenVisiblePattern = false;
+  for (const [key, exp] of entries) {
+    if (!key.includes("*")) {
+      continue;
+    }
+    if (exp !== "hidden") {
+      seenVisiblePattern = true;
+    } else if (seenVisiblePattern) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function hiddenExposureFields(
   visibleKeys: readonly string[],
+  hiddenKeys: readonly string[],
   directKeys: readonly string[],
   ctx: NativeEntryContext,
 ): Partial<ServerEntry> {
@@ -150,6 +187,7 @@ function hiddenExposureFields(
   const exact = collectExactDirectNames(directKeys, ctx);
   return {
     includeTools: [...visibleKeys],
+    ...(hiddenKeys.length > 0 ? { excludeTools: [...hiddenKeys] } : {}),
     directTools: exact.length > 0 ? exact : false,
   };
 }
@@ -193,13 +231,22 @@ function defaultExposureFields(
   return result;
 }
 
-function exposureFields(base: NativeBaseFields, ctx: NativeEntryContext): Partial<ServerEntry> {
+function exposureFields(
+  base: NativeBaseFields,
+  ctx: NativeEntryContext,
+): Partial<ServerEntry> | null {
   const entries = base.toolExposure ? Object.entries(base.toolExposure) : [];
+  if (hasUnrepresentableToolExposure(entries)) {
+    return warnNativeEntry(
+      ctx,
+      "toolExposure mixes hidden wildcards with conflicting visible rules that cannot be represented safely",
+    );
+  }
   const directKeys = entries.filter(([, exp]) => exp === "direct").map(([key]) => key);
   const hiddenKeys = entries.filter(([, exp]) => exp === "hidden").map(([key]) => key);
   if (base.exposure === "hidden") {
     const visibleKeys = entries.filter(([, exp]) => exp !== "hidden").map(([key]) => key);
-    return hiddenExposureFields(visibleKeys, directKeys, ctx);
+    return hiddenExposureFields(visibleKeys, hiddenKeys, directKeys, ctx);
   }
   if (base.exposure === "direct") {
     return directExposureFields(entries, hiddenKeys, ctx);
@@ -240,6 +287,9 @@ function mapOverrideEntry(
     return null;
   }
   const mappedExposure = exposureFields(base, ctx);
+  if (!mappedExposure) {
+    return null;
+  }
   return {
     ...mappedExposure,
     ...resolveDisabledOverride(base.enabled, mappedExposure.disabled === true),
@@ -387,6 +437,9 @@ function mapDefinitionEntry(
     return null;
   }
   const mappedExposure = exposureFields(base, ctx);
+  if (!mappedExposure) {
+    return null;
+  }
   return {
     ...transport,
     ...(base.timeout !== undefined ? { requestTimeoutMs: Math.round(base.timeout * 1000) } : {}),

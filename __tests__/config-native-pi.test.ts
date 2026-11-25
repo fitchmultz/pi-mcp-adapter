@@ -133,6 +133,38 @@ describe("native Pi project .pi/mcp.json support", () => {
             secret: "hidden",
           },
         },
+        wildcardWithExactHidden: {
+          command: "uv",
+          exposure: "hidden",
+          toolExposure: {
+            "*": "codemode",
+            delete_all: "hidden",
+          },
+        },
+        orderedHiddenBeforeWildcard: {
+          command: "uv",
+          exposure: "hidden",
+          toolExposure: {
+            "delete_*": "hidden",
+            "*": "codemode",
+          },
+        },
+        conflictingExactVisible: {
+          command: "uv",
+          exposure: "direct",
+          toolExposure: {
+            "read_*": "hidden",
+            read_public: "direct",
+          },
+        },
+        conflictingPatternOrder: {
+          command: "uv",
+          exposure: "codemode",
+          toolExposure: {
+            "read_*": "codemode",
+            "*": "hidden",
+          },
+        },
         selectiveDirect: {
           command: "uv",
           exposure: "deferred",
@@ -153,6 +185,7 @@ describe("native Pi project .pi/mcp.json support", () => {
     });
 
     const { loadMcpConfig } = await import("../config.ts");
+    const { isToolAllowed } = await import("../tool-names.ts");
     const config = loadMcpConfig(undefined, project);
 
     expect(config.mcpServers.off).toMatchObject({ command: "uv", disabled: true });
@@ -160,8 +193,42 @@ describe("native Pi project .pi/mcp.json support", () => {
     expect(config.mcpServers.allowlist).toEqual({
       command: "uv",
       includeTools: ["search", "read_*"],
+      excludeTools: ["secret"],
       directTools: ["search"],
     });
+    expect(config.mcpServers.wildcardWithExactHidden).toEqual({
+      command: "uv",
+      includeTools: ["*"],
+      excludeTools: ["delete_all"],
+      directTools: false,
+    });
+    const wildcardDef = config.mcpServers.wildcardWithExactHidden;
+    expect(
+      isToolAllowed(
+        "delete_all",
+        "srv",
+        "server",
+        wildcardDef?.includeTools,
+        wildcardDef?.excludeTools,
+      ),
+    ).toBe(false);
+    expect(
+      isToolAllowed(
+        "search",
+        "srv",
+        "server",
+        wildcardDef?.includeTools,
+        wildcardDef?.excludeTools,
+      ),
+    ).toBe(true);
+    expect(config.mcpServers.orderedHiddenBeforeWildcard).toEqual({
+      command: "uv",
+      includeTools: ["*"],
+      excludeTools: ["delete_*"],
+      directTools: false,
+    });
+    expect(config.mcpServers.conflictingExactVisible).toBeUndefined();
+    expect(config.mcpServers.conflictingPatternOrder).toBeUndefined();
     expect(config.mcpServers.selectiveDirect).toEqual({
       command: "uv",
       excludeTools: ["admin_*"],
@@ -175,6 +242,8 @@ describe("native Pi project .pi/mcp.json support", () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("per-tool deferred overrides (slow)"),
     );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("conflictingExactVisible"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("conflictingPatternOrder"));
   });
 
   it("translates HTTP OAuth fields and isolates invalid entries from valid siblings", async () => {
