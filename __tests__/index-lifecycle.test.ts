@@ -1283,7 +1283,7 @@ describe("mcpAdapter session lifecycle", () => {
       { value: "sentry", label: "sentry", description: "mcp.sentry.dev" },
       { value: "corp", label: "corp", description: "corp.example.test" },
     ]);
-    delete process.env.CORP_HOST;
+    vi.stubEnv("CORP_HOST", globalThis.undefined);
     expect(await authCommand.getArgumentCompletions("  co")).toEqual([
       { value: "corp", label: "corp" },
     ]);
