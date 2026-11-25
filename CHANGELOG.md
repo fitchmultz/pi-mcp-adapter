@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.58 - 2026-11-25
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: clarify codemode MCP text contract, error server_backoff, and gate schema hints (#288) ([5cc4604](https://github.com/fitchmultz/pi-mcp-adapter/commit/5cc4604fa98c66b5c748c29c8e8184f09d994161))
+
+### What's Changed
+
+- fix: clarify codemode MCP text contract, error server_backoff, and gate schema hints by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/288
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.57...v8.0.58
+
 ## 8.0.57 - 2026-11-25
 
 <!-- npm-release:unreleased:start -->
