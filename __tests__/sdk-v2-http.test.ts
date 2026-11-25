@@ -1095,7 +1095,9 @@ describe("published SDK v2 over real local HTTP", () => {
     session.agent.streamFunction = async (_model, context) => {
       const active = getCurrentTools(context.messages);
       const selected = active.find(
-        (candidate) => candidate.description === "Read newly available data",
+        (candidate) =>
+          candidate.name === "local_second" &&
+          candidate.description.startsWith("Read newly available data"),
       );
       loadingStages.push({
         hasGateway: active.some((candidate) => candidate.name === "mcp"),

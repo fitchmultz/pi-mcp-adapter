@@ -6,7 +6,7 @@ import { executeCall } from "../proxy-modes.ts";
 import type * as Auth from "../mcp-auth-flow.ts";
 import { createTestExtensionContext } from "./test-extension-context.ts";
 import { createTestState } from "./test-state.ts";
-import { proxyRuntimeState } from "./fixtures/proxy-runtime.ts";
+import { firstText, proxyRuntimeState } from "./fixtures/proxy-runtime.ts";
 import {
   MachineHttpServer,
   machineJson,
@@ -126,6 +126,7 @@ describe("proxy and direct tool call parity", () => {
             )
           : await executeCall(state, { toolName: "demo_echo", args: {} });
       expect(output.details.error).toBe("call_failed");
+      expect(firstText(output)).not.toContain("Expected parameters:");
       expect(authSignal?.aborted).toBe(true);
       authentication.resolve("authenticated");
       await new Promise((resolve) => {
@@ -182,5 +183,33 @@ describe("proxy and direct tool call parity", () => {
     const result = await executeCall(state, { toolName: "demo_echo", args: { x: 1 } });
     expect(result.details.error).toBeUndefined();
     expect(result.details.mcpResult).toEqual(MCP_RESULT);
+  });
+
+  it.each([
+    { diagnostic: "Input validation error: Invalid arguments for tool echo", hint: true },
+    { diagnostic: "Validation error: query must be a string", hint: true },
+    { diagnostic: 'validating "arguments": unexpected additional properties ["x"]', hint: true },
+    { diagnostic: 'Unrecognized key: "query"', hint: true },
+    { diagnostic: 'Missing required parameter: "query"', hint: true },
+    { diagnostic: 'Unknown enum value: "query"', hint: true },
+    { diagnostic: "HTTP 422: SQL query failed near timeout", hint: false },
+    { diagnostic: 'Validation error (UnknownType@[query]): Unknown type "Query"', hint: false },
+    { diagnostic: "Cloudflare API 400: request validation error", hint: false },
+    { diagnostic: "Datadog script failed: invalid arguments to the query function", hint: false },
+    { diagnostic: "Token refresh failed: not authorized", hint: false },
+  ])("only hints on argument validation: $diagnostic", async ({ diagnostic, hint }) => {
+    const upstream = { isError: true, content: [{ type: "text" as const, text: diagnostic }] };
+    const { state, connection } = await proxyRuntimeState({ name: "echo", result: upstream });
+    const tool = connection.tools[0];
+    assert.ok(tool);
+    tool.inputSchema = { type: "object", properties: { timeout: { type: "number" } } };
+
+    const result = await executeCall(state, { toolName: "demo_echo", args: {} });
+    expect(result).toMatchObject({
+      isError: true,
+      details: { error: "tool_error", mcpResult: upstream },
+    });
+    const suffix = hint ? "\n\nExpected parameters:\n  timeout (number)" : "";
+    expect(firstText(result)).toBe(`Error: ${diagnostic}${suffix}`);
   });
 });

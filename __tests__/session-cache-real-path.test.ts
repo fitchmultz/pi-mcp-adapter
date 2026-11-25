@@ -267,6 +267,69 @@ function liveServers(lifecycle: "eager" | "lazy") {
 }
 
 describe("cached tool surface through Pi SessionManager", () => {
+  it("marks connection backoff as an error for direct, plain gateway, structured, and resources calls", async () => {
+    const h = await harness();
+    try {
+      const tools = h.session.agent.state.tools;
+      const gateway = tools.find((candidate) => candidate.name === "mcp");
+      const direct = tools.find((candidate) => candidate.name === "demo_pinned");
+      assert.ok(gateway && direct);
+      const connect = await gateway.execute("failed-connect", {
+        action: "connect",
+        server: "demo",
+      });
+      expect(connect.details).toMatchObject({ error: "connect_failed" });
+
+      const args = { action: "call", server: "demo", tool: "pinned" };
+      const typed = await direct.execute("direct-backoff", {});
+      const plain = await gateway.execute("gateway-backoff", args);
+      const structured = await gateway.execute("structured-backoff", {
+        ...args,
+        format: "structured",
+      });
+      for (const result of [typed, plain, structured]) {
+        expect(result).toMatchObject({
+          isError: true,
+          details: { error: "server_backoff", dispatched: false, server: "demo", tool: "pinned" },
+        });
+        expect(resultText(result)).toContain("No call was dispatched.");
+      }
+      expect(structured.structuredContent).toMatchObject({
+        isError: true,
+        mcpAdapter: { omitted: true, error: "server_backoff" },
+      });
+    } finally {
+      await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      h.session.dispose();
+    }
+    // Gateway resources on an uncached server also preserves server_backoff isError through present().
+    const uncached = await harness(Date.now(), resolve("index.ts"), {
+      uncached: { command: "synthetic-never-started", args: [], lifecycle: "lazy" },
+    });
+    try {
+      const tools = uncached.session.agent.state.tools;
+      const gateway = tools.find((candidate) => candidate.name === "mcp");
+      assert.ok(gateway);
+      const connect = await gateway.execute("failed-connect-uncached", {
+        action: "connect",
+        server: "uncached",
+      });
+      expect(connect.details).toMatchObject({ error: "connect_failed" });
+      const resources = await gateway.execute("resources-backoff", {
+        action: "resources",
+        server: "uncached",
+      });
+      expect(resources).toMatchObject({
+        isError: true,
+        details: { error: "server_backoff", dispatched: false, server: "uncached" },
+      });
+      expect(resultText(resources)).toContain("No call was dispatched.");
+    } finally {
+      await uncached.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      uncached.session.dispose();
+    }
+  });
+
   it("registers the cached catalog and observes changed metadata and config on session_start", async () => {
     const h = await harness();
     const active = () => h.session.getActiveToolNames().sort();
@@ -280,7 +343,7 @@ describe("cached tool surface through Pi SessionManager", () => {
       await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
       await setImmediate();
       expect(active()).toEqual(["demo_pinned", "mcp"]);
-      expect(search()?.description).toBe("updated");
+      expect(search()?.description).toMatch(/^updated\n/);
       expect(search()?.parameters).toMatchObject({
         properties: { query: { description: "updated" } },
       });

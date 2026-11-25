@@ -261,6 +261,7 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.resolve();
     expect(api.getActiveTools()).toContain("demo_search");
     expect(api.getActiveTools()).not.toContain("mcp");
+    expect(registeredTool("demo_search").description).not.toContain("tools.mcp(");
     state.toolMetadata.set("demo", []);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway refreshed");
     await requireValue(state.onToolMetadataUpdated)("demo", "tools-list-changed");
@@ -271,8 +272,10 @@ describe("mcpAdapter session lifecycle", () => {
     state.toolMetadata.set("demo", [{ ...tool, description: "Search v2" }]);
     await requireValue(state.onToolMetadataUpdated)("demo", "tools-list-changed");
     expect(spies.registerTool).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "demo_search", description: "Search v2" }),
+      expect.objectContaining({ name: "demo_search" }),
     );
+    expect(registeredTool("demo_search").description).toMatch(/^Search v2\n/);
+    expect(registeredTool("demo_search").description).not.toContain("tools.mcp(");
     expect(registeredTool("demo_search")).not.toHaveProperty("exposure");
     expect(api.getActiveTools()).toContain("demo_search");
   });
@@ -296,12 +299,13 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.initializeMcp.mockResolvedValue(state);
     const { default: adapter } = await import("../index.ts");
-    const { api, spies, handlers } = await createPi();
+    const { api, spies, handlers, tool: registeredTool } = await createPi();
     adapter(api);
     await handlers.get("session_start")({}, {});
     await Promise.resolve();
     expect(api.getActiveTools()).toContain("demo_search");
     expect(api.getActiveTools()).toContain("mcp");
+    expect(registeredTool("demo_search").description).toContain("tools.mcp(");
     expect(spies.registerTool).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: "demo_read_doc" }),
     );
@@ -1749,7 +1753,7 @@ describe("mcpAdapter session lifecycle", () => {
       expect(firstOwner.isActive()).toBe(false);
       expect(spies.registerTool).not.toHaveBeenCalled();
       expect(spies.setActiveTools).not.toHaveBeenCalled();
-      expect(registeredTool("demo_search").description).toBe("Search");
+      expect(registeredTool("demo_search").description).toMatch(/^Search\n/);
       expect(api.getActiveTools()).not.toContain("demo_extra");
 
       // Changed effective config in another cwd: unfreezes and resyncs tool declarations for the new project.
@@ -1816,7 +1820,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(spies.registerTool).not.toHaveBeenCalled();
     expect(spies.setActiveTools).not.toHaveBeenCalled();
     expect(mocks.loadMetadataCache).not.toHaveBeenCalled();
-    expect(registeredTool("demo_search").description).toBe("Search");
+    expect(registeredTool("demo_search").description).toMatch(/^Search\n/);
     expect(api.getActiveTools()).not.toContain("demo_extra");
   });
 

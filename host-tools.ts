@@ -97,7 +97,7 @@ export class McpHostTools {
     config: McpConfig,
     cache: MetadataCache | null,
     directSpecs: DirectToolSpec[],
-  ): void {
+  ): boolean {
     const missingConfiguredDirectToolServers = getMissingConfiguredDirectToolServers(
       config,
       cache,
@@ -118,6 +118,7 @@ export class McpHostTools {
     } else {
       this.hideHostTool("mcp");
     }
+    return shouldRegisterProxyTool;
   }
   private hasPinnedResources(config: McpConfig, cache: MetadataCache | null): boolean {
     return (

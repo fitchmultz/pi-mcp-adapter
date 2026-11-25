@@ -5,8 +5,8 @@
  * returned an error result) or `"call_failed"` (the call itself threw and was caught).
  * Spread this onto the returned result without replacing human or structured content.
  *
- * Limited to those two codes: the adapter's other `details.error` values (`auth_required`, connection
- * states, search/validation feedback, ...) are not failed tool calls, so they get no override.
+ * Other results can set `isError` at their source, such as `server_backoff` before dispatch.
+ * A `details.error` code alone (for example `auth_required` or search feedback) does not set it.
  */
 export function toolErrorOverride(details: unknown): { isError: true } | undefined {
   if (details !== null && typeof details === "object" && "error" in details) {

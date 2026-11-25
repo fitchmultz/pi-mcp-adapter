@@ -377,10 +377,14 @@ function unavailableConnection(
   failure: (error: string, message: string) => ProxyToolResult,
 ): { error: ProxyToolResult } {
   const failedAgo = getFailureAgeSeconds(state, serverName);
+  if (failedAgo === null) {
+    return { error: failure("server_unavailable", `Server "${serverName}" not available`) };
+  }
+  const backoff = failure(
+    "server_backoff",
+    `Server "${serverName}" is backing off (last failed ${failedAgo}s ago). No call was dispatched.`,
+  );
   return {
-    error: failure(
-      failedAgo === null ? "server_unavailable" : "server_backoff",
-      `Server "${serverName}" not available${failedAgo === null ? "" : ` (last failed ${failedAgo}s ago)`}`,
-    ),
+    error: { ...backoff, isError: true, details: { ...backoff.details, dispatched: false } },
   };
 }

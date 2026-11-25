@@ -116,5 +116,6 @@ describe("MCP output schema validation", () => {
     const block = result.content[0];
     assert.ok(block?.type === "text");
     expect(block.text).toContain("Structured content does not match the tool's output schema");
+    expect(block.text).not.toContain("Expected parameters:");
   });
 });

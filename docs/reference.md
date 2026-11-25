@@ -552,7 +552,7 @@ If a server puts JSON inside a text block, a pointer selects the entire string, 
 
 Use Pi's `codemode` tool for loops, filters, and dependent tool calls. Its scripts call any registered catalog tool, deferred or loaded, as `await tools.<flat_name>(args)`, and find unlisted tools with `searchTools`, `describeTool`, and `describeNamespace`. Gateway actions stay available as `tools.mcp({ action, ... })`, including `read-result` and `read-resource`. Each nested call runs through Pi's tool pipeline and the adapter's normal execution path, so authentication, approvals, filters, `beforeExecute`, `onToolCall`, output guards, and cancellation apply to it. Enable `codemode` with `+codemode` in `defaultTools` or `--tools`.
 
-Direct tools without a server-declared output schema and default gateway calls still return display text. Direct tools with a declared schema keep their [existing structured result](#mcp-output-schemas) or overflow receipt. Use the gateway with `format: "structured"` **on the original call** if your script needs the provider payload or a saved reference:
+Direct tools without a server-declared output schema and default gateway calls return display text, capped at 50 KiB by default. The text is not a raw JSON contract. Direct tools with a declared schema return their [structured result](#mcp-output-schemas) or overflow receipt. Use the gateway with `format: "structured"` **on the original call** if your script needs the provider payload or a saved reference:
 
 ```js
 const result = await tools.mcp({
@@ -567,6 +567,10 @@ const result = await tools.mcp({
 When the provider result fits, `result.mcpResult` holds its original blocks and any `structuredContent`, without protocol `_meta` fields. If the result does not fit, `mcpResult` is absent and `result.mcpAdapter.omitted` is `true`. When present, `result.mcpAdapter.resultRef` names the complete saved protocol envelope. `result.mcpAdapter.outputPath` names saved rendered text instead. The format option does not change what Pi displays or what the adapter saves.
 
 If the adapter returns a diagnostic instead of a provider result, `mcpAdapter.omitted` is `true` and `mcpAdapter.error` gives the code, such as `approval_required`. Read `mcpAdapter.message` for the explanation when present. The receipt includes `isError: true` only when Pi marks the call as a tool error. Argument validation and other failures that reject in Pi before the adapter returns a result still reject in codemode.
+
+`server_backoff` is an error: the adapter did not dispatch the call because the server recently failed to connect. `ambiguous_outcome` means a dispatched call may have run; read back its outcome before repeating it.
+
+The adapter shows `Expected parameters:` when an error points to the tool's input arguments. It leaves that hint out of upstream query, API, authentication, and transport failures.
 
 Set `format: "structured"` on `read-result` to get `{ text, ref, path?, offset, nextOffset, totalCharacters }` without a continuation notice in `text`. Pass `readAll: true` with `format: "structured"` (and without `offset` or `limit`) to return the entire selected value in one call (`offset: 0`, `nextOffset: null`) while keeping model-facing display text within the normal output limits. Without `format: "structured"`, the script gets display text as before. Failed reads reject in either format. If the call returned a `resultRef`, read it in one call or join pages before decoding a JSON selection:
 
