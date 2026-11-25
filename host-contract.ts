@@ -40,17 +40,29 @@ export type HostToolExecute<Params> = ToolDefinition<
 export type HostToolArguments<Params> = Parameters<HostToolExecute<Params>>;
 
 const BUILTIN_MCP_EXTENSION_PATH = "builtin:mcp";
+const MCP_COMMAND_NAME_PATTERN = /^mcp(?::\d+)?$/;
 
 /**
- * Detect whether Pi's built-in MCP extension is active in the current session.
- * When active, Pi's built-in MCP owns `<project>/.pi/mcp.json` and the adapter
- * skips it so configured servers are never started twice.
+ * Detect whether another Pi MCP extension (either `builtin:mcp` or an inline
+ * SDK `createMcpExtension()` factory) is coexisting alongside this adapter.
+ * In the Pi CLI, `builtin:mcp` is `replaceable: true` and yields automatically
+ * to the adapter; in SDK hosts that add `createMcpExtension()` directly, both
+ * extensions load and produce two `/mcp` extension commands (`mcp:1`, `mcp:2`).
+ * When another MCP extension is active, the adapter skips `<project>/.pi/mcp.json`
+ * so configured servers are never started twice.
  */
 export function isBuiltinMcpActive(pi: Pick<ExtensionAPI, "getCommands"> | undefined): boolean {
-  return (
-    typeof pi?.getCommands === "function" &&
-    pi.getCommands().some((command) => command.sourceInfo.path === BUILTIN_MCP_EXTENSION_PATH)
+  if (typeof pi?.getCommands !== "function") {
+    return false;
+  }
+  const commands = pi.getCommands();
+  if (commands.some((command) => command.sourceInfo.path === BUILTIN_MCP_EXTENSION_PATH)) {
+    return true;
+  }
+  const mcpExtensionCommands = commands.filter(
+    (command) => command.source === "extension" && MCP_COMMAND_NAME_PATTERN.test(command.name),
   );
+  return mcpExtensionCommands.length > 1;
 }
 
 export function nativePiConfigOptions(

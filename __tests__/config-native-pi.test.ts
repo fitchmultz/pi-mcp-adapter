@@ -568,7 +568,7 @@ describe("native Pi project .pi/mcp.json support", () => {
     return readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean).length;
   }
 
-  it("bootstraps direct tools once from a trusted project .pi/mcp.json when builtin:mcp is disabled", async () => {
+  it("bootstraps direct tools once from a trusted project .pi/mcp.json when replacing Pi's CLI builtin:mcp", async () => {
     initTheme();
     const { root, agentDir, project } = createWorkspace();
     const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
@@ -593,12 +593,14 @@ describe("native Pi project .pi/mcp.json support", () => {
       },
     });
 
-    const settingsManager = SettingsManager.inMemory({ extensions: ["-builtin:mcp"] });
+    const settingsManager = SettingsManager.inMemory();
     const loader = new DefaultResourceLoader({
       cwd: project,
       agentDir,
       settingsManager,
-      extensionFactories: [{ name: "mcp", builtin: true, factory: createMcpExtension() }],
+      extensionFactories: [
+        { name: "mcp", builtin: true, replaceable: true, factory: createMcpExtension() },
+      ],
       additionalExtensionPaths: [resolve("index.ts")],
     });
     await loader.reload();
@@ -630,7 +632,7 @@ describe("native Pi project .pi/mcp.json support", () => {
     }
   });
 
-  it("skips project .pi/mcp.json when Pi's builtin:mcp is active so servers never start twice", async () => {
+  it("skips project .pi/mcp.json when an inline SDK createMcpExtension() coexists so servers never start twice", async () => {
     initTheme();
     const { root, agentDir, project } = createWorkspace();
     const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
@@ -661,7 +663,7 @@ describe("native Pi project .pi/mcp.json support", () => {
       cwd: project,
       agentDir,
       settingsManager,
-      extensionFactories: [{ name: "mcp", builtin: true, factory: createMcpExtension() }],
+      extensionFactories: [createMcpExtension()],
       additionalExtensionPaths: [resolve("index.ts")],
     });
     await loader.reload();
@@ -722,13 +724,15 @@ describe("native Pi project .pi/mcp.json support", () => {
       },
     });
 
-    const settingsManager = SettingsManager.inMemory({ extensions: ["-builtin:mcp"] });
+    const settingsManager = SettingsManager.inMemory();
     settingsManager.setProjectTrusted(false);
     const loader = new DefaultResourceLoader({
       cwd: project,
       agentDir,
       settingsManager,
-      extensionFactories: [{ name: "mcp", builtin: true, factory: createMcpExtension() }],
+      extensionFactories: [
+        { name: "mcp", builtin: true, replaceable: true, factory: createMcpExtension() },
+      ],
       additionalExtensionPaths: [resolve("index.ts")],
     });
     await loader.reload();
