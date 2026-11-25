@@ -11,9 +11,7 @@ import { createOwnedUi, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { writeProjectServerDisabledOverride } from "./config.ts";
 import { supportsOAuth } from "./mcp-oauth-runtime.ts";
 import { isServerDisabled, type ServerEntry } from "./types.ts";
-import { hasServerUrl } from "./utils.ts";
-
-const ENV_PLACEHOLDER_PATTERN = /\$\{\w+\}|\$env:\w+|\{env:\w+\}/;
+import { hasServerUrl, resolveServerUrl } from "./utils.ts";
 
 const MCP_SUBCOMMANDS: AutocompleteItem[] = [
   { value: "reconnect", label: "reconnect", description: "Reconnect servers" },
@@ -54,17 +52,9 @@ function snapshotContext(ctx: ExtensionContext, owner: McpRuntimeOwner | null): 
 }
 
 function configuredHost(definition: ServerEntry): string | undefined {
-  const rawUrl = definition.url;
-  if (
-    typeof rawUrl !== "string" ||
-    rawUrl.trim().length === 0 ||
-    ENV_PLACEHOLDER_PATTERN.test(rawUrl)
-  ) {
-    return undefined;
-  }
   try {
-    const host = new URL(rawUrl).host;
-    return host.length > 0 ? host : undefined;
+    const url = resolveServerUrl(definition);
+    return url === undefined ? undefined : new URL(url).host || undefined;
   } catch {
     return undefined;
   }
