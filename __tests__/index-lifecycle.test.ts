@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import { setImmediate as nextTurn } from "node:timers/promises";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager, type SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
 import type { McpAdapterOptions, McpConfig, ToolMetadata } from "../types.ts";
 import { startUiServer } from "../ui-server.ts";
 import type { McpExtensionState } from "../state.ts";
-import type { ServerConnection } from "../server-connection.ts";
 import type * as Init from "../init.ts";
 import type * as OAuth from "../mcp-oauth-runtime.ts";
 import type * as Config from "../config.ts";
@@ -131,19 +129,6 @@ function createState() {
   return state;
 }
 
-function createStubConnection(status: ServerConnection["status"]): ServerConnection {
-  return {
-    status,
-    client: new Client({ name: "completion-test", version: "1" }),
-    transport: InMemoryTransport.createLinkedPair()[0],
-    definition: { url: "https://example.test/mcp" },
-    tools: [],
-    resources: [],
-    prompts: [],
-    lastUsedAt: Date.now(),
-  };
-}
-
 const hosts: Awaited<ReturnType<typeof createLifecycleHost>>[] = [];
 async function createPi() {
   const host = await createLifecycleHost();
@@ -186,6 +171,7 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     for (const host of hosts.splice(0)) {
       await host.dispose();
       assert.deepEqual(host.errors, []);
@@ -1263,14 +1249,14 @@ describe("mcpAdapter session lifecycle", () => {
     );
   });
 
-  it("completes `/mcp-auth` with enabled OAuth-capable servers and status descriptions", async () => {
+  it("completes `/mcp-auth` with enabled OAuth-capable servers and resolved hosts", async () => {
+    vi.stubEnv("CORP_HOST", "corp.example.test");
     const state = createState();
     state.config.mcpServers = {
       linear: { url: "https://mcp.linear.app/sse", auth: "oauth" },
       notion: { url: "https://mcp.notion.com/mcp" },
       sentry: { url: "https://user:secret@mcp.sentry.dev/mcp?token=hidden", auth: "oauth" },
       corp: { url: "https://${CORP_HOST}/mcp", auth: "oauth" },
-      corpPending: { url: "https://${CORP_HOST}/pending", auth: "oauth" },
       disabledOauth: { url: "https://disabled.example.test/mcp", auth: "oauth", disabled: true },
       localStdio: { command: "local-mcp" },
       bearerApi: { url: "https://bearer.example.test/mcp", auth: "bearer" },
@@ -1278,15 +1264,6 @@ describe("mcpAdapter session lifecycle", () => {
       noAuth: { url: "https://noauth.example.test/mcp", auth: false },
       oauthOff: { url: "https://oauthoff.example.test/mcp", oauth: false },
     };
-    vi.spyOn(state.manager, "getConnection").mockImplementation((name) => {
-      if (name === "linear" || name === "corpPending") {
-        return createStubConnection("needs-auth");
-      }
-      if (name === "notion") {
-        return createStubConnection("connected");
-      }
-      return;
-    });
     mocks.initializeMcp.mockResolvedValue(state);
 
     const { default: mcpAdapter } = await import("../index.ts");
@@ -1301,21 +1278,20 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.resolve();
 
     expect(await authCommand.getArgumentCompletions("")).toEqual([
-      { value: "linear", label: "linear", description: "needs auth — mcp.linear.app" },
-      { value: "notion", label: "notion", description: "connected — mcp.notion.com" },
-      { value: "sentry", label: "sentry", description: "OAuth — mcp.sentry.dev" },
-      { value: "corp", label: "corp", description: "OAuth" },
-      { value: "corpPending", label: "corpPending", description: "OAuth (needs auth)" },
+      { value: "linear", label: "linear", description: "mcp.linear.app" },
+      { value: "notion", label: "notion", description: "mcp.notion.com" },
+      { value: "sentry", label: "sentry", description: "mcp.sentry.dev" },
+      { value: "corp", label: "corp", description: "corp.example.test" },
     ]);
+    delete process.env.CORP_HOST;
     expect(await authCommand.getArgumentCompletions("  co")).toEqual([
-      { value: "corp", label: "corp", description: "OAuth" },
-      { value: "corpPending", label: "corpPending", description: "OAuth (needs auth)" },
+      { value: "corp", label: "corp" },
     ]);
     expect(await authCommand.getArgumentCompletions("  SNTR")).toEqual([
-      { value: "sentry", label: "sentry", description: "OAuth — mcp.sentry.dev" },
+      { value: "sentry", label: "sentry", description: "mcp.sentry.dev" },
     ]);
     expect(await authCommand.getArgumentCompletions("linear ")).toEqual([
-      { value: "linear", label: "linear", description: "needs auth — mcp.linear.app" },
+      { value: "linear", label: "linear", description: "mcp.linear.app" },
     ]);
     expect(await authCommand.getArgumentCompletions("missing")).toBeNull();
   });

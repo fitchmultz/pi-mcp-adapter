@@ -9,7 +9,7 @@ import type { McpAdapterHost } from "./host-contract.ts";
 import * as commands from "./commands.ts";
 import { createOwnedUi, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { writeProjectServerDisabledOverride } from "./config.ts";
-import { supportsOAuth } from "./mcp-oauth-runtime.ts";
+import { authEligibility } from "./mcp-auth-commands.ts";
 import { isServerDisabled, type ServerEntry } from "./types.ts";
 import { hasServerUrl, resolveServerUrl } from "./utils.ts";
 
@@ -62,30 +62,6 @@ function configuredHost(definition: ServerEntry): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function authStatusLabel(state: McpExtensionState, name: string): string {
-  const status = state.manager.getConnection(name)?.status;
-  if (status === "needs-auth") {
-    return "needs auth";
-  }
-  if (status === "connected") {
-    return "connected";
-  }
-  return "OAuth";
-}
-
-function describeAuthServer(
-  state: McpExtensionState,
-  name: string,
-  definition: ServerEntry,
-): string {
-  const label = authStatusLabel(state, name);
-  const host = configuredHost(definition);
-  if (host !== undefined) {
-    return `${label} — ${host}`;
-  }
-  return label === "OAuth" ? "OAuth" : `OAuth (${label})`;
 }
 
 export class McpHostCommands {
@@ -146,13 +122,14 @@ export class McpHostCommands {
     }
     const servers: AutocompleteItem[] = [];
     for (const [name, definition] of Object.entries(state.config.mcpServers)) {
-      if (isServerDisabled(definition) || !supportsOAuth(definition)) {
+      if (authEligibility(definition) !== "eligible") {
         continue;
       }
+      const host = configuredHost(definition);
       servers.push({
         value: name,
         label: name,
-        description: describeAuthServer(state, name, definition),
+        ...(host === undefined ? {} : { description: host }),
       });
     }
     return fuzzyCompletions(servers, prefix.trimStart());
