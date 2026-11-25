@@ -177,6 +177,84 @@ function buildMappedOAuth(
   return oauth;
 }
 
+const ADAPTER_ONLY_TOP_LEVEL_KEYS = ["settings", "imports"] as const;
+const ADAPTER_ONLY_SERVER_KEYS = [
+  "disabled",
+  "directTools",
+  "socket",
+  "includeTools",
+  "excludeTools",
+  "lifecycle",
+  "idleTimeout",
+  "requestTimeoutMs",
+  "debug",
+  "bearerToken",
+  "bearerTokenEnv",
+] as const;
+const ADAPTER_ONLY_OAUTH_KEYS = ["redirectUri", "clientMetadataUrl"] as const;
+
+export function findAdapterOnlyTopLevelKeys(raw: Record<string, unknown>): string[] {
+  return ADAPTER_ONLY_TOP_LEVEL_KEYS.filter((key) => Object.hasOwn(raw, key));
+}
+
+export function findAdapterOnlyServerKeys(raw: Record<string, unknown>): string[] {
+  const found: string[] = [];
+  for (const key of ADAPTER_ONLY_SERVER_KEYS) {
+    if (Object.hasOwn(raw, key)) {
+      found.push(key);
+    }
+  }
+  if (typeof raw.auth === "string") {
+    found.push("auth");
+  }
+  if (isConfigObject(raw.oauth)) {
+    for (const key of ADAPTER_ONLY_OAUTH_KEYS) {
+      if (Object.hasOwn(raw.oauth, key)) {
+        found.push(`oauth.${key}`);
+      }
+    }
+  }
+  return found;
+}
+
+function matchesNativeToolPattern(pattern: string, toolName: string): boolean {
+  const source = pattern
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${source}$`).test(toolName);
+}
+
+export function hasUnrepresentableToolExposure(
+  entries: ReadonlyArray<[string, "direct" | "codemode" | "deferred" | "hidden"]>,
+): boolean {
+  const hiddenPatterns = entries
+    .filter(([key, exp]) => exp === "hidden" && key.includes("*"))
+    .map(([key]) => key);
+  const exactVisible = entries
+    .filter(([key, exp]) => exp !== "hidden" && !key.includes("*"))
+    .map(([key]) => key);
+  if (
+    hiddenPatterns.some((pattern) =>
+      exactVisible.some((name) => matchesNativeToolPattern(pattern, name)),
+    )
+  ) {
+    return true;
+  }
+  let seenVisiblePattern = false;
+  for (const [key, exp] of entries) {
+    if (!key.includes("*")) {
+      continue;
+    }
+    if (exp !== "hidden") {
+      seenVisiblePattern = true;
+    } else if (seenVisiblePattern) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function mapNativeOAuth(
   raw: unknown,
   ctx: NativeEntryContext,

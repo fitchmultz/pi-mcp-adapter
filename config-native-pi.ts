@@ -5,6 +5,9 @@ import stripJsonComments from "strip-json-comments";
 import type { McpConfig, ServerEntry } from "./config-types.ts";
 import { isConfigObject, isStringArray, isStringRecord } from "./config-validation.ts";
 import {
+  findAdapterOnlyServerKeys,
+  findAdapterOnlyTopLevelKeys,
+  hasUnrepresentableToolExposure,
   mapNativeOAuth,
   warnNativeEntry,
   warnNativeEntryFalse,
@@ -137,42 +140,6 @@ function collectExactDirectNames(keys: readonly string[], ctx: NativeEntryContex
     );
   }
   return exact;
-}
-
-function matchesNativeToolPattern(pattern: string, toolName: string): boolean {
-  const source = pattern
-    .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${source}$`).test(toolName);
-}
-
-function hasUnrepresentableToolExposure(entries: ReadonlyArray<[string, NativeExposure]>): boolean {
-  const hiddenPatterns = entries
-    .filter(([key, exp]) => exp === "hidden" && key.includes("*"))
-    .map(([key]) => key);
-  const exactVisible = entries
-    .filter(([key, exp]) => exp !== "hidden" && !key.includes("*"))
-    .map(([key]) => key);
-  if (
-    hiddenPatterns.some((pattern) =>
-      exactVisible.some((name) => matchesNativeToolPattern(pattern, name)),
-    )
-  ) {
-    return true;
-  }
-  let seenVisiblePattern = false;
-  for (const [key, exp] of entries) {
-    if (!key.includes("*")) {
-      continue;
-    }
-    if (exp !== "hidden") {
-      seenVisiblePattern = true;
-    } else if (seenVisiblePattern) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function hiddenExposureFields(
@@ -457,6 +424,13 @@ function mapNativeServerEntry(
   if (!isConfigObject(raw)) {
     return warnNativeEntry(ctx, "server entry must be an object");
   }
+  const adapterKeys = findAdapterOnlyServerKeys(raw);
+  if (adapterKeys.length > 0) {
+    return warnNativeEntry(
+      ctx,
+      `uses adapter-only fields (${adapterKeys.join(", ")}); move adapter-format project configs to .pi/fitch-mcp-adapter/mcp.json`,
+    );
+  }
   if (raw.command === undefined && raw.url === undefined && raw.type === undefined) {
     const entry = mapOverrideEntry(raw, ctx, existingServers);
     return entry === null ? null : { entry, replacesExisting: false };
@@ -496,6 +470,13 @@ export function readNativePiProjectConfig(
   }
   const raw = parseNativeConfigFile(filePath);
   if (!raw) {
+    return null;
+  }
+  const adapterTopKeys = findAdapterOnlyTopLevelKeys(raw);
+  if (adapterTopKeys.length > 0) {
+    console.warn(
+      `Skipped ${filePath}: top-level adapter-only fields (${adapterTopKeys.join(", ")}) look like a legacy adapter config; move it to .pi/fitch-mcp-adapter/mcp.json`,
+    );
     return null;
   }
   if (raw.mcpServers === undefined) {

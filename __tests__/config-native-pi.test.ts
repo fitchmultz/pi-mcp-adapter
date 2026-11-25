@@ -313,6 +313,14 @@ describe("native Pi project .pi/mcp.json support", () => {
           command: "uv",
           env: { API_KEY: 42 },
         },
+        legacyAdapterDisabled: {
+          command: "uv",
+          disabled: true,
+          directTools: true,
+        },
+        legacyAdapterSocket: {
+          socket: "/tmp/legacy.sock",
+        },
       },
     });
 
@@ -370,8 +378,28 @@ describe("native Pi project .pi/mcp.json support", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("badCimd"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("badHeaderValue"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("badEnvValue"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("legacyAdapterDisabled"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("legacyAdapterSocket"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("oauth.authServerMetadataUrl"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("oauth.callbackUrl without a port"));
+  });
+
+  it("skips a legacy adapter-format .pi/mcp.json with top-level adapter keys instead of misinterpreting it", async () => {
+    const { project } = createWorkspace();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {
+      /* suppress expected warning */
+    });
+    writeJson(join(project, ".pi", "mcp.json"), {
+      settings: { idleTimeout: 5 },
+      mcpServers: {
+        legacy: { command: "uv" },
+      },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(undefined, project);
+    expect(config.mcpServers.legacy).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("top-level adapter-only fields"));
   });
 
   it("replaces lower-precedence definitions wholesale while merging override-only entries", async () => {
@@ -577,6 +605,15 @@ describe("native Pi project .pi/mcp.json support", () => {
     initTheme();
     const { root, agentDir, project } = createWorkspace();
     const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
+    writeJson(join(agentDir, "fitch-mcp-adapter", "mcp.json"), {
+      mcpServers: {
+        "control-global": {
+          command: process.execPath,
+          args: [fixtureServer],
+          directTools: true,
+        },
+      },
+    });
     writeJson(join(project, ".pi", "mcp.json"), {
       mcpServers: {
         "native-direct": {
@@ -614,7 +651,7 @@ describe("native Pi project .pi/mcp.json support", () => {
         mode: "tui",
         uiContext: session.extensionRunner.getUIContext(),
       });
-      await delay(200);
+      await waitFor(() => session.getActiveToolNames().includes("control_global_noop"), 8000);
       expect(session.getActiveToolNames()).not.toContain("native_direct_noop");
     } finally {
       session.dispose();
