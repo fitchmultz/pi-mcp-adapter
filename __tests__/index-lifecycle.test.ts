@@ -171,6 +171,7 @@ describe("mcpAdapter session lifecycle", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     for (const host of hosts.splice(0)) {
       await host.dispose();
       assert.deepEqual(host.errors, []);
@@ -1192,12 +1193,13 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);
   });
 
-  it("completes current `/mcp` subcommands and server arguments", async () => {
+  it("fuzzy-matches `/mcp` subcommands and eligible server arguments", async () => {
     const state = createState();
     state.config.mcpServers = {
-      github: { command: "github-mcp" },
-      gitlab: { command: "gitlab-mcp" },
+      github: { url: "https://github.example.test/mcp", auth: false },
+      gitlab: { url: "https://gitlab.example.test/mcp" },
       notion: { command: "notion-mcp" },
+      legacy: { command: "legacy-mcp", disabled: true },
     };
     mocks.initializeMcp.mockResolvedValue(state);
 
@@ -1215,29 +1217,102 @@ describe("mcpAdapter session lifecycle", () => {
     expect(
       requireValue(await commandDef.getArgumentCompletions("")).map(({ value }) => value),
     ).toEqual(["reconnect", "tools", "prompts", "setup", "logout", "disable", "enable", "status"]);
-    expect(await commandDef.getArgumentCompletions("st")).toEqual([
-      { value: "status", label: "status — Show server status" },
+    expect(await commandDef.getArgumentCompletions("STTS")).toEqual([
+      { value: "status", label: "status", description: "Show server status" },
     ]);
     expect(await commandDef.getArgumentCompletions("reconnect ")).toEqual([
       { value: "reconnect github", label: "github" },
       { value: "reconnect gitlab", label: "gitlab" },
       { value: "reconnect notion", label: "notion" },
     ]);
-    expect(await commandDef.getArgumentCompletions("  logout git")).toEqual([
+    expect(await commandDef.getArgumentCompletions("  logout ")).toEqual([
       { value: "logout github", label: "github" },
       { value: "logout gitlab", label: "gitlab" },
     ]);
-    expect(await commandDef.getArgumentCompletions("disable git")).toEqual([
+    expect(await commandDef.getArgumentCompletions("  disable   GHB")).toEqual([
       { value: "disable github", label: "github" },
-      { value: "disable gitlab", label: "gitlab" },
     ]);
-    expect(await commandDef.getArgumentCompletions("enable not")).toEqual([
-      { value: "enable notion", label: "notion" },
+    expect(await commandDef.getArgumentCompletions("enable lgcy")).toEqual([
+      { value: "enable legacy", label: "legacy" },
     ]);
+    expect(await commandDef.getArgumentCompletions("enable GHB")).toEqual([
+      { value: "enable github", label: "github" },
+    ]);
+    expect(await commandDef.getArgumentCompletions("disable lgcy")).toEqual([
+      { value: "disable legacy", label: "legacy" },
+    ]);
+    expect(await commandDef.getArgumentCompletions("missing")).toBeNull();
+    expect(await commandDef.getArgumentCompletions("reconnect missing")).toBeNull();
     expect(await commandDef.getArgumentCompletions("tools anything")).toBeNull();
     expect(spies.registerCommand.mock.calls.some((call) => call[0] === "mcp-reconnect")).toBe(
       false,
     );
+  });
+
+  it("completes `/mcp-auth` with enabled OAuth-capable servers and resolved hosts", async () => {
+    vi.stubEnv("CORP_HOST", "corp.example.test");
+    const state = createState();
+    state.config.mcpServers = {
+      linear: { url: "https://mcp.linear.app/sse", auth: "oauth" },
+      notion: { url: "https://mcp.notion.com/mcp" },
+      sentry: { url: "https://user:secret@mcp.sentry.dev/mcp?token=hidden", auth: "oauth" },
+      corp: { url: "https://${CORP_HOST}/mcp", auth: "oauth" },
+      disabledOauth: { url: "https://disabled.example.test/mcp", auth: "oauth", disabled: true },
+      localStdio: { command: "local-mcp" },
+      bearerApi: { url: "https://bearer.example.test/mcp", auth: "bearer" },
+      headerApi: { url: "https://header.example.test/mcp", headers: { "x-api-key": "k" } },
+      noAuth: { url: "https://noauth.example.test/mcp", auth: false },
+      oauthOff: { url: "https://oauthoff.example.test/mcp", oauth: false },
+    };
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers, command: registeredCommand } = await createPi();
+    mcpAdapter(api);
+
+    const authCommand = registeredCommand("mcp-auth");
+    expect(await authCommand.getArgumentCompletions("")).toBeNull();
+
+    await handlers.get("session_start")({}, { hasUI: false });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(await authCommand.getArgumentCompletions("")).toEqual([
+      { value: "linear", label: "linear", description: "mcp.linear.app" },
+      { value: "notion", label: "notion", description: "mcp.notion.com" },
+      { value: "sentry", label: "sentry", description: "mcp.sentry.dev" },
+      { value: "corp", label: "corp", description: "corp.example.test" },
+    ]);
+    vi.stubEnv("CORP_HOST", globalThis.undefined);
+    expect(await authCommand.getArgumentCompletions("  co")).toEqual([
+      { value: "corp", label: "corp" },
+    ]);
+    expect(await authCommand.getArgumentCompletions("  SNTR")).toEqual([
+      { value: "sentry", label: "sentry", description: "mcp.sentry.dev" },
+    ]);
+    expect(await authCommand.getArgumentCompletions("linear ")).toEqual([
+      { value: "linear", label: "linear", description: "mcp.linear.app" },
+    ]);
+    expect(await authCommand.getArgumentCompletions("missing")).toBeNull();
+  });
+
+  it("returns null for `/mcp-auth` completions when no OAuth-capable servers are configured", async () => {
+    const state = createState();
+    state.config.mcpServers = {
+      localStdio: { command: "local-mcp" },
+      disabledOauth: { url: "https://disabled.example.test/mcp", auth: "oauth", disabled: true },
+    };
+    mocks.initializeMcp.mockResolvedValue(state);
+
+    const { default: mcpAdapter } = await import("../index.ts");
+    const { api, handlers, command: registeredCommand } = await createPi();
+    mcpAdapter(api);
+
+    await handlers.get("session_start")({}, { hasUI: false });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(await registeredCommand("mcp-auth").getArgumentCompletions("")).toBeNull();
   });
 
   it("hot-registers prompt commands after live prompt metadata refresh", async () => {

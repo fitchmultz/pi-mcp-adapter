@@ -25,7 +25,6 @@ import {
 import { getFailureAgeSeconds, getFailureMessage } from "./init.ts";
 import { panelStatus, serverStage } from "./server-status.ts";
 import { loadMetadataCache } from "./metadata-cache.ts";
-import { supportsOAuth } from "./mcp-oauth-runtime.ts";
 import { inspectAuthForUrl } from "./mcp-auth.ts";
 import {
   loadOnboardingState,
@@ -38,7 +37,7 @@ import { createMcpSetupPanel } from "./mcp-setup-panel.ts";
 import type { SetupPanelCallbacks } from "./mcp-setup-contract.ts";
 import { showStatus } from "./mcp-inspection-commands.ts";
 import { reconnectServer } from "./mcp-connection-commands.ts";
-import { authenticateServer } from "./mcp-auth-commands.ts";
+import { authenticateServer, authEligibility } from "./mcp-auth-commands.ts";
 import { logger } from "./logger.ts";
 export { showStatus, showPrompts, showTools } from "./mcp-inspection-commands.ts";
 export { reconnectServer, reconnectServers } from "./mcp-connection-commands.ts";
@@ -247,7 +246,7 @@ function buildMcpPanelCallbacks(
     reconnect: (serverName, afterAuth) => reconnectServer(state, ctx, serverName, afterAuth),
     canAuthenticate: (serverName: string) => {
       const definition = config.mcpServers[serverName];
-      return definition ? !isServerDisabled(definition) && supportsOAuth(definition) : false;
+      return definition !== undefined && authEligibility(definition) === "eligible";
     },
     authenticate: (serverName: string) =>
       authenticateServer({
@@ -430,7 +429,7 @@ export async function openMcpAuthPanel(
 
   const config = state.config;
   const oauthServers = Object.entries(config.mcpServers).filter(
-    ([, definition]) => !isServerDisabled(definition) && supportsOAuth(definition),
+    ([, definition]) => authEligibility(definition) === "eligible",
   );
   if (oauthServers.length === 0) {
     ctx.ui.notify("No OAuth-capable MCP servers are configured.", "warning");

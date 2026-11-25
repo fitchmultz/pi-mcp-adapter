@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Raise the Pi support floor to `1.6.1`. Use Pi's fuzzy matcher for `/mcp` and add `/mcp-auth` completions for enabled OAuth-capable servers, with host names where available.
+
 ## 8.0.56 - 2026-11-24
 
 <!-- npm-release:unreleased:start -->

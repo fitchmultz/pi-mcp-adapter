@@ -6,18 +6,27 @@ import { getAuthStorageOptions } from "./mcp-auth.ts";
 import { updateStatusBar } from "./init.ts";
 import { resolveServerUrl, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
+
+export function authEligibility(definition: ServerEntry): "eligible" | "disabled" | "unsupported" {
+  if (isServerDisabled(definition)) {
+    return "disabled";
+  }
+  return supportsOAuth(definition) ? "eligible" : "unsupported";
+}
+
 function authPreconditionFailure(
   serverName: string,
   definition: ServerEntry,
   ui: ExtensionContext["ui"],
 ): McpAuthResult | undefined {
-  if (isServerDisabled(definition)) {
+  const eligibility = authEligibility(definition);
+  if (eligibility === "disabled") {
     const message = `Server "${serverName}" is disabled. Run /mcp enable ${serverName}, then /reload.`;
     ui.notify(message, "warning");
     return { ok: false, message };
   }
 
-  if (!supportsOAuth(definition)) {
+  if (eligibility === "unsupported") {
     const message = `Server "${serverName}" does not use OAuth authentication. Set "auth": "oauth" or omit auth for auto-detection.`;
     ui.notify(
       `Server "${serverName}" does not use OAuth authentication.\n` +
