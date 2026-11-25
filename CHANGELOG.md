@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.57 - 2026-11-25
+
+<!-- npm-release:unreleased:start -->
+
 - Raise the Pi support floor to `1.6.1`. Use Pi's fuzzy matcher for `/mcp` and add `/mcp-auth` completions for enabled OAuth-capable servers, with host names where available.
+
+<!-- npm-release:unreleased:end -->
+
+- chore: enforce 2-day npm min-release-age cooldown (#286) ([8a7d863](https://github.com/fitchmultz/pi-mcp-adapter/commit/8a7d863128d3218ae6f1dc319b09744c584d30f6))
+
+### What's Changed
+
+- chore: enforce 2-day npm min-release-age cooldown by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/286
+- Raise the Pi floor to 1.6.1 and use native MCP completions by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/287
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.56...v8.0.57
 
 ## 8.0.56 - 2026-11-24
 
