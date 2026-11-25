@@ -9,7 +9,7 @@ import {
   vi,
   type MockInstance,
 } from "vitest";
-import type { Client } from "@modelcontextprotocol/client";
+import { type Client, ProtocolErrorCode } from "@modelcontextprotocol/client";
 import type { ServerConnection } from "../server-manager.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
@@ -33,7 +33,10 @@ afterAll(async () => {
   await host.dispose();
 });
 
-async function recoveryFixture(kind: "terminated" | "uninitialized", repeat = false) {
+async function recoveryFixture(
+  kind: "terminated" | "uninitialized" | "invalid-arguments" | "rate-limited",
+  repeat = false,
+) {
   let sessions = 0;
   const toolCallSessionIds: string[] = [];
   const http = new MachineHttpServer(async (request, response) => {
@@ -52,6 +55,18 @@ async function recoveryFixture(kind: "terminated" | "uninitialized", repeat = fa
     if (message.method === "tools/call") {
       const session = request.headers["mcp-session-id"];
       toolCallSessionIds.push(Array.isArray(session) ? (session[0] ?? "") : (session ?? ""));
+      if (kind === "rate-limited") {
+        machineJson(response, { error: "Too Many Requests" }, 429);
+        return;
+      }
+      if (kind === "invalid-arguments") {
+        machineJson(response, {
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: ProtocolErrorCode.InvalidParams, message: "Missing key: query" },
+        });
+        return;
+      }
       if (toolCallSessionIds.length === 1 || repeat) {
         if (kind === "terminated") {
           machineJson(response, { error: "Session not found" }, 404);
@@ -161,6 +176,21 @@ describe("session recovery — Streamable HTTP wire path", () => {
 });
 
 describe("session recovery — proxy path (proxy-modes.ts executeCall)", () => {
+  it.each([
+    { kind: "invalid-arguments", message: "Missing key: query", hint: true },
+    { kind: "rate-limited", message: "Too Many Requests", hint: false },
+  ] as const)("returns $kind from the wire without reconnect or replay", async (test) => {
+    const fixture = await recoveryFixture(test.kind);
+    const result = await executeCall(fixture.state, { toolName: "demo_search", args: {} });
+
+    expect(fixture.toolCallSessionIds).toEqual(["session-1"]);
+    expect(fixture.reconnect).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ isError: true, details: { error: "call_failed" } });
+    expect(firstText(result)).toContain(test.message);
+    expect(firstText(result).includes("Expected parameters:")).toBe(test.hint);
+    expect(result.details.message).not.toContain("Expected parameters:");
+  });
+
   it.each([
     {
       label: "recovers a terminated Streamable HTTP session transparently mid tool-call",

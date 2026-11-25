@@ -101,6 +101,24 @@ describe("MCP catalog registration", () => {
     expect(definition(guardedHost, "demo_search").executionMode).toBe("sequential");
   });
 
+  it("advertises the codemode text contract only for tools without an output schema", async () => {
+    const h = await host();
+    const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
+    const entries = cache();
+    const other = requireEntry(entries, "other");
+    other.tools = [{ name: "raw-search", inputSchema: schema }];
+    loader.sync(config, entries);
+
+    expect(definition(h, "demo_search").description).toBe("search");
+    const unstructured = definition(h, "other_raw-search");
+    expect(unstructured.outputSchema).toBeUndefined();
+    expect(unstructured.description).toMatch(/Codemode:.*display text.*50 KiB.*not raw JSON/);
+    expect(unstructured.description).toContain(
+      'tools.mcp({ action: "call", server: "other", tool: "raw-search", args, format: "structured" })',
+    );
+    expect(unstructured.description).toMatch(/read-result.*\.text/);
+  });
+
   it("re-registers a tool when its pin, schema or server instructions change", async () => {
     const h = await host();
     const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });

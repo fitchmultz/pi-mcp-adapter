@@ -8,13 +8,28 @@ import {
 import { renderMcpResultContent } from "./tool-registrar.ts";
 import type { UiSessionResultSummary } from "./ui-session.ts";
 import type { ProxyToolResult } from "./proxy-result.ts";
+import type { ToolMetadata } from "./types.ts";
+import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
+import { formatSchema } from "./tool-metadata.ts";
+
+// Match the leading diagnostic, not provider messages that quote validation terms inside an API error.
+const INPUT_VALIDATION =
+  /^(?:error:\s*)?(?:(?:input|argument|parameter|schema) validation error\b|validation error(?::|$)|validating "(?:arguments|params)":|(?:invalid|missing|unrecognized|unknown|unexpected) (?:required )?(?:arguments?|params?|parameters?|keys?|fields?|enum(?: value)?|types?)\b)/i;
+
+export function inputValidationHint(
+  schema: ToolMetadata["inputSchema"],
+  diagnostic: string,
+): string {
+  return schema && INPUT_VALIDATION.test(diagnostic.trimStart())
+    ? `\n\nExpected parameters:\n${formatSchema(schema)}`
+    : "";
+}
 
 interface CallResultRequest {
-  target: { resourceUri?: string; uiResourceUri?: string };
+  target: Pick<ToolMetadata, "resourceUri" | "inputSchema">;
   uiSummary: UiSessionResultSummary | undefined;
   detailsBase: Record<string, unknown>;
   outputGuardOptions: McpOutputGuardOptions;
-  schemaSuffix: () => string;
 }
 export async function toolCallResult(
   result: Record<string, unknown>,
@@ -61,7 +76,7 @@ async function renderedCallResult(
     {
       ...request.outputGuardOptions,
       retainedMcpResult: retained,
-      ...resultAffixes(record.isError === true, request, uiSummary),
+      ...resultAffixes(record, request, uiSummary),
     },
   );
   return {
@@ -72,14 +87,21 @@ async function renderedCallResult(
 }
 
 function resultAffixes(
-  isError: boolean,
+  result: Record<string, unknown>,
   request: CallResultRequest,
   uiSummary: UiSessionResultSummary | undefined,
 ): McpOutputGuardOptions {
-  if (isError) {
+  if (result.isError === true) {
+    const blocks = result.content;
+    const diagnostic = isUnknownArray(blocks)
+      ? blocks.map(asObjectRecord).find((block) => block?.type === "text")?.text
+      : undefined;
     return {
       prefix: "Error: ",
-      suffix: request.schemaSuffix(),
+      suffix:
+        typeof diagnostic === "string"
+          ? inputValidationHint(request.target.inputSchema, diagnostic)
+          : "",
       emptyTextFallback: "Tool execution failed",
     };
   }

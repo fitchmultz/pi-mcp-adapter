@@ -11,7 +11,6 @@ import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import type { UiSessionRuntime } from "./ui-session.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { formatSchema } from "./tool-metadata.ts";
 import {
   guardMcpOutput,
   guardedMcpDetails,
@@ -19,7 +18,7 @@ import {
   resolveMcpOutputGuardOptions,
   formatMcpResultReference,
 } from "./mcp-output-guard.ts";
-import { toolCallResult } from "./proxy-call-result.ts";
+import { inputValidationHint, toolCallResult } from "./proxy-call-result.ts";
 /** The part of a tool call that is identical for proxy and direct tools. */
 type ToolCallTarget = Pick<
   ToolMetadata,
@@ -88,12 +87,6 @@ class ToolCallRuntime {
       tool: target.originalName,
       ...(options.toolCallId !== undefined ? { toolCallId: options.toolCallId } : {}),
     };
-  }
-  private schemaSuffix(): string {
-    const { target } = this.request;
-    return target.inputSchema
-      ? `\n\nExpected parameters:\n${formatSchema(target.inputSchema)}`
-      : "";
   }
   private async capture(event: McpToolCallEvent): Promise<void> {
     const { state } = this.request;
@@ -257,7 +250,6 @@ class ToolCallRuntime {
           : undefined,
         detailsBase: options.detailsBase,
         outputGuardOptions: this.outputGuardOptions,
-        schemaSuffix: () => this.schemaSuffix(),
       });
     } catch (error) {
       if (this.beforeDispatchPending) {
@@ -362,12 +354,18 @@ class ToolCallRuntime {
     };
   }
   private async genericFailure(error: unknown): Promise<ProxyToolResult> {
+    const { sdk } = this.deps;
     const message = error instanceof Error ? error.message : String(error);
+    const invalidParamsCode: number = sdk.ProtocolErrorCode.InvalidParams;
+    const suffix =
+      error instanceof sdk.ProtocolError && error.code === invalidParamsCode
+        ? inputValidationHint(this.request.target.inputSchema, message)
+        : "";
     this.uiSession?.sendToolCancelled(message);
     const guarded = await guardMcpOutput([{ type: "text", text: message }], {
       ...this.outputGuardOptions,
       prefix: "Failed to call tool: ",
-      suffix: this.schemaSuffix(),
+      suffix,
     });
     return {
       content: guarded.content,

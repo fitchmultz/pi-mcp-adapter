@@ -109,6 +109,15 @@ function nativeAnnotations(
   };
 }
 
+function catalogDescription(spec: DirectToolSpec): string {
+  const description = spec.description === "" ? "(no description)" : spec.description;
+  if (spec.outputSchema) {
+    return description;
+  }
+  const call = `tools.mcp({ action: "call", server: ${JSON.stringify(spec.serverName)}, tool: ${JSON.stringify(spec.originalName)}, args, format: "structured" })`;
+  return `${description}\n\nCodemode: Returns display text (50 KiB by default), not raw JSON. For structured or large data, use \`${call}\`. For saved JSON, join structured \`read-result\` pages' \`.text\` before parsing.`;
+}
+
 /**
  * Pinned tools are direct tools that the loader activates itself (see `Loader.activatePins`). Other
  * catalog tools register with deferred exposure: Pi lists them for tool_search and codemode and
@@ -134,7 +143,7 @@ export function catalogDefinition(
     ...(pinned ? { defaultActive: false } : { exposure: "deferred" }),
     ...(dependencies.beforeExecute ? { executionMode: "sequential" } : {}),
     label: spec.title ?? `MCP: ${spec.originalName}`,
-    description: spec.description === "" ? "(no description)" : spec.description,
+    description: catalogDescription(spec),
     parameters: Type.Unsafe<Record<string, unknown>>(
       normalizeDirectToolInputSchema(spec.inputSchema),
     ),

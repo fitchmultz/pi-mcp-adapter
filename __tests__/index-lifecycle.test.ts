@@ -271,8 +271,9 @@ describe("mcpAdapter session lifecycle", () => {
     state.toolMetadata.set("demo", [{ ...tool, description: "Search v2" }]);
     await requireValue(state.onToolMetadataUpdated)("demo", "tools-list-changed");
     expect(spies.registerTool).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "demo_search", description: "Search v2" }),
+      expect.objectContaining({ name: "demo_search" }),
     );
+    expect(registeredTool("demo_search").description).toMatch(/^Search v2\n/);
     expect(registeredTool("demo_search")).not.toHaveProperty("exposure");
     expect(api.getActiveTools()).toContain("demo_search");
   });
@@ -1749,7 +1750,7 @@ describe("mcpAdapter session lifecycle", () => {
       expect(firstOwner.isActive()).toBe(false);
       expect(spies.registerTool).not.toHaveBeenCalled();
       expect(spies.setActiveTools).not.toHaveBeenCalled();
-      expect(registeredTool("demo_search").description).toBe("Search");
+      expect(registeredTool("demo_search").description).toMatch(/^Search\n/);
       expect(api.getActiveTools()).not.toContain("demo_extra");
 
       // Changed effective config in another cwd: unfreezes and resyncs tool declarations for the new project.
@@ -1816,7 +1817,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(spies.registerTool).not.toHaveBeenCalled();
     expect(spies.setActiveTools).not.toHaveBeenCalled();
     expect(mocks.loadMetadataCache).not.toHaveBeenCalled();
-    expect(registeredTool("demo_search").description).toBe("Search");
+    expect(registeredTool("demo_search").description).toMatch(/^Search\n/);
     expect(api.getActiveTools()).not.toContain("demo_extra");
   });
 
