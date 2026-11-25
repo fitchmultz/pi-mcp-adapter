@@ -1207,12 +1207,13 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.shutdownOAuth).toHaveBeenCalledTimes(1);
   });
 
-  it("completes current `/mcp` subcommands and server arguments", async () => {
+  it("fuzzy-matches `/mcp` subcommands and eligible server arguments", async () => {
     const state = createState();
     state.config.mcpServers = {
-      github: { command: "github-mcp" },
-      gitlab: { command: "gitlab-mcp" },
+      github: { url: "https://github.example.test/mcp" },
+      gitlab: { url: "https://gitlab.example.test/mcp" },
       notion: { command: "notion-mcp" },
+      legacy: { command: "legacy-mcp", disabled: true },
     };
     mocks.initializeMcp.mockResolvedValue(state);
 
@@ -1230,25 +1231,32 @@ describe("mcpAdapter session lifecycle", () => {
     expect(
       requireValue(await commandDef.getArgumentCompletions("")).map(({ value }) => value),
     ).toEqual(["reconnect", "tools", "prompts", "setup", "logout", "disable", "enable", "status"]);
-    expect(await commandDef.getArgumentCompletions("st")).toEqual([
-      { value: "status", label: "status — Show server status" },
+    expect(await commandDef.getArgumentCompletions("STTS")).toEqual([
+      { value: "status", label: "status", description: "Show server status" },
     ]);
     expect(await commandDef.getArgumentCompletions("reconnect ")).toEqual([
       { value: "reconnect github", label: "github" },
       { value: "reconnect gitlab", label: "gitlab" },
       { value: "reconnect notion", label: "notion" },
     ]);
-    expect(await commandDef.getArgumentCompletions("  logout git")).toEqual([
+    expect(await commandDef.getArgumentCompletions("  logout ")).toEqual([
       { value: "logout github", label: "github" },
       { value: "logout gitlab", label: "gitlab" },
     ]);
-    expect(await commandDef.getArgumentCompletions("disable git")).toEqual([
+    expect(await commandDef.getArgumentCompletions("disable GHB")).toEqual([
       { value: "disable github", label: "github" },
-      { value: "disable gitlab", label: "gitlab" },
     ]);
-    expect(await commandDef.getArgumentCompletions("enable not")).toEqual([
-      { value: "enable notion", label: "notion" },
+    expect(await commandDef.getArgumentCompletions("enable lgcy")).toEqual([
+      { value: "enable legacy", label: "legacy" },
     ]);
+    expect(await commandDef.getArgumentCompletions("enable GHB")).toEqual([
+      { value: "enable github", label: "github" },
+    ]);
+    expect(await commandDef.getArgumentCompletions("disable lgcy")).toEqual([
+      { value: "disable legacy", label: "legacy" },
+    ]);
+    expect(await commandDef.getArgumentCompletions("missing")).toBeNull();
+    expect(await commandDef.getArgumentCompletions("reconnect missing")).toBeNull();
     expect(await commandDef.getArgumentCompletions("tools anything")).toBeNull();
     expect(spies.registerCommand.mock.calls.some((call) => call[0] === "mcp-reconnect")).toBe(
       false,
@@ -1303,10 +1311,12 @@ describe("mcpAdapter session lifecycle", () => {
       { value: "corp", label: "corp", description: "OAuth" },
       { value: "corpPending", label: "corpPending", description: "OAuth (needs auth)" },
     ]);
-    expect(await authCommand.getArgumentCompletions("sen")).toEqual([
+    expect(await authCommand.getArgumentCompletions("SNTR")).toEqual([
       { value: "sentry", label: "sentry", description: "OAuth — mcp.sentry.dev" },
     ]);
-    expect(await authCommand.getArgumentCompletions("linear ")).toBeNull();
+    expect(await authCommand.getArgumentCompletions("linear ")).toEqual([
+      { value: "linear", label: "linear", description: "needs auth — mcp.linear.app" },
+    ]);
     expect(await authCommand.getArgumentCompletions("missing")).toBeNull();
   });
 

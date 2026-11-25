@@ -3,7 +3,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { fuzzyFilter, type AutocompleteItem } from "@earendil-works/pi-tui";
 import type { McpExtensionState } from "./state.ts";
 import type { McpAdapterHost } from "./host-contract.ts";
 import * as commands from "./commands.ts";
@@ -11,8 +11,20 @@ import { createOwnedUi, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { writeProjectServerDisabledOverride } from "./config.ts";
 import { supportsOAuth } from "./mcp-oauth-runtime.ts";
 import { isServerDisabled, type ServerEntry } from "./types.ts";
+import { hasServerUrl } from "./utils.ts";
 
 const ENV_PLACEHOLDER_PATTERN = /\$\{\w+\}|\$env:\w+|\{env:\w+\}/;
+
+const MCP_SUBCOMMANDS: AutocompleteItem[] = [
+  { value: "reconnect", label: "reconnect", description: "Reconnect servers" },
+  { value: "tools", label: "tools", description: "List all tools" },
+  { value: "prompts", label: "prompts", description: "List all MCP prompts" },
+  { value: "setup", label: "setup", description: "Configure MCP servers" },
+  { value: "logout", label: "logout", description: "Clear server credentials" },
+  { value: "disable", label: "disable", description: "Disable a server" },
+  { value: "enable", label: "enable", description: "Enable a server" },
+  { value: "status", label: "status", description: "Show server status" },
+];
 
 type Command = {
   state: McpExtensionState;
@@ -22,6 +34,11 @@ type Command = {
   rest: string;
   target: string | undefined;
 };
+
+function fuzzyCompletions(items: AutocompleteItem[], query: string): AutocompleteItem[] | null {
+  const matches = fuzzyFilter(items, query, (item) => item.label);
+  return matches.length > 0 ? matches : null;
+}
 
 function snapshotContext(ctx: ExtensionContext, owner: McpRuntimeOwner | null): ExtensionContext {
   const trusted = ctx.isProjectTrusted();
@@ -102,30 +119,30 @@ export class McpHostCommands {
     const normalized = prefix.trimStart();
     const match = normalized.match(/^(\S+)\s+(.*)$/);
     if (!match) {
-      const completions = [
-        { value: "reconnect", label: "reconnect — Reconnect servers" },
-        { value: "tools", label: "tools — List all tools" },
-        { value: "prompts", label: "prompts — List all MCP prompts" },
-        { value: "setup", label: "setup — Configure MCP servers" },
-        { value: "logout", label: "logout — Clear server credentials" },
-        { value: "disable", label: "disable — Disable a server" },
-        { value: "enable", label: "enable — Enable a server" },
-        { value: "status", label: "status — Show server status" },
-      ].filter(({ value }) => value.startsWith(normalized));
-      return completions.length > 0 ? completions : null;
+      return fuzzyCompletions(MCP_SUBCOMMANDS, normalized);
     }
-    const [, subcommand, argumentPrefix] = match;
+    const [, subcommand, query] = match;
+    const state = this.host.state;
     if (
-      !this.host.state ||
-      argumentPrefix === undefined ||
-      !["reconnect", "logout", "disable", "enable"].includes(subcommand ?? "")
+      !state ||
+      subcommand === undefined ||
+      query === undefined ||
+      !["reconnect", "logout", "disable", "enable"].includes(subcommand)
     ) {
       return null;
     }
-    const servers = Object.keys(this.host.state.config.mcpServers)
-      .filter((name) => name.startsWith(argumentPrefix.trimStart()))
-      .map((name) => ({ value: `${subcommand ?? ""} ${name}`, label: name }));
-    return servers.length > 0 ? servers : null;
+    const servers = Object.entries(state.config.mcpServers)
+      .filter(([, definition]) => {
+        if (subcommand === "reconnect") {
+          return !isServerDisabled(definition);
+        }
+        if (subcommand === "logout") {
+          return hasServerUrl(definition);
+        }
+        return true;
+      })
+      .map(([name]) => ({ value: `${subcommand} ${name}`, label: name }));
+    return fuzzyCompletions(servers, query);
   }
 
   private completeAuth(prefix: string): AutocompleteItem[] | null {
@@ -133,13 +150,9 @@ export class McpHostCommands {
     if (!state) {
       return null;
     }
-    const normalized = prefix.trimStart();
     const servers: AutocompleteItem[] = [];
     for (const [name, definition] of Object.entries(state.config.mcpServers)) {
       if (isServerDisabled(definition) || !supportsOAuth(definition)) {
-        continue;
-      }
-      if (!name.startsWith(normalized)) {
         continue;
       }
       servers.push({
@@ -148,7 +161,7 @@ export class McpHostCommands {
         description: describeAuthServer(state, name, definition),
       });
     }
-    return servers.length > 0 ? servers : null;
+    return fuzzyCompletions(servers, prefix);
   }
 
   private async execute(args: string, original: ExtensionCommandContext): Promise<void> {

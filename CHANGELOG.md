@@ -5,10 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## Unreleased
 
-- Raise the Pi support floor and locked development packages to Pi `1.6.1`.
-- Add `/mcp-auth` argument auto-completion for enabled OAuth-capable MCP servers with live connection status and server host descriptions.
+- Raise the Pi support floor to `1.6.1`. Use Pi's fuzzy matcher for `/mcp` and add `/mcp-auth` completions for enabled OAuth-capable servers.
 
 ## 8.0.56 - 2026-11-24
 
