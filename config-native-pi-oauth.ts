@@ -1,4 +1,4 @@
-import type { OAuthConfig } from "./config-types.ts";
+import type { McpConfig, OAuthConfig, ServerEntry } from "./config-types.ts";
 import { isConfigObject } from "./config-validation.ts";
 
 export interface NativeEntryContext {
@@ -177,21 +177,59 @@ function buildMappedOAuth(
   return oauth;
 }
 
-const ADAPTER_ONLY_TOP_LEVEL_KEYS = ["settings", "imports"] as const;
-const ADAPTER_ONLY_SERVER_KEYS = [
-  "disabled",
-  "directTools",
-  "socket",
-  "includeTools",
-  "excludeTools",
-  "lifecycle",
-  "idleTimeout",
-  "requestTimeoutMs",
-  "debug",
-  "bearerToken",
-  "bearerTokenEnv",
-] as const;
-const ADAPTER_ONLY_OAUTH_KEYS = ["redirectUri", "clientMetadataUrl"] as const;
+type NativeSharedServerKey =
+  | "command"
+  | "args"
+  | "env"
+  | "cwd"
+  | "url"
+  | "headers"
+  | "oauth"
+  | "auth";
+type AdapterOnlyServerKey = Exclude<keyof ServerEntry, NativeSharedServerKey>;
+const ADAPTER_ONLY_SERVER_KEY_MAP: Record<AdapterOnlyServerKey, true> = {
+  socket: true,
+  protocolVersion: true,
+  retryOnTransportFailure: true,
+  bearerToken: true,
+  bearerTokenEnv: true,
+  lifecycle: true,
+  idleTimeout: true,
+  requestTimeoutMs: true,
+  exposeResources: true,
+  directTools: true,
+  toolPrefix: true,
+  includeTools: true,
+  excludeTools: true,
+  approveTools: true,
+  uiViewer: true,
+  uiToolConsent: true,
+  debug: true,
+  trace: true,
+  disabled: true,
+};
+const ADAPTER_ONLY_SERVER_KEYS = Object.keys(ADAPTER_ONLY_SERVER_KEY_MAP);
+
+type NativeSharedOAuthKey = "clientId" | "clientSecret" | "scope" | "clientName";
+type AdapterOnlyOAuthKey = Exclude<keyof OAuthConfig, NativeSharedOAuthKey>;
+const ADAPTER_ONLY_OAUTH_KEY_MAP: Record<AdapterOnlyOAuthKey, true> = {
+  skipIssuerMetadataValidation: true,
+  grantType: true,
+  privateKeyJwt: true,
+  crossAppAccess: true,
+  authorizationParams: true,
+  redirectUri: true,
+  clientUri: true,
+  clientMetadataUrl: true,
+};
+const ADAPTER_ONLY_OAUTH_KEYS = Object.keys(ADAPTER_ONLY_OAUTH_KEY_MAP);
+
+type AdapterOnlyTopLevelKey = Exclude<keyof McpConfig, "mcpServers">;
+const ADAPTER_ONLY_TOP_LEVEL_KEY_MAP: Record<AdapterOnlyTopLevelKey, true> = {
+  imports: true,
+  settings: true,
+};
+const ADAPTER_ONLY_TOP_LEVEL_KEYS = Object.keys(ADAPTER_ONLY_TOP_LEVEL_KEY_MAP);
 
 export function findAdapterOnlyTopLevelKeys(raw: Record<string, unknown>): string[] {
   return ADAPTER_ONLY_TOP_LEVEL_KEYS.filter((key) => Object.hasOwn(raw, key));
@@ -204,8 +242,11 @@ export function findAdapterOnlyServerKeys(raw: Record<string, unknown>): string[
       found.push(key);
     }
   }
-  if (typeof raw.auth === "string") {
+  if (typeof raw.auth === "string" || raw.auth === false) {
     found.push("auth");
+  }
+  if (raw.oauth === false || raw.oauth === null) {
+    found.push("oauth");
   }
   if (isConfigObject(raw.oauth)) {
     for (const key of ADAPTER_ONLY_OAUTH_KEYS) {

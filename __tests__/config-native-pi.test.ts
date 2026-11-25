@@ -321,6 +321,17 @@ describe("native Pi project .pi/mcp.json support", () => {
         legacyAdapterSocket: {
           socket: "/tmp/legacy.sock",
         },
+        legacyAdapterApproveTools: {
+          command: "uv",
+          approveTools: true,
+        },
+        legacyAdapterGrantType: {
+          url: "https://mcp.example.com/client-creds",
+          oauth: {
+            grantType: "client_credentials",
+            authorizationParams: { audience: "https://api.example.com" },
+          },
+        },
       },
     });
 
@@ -380,6 +391,8 @@ describe("native Pi project .pi/mcp.json support", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("badEnvValue"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("legacyAdapterDisabled"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("legacyAdapterSocket"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("legacyAdapterApproveTools"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("legacyAdapterGrantType"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("oauth.authServerMetadataUrl"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("oauth.callbackUrl without a port"));
   });
