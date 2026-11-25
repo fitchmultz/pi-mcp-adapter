@@ -267,7 +267,7 @@ function liveServers(lifecycle: "eager" | "lazy") {
 }
 
 describe("cached tool surface through Pi SessionManager", () => {
-  it("marks connection backoff as an error for direct, plain gateway, and structured calls", async () => {
+  it("marks connection backoff as an error for direct, plain gateway, structured, and resources calls", async () => {
     const h = await harness();
     try {
       const tools = h.session.agent.state.tools;
@@ -301,6 +301,32 @@ describe("cached tool surface through Pi SessionManager", () => {
     } finally {
       await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
       h.session.dispose();
+    }
+    // Gateway resources on an uncached server also preserves server_backoff isError through present().
+    const uncached = await harness(Date.now(), resolve("index.ts"), {
+      uncached: { command: "synthetic-never-started", args: [], lifecycle: "lazy" },
+    });
+    try {
+      const tools = uncached.session.agent.state.tools;
+      const gateway = tools.find((candidate) => candidate.name === "mcp");
+      assert.ok(gateway);
+      const connect = await gateway.execute("failed-connect-uncached", {
+        action: "connect",
+        server: "uncached",
+      });
+      expect(connect.details).toMatchObject({ error: "connect_failed" });
+      const resources = await gateway.execute("resources-backoff", {
+        action: "resources",
+        server: "uncached",
+      });
+      expect(resources).toMatchObject({
+        isError: true,
+        details: { error: "server_backoff", dispatched: false, server: "uncached" },
+      });
+      expect(resultText(resources)).toContain("No call was dispatched.");
+    } finally {
+      await uncached.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      uncached.session.dispose();
     }
   });
 

@@ -42,6 +42,7 @@ async function present(ready: McpExtensionState, result: GatewayResult): Promise
   return {
     content: guarded.content,
     details: { ...result.details, ...guardedMcpDetails(guarded) },
+    ...(result.isError === true ? { isError: true } : {}),
   };
 }
 

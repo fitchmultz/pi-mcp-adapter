@@ -261,6 +261,7 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.resolve();
     expect(api.getActiveTools()).toContain("demo_search");
     expect(api.getActiveTools()).not.toContain("mcp");
+    expect(registeredTool("demo_search").description).not.toContain("tools.mcp(");
     state.toolMetadata.set("demo", []);
     mocks.buildProxyDescription.mockReturnValue("MCP gateway refreshed");
     await requireValue(state.onToolMetadataUpdated)("demo", "tools-list-changed");
@@ -274,6 +275,7 @@ describe("mcpAdapter session lifecycle", () => {
       expect.objectContaining({ name: "demo_search" }),
     );
     expect(registeredTool("demo_search").description).toMatch(/^Search v2\n/);
+    expect(registeredTool("demo_search").description).not.toContain("tools.mcp(");
     expect(registeredTool("demo_search")).not.toHaveProperty("exposure");
     expect(api.getActiveTools()).toContain("demo_search");
   });
@@ -297,12 +299,13 @@ describe("mcpAdapter session lifecycle", () => {
     mocks.loadMcpConfig.mockReturnValue(config);
     mocks.initializeMcp.mockResolvedValue(state);
     const { default: adapter } = await import("../index.ts");
-    const { api, spies, handlers } = await createPi();
+    const { api, spies, handlers, tool: registeredTool } = await createPi();
     adapter(api);
     await handlers.get("session_start")({}, {});
     await Promise.resolve();
     expect(api.getActiveTools()).toContain("demo_search");
     expect(api.getActiveTools()).toContain("mcp");
+    expect(registeredTool("demo_search").description).toContain("tools.mcp(");
     expect(spies.registerTool).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: "demo_read_doc" }),
     );

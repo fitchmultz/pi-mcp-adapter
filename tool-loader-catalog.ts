@@ -109,10 +109,13 @@ function nativeAnnotations(
   };
 }
 
-function catalogDescription(spec: DirectToolSpec): string {
+function catalogDescription(spec: DirectToolSpec, gatewayAvailable: boolean): string {
   const description = spec.description === "" ? "(no description)" : spec.description;
   if (spec.outputSchema) {
     return description;
+  }
+  if (!gatewayAvailable) {
+    return `${description}\n\nCodemode: Returns display text (50 KiB by default), not raw JSON.`;
   }
   const call = `tools.mcp({ action: "call", server: ${JSON.stringify(spec.serverName)}, tool: ${JSON.stringify(spec.originalName)}, args, format: "structured" })`;
   return `${description}\n\nCodemode: Returns display text (50 KiB by default), not raw JSON. For structured or large data, use \`${call}\`. For saved JSON, join structured \`read-result\` pages' \`.text\` before parsing.`;
@@ -127,11 +130,12 @@ export function catalogDefinition(
   spec: DirectToolSpec,
   instructions: string | undefined,
   dependencies: LoaderDependencies,
-  pinned: boolean,
+  options: { pinned: boolean; gatewayAvailable: boolean },
 ): ToolDefinition<
   ReturnType<typeof Type.Unsafe<Record<string, unknown>>>,
   Record<string, unknown>
 > {
+  const { pinned, gatewayAvailable } = options;
   return {
     name: spec.prefixedName,
     namespace: {
@@ -143,7 +147,7 @@ export function catalogDefinition(
     ...(pinned ? { defaultActive: false } : { exposure: "deferred" }),
     ...(dependencies.beforeExecute ? { executionMode: "sequential" } : {}),
     label: spec.title ?? `MCP: ${spec.originalName}`,
-    description: catalogDescription(spec),
+    description: catalogDescription(spec, gatewayAvailable),
     parameters: Type.Unsafe<Record<string, unknown>>(
       normalizeDirectToolInputSchema(spec.inputSchema),
     ),
