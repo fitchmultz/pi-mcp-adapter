@@ -142,7 +142,7 @@ export class McpHostCommands {
         return true;
       })
       .map(([name]) => ({ value: `${subcommand} ${name}`, label: name }));
-    return fuzzyCompletions(servers, query);
+    return fuzzyCompletions(servers, query.trimStart());
   }
 
   private completeAuth(prefix: string): AutocompleteItem[] | null {
@@ -161,7 +161,7 @@ export class McpHostCommands {
         description: describeAuthServer(state, name, definition),
       });
     }
-    return fuzzyCompletions(servers, prefix);
+    return fuzzyCompletions(servers, prefix.trimStart());
   }
 
   private async execute(args: string, original: ExtensionCommandContext): Promise<void> {

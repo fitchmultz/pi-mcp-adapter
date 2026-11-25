@@ -1210,7 +1210,7 @@ describe("mcpAdapter session lifecycle", () => {
   it("fuzzy-matches `/mcp` subcommands and eligible server arguments", async () => {
     const state = createState();
     state.config.mcpServers = {
-      github: { url: "https://github.example.test/mcp" },
+      github: { url: "https://github.example.test/mcp", auth: false },
       gitlab: { url: "https://gitlab.example.test/mcp" },
       notion: { command: "notion-mcp" },
       legacy: { command: "legacy-mcp", disabled: true },
@@ -1243,7 +1243,7 @@ describe("mcpAdapter session lifecycle", () => {
       { value: "logout github", label: "github" },
       { value: "logout gitlab", label: "gitlab" },
     ]);
-    expect(await commandDef.getArgumentCompletions("disable GHB")).toEqual([
+    expect(await commandDef.getArgumentCompletions("  disable   GHB")).toEqual([
       { value: "disable github", label: "github" },
     ]);
     expect(await commandDef.getArgumentCompletions("enable lgcy")).toEqual([
@@ -1311,7 +1311,7 @@ describe("mcpAdapter session lifecycle", () => {
       { value: "corp", label: "corp", description: "OAuth" },
       { value: "corpPending", label: "corpPending", description: "OAuth (needs auth)" },
     ]);
-    expect(await authCommand.getArgumentCompletions("SNTR")).toEqual([
+    expect(await authCommand.getArgumentCompletions("  SNTR")).toEqual([
       { value: "sentry", label: "sentry", description: "OAuth — mcp.sentry.dev" },
     ]);
     expect(await authCommand.getArgumentCompletions("linear ")).toEqual([
