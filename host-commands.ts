@@ -54,7 +54,11 @@ function snapshotContext(ctx: ExtensionContext, owner: McpRuntimeOwner | null): 
 function configuredHost(definition: ServerEntry): string | undefined {
   try {
     const url = resolveServerUrl(definition);
-    return url === undefined ? undefined : new URL(url).host || undefined;
+    if (url === undefined) {
+      return undefined;
+    }
+    const { host } = new URL(url);
+    return host === "" ? undefined : host;
   } catch {
     return undefined;
   }
