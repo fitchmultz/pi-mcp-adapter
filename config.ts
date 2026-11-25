@@ -85,7 +85,7 @@ export function getMcpDiscoverySummary(
     exists: existsSync(source.readPath),
     scope: source.scope,
     kind: source.shared ? "shared" : "pi",
-    serverCount: loaded ? Object.keys(loaded.mcpServers).length : 0,
+    serverCount: loaded ? Object.keys(loaded.config.mcpServers).length : 0,
   })) satisfies ConfigDiscoverySource[];
 
   const imports = Object.keys(IMPORT_PATHS)
@@ -139,7 +139,7 @@ export function getMcpDiscoverySummary(
 
 interface LoadedConfigSource {
   source: ConfigSourceSpec;
-  loaded: McpConfig | null;
+  loaded: ReturnType<typeof readConfigSource>;
 }
 
 function loadDiscoverySources(
@@ -152,7 +152,11 @@ function loadDiscoverySources(
   return sourceSpecs.map((source) => {
     const loaded = readConfigSource(source, cwd, merged.mcpServers);
     if (loaded) {
-      merged = mergeConfigs(merged, expandImports(loaded, cwd, true));
+      merged = mergeConfigs(
+        merged,
+        expandImports(loaded.config, cwd, true),
+        loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
+      );
     }
     return { source, loaded };
   });
@@ -185,7 +189,11 @@ export function loadMcpConfig(
     if (!loaded) {
       continue;
     }
-    config = mergeConfigs(config, expandImports(loaded, cwd, includeProject));
+    config = mergeConfigs(
+      config,
+      expandImports(loaded.config, cwd, includeProject),
+      loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
+    );
   }
 
   return config;
@@ -267,12 +275,12 @@ function getConfigConflicts(
     if (!loaded) {
       continue;
     }
-    for (const imported of importedServerSources(loaded.imports ?? [], cwd)) {
+    for (const imported of importedServerSources(loaded.config.imports ?? [], cwd)) {
       for (const name of imported.names) {
         record(name, { kind: "host", path: imported.path });
       }
     }
-    for (const name of Object.keys(loaded.mcpServers)) {
+    for (const name of Object.keys(loaded.config.mcpServers)) {
       record(name, {
         kind: source.shared ? "shared" : "pi",
         path: source.readPath,
@@ -332,7 +340,7 @@ function detectRepoPrompt(
     if (!source.shared || !loaded) {
       continue;
     }
-    for (const [name, entry] of Object.entries(loaded.mcpServers)) {
+    for (const [name, entry] of Object.entries(loaded.config.mcpServers)) {
       if (isRepoPromptServer(name, entry)) {
         return { configured: true, configuredPath: source.readPath };
       }
@@ -387,9 +395,13 @@ export function getServerProvenance(
     if (!loaded) {
       continue;
     }
-    merged = mergeConfigs(merged, expandImports(loaded, cwd, true));
-    addInheritedProvenance(provenance, loaded.imports ?? [], userPath, cwd);
-    addSourceServerProvenance(provenance, source, Object.keys(loaded.mcpServers));
+    merged = mergeConfigs(
+      merged,
+      expandImports(loaded.config, cwd, true),
+      loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
+    );
+    addInheritedProvenance(provenance, loaded.config.imports ?? [], userPath, cwd);
+    addSourceServerProvenance(provenance, source, Object.keys(loaded.config.mcpServers));
   }
 
   return provenance;

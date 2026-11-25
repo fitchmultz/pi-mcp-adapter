@@ -127,15 +127,21 @@ export function readValidatedConfig(path: string, label: string): McpConfig | nu
   }
 }
 
+export interface LoadedSourceConfig {
+  readonly config: McpConfig;
+  readonly replacedServers?: ReadonlySet<string>;
+}
+
 export function readConfigSource(
   source: ConfigSourceSpec,
   cwd: string,
   existingServers?: Readonly<Record<string, ServerEntry>>,
-): McpConfig | null {
+): LoadedSourceConfig | null {
   if (source.id === "native-pi-project") {
     return readNativePiProjectConfig(source.readPath, cwd, existingServers);
   }
-  return readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
+  const config = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
+  return config ? { config } : null;
 }
 
 function validateServerMap(raw: Record<string, unknown>): Record<string, ServerEntry> {

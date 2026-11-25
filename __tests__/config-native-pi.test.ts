@@ -212,6 +212,14 @@ describe("native Pi project .pi/mcp.json support", () => {
             callbackUrl: "http://localhost/oauth/callback",
           },
         },
+        remoteCustomHeaderOnly: {
+          url: "https://mcp.example.com/tenant",
+          headers: { "X-Tenant": "acme" },
+        },
+        remoteStaticBearer: {
+          url: "https://mcp.example.com/static",
+          headers: { authorization: "Bearer ${STATIC_TOKEN}" },
+        },
         badProviderAuth: {
           url: "https://mcp.example.com/provider",
           auth: { provider: "github" },
@@ -228,19 +236,31 @@ describe("native Pi project .pi/mcp.json support", () => {
           url: "https://mcp.example.com/cimd",
           oauth: { clientId: "cid", clientRegistration: "cimd" },
         },
+        badHeaderValue: {
+          url: "https://mcp.example.com/bad-header",
+          headers: { Authorization: 42 },
+        },
+        badEnvValue: {
+          command: "uv",
+          env: { API_KEY: 42 },
+        },
       },
     });
 
     const { loadMcpConfig } = await import("../config.ts");
+    const { supportsOAuth } = await import("../mcp-oauth-runtime.ts");
     const config = loadMcpConfig(undefined, project);
 
     expect(Object.keys(config.mcpServers).sort()).toEqual([
       "remoteCombinedCallback",
+      "remoteCustomHeaderOnly",
       "remotePort",
       "remotePortlessCallback",
+      "remoteStaticBearer",
     ]);
     expect(config.mcpServers.remotePort).toEqual({
       url: "https://mcp.example.com/mcp",
+      auth: "oauth",
       headers: { "X-Env": "${TOKEN}" },
       oauth: {
         clientId: "cid",
@@ -252,6 +272,7 @@ describe("native Pi project .pi/mcp.json support", () => {
     });
     expect(config.mcpServers.remoteCombinedCallback).toEqual({
       url: "http://localhost/oauth/callback",
+      auth: "oauth",
       oauth: {
         clientName: "Custom Client",
         redirectUri: "http://localhost:9123/oauth/callback",
@@ -259,17 +280,32 @@ describe("native Pi project .pi/mcp.json support", () => {
     });
     expect(config.mcpServers.remotePortlessCallback).toEqual({
       url: "https://mcp.example.com/portless",
+      auth: "oauth",
       oauth: {},
     });
+    expect(config.mcpServers.remoteCustomHeaderOnly).toEqual({
+      url: "https://mcp.example.com/tenant",
+      auth: "oauth",
+      headers: { "X-Tenant": "acme" },
+    });
+    expect(config.mcpServers.remoteStaticBearer).toEqual({
+      url: "https://mcp.example.com/static",
+      headers: { authorization: "Bearer ${STATIC_TOKEN}" },
+    });
+    expect(supportsOAuth(config.mcpServers.remotePort ?? {})).toBe(true);
+    expect(supportsOAuth(config.mcpServers.remoteCustomHeaderOnly ?? {})).toBe(true);
+    expect(supportsOAuth(config.mcpServers.remoteStaticBearer ?? {})).toBe(false);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("badProviderAuth"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("badSse"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("badEnabled"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("badCimd"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("badHeaderValue"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("badEnvValue"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("oauth.authServerMetadataUrl"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("oauth.callbackUrl without a port"));
   });
 
-  it("supports project-only overrides on lower-precedence servers and skips unmatched overrides", async () => {
+  it("replaces lower-precedence definitions wholesale while merging override-only entries", async () => {
     const { agentDir, project } = createWorkspace();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {
       /* suppress expected warning */
@@ -278,13 +314,26 @@ describe("native Pi project .pi/mcp.json support", () => {
       mcpServers: {
         globalStdio: { command: "global-cmd", directTools: true },
         globalDisabled: { command: "disabled-cmd", disabled: true },
-        switched: { command: "old-stdio", env: { SECRET: "keep-out" } },
+        replacedStdio: {
+          command: "node",
+          args: ["old-server.js", "--legacy"],
+          cwd: "/var/old-cwd",
+          env: { SECRET: "keep-out" },
+          disabled: true,
+        },
+        switched: {
+          command: "old-stdio",
+          args: ["--old"],
+          cwd: "/var/old-cwd",
+          env: { SECRET: "keep-out" },
+        },
       },
     });
     writeJson(join(project, ".pi", "mcp.json"), {
       mcpServers: {
         globalStdio: { enabled: false },
         globalDisabled: { enabled: true, exposure: "direct" },
+        replacedStdio: { command: "python3", exposure: "direct" },
         switched: { url: "https://switched.example/mcp" },
         orphanOverride: { enabled: false },
       },
@@ -302,8 +351,11 @@ describe("native Pi project .pi/mcp.json support", () => {
       disabled: false,
       directTools: true,
     });
+    expect(config.mcpServers.replacedStdio).toEqual({
+      command: "python3",
+      directTools: true,
+    });
     expect(config.mcpServers.switched).toEqual({
-      command: null,
       url: "https://switched.example/mcp",
     });
     expect(config.mcpServers.orphanOverride).toBeUndefined();

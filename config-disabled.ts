@@ -39,7 +39,11 @@ function lowerPrecedenceConfig(
     }
     const loaded = readConfigSource(source, cwd, lower.mcpServers);
     if (loaded) {
-      lower = mergeConfigs(lower, expandImports(loaded, cwd, true));
+      lower = mergeConfigs(
+        lower,
+        expandImports(loaded.config, cwd, true),
+        loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
+      );
     }
   }
   if (raw.imports === undefined) {

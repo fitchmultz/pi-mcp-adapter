@@ -3,11 +3,15 @@ import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
 import { loadImportedConfig, extractServers } from "./config-imports.ts";
 import { hasServerUrl } from "./utils.ts";
 
-export function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
+export function mergeConfigs(
+  base: McpConfig,
+  next: McpConfig,
+  options?: { readonly replaceServers?: ReadonlySet<string> },
+): McpConfig {
   const imports = mergeImports(base.imports, next.imports);
   const settings = next.settings ? { ...base.settings, ...next.settings } : base.settings;
   return {
-    mcpServers: mergeServerMaps(base.mcpServers, next.mcpServers),
+    mcpServers: mergeServerMaps(base.mcpServers, next.mcpServers, options?.replaceServers),
     ...(imports !== undefined ? { imports } : {}),
     ...(settings !== undefined ? { settings } : {}),
   };
@@ -23,9 +27,14 @@ const URL_BOUND_AUTH_FIELDS = ["headers", "bearerToken", "bearerTokenEnv"] as co
 function mergeServerMaps(
   base: Record<string, ServerEntry>,
   next: Record<string, ServerEntry>,
+  replaceServers?: ReadonlySet<string>,
 ): Record<string, ServerEntry> {
   const merged = { ...base };
   for (const [name, definition] of Object.entries(next)) {
+    if (replaceServers?.has(name) === true) {
+      merged[name] = definition;
+      continue;
+    }
     const existing = merged[name];
     merged[name] = { ...inheritableServerFields(existing, definition), ...definition };
   }

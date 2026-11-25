@@ -27,7 +27,7 @@ const isBoolean = (value: unknown): value is boolean => typeof value === "boolea
 const isNumber = (value: unknown): value is number => typeof value === "number";
 export const isStringArray = (value: unknown): value is string[] =>
   isUnknownArray(value) && value.every(isString);
-const isStringRecord = (value: unknown): value is Record<string, string> =>
+export const isStringRecord = (value: unknown): value is Record<string, string> =>
   isConfigObject(value) && Object.values(value).every(isString);
 const isToolSelection = (value: unknown): value is boolean | string[] =>
   isBoolean(value) || isStringArray(value);

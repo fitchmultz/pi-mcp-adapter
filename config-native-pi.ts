@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import stripJsonComments from "strip-json-comments";
 import type { McpConfig, ServerEntry } from "./config-types.ts";
-import { isConfigObject, isStringArray } from "./config-validation.ts";
+import { isConfigObject, isStringArray, isStringRecord } from "./config-validation.ts";
 import {
   mapNativeOAuth,
   warnNativeEntry,
@@ -11,7 +11,11 @@ import {
   warnNativeField,
   type NativeEntryContext,
 } from "./config-native-pi-oauth.ts";
-import { toStringRecord } from "./utils.ts";
+
+export interface LoadedNativePiConfig {
+  readonly config: McpConfig;
+  readonly replacedServers: ReadonlySet<string>;
+}
 
 type NativeExposure = "codemode" | "deferred" | "direct" | "hidden";
 
@@ -206,12 +210,11 @@ function exposureFields(base: NativeBaseFields, ctx: NativeEntryContext): Partia
 function resolveDisabledOverride(
   enabled: boolean | undefined,
   hiddenDisabled: boolean,
-  forceEnableInherited: boolean,
 ): Partial<ServerEntry> {
   if (enabled === false || hiddenDisabled) {
     return { disabled: true };
   }
-  return enabled === true || forceEnableInherited ? { disabled: false } : {};
+  return enabled === true ? { disabled: false } : {};
 }
 
 function mapOverrideEntry(
@@ -239,7 +242,7 @@ function mapOverrideEntry(
   const mappedExposure = exposureFields(base, ctx);
   return {
     ...mappedExposure,
-    ...resolveDisabledOverride(base.enabled, mappedExposure.disabled === true, false),
+    ...resolveDisabledOverride(base.enabled, mappedExposure.disabled === true),
   };
 }
 
@@ -250,17 +253,30 @@ function validateHttpFields(raw: Record<string, unknown>, ctx: NativeEntryContex
   if (typeof raw.url !== "string" || !isValidHttpUrl(raw.url)) {
     return warnNativeEntryFalse(ctx, "url must be an http or https URL");
   }
-  if (raw.headers !== undefined && toStringRecord(raw.headers) === undefined) {
+  if (raw.headers !== undefined && !isStringRecord(raw.headers)) {
     return warnNativeEntryFalse(ctx, "headers must map names to strings");
   }
   return true;
 }
 
-function mapHttpEntry(
-  raw: Record<string, unknown>,
-  ctx: NativeEntryContext,
-  existing: ServerEntry | undefined,
-): ServerEntry | null {
+function hasAuthorizationHeader(headers: Readonly<Record<string, string>> | undefined): boolean {
+  return (
+    headers !== undefined &&
+    Object.keys(headers).some((key) => key.toLowerCase() === "authorization")
+  );
+}
+
+function shouldEnableNativeOAuth(
+  headers: Readonly<Record<string, string>> | undefined,
+  hasOAuthConfig: boolean,
+): boolean {
+  if (hasAuthorizationHeader(headers)) {
+    return false;
+  }
+  return hasOAuthConfig || (headers !== undefined && Object.keys(headers).length > 0);
+}
+
+function mapHttpEntry(raw: Record<string, unknown>, ctx: NativeEntryContext): ServerEntry | null {
   if (!validateHttpFields(raw, ctx) || typeof raw.url !== "string") {
     return null;
   }
@@ -269,15 +285,15 @@ function mapHttpEntry(
     return null;
   }
   const entry: ServerEntry = { url: raw.url };
-  if (typeof existing?.command === "string" && existing.command !== "") {
-    entry.command = null;
-  }
-  const headers = toStringRecord(raw.headers);
+  const headers = isStringRecord(raw.headers) ? { ...raw.headers } : undefined;
   if (headers !== undefined) {
     entry.headers = headers;
   }
   if (oauth !== undefined) {
     entry.oauth = oauth;
+  }
+  if (shouldEnableNativeOAuth(headers, oauth !== undefined)) {
+    entry.auth = "oauth";
   }
   return entry;
 }
@@ -289,7 +305,7 @@ function validateStdioFields(raw: Record<string, unknown>, ctx: NativeEntryConte
   if (raw.args !== undefined && !isStringArray(raw.args)) {
     return warnNativeEntryFalse(ctx, "args must be an array of strings");
   }
-  if (raw.env !== undefined && toStringRecord(raw.env) === undefined) {
+  if (raw.env !== undefined && !isStringRecord(raw.env)) {
     return warnNativeEntryFalse(ctx, "env must map names to strings");
   }
   if (raw.cwd !== undefined && typeof raw.cwd !== "string") {
@@ -310,9 +326,8 @@ function mapStdioEntry(
   if (isStringArray(raw.args)) {
     entry.args = raw.args.map(expandHomePath);
   }
-  const env = toStringRecord(raw.env);
-  if (env !== undefined) {
-    entry.env = env;
+  if (isStringRecord(raw.env)) {
+    entry.env = { ...raw.env };
   }
   if (typeof raw.cwd === "string") {
     entry.cwd = resolveNativeCwd(raw.cwd, projectCwd);
@@ -324,14 +339,13 @@ function mapTransportEntry(
   raw: Record<string, unknown>,
   ctx: NativeEntryContext,
   cwd: string,
-  existing: ServerEntry | undefined,
 ): ServerEntry | null {
   const { type, url, command } = raw;
   if (
     typeof url === "string" &&
     (type === undefined || type === "http" || type === "streamable-http")
   ) {
-    return mapHttpEntry(raw, ctx, existing);
+    return mapHttpEntry(raw, ctx);
   }
   if (typeof command === "string" && (type === undefined || type === "stdio")) {
     return mapStdioEntry(raw, ctx, cwd);
@@ -360,7 +374,6 @@ function mapDefinitionEntry(
   raw: Record<string, unknown>,
   ctx: NativeEntryContext,
   cwd: string,
-  existing: ServerEntry | undefined,
 ): ServerEntry | null {
   if (!validateDefinitionTypeAndAuth(raw, ctx)) {
     return null;
@@ -369,7 +382,7 @@ function mapDefinitionEntry(
   if (!base) {
     return null;
   }
-  const transport = mapTransportEntry(raw, ctx, cwd, existing);
+  const transport = mapTransportEntry(raw, ctx, cwd);
   if (!transport) {
     return null;
   }
@@ -378,11 +391,7 @@ function mapDefinitionEntry(
     ...transport,
     ...(base.timeout !== undefined ? { requestTimeoutMs: Math.round(base.timeout * 1000) } : {}),
     ...mappedExposure,
-    ...resolveDisabledOverride(
-      base.enabled,
-      mappedExposure.disabled === true,
-      existing?.disabled === true,
-    ),
+    ...resolveDisabledOverride(base.enabled, mappedExposure.disabled === true),
   };
 }
 
@@ -391,14 +400,16 @@ function mapNativeServerEntry(
   ctx: NativeEntryContext,
   cwd: string,
   existingServers: Readonly<Record<string, ServerEntry>> | undefined,
-): ServerEntry | null {
+): { readonly entry: ServerEntry; readonly replacesExisting: boolean } | null {
   if (!isConfigObject(raw)) {
     return warnNativeEntry(ctx, "server entry must be an object");
   }
   if (raw.command === undefined && raw.url === undefined && raw.type === undefined) {
-    return mapOverrideEntry(raw, ctx, existingServers);
+    const entry = mapOverrideEntry(raw, ctx, existingServers);
+    return entry === null ? null : { entry, replacesExisting: false };
   }
-  return mapDefinitionEntry(raw, ctx, cwd, existingServers?.[ctx.serverName]);
+  const entry = mapDefinitionEntry(raw, ctx, cwd);
+  return entry === null ? null : { entry, replacesExisting: true };
 }
 
 function parseNativeConfigFile(filePath: string): Record<string, unknown> | null {
@@ -426,7 +437,7 @@ export function readNativePiProjectConfig(
   filePath: string,
   cwd: string,
   existingServers?: Readonly<Record<string, ServerEntry>>,
-): McpConfig | null {
+): LoadedNativePiConfig | null {
   if (!existsSync(filePath)) {
     return null;
   }
@@ -435,7 +446,7 @@ export function readNativePiProjectConfig(
     return null;
   }
   if (raw.mcpServers === undefined) {
-    return { mcpServers: {} };
+    return { config: { mcpServers: {} }, replacedServers: new Set() };
   }
   if (!isConfigObject(raw.mcpServers)) {
     console.warn(
@@ -444,11 +455,15 @@ export function readNativePiProjectConfig(
     return null;
   }
   const mcpServers: Record<string, ServerEntry> = {};
+  const replacedServers = new Set<string>();
   for (const [serverName, value] of Object.entries(raw.mcpServers)) {
     const mapped = mapNativeServerEntry(value, { filePath, serverName }, cwd, existingServers);
     if (mapped !== null) {
-      mcpServers[serverName] = mapped;
+      mcpServers[serverName] = mapped.entry;
+      if (mapped.replacesExisting) {
+        replacedServers.add(serverName);
+      }
     }
   }
-  return { mcpServers };
+  return { config: { mcpServers }, replacedServers };
 }

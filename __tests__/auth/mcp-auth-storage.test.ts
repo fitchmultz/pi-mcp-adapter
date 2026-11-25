@@ -312,6 +312,8 @@ describe("OAuth credential-store diagnostics", () => {
         "config-file.ts",
         "config-imports.ts",
         "config-merge.ts",
+        "config-native-pi.ts",
+        "config-native-pi-oauth.ts",
         "config-opencode.ts",
         "config-paths.ts",
         "config-protocol.ts",
