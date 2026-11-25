@@ -3,11 +3,16 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { McpExtensionState } from "./state.ts";
 import type { McpAdapterHost } from "./host-contract.ts";
 import * as commands from "./commands.ts";
 import { createOwnedUi, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { writeProjectServerDisabledOverride } from "./config.ts";
+import { supportsOAuth } from "./mcp-oauth-runtime.ts";
+import { isServerDisabled, type ServerEntry } from "./types.ts";
+
+const ENV_PLACEHOLDER_PATTERN = /\$\{\w+\}|\$env:\w+|\{env:\w+\}/;
 
 type Command = {
   state: McpExtensionState;
@@ -31,6 +36,47 @@ function snapshotContext(ctx: ExtensionContext, owner: McpRuntimeOwner | null): 
   };
 }
 
+function configuredHost(definition: ServerEntry): string | undefined {
+  const rawUrl = definition.url;
+  if (
+    typeof rawUrl !== "string" ||
+    rawUrl.trim().length === 0 ||
+    ENV_PLACEHOLDER_PATTERN.test(rawUrl)
+  ) {
+    return undefined;
+  }
+  try {
+    const host = new URL(rawUrl).host;
+    return host.length > 0 ? host : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function authStatusLabel(state: McpExtensionState, name: string): string {
+  const status = state.manager.getConnection(name)?.status;
+  if (status === "needs-auth") {
+    return "needs auth";
+  }
+  if (status === "connected") {
+    return "connected";
+  }
+  return "OAuth";
+}
+
+function describeAuthServer(
+  state: McpExtensionState,
+  name: string,
+  definition: ServerEntry,
+): string {
+  const label = authStatusLabel(state, name);
+  const host = configuredHost(definition);
+  if (host !== undefined) {
+    return `${label} — ${host}`;
+  }
+  return label === "OAuth" ? "OAuth" : `OAuth (${label})`;
+}
+
 export class McpHostCommands {
   private readonly pi: ExtensionAPI;
   private readonly host: McpAdapterHost;
@@ -47,11 +93,12 @@ export class McpHostCommands {
     });
     this.pi.registerCommand("mcp-auth", {
       description: "Authenticate with an MCP server (OAuth)",
+      getArgumentCompletions: (prefix) => this.completeAuth(prefix),
       handler: (args, ctx) => this.authenticate(args, ctx),
     });
   }
 
-  private complete(prefix: string) {
+  private complete(prefix: string): AutocompleteItem[] | null {
     const normalized = prefix.trimStart();
     const match = normalized.match(/^(\S+)\s+(.*)$/);
     if (!match) {
@@ -78,6 +125,29 @@ export class McpHostCommands {
     const servers = Object.keys(this.host.state.config.mcpServers)
       .filter((name) => name.startsWith(argumentPrefix.trimStart()))
       .map((name) => ({ value: `${subcommand ?? ""} ${name}`, label: name }));
+    return servers.length > 0 ? servers : null;
+  }
+
+  private completeAuth(prefix: string): AutocompleteItem[] | null {
+    const state = this.host.state;
+    if (!state) {
+      return null;
+    }
+    const normalized = prefix.trimStart();
+    const servers: AutocompleteItem[] = [];
+    for (const [name, definition] of Object.entries(state.config.mcpServers)) {
+      if (isServerDisabled(definition) || !supportsOAuth(definition)) {
+        continue;
+      }
+      if (!name.startsWith(normalized)) {
+        continue;
+      }
+      servers.push({
+        value: name,
+        label: name,
+        description: describeAuthServer(state, name, definition),
+      });
+    }
     return servers.length > 0 ? servers : null;
   }
 

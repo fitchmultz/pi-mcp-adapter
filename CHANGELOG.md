@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Raise the Pi support floor and locked development packages to Pi `1.6.1`.
+- Add `/mcp-auth` argument auto-completion for enabled OAuth-capable MCP servers with live connection status and server host descriptions.
+
 ## 8.0.56 - 2026-11-24
 
 <!-- npm-release:unreleased:start -->
