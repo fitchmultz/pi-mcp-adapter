@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { fuzzyFilter, type AutocompleteItem } from "@earendil-works/pi-tui";
 import type { McpExtensionState } from "./state.ts";
-import type { McpAdapterHost } from "./host-contract.ts";
+import { isBuiltinMcpActive, nativePiConfigOptions, type McpAdapterHost } from "./host-contract.ts";
 import * as commands from "./commands.ts";
 import { createOwnedUi, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { writeProjectServerDisabledOverride } from "./config.ts";
@@ -226,6 +226,15 @@ export class McpHostCommands {
     }
   }
 
+  private disabledOverrideTarget():
+    | string
+    | { readonly path?: string | undefined; readonly includeNativePiProject?: boolean }
+    | undefined {
+    return isBuiltinMcpActive(this.pi)
+      ? { path: this.host.configPath, includeNativePiProject: false }
+      : this.host.configPath;
+  }
+
   private setDisabled({ state, ctx, owner, rest }: Command, disabled: boolean): void {
     const subcommand = disabled ? "disable" : "enable";
     if (!ctx.isProjectTrusted()) {
@@ -254,7 +263,7 @@ export class McpHostCommands {
     }
     owner?.throwIfInactive();
     const result = writeProjectServerDisabledOverride(
-      this.host.configPath,
+      this.disabledOverrideTarget(),
       ctx.cwd,
       rest,
       disabled,
@@ -314,7 +323,12 @@ export class McpHostCommands {
         );
         return;
       }
-      await commands.openMcpAuthPanel(state, ctx, this.host.configPath);
+      const authPanelOptions = nativePiConfigOptions(this.pi);
+      if (authPanelOptions) {
+        await commands.openMcpAuthPanel(state, ctx, this.host.configPath, authPanelOptions);
+      } else {
+        await commands.openMcpAuthPanel(state, ctx, this.host.configPath);
+      }
       return;
     }
     const result = await commands.authenticateServer({

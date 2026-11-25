@@ -1,3 +1,4 @@
+import type { McpExposure, McpServerConfig } from "@earendil-works/pi-coding-agent";
 import type { McpConfig, OAuthConfig, ServerEntry } from "./config-types.ts";
 import { isConfigObject } from "./config-validation.ts";
 
@@ -6,7 +7,10 @@ export interface NativeEntryContext {
   readonly serverName: string;
 }
 
-type ClientRegistration = "auto" | "dcr" | "cimd";
+export type NativeStdioServerConfig = Extract<McpServerConfig, { command: string }>;
+export type NativeHttpServerConfig = Extract<McpServerConfig, { url: string }>;
+export type NativeOAuthConfig = NonNullable<NativeHttpServerConfig["oauth"]>;
+type ClientRegistration = NonNullable<NativeOAuthConfig["clientRegistration"]>;
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -177,15 +181,10 @@ function buildMappedOAuth(
   return oauth;
 }
 
-type NativeSharedServerKey =
-  | "command"
-  | "args"
-  | "env"
-  | "cwd"
-  | "url"
-  | "headers"
-  | "oauth"
-  | "auth";
+type NativeSharedServerKey = Extract<
+  keyof ServerEntry,
+  keyof NativeStdioServerConfig | keyof NativeHttpServerConfig
+>;
 type AdapterOnlyServerKey = Exclude<keyof ServerEntry, NativeSharedServerKey>;
 const ADAPTER_ONLY_SERVER_KEY_MAP: Record<AdapterOnlyServerKey, true> = {
   socket: true,
@@ -210,7 +209,7 @@ const ADAPTER_ONLY_SERVER_KEY_MAP: Record<AdapterOnlyServerKey, true> = {
 };
 const ADAPTER_ONLY_SERVER_KEYS = Object.keys(ADAPTER_ONLY_SERVER_KEY_MAP);
 
-type NativeSharedOAuthKey = "clientId" | "clientSecret" | "scope" | "clientName";
+type NativeSharedOAuthKey = Extract<keyof OAuthConfig, keyof NativeOAuthConfig>;
 type AdapterOnlyOAuthKey = Exclude<keyof OAuthConfig, NativeSharedOAuthKey>;
 const ADAPTER_ONLY_OAUTH_KEY_MAP: Record<AdapterOnlyOAuthKey, true> = {
   skipIssuerMetadataValidation: true,
@@ -267,7 +266,7 @@ function matchesNativeToolPattern(pattern: string, toolName: string): boolean {
 }
 
 export function hasUnrepresentableToolExposure(
-  entries: ReadonlyArray<[string, "direct" | "codemode" | "deferred" | "hidden"]>,
+  entries: ReadonlyArray<[string, McpExposure]>,
 ): boolean {
   const hiddenPatterns = entries
     .filter(([key, exp]) => exp === "hidden" && key.includes("*"))

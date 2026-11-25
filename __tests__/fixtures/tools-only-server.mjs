@@ -1,5 +1,11 @@
+import { appendFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+
+const startLogFile = process.env.MCP_START_LOG_FILE;
+if (startLogFile !== undefined && startLogFile !== "") {
+  appendFileSync(startLogFile, `${process.pid}\n`);
+}
 
 // A minimal MCP server that advertises tools only — no `resources`, no
 // `prompts`. Used by resources-capability.test.ts to check that the adapter

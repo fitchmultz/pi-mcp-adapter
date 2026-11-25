@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { nativePiConfigOptions } from "./host-contract.ts";
 import type { McpExtensionState } from "./state.ts";
 import {
   isServerDisabled,
@@ -50,8 +51,9 @@ export interface PanelFlowResult {
 function buildSharedConfigNoticeLines(
   configOverridePath: string | undefined,
   cwd: string,
+  discoveryOptions?: { readonly includeNativePiProject?: boolean },
 ): string[] {
-  const discovery = getMcpDiscoverySummary(configOverridePath, cwd);
+  const discovery = getMcpDiscoverySummary(configOverridePath, cwd, discoveryOptions);
   const onboardingState = loadOnboardingState();
   if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
     return [];
@@ -74,12 +76,15 @@ function buildSetupCallbacks(input: {
   onConfigChanged: () => void;
 }): SetupPanelCallbacks {
   const { pi, ctx, configOverridePath, onConfigChanged } = input;
+  const discoveryOptions = nativePiConfigOptions(pi);
+  const getRepoPrompt = () =>
+    getMcpDiscoverySummary(configOverridePath, ctx.cwd, discoveryOptions).repoPrompt;
   return {
     previewImports: (imports: ImportKind[]) =>
       previewCompatibilityImports(imports, configOverridePath),
     previewStarterProject: () => previewStarterProjectConfig(ctx.cwd),
     previewRepoPrompt: () => {
-      const repoPrompt = getMcpDiscoverySummary(configOverridePath, ctx.cwd).repoPrompt;
+      const repoPrompt = getRepoPrompt();
       if (
         !repoPrompt.entry ||
         repoPrompt.targetPath === undefined ||
@@ -110,7 +115,7 @@ function buildSetupCallbacks(input: {
       return { path };
     },
     addRepoPrompt: async () => {
-      const repoPrompt = getMcpDiscoverySummary(configOverridePath, ctx.cwd).repoPrompt;
+      const repoPrompt = getRepoPrompt();
       if (
         !repoPrompt.entry ||
         repoPrompt.targetPath === undefined ||
@@ -167,7 +172,8 @@ export async function openMcpSetup(input: {
     return { configChanged: false };
   }
 
-  const discovery = getMcpDiscoverySummary(configOverridePath, ctx.cwd);
+  const discoveryOptions = nativePiConfigOptions(pi);
+  const discovery = getMcpDiscoverySummary(configOverridePath, ctx.cwd, discoveryOptions);
   const onboardingState = loadOnboardingState();
   let configChanged = false;
 
@@ -357,8 +363,9 @@ export async function openMcpPanel(input: {
   const config = state.config;
   const cache = loadMetadataCache(state.metadataCacheEnabled);
   const configPath = configOverridePath;
-  const provenanceMap = getServerProvenance(configPath, ctx.cwd);
-  const noticeLines = buildSharedConfigNoticeLines(configPath, ctx.cwd);
+  const discoveryOptions = nativePiConfigOptions(pi);
+  const provenanceMap = getServerProvenance(configPath, ctx.cwd, discoveryOptions);
+  const noticeLines = buildSharedConfigNoticeLines(configPath, ctx.cwd, discoveryOptions);
 
   const callbacks = buildMcpPanelCallbacks(state, config, ctx);
 
@@ -407,6 +414,7 @@ export async function openMcpAuthPanel(
   state: McpExtensionState,
   ctx: ExtensionContext,
   configOverridePath?: string,
+  discoveryOptions?: { readonly includeNativePiProject?: boolean },
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) {
     return { configChanged: false };
@@ -438,7 +446,7 @@ export async function openMcpAuthPanel(
 
   const cache = loadMetadataCache(state.metadataCacheEnabled);
   const configPath = configOverridePath;
-  const provenanceMap = getServerProvenance(configPath, ctx.cwd);
+  const provenanceMap = getServerProvenance(configPath, ctx.cwd, discoveryOptions);
   const callbacks = buildMcpPanelCallbacks(state, config, ctx);
 
   return ctx.ui.custom<PanelFlowResult>(

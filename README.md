@@ -21,7 +21,7 @@ For a Git install, run `pi install git:github.com/fitchmultz/pi-mcp-adapter`.
 
 Enter `/mcp setup` to add a server or import configs from other hosts. Preview the changes before you save them. The adapter leaves external host files unchanged.
 
-The adapter reads `.mcp.json`, project `.pi/mcp.json` (read-only native Pi format), and `~/.config/mcp/mcp.json` automatically. Pi loads project configs only after project trust. See [config paths and precedence](docs/reference.md#quick-start).
+The adapter reads `.mcp.json`, project `.pi/mcp.json` (read-only native Pi format when Pi's built-in MCP extension is disabled), and `~/.config/mcp/mcp.json` automatically. Pi loads project configs only after project trust. See [config paths and precedence](docs/reference.md#quick-start).
 
 For Chrome DevTools, create `.mcp.json` in your project:
 

@@ -1,4 +1,8 @@
-import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import type { TUnsafe } from "typebox";
 import type { McpExtensionState } from "./state.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
@@ -34,3 +38,23 @@ export type HostToolExecute<Params> = ToolDefinition<
 >["execute"];
 
 export type HostToolArguments<Params> = Parameters<HostToolExecute<Params>>;
+
+const BUILTIN_MCP_EXTENSION_PATH = "builtin:mcp";
+
+/**
+ * Detect whether Pi's built-in MCP extension is active in the current session.
+ * When active, Pi's built-in MCP owns `<project>/.pi/mcp.json` and the adapter
+ * skips it so configured servers are never started twice.
+ */
+export function isBuiltinMcpActive(pi: Pick<ExtensionAPI, "getCommands"> | undefined): boolean {
+  return (
+    typeof pi?.getCommands === "function" &&
+    pi.getCommands().some((command) => command.sourceInfo.path === BUILTIN_MCP_EXTENSION_PATH)
+  );
+}
+
+export function nativePiConfigOptions(
+  pi: Pick<ExtensionAPI, "getCommands"> | undefined,
+): { readonly includeNativePiProject: false } | undefined {
+  return isBuiltinMcpActive(pi) ? { includeNativePiProject: false } : undefined;
+}

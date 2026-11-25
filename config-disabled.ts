@@ -26,15 +26,37 @@ function readProjectOverride(filePath: string): Record<string, unknown> {
   }
 }
 
+type DisabledOverrideTarget =
+  | string
+  | { readonly path?: string | undefined; readonly includeNativePiProject?: boolean }
+  | undefined;
+
+function resolveDisabledOverrideTarget(target: DisabledOverrideTarget): {
+  overridePath: string | undefined;
+  includeNativePiProject: boolean;
+} {
+  if (typeof target === "object") {
+    return {
+      overridePath: target.path,
+      includeNativePiProject: target.includeNativePiProject !== false,
+    };
+  }
+  return { overridePath: target, includeNativePiProject: true };
+}
+
 function lowerPrecedenceConfig(
-  overridePath: string | undefined,
+  target: DisabledOverrideTarget,
   cwd: string,
   raw: Record<string, unknown>,
 ): McpConfig {
+  const { overridePath, includeNativePiProject } = resolveDisabledOverrideTarget(target);
   const filePath = getProjectPiConfigPath(cwd);
   let lower: McpConfig = { mcpServers: {} };
   for (const source of getConfigSources(overridePath, cwd)) {
     if (source.readPath === filePath) {
+      continue;
+    }
+    if (!includeNativePiProject && source.id === "native-pi-project") {
       continue;
     }
     const loaded = readConfigSource(source, cwd, lower.mcpServers);
@@ -89,7 +111,7 @@ function projectServerOverrides(
 
 /** Persist only the local disabled field; inherited definitions and credentials remain in their source. */
 export function writeProjectServerDisabledOverride(
-  overridePath: string | undefined,
+  overridePath: DisabledOverrideTarget,
   cwd: string,
   serverName: string,
   disabled: boolean,
@@ -101,7 +123,7 @@ export function writeProjectServerDisabledOverride(
 }
 
 function updateProjectServerDisabledOverride(
-  overridePath: string | undefined,
+  overridePath: DisabledOverrideTarget,
   cwd: string,
   serverName: string,
   disabled: boolean,
