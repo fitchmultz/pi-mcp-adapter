@@ -307,7 +307,8 @@ describe("mcp-setup-panel custom keybindings", () => {
     expect(output).toContain("0. detected host configs (opt-in lowest-precedence fallback)");
     expect(output).toContain("2. ~/.agents/mcp.json");
     expect(output).toContain("3. ~/.agents/mcp/mcp.json");
-    expect(output).toContain("6. .pi/fitch-mcp-adapter/mcp.json");
+    expect(output).toContain("6. .pi/mcp.json (read-only native Pi project config)");
+    expect(output).toContain("7. .pi/fitch-mcp-adapter/mcp.json");
     panel.dispose();
   });
 

@@ -21,7 +21,7 @@ const globalConfig =
   '{\n // Keep the existing JSONC and formatting.\n "mcpServers": { "global": { "command": "unused-global-server" } }\n}\n';
 const projectConfig = '{"mcpServers":{"project":{"command":"unused-project-server"}}}\n';
 
-function sourceFiles(agent: string, project: string): Map<string, string> {
+function globalSourceFiles(agent: string): Map<string, string> {
   return new Map([
     [join(agent, "mcp.json"), globalConfig],
     [join(agent, "mcp-cache.json"), '{"version":1,"servers":{}}'],
@@ -30,7 +30,6 @@ function sourceFiles(agent: string, project: string): Map<string, string> {
       '{"version":1,"setupCompleted":true,"sharedConfigHintShown":true}',
     ],
     [join(agent, "mcp-npx-cache.json"), '{"version":1,"entries":{}}'],
-    [join(project, ".pi", "mcp.json"), projectConfig],
   ]);
 }
 
@@ -95,7 +94,7 @@ describe("explicit pre-v5 state migration", () => {
     );
   });
 
-  it("ignores pre-v5 defaults while retaining shared standard MCP discovery", async () => {
+  it("ignores pre-v5 global defaults while retaining shared and trusted native Pi project MCP discovery", async () => {
     write(join(agent, "mcp.json"), globalConfig);
     write(join(project, ".pi", "mcp.json"), projectConfig);
     write(join(agent, "mcp-cache.json"), '{"version":1,"servers":{}}');
@@ -111,25 +110,35 @@ describe("explicit pre-v5 state migration", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const { loadMetadataCache } = await import("../metadata-cache.ts");
     const { loadOnboardingState } = await import("../onboarding-state.ts");
-    expect(Object.keys(loadMcpConfig(undefined, project).mcpServers)).toEqual(["shared"]);
+    expect(Object.keys(loadMcpConfig(undefined, project).mcpServers).sort()).toEqual([
+      "project",
+      "shared",
+    ]);
+    expect(
+      Object.keys(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers),
+    ).toEqual([]);
     expect(loadMetadataCache()).toBeNull();
     expect(loadOnboardingState().setupCompleted).toBe(false);
     expect(existsSync(join(agent, "fitch-mcp-adapter"))).toBe(false);
+    expect(existsSync(join(project, ".pi", "fitch-mcp-adapter"))).toBe(false);
   });
 
   it("copies owned state byte-for-byte and keeps later config/cache writes separate", async () => {
-    const sources = sourceFiles(agent, project);
+    const sources = globalSourceFiles(agent);
     for (const [path, contents] of sources) {
       write(path, contents);
     }
+    write(join(project, ".pi", "mcp.json"), projectConfig);
     const { migrateLegacyState } = await import("../legacy-migration.ts");
     const result = migrateLegacyState({ cwd: project });
-    expect(result.files).toHaveLength(5);
+    expect(result.files).toHaveLength(4);
     expect(result.files.every((file) => file.status === "copied")).toBe(true);
     expect(result.credentials).toEqual([]);
     for (const file of result.files) {
       expect(readFileSync(file.destination, "utf8")).toBe(sources.get(file.source));
     }
+    // Native project .pi/mcp.json stays untouched and is not copied over into .pi/fitch-mcp-adapter/mcp.json.
+    expect(existsSync(join(project, ".pi", "fitch-mcp-adapter", "mcp.json"))).toBe(false);
 
     const { loadMcpConfig, writeProjectServerDisabledOverride } = await import("../config.ts");
     const { saveMetadataCache } = await import("../metadata-cache.ts");
@@ -148,12 +157,12 @@ describe("explicit pre-v5 state migration", () => {
   it.skipIf(process.platform === "win32")(
     "creates every migrated file with private permissions",
     async () => {
-      for (const [path, contents] of sourceFiles(agent, project)) {
+      for (const [path, contents] of globalSourceFiles(agent)) {
         write(path, contents);
       }
       const { migrateLegacyState } = await import("../legacy-migration.ts");
       const result = migrateLegacyState({ cwd: project });
-      expect(result.files).toHaveLength(5);
+      expect(result.files).toHaveLength(4);
       for (const file of result.files) {
         expect(statSync(file.destination).mode & 0o777).toBe(0o600);
       }
@@ -180,7 +189,7 @@ describe("explicit pre-v5 state migration", () => {
     vi.stubEnv("PI_MCP_ADAPTER_TEST_AUTH_STORE", "unavailable");
     const { migrateLegacyState } = await import("../legacy-migration.ts");
     const result = migrateLegacyState({ cwd: project, dryRun: true });
-    expect(result.files.filter((file) => file.status === "would-copy")).toHaveLength(2);
+    expect(result.files.filter((file) => file.status === "would-copy")).toHaveLength(1);
     expect(result.credentials).toEqual([]);
     expect(existsSync(join(agent, "fitch-mcp-adapter"))).toBe(false);
     expect(existsSync(join(project, ".pi", "fitch-mcp-adapter"))).toBe(false);

@@ -11,6 +11,7 @@ const AGENTS_GLOBAL_CONFIG_PATHS = [
   join(homedir(), ".agents", "mcp", "mcp.json"),
 ] as const;
 const PROJECT_CONFIG_NAME = ".mcp.json";
+const PROJECT_NATIVE_PI_CONFIG_NAME = ".pi/mcp.json";
 const PROJECT_PI_CONFIG_NAME = ".pi/fitch-mcp-adapter/mcp.json";
 export const REPOPROMPT_BINARY_CANDIDATES = [
   join(homedir(), "RepoPrompt", "repoprompt_cli"),
@@ -41,6 +42,10 @@ export function getPiGlobalConfigPath(overridePath?: string): string {
 
 export function getProjectConfigPath(cwd = process.cwd()): string {
   return resolve(cwd, PROJECT_CONFIG_NAME);
+}
+
+export function getProjectNativePiConfigPath(cwd = process.cwd()): string {
+  return resolve(cwd, PROJECT_NATIVE_PI_CONFIG_NAME);
 }
 
 export function getProjectPiConfigPath(cwd = process.cwd()): string {
@@ -92,6 +97,7 @@ export function isProjectConfigSource(source: ConfigSourceSpec, cwd: string): bo
 export function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
   const userPath = getPiGlobalConfigPath(overridePath);
   const projectPath = getProjectConfigPath(cwd);
+  const projectNativePiPath = getProjectNativePiConfigPath(cwd);
   const projectPiPath = getProjectPiConfigPath(cwd);
   const sources: ConfigSourceSpec[] = [];
 
@@ -126,6 +132,22 @@ export function getConfigSources(overridePath?: string, cwd = process.cwd()): Co
       label: "project standard MCP",
       readPath: projectPath,
       writePath: projectPath,
+      kind: "project",
+      shared: true,
+      scope: "project",
+    });
+  }
+
+  if (
+    projectNativePiPath !== userPath &&
+    projectNativePiPath !== projectPath &&
+    projectNativePiPath !== projectPiPath
+  ) {
+    sources.push({
+      id: "native-pi-project",
+      label: "project native Pi MCP",
+      readPath: projectNativePiPath,
+      writePath: projectPiPath,
       kind: "project",
       shared: true,
       scope: "project",

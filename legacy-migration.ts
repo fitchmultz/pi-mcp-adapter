@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 import { getAdapterPath, getAgentPath } from "./agent-dir.ts";
-import { getProjectPiConfigPath, loadMcpConfig, resolveConfiguredOAuthDir } from "./config.ts";
+import { loadMcpConfig, resolveConfiguredOAuthDir } from "./config.ts";
 import { getAuthStorageOptions, migrateLegacyAuthEntry } from "./mcp-auth.ts";
 import { resolveServerUrl } from "./utils.ts";
 
@@ -22,7 +22,6 @@ export function migrateLegacyState({
   const paths = ["mcp.json", "mcp-cache.json", "mcp-onboarding.json", "mcp-npx-cache.json"].map(
     (name) => ({ source: getAgentPath(name), destination: getAdapterPath(name) }),
   );
-  paths.push({ source: resolve(cwd, ".pi", "mcp.json"), destination: getProjectPiConfigPath(cwd) });
 
   const files: FileMigration[] = paths.map(({ source, destination }) => {
     if (!existsSync(source)) {

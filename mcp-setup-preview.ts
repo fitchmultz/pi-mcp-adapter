@@ -131,7 +131,8 @@ export class SetupPreview {
         "3. ~/.agents/mcp/mcp.json",
         "4. <Pi agent dir>/fitch-mcp-adapter/mcp.json",
         "5. .mcp.json",
-        "6. .pi/fitch-mcp-adapter/mcp.json",
+        "6. .pi/mcp.json (read-only native Pi project config)",
+        "7. .pi/fitch-mcp-adapter/mcp.json",
         `Host discovery: ${this.state.discovery.hostConfigDiscovery}. Conflicts reported: ${this.state.discovery.conflicts.length}.`,
         ...this.state.discovery.conflicts
           .slice(0, 8)
