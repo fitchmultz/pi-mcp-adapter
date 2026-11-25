@@ -22,12 +22,18 @@ import {
   REPOPROMPT_BINARY_CANDIDATES,
   IMPORT_PATHS,
 } from "./config-paths.ts";
-import { loadImportedConfig, readValidatedConfig, extractServers } from "./config-imports.ts";
+import {
+  loadImportedConfig,
+  readConfigSource,
+  readValidatedConfig,
+  extractServers,
+} from "./config-imports.ts";
 import { mergeConfigs, expandImports } from "./config-merge.ts";
 export type * from "./config-contracts.ts";
 export {
   getPiGlobalConfigPath,
   getProjectConfigPath,
+  getProjectNativePiConfigPath,
   getProjectPiConfigPath,
   isPathInsideProject,
 } from "./config-paths.ts";
@@ -70,18 +76,17 @@ export function getMcpDiscoverySummary(
   cwd = process.cwd(),
 ): McpDiscoverySummary {
   const sourceSpecs = getConfigSources(overridePath, cwd);
-  const sources = sourceSpecs.map((source) => {
-    const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-    return {
-      id: source.id,
-      label: source.label,
-      path: source.readPath,
-      exists: existsSync(source.readPath),
-      scope: source.scope,
-      kind: source.shared ? "shared" : "pi",
-      serverCount: loaded ? Object.keys(loaded.mcpServers).length : 0,
-    } satisfies ConfigDiscoverySource;
-  });
+  const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
+  const loadedSources = loadDiscoverySources(sourceSpecs, cwd, hostConfigDiscovery);
+  const sources = loadedSources.map(({ source, loaded }) => ({
+    id: source.id,
+    label: source.label,
+    path: source.readPath,
+    exists: existsSync(source.readPath),
+    scope: source.scope,
+    kind: source.shared ? "shared" : "pi",
+    serverCount: loaded ? Object.keys(loaded.mcpServers).length : 0,
+  })) satisfies ConfigDiscoverySource[];
 
   const imports = Object.keys(IMPORT_PATHS)
     .filter(isImportKind)
@@ -101,7 +106,6 @@ export function getMcpDiscoverySummary(
       } satisfies ImportConfigSummary;
     })
     .filter((value): value is ImportConfigSummary => value !== null);
-  const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
   const hostConfigs = imports.map((entry) => ({ ...entry, active: hostConfigDiscovery === "on" }));
   const totalServerCount = sources.reduce((sum, source) => sum + source.serverCount, 0);
   const hasSharedServers = sources.some(
@@ -119,7 +123,7 @@ export function getMcpDiscoverySummary(
     imports,
     hostConfigs,
     hostConfigDiscovery,
-    conflicts: getConfigConflicts(sourceSpecs, imports, cwd),
+    conflicts: getConfigConflicts(loadedSources, imports, cwd),
     hasAnyConfig,
     hasAnyDetectedPaths,
     hasSharedServers,
@@ -129,8 +133,29 @@ export function getMcpDiscoverySummary(
 
   return {
     ...summaryWithoutRepoPrompt,
-    repoPrompt: detectRepoPrompt(summaryWithoutRepoPrompt, cwd),
+    repoPrompt: detectRepoPrompt(loadedSources, cwd),
   };
+}
+
+interface LoadedConfigSource {
+  source: ConfigSourceSpec;
+  loaded: McpConfig | null;
+}
+
+function loadDiscoverySources(
+  sourceSpecs: ConfigSourceSpec[],
+  cwd: string,
+  hostConfigDiscovery: HostConfigDiscovery,
+): LoadedConfigSource[] {
+  let merged: McpConfig =
+    hostConfigDiscovery === "on" ? loadDiscoveredHostConfigs(cwd, true) : { mcpServers: {} };
+  return sourceSpecs.map((source) => {
+    const loaded = readConfigSource(source, cwd, merged.mcpServers);
+    if (loaded) {
+      merged = mergeConfigs(merged, expandImports(loaded, cwd, true));
+    }
+    return { source, loaded };
+  });
 }
 
 export function cloneMcpConfig(config: McpConfig): McpConfig {
@@ -156,7 +181,7 @@ export function loadMcpConfig(
       : { mcpServers: {} };
 
   for (const source of sourceSpecs) {
-    const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
+    const loaded = readConfigSource(source, cwd, config.mcpServers);
     if (!loaded) {
       continue;
     }
@@ -166,6 +191,16 @@ export function loadMcpConfig(
   return config;
 }
 
+function supportsHostDiscoverySetting(
+  source: ConfigSourceSpec,
+  cwd: string,
+  includeProject: boolean,
+): boolean {
+  return (
+    source.id !== "native-pi-project" && (includeProject || !isProjectConfigSource(source, cwd))
+  );
+}
+
 function getConfiguredHostConfigDiscovery(
   overridePath?: string,
   cwd = process.cwd(),
@@ -173,7 +208,7 @@ function getConfiguredHostConfigDiscovery(
 ): HostConfigDiscovery {
   let configured: HostConfigDiscovery = "off";
   for (const source of getConfigSources(overridePath, cwd)) {
-    if (!includeProject && isProjectConfigSource(source, cwd)) {
+    if (!supportsHostDiscoverySetting(source, cwd, includeProject)) {
       continue;
     }
     const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
@@ -205,7 +240,7 @@ function loadDiscoveredHostConfigs(cwd: string, includeProject: boolean): McpCon
 }
 
 function getConfigConflicts(
-  sourceSpecs: ConfigSourceSpec[],
+  loadedSources: LoadedConfigSource[],
   imports: ImportConfigSummary[],
   cwd: string,
 ): McpConfigConflict[] {
@@ -228,8 +263,7 @@ function getConfigConflicts(
       record(name, { kind: "host", path: imported.path });
     }
   }
-  for (const source of sourceSpecs) {
-    const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
+  for (const { source, loaded } of loadedSources) {
     if (!loaded) {
       continue;
     }
@@ -291,20 +325,16 @@ function buildRepoPromptEntry(executablePath: string): ServerEntry {
 }
 
 function detectRepoPrompt(
-  summary: Omit<McpDiscoverySummary, "repoPrompt">,
+  loadedSources: LoadedConfigSource[],
   cwd = process.cwd(),
 ): RepoPromptDiscovery {
-  for (const source of summary.sources) {
-    if (source.kind !== "shared" || source.serverCount === 0) {
+  for (const { source, loaded } of loadedSources) {
+    if (!source.shared || !loaded) {
       continue;
     }
-    const config = readValidatedConfig(source.path, `MCP config from ${source.path}`);
-    if (!config) {
-      continue;
-    }
-    for (const [name, entry] of Object.entries(config.mcpServers)) {
+    for (const [name, entry] of Object.entries(loaded.mcpServers)) {
       if (isRepoPromptServer(name, entry)) {
-        return { configured: true, configuredPath: source.path };
+        return { configured: true, configuredPath: source.readPath };
       }
     }
   }
@@ -344,36 +374,54 @@ export function getServerProvenance(
 ): Map<string, ServerProvenance> {
   const provenance = new Map<string, ServerProvenance>();
   const userPath = getPiGlobalConfigPath(overridePath);
+  const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
+  let merged: McpConfig =
+    hostConfigDiscovery === "on" ? loadDiscoveredHostConfigs(cwd, true) : { mcpServers: {} };
 
-  if (getConfiguredHostConfigDiscovery(overridePath, cwd) === "on") {
-    for (const imported of importedServerSources(
-      Object.keys(IMPORT_PATHS).filter(isImportKind),
-      cwd,
-    )) {
-      for (const name of imported.names) {
-        provenance.set(name, { path: userPath, kind: "import", importKind: imported.importKind });
-      }
-    }
+  if (hostConfigDiscovery === "on") {
+    addDiscoveredHostProvenance(provenance, userPath, cwd);
   }
 
   for (const source of getConfigSources(overridePath, cwd)) {
-    const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
+    const loaded = readConfigSource(source, cwd, merged.mcpServers);
     if (!loaded) {
       continue;
     }
-
+    merged = mergeConfigs(merged, expandImports(loaded, cwd, true));
     addInheritedProvenance(provenance, loaded.imports ?? [], userPath, cwd);
-
-    for (const name of Object.keys(loaded.mcpServers)) {
-      provenance.set(name, {
-        path: source.writePath,
-        kind: source.kind,
-        ...(source.importKind !== undefined ? { importKind: source.importKind } : {}),
-      });
-    }
+    addSourceServerProvenance(provenance, source, Object.keys(loaded.mcpServers));
   }
 
   return provenance;
+}
+
+function addDiscoveredHostProvenance(
+  provenance: Map<string, ServerProvenance>,
+  userPath: string,
+  cwd: string,
+): void {
+  for (const imported of importedServerSources(
+    Object.keys(IMPORT_PATHS).filter(isImportKind),
+    cwd,
+  )) {
+    for (const name of imported.names) {
+      provenance.set(name, { path: userPath, kind: "import", importKind: imported.importKind });
+    }
+  }
+}
+
+function addSourceServerProvenance(
+  provenance: Map<string, ServerProvenance>,
+  source: ConfigSourceSpec,
+  serverNames: readonly string[],
+): void {
+  for (const name of serverNames) {
+    provenance.set(name, {
+      path: source.writePath,
+      kind: source.kind,
+      ...(source.importKind !== undefined ? { importKind: source.importKind } : {}),
+    });
+  }
 }
 
 function* importedServerSources(

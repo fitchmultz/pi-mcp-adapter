@@ -60,6 +60,8 @@ Pi also reads Pi-owned override files for settings and host-specific compatibili
 
 Host-specific configs are detected and shown by `/mcp setup` and `fitch-mcp-adapter init`, but they are not loaded automatically. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `fitch-mcp-adapter init --discover-host-configs`. The default is `"off"`. Host configs are lower precedence than every shared and Pi-owned source, and `/mcp setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
 
+The adapter also reads Pi's native project config (`.pi/mcp.json`) read-only when the project is trusted, translating native Pi fields (`enabled`, `exposure`, `toolExposure`, `timeout`, stdio `~/` / relative `cwd`, and supported OAuth fields) into adapter behavior while keeping adapter writes in `.pi/fitch-mcp-adapter/mcp.json`. Invalid entries in `.pi/mcp.json` warn and are skipped individually.
+
 Precedence is:
 
 1. `~/.config/mcp/mcp.json`
@@ -67,7 +69,8 @@ Precedence is:
 3. `~/.agents/mcp/mcp.json`
 4. `<Pi agent dir>/fitch-mcp-adapter/mcp.json`
 5. `.mcp.json`
-6. `.pi/fitch-mcp-adapter/mcp.json`
+6. `.pi/mcp.json` (read-only native Pi project config)
+7. `.pi/fitch-mcp-adapter/mcp.json`
 
 If a higher-precedence config changes a stdio server's `command`, `args`, or `cwd`, it must explicitly supply any `env` values that the new process needs; the previous definition's `env` is not inherited. An OpenCode `environment` override also replaces the previous map rather than merging its keys.
 
@@ -106,6 +109,7 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 | `~/.agents/mcp.json`                        | User-global tool-agnostic MCP config              |
 | `~/.agents/mcp/mcp.json`                    | User-global tool-agnostic MCP config              |
 | `.mcp.json`                                 | Project-local shared MCP config                   |
+| `.pi/mcp.json`                              | Project-local native Pi MCP config (read-only)    |
 | `<Pi agent dir>/fitch-mcp-adapter/mcp.json` | Adapter global override and compatibility imports |
 | `.pi/fitch-mcp-adapter/mcp.json`            | Adapter project override                          |
 

@@ -14,6 +14,7 @@ export interface ConfigSourceSpec {
     | "agents-nested-global"
     | "pi-global"
     | "shared-project"
+    | "native-pi-project"
     | "pi-project";
   label: string;
   readPath: string;

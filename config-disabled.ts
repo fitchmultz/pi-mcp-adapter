@@ -4,7 +4,7 @@ import type { ServerDisabledOverrideResult } from "./config-contracts.ts";
 import { isServerDisabled } from "./config-protocol.ts";
 import { isConfigObject, isUnknownArray, isImportKind } from "./config-validation.ts";
 import { getProjectPiConfigPath, getConfigSources } from "./config-paths.ts";
-import { parseJsonConfig, readValidatedConfig } from "./config-imports.ts";
+import { parseJsonConfig, readConfigSource } from "./config-imports.ts";
 import { mergeConfigs, expandImports } from "./config-merge.ts";
 import { withConfigWrite, writeRawConfigObject, getServersKey } from "./config-file.ts";
 
@@ -37,7 +37,7 @@ function lowerPrecedenceConfig(
     if (source.readPath === filePath) {
       continue;
     }
-    const loaded = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
+    const loaded = readConfigSource(source, cwd, lower.mcpServers);
     if (loaded) {
       lower = mergeConfigs(lower, expandImports(loaded, cwd, true));
     }

@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
+import type { ConfigSourceSpec } from "./config-contracts.ts";
+import { readNativePiProjectConfig } from "./config-native-pi.ts";
 import { isPathInsideProject, IMPORT_PATHS } from "./config-paths.ts";
 import { validateUnknownServerProtocolConfig } from "./config-protocol.ts";
 import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
@@ -123,6 +125,17 @@ export function readValidatedConfig(path: string, label: string): McpConfig | nu
     console.warn(`Failed to load ${label}:`, error);
     return null;
   }
+}
+
+export function readConfigSource(
+  source: ConfigSourceSpec,
+  cwd: string,
+  existingServers?: Readonly<Record<string, ServerEntry>>,
+): McpConfig | null {
+  if (source.id === "native-pi-project") {
+    return readNativePiProjectConfig(source.readPath, cwd, existingServers);
+  }
+  return readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
 }
 
 function validateServerMap(raw: Record<string, unknown>): Record<string, ServerEntry> {

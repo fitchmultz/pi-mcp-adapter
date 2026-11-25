@@ -95,7 +95,7 @@ describe("explicit pre-v5 state migration", () => {
     );
   });
 
-  it("ignores pre-v5 defaults while retaining shared standard MCP discovery", async () => {
+  it("ignores pre-v5 global defaults while retaining shared and trusted native Pi project MCP discovery", async () => {
     write(join(agent, "mcp.json"), globalConfig);
     write(join(project, ".pi", "mcp.json"), projectConfig);
     write(join(agent, "mcp-cache.json"), '{"version":1,"servers":{}}');
@@ -111,10 +111,17 @@ describe("explicit pre-v5 state migration", () => {
     const { loadMcpConfig } = await import("../config.ts");
     const { loadMetadataCache } = await import("../metadata-cache.ts");
     const { loadOnboardingState } = await import("../onboarding-state.ts");
-    expect(Object.keys(loadMcpConfig(undefined, project).mcpServers)).toEqual(["shared"]);
+    expect(Object.keys(loadMcpConfig(undefined, project).mcpServers).sort()).toEqual([
+      "project",
+      "shared",
+    ]);
+    expect(
+      Object.keys(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers),
+    ).toEqual([]);
     expect(loadMetadataCache()).toBeNull();
     expect(loadOnboardingState().setupCompleted).toBe(false);
     expect(existsSync(join(agent, "fitch-mcp-adapter"))).toBe(false);
+    expect(existsSync(join(project, ".pi", "fitch-mcp-adapter"))).toBe(false);
   });
 
   it("copies owned state byte-for-byte and keeps later config/cache writes separate", async () => {
