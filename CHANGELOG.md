@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.59 - 2026-11-25
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- feat(config): read and translate trusted project .pi/mcp.json (MCP-203) (#289) ([a08d17c](https://github.com/fitchmultz/pi-mcp-adapter/commit/a08d17c1924e6677804db89c00ef5ed64ff50a42))
+
+### What's Changed
+
+- feat(config): read and translate trusted project .pi/mcp.json (MCP-203) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/289
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.58...v8.0.59
+
 ## 8.0.58 - 2026-11-25
 
 <!-- npm-release:unreleased:start -->
