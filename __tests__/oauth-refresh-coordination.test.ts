@@ -456,7 +456,9 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     "serializes concurrent cross-process 401 refreshes over rotating refresh tokens",
     { timeout: 20_000 },
     async () => {
-      const { server, url } = await startServer({ tokenDelayMs: 150 });
+      // Short-lived (30s) tokens also verify that the waiting process adopting access-2 after 401
+      // records a proactive cooldown instead of immediately refreshing access-2 on retry.
+      const { server, url } = await startServer({ tokenDelayMs: 150, tokenExpiresInSeconds: 30 });
       const home = mkdtempSync(join(tmpdir(), "mcp-204-cross-proc-"));
       tempDirs.push(home);
       const keyringFile = join(home, "keyring.json");

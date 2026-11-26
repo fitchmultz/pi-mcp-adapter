@@ -303,13 +303,14 @@ function adoptFreshToken(
     if (!isProactiveTokenFresh(tokens, options.identity, baseline)) {
       return false;
     }
-    if (!isWithinProactiveCooldown(options.identity)) {
-      recordProactiveRefreshOutcome(options.identity, "refreshed", tokens);
-    }
-    return true;
+  } else if (
+    options.rejectedAccessToken !== undefined &&
+    tokens.accessToken === options.rejectedAccessToken
+  ) {
+    return false;
   }
-  if (options.rejectedAccessToken !== undefined) {
-    return tokens.accessToken !== options.rejectedAccessToken;
+  if (!isWithinProactiveCooldown(options.identity)) {
+    recordProactiveRefreshOutcome(options.identity, "refreshed", tokens);
   }
   return true;
 }
