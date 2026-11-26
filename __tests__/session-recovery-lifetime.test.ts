@@ -135,6 +135,9 @@ async function fixture(handler: (e: Exchange) => boolean | undefined = () => fal
       case "resources/list":
         result(e, { resources: [{ name: "document", uri: "test://document" }] });
         return;
+      case "resources/templates/list":
+        result(e, { resourceTemplates: [] });
+        return;
       case "prompts/list":
         result(e, { prompts: [{ name: "prompt" }] });
         return;

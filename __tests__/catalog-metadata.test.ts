@@ -207,10 +207,10 @@ describe("canonical tool catalog", () => {
     ).toEqual(["legacy", "plain"]);
   });
 
-  it("keeps resource aliases readable but never registers them as pinned functions", async () => {
+  it("keeps resource aliases readable outside tool filters and excludes ui:// app resources", async () => {
     const definition = {
       directTools: true,
-      includeTools: ["demo_*"],
+      includeTools: ["get_guide"],
       excludeTools: ["read_secret"],
     };
     const resources = [
@@ -222,18 +222,23 @@ describe("canonical tool catalog", () => {
         _meta: { source: "docs" },
       },
       { name: "secret", uri: "docs://secret" },
+      { name: "app_bundle", uri: "ui://demo/app.html" },
     ];
     const entry = {
       ...cacheEntry([{ name: "get_guide" }], definition),
       resources: serializeResources(resources),
     };
     expect(entry.resources).toEqual(resources);
+    const reconstructed = reconstructToolMetadata("demo", entry, "server", definition);
     expect(
-      reconstructToolMetadata("demo", entry, "server", definition).find(
-        (tool) => tool.resourceUri !== undefined,
-      )?.resourceDescriptor,
+      reconstructed
+        .filter((tool) => tool.resourceUri !== undefined)
+        .map((tool) => tool.resourceUri),
+    ).toEqual(["docs://guide", "docs://secret"]);
+    expect(
+      reconstructed.find((tool) => tool.resourceUri === "docs://guide")?.resourceDescriptor,
     ).toEqual(resources[0]);
-    expect(reconstructToolMetadata("demo", entry, "server", definition)).toContainEqual({
+    expect(reconstructed).toContainEqual({
       name: "demo_read_guide",
       originalName: "read_guide",
       description: "Read resource: docs://guide",

@@ -64,9 +64,9 @@ function authComplete(
   );
 }
 
-async function listResources(
-  { ready, signal, onUpdate }: Dispatch,
+async function dispatchResources(
   params: GatewayArguments,
+  { ready, signal, onUpdate }: Dispatch,
 ): Promise<GatewayResult> {
   const resources = await import("./resource-tools.ts");
   return present(
@@ -81,6 +81,49 @@ async function listResources(
   );
 }
 
+async function dispatchReadResource(
+  params: GatewayArguments,
+  { ready, signal, onUpdate, toolCallId, beforeDispatch }: Dispatch,
+): Promise<GatewayResult> {
+  const resources = await import("./resource-tools.ts");
+  return resources.executeResourceRead(ready, {
+    server: required(params.server, params.action, "server"),
+    uri: required(params.uri, params.action, "uri"),
+    signal,
+    onUpdate,
+    identity: { toolCallId },
+    beforeDispatch,
+  });
+}
+
+async function dispatchPrompts(
+  params: GatewayArguments,
+  { ready, signal }: Dispatch,
+): Promise<GatewayResult> {
+  const prompts = await import("./prompt-tools.ts");
+  return present(
+    ready,
+    await prompts.executePromptList(ready, {
+      server: params.server,
+      limit: params.limit,
+      offset: params.offset,
+      signal,
+    }),
+  );
+}
+
+async function dispatchGetPrompt(
+  params: GatewayArguments,
+  { ready, signal }: Dispatch,
+): Promise<GatewayResult> {
+  const prompts = await import("./prompt-tools.ts");
+  return prompts.executeGetPrompt(ready, {
+    server: required(params.server, params.action, "server"),
+    prompt: required(params.prompt, params.action, "prompt"),
+    args: params.args,
+    signal,
+  });
+}
 async function dispatchGateway(
   params: GatewayArguments,
   context: Dispatch,
@@ -135,16 +178,13 @@ async function dispatchGateway(
     case "list":
       return present(ready, proxy.executeList(ready, server(), params.limit, params.offset));
     case "resources":
-      return listResources(context, params);
+      return dispatchResources(params, context);
     case "read-resource":
-      return (await import("./resource-tools.ts")).executeResourceRead(ready, {
-        server: server(),
-        uri: required(params.uri, params.action, "uri"),
-        signal,
-        onUpdate,
-        identity: { toolCallId },
-        beforeDispatch,
-      });
+      return dispatchReadResource(params, context);
+    case "prompts":
+      return dispatchPrompts(params, context);
+    case "get-prompt":
+      return dispatchGetPrompt(params, context);
     case "read-result":
       return readResult(ready, params);
     case "status":

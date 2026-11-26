@@ -82,7 +82,7 @@ export class McpHostTools {
       label: "MCP",
       description,
       promptSnippet:
-        "MCP server operations, resources, saved result readback, and fallback tool calls",
+        "MCP server operations, resources, prompts, saved result readback, and fallback tool calls",
       renderCall: renderMcpProxyToolCall,
       parameters: Type.Unsafe<Record<string, unknown>>(gatewayParameters),
       outputSchema: Type.Union([mcpReadPageSchema, mcpScriptOutputSchema]),

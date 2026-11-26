@@ -109,16 +109,17 @@ function readUiResourceUri(tool: McpTool, failedTools: string[]): string | undef
   return undefined;
 }
 
+export function isUiResourceUri(uri: string): boolean {
+  return uri.startsWith("ui://");
+}
+
 function resourceMetadata(resources: McpResource[], context: MetadataContext): ToolMetadata[] {
   const metadata: ToolMetadata[] = [];
   for (const resource of resources) {
-    if (resource.name === "" || resource.uri === "") {
+    if (resource.name === "" || resource.uri === "" || isUiResourceUri(resource.uri)) {
       continue;
     }
     const baseName = `read_${resourceNameToToolName(resource.name)}`;
-    if (!allowsTool(context, baseName)) {
-      continue;
-    }
     metadata.push({
       name: formatToolName(baseName, context.serverName, context.prefix),
       originalName: baseName,

@@ -50,7 +50,8 @@ export function formatPromptCommandName(
   serverName: string,
   prefix: ToolPrefix,
 ): string {
-  const configuredPrefix = getServerPrefix(serverName, prefix);
+  const configuredPrefix =
+    prefix === "mcp" ? serverName.replace(/-/g, "_") : getServerPrefix(serverName, prefix);
   const serverPart = configuredPrefix !== "" ? configuredPrefix : serverName.replace(/-/g, "_");
   return `mcp__${serverPart !== "" ? serverPart : "server"}__${sanitizePromptName(promptName)}`;
 }

@@ -10,8 +10,7 @@ import {
   clearFailure,
   recordFailure,
 } from "./init.ts";
-import { reconstructPromptMetadata } from "./metadata-cache.ts";
-import { buildToolMetadata } from "./tool-metadata.ts";
+import { applyServerMetadata } from "./init-metadata.ts";
 import { parallelLimit, sanitizeTerminalText } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
 import type { ServerConnection } from "./server-manager.ts";
@@ -38,35 +37,14 @@ function applyConnectionMetadata(
   name: string,
   definition: ServerEntry,
   connection: ServerConnection,
-): ReturnType<typeof buildToolMetadata>["failedTools"] {
-  const prefix = state.config.settings?.toolPrefix ?? "server";
-  const { metadata, failedTools } = buildToolMetadata({
-    tools: connection.tools,
-    resources: connection.resources,
-    definition,
-    serverName: name,
-    prefix,
-  });
-  state.toolMetadata.set(name, metadata);
-  if (connection.promptDiscoveryFailed !== true) {
-    state.promptMetadata.set(
-      name,
-      reconstructPromptMetadata(name, connection.prompts, prefix, definition),
-    );
-    state.promptMetadataLive.add(name);
-  }
-  const { instructions } = connection;
-  if (instructions !== undefined && instructions.length > 0) {
-    state.serverInstructions.set(name, instructions);
-  } else {
-    state.serverInstructions.delete(name);
-  }
+): number {
+  const skippedCount = applyServerMetadata(state, { serverName: name, connection, definition });
   updateMetadataCache(state, name);
   notifyToolMetadataUpdated(state, name, "command-reconnect");
   markKeepAliveAfterConnect(state, name);
   clearFailure(state, name);
 
-  return failedTools;
+  return skippedCount;
 }
 
 function notifyReconnected(
@@ -142,8 +120,8 @@ export async function reconnectServer(
       return notifyAuthenticationRequired(state, ui, name);
     }
 
-    const failedTools = applyConnectionMetadata(state, name, definition, connection);
-    notifyReconnected(ui, name, connection, failedTools.length);
+    const skippedCount = applyConnectionMetadata(state, name, definition, connection);
+    notifyReconnected(ui, name, connection, skippedCount);
     updateStatusBar(state);
     return true;
   } catch (error) {

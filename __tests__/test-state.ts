@@ -22,6 +22,7 @@ export function createTestState(overrides: Partial<McpExtensionState> = {}): Mcp
     ),
     toolMetadata: new Map(),
     resourceCounts: new Map(),
+    resourceTemplates: new Map(),
     promptMetadata: new Map(),
     promptMetadataLive: new Set(),
     serverInstructions: new Map(),

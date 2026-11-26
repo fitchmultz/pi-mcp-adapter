@@ -313,6 +313,11 @@ export async function createCallbackHttpFixture(
               ? [{ uri: `file://${updatedCatalogs}`, name: updatedCatalogs }]
               : [],
         };
+      case "resources/templates/list":
+        return {
+          resultType: "complete",
+          resourceTemplates: [],
+        };
       case "prompts/list":
         return {
           resultType: "complete",

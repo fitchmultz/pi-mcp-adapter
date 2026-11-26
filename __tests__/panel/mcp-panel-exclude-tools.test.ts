@@ -33,7 +33,7 @@ describe("mcp-panel include/exclude tools", () => {
       ],
       resources: [
         { name: "guide", uri: "docs://guide" },
-        { name: "secret", uri: "docs://secret" },
+        { name: "app_ui", uri: "ui://docs/app.html" },
       ],
     };
     const done = vi.fn<(result: McpPanelResult) => void>();

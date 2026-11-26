@@ -335,11 +335,11 @@ describe("direct tool metadata bootstrap", () => {
 });
 
 describe("excludeTools filtering", () => {
-  it("filters excluded tools from live and cached metadata", () => {
+  it("filters excluded tools without hiding model resources, while excluding ui:// app bundles", () => {
     const definition = {
       command: "npx",
       args: ["-y", "figma"],
-      excludeTools: ["figma_get_screenshot", "read_figjam"],
+      excludeTools: ["figma_get_screenshot", "read_spec"],
     };
 
     const { metadata } = buildToolMetadata({
@@ -347,13 +347,16 @@ describe("excludeTools filtering", () => {
         { name: "get_screenshot", description: "Screenshot" },
         { name: "get_nodes", description: "Nodes" },
       ],
-      resources: [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }],
+      resources: [
+        { name: "figjam", uri: "ui://figjam", description: "FigJam App" },
+        { name: "spec", uri: "figma://spec", description: "Spec" },
+      ],
       definition,
       serverName: "figma",
       prefix: "server",
     });
 
-    expect(metadata.map((tool) => tool.name)).toEqual(["figma_get_nodes"]);
+    expect(metadata.map((tool) => tool.name)).toEqual(["figma_get_nodes", "figma_read_spec"]);
 
     const reconstructed = reconstructToolMetadata(
       "figma",
@@ -364,20 +367,23 @@ describe("excludeTools filtering", () => {
           { name: "get_screenshot", description: "Screenshot" },
           { name: "get_nodes", description: "Nodes" },
         ],
-        resources: [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }],
+        resources: [
+          { name: "figjam", uri: "ui://figjam", description: "FigJam App" },
+          { name: "spec", uri: "figma://spec", description: "Spec" },
+        ],
       },
       "server",
       definition,
     );
 
-    expect(reconstructed.map((tool) => tool.name)).toEqual(["figma_get_nodes"]);
+    expect(reconstructed.map((tool) => tool.name)).toEqual(["figma_get_nodes", "figma_read_spec"]);
   });
 
-  it("filters included tools from live and cached metadata before applying exclusions", () => {
+  it("filters included tools without hiding non-ui resources", () => {
     const definition = {
       command: "npx",
       args: ["-y", "figma"],
-      includeTools: ["get_node*", "figma_read_figjam"],
+      includeTools: ["get_node*"],
       excludeTools: ["get_nodes_secret"],
     };
 
@@ -386,7 +392,10 @@ describe("excludeTools filtering", () => {
       { name: "get_nodes", description: "Nodes" },
       { name: "get_nodes_secret", description: "Secret nodes" },
     ];
-    const resources = [{ name: "figjam", uri: "ui://figjam", description: "FigJam" }];
+    const resources = [
+      { name: "figjam", uri: "figma://figjam", description: "FigJam" },
+      { name: "widget", uri: "ui://widget", description: "Widget" },
+    ];
 
     const { metadata } = buildToolMetadata({
       tools,
@@ -452,7 +461,9 @@ describe("excludeTools filtering", () => {
         { name: "namespace_tool", description: "Underscored" },
         { name: "read_namespace.tool", description: "Tool before colliding resource" },
       ],
-      resources: [{ name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" }],
+      resources: [
+        { name: "namespace.tool", uri: "docs://namespace.tool", description: "Resource" },
+      ],
       definition: { command: "npx", args: ["-y", "demo"] },
       serverName: "demo",
       prefix: "server",
@@ -479,7 +490,7 @@ describe("excludeTools filtering", () => {
           { name: "read_namespace.tool", description: "Tool before colliding resource" },
         ],
         resources: [
-          { name: "namespace.tool", uri: "ui://namespace.tool", description: "Resource" },
+          { name: "namespace.tool", uri: "docs://namespace.tool", description: "Resource" },
         ],
       },
       "server",

@@ -8,7 +8,7 @@ import {
   getMissingConfiguredDirectToolServers,
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
-import { totalToolCount } from "./tool-metadata.ts";
+import { isUiResourceUri, totalToolCount } from "./tool-metadata.ts";
 import {
   parallelLimit,
   MAX_CONCURRENT_SERVER_CONNECTS,
@@ -70,6 +70,28 @@ function registerLifecycle(
     state.lifecycle.markKeepAlive(name, definition);
   }
 }
+function restoreCachedResources(
+  state: McpExtensionState,
+  name: string,
+  definition: ServerDefinition,
+  cachedEntry: ServerCacheEntry,
+): void {
+  const expose = definition.exposeResources !== false;
+  if (Array.isArray(cachedEntry.resources)) {
+    const count = expose
+      ? cachedEntry.resources.filter((resource) => !isUiResourceUri(resource.uri)).length
+      : 0;
+    state.resourceCounts.set(name, count);
+  }
+  if (Array.isArray(cachedEntry.resourceTemplates)) {
+    state.resourceTemplates.set(
+      name,
+      expose
+        ? cachedEntry.resourceTemplates.filter((template) => !isUiResourceUri(template.uriTemplate))
+        : [],
+    );
+  }
+}
 function restoreCachedMetadata(
   state: McpExtensionState,
   input: {
@@ -84,9 +106,7 @@ function restoreCachedMetadata(
     return;
   }
   state.toolMetadata.set(name, reconstructToolMetadata(name, cachedEntry, prefix, definition));
-  if (Array.isArray(cachedEntry.resources)) {
-    state.resourceCounts.set(name, cachedEntry.resources.length);
-  }
+  restoreCachedResources(state, name, definition, cachedEntry);
   if ((cachedEntry.prompts?.length ?? 0) > 0) {
     state.promptMetadata.set(
       name,
@@ -301,7 +321,7 @@ function updateServerMetadataFromConnection(
   if (!connection) {
     return 0;
   }
-  return applyServerMetadata(state, name, connection, definition);
+  return applyServerMetadata(state, { serverName: name, connection, definition });
 }
 
 function reportStartupFailure(

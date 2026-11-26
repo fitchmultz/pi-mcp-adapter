@@ -123,6 +123,9 @@ export async function proxyRuntimeState({
       case "resources/list":
         payload = listResources ? await listResources() : { resources: [] };
         break;
+      case "resources/templates/list":
+        payload = { resourceTemplates: [] };
+        break;
       case "resources/read":
         payload = readResource ? await readResource() : { contents: [] };
         break;

@@ -59,7 +59,7 @@ Use [`approveTools`](docs/reference.md#tool-approval) to require confirmation be
 
 ## More server features
 
-The adapter supports [resources](docs/reference.md#mcp-resources) and [prompt templates](docs/reference.md#mcp-prompts). Prompt commands use `/mcp__<server>__<prompt>` names.
+The adapter supports [resources and URI templates](docs/reference.md#mcp-resources) (`resources` / `read-resource`) and [prompt templates](docs/reference.md#mcp-prompts) (slash commands under `/mcp__<server>__<prompt>` with MCP argument completions, plus `prompts` / `get-prompt` gateway actions).
 
 [MCP Apps](docs/reference.md#mcp-ui-integration) open interactive UIs in a browser or through [Glimpse](https://github.com/hazat/glimpse) on macOS. Apps can send messages to Pi. Try the [interactive visualizer](examples/interactive-visualizer/README.md).
 

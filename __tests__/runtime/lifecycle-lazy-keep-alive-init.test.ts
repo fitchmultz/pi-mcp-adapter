@@ -62,12 +62,14 @@ vi.mock("../../metadata-cache.ts", () => ({
     return "saved";
   }),
   serializeResources: vi.fn<typeof Metadata.serializeResources>(() => []),
+  serializeResourceTemplates: vi.fn<typeof Metadata.serializeResourceTemplates>(() => []),
   serializeTools: vi.fn<typeof Metadata.serializeTools>(() => []),
   serializePrompts: vi.fn<typeof Metadata.serializePrompts>(() => []),
 }));
 
 vi.mock("../../tool-metadata.ts", () => ({
   buildToolMetadata: mocks.buildToolMetadata,
+  isUiResourceUri: vi.fn<typeof ToolMetadata.isUiResourceUri>((uri) => uri.startsWith("ui://")),
   totalToolCount: vi.fn<typeof ToolMetadata.totalToolCount>(() => 0),
 }));
 

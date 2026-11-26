@@ -1,4 +1,6 @@
 import type {
+  CompleteRequestParams,
+  CompleteResult,
   GetPromptResult,
   ReadResourceResult,
   RequestOptions,
@@ -146,6 +148,28 @@ export class McpServerManager {
         throw enriched;
       }
       throw error;
+    } finally {
+      this.decrementInFlight(connection);
+      this.touch(name);
+    }
+  }
+
+  async complete(
+    name: string,
+    params: CompleteRequestParams,
+    signal?: AbortSignal,
+  ): Promise<CompleteResult> {
+    const connection = this.lifecycle.getConnection(name);
+    if (!connection || connection.status !== "connected") {
+      throw new Error(`Server "${name}" is not connected`);
+    }
+    if (!connection.client.getServerCapabilities()?.completions) {
+      return { completion: { values: [] } };
+    }
+    try {
+      this.touch(name);
+      this.incrementInFlight(connection);
+      return await connection.client.complete(params, this.getRequestOptions(name, signal));
     } finally {
       this.decrementInFlight(connection);
       this.touch(name);

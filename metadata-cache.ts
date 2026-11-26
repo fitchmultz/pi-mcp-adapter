@@ -7,10 +7,12 @@ import { hash } from "node:crypto";
 import {
   type CachedPrompt,
   type CachedResource,
+  type CachedResourceTemplate,
   type CachedTool,
   type McpConfig,
   type McpTool,
   type McpResource,
+  type McpResourceTemplate,
   type McpPrompt,
   type McpPromptArgument,
   type MetadataCache,
@@ -57,6 +59,7 @@ function freezeMetadata<T>(value: T): T {
 export type {
   CachedPrompt,
   CachedResource,
+  CachedResourceTemplate,
   CachedTool,
   MetadataCache,
   ServerCacheEntry,
@@ -317,6 +320,12 @@ export function serializeTools(tools: McpTool[]): CachedTool[] {
 
 export function serializeResources(resources: McpResource[]): CachedResource[] {
   return resources.filter((resource) => resource.name !== "" && resource.uri !== "");
+}
+
+export function serializeResourceTemplates(
+  templates: McpResourceTemplate[],
+): CachedResourceTemplate[] {
+  return templates.filter((template) => template.name !== "" && template.uriTemplate !== "");
 }
 
 export function serializePrompts(prompts: McpPrompt[]): CachedPrompt[] {

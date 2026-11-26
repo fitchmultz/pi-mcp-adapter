@@ -431,6 +431,7 @@ describe("McpServerManager configuration", () => {
       fixture.notify(`notifications/${catalog}/list_changed`, {});
     }
     await expect.poll(() => captures.deliveries.length).toBe(3);
+    await expect.poll(() => metadataChanged.mock.calls.length).toBe(3);
     expect(instance.getConnection("demo")?.tools).toEqual([
       expect.objectContaining({ name: "updated" }),
     ]);

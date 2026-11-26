@@ -241,7 +241,7 @@ describe("MCP execution redesign", () => {
     });
   });
 
-  it("keeps resource policy and legacy aliases beside URI reads", async () => {
+  it("keeps resource policy and legacy aliases beside URI reads without letting tool filters hide resources", async () => {
     const { state, connection, readResource } = await fixture();
     connection.resources = [{ name: "notes", uri: "test://notes" }];
     expect((await resources.executeResourceList(state, { server: "demo" })).details).toMatchObject({
@@ -256,23 +256,28 @@ describe("MCP execution redesign", () => {
     expect(
       (await executeCall(state, { toolName: "demo_read_notes" })).details.error,
     ).toBeUndefined();
-    for (const policy of [
-      { exposeResources: false },
-      { excludeTools: ["read_notes"] },
-      { includeTools: ["echo"] },
-    ]) {
-      state.config.mcpServers.demo = { command: "fixture", ...policy };
+    for (const toolFilter of [{ excludeTools: ["read_notes"] }, { includeTools: ["echo"] }]) {
+      state.config.mcpServers.demo = { command: "fixture", ...toolFilter };
       expect(
         (await resources.executeResourceList(state, { server: "demo" })).details,
       ).toMatchObject({
-        total: 0,
+        total: 1,
       });
       expect(
         (await resources.executeResourceRead(state, { server: "demo", uri: "test://notes" }))
           .details.error,
-      ).toBe("tool_not_found");
+      ).toBeUndefined();
     }
-    expect(readResource).toHaveBeenCalledTimes(2);
+    state.config.mcpServers.demo = { command: "fixture", exposeResources: false };
+    expect((await resources.executeResourceList(state, { server: "demo" })).details).toMatchObject({
+      total: 0,
+      resourceTemplates: [],
+    });
+    expect(
+      (await resources.executeResourceRead(state, { server: "demo", uri: "test://notes" })).details
+        .error,
+    ).toBe("resources_disabled");
+    expect(readResource).toHaveBeenCalledTimes(4);
   });
 
   it("rejects normalized live alias collisions without dispatch", async () => {

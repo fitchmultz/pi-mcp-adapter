@@ -1,4 +1,4 @@
-import type { Client, RequestOptions, Transport } from "@modelcontextprotocol/client";
+import type { RequestOptions, Transport } from "@modelcontextprotocol/client";
 import type * as ConnectionRuntime from "./connection-runtime.ts";
 import type { ManagedClient } from "./connection-runtime.ts";
 import type { ServerConnection } from "./server-connection.ts";
@@ -18,9 +18,6 @@ import {
 import {
   type ServerDefinition,
   type McpTraceSettings,
-  type McpTool,
-  type McpResource,
-  type McpPrompt,
   validateServerProtocolConfig,
 } from "./types.ts";
 import {
@@ -49,8 +46,13 @@ import {
   StdioDiagnostics,
 } from "./connection-stdio.ts";
 import { drainClientCallbacks } from "./client-operations.ts";
-import { logger } from "./logger.ts";
 import { cleanupFailures } from "./connection-disposal.ts";
+import {
+  fetchAllPrompts,
+  fetchAllResources,
+  fetchAllResourceTemplates,
+  fetchAllTools,
+} from "./connection-discovery.ts";
 
 import { ConnectionHandshake } from "./connection-handshake.ts";
 
@@ -409,6 +411,7 @@ class ConnectionSetup {
       definition: this.options.definition,
       tools: [],
       resources: [],
+      resourceTemplates: [],
       prompts: [],
       lastUsedAt: Date.now(),
       status,
@@ -442,6 +445,7 @@ class ConnectionSetup {
     const catalogs = [
       fetchAllTools(this.client, requestOptions),
       fetchAllResources(this.client, requestOptions),
+      fetchAllResourceTemplates(this.client, requestOptions),
       fetchAllPrompts(this.client, requestOptions),
     ] as const;
     const [toolResult] = await Promise.allSettled(catalogs);
@@ -453,9 +457,10 @@ class ConnectionSetup {
     if (this.authError) {
       throw this.authError;
     }
-    const [tools, resources, promptResult] = await Promise.all(catalogs);
+    const [tools, resources, resourceTemplates, promptResult] = await Promise.all(catalogs);
     connection.tools = tools;
     connection.resources = resources;
+    connection.resourceTemplates = resourceTemplates;
     connection.prompts = promptResult.prompts;
     connection.promptDiscoveryFailed = promptResult.failed;
     return connection;
@@ -487,51 +492,5 @@ class ConnectionSetup {
         ? new AggregateError([failure, ...failures], "MCP connection setup failed")
         : failure;
     return Promise.reject(this.stderr.report(reported));
-  }
-}
-
-async function fetchAllTools(client: Client, requestOptions?: RequestOptions): Promise<McpTool[]> {
-  return (await client.listTools(undefined, { ...requestOptions, cacheMode: "refresh" })).tools;
-}
-
-async function fetchAllPrompts(
-  client: Client,
-  requestOptions?: RequestOptions,
-): Promise<{ prompts: McpPrompt[]; failed: boolean }> {
-  if (!client.getServerCapabilities()?.prompts) {
-    return { prompts: [], failed: false };
-  }
-  try {
-    return {
-      prompts: (await client.listPrompts(undefined, { ...requestOptions, cacheMode: "refresh" }))
-        .prompts,
-      failed: false,
-    };
-  } catch (error) {
-    if (requestOptions?.signal?.aborted === true) {
-      throwIfAborted(requestOptions.signal);
-    }
-    logger.debug(
-      `MCP: prompts/list failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return { prompts: [], failed: true };
-  }
-}
-
-async function fetchAllResources(
-  client: Client,
-  requestOptions?: RequestOptions,
-): Promise<McpResource[]> {
-  if (!client.getServerCapabilities()?.resources) {
-    return [];
-  }
-  try {
-    return (await client.listResources(undefined, { ...requestOptions, cacheMode: "refresh" }))
-      .resources;
-  } catch {
-    if (requestOptions?.signal?.aborted === true) {
-      throwIfAborted(requestOptions.signal);
-    }
-    return [];
   }
 }

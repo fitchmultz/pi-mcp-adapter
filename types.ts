@@ -3,6 +3,7 @@ import type {
   Transport as McpTransport,
   ListPromptsResult,
   ListResourcesResult,
+  ListResourceTemplatesResult,
   ListToolsResult,
 } from "@modelcontextprotocol/client";
 import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
@@ -48,6 +49,7 @@ export interface McpStatusSnapshot {
 
 type SdkTool = ListToolsResult["tools"][number];
 type SdkResource = ListResourcesResult["resources"][number];
+type SdkResourceTemplate = ListResourceTemplatesResult["resourceTemplates"][number];
 type SdkPrompt = ListPromptsResult["prompts"][number];
 type SdkPromptArgument = NonNullable<SdkPrompt["arguments"]>[number];
 
@@ -57,6 +59,7 @@ export interface McpTool extends Omit<SdkTool, "inputSchema"> {
 }
 
 export type McpResource = SdkResource;
+export type McpResourceTemplate = SdkResourceTemplate;
 
 export interface McpPromptArgument {
   name: SdkPromptArgument["name"];
@@ -200,6 +203,7 @@ export interface CachedTool extends McpTool {
 }
 
 export type CachedResource = McpResource;
+export type CachedResourceTemplate = McpResourceTemplate;
 
 export interface CachedPrompt {
   name: string;
@@ -212,6 +216,7 @@ export interface ServerCacheEntry {
   configHash: string;
   tools: CachedTool[];
   resources: CachedResource[];
+  resourceTemplates?: CachedResourceTemplate[];
   prompts?: CachedPrompt[];
   instructions?: string;
   cachedAt: number;

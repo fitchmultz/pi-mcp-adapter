@@ -34,10 +34,12 @@ export class ConnectionCallbacks {
     const catalogs = this.catalogs.get(connection.client);
     const tools = catalogs?.tools();
     const resources = catalogs?.resources();
+    const resourceTemplates = catalogs?.resourceTemplates();
     const prompts = catalogs?.prompts();
     Object.assign(connection, {
       ...(tools === undefined ? {} : { tools }),
       ...(resources === undefined ? {} : { resources }),
+      ...(resourceTemplates === undefined ? {} : { resourceTemplates }),
       ...(prompts === undefined ? {} : { prompts, promptDiscoveryFailed: false }),
     });
   }
@@ -104,7 +106,12 @@ export class ConnectionCallbacks {
           },
           resources: {
             onChanged: (error: Error | null) => {
-              this.handleResourcesListChanged(serverName, client, error);
+              this.handleResourcesListChanged(
+                serverName,
+                client,
+                error,
+                runtime.isMethodNotFoundError,
+              );
             },
           },
           prompts: {
@@ -197,6 +204,7 @@ export class ConnectionCallbacks {
     serverName: string,
     client: Client,
     error: Error | null,
+    isMethodNotFound: (error: unknown) => boolean,
   ): void {
     if (error) {
       logger.debug(
@@ -212,7 +220,89 @@ export class ConnectionCallbacks {
     if (!connection || connection.client !== client || connection.status !== "connected") {
       return;
     }
+    connection.pendingResources = resources;
+    connection.resourceTemplatesStale = true;
+    const generation = (connection.resourceTemplatesGeneration ?? 0) + 1;
+    connection.resourceTemplatesGeneration = generation;
+    this.refreshTemplatesOnResourcesChanged({
+      serverName,
+      client,
+      connection,
+      resources,
+      generation,
+      isMethodNotFound,
+    }).catch((refreshError: unknown) => {
+      const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
+      logger.debug(`MCP: resources/templates/list refresh failed for ${serverName}: ${message}`);
+    });
+  }
+
+  private async fetchTemplatesForListChanged(
+    serverName: string,
+    client: Client,
+    signal: AbortSignal | undefined,
+    isMethodNotFound: (error: unknown) => boolean,
+  ): Promise<ServerConnection["resourceTemplates"] | undefined> {
+    try {
+      const result = await client.listResourceTemplates(undefined, {
+        ...(signal ? { signal } : {}),
+        cacheMode: "refresh",
+      });
+      return result.resourceTemplates;
+    } catch (error) {
+      if (signal?.aborted === true) {
+        return undefined;
+      }
+      if (isMethodNotFound(error)) {
+        return [];
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      logger.debug(`MCP: resources/templates/list refresh failed for ${serverName}: ${message}`);
+      return undefined;
+    }
+  }
+
+  private isCurrentTemplateRefresh(
+    serverName: string,
+    client: Client,
+    connection: ServerConnection,
+    generation: number,
+  ): boolean {
+    return (
+      this.lifecycle.runtimeSignal?.aborted !== true &&
+      connection.resourceTemplatesStale === true &&
+      (connection.resourceTemplatesGeneration ?? 0) === generation &&
+      this.lifecycle.getConnection(serverName) === connection &&
+      connection.client === client &&
+      connection.status === "connected"
+    );
+  }
+
+  private async refreshTemplatesOnResourcesChanged(input: {
+    readonly serverName: string;
+    readonly client: Client;
+    readonly connection: ServerConnection;
+    readonly resources: ServerConnection["resources"];
+    readonly generation: number;
+    readonly isMethodNotFound: (error: unknown) => boolean;
+  }): Promise<void> {
+    const { serverName, client, connection, resources, generation, isMethodNotFound } = input;
+    const refreshed = await this.fetchTemplatesForListChanged(
+      serverName,
+      client,
+      this.lifecycle.runtimeSignal,
+      isMethodNotFound,
+    );
+    if (
+      refreshed === undefined ||
+      !this.isCurrentTemplateRefresh(serverName, client, connection, generation)
+    ) {
+      return;
+    }
     connection.resources = resources;
+    connection.pendingResources = undefined;
+    connection.resourceTemplates = refreshed;
+    connection.resourceTemplatesStale = false;
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
   }
 
