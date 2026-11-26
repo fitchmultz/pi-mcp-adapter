@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.62 - 2026-11-26
+
+<!-- npm-release:unreleased:start -->
+
+- Harden MCP Apps `openLink` to allow only `http:`, `https:`, and `mailto:` URLs on both the local proxy server and the browser host page.
+- Default headless and non-UI sessions (such as subagents and `pi -p`) to data-only execution when `uiViewer` is `"auto"` or unset, while preserving explicit `"browser"` and `"glimpse"` overrides.
+- Scope Glimpse viewer windows per UI session handle instead of a process-wide singleton, and probe global Glimpse installations asynchronously without permanently caching lookup failures.
+- Preserve pending `ui/update-model-context` updates across UI close until the next user prompt, expose active open UI session messages in `mcp({ action: "ui-messages" })`, surface AppBridge/iframe load errors back to the host and agent, keep background tabs alive while their SSE stream stays connected, and cache host bundle reads/digests.
+
+<!-- npm-release:unreleased:end -->
+
+- fix(ui): harden openLink, default headless runs to no-UI, and fix MCP Apps lifecycle (MCP-207) (#291) ([5cd66c9](https://github.com/fitchmultz/pi-mcp-adapter/commit/5cd66c9102dfdc61f341dfea0887634636262fc3))
+
+### What's Changed
+
+- fix(ui): harden openLink, default headless runs to no-UI, and fix MCP Apps lifecycle (MCP-207) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/291
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.61...v8.0.62
+
 ## 8.0.61 - 2026-11-26
 
 <!-- npm-release:unreleased:start -->
