@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.64 - 2026-11-26
+
+<!-- npm-release:unreleased:start -->
+
+- Fixed `/mcp status` subcommand routing so it always prints status directly without opening the interactive panel, replaced unknown subcommand fallthrough with `/mcp` usage help, and added `/mcp reload`, `/mcp tools [server]`, and `/mcp doctor [server]` with tab completions.
+- Applied `/mcp disable <server>` and `/mcp enable <server>` live in-session while persisting project overrides, skipped disabled servers silently on bare `/mcp reconnect`, unified `applyConnectionMetadata` (`resourceCounts` + metadata sync), and deduplicated config loading/snapshot discovery across `config.ts`, `config-disabled.ts`, and `commands.ts` to avoid redundant disk reads per `/mcp` open.
+- Switched config validation (`config-diagnostics.ts` and `config-imports.ts`) to isolate invalid server entries and individual settings rather than dropping entire config files, reporting structured validation errors/warnings (`configErrors`) for malformed entries, unknown/typo keys, bad `imports`, and invalid numeric bounds in startup notices, `/mcp`, `/mcp status`, and `/mcp doctor`.
+- Added `<agentDir>/mcp.log` logging with 5 MiB `.1` rotation for `notifications/message`, fixed `mcp-trace.ts` (`durationMs` actual RPC round-trip latency, `relatedRequestId` propagation, string JSON-RPC ID preservation, and non-clobbering initialization on explicit `trace.file`), and polished `/mcp` panels to use Pi `theme` tokens, pause the 60s auto-close timer when busy or dirty, retain matching undiscovered/failed servers in search, ignore `Space` on disabled servers, and display per-server and per-tool token estimates (while untrusted project `blocked` servers render in `/mcp status` and `/mcp doctor`).
+
+<!-- npm-release:unreleased:end -->
+
+- fix(commands,config,obs): fix /mcp status routing, live enable/disable, per-entry validation, and operator observability (MCP-214) (#303) ([c5d5f38](https://github.com/fitchmultz/pi-mcp-adapter/commit/c5d5f38f7c36af5f19ac2a26a34b15098206348f))
+
+### What's Changed
+
+- fix(commands,config,obs): fix /mcp status routing, live enable/disable, per-entry validation, and operator observability (MCP-214) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/303
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.63...v8.0.64
+
 ## 8.0.63 - 2026-11-26
 
 <!-- npm-release:unreleased:start -->
