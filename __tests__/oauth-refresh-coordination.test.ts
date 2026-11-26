@@ -621,11 +621,12 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
 
   it("coalesces concurrent proactive refreshes when the AS issues short-lived tokens (<=60s)", async () => {
     const { server, url } = await startServer({
-      tokenDelayMs: 100,
+      tokenDelayMs: 120,
       tokenExpiresInSeconds: 30,
       rotateRefreshToken: true,
     });
-    const manager = trackManager();
+    const managerA = trackManager();
+    const managerB = trackManager();
     const now = Math.floor(Date.now() / 1000);
     seedInMemory("proactive-short", url, server.origin, {
       accessToken: "access-1",
@@ -634,18 +635,22 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
       scope: "read write",
     });
 
-    const connection = await manager.connect("proactive-short", { url, auth: "oauth" });
+    // Two independent managers observe the same expiring 30s token with no local cooldown yet,
+    // so both enter coordinateOAuthRefresh concurrently and the waiter must adopt access-2.
+    const [connA, connB] = await Promise.all([
+      managerA.connect("proactive-short", { url, auth: "oauth" }),
+      managerB.connect("proactive-short", { url, auth: "oauth" }),
+    ]);
     const results = await Promise.all([
-      connection.client.callTool({ name: "echo", arguments: { n: 1 } }),
-      connection.client.callTool({ name: "echo", arguments: { n: 2 } }),
-      connection.client.callTool({ name: "echo", arguments: { n: 3 } }),
+      connA.client.callTool({ name: "echo", arguments: { n: 1 } }),
+      connB.client.callTool({ name: "echo", arguments: { n: 2 } }),
     ]);
 
-    expect(results).toHaveLength(3);
+    expect(results).toHaveLength(2);
     expect(server.tokenRequests).toHaveLength(1);
     expect(server.invalidGrantCount).toBe(0);
     expect(server.unauthorizedCount).toBe(0);
-    expect(server.callAuthorizations).toEqual(["access-2", "access-2", "access-2"]);
+    expect(server.callAuthorizations).toEqual(["access-2", "access-2"]);
   });
 
   it(
@@ -822,5 +827,103 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
       `${sseOrigin}/.well-known/oauth-protected-resource`,
     );
     expect(recorded?.discovered?.scope).toBe("sse:read");
+  });
+
+  it("ignores partial-scope credentials for a 401 discovered scope until a peer saves the required scope", async () => {
+    let origin = "";
+    let mcpRequests = 0;
+    const scopedServer = new MachineHttpServer(async (req, res) => {
+      const url = new URL(req.url ?? "/", origin);
+      if (url.pathname === "/.well-known/oauth-protected-resource") {
+        machineJson(res, {
+          resource: `${origin}/mcp`,
+          authorization_servers: [origin],
+        });
+        return;
+      }
+      if (url.pathname === "/.well-known/oauth-authorization-server") {
+        machineJson(res, {
+          issuer: origin,
+          authorization_endpoint: `${origin}/authorize`,
+          token_endpoint: `${origin}/token`,
+          registration_endpoint: `${origin}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+        });
+        return;
+      }
+      if (url.pathname === "/register") {
+        const body = OAuthClientMetadataSchema.parse(JSON.parse(await readMachineBody(req)));
+        machineJson(res, { client_id: "scoped-client", ...body }, 201);
+        return;
+      }
+      if (req.method !== "POST") {
+        res.writeHead(req.method === "DELETE" ? 202 : 405).end();
+        return;
+      }
+      mcpRequests += 1;
+      const body = machineMessageSchema.parse(JSON.parse(await readMachineBody(req)));
+      if (req.headers.authorization !== "Bearer write-token") {
+        res
+          .writeHead(401, {
+            "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource", scope="write"`,
+          })
+          .end("Unauthorized");
+        return;
+      }
+      if (!("id" in body)) {
+        res.writeHead(202).end();
+        return;
+      }
+      machineJson(res, {
+        jsonrpc: "2.0",
+        id: body.id,
+        result: machineResult(body.method, "scoped-fixture", "ok:write"),
+      });
+    });
+    rawServers.push(scopedServer);
+    origin = await scopedServer.listen();
+    const url = `${origin}/mcp`;
+
+    const manager = trackManager();
+    const oauthRuntime = createOAuthRuntime();
+    manager.setOAuthRuntime(oauthRuntime);
+    const definition = { url, auth: "oauth" as const };
+
+    const initial = await manager.connect("scoped-remote", definition);
+    expect(initial.status).toBe("needs-auth");
+    expect(
+      getOAuthRequest("scoped-remote", url, getAuthBaseDir(), oauthRuntime)?.discovered?.scope,
+    ).toBe("write");
+
+    const state = createTestState({
+      manager,
+      oauthRuntime,
+      config: { settings: { autoAuth: false }, mcpServers: { "scoped-remote": definition } },
+    });
+
+    // Peer stores a read-only token that misses the 401 discovered scope: stay needs-auth without reconnecting.
+    const requestsBeforePartial = mcpRequests;
+    seedInMemory("scoped-remote", url, origin, {
+      accessToken: "read-only-token",
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+      scope: "read",
+    });
+    const partialAttempt = await prepareMcpConnection(state, "scoped-remote");
+    expect(partialAttempt.error).toBeDefined();
+    expect(manager.getConnection("scoped-remote")?.status).toBe("needs-auth");
+    expect(mcpRequests).toBe(requestsBeforePartial);
+
+    // Peer stores a token covering the 401 discovered scope: pick it up and reconnect cleanly.
+    seedInMemory("scoped-remote", url, origin, {
+      accessToken: "write-token",
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+      scope: "read write",
+    });
+    const recovered = await prepareMcpConnection(state, "scoped-remote");
+    expect(recovered.error).toBeUndefined();
+    expect(recovered.connection?.status).toBe("connected");
+    expect(mcpRequests).toBeGreaterThan(requestsBeforePartial);
   });
 });

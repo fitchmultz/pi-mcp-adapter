@@ -88,6 +88,28 @@ function isWithinProactiveCooldown(identity: AuthIdentity, nowMs = Date.now()): 
   return until !== undefined && nowMs < until;
 }
 
+export function hasUsableStoredTokens(tokens: {
+  readonly accessToken: string;
+  readonly refreshToken?: string | undefined;
+  readonly expiresAt?: number | undefined;
+}): boolean {
+  return (
+    (!isTokenExpired(tokens) && tokens.accessToken !== "") ||
+    (tokens.refreshToken !== undefined && tokens.refreshToken !== "")
+  );
+}
+
+export function matchesTokenSnapshot(
+  snapshot: TokenSnapshot | undefined,
+  tokens: { readonly accessToken: string; readonly refreshToken?: string | undefined },
+): boolean {
+  return (
+    snapshot !== undefined &&
+    snapshot.accessToken === tokens.accessToken &&
+    snapshot.refreshToken === tokens.refreshToken
+  );
+}
+
 export function needsProactiveRefresh(
   tokens: { readonly refreshToken?: string | undefined; readonly expiresAt?: number | undefined },
   nowSeconds = Date.now() / 1000,

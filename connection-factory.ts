@@ -5,10 +5,10 @@ import type { ServerConnection } from "./server-connection.ts";
 import {
   getOAuthRequest,
   hasUnsatisfiedScope,
-  isTokenExpired,
   supportsOAuth,
   type McpOAuthRuntime,
 } from "./mcp-oauth-runtime.ts";
+import { hasUsableStoredTokens, matchesTokenSnapshot } from "./mcp-oauth-refresh.ts";
 import {
   getAuthBaseDir,
   inspectAuthForUrl,
@@ -63,28 +63,6 @@ function safeResolveServerUrl(definition: ServerDefinition): string | undefined 
   }
 }
 
-function hasUsableStoredTokens(tokens: {
-  readonly accessToken: string;
-  readonly refreshToken?: string | undefined;
-  readonly expiresAt?: number | undefined;
-}): boolean {
-  return (
-    (!isTokenExpired(tokens) && tokens.accessToken !== "") ||
-    (tokens.refreshToken !== undefined && tokens.refreshToken !== "")
-  );
-}
-
-function matchesTokenSnapshot(
-  snapshot: TokenSnapshot | undefined,
-  tokens: { readonly accessToken: string; readonly refreshToken?: string | undefined },
-): boolean {
-  return (
-    snapshot !== undefined &&
-    snapshot.accessToken === tokens.accessToken &&
-    snapshot.refreshToken === tokens.refreshToken
-  );
-}
-
 export class ConnectionFactory {
   authStorageOptions: AuthStorageOptions = {};
   oauthRuntime: McpOAuthRuntime | undefined;
@@ -115,34 +93,32 @@ export class ConnectionFactory {
     this.needsAuthTokens.set(connection, snapshot);
   }
 
+  private requiredOAuthScope(name: string, serverUrl: string): string | undefined {
+    const request = this.oauthRuntime
+      ? getOAuthRequest(name, serverUrl, getAuthBaseDir(this.authStorageOptions), this.oauthRuntime)
+      : undefined;
+    return request?.challenge?.requiredScope ?? request?.discovered?.scope;
+  }
+
   hasFreshOAuthCredentials(
     name: string,
     definition: ServerDefinition,
     stale: ServerConnection,
   ): boolean {
-    if (!supportsOAuth(definition)) {
-      return false;
-    }
-    const serverUrl = safeResolveServerUrl(definition);
+    const serverUrl = supportsOAuth(definition) ? safeResolveServerUrl(definition) : undefined;
     if (serverUrl === undefined) {
       return false;
     }
     const status = inspectAuthForUrl({ serverName: name, serverUrl }, this.authStorageOptions);
-    if (status.status !== "present" || !status.entry.tokens) {
-      return false;
-    }
-    const tokens = status.entry.tokens;
+    const tokens = status.status === "present" ? status.entry.tokens : undefined;
     if (
+      !tokens ||
       !hasUsableStoredTokens(tokens) ||
       matchesTokenSnapshot(this.needsAuthTokens.get(stale), tokens)
     ) {
       return false;
     }
-    const requiredScope = this.oauthRuntime
-      ? getOAuthRequest(name, serverUrl, getAuthBaseDir(this.authStorageOptions), this.oauthRuntime)
-          ?.challenge?.requiredScope
-      : undefined;
-    return !hasUnsatisfiedScope(requiredScope, tokens.scope);
+    return !hasUnsatisfiedScope(this.requiredOAuthScope(name, serverUrl), tokens.scope);
   }
 
   requestOptions(definition?: ServerDefinition, signal?: AbortSignal): RequestOptions | undefined {
