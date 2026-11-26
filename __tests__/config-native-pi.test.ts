@@ -879,4 +879,60 @@ describe("native Pi project .pi/mcp.json support", () => {
       mcpServers: { globalDocs: { directTools: true } },
     });
   });
+
+  it("matches Pi exposure/toolExposure precedence when project .pi/mcp.json overrides global <agentDir>/mcp.json", async () => {
+    const { agentDir, project } = createWorkspace();
+    writeJson(join(agentDir, "mcp.json"), {
+      mcpServers: {
+        docs: {
+          url: "https://docs.example.com/mcp",
+          exposure: "hidden",
+          toolExposure: { search: "direct" },
+        },
+        allHidden: {
+          url: "https://hidden.example.com/mcp",
+          exposure: "hidden",
+        },
+        disabledGlobal: {
+          url: "https://disabled.example.com/mcp",
+          enabled: false,
+        },
+        scoped: {
+          url: "https://scoped.example.com/mcp",
+          exposure: "hidden",
+          toolExposure: { search: "direct" },
+        },
+      },
+    });
+    writeJson(join(project, ".pi", "mcp.json"), {
+      mcpServers: {
+        docs: { exposure: "direct" },
+        allHidden: { exposure: "direct" },
+        disabledGlobal: { exposure: "direct" },
+        scoped: { toolExposure: { ping: "direct" } },
+      },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const config = loadMcpConfig(undefined, project);
+
+    expect(config.mcpServers.docs).toEqual({
+      url: "https://docs.example.com/mcp",
+      directTools: true,
+    });
+    expect(config.mcpServers.allHidden).toEqual({
+      url: "https://hidden.example.com/mcp",
+      directTools: true,
+    });
+    expect(config.mcpServers.disabledGlobal).toEqual({
+      url: "https://disabled.example.com/mcp",
+      directTools: true,
+      disabled: true,
+    });
+    expect(config.mcpServers.scoped).toEqual({
+      url: "https://scoped.example.com/mcp",
+      includeTools: ["ping"],
+      directTools: ["ping"],
+    });
+  });
 });

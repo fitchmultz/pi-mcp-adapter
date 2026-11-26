@@ -17,11 +17,17 @@ import {
   warnNativeEntryFalse,
   type NativeEntryContext,
 } from "./config-native-pi-oauth.ts";
-import { mapNativeExposureFields } from "./config-native-pi-exposure.ts";
+import {
+  buildNativePolicyOverrideEntry,
+  mapNativeExposureFields,
+  pickNativeServerPolicy,
+  type NativeServerPolicy,
+} from "./config-native-pi-exposure.ts";
 
 export interface LoadedNativePiConfig {
   readonly config: McpConfig;
   readonly replacedServers: ReadonlySet<string>;
+  readonly nativePolicies?: ReadonlyMap<string, NativeServerPolicy>;
 }
 
 type NativeBaseFields = Readonly<
@@ -151,8 +157,8 @@ function resolveDisabledOverride(
 function mapOverrideEntry(
   raw: Record<string, unknown>,
   ctx: NativeEntryContext,
-  existingServers: Readonly<Record<string, ServerEntry>> | undefined,
-): ServerEntry | null {
+  options: Pick<MapEntryOptions, "existingServers" | "nativePolicies">,
+): { readonly entry: ServerEntry; readonly replacesExisting: boolean } | null {
   const extra = Object.keys(raw).filter((key) => !NATIVE_OVERRIDE_KEYS.has(key));
   if (extra.length > 0) {
     return warnNativeEntry(
@@ -160,7 +166,10 @@ function mapOverrideEntry(
       `an override without command or url can only set enabled, exposure, or toolExposure (unexpected: ${extra.join(", ")})`,
     );
   }
-  if (existingServers !== undefined && !Object.hasOwn(existingServers, ctx.serverName)) {
+  if (
+    options.existingServers !== undefined &&
+    !Object.hasOwn(options.existingServers, ctx.serverName)
+  ) {
     return warnNativeEntry(
       ctx,
       'needs "command" or "url", or a lower-precedence server to override',
@@ -170,11 +179,13 @@ function mapOverrideEntry(
   if (!base) {
     return null;
   }
-  const mappedExposure = mapNativeExposureFields(base, ctx);
-  return {
-    ...mappedExposure,
-    ...resolveDisabledOverride(base.enabled, mappedExposure.disabled === true),
-  };
+  return buildNativePolicyOverrideEntry({
+    base,
+    existing: options.existingServers?.[ctx.serverName],
+    nativePolicy: options.nativePolicies?.get(ctx.serverName),
+    ctx,
+    resolveDisabled: resolveDisabledOverride,
+  });
 }
 
 function validateHttpFields(raw: Record<string, unknown>, ctx: NativeEntryContext): boolean {
@@ -301,11 +312,17 @@ function validateDefinitionTypeAndAuth(
   return true;
 }
 
+interface MappedNativeEntry {
+  readonly entry: ServerEntry;
+  readonly replacesExisting: boolean;
+  readonly policy?: NativeServerPolicy;
+}
+
 function mapDefinitionEntry(
   raw: Record<string, unknown>,
   ctx: NativeEntryContext,
   cwd: string,
-): ServerEntry | null {
+): { readonly entry: ServerEntry; readonly policy: NativeServerPolicy } | null {
   if (!validateDefinitionTypeAndAuth(raw, ctx)) {
     return null;
   }
@@ -319,11 +336,14 @@ function mapDefinitionEntry(
   }
   const mappedExposure = mapNativeExposureFields(base, ctx);
   return {
-    ...transport,
-    ...(base.description !== undefined ? { description: base.description } : {}),
-    ...(base.timeout !== undefined ? { requestTimeoutMs: Math.round(base.timeout * 1000) } : {}),
-    ...mappedExposure,
-    ...resolveDisabledOverride(base.enabled, mappedExposure.disabled === true),
+    entry: {
+      ...transport,
+      ...(base.description !== undefined ? { description: base.description } : {}),
+      ...(base.timeout !== undefined ? { requestTimeoutMs: Math.round(base.timeout * 1000) } : {}),
+      ...mappedExposure,
+      ...resolveDisabledOverride(base.enabled, mappedExposure.disabled === true),
+    },
+    policy: pickNativeServerPolicy(base),
   };
 }
 
@@ -332,13 +352,14 @@ interface MapEntryOptions {
   readonly allowOverrides: boolean;
   readonly adapterConfigHint: string;
   readonly existingServers?: Readonly<Record<string, ServerEntry>> | undefined;
+  readonly nativePolicies?: ReadonlyMap<string, NativeServerPolicy> | undefined;
 }
 
 function mapNativeServerEntry(
   raw: unknown,
   ctx: NativeEntryContext,
   options: MapEntryOptions,
-): { readonly entry: ServerEntry; readonly replacesExisting: boolean } | null {
+): MappedNativeEntry | null {
   if (!isConfigObject(raw)) {
     return warnNativeEntry(ctx, "server entry must be an object");
   }
@@ -353,11 +374,12 @@ function mapNativeServerEntry(
     if (!options.allowOverrides) {
       return warnNativeEntry(ctx, 'needs either "command" (stdio) or "url" (streamable HTTP)');
     }
-    const entry = mapOverrideEntry(raw, ctx, options.existingServers);
-    return entry === null ? null : { entry, replacesExisting: false };
+    return mapOverrideEntry(raw, ctx, options);
   }
-  const entry = mapDefinitionEntry(raw, ctx, options.cwd);
-  return entry === null ? null : { entry, replacesExisting: true };
+  const mapped = mapDefinitionEntry(raw, ctx, options.cwd);
+  return mapped === null
+    ? null
+    : { entry: mapped.entry, replacesExisting: true, policy: mapped.policy };
 }
 
 function parseNativeConfigFile(filePath: string): Record<string, unknown> | null {
@@ -375,6 +397,34 @@ function parseNativeConfigFile(filePath: string): Record<string, unknown> | null
     return null;
   }
   return raw;
+}
+
+function collectNativeServerEntries(
+  rawServers: Record<string, unknown>,
+  filePath: string,
+  options: MapEntryOptions,
+): LoadedNativePiConfig {
+  const mcpServers: Record<string, ServerEntry> = {};
+  const replacedServers = new Set<string>();
+  const nativePolicies = new Map<string, NativeServerPolicy>();
+  for (const [serverName, value] of Object.entries(rawServers)) {
+    const mapped = mapNativeServerEntry(value, { filePath, serverName }, options);
+    if (mapped === null) {
+      continue;
+    }
+    mcpServers[serverName] = mapped.entry;
+    if (mapped.replacesExisting) {
+      replacedServers.add(serverName);
+    }
+    if (mapped.policy) {
+      nativePolicies.set(serverName, mapped.policy);
+    }
+  }
+  return {
+    config: { mcpServers },
+    replacedServers,
+    ...(nativePolicies.size > 0 ? { nativePolicies } : {}),
+  };
 }
 
 function readNativePiConfigFile(
@@ -404,18 +454,7 @@ function readNativePiConfigFile(
     );
     return null;
   }
-  const mcpServers: Record<string, ServerEntry> = {};
-  const replacedServers = new Set<string>();
-  for (const [serverName, value] of Object.entries(raw.mcpServers)) {
-    const mapped = mapNativeServerEntry(value, { filePath, serverName }, options);
-    if (mapped !== null) {
-      mcpServers[serverName] = mapped.entry;
-      if (mapped.replacesExisting) {
-        replacedServers.add(serverName);
-      }
-    }
-  }
-  return { config: { mcpServers }, replacedServers };
+  return collectNativeServerEntries(raw.mcpServers, filePath, options);
 }
 
 /**
@@ -441,12 +480,14 @@ export function readNativePiProjectConfig(
   filePath: string,
   cwd: string,
   existingServers?: Readonly<Record<string, ServerEntry>>,
+  nativePolicies?: ReadonlyMap<string, NativeServerPolicy>,
 ): LoadedNativePiConfig | null {
   return readNativePiConfigFile(filePath, {
     cwd,
     allowOverrides: true,
     adapterConfigHint: ".pi/fitch-mcp-adapter/mcp.json",
     existingServers,
+    nativePolicies,
   });
 }
 

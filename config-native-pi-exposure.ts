@@ -1,4 +1,5 @@
 import type { McpExposure } from "@earendil-works/pi-coding-agent";
+import type { ConfigSourceSpec } from "./config-contracts.ts";
 import type { ServerEntry } from "./config-types.ts";
 import {
   normalizeNativeToolExposure,
@@ -9,6 +10,121 @@ import {
 export interface NativeExposureInput {
   readonly exposure?: McpExposure;
   readonly toolExposure?: Record<string, McpExposure>;
+}
+
+export interface NativeServerPolicy extends NativeExposureInput {
+  readonly enabled?: boolean;
+}
+
+export function pickNativeServerPolicy(
+  base: NativeExposureInput & { readonly enabled?: boolean },
+): NativeServerPolicy {
+  return {
+    ...(base.enabled !== undefined ? { enabled: base.enabled } : {}),
+    ...(base.exposure !== undefined ? { exposure: base.exposure } : {}),
+    ...(base.toolExposure !== undefined ? { toolExposure: { ...base.toolExposure } } : {}),
+  };
+}
+
+function mergeNativePolicy(
+  basePolicy: NativeServerPolicy,
+  override: NativeExposureInput & { readonly enabled?: boolean },
+): NativeServerPolicy {
+  return {
+    ...basePolicy,
+    ...(override.enabled !== undefined ? { enabled: override.enabled } : {}),
+    ...(override.exposure !== undefined ? { exposure: override.exposure } : {}),
+    ...(override.toolExposure !== undefined ? { toolExposure: { ...override.toolExposure } } : {}),
+  };
+}
+
+function stripExposureOverrides(entry: ServerEntry, stripDisabled: boolean): ServerEntry {
+  const next = { ...entry };
+  delete next.directTools;
+  delete next.includeTools;
+  delete next.excludeTools;
+  delete next.toolExposure;
+  if (stripDisabled) {
+    delete next.disabled;
+  }
+  return next;
+}
+
+function hasExposureOverrideFields(entry: ServerEntry): boolean {
+  return (
+    entry.directTools !== undefined ||
+    entry.includeTools !== undefined ||
+    entry.excludeTools !== undefined ||
+    entry.toolExposure !== undefined ||
+    entry.disabled !== undefined
+  );
+}
+
+export function updateNativePolicyTracking(
+  policies: Map<string, NativeServerPolicy>,
+  sourceId: ConfigSourceSpec["id"],
+  layer: {
+    readonly loadedPolicies?: ReadonlyMap<string, NativeServerPolicy>;
+    readonly servers: Readonly<Record<string, ServerEntry>>;
+    readonly hasTransport: (entry: ServerEntry) => boolean;
+  },
+): void {
+  if (sourceId === "native-pi-global") {
+    for (const [name, policy] of layer.loadedPolicies ?? []) {
+      policies.set(name, policy);
+    }
+    return;
+  }
+  for (const [name, entry] of Object.entries(layer.servers)) {
+    if (layer.hasTransport(entry) || hasExposureOverrideFields(entry)) {
+      policies.delete(name);
+    }
+  }
+}
+
+export function buildNativePolicyOverrideEntry(input: {
+  readonly base: NativeExposureInput & { readonly enabled?: boolean };
+  readonly existing: ServerEntry | undefined;
+  readonly nativePolicy: NativeServerPolicy | undefined;
+  readonly ctx: NativeEntryContext;
+  readonly resolveDisabled: (
+    enabled: boolean | undefined,
+    hiddenDisabled: boolean,
+  ) => Partial<ServerEntry>;
+}): { readonly entry: ServerEntry; readonly replacesExisting: boolean } {
+  const { base, existing, nativePolicy, ctx, resolveDisabled } = input;
+  if (nativePolicy !== undefined && existing !== undefined) {
+    const merged = mergeNativePolicy(nativePolicy, base);
+    const mappedExposure = mapNativeExposureFields(merged, ctx);
+    return {
+      entry: {
+        ...stripExposureOverrides(existing, true),
+        ...mappedExposure,
+        ...resolveDisabled(merged.enabled, mappedExposure.disabled === true),
+      },
+      replacesExisting: true,
+    };
+  }
+  const mappedExposure = mapNativeExposureFields(base, ctx);
+  const disabledOverride = resolveDisabled(base.enabled, mappedExposure.disabled === true);
+  const hasExplicitExposure = base.exposure !== undefined || base.toolExposure !== undefined;
+  if (hasExplicitExposure && existing !== undefined) {
+    return {
+      entry: {
+        ...stripExposureOverrides(
+          existing,
+          base.enabled !== undefined || mappedExposure.disabled === true,
+        ),
+        ...mappedExposure,
+        ...disabledOverride,
+      },
+      replacesExisting: true,
+    };
+  }
+  return {
+    entry: { ...mappedExposure, ...disabledOverride },
+    replacesExisting: false,
+  };
 }
 
 function collectExactDirectNames(keys: readonly string[], ctx: NativeEntryContext): string[] {

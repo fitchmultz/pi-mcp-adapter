@@ -106,11 +106,12 @@ function updateSharedServerEntry(filePath: string, serverName: string, entry: Se
   return filePath;
 }
 
-function resolveDirectToolsWritePath(path: string): string {
-  // Never mutate a shared `.mcp.json` with adapter-only `directTools` pins.
-  return basename(path) === ".mcp.json"
-    ? join(dirname(path), ".pi", "fitch-mcp-adapter", "mcp.json")
-    : path;
+function resolveDirectToolsWritePath(provenance: ServerProvenance): string {
+  // Never mutate a shared project `.mcp.json` with adapter-only `directTools` pins,
+  // while keeping explicit user `--mcp-config` / `configPath` `.mcp.json` targets writable.
+  return provenance.kind === "project" && basename(provenance.path) === ".mcp.json"
+    ? join(dirname(provenance.path), ".pi", "fitch-mcp-adapter", "mcp.json")
+    : provenance.path;
 }
 
 export function writeDirectToolsConfig(
@@ -127,7 +128,7 @@ export function writeDirectToolsConfig(
       continue;
     }
 
-    const targetPath = resolveDirectToolsWritePath(prov.path);
+    const targetPath = resolveDirectToolsWritePath(prov);
 
     const entries = byPath.get(targetPath) ?? [];
     entries.push({ name: serverName, value });

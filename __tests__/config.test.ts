@@ -4,6 +4,7 @@ import { isConfigObject } from "../config-validation.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -1906,6 +1907,35 @@ describe("config discovery", () => {
     ]);
     expect(warning).toHaveBeenCalled();
     warning.mockRestore();
+  });
+
+  it("writes directTools pins directly to an external explicit .mcp.json overridePath", async () => {
+    const extDir = mkdtempSync(join(tmpdir(), "pi-mcp-external-override-"));
+    const cwdDir = mkdtempSync(join(tmpdir(), "pi-mcp-external-cwd-"));
+    const overrideFile = join(extDir, ".mcp.json");
+    writeJson(overrideFile, {
+      mcpServers: {
+        docs: { command: "docs-bin", args: [], directTools: false },
+      },
+    });
+
+    const { getServerProvenance, writeDirectToolsConfig, loadMcpConfig } =
+      await import("../config.ts");
+    const provenance = getServerProvenance(overrideFile, cwdDir);
+    expect(provenance.get("docs")).toEqual({ path: overrideFile, kind: "user" });
+
+    writeDirectToolsConfig(new Map([["docs", true]]), provenance);
+    expect(existsSync(join(extDir, ".pi", "fitch-mcp-adapter", "mcp.json"))).toBe(false);
+    expect(readJsonServers(overrideFile).docs).toEqual({
+      command: "docs-bin",
+      args: [],
+      directTools: true,
+    });
+    expect(loadMcpConfig(overrideFile, cwdDir).mcpServers.docs).toEqual({
+      command: "docs-bin",
+      args: [],
+      directTools: true,
+    });
   });
 });
 
