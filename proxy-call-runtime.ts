@@ -25,10 +25,13 @@ import {
   formatMcpResultReference,
 } from "./mcp-output-guard.ts";
 import {
+  appendStderrTail,
+  createNoProgressBudget,
   formatInterruptedTimeoutMessage,
   formatProgressText,
   formatTimeoutMessage,
   inputValidationHint,
+  stderrDetails,
   toolCallResult,
 } from "./proxy-call-result.ts";
 /** The part of a tool call that is identical for proxy and direct tools. */
@@ -51,25 +54,6 @@ interface ToolCallOptions extends McpToolCallIdentity {
   recoverAuthConnection: NonNullable<SessionRecoveryDeps["onNeedsAuth"]>;
   authRequiredMessage: () => string;
   autoAuthAttempted: () => boolean;
-}
-
-function createNoProgressBudget(
-  callerSignal: AbortSignal,
-  remainingTimeoutMs: number | undefined,
-  sdk: RuntimeDependencies["sdk"],
-): { signal: AbortSignal; clear?: () => void } {
-  if (remainingTimeoutMs === undefined) {
-    return { signal: callerSignal };
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort(new sdk.SdkError(sdk.SdkErrorCode.RequestTimeout, "Request timed out"));
-  }, remainingTimeoutMs);
-  timer.unref();
-  return {
-    signal: combineAbortSignals(callerSignal, controller.signal) ?? controller.signal,
-    clear: () => clearTimeout(timer),
-  };
 }
 
 type RuntimeDependencies = Awaited<ReturnType<typeof loadCallDependencies>>;
@@ -268,7 +252,16 @@ class ToolCallRuntime {
                 attemptStartedAt = Date.now();
                 sawProgress = false;
               }
-              const budget = createNoProgressBudget(signal, remainingTimeoutMs, this.deps.sdk);
+              const budget = createNoProgressBudget(
+                signal,
+                remainingTimeoutMs,
+                () =>
+                  new this.deps.sdk.SdkError(
+                    this.deps.sdk.SdkErrorCode.RequestTimeout,
+                    "Request timed out",
+                  ),
+                combineAbortSignals,
+              );
               const trackedProgress: NonNullable<RequestOptions["onprogress"]> = (progress) => {
                 sawProgress = true;
                 budget.clear?.();
@@ -423,35 +416,31 @@ class ToolCallRuntime {
     const { sdk } = this.deps;
     return sdk.SdkError.isInstance(error) && error.code === sdk.SdkErrorCode.RequestTimeout;
   }
+  private interruptedFailure(error: unknown): ProxyToolResult {
+    const { serverName, target } = this.request;
+    const stderrTail = this.stderrTailForError(error);
+    const cause = error instanceof Error ? error.cause : undefined;
+    const baseMessage = this.isRequestTimeout(cause)
+      ? formatInterruptedTimeoutMessage(serverName, target.originalName, this.effectiveTimeoutMs())
+      : `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call.`;
+    return this.cancelled(
+      appendStderrTail(baseMessage, stderrTail),
+      {
+        error: "ambiguous_outcome",
+        recovery: { ...this.identity, action: "readback" },
+        ...stderrDetails(stderrTail),
+      },
+      true,
+    );
+  }
   private async failure(error: unknown): Promise<ProxyToolResult> {
-    const { serverName, target, options } = this.request;
+    const { options } = this.request;
     const { recovery, sdk } = this.deps;
     if (this.captureFailure) {
       return this.captureFailureResult(error, this.captureFailure);
     }
     if (recovery.isToolTransportFailure(error) || recovery.isInterruptedToolCall(error)) {
-      const stderrTail = this.stderrTailForError(error);
-      const cause = error instanceof Error ? error.cause : undefined;
-      const baseMessage = this.isRequestTimeout(cause)
-        ? formatInterruptedTimeoutMessage(
-            serverName,
-            target.originalName,
-            this.effectiveTimeoutMs(),
-          )
-        : `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call.`;
-      const message =
-        stderrTail.length > 0
-          ? `${baseMessage}\n\nRecent server stderr:\n${stderrTail}`
-          : baseMessage;
-      return this.cancelled(
-        message,
-        {
-          error: "ambiguous_outcome",
-          recovery: { ...this.identity, action: "readback" },
-          ...(stderrTail.length > 0 ? { stderr: stderrTail } : {}),
-        },
-        true,
-      );
+      return this.interruptedFailure(error);
     }
     if (error instanceof recovery.SessionRecoveryAuthRequiredError) {
       return this.cancelled(error.authMessage ?? options.authRequiredMessage(), {
@@ -491,10 +480,7 @@ class ToolCallRuntime {
         )
       : rawMessage;
     const stderrTail = this.stderrTailForError(error);
-    const message =
-      stderrTail.length > 0 && !baseMessage.includes(stderrTail)
-        ? `${baseMessage}\n\nRecent server stderr:\n${stderrTail}`
-        : baseMessage;
+    const message = appendStderrTail(baseMessage, stderrTail);
     const invalidParamsCode: number = sdk.ProtocolErrorCode.InvalidParams;
     const suffix =
       !timedOut && error instanceof sdk.ProtocolError && error.code === invalidParamsCode
@@ -513,7 +499,7 @@ class ToolCallRuntime {
         ...this.request.options.detailsBase,
         error: !timedOut && isAbortError(error, this.callerSignal) ? "aborted" : "call_failed",
         message: guarded.outputGuard ? "output truncated; see outputGuard.fullOutputPath" : message,
-        ...(stderrTail.length > 0 ? { stderr: stderrTail } : {}),
+        ...stderrDetails(stderrTail),
         ...guardedMcpDetails(guarded),
       },
     };

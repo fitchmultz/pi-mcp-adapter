@@ -146,3 +146,33 @@ function resultAffixes(
   }
   return uiSummary ? { suffix: `\n\n${uiSummary.message}` } : {};
 }
+
+export function appendStderrTail(baseMessage: string, stderrTail: string): string {
+  return stderrTail.length > 0 && !baseMessage.includes(stderrTail)
+    ? `${baseMessage}\n\nRecent server stderr:\n${stderrTail}`
+    : baseMessage;
+}
+
+export function stderrDetails(stderrTail: string): { stderr?: string } {
+  return stderrTail.length > 0 ? { stderr: stderrTail } : {};
+}
+
+export function createNoProgressBudget(
+  callerSignal: AbortSignal,
+  remainingTimeoutMs: number | undefined,
+  createTimeoutError: () => Error,
+  combine: (a: AbortSignal, b: AbortSignal) => AbortSignal | undefined,
+): { signal: AbortSignal; clear?: () => void } {
+  if (remainingTimeoutMs === undefined) {
+    return { signal: callerSignal };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(createTimeoutError());
+  }, remainingTimeoutMs);
+  timer.unref();
+  return {
+    signal: combine(callerSignal, controller.signal) ?? controller.signal,
+    clear: () => clearTimeout(timer),
+  };
+}
