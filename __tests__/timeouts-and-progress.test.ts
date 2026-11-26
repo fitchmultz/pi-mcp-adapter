@@ -886,4 +886,81 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       expect(progressUpdate.details).toEqual({ server: "stdio_worker", tool: "slow_stdio" });
     }
   });
+
+  it("restores the full requestTimeoutMs on progress after a same-connection modern transport retry", async () => {
+    let attempts = 0;
+    const server = await startModernServer(async (_req, res, body) => {
+      if (body.method !== "tools/call") {
+        return false;
+      }
+      attempts += 1;
+      const token = body.params?._meta?.progressToken;
+      assert(token !== undefined);
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      if (attempts === 1) {
+        res.write(": open\n\n");
+        await delay(160);
+        res.destroy();
+        return true;
+      }
+      await delay(30);
+      writeSseEvent(res, {
+        jsonrpc: "2.0",
+        method: "notifications/progress",
+        params: { progressToken: token, progress: 1, total: 2, message: "Retried step 1" },
+      });
+      // Exceeds the ~100ms leftover from attempt 1 while staying below the full 260ms timeout.
+      await delay(170);
+      writeSseEvent(res, {
+        jsonrpc: "2.0",
+        id: body.id,
+        result: {
+          resultType: "complete",
+          content: [{ type: "text", text: "retried after progress" }],
+        },
+      });
+      res.end();
+      return true;
+    });
+
+    const manager = new McpServerManager();
+    cleanups.push(() => manager.closeAll());
+    const definition = {
+      url: server.url,
+      auth: false as const,
+      requestTimeoutMs: 260,
+      retryOnTransportFailure: true,
+    };
+    const connection = await manager.connect("retryable", definition);
+    const state = createTestState({
+      manager,
+      config: { mcpServers: { retryable: definition }, settings: { toolPrefix: "server" } },
+      toolMetadata: new Map([
+        [
+          "retryable",
+          buildToolMetadata({
+            tools: connection.tools,
+            resources: [],
+            definition,
+            serverName: "retryable",
+            prefix: "server",
+          }).metadata,
+        ],
+      ]),
+    });
+
+    const updates: Array<AgentToolResult<Record<string, unknown>>> = [];
+    const output = await executeCall(state, {
+      toolName: "retryable_slow_work",
+      args: {},
+      onUpdate: (partial) => updates.push(partial),
+    });
+
+    expect(attempts).toBe(2);
+    expect(output.details.error, String(output.details.message)).toBeUndefined();
+    const first = output.content[0];
+    assert(first?.type === "text");
+    expect(first.text).toBe("retried after progress");
+    expect(updateTexts(updates)).toEqual(["Retried step 1"]);
+  });
 });
