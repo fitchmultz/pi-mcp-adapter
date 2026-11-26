@@ -24,6 +24,12 @@ import {
 import { CallToolRequestSchema, JSONRPCMessageSchema } from "@modelcontextprotocol/core";
 import { z } from "zod";
 import { createMcpAdapter } from "../../index.ts";
+import { asObjectRecord } from "../../mcp-output-values.ts";
+import {
+  attachRawMcpResult,
+  nativeMcpResult,
+  withMcpScriptOutput,
+} from "../../mcp-script-output.ts";
 
 /** Valid 1x1 transparent PNG in base64 (accepted by Pi codemode's `image()` signature check). */
 const ONE_PIXEL_PNG =
@@ -502,4 +508,34 @@ describe("Pi 1.6.1 codemode MCP CallToolResult parity", () => {
       .parse(directLarge.details);
     expect(details.mcpResult.omitted).toBe(true);
   }, 20_000);
+
+  it("preserves own __proto__ keys in structuredContent across direct and structured gateway results", () => {
+    const rawStructured: Record<string, unknown> = Object.defineProperty({ a: 2 }, "__proto__", {
+      value: { x: 1 },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const raw = { content: [{ type: "text", text: "ok" }], structuredContent: rawStructured };
+    const base = attachRawMcpResult(
+      { content: [{ type: "text" as const, text: "ok" }], details: {} },
+      raw,
+    );
+
+    const direct = nativeMcpResult(base);
+    const directStructured = asObjectRecord(
+      asObjectRecord(direct.structuredContent)?.structuredContent,
+    );
+    assert.ok(directStructured !== undefined);
+    expect(Object.hasOwn(directStructured, "__proto__")).toBe(true);
+    expect(directStructured["__proto__"]).toEqual({ x: 1 });
+    expect(directStructured.a).toBe(2);
+
+    const gateway = withMcpScriptOutput(base);
+    const gatewayMcpResult = asObjectRecord(asObjectRecord(gateway.structuredContent)?.mcpResult);
+    const gatewayStructured = asObjectRecord(gatewayMcpResult?.structuredContent);
+    assert.ok(gatewayStructured !== undefined);
+    expect(Object.hasOwn(gatewayStructured, "__proto__")).toBe(true);
+    expect(gatewayStructured["__proto__"]).toEqual({ x: 1 });
+  });
 });

@@ -1,7 +1,6 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { Type, type Static, type TUnsafe } from "typebox";
-import { z } from "zod";
 import { toolErrorOverride } from "./error-signal.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
 
@@ -141,21 +140,35 @@ export function attachRawMcpResult<T extends AgentToolResult<Record<string, unkn
   return result;
 }
 
-/** Parse already-JSON MCP payloads into Pi's JsonValue without custom cycle/NaN traversal. */
-const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(jsonValueSchema),
-    z.record(z.string(), jsonValueSchema),
-  ]),
-);
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+  const record = asObjectRecord(value);
+  return record !== undefined && Object.values(record).every(isJsonValue);
+}
 
+/** Narrow already-JSON MCP payloads to JsonValue without pulling Zod into cold startup or stripping own __proto__ keys. */
 function asJsonValue(value: unknown): JsonValue | undefined {
-  const parsed = jsonValueSchema.safeParse(value);
-  return parsed.success ? parsed.data : undefined;
+  if (isJsonValue(value)) {
+    return value;
+  }
+  try {
+    const serialized: unknown = JSON.stringify(value);
+    if (typeof serialized !== "string") {
+      return undefined;
+    }
+    const parsed: unknown = JSON.parse(serialized);
+    return isJsonValue(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function receiptFields(details: Record<string, unknown>) {
