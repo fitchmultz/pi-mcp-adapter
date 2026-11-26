@@ -170,6 +170,14 @@ export function detachStdioDiagnostics(connection: ServerConnection): void {
   connectionDiagnostics.get(connection)?.detach();
 }
 
+function isServerAnsweredError(error: Error, code: unknown): boolean {
+  return (
+    typeof code === "number" ||
+    error.name === "ProtocolError" ||
+    ("status" in error && typeof error.status === "number")
+  );
+}
+
 export function isConnectionTransportError(error: unknown): boolean {
   const pending: unknown[] = [error];
   const seen = new Set<unknown>();
@@ -180,10 +188,10 @@ export function isConnectionTransportError(error: unknown): boolean {
     }
     seen.add(current);
     const code = "code" in current ? current.code : undefined;
-    if (
-      (typeof code === "string" && TRANSPORT_ERROR_CODES.has(code)) ||
-      TRANSPORT_ERROR_PATTERN.test(current.message)
-    ) {
+    if (typeof code === "string" && TRANSPORT_ERROR_CODES.has(code)) {
+      return true;
+    }
+    if (!isServerAnsweredError(current, code) && TRANSPORT_ERROR_PATTERN.test(current.message)) {
       return true;
     }
     if (current.cause !== undefined) {

@@ -211,4 +211,39 @@ describe("McpServerManager stderr capture", () => {
     });
     expect(text).toContain("FATAL: resource reader crashed");
   });
+
+  it("does not attach stderr when a live stdio server returns a JSON-RPC error mentioning transport terms", async () => {
+    const instance = manager();
+    const definition = stdio("crash-mid-session");
+    const connection = await instance.connect("crashy", definition);
+    const state = createTestState({
+      manager: instance,
+      config: { mcpServers: { crashy: definition }, settings: {} },
+      toolMetadata: new Map([
+        [
+          "crashy",
+          buildToolMetadata({
+            tools: connection.tools,
+            resources: connection.resources,
+            definition,
+            serverName: "crashy",
+            prefix: "server",
+          }).metadata,
+        ],
+      ]),
+    });
+
+    const result = await executeCall(state, {
+      toolName: "crashy_rpc-error",
+      args: {},
+      serverOverride: "crashy",
+    });
+
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(result.isError).toBe(true);
+    expect(text).toContain("Database not connected");
+    expect(text).not.toContain("benign startup warning");
+    expect(result.details.stderr).toBeUndefined();
+    expect(instance.getConnection("crashy")?.status).toBe("connected");
+  });
 });
