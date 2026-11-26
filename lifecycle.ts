@@ -208,7 +208,13 @@ export class McpLifecycleManager {
         return;
       }
       const delayMs = this.recordReconnectFailure(name);
-      this.onReconnectFailure?.(name, error);
+      try {
+        this.onReconnectFailure?.(name, error);
+      } catch (callbackError) {
+        logger.debug(
+          `MCP: Reconnect failure callback failed: ${formatTerminalError(callbackError)}`,
+        );
+      }
       const message = error instanceof Error ? error.message : String(error);
       logger.debug(
         `MCP: Failed to reconnect to ${name}: ${sanitizeTerminalText(message)} (next retry in ${Math.round(delayMs / 1000)}s)`,
@@ -230,11 +236,15 @@ export class McpLifecycleManager {
       if (this.activeReconnects.has(name) || !this.shouldAttemptReconnect(name, definition, now)) {
         continue;
       }
-      const task = this.reconnect(name, definition, signal).finally(() => {
-        if (this.activeReconnects.get(name) === task) {
-          this.activeReconnects.delete(name);
-        }
-      });
+      const task = this.reconnect(name, definition, signal)
+        .catch((error: unknown) => {
+          logger.debug(`MCP: Health check failed: ${formatTerminalError(error)}`);
+        })
+        .finally(() => {
+          if (this.activeReconnects.get(name) === task) {
+            this.activeReconnects.delete(name);
+          }
+        });
       this.activeReconnects.set(name, task);
     }
   }
@@ -248,11 +258,15 @@ export class McpLifecycleManager {
       if (timeout <= 0 || !this.manager.isIdle(name, timeout)) {
         continue;
       }
-      const task = this.closeIdleServer(name, signal).finally(() => {
-        if (this.activeIdleCloses.get(name) === task) {
-          this.activeIdleCloses.delete(name);
-        }
-      });
+      const task = this.closeIdleServer(name, signal)
+        .catch((error: unknown) => {
+          logger.debug(`MCP: Health check failed: ${formatTerminalError(error)}`);
+        })
+        .finally(() => {
+          if (this.activeIdleCloses.get(name) === task) {
+            this.activeIdleCloses.delete(name);
+          }
+        });
       this.activeIdleCloses.set(name, task);
     }
   }

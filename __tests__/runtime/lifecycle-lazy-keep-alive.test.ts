@@ -108,6 +108,35 @@ describe("lazy-keep-alive lifecycle", () => {
     }
   });
 
+  it("contains throwing reconnect-failure callbacks without an unhandled rejection", async () => {
+    vi.useFakeTimers();
+    lifecycle.markKeepAlive("srv", makeDefinition("keep-alive"));
+    vi.spyOn(manager, "connect").mockRejectedValue(new Error("connect failed"));
+    lifecycle.setReconnectFailureCallback(() => {
+      throw new Error("callback exploded");
+    });
+    const debugLog = vi.spyOn(logger, "debug").mockImplementation(() => {
+      // Keep expected failure diagnostics out of test output.
+    });
+    const unhandled = vi.fn<(reason: unknown, promise: Promise<unknown>) => void>();
+    process.on("unhandledRejection", unhandled);
+
+    try {
+      lifecycle.startHealthChecks(100);
+      await vi.advanceTimersByTimeAsync(100);
+      await Promise.resolve();
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(debugLog).toHaveBeenCalledWith(
+        "MCP: Reconnect failure callback failed: callback exploded",
+      );
+      expect(debugLog).toHaveBeenCalledWith(
+        expect.stringContaining("MCP: Failed to reconnect to srv: connect failed"),
+      );
+    } finally {
+      process.removeListener("unhandledRejection", unhandled);
+    }
+  });
+
   it("reconnects after first spawn when the process dies", async () => {
     const definition = makeDefinition("lazy-keep-alive");
     const connect = vi.spyOn(manager, "connect");
