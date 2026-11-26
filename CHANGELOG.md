@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.61 - 2026-11-26
+
+<!-- npm-release:unreleased:start -->
+
+- Return raw unescaped text from `read-result` when a JSON Pointer selects a string (such as `/content/0/text`), and serialize non-string JSON selections compactly to save tokens and page space.
+- Traverse parseable JSON inside MCP text blocks (`content[*].text` / `contents[*].text`) transparently when an outer-envelope JSON Pointer misses, and include nearest-valid-parent paths and available keys or array bounds in pointer-miss errors.
+- Eliminate double-spilling oversized MCP tool and resource responses into both `mcp-result-*.txt` and `output-*.txt`, retaining one canonical private artifact with a single non-conflicting readback notice.
+- Render `image/*` resource blobs as native Pi `ImageContent`, decode UTF-8 text/JSON/XML blobs inline through the normal output budget with binary fallback on invalid UTF-8, preserve safe file extensions from MIME types or resource URIs for saved binary blobs, and include `title`, `description`, `mimeType`, and `size` metadata on `resource_link` blocks.
+
+<!-- npm-release:unreleased:end -->
+
+- feat(output): overhaul read-result traversal and native media/blob rendering (MCP-209) (#293) ([5422760](https://github.com/fitchmultz/pi-mcp-adapter/commit/54227609f53a4119a74a7b8ebf6ec1b2c4527dfc))
+
+### What's Changed
+
+- feat(output): overhaul read-result traversal and native media/blob rendering (MCP-209) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/293
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.60...v8.0.61
+
 ## 8.0.60 - 2026-11-26
 
 <!-- npm-release:unreleased:start -->
