@@ -121,7 +121,7 @@ export type McpToolCallEvent = McpToolCallIdentity & {
     | { phase: "after"; error: unknown }
   );
 
-/** Resolved operation facts before the service deadline; no connection/configuration objects. */
+/** Resolved operation facts before dispatch; no connection/configuration objects. */
 export type McpOperationContext = Omit<
   Extract<McpToolCallEvent, { phase: "before" }>,
   "phase" | "signal"
@@ -131,7 +131,7 @@ export type McpOperationContext = Omit<
 };
 
 export interface McpAdapterOptions {
-  /** Awaited before the service deadline for each resolved call; operation is absent for other proxy modes. Honor ctx.signal. Selects native sequential sibling scheduling. */
+  /** Awaited before dispatch for each resolved call; operation is absent for other proxy modes. Honor ctx.signal. Selects native sequential sibling scheduling. */
   beforeExecute?: (
     toolCallId: string,
     ctx: ExtensionContext,
