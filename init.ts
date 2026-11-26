@@ -35,7 +35,6 @@ export {
   flushMetadataCache,
 } from "./init-metadata.ts";
 
-<<<<<<< HEAD
 function formatStartupConfigErrorLine(error: {
   severity: string;
   filePath: string;

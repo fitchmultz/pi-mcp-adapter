@@ -120,7 +120,6 @@ function bindRuntime(state: McpExtensionState, ownsOAuthRuntime: boolean): void 
   owner.addCleanup(() => cleanup.closeUiServer("runtime_owner_stopped"));
 }
 
-<<<<<<< HEAD
 function createConfiguredManager(input: {
   cwd: string;
   owner: McpRuntimeOwner;

@@ -21,20 +21,16 @@ import {
 } from "./host-registered-servers.ts";
 import {
   applyLiveServerDisabledToggle,
-  bindHostMetadataUpdates,
-  completeHostInitialization,
-  rejectHostInitialization,
+  launchHostInitialization,
   runLiveSessionReconcile,
 } from "./host-live-toggle.ts";
 import { canPreserveFrozenTools, HostSession } from "./host-session.ts";
 import {
-  buildHostInitOptions,
   finalizeHostShutdown,
   HostReconcileCoordinator,
   logSessionRestartFailures,
   shouldAwaitDirectToolBootstrap,
   stopRuntimeSession,
-  stopStaleInitState,
 } from "./host-state-cleanup.ts";
 import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
 import { McpHostTools } from "./host-tools.ts";
@@ -477,51 +473,13 @@ export class McpHostRuntime implements McpAdapterHost {
     runtimeConfig: McpConfig;
     generation: number;
   }): Promise<void> {
-    const { init, ctx, owner, oauthRuntime, runtimeConfig, generation } = input;
-    const promise = init.initializeMcp(
-      this.pi,
-      ctx,
-      owner,
-      buildHostInitOptions({
-        programmaticConfig: this.programmaticConfig,
-        runtimeConfig,
-        configPath: this.configPath,
-        options: this.options,
-        oauthRuntime,
-        statusEvents: this.pi.events,
-      }),
-    );
-    this.session.initialize(generation, promise);
-    return promise
-      .then(async (state) => {
-        if (!this.session.owns(owner, generation)) {
-          await stopStaleInitState(state, this.initModule?.flushMetadataCache);
-          return;
-        }
-        this.session.ready(state);
-        this.bindMetadataUpdates(owner);
-        await this.completeInitialization(init, owner);
-        return;
-      })
-      .catch((error: unknown) => this.rejectInitialization({ owner, generation, oauthRuntime }, error));
-  }
-
-  private bindMetadataUpdates(owner: McpRuntimeOwner): void {
-    bindHostMetadataUpdates({
+    return launchHostInitialization({
+      ...input,
+      pi: this.pi,
       session: this.session,
-      owner,
-      syncPrompts: () => this.syncPromptCommands(),
-      syncSkills: (state) => this.skillsTracker.handleStateUpdate(state),
-      syncTools: () => this.syncToolSurface(),
-      isFrozen: () => this.directToolsFrozen,
-    });
-  }
-
-  private completeInitialization(init: typeof Init, owner: McpRuntimeOwner): Promise<void> {
-    return completeHostInitialization({
-      init,
-      owner,
-      session: this.session,
+      configPath: this.configPath,
+      programmaticConfig: this.programmaticConfig,
+      options: this.options,
       isFrozen: () => this.directToolsFrozen,
       markFrozen: () => {
         this.directToolsFrozen = true;
@@ -529,23 +487,6 @@ export class McpHostRuntime implements McpAdapterHost {
       syncPrompts: () => this.syncPromptCommands(),
       syncSkills: (state) => this.skillsTracker.handleStateUpdate(state),
       syncTools: () => this.syncToolSurface(),
-    });
-  }
-
-  private rejectInitialization(
-    input: {
-      owner: McpRuntimeOwner;
-      generation: number;
-      oauthRuntime: McpOAuthRuntime;
-    },
-    error: unknown,
-  ): Promise<void> {
-    return rejectHostInitialization({
-      session: this.session,
-      owner: input.owner,
-      generation: input.generation,
-      oauthRuntime: input.oauthRuntime,
-      error,
     });
   }
 

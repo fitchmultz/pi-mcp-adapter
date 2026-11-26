@@ -78,7 +78,6 @@ export interface McpExtensionState {
   includeNativePi?: boolean;
   serverInstructions: Map<string, string>;
   config: McpConfig;
-  configPath?: string | undefined;
   configErrors?: McpConfigValidationError[] | undefined;
   recentStderr?: Map<string, string> | undefined;
   programmaticConfig?: boolean;

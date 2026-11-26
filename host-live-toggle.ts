@@ -6,7 +6,12 @@ import { isServerDisabled, type McpAdapterOptions, type McpConfig } from "./type
 import { cloneMcpConfig } from "./config.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { HostSession } from "./host-session.ts";
-import { stopRejectedInitialization, type HostReconcileCoordinator } from "./host-state-cleanup.ts";
+import {
+  buildHostInitOptions,
+  stopRejectedInitialization,
+  stopStaleInitState,
+  type HostReconcileCoordinator,
+} from "./host-state-cleanup.ts";
 import { stageHostReconcile } from "./host-registered-servers.ts";
 import type { McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import { logger } from "./logger.ts";
@@ -258,4 +263,75 @@ export async function rejectHostInitialization(input: {
   }
   session.fail(formatTerminalError(error));
   await stopRejectedInitialization(owner, oauthRuntime);
+}
+
+export function launchHostInitialization(input: {
+  pi: ExtensionAPI;
+  init: typeof Init;
+  ctx: ExtensionContext;
+  owner: McpRuntimeOwner;
+  session: HostSession;
+  oauthRuntime: McpOAuthRuntime;
+  runtimeConfig: McpConfig;
+  configPath: string | undefined;
+  programmaticConfig: boolean;
+  options: McpAdapterOptions;
+  generation: number;
+  isFrozen: () => boolean;
+  markFrozen: () => void;
+  syncPrompts: () => void;
+  syncSkills: (state: McpExtensionState) => void;
+  syncTools: () => void;
+}): Promise<void> {
+  const { init, ctx, owner, session, oauthRuntime, runtimeConfig, generation } = input;
+  const promise = init.initializeMcp(
+    input.pi,
+    ctx,
+    owner,
+    buildHostInitOptions({
+      programmaticConfig: input.programmaticConfig,
+      runtimeConfig,
+      configPath: input.configPath,
+      options: input.options,
+      oauthRuntime,
+      statusEvents: input.pi.events,
+    }),
+  );
+  session.initialize(generation, promise);
+  return promise
+    .then(async (state) => {
+      if (!session.owns(owner, generation)) {
+        await stopStaleInitState(state, init.flushMetadataCache);
+        return;
+      }
+      session.ready(state);
+      bindHostMetadataUpdates({
+        session,
+        owner,
+        syncPrompts: input.syncPrompts,
+        syncSkills: input.syncSkills,
+        syncTools: input.syncTools,
+        isFrozen: input.isFrozen,
+      });
+      await completeHostInitialization({
+        init,
+        owner,
+        session,
+        isFrozen: input.isFrozen,
+        markFrozen: input.markFrozen,
+        syncPrompts: input.syncPrompts,
+        syncSkills: input.syncSkills,
+        syncTools: input.syncTools,
+      });
+      return;
+    })
+    .catch((error: unknown) =>
+      rejectHostInitialization({
+        session,
+        owner,
+        generation,
+        oauthRuntime,
+        error,
+      }),
+    );
 }
