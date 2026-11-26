@@ -60,7 +60,7 @@ type PendingConnection = { promise: Promise<ServerConnection>; attempt: Connecti
 export class ConnectionLifecycle {
   private readonly connections = new Map<string, ServerConnection>();
   private readonly pendingConnections = new Map<string, PendingConnection>();
-  private readonly reconnectPromises = new Map<string, Promise<ServerConnection>>();
+  private readonly pendingReconnects = new Map<string, PendingConnection>();
   private readonly closePromises = new Map<string, Promise<void>>();
   // Bumped by every close(name); establish() discards an attempt whose generation no longer
   // matches, fencing work that raced a close.
@@ -206,20 +206,28 @@ export class ConnectionLifecycle {
     this.assertRunning();
     const ownedSignal = combineAbortSignals(this.runtimeSignal, signal);
     throwIfAborted(ownedSignal);
-    const inFlight = this.reconnectPromises.get(name);
-    if (inFlight) {
-      return abortable(inFlight, ownedSignal);
+    const pending = this.pendingReconnects.get(name);
+    if (pending) {
+      const { attempt, promise } = pending;
+      if (attempt.controller.signal.aborted) {
+        // Finish the canceled attempt's cleanup before starting a fresh one.
+        await attempt.waitCancelled(promise, ownedSignal);
+        return this.reconnect(name, definition, staleConnection, signal);
+      }
+      return attempt.wait(promise, ownedSignal);
     }
 
-    const promise = this.doReconnect(name, definition, staleConnection, this.runtimeSignal).finally(
+    const attempt = new ConnectionAttempt();
+    const attemptSignal = combineAbortSignals(this.runtimeSignal, attempt.controller.signal);
+    const promise = this.doReconnect(name, definition, staleConnection, attemptSignal).finally(
       () => {
-        if (this.reconnectPromises.get(name) === promise) {
-          this.reconnectPromises.delete(name);
+        if (this.pendingReconnects.get(name)?.promise === promise) {
+          this.pendingReconnects.delete(name);
         }
       },
     );
-    this.reconnectPromises.set(name, promise);
-    return abortable(promise, ownedSignal);
+    this.pendingReconnects.set(name, { promise, attempt });
+    return attempt.wait(promise, ownedSignal);
   }
 
   private async doReconnect(
@@ -255,11 +263,21 @@ export class ConnectionLifecycle {
     this.disposal.retire(name, current);
   }
 
+  private ignoreNonCleanupFailure(
+    promise: Promise<ServerConnection> | undefined,
+  ): Promise<unknown> | undefined {
+    return promise?.catch((error: unknown) => {
+      if (containsCleanupFailure(error)) {
+        throw error;
+      }
+    });
+  }
+
   async close(name: string): Promise<void> {
     this.closeGenerations.set(name, (this.closeGenerations.get(name) ?? 0) + 1);
-    this.pendingConnections
-      .get(name)
-      ?.attempt.controller.abort(new Error(`MCP connection ${name} was closed`));
+    const closeReason = new Error(`MCP connection ${name} was closed`);
+    this.pendingReconnects.get(name)?.attempt.controller.abort(closeReason);
+    this.pendingConnections.get(name)?.attempt.controller.abort(closeReason);
     const pendingClose = this.closePromises.get(name);
     if (pendingClose) {
       return pendingClose;
@@ -281,14 +299,12 @@ export class ConnectionLifecycle {
       item.status = "closed";
     }
     const pendingConnect = this.pendingConnections.get(name)?.promise;
+    const pendingReconnect = this.pendingReconnects.get(name)?.promise;
     const closing = (async () => {
       const results = await Promise.allSettled([
         ...[...owned].map((item) => this.disposal.dispose(item)),
-        pendingConnect?.catch((error: unknown) => {
-          if (containsCleanupFailure(error)) {
-            throw error;
-          }
-        }),
+        this.ignoreNonCleanupFailure(pendingConnect),
+        this.ignoreNonCleanupFailure(pendingReconnect),
       ]);
       const failures = cleanupFailures(results);
       if (failures.length > 0) {
@@ -310,6 +326,7 @@ export class ConnectionLifecycle {
       ...this.connections.keys(),
       ...this.disposal.retired.keys(),
       ...this.pendingConnections.keys(),
+      ...this.pendingReconnects.keys(),
       ...this.closePromises.keys(),
     ]);
     const results = await Promise.allSettled([...names].map((name) => this.close(name)));

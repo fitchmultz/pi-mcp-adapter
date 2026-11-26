@@ -1,5 +1,6 @@
 import type { Client, RequestOptions } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
+import type { ServerConnection } from "./server-connection.ts";
 import type { ProxyToolResult } from "./proxy-result.ts";
 import type {
   ToolMetadata,
@@ -10,6 +11,7 @@ import type {
 import type { SessionRecoveryDeps } from "./session-recovery.ts";
 import type { UiSessionRuntime } from "./ui-session.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
+import { connectionStderrTail } from "./connection-stdio.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import {
   guardMcpOutput,
@@ -65,6 +67,7 @@ class ToolCallRuntime {
   private uiAttempted = false;
   private beforeDispatchPending = false;
   private captureFailure: McpToolCallEvent | undefined;
+  private activeConnection: ServerConnection | undefined;
   private readonly configuredOptions: RequestOptions | undefined;
   private readonly callerSignal: AbortSignal | undefined;
   private readonly outputGuardOptions: ReturnType<typeof resolveMcpOutputGuardOptions>;
@@ -195,9 +198,13 @@ class ToolCallRuntime {
     const resourceUri = target.resourceUri;
     if (resourceUri !== undefined && resourceUri.length > 0) {
       return this.captureDispatch(call, () =>
-        this.deps.recovery.withSessionRecovery(recovery, serverName, (connection) =>
-          abortable(connection.client.readResource({ uri: resourceUri }, requestOptions), signal),
-        ),
+        this.deps.recovery.withSessionRecovery(recovery, serverName, (connection) => {
+          this.activeConnection = connection;
+          return abortable(
+            connection.client.readResource({ uri: resourceUri }, requestOptions),
+            signal,
+          );
+        }),
       );
     }
     const result = await this.captureDispatch(call, () =>
@@ -211,8 +218,9 @@ class ToolCallRuntime {
                 operation.annotations?.idempotentHint === true,
             },
             serverName,
-            (connection) =>
-              abortable(
+            (connection) => {
+              this.activeConnection = connection;
+              return abortable(
                 connection.client.callTool(
                   {
                     name: target.originalName,
@@ -222,7 +230,8 @@ class ToolCallRuntime {
                   requestOptions,
                 ),
                 signal,
-              ),
+              );
+            },
           ),
         signal,
       ),
@@ -235,6 +244,7 @@ class ToolCallRuntime {
     // Count on the connection this call will dispatch on, if one exists yet; a call that
     // recovery later migrates keeps its count on the connection it started on.
     const connection = state.manager.getConnection(serverName);
+    this.activeConnection = connection;
     try {
       state.manager.touch(serverName);
       if (connection !== undefined) {
@@ -313,6 +323,13 @@ class ToolCallRuntime {
       details: { ...this.request.options.detailsBase, ...details, message },
     };
   }
+  private stderrTailForError(error: unknown): string {
+    const { state, serverName } = this.request;
+    return connectionStderrTail(
+      this.activeConnection ?? state.manager.getConnection(serverName),
+      error,
+    );
+  }
   private async failure(error: unknown): Promise<ProxyToolResult> {
     const { serverName, target, options } = this.request;
     const { recovery, sdk } = this.deps;
@@ -320,10 +337,19 @@ class ToolCallRuntime {
       return this.captureFailureResult(error, this.captureFailure);
     }
     if (recovery.isToolTransportFailure(error) || recovery.isInterruptedToolCall(error)) {
-      const message = `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call.`;
+      const stderrTail = this.stderrTailForError(error);
+      const baseMessage = `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call.`;
+      const message =
+        stderrTail.length > 0
+          ? `${baseMessage}\n\nRecent server stderr:\n${stderrTail}`
+          : baseMessage;
       return this.cancelled(
         message,
-        { error: "ambiguous_outcome", recovery: { ...this.identity, action: "readback" } },
+        {
+          error: "ambiguous_outcome",
+          recovery: { ...this.identity, action: "readback" },
+          ...(stderrTail.length > 0 ? { stderr: stderrTail } : {}),
+        },
         true,
       );
     }
@@ -355,7 +381,12 @@ class ToolCallRuntime {
   }
   private async genericFailure(error: unknown): Promise<ProxyToolResult> {
     const { sdk } = this.deps;
-    const message = error instanceof Error ? error.message : String(error);
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const stderrTail = this.stderrTailForError(error);
+    const message =
+      stderrTail.length > 0 && !rawMessage.includes(stderrTail)
+        ? `${rawMessage}\n\nRecent server stderr:\n${stderrTail}`
+        : rawMessage;
     const invalidParamsCode: number = sdk.ProtocolErrorCode.InvalidParams;
     const suffix =
       error instanceof sdk.ProtocolError && error.code === invalidParamsCode
@@ -374,6 +405,7 @@ class ToolCallRuntime {
         ...this.request.options.detailsBase,
         error: isAbortError(error, this.callerSignal) ? "aborted" : "call_failed",
         message: guarded.outputGuard ? "output truncated; see outputGuard.fullOutputPath" : message,
+        ...(stderrTail.length > 0 ? { stderr: stderrTail } : {}),
         ...guardedMcpDetails(guarded),
       },
     };

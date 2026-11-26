@@ -18,6 +18,7 @@ import type {
 import { ConnectionLifecycle } from "./connection-lifecycle.ts";
 import { ConnectionFactory } from "./connection-factory.ts";
 import { ConnectionCallbacks } from "./connection-callbacks.ts";
+import { appendStderrToError } from "./connection-stdio.ts";
 export type { ServerConnection } from "./server-connection.ts";
 
 export class McpServerManager {
@@ -131,6 +132,12 @@ export class McpServerManager {
         { name: promptName, ...(args ? { arguments: args } : {}) },
         this.getRequestOptions(name, signal),
       );
+    } catch (error) {
+      const enriched = appendStderrToError(error, connection);
+      if (enriched !== undefined) {
+        throw enriched;
+      }
+      throw error;
     } finally {
       this.decrementInFlight(connection);
       this.touch(name);
@@ -150,6 +157,12 @@ export class McpServerManager {
       this.touch(name);
       this.incrementInFlight(connection);
       return await connection.client.readResource({ uri }, this.getRequestOptions(name, signal));
+    } catch (error) {
+      const enriched = appendStderrToError(error, connection);
+      if (enriched !== undefined) {
+        throw enriched;
+      }
+      throw error;
     } finally {
       this.decrementInFlight(connection);
       this.touch(name);

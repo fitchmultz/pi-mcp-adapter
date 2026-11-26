@@ -21,6 +21,7 @@ export {
   recordFailure,
   updateStatusBar,
   getFailureAgeSeconds,
+  getFailureRemainingSeconds,
   getFailureMessage,
   lazyConnect,
 } from "./init-status.ts";

@@ -1,8 +1,17 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { Client } from "@modelcontextprotocol/client";
+import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import type { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { clientOperations, type ClientOperation } from "./client-operations.ts";
 import { throwIfAborted } from "./abort.ts";
+
+export function isSdkTransportError(error: unknown): boolean {
+  return (
+    SdkError.isInstance(error) &&
+    (error.code === SdkErrorCode.ConnectionClosed ||
+      error.code === SdkErrorCode.NotConnected ||
+      error.code === SdkErrorCode.SendFailed)
+  );
+}
 
 // Track complete SDK operations, including pagination and pre-request cache awaits.
 export class ManagedClient extends Client {

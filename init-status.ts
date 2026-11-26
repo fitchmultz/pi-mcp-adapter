@@ -5,7 +5,15 @@ import { formatMcpStatus, sanitizeTerminalText } from "./utils.ts";
 import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
-import { FAILURE_BACKOFF_MS, failureAgeSeconds } from "./server-status.ts";
+import {
+  ensureFailureBackoffMap,
+  failureAgeSeconds,
+  failureBackoffMs,
+  failureRemainingSeconds,
+  getFailureBackoffMap,
+  serverFailureBackoffMs,
+  type FailureBackoffEntry,
+} from "./server-status.ts";
 import {
   updateServerMetadata,
   updateMetadataCache,
@@ -13,59 +21,59 @@ import {
   markKeepAliveAfterConnect,
 } from "./init-metadata.ts";
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
-const failureExpiryTimers = new WeakMap<
-  McpExtensionState,
-  Map<string, ReturnType<typeof setTimeout>>
->();
 
-function getFailureExpiryTimers(
-  state: McpExtensionState,
-): Map<string, ReturnType<typeof setTimeout>> {
-  let timers = failureExpiryTimers.get(state);
-  if (!timers) {
-    timers = new Map();
-    failureExpiryTimers.set(state, timers);
-    const ownedTimers = timers;
+function getFailureBackoffs(state: McpExtensionState): Map<string, FailureBackoffEntry> {
+  return ensureFailureBackoffMap(state, (ownedEntries) => {
     state.owner.addCleanup(() => {
-      for (const timer of ownedTimers.values()) {
-        clearTimeout(timer);
+      for (const entry of ownedEntries.values()) {
+        if (entry.timer) {
+          clearTimeout(entry.timer);
+          entry.timer = undefined;
+        }
       }
-      ownedTimers.clear();
+      ownedEntries.clear();
     });
-  }
-  return timers;
+  });
 }
 
 export function clearFailure(state: McpExtensionState, serverName: string): void {
   state.failureTracker.delete(serverName);
   state.failureMessages.delete(serverName);
-  const timers = failureExpiryTimers.get(state);
-  const timer = timers?.get(serverName);
-  if (timer) {
-    clearTimeout(timer);
+  state.lifecycle.resetReconnectBackoff(serverName);
+  const entries = getFailureBackoffMap(state);
+  const entry = entries?.get(serverName);
+  if (entry?.timer) {
+    clearTimeout(entry.timer);
   }
-  timers?.delete(serverName);
+  entries?.delete(serverName);
 }
 
 export function recordFailure(state: McpExtensionState, serverName: string, message: string): void {
-  clearFailure(state, serverName);
+  const entries = getFailureBackoffs(state);
+  const previous = entries.get(serverName);
+  if (previous?.timer) {
+    clearTimeout(previous.timer);
+  }
+  const consecutiveFailures = (previous?.consecutiveFailures ?? 0) + 1;
+  const backoffMs = failureBackoffMs(consecutiveFailures);
   const failedAt = Date.now();
   state.failureTracker.set(serverName, failedAt);
   state.failureMessages.set(serverName, message.slice(0, MAX_FAILURE_MESSAGE_CHARS));
+  const entry: FailureBackoffEntry = { consecutiveFailures, backoffMs, timer: undefined };
   const timer = setTimeout(() => {
+    entry.timer = undefined;
     if (!state.owner.isActive()) {
-      getFailureExpiryTimers(state).delete(serverName);
+      entries.delete(serverName);
       return;
     }
     if (state.failureTracker.get(serverName) === failedAt) {
       state.failureTracker.delete(serverName);
-      state.failureMessages.delete(serverName);
       publishMcpStatusSnapshot(state);
     }
-    getFailureExpiryTimers(state).delete(serverName);
-  }, FAILURE_BACKOFF_MS);
+  }, backoffMs);
   timer.unref();
-  getFailureExpiryTimers(state).set(serverName, timer);
+  entry.timer = timer;
+  entries.set(serverName, entry);
 }
 
 export function updateStatusBar(state: McpExtensionState): void {
@@ -108,13 +116,25 @@ export function updateStatusBar(state: McpExtensionState): void {
 }
 
 export function getFailureAgeSeconds(state: McpExtensionState, serverName: string): number | null {
-  return failureAgeSeconds(state.failureTracker.get(serverName), Date.now());
+  return failureAgeSeconds(
+    state.failureTracker.get(serverName),
+    Date.now(),
+    serverFailureBackoffMs(state, serverName),
+  );
+}
+
+export function getFailureRemainingSeconds(
+  state: McpExtensionState,
+  serverName: string,
+): number | null {
+  return failureRemainingSeconds(
+    state.failureTracker.get(serverName),
+    Date.now(),
+    serverFailureBackoffMs(state, serverName),
+  );
 }
 
 export function getFailureMessage(state: McpExtensionState, serverName: string): string | null {
-  if (getFailureAgeSeconds(state, serverName) === null) {
-    return null;
-  }
   return state.failureMessages.get(serverName) ?? null;
 }
 

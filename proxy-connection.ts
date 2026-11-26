@@ -8,12 +8,16 @@ import { attemptAutoAuth, getAuthRequiredMessage } from "./proxy-auth.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { throwIfAborted } from "./abort.ts";
 import { formatMcpStatus } from "./utils.ts";
+import { connectionStderrTail } from "./connection-stdio.ts";
+import { formatFailureSummary } from "./server-status.ts";
 import {
   lazyConnect,
   markKeepAliveAfterConnect,
   notifyToolMetadataUpdated,
   updateMetadataCache,
   getFailureAgeSeconds,
+  getFailureRemainingSeconds,
+  getFailureMessage,
   updateStatusBar,
   clearFailure,
   recordFailure,
@@ -169,7 +173,11 @@ function connectionErrorMessage(
   if (error instanceof AuthRequired) {
     return error.authMessage ?? getAuthRequiredMessage(state, serverName);
   }
-  return error instanceof Error ? error.message : String(error);
+  const base = error instanceof Error ? error.message : String(error);
+  const stderrTail = connectionStderrTail(state.manager.getConnection(serverName), error);
+  return stderrTail.length > 0 && !base.includes(stderrTail)
+    ? `${base}\n\nRecent server stderr:\n${stderrTail}`
+    : base;
 }
 
 async function connectAuthentication(
@@ -371,20 +379,71 @@ export async function prepareMcpConnection(
   }
 }
 
+function serverFailureDiagnostic(state: McpExtensionState, serverName: string): string | null {
+  const connection = state.manager.getConnection(serverName);
+  return formatFailureSummary(
+    getFailureMessage(state, serverName) ??
+      (connection?.status === "closed" ? connection.getStderrTail?.() : null),
+  );
+}
+
+function backoffError(
+  serverName: string,
+  failure: (error: string, message: string) => ProxyToolResult,
+  context: {
+    failedAgo: number;
+    retryAfterSeconds: number | null;
+    failureMessage: string | null;
+  },
+): { error: ProxyToolResult } {
+  const { failedAgo, retryAfterSeconds, failureMessage } = context;
+  const windowText =
+    retryAfterSeconds !== null
+      ? `last failed ${failedAgo}s ago, retry in ${retryAfterSeconds}s`
+      : `last failed ${failedAgo}s ago`;
+  const reasonText = failureMessage !== null ? ` Last error: ${failureMessage}.` : "";
+  const backoff = failure(
+    "server_backoff",
+    `Server "${serverName}" is backing off (${windowText}).${reasonText} No call was dispatched. Call mcp({ action: "connect", server: ${JSON.stringify(serverName)} }) to retry immediately.`,
+  );
+  return {
+    error: {
+      ...backoff,
+      isError: true,
+      details: {
+        ...backoff.details,
+        dispatched: false,
+        failedAgoSeconds: failedAgo,
+        ...(retryAfterSeconds !== null ? { retryAfterSeconds } : {}),
+        ...(failureMessage !== null ? { failureMessage } : {}),
+      },
+    },
+  };
+}
+
 function unavailableConnection(
   state: McpExtensionState,
   serverName: string,
   failure: (error: string, message: string) => ProxyToolResult,
 ): { error: ProxyToolResult } {
   const failedAgo = getFailureAgeSeconds(state, serverName);
+  const failureMessage = serverFailureDiagnostic(state, serverName);
   if (failedAgo === null) {
-    return { error: failure("server_unavailable", `Server "${serverName}" not available`) };
+    const base = `Server "${serverName}" not available`;
+    const unavailable = failure(
+      "server_unavailable",
+      failureMessage !== null ? `${base}: ${failureMessage}` : base,
+    );
+    return {
+      error:
+        failureMessage !== null
+          ? { ...unavailable, details: { ...unavailable.details, failureMessage } }
+          : unavailable,
+    };
   }
-  const backoff = failure(
-    "server_backoff",
-    `Server "${serverName}" is backing off (last failed ${failedAgo}s ago). No call was dispatched.`,
-  );
-  return {
-    error: { ...backoff, isError: true, details: { ...backoff.details, dispatched: false } },
-  };
+  return backoffError(serverName, failure, {
+    failedAgo,
+    retryAfterSeconds: getFailureRemainingSeconds(state, serverName),
+    failureMessage,
+  });
 }
