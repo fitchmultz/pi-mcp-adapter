@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.60 - 2026-11-26
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix(config): skip .pi/mcp.json when builtin:mcp is active and derive native Pi types (MCP-203) (#290) ([1000067](https://github.com/fitchmultz/pi-mcp-adapter/commit/1000067bf0a9f67be75bbeb839f740253c2a2706))
+
+### What's Changed
+
+- fix(config): skip .pi/mcp.json when builtin:mcp is active and derive native Pi types (MCP-203) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/290
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.59...v8.0.60
+
 ## 8.0.59 - 2026-11-25
 
 <!-- npm-release:unreleased:start -->
