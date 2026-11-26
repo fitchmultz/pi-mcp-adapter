@@ -342,8 +342,8 @@ describe("mcpAdapter session lifecycle", () => {
     adapter(api);
     try {
       await handlers.get("session_start")({}, {});
-      expect(api.getAllTools().some((tool) => tool.name === "demo_search")).toBe(true);
-      expect(api.getActiveTools()).not.toContain("demo_search");
+      expect(api.getAllTools().some((tool) => tool.name === "mcp__demo__search")).toBe(true);
+      expect(api.getActiveTools()).not.toContain("mcp__demo__search");
     } finally {
       init.resolve(state);
       await Promise.resolve();

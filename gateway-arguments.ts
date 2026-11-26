@@ -87,7 +87,7 @@ export const gatewayParameters = Type.Object(
       Type.String({ description: "Search terms. Prefer tool_search to load typed tools." }),
     ),
     includeSchemas: Type.Optional(
-      Type.Boolean({ description: "Include complete schemas in search results (default true)." }),
+      Type.Boolean({ description: "Include complete schemas in search results (default false)." }),
     ),
     limit: Type.Optional(
       Type.Integer({

@@ -93,7 +93,7 @@ describe("factory output directory", () => {
       await Promise.all(
         adapters.map(async (adapter, index) => {
           const text = "unique".repeat(20_000);
-          const result = await adapter.call("output_echo", { text });
+          const result = await adapter.call("mcp__output__echo", { text });
           const path = spillDetails.parse(result.details).resultRef;
           expect(dirname(dirname(path))).toBe(directories[index]);
           expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
@@ -130,8 +130,8 @@ describe("factory output directory", () => {
         for (const mode of ["direct", "proxy"]) {
           const text = `${mode}: π\n`.repeat(10_000);
           const result = await adapter.call(
-            mode === "direct" ? "output_echo" : "mcp",
-            mode === "direct" ? { text } : { tool: "output_echo", args: { text } },
+            mode === "direct" ? "mcp__output__echo" : "mcp",
+            mode === "direct" ? { text } : { tool: "mcp__output__echo", args: { text } },
           );
           const details = spillDetails
             .extend({ mcpResult: z.object({ fullResultPath: z.string() }) })
@@ -145,7 +145,7 @@ describe("factory output directory", () => {
             }),
           );
         }
-        const resource = await adapter.call("mcp", { tool: "output_read_large" });
+        const resource = await adapter.call("mcp", { tool: "mcp__output__read_large" });
         const resourceDetails = spillDetails.parse(resource.details);
         await check(
           resourceDetails.resultRef,

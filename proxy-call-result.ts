@@ -56,12 +56,16 @@ export function formatTimeoutMessage(
 const INPUT_VALIDATION =
   /^(?:error:\s*)?(?:(?:input|argument|parameter|schema) validation error\b|validation error(?::|$)|validating "(?:arguments|params)":|(?:invalid|missing|unrecognized|unknown|unexpected) (?:required )?(?:arguments?|params?|parameters?|keys?|fields?|enum(?: value)?|types?)\b)/i;
 
+export function expectedParametersHint(schema: ToolMetadata["inputSchema"]): string {
+  return schema ? `\n\nExpected parameters:\n${formatSchema(schema)}` : "";
+}
+
 export function inputValidationHint(
   schema: ToolMetadata["inputSchema"],
   diagnostic: string,
 ): string {
   return schema && INPUT_VALIDATION.test(diagnostic.trimStart())
-    ? `\n\nExpected parameters:\n${formatSchema(schema)}`
+    ? expectedParametersHint(schema)
     : "";
 }
 
@@ -129,22 +133,32 @@ async function renderedCallResult(
   );
 }
 
+function textDiagnostics(blocks: unknown): string[] {
+  if (!isUnknownArray(blocks)) {
+    return [];
+  }
+  const diagnostics: string[] = [];
+  for (const block of blocks) {
+    const record = asObjectRecord(block);
+    if (record?.type === "text" && typeof record.text === "string") {
+      diagnostics.push(record.text);
+    }
+  }
+  return diagnostics;
+}
+
 function resultAffixes(
   result: Record<string, unknown>,
   request: CallResultRequest,
   uiSummary: UiSessionResultSummary | undefined,
 ): McpOutputGuardOptions {
   if (result.isError === true) {
-    const blocks = result.content;
-    const diagnostic = isUnknownArray(blocks)
-      ? blocks.map(asObjectRecord).find((block) => block?.type === "text")?.text
-      : undefined;
+    const hasValidationError = textDiagnostics(result.content).some((diagnostic) =>
+      INPUT_VALIDATION.test(diagnostic.trimStart()),
+    );
     return {
       prefix: "Error: ",
-      suffix:
-        typeof diagnostic === "string"
-          ? inputValidationHint(request.target.inputSchema, diagnostic)
-          : "",
+      suffix: hasValidationError ? expectedParametersHint(request.target.inputSchema) : "",
       emptyTextFallback: "Tool execution failed",
     };
   }

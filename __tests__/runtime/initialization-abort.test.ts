@@ -160,13 +160,13 @@ function call(name: string, signal?: AbortSignal) {
   if (tool === undefined) {
     throw new Error(`${name} was not registered`);
   }
-  const args = name === "mcp" ? { tool: "demo_echo", args: {} } : {};
+  const args = name === "mcp" ? { tool: "mcp__demo__echo", args: {} } : {};
   const result = tool.execute("init-abort", args, signal);
   pending.push(result);
   return result;
 }
 
-describe.each(["mcp", "demo_echo"])("native registered %s initialization", (name) => {
+describe.each(["mcp", "mcp__demo__echo"])("native registered %s initialization", (name) => {
   it.each(["before", "during"])(
     "honors cancellation %s the wait without cancelling shared startup",
     async (timing) => {

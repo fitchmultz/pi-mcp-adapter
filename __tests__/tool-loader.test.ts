@@ -75,17 +75,17 @@ describe("MCP catalog registration", () => {
     expect(loader.sync(config, cache(), undefined, (specs) => void pins.push(specs))).toHaveLength(
       1,
     );
-    expect(pins[0]?.map((spec) => spec.prefixedName)).toEqual(["demo_pinned"]);
+    expect(pins[0]?.map((spec) => spec.prefixedName)).toEqual(["mcp__demo__pinned"]);
     expect(h.definitions.size).toBe(3);
-    expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }, { name: "demo_pinned" }]);
-    expect(definition(h, "demo_pinned")).not.toHaveProperty("exposure");
-    const search = definition(h, "demo_search");
+    expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }, { name: "mcp__demo__pinned" }]);
+    expect(definition(h, "mcp__demo__pinned")).not.toHaveProperty("exposure");
+    const search = definition(h, "mcp__demo__search");
     expect(search.exposure).toBe("deferred");
     expect(search.parameters).toEqual(schema);
     expect(search.namespace).toEqual({ name: "mcp_demo", aliases: ["demo"] });
     expect(search).not.toHaveProperty("promptSnippet");
     expect(search).not.toHaveProperty("promptGuidelines");
-    expect(definition(h, "other_search").exposure).toBe("deferred");
+    expect(definition(h, "mcp__other__search").exposure).toBe("deferred");
   });
 
   it("serializes guarded calls at the public execution boundary", async () => {
@@ -98,7 +98,7 @@ describe("MCP catalog registration", () => {
       },
     });
     guarded.sync(config, cache());
-    expect(definition(guardedHost, "demo_search").executionMode).toBe("sequential");
+    expect(definition(guardedHost, "mcp__demo__search").executionMode).toBe("sequential");
   });
 
   it("attaches CallToolResult outputSchema without codemode description boilerplate and forwards server description", async () => {
@@ -115,8 +115,8 @@ describe("MCP catalog registration", () => {
     };
     loader.sync(withDescription, entries);
 
-    expect(definition(h, "demo_search").description).toBe("search");
-    const unstructured = definition(h, "other_raw-search");
+    expect(definition(h, "mcp__demo__search").description).toBe("search");
+    const unstructured = definition(h, "mcp__other__raw-search");
     expect(unstructured.description).toBe("Raw search");
     expect(unstructured.description).not.toContain("Codemode:");
     expect(unstructured.outputSchema).toMatchObject({
@@ -140,11 +140,11 @@ describe("MCP catalog registration", () => {
     const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     loader.sync(config, cache());
     expect(loader.sync(unpinned, cache())).toEqual([]);
-    expect(definition(h, "demo_pinned").exposure).toBe("deferred");
-    expect(h.active()).not.toContainEqual({ name: "demo_pinned" });
+    expect(definition(h, "mcp__demo__pinned").exposure).toBe("deferred");
+    expect(h.active()).not.toContainEqual({ name: "mcp__demo__pinned" });
     loader.sync(config, cache());
-    expect(definition(h, "demo_pinned")).not.toHaveProperty("exposure");
-    expect(h.active()).toContainEqual({ name: "demo_pinned" });
+    expect(definition(h, "mcp__demo__pinned")).not.toHaveProperty("exposure");
+    expect(h.active()).toContainEqual({ name: "mcp__demo__pinned" });
     const updated = cache();
     const first = updated.servers.demo?.tools[0];
     assert.ok(first);
@@ -157,13 +157,13 @@ describe("MCP catalog registration", () => {
       },
     };
     loader.sync(describedConfig, updated);
-    expect(definition(h, "demo_pinned").outputSchema).toMatchObject({
+    expect(definition(h, "mcp__demo__pinned").outputSchema).toMatchObject({
       type: "object",
       properties: {
         structuredContent: { type: "object", properties: { changed: { type: "boolean" } } },
       },
     });
-    expect(definition(h, "demo_search").namespace).toEqual({
+    expect(definition(h, "mcp__demo__search").namespace).toEqual({
       name: "mcp_demo",
       aliases: ["demo"],
       description: "Demo server",
@@ -171,23 +171,33 @@ describe("MCP catalog registration", () => {
     });
   });
 
-  it("uses unique public names without touching foreign tools", async () => {
+  it("uses unique public names with hash disambiguation without touching foreign tools", async () => {
     const h = await host();
     h.api.registerTool(loaderFixtureTool("search", { name: "outside" }));
     const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     loader.sync({ ...config, settings: { toolPrefix: "none" } }, cache());
     expect(definition(h, "search").namespace).toEqual({ name: "outside" });
     expect(h.definitions.has("pinned")).toBe(true);
+    const disambiguated = [...h.definitions.keys()]
+      .filter((name) => name.startsWith("search_"))
+      .sort();
+    expect(disambiguated).toHaveLength(2);
+    expect(
+      disambiguated
+        .map((name) => definition(h, name).namespace?.name ?? "")
+        .sort((left, right) => left.localeCompare(right)),
+    ).toEqual(["mcp_demo", "mcp_other"]);
     loader.sync(config, cache());
     expect([...h.definitions.keys()].sort()).toEqual([
-      "demo_pinned",
-      "demo_search",
-      "other_search",
+      "mcp__demo__pinned",
+      "mcp__demo__search",
+      "mcp__other__search",
       "pinned",
       "search",
+      ...disambiguated,
     ]);
     expect(h.active()).toContainEqual({ name: "search" });
-    expect(h.active()).toContainEqual({ name: "demo_pinned" });
+    expect(h.active()).toContainEqual({ name: "mcp__demo__pinned" });
   });
 
   it("reports no pins when the host excludes them", async () => {
@@ -202,7 +212,7 @@ describe("MCP catalog registration", () => {
     const loader = createToolLoader(h.api, {
       getState: () => null,
       getInitPromise: () => null,
-      removedOnBranch: (name) => recorded && name === "demo_pinned",
+      removedOnBranch: (name) => recorded && name === "mcp__demo__pinned",
     });
     loader.sync(config, cache());
     h.api.setActiveTools(["mcp", "read"]);
@@ -215,7 +225,7 @@ describe("MCP catalog registration", () => {
     expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
     recorded = false;
     loader.settlePins();
-    expect(h.active()).toContainEqual({ name: "demo_pinned" });
+    expect(h.active()).toContainEqual({ name: "mcp__demo__pinned" });
     // A boundary while the pin is withdrawn decides its return from the branch it reaches.
     loader.sync({ mcpServers: {} }, null);
     h.api.setActiveTools(["mcp", "read"]);
@@ -229,7 +239,7 @@ describe("MCP catalog registration", () => {
     // A prompt sent while the pin is withdrawn records it removed; that is not a deselection.
     recorded = true;
     loader.sync(config, cache());
-    expect(h.active()).toContainEqual({ name: "demo_pinned" });
+    expect(h.active()).toContainEqual({ name: "mcp__demo__pinned" });
   });
 
   it("re-activates a deferred tool that returns pinned after leaving the catalog", async () => {
@@ -240,12 +250,12 @@ describe("MCP catalog registration", () => {
       removedOnBranch: () => true,
     });
     loader.sync(unpinned, cache());
-    expect(definition(h, "demo_pinned").exposure).toBe("deferred");
+    expect(definition(h, "mcp__demo__pinned").exposure).toBe("deferred");
     loader.sync({ mcpServers: {} }, null);
-    expect(definition(h, "demo_pinned").exposure).toBe("hidden");
+    expect(definition(h, "mcp__demo__pinned").exposure).toBe("hidden");
     // It never had a pin to lose, so its return is a gain even with a recorded removal.
     loader.sync(config, cache());
-    expect(h.active()).toContainEqual({ name: "demo_pinned" });
+    expect(h.active()).toContainEqual({ name: "mcp__demo__pinned" });
   });
 
   it("withdraws tools that leave the catalog and restores them when they return", async () => {
@@ -254,23 +264,23 @@ describe("MCP catalog registration", () => {
     const loader = createToolLoader(h.api, {
       getState: () => null,
       getInitPromise: () => null,
-      removedOnBranch: (name) => recorded && name === "demo_pinned",
+      removedOnBranch: (name) => recorded && name === "mcp__demo__pinned",
     });
     loader.sync(config, cache());
     const shrunk = cache();
     shrunk.servers.demo = { ...requireEntry(shrunk, "demo"), tools: [tool("pinned")] };
     loader.sync(config, shrunk);
-    expect(definition(h, "demo_search").exposure).toBe("hidden");
-    expect(definition(h, "demo_pinned")).not.toHaveProperty("exposure");
+    expect(definition(h, "mcp__demo__search").exposure).toBe("hidden");
+    expect(definition(h, "mcp__demo__pinned")).not.toHaveProperty("exposure");
     loader.sync(config, cache());
-    expect(definition(h, "demo_search").exposure).toBe("deferred");
+    expect(definition(h, "mcp__demo__search").exposure).toBe("deferred");
     loader.sync({ mcpServers: {} }, null);
-    expect(definition(h, "demo_pinned").exposure).toBe("hidden");
+    expect(definition(h, "mcp__demo__pinned").exposure).toBe("hidden");
     expect(h.active()).toEqual([{ name: "mcp" }, { name: "read" }]);
     // The next prompt records the withdrawn pin as removed, which is not a user deselection.
     recorded = true;
     loader.sync(config, cache());
-    expect(h.active()).toContainEqual({ name: "demo_pinned" });
+    expect(h.active()).toContainEqual({ name: "mcp__demo__pinned" });
     // A pin the user deselected stays off when it leaves and returns.
     h.api.setActiveTools(["mcp", "read"]);
     loader.sync({ mcpServers: {} }, null);
@@ -285,5 +295,33 @@ describe("MCP catalog registration", () => {
     const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     expect(loader.sync(config, cache(), null)).toEqual([]);
     expect(h.definitions.size).toBe(0);
+  });
+
+  it("refreshes deferred catalog tools via syncDeferred while keeping pins and active tools frozen", async () => {
+    const h = await host();
+    const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
+    loader.sync(config, cache());
+    // Simulate tool_search activating one deferred tool before freezing.
+    h.api.setActiveTools([...h.active().map((entry) => entry.name), "mcp__demo__search"]);
+    const activeBefore = h.active();
+
+    const updated = cache();
+    const demo = requireEntry(updated, "demo");
+    demo.tools = [
+      { ...tool("pinned"), description: "pinned changed" },
+      { ...tool("search"), description: "active deferred changed" },
+      { ...tool("fresh"), description: "new deferred tool" },
+    ];
+    const other = requireEntry(updated, "other");
+    other.tools = [];
+
+    loader.syncDeferred(config, updated);
+
+    // Pinned and active tools stay untouched; inactive deferred tools add/withdraw cleanly.
+    expect(h.active()).toEqual(activeBefore);
+    expect(definition(h, "mcp__demo__pinned").description).toBe("pinned");
+    expect(definition(h, "mcp__demo__search").description).toBe("search");
+    expect(definition(h, "mcp__demo__fresh").exposure).toBe("deferred");
+    expect(definition(h, "mcp__other__search").exposure).toBe("hidden");
   });
 });

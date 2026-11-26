@@ -40,7 +40,7 @@ Run `/reload` after config changes. Ask Pi:
 
 > Use Chrome DevTools to take a screenshot of the current page.
 
-By default, servers connect when Pi discovers an uncached catalog or calls a tool. Cached catalogs register as deferred Pi tools without a connection: Pi's `tool_search` loads the ones a task needs, `codemode` scripts can call them directly, and the `mcp` gateway discovers servers that have no cached catalog yet.
+By default, servers connect when Pi discovers an uncached catalog or calls a tool. Enabled servers appear in a cache-stable `<mcp_servers>` prompt section with their description or instructions summary, and cached catalogs register as deferred Pi tools (`mcp__<server>__<tool>` by default) without a connection: Pi's `tool_search` loads the ones a task needs, `codemode` scripts can call them directly, and the `mcp` gateway discovers servers that have no cached catalog yet.
 
 ## Controls and settings
 

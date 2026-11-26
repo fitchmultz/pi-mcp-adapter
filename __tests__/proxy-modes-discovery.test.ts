@@ -81,7 +81,10 @@ describe("proxy discovery", () => {
       _meta: tool._meta,
     });
     expect(described).not.toHaveProperty("inputTypeScript");
-    const text = firstText(executeSearch(state, { query: "unique lookup" }));
+    const compact = firstText(executeSearch(state, { query: "unique lookup" }));
+    expect(compact).toContain("demo_search");
+    expect(compact).not.toContain('"inputSchema"');
+    const text = firstText(executeSearch(state, { query: "unique lookup", includeSchemas: true }));
     const searched = parsedRecord(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
     expect(searched.inputSchema).toEqual(tool.inputSchema);
     expect(searched.outputSchema).toEqual(tool.outputSchema);
@@ -163,7 +166,7 @@ describe("proxy discovery", () => {
     });
 
     expect(firstText(result)).toContain(
-      '1-1 of 2 — mcp({ action: "search", query: "demo", includeSchemas: false, limit: 1, offset: 1 }) for more',
+      '1-1 of 2 — mcp({ action: "search", query: "demo", limit: 1, offset: 1 }) for more',
     );
 
     expect(result.details).toMatchObject({
@@ -174,34 +177,42 @@ describe("proxy discovery", () => {
     });
   });
 
-  it("keeps the default schema mode implicit in search continuations", () => {
-    const result = executeSearch(createState(), { query: "demo", limit: 1, offset: 0 });
-
-    expect(firstText(result)).not.toContain("includeSchemas");
+  it("keeps the default compact schema mode implicit and preserves includeSchemas: true in continuations", () => {
+    const compact = executeSearch(createState(), { query: "demo", limit: 1, offset: 0 });
+    expect(firstText(compact)).not.toContain("includeSchemas");
+    const expanded = executeSearch(createState(), {
+      query: "demo",
+      includeSchemas: true,
+      limit: 1,
+      offset: 0,
+    });
+    expect(firstText(expanded)).toContain(
+      'mcp({ action: "search", query: "demo", includeSchemas: true, limit: 1, offset: 1 })',
+    );
   });
 
-  it("preserves compact server-scoped search in continuation and retry calls", () => {
+  it("preserves server-scoped search in continuation and retry calls", () => {
     const state = createState();
     const page = executeSearch(state, {
       query: "demo",
       server: "demo",
-      includeSchemas: false,
+      includeSchemas: true,
       limit: 1,
       offset: 0,
     });
     const retry = executeSearch(state, {
       query: "demo",
       server: "demo",
-      includeSchemas: false,
+      includeSchemas: true,
       limit: 1,
       offset: 99,
     });
 
     expect(firstText(page)).toContain(
-      'mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 1 })',
+      'mcp({ action: "search", query: "demo", server: "demo", includeSchemas: true, limit: 1, offset: 1 })',
     );
     expect(firstText(retry)).toContain(
-      'mcp({ action: "search", query: "demo", server: "demo", includeSchemas: false, limit: 1, offset: 0 })',
+      'mcp({ action: "search", query: "demo", server: "demo", includeSchemas: true, limit: 1, offset: 0 })',
     );
   });
 
@@ -444,6 +455,7 @@ describe("proxy discovery", () => {
     );
     expect(result.details).toMatchObject({ error: "native_tool", requestedTool: "read" });
   });
+<<<<<<< HEAD
 
   it("surfaces sanitized failure reasons, retry countdown, and connect bypass guidance in server_backoff", async () => {
     vi.useFakeTimers();
@@ -525,5 +537,133 @@ describe("proxy discovery", () => {
     const servers = afterClear.details.servers;
     assert.ok(Array.isArray(servers));
     expect(servers[0]).not.toHaveProperty("failureMessage");
+  });
+
+  it("scopes tool_not_found suggestions strictly to the requested server and hints undiscovered servers", async () => {
+    const state = createState();
+    state.config.mcpServers = {
+      "cloudflare-workos": { command: "cf" },
+      slack: { command: "slack" },
+      linear: { command: "linear" },
+    };
+    state.toolMetadata = new Map([
+      [
+        "cloudflare-workos",
+        [
+          {
+            name: "mcp__cloudflare_workos__list_workers",
+            originalName: "list_workers",
+            description: "List Cloudflare workers",
+          },
+        ],
+      ],
+      [
+        "slack",
+        [
+          {
+            name: "mcp__slack__post_message",
+            originalName: "post_message",
+            description: "Post a Slack message",
+          },
+        ],
+      ],
+    ]);
+
+    const callMiss = await executeCall(state, {
+      toolName: "post_channel_reply",
+      serverOverride: "cloudflare-workos",
+    });
+    expect(callMiss.details).toMatchObject({
+      error: "tool_not_found",
+      hintServer: "cloudflare-workos",
+      suggestions: [],
+    });
+    expect(firstText(callMiss)).not.toContain("slack");
+
+    const describeMiss = executeDescribe(state, "post_channel_reply", "cloudflare-workos");
+    expect(describeMiss.details).toMatchObject({
+      error: "tool_not_found",
+      suggestions: [],
+    });
+    expect(firstText(describeMiss)).not.toContain("slack");
+
+    // Unscoped miss hints configured enabled servers whose catalog has not been discovered yet.
+    const unscopedDescribe = executeDescribe(state, "get_issue");
+    expect(unscopedDescribe.details).toMatchObject({
+      error: "tool_not_found",
+      undiscoveredServers: ["linear"],
+    });
+    expect(firstText(unscopedDescribe)).toContain("Undiscovered servers: linear");
+    expect(firstText(unscopedDescribe)).toContain('action: "connect", server: "linear"');
+
+    const unscopedCall = await executeCall(state, { toolName: "get_issue" });
+    expect(unscopedCall.details).toMatchObject({
+      error: "tool_not_found",
+      undiscoveredServers: ["linear"],
+    });
+    expect(firstText(unscopedCall)).toContain("Undiscovered servers: linear");
+  });
+
+  it("resolves legacy <server>_<tool> and bare <tool> aliases when unambiguous and surfaces serverInstructions in describe", () => {
+    const state = createState();
+    state.config.mcpServers = {
+      demo: { command: "demo" },
+      other: { command: "other" },
+    };
+    state.toolMetadata = new Map([
+      [
+        "demo",
+        [
+          {
+            name: "mcp__demo__get_record",
+            originalName: "get_record",
+            description: "Fetch a demo record",
+          },
+          {
+            name: "mcp__demo__ping",
+            originalName: "ping",
+            description: "Demo ping",
+          },
+        ],
+      ],
+      [
+        "other",
+        [
+          {
+            name: "mcp__other__ping",
+            originalName: "ping",
+            description: "Other ping",
+          },
+        ],
+      ],
+    ]);
+    state.serverInstructions.set("demo", "Always include workspace_id for demo queries.");
+
+    // Legacy <server>_<tool>, legacy single-underscore mcp__<server>_<tool>, and unambiguous bare name resolve.
+    for (const alias of ["demo_get_record", "mcp__demo_get_record", "get_record"]) {
+      const described = executeDescribe(state, alias);
+      expect(described.details).toMatchObject({ mode: "describe", server: "demo" });
+      expect(parsedRecord(firstText(described))).toMatchObject({
+        path: "mcp__demo__get_record",
+        name: "get_record",
+        serverInstructions: "Always include workspace_id for demo queries.",
+      });
+    }
+
+    // Ambiguous bare name across two servers fails with ambiguous_tool.
+    expect(executeDescribe(state, "ping").details).toMatchObject({ error: "ambiguous_tool" });
+
+    // Compact search default trims long descriptions to ~140 chars without schema JSON.
+    const demoTools = state.toolMetadata.get("demo");
+    assert.ok(demoTools?.[0]);
+    demoTools[0].description = `Summary ${"detail ".repeat(40)}`;
+    const compact = firstText(executeSearch(state, { query: "get_record" }));
+    expect(compact).toContain("mcp__demo__get_record");
+    expect(compact).not.toContain('"inputSchema"');
+    const summaryLine = compact
+      .split("\n")
+      .find((line) => line.startsWith("- mcp__demo__get_record"));
+    assert.ok(summaryLine !== undefined);
+    expect(summaryLine.length).toBeLessThanOrEqual(175);
   });
 });

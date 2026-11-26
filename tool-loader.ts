@@ -3,8 +3,14 @@ import type {
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { logger } from "./logger.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
-import type { DirectToolSpec, McpConfig, ToolMetadata } from "./types.ts";
+import {
+  disambiguateToolName,
+  type DirectToolSpec,
+  type McpConfig,
+  type ToolMetadata,
+} from "./types.ts";
 import {
   catalogDefinition,
   collectCatalog,
@@ -43,11 +49,13 @@ type Exposure =
     };
 
 type Registration = {
+  server: string;
   name: string;
   fingerprint: string;
   definition: ReturnType<typeof catalogDefinition>;
   exposure: Exposure;
 };
+
 interface ToolLoader {
   sync: (
     config: McpConfig,
@@ -55,10 +63,14 @@ interface ToolLoader {
     env?: string[] | null,
     registerGateways?: (pins: DirectToolSpec[]) => boolean | undefined,
   ) => DirectToolSpec[];
+  /** Refresh non-active deferred catalog tools while keeping pinned and active tools frozen. */
+  syncDeferred: (config: McpConfig, cache: MetadataCache | null, env?: string[] | null) => void;
   /** Whether any catalog tool is registered with deferred exposure. */
   hasDeferred: () => boolean;
   /** Decides every registered pin again after a session start or tree navigation. */
   settlePins: () => void;
+  /** Server name owning a registered MCP tool name, if known. */
+  serverForTool: (name: string) => string | undefined;
 }
 
 /** Replays the branch's recorded tool loadout (Pi docs/session-format.md) for one tool. */
@@ -128,6 +140,21 @@ export function activateToolSearch(
   return true;
 }
 
+function uniqueCatalogName(
+  item: CatalogTool,
+  blocked: ReadonlySet<string>,
+  assigned: ReadonlySet<string>,
+): string {
+  const identity = `${item.selection.server}\0${item.selection.tool}`;
+  let candidate = disambiguateToolName(item.name, identity);
+  let attempt = 1;
+  while (blocked.has(candidate) || assigned.has(candidate)) {
+    candidate = disambiguateToolName(item.name, `${identity}\0${attempt}`);
+    attempt += 1;
+  }
+  return candidate;
+}
+
 /**
  * Registers the MCP catalog with Pi. Pinned tools are direct and active from startup; every
  * other catalog tool registers with deferred exposure so Pi's native tool_search loads it and the
@@ -138,12 +165,14 @@ class Loader implements ToolLoader {
   private readonly pi: ExtensionAPI;
   private readonly dependencies: LoaderDependencies;
   private readonly registered = new Map<string, Registration>();
+  private readonly toolToServer = new Map<string, string>();
   /** Pins decided since the last session boundary, so a later live deselection is not undone. */
   private readonly settled = new Set<string>();
   private readonly fingerprints = new WeakMap<
     ToolMetadata,
     {
       server: string;
+      name: string;
       description: string | undefined;
       instructions: string | undefined;
       pinned: boolean;
@@ -179,11 +208,13 @@ class Loader implements ToolLoader {
     });
     this.pi.registerTool(definition);
     this.registered.set(id, {
+      server: selection.server,
       name,
       fingerprint,
       definition,
       exposure: pinned ? { kind: "pinned" } : { kind: unpinnedExposure },
     });
+    this.toolToServer.set(name, selection.server);
     return pinChange(existing, pinned);
   }
 
@@ -224,10 +255,16 @@ class Loader implements ToolLoader {
     }
   }
 
-  private withdraw(available: Set<string>): void {
+  private withdraw(available: Set<string>, freezePins: boolean): void {
     const active = new Set(this.pi.getActiveTools());
     for (const [id, registration] of this.registered) {
       if (available.has(id) || registration.exposure.kind === "withdrawn") {
+        continue;
+      }
+      if (
+        freezePins &&
+        (registration.exposure.kind === "pinned" || active.has(registration.name))
+      ) {
         continue;
       }
       registration.exposure = {
@@ -248,6 +285,7 @@ class Loader implements ToolLoader {
     const previous = Object.isFrozen(source) ? this.fingerprints.get(source) : undefined;
     const fingerprint =
       previous?.server === spec.serverName &&
+      previous.name === name &&
       previous.description === description &&
       previous.instructions === instructions &&
       previous.pinned === pinned &&
@@ -257,6 +295,7 @@ class Loader implements ToolLoader {
     if (Object.isFrozen(source)) {
       this.fingerprints.set(source, {
         server: spec.serverName,
+        name,
         description,
         instructions,
         pinned,
@@ -267,42 +306,88 @@ class Loader implements ToolLoader {
     return fingerprint;
   }
 
-  /** Catalog tools this loader may own: unique, unreserved, and not registered by another extension. */
-  private eligible(specs: readonly CatalogTool[]): CatalogTool[] {
-    const previousNames = new Set([...this.registered.values()].map((item) => item.name));
-    const existing = new Set(this.pi.getAllTools().map((tool) => tool.name));
+  /**
+   * Resolve unique, provider-safe catalog names without overwriting reserved or foreign tools.
+   * Colliding tools receive deterministic hash suffixes instead of being dropped.
+   */
+  private resolveNames(specs: readonly CatalogTool[]): CatalogTool[] {
+    const ownedNames = new Set([...this.registered.values()].map((item) => item.name));
+    const foreign = new Set(
+      this.pi
+        .getAllTools()
+        .map((tool) => tool.name)
+        .filter((name) => !ownedNames.has(name)),
+    );
+    const blocked = new Set<string>([...reserved, ...foreign]);
     const counts = new Map<string, number>();
     for (const { name } of specs) {
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
-    return specs.filter(
-      ({ name }) =>
-        !reserved.has(name) &&
-        counts.get(name) === 1 &&
-        (!existing.has(name) || previousNames.has(name)),
+    const assigned = new Set<string>(
+      specs
+        .filter(({ name }) => !blocked.has(name) && counts.get(name) === 1)
+        .map(({ name }) => name),
+    );
+    return specs.map((item) => {
+      const collides = blocked.has(item.name) || (counts.get(item.name) ?? 0) > 1;
+      if (!collides) {
+        return item;
+      }
+      const renamed = uniqueCatalogName(item, blocked, assigned);
+      assigned.add(renamed);
+      logger.debug(
+        `MCP: disambiguated catalog tool "${item.selection.tool}" on ${item.selection.server} (${item.name} -> ${renamed})`,
+      );
+      return { ...item, name: renamed, spec: { ...item.spec, prefixedName: renamed } };
+    });
+  }
+
+  private isFrozenRegistration(item: CatalogTool, active: ReadonlySet<string>): boolean {
+    if (item.pinned || active.has(item.name)) {
+      return true;
+    }
+    const existing = this.registered.get(key(item.selection));
+    return (
+      existing?.exposure.kind === "pinned" || (existing !== undefined && active.has(existing.name))
     );
   }
 
+  private syncDeferredOnly(resolved: readonly CatalogTool[], cache: MetadataCache | null): void {
+    const active = new Set(this.pi.getActiveTools());
+    const available = new Set(resolved.map((item) => key(item.selection)));
+    for (const item of resolved) {
+      if (!this.isFrozenRegistration(item, active)) {
+        this.register(item, cache);
+      }
+    }
+    this.withdraw(available, true);
+  }
+
+  syncDeferred: ToolLoader["syncDeferred"] = (config, cache, env) => {
+    const specs = collectCatalog(config, cache, env, this.dependencies.getState);
+    this.syncDeferredOnly(this.resolveNames(specs), cache);
+  };
+
   sync: ToolLoader["sync"] = (config, cache, env, registerGateways) => {
     const specs = collectCatalog(config, cache, env, this.dependencies.getState);
-    const eligible = this.eligible(specs);
-    const available = new Set(eligible.map((item) => key(item.selection)));
+    const resolved = this.resolveNames(specs);
+    const available = new Set(resolved.map((item) => key(item.selection)));
     const lost = new Set<string>();
     const gained = new Set<string>();
-    for (const item of eligible) {
+    for (const item of resolved) {
       const change = this.register(item, cache);
       if (change !== undefined) {
         (change === "lost" ? lost : gained).add(item.name);
       }
     }
-    this.withdraw(available);
+    this.withdraw(available, false);
     this.deactivate(lost);
     for (const name of lost) {
       this.settled.delete(name);
     }
     this.activatePins(gained);
     const permitted = new Set(this.pi.getAllTools().map((tool) => tool.name));
-    const pins = specs
+    const pins = resolved
       .filter(
         (item) => item.pinned && available.has(key(item.selection)) && permitted.has(item.name),
       )
@@ -325,9 +410,17 @@ class Loader implements ToolLoader {
     }
     this.activatePins(new Set());
   };
+
+  serverForTool: ToolLoader["serverForTool"] = (name) => this.toolToServer.get(name);
 }
 
 export function createToolLoader(pi: ExtensionAPI, dependencies: LoaderDependencies): ToolLoader {
   const loader = new Loader(pi, dependencies);
-  return { sync: loader.sync, hasDeferred: loader.hasDeferred, settlePins: loader.settlePins };
+  return {
+    sync: loader.sync,
+    syncDeferred: loader.syncDeferred,
+    hasDeferred: loader.hasDeferred,
+    settlePins: loader.settlePins,
+    serverForTool: loader.serverForTool,
+  };
 }

@@ -24,7 +24,7 @@ export default function nativeCli(pi: ExtensionAPI): void {
     { name: "mcp", arguments: { action: "connect", server: "local" } },
     ...["coded-cli", "fail", "redact", "blocked"].map((value) => ({
       name: "codemode",
-      arguments: { code: `return await tools.local_echo({value:${JSON.stringify(value)}});` },
+      arguments: { code: `return await tools.mcp__local__echo({value:${JSON.stringify(value)}});` },
     })),
   ];
   let stage = 0;

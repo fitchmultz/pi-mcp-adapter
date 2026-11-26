@@ -24,7 +24,11 @@ import {
   launchHostInitialization,
   runLiveSessionReconcile,
 } from "./host-live-toggle.ts";
-import { canPreserveFrozenTools, HostSession } from "./host-session.ts";
+import {
+  canPreserveFrozenTools,
+  HostSession,
+  parseEnvDirectToolOverride,
+} from "./host-session.ts";
 import {
   finalizeHostShutdown,
   HostReconcileCoordinator,
@@ -34,6 +38,7 @@ import {
 } from "./host-state-cleanup.ts";
 import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
 import { McpHostTools } from "./host-tools.ts";
+import { McpServersPromptState } from "./mcp-servers-prompt.ts";
 import { HostSkillsTracker } from "./mcp-skills-store.ts";
 import {
   registerWorkingSessionSaveHandler,
@@ -41,7 +46,6 @@ import {
   type DeferredToolSurfaceActions,
 } from "./host-working-session.ts";
 import { consumeStateUiModelContext } from "./ui-session-events.ts";
-
 /**
  * Owns registrations for the host's lifetime. Pi registrations survive session
  * swaps, so handlers borrow current state at invocation rather than capture a
@@ -66,15 +70,13 @@ export class McpHostRuntime implements McpAdapterHost {
   private readonly skillsTracker = new HostSkillsTracker();
   private startSessionPromise: Promise<void> | null = null;
   private readonly envRaw = process.env.MCP_DIRECT_TOOLS;
-  private readonly envDirectToolOverride = this.envRaw
-    ?.split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  private readonly envDirectToolOverride = parseEnvDirectToolOverride(this.envRaw);
   private readonly toolLoader: ReturnType<typeof createToolLoader>;
   private readonly tools: McpHostTools;
   private sessionManager: ExtensionContext["sessionManager"] | undefined;
   /** Whether tool_search activation was decided since the last session start or tree navigation. */
   private toolSearchSettled = false;
+  private readonly serversPrompt = new McpServersPromptState();
 
   get state(): McpExtensionState | null {
     return this.session.currentState;
@@ -127,6 +129,7 @@ export class McpHostRuntime implements McpAdapterHost {
     this.pi.on("session_start", (_event, ctx) => {
       this.sessionManager = ctx.sessionManager;
       this.toolSearchSettled = false;
+      this.serversPrompt.clearSurfaced();
       this.skillsTracker.reset();
       this.settlePinsOrDefer();
       const started = this.startSession(ctx);
@@ -143,6 +146,7 @@ export class McpHostRuntime implements McpAdapterHost {
     this.pi.on("session_tree", (_event, ctx) => {
       this.sessionManager = ctx.sessionManager;
       this.toolSearchSettled = false;
+      this.serversPrompt.clearSurfaced();
       this.settlePinsOrDefer();
       this.activateToolSearch();
     });
@@ -159,6 +163,13 @@ export class McpHostRuntime implements McpAdapterHost {
       } else if (ctx.cwd !== this.runtimeCwd || this.reconcile.retryPending) {
         await this.syncWorkingDirectory(ctx);
       }
+      this.serversPrompt.applyBeforeAgentStart(event, {
+        state: this.state,
+        fallbackConfig: this.config,
+        cacheEnabled: this.runtimeCacheEnabled === true,
+        frozen: this.directToolsFrozen,
+        builtinActive: isBuiltinMcpActive(this.pi),
+      });
       if (event.messageType !== "user") {
         return;
       }
@@ -173,6 +184,12 @@ export class McpHostRuntime implements McpAdapterHost {
         this.workingSession.collectBlockers(this.state, this.oauthRuntime),
         (actions) => this.flushDeferredToolSurface(actions),
       ),
+    );
+    this.pi.on("tool_result", (event) =>
+      this.serversPrompt.surfaceToolResult(event, {
+        serverForTool: (name) => this.toolLoader.serverForTool(name),
+        state: this.state,
+      }),
     );
     this.pi.on("session_shutdown", () => this.shutdown());
   }
@@ -216,6 +233,14 @@ export class McpHostRuntime implements McpAdapterHost {
     this.toolLoader.settlePins();
   }
 
+  private syncDeferredCatalog(): void {
+    const config = this.state?.config ?? this.config;
+    this.toolLoader.syncDeferred(
+      config,
+      loadMetadataCache(this.state?.metadataCacheEnabled ?? false),
+      this.envRaw === "__none__" ? null : this.envDirectToolOverride,
+    );
+  }
   /** Once per session start or tree navigation, so a later live deselection is not undone. */
   private activateToolSearch(): void {
     if (this.workingSession.isSaving()) {
@@ -263,6 +288,7 @@ export class McpHostRuntime implements McpAdapterHost {
     this.runtimeCacheEnabled = undefined;
     this.directToolsFrozen = false;
     this.reconcile.reset();
+    this.serversPrompt.resetAll();
     this.skillsTracker.reset();
     this.startSessionPromise = null;
     this.prompts.clear();
@@ -394,7 +420,10 @@ export class McpHostRuntime implements McpAdapterHost {
       if (this.config.settings?.freezeDirectTools === true) {
         this.directToolsFrozen = true;
       }
+    } else {
+      this.syncDeferredCatalog();
     }
+    this.serversPrompt.resetFrozen(this.directToolsFrozen);
   }
 
   private syncCachedPromptCommands(config: McpConfig, cacheEnabled: boolean): void {
@@ -436,6 +465,7 @@ export class McpHostRuntime implements McpAdapterHost {
       configPath: this.configPath,
       cacheEnabled,
     });
+    this.serversPrompt.resetFrozen(this.directToolsFrozen);
     this.syncCachedPromptCommands(runtimeConfig, cacheEnabled);
     const cache = loadMetadataCache(cacheEnabled);
     if (!this.directToolsFrozen) {
@@ -488,6 +518,7 @@ export class McpHostRuntime implements McpAdapterHost {
       syncPrompts: () => this.syncPromptCommands(),
       syncSkills: (state) => this.skillsTracker.handleStateUpdate(state),
       syncTools: () => this.syncToolSurface(),
+      syncDeferred: () => this.syncDeferredCatalog(),
     });
   }
 

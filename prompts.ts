@@ -5,7 +5,12 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { GetPromptResult } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type McpConfig, type PromptMetadata } from "./types.ts";
+import {
+  DEFAULT_TOOL_PREFIX,
+  isServerDisabled,
+  type McpConfig,
+  type PromptMetadata,
+} from "./types.ts";
 import {
   isServerCacheValid,
   loadMetadataCache,
@@ -33,7 +38,7 @@ export function resolveCachedPrompts(config: McpConfig, cacheEnabled = true): Pr
     return [];
   }
 
-  const prefix = config.settings?.toolPrefix ?? "server";
+  const prefix = config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX;
   const specs: PromptMetadata[] = [];
 
   for (const [serverName, entry] of Object.entries(cache.servers)) {

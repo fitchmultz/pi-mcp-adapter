@@ -108,4 +108,117 @@ describe("formatSchema", () => {
       ].join("\n"),
     );
   });
+
+  it("resolves local $ref into $defs and definitions and guards recursive cycles", () => {
+    const schema = {
+      type: "object",
+      $defs: {
+        Filter: {
+          type: "object",
+          properties: {
+            field: { type: "string", description: "Column name" },
+          },
+          required: ["field"],
+        },
+        Node: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            child: { $ref: "#/$defs/Node" },
+          },
+        },
+      },
+      definitions: {
+        LegacyLimit: {
+          type: "integer",
+          minimum: 1,
+        },
+      },
+      properties: {
+        filter: { $ref: "#/$defs/Filter", description: "Primary filter" },
+        limit: { $ref: "#/definitions/LegacyLimit" },
+        tree: { $ref: "#/$defs/Node" },
+      },
+      required: ["filter"],
+    };
+
+    const formatted = formatSchema(schema);
+    expect(formatted).toContain("  filter (object) *required* - Primary filter");
+    expect(formatted).toContain("    field (string) *required* - Column name");
+    expect(formatted).toContain("  limit (integer) [minimum: 1]");
+    expect(formatted).toContain("    child (circular $ref: #/$defs/Node)");
+  });
+
+  it("flattens allOf branches and reports additionalProperties", () => {
+    const schema = {
+      allOf: [
+        {
+          type: "object",
+          properties: { id: { type: "string" } },
+          required: ["id"],
+        },
+        {
+          type: "object",
+          properties: { count: { type: "number" } },
+          required: ["count"],
+          additionalProperties: false,
+        },
+      ],
+    };
+
+    expect(formatSchema(schema)).toBe(
+      [
+        "  id (string) *required*",
+        "  count (number) *required*",
+        "  (additionalProperties: false)",
+      ].join("\n"),
+    );
+
+    const openMap = {
+      type: "object",
+      properties: { fixed: { type: "string" } },
+      additionalProperties: { type: "number", description: "Extra score" },
+    };
+    expect(formatSchema(openMap)).toBe(
+      ["  fixed (string)", "  additionalProperties (number) - Extra score"].join("\n"),
+    );
+  });
+
+  it("formats root-level anyOf and oneOf schemas", () => {
+    const rootOneOf = {
+      oneOf: [
+        {
+          type: "object",
+          properties: { id: { type: "string" } },
+          required: ["id"],
+        },
+        {
+          type: "object",
+          properties: { slug: { type: "string" } },
+          required: ["slug"],
+        },
+      ],
+    };
+
+    expect(formatSchema(rootOneOf)).toBe(
+      [
+        "  oneOf:",
+        "    - object",
+        "      id (string) *required*",
+        "    - object",
+        "      slug (string) *required*",
+      ].join("\n"),
+    );
+
+    const objectWithRootAnyOf = {
+      type: "object",
+      properties: { workspace: { type: "string" } },
+      anyOf: [{ required: ["workspace"] }],
+      additionalProperties: true,
+    };
+    const formatted = formatSchema(objectWithRootAnyOf);
+    expect(formatted).toContain("  workspace (string)");
+    expect(formatted).toContain("  anyOf:");
+    expect(formatted).toContain("  (additionalProperties: true)");
+  });
 });

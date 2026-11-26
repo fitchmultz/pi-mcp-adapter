@@ -27,10 +27,10 @@ import {
 import {
   appendStderrTail,
   createNoProgressBudget,
+  expectedParametersHint,
   formatInterruptedTimeoutMessage,
   formatProgressText,
   formatTimeoutMessage,
-  inputValidationHint,
   stderrDetails,
   toolCallResult,
 } from "./proxy-call-result.ts";
@@ -482,9 +482,10 @@ class ToolCallRuntime {
     const stderrTail = this.stderrTailForError(error);
     const message = appendStderrTail(baseMessage, stderrTail);
     const invalidParamsCode: number = sdk.ProtocolErrorCode.InvalidParams;
+    const isOutputSchemaError = /output schema/i.test(message);
     const suffix =
-      !timedOut && error instanceof sdk.ProtocolError && error.code === invalidParamsCode
-        ? inputValidationHint(this.request.target.inputSchema, message)
+      !timedOut && !isOutputSchemaError && error instanceof sdk.ProtocolError && error.code === invalidParamsCode
+        ? expectedParametersHint(this.request.target.inputSchema)
         : "";
     this.uiSession?.sendToolCancelled(message);
     const guarded = await guardMcpOutput([{ type: "text", text: message }], {

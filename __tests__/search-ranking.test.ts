@@ -209,7 +209,12 @@ describe("search ranking", () => {
     expect(rankSuggestions(state, "datadgo_aggregate_evnts", 5)).toEqual([
       "datadog_aggregate_events",
     ]);
-    expect(rankSuggestions(state, "datadog_get_datadog_xyzzy", 5)).toEqual([]);
+    expect(rankSuggestions(state, "datadog_get_datadog_xyzzy", 5)).toEqual([
+      "datadog_get_datadog_dashboard",
+      "datadog_get_datadog_incident",
+      "datadog_get_datadog_metric",
+    ]);
+    expect(rankSuggestions(state, "datadog_xyzzy", 5)).toEqual([]);
     expect(rankSuggestions(state, `datadog_${"x".repeat(10_000)}`, 5)).toEqual([]);
   });
 
@@ -282,5 +287,67 @@ describe("search ranking", () => {
       hasMore: true,
       nextOffset: 100,
     });
+  });
+
+  it("applies plural/singular stemming, fuzzy matching, and serverName indexing in search", () => {
+    const state: CatalogState = {
+      config: {
+        mcpServers: {
+          "cloudflare-workos": { command: "cf", toolPrefix: "none" },
+          github: { command: "gh" },
+        },
+      },
+      toolMetadata: new Map([
+        [
+          "cloudflare-workos",
+          [
+            tool("list_worker", "Inspect a deployed worker script", "list_worker"),
+            tool("query_log", "Run a log query", "query_log"),
+          ],
+        ],
+        ["github", [tool("mcp__github__get_issue", "Fetch a single issue", "get_issue")]],
+      ]),
+    };
+
+    // Plural/singular stemming
+    expect(rankToolMatches(state, "workers").map((m) => m.tool.originalName)).toEqual([
+      "list_worker",
+    ]);
+    expect(rankToolMatches(state, "issues").map((m) => m.tool.originalName)).toEqual(["get_issue"]);
+    expect(rankToolMatches(state, "queries").map((m) => m.tool.originalName)).toEqual([
+      "query_log",
+    ]);
+    // Fuzzy match on typo in rankToolMatches
+    expect(rankToolMatches(state, "wrkers").map((m) => m.tool.originalName)).toEqual([
+      "list_worker",
+    ]);
+    // serverName is searchable even with toolPrefix: "none"
+    expect(rankToolMatches(state, "cloudflare").map((m) => m.server)).toEqual([
+      "cloudflare-workos",
+      "cloudflare-workos",
+    ]);
+  });
+
+  it("keeps rankSuggestions strictly scoped to the requested server even on OR fallback", () => {
+    const state: CatalogState = {
+      config: {
+        mcpServers: {
+          "cloudflare-workos": { command: "cf" },
+          slack: { command: "slack" },
+        },
+      },
+      toolMetadata: new Map([
+        [
+          "cloudflare-workos",
+          [tool("mcp__cloudflare_workos__list_workers", "List workers", "list_workers")],
+        ],
+        ["slack", [tool("mcp__slack__post_message", "Post a Slack message", "post_message")]],
+      ]),
+    };
+
+    expect(rankSuggestions(state, "post_message", 5, "cloudflare-workos")).toEqual([]);
+    expect(rankSuggestions(state, "workers_unknown_token", 5, "cloudflare-workos")).toEqual([
+      "mcp__cloudflare_workos__list_workers",
+    ]);
   });
 });

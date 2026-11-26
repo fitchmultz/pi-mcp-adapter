@@ -6,6 +6,9 @@ import { paginate, rankToolMatches } from "./search-ranking.ts";
 import { isToolCallApprovalRequired } from "./tool-approval.ts";
 import { truncateAtWord } from "./utils.ts";
 
+/** Compact search summary width (~140 chars fits one readable sentence without schema dumps). */
+const SEARCH_SUMMARY_MAX_CHARS = 140;
+
 interface SearchContinuation {
   query: string;
   server: string | undefined;
@@ -14,7 +17,7 @@ interface SearchContinuation {
 }
 function searchContinuation(options: SearchContinuation, nextOffset: number | null): string {
   const { query, server, showSchemas, limit } = options;
-  return `mcp({ action: "search", query: ${JSON.stringify(query)}${(server ?? "").length > 0 ? `, server: ${JSON.stringify(server)}` : ""}${showSchemas ? "" : ", includeSchemas: false"}, limit: ${limit}, offset: ${String(nextOffset)} })`;
+  return `mcp({ action: "search", query: ${JSON.stringify(query)}${(server ?? "").length > 0 ? `, server: ${JSON.stringify(server)}` : ""}${showSchemas ? ", includeSchemas: true" : ""}, limit: ${limit}, offset: ${String(nextOffset)} })`;
 }
 function formatSearchMatch(
   state: McpExtensionState,
@@ -25,8 +28,9 @@ function formatSearchMatch(
   if (showSchemas) {
     return `${JSON.stringify({ ...toToolDescriptor(match.server, match.tool), ...(approval ? { approvalRequired: true } : {}) }, null, 2)}\n\n`;
   }
+  const singleLine = match.tool.description.replace(/\s+/g, " ").trim();
   const description =
-    match.tool.description.length > 0 ? ` - ${truncateAtWord(match.tool.description, 50)}` : "";
+    singleLine.length > 0 ? ` - ${truncateAtWord(singleLine, SEARCH_SUMMARY_MAX_CHARS)}` : "";
   return `- ${match.tool.name}${approval ? " (requires approval)" : ""}${description}\n`;
 }
 
@@ -136,7 +140,7 @@ export function executeSearch(
     offset?: number | undefined;
   },
 ): ProxyToolResult {
-  const showSchemas = includeSchemas !== false;
+  const showSchemas = includeSchemas === true;
   if (
     server !== undefined &&
     server.length > 0 &&

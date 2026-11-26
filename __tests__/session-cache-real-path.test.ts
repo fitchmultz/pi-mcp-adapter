@@ -272,7 +272,7 @@ describe("cached tool surface through Pi SessionManager", () => {
     try {
       const tools = h.session.agent.state.tools;
       const gateway = tools.find((candidate) => candidate.name === "mcp");
-      const direct = tools.find((candidate) => candidate.name === "demo_pinned");
+      const direct = tools.find((candidate) => candidate.name === "mcp__demo__pinned");
       assert.ok(gateway && direct);
       const connect = await gateway.execute("failed-connect", {
         action: "connect",
@@ -333,16 +333,16 @@ describe("cached tool surface through Pi SessionManager", () => {
   it("registers the cached catalog and observes changed metadata and config on session_start", async () => {
     const h = await harness();
     const active = () => h.session.getActiveToolNames().sort();
-    const search = () => h.session.getAllTools().find((tool) => tool.name === "demo_search");
+    const search = () => h.session.getAllTools().find((tool) => tool.name === "mcp__demo__search");
     try {
-      expect(active()).toEqual(["demo_pinned", "mcp"]);
+      expect(active()).toEqual(["mcp", "mcp__demo__pinned"]);
       expect(search()?.exposure).toBe("deferred");
-      expect(h.session.getCallableToolNames()).toContain("demo_search");
+      expect(h.session.getCallableToolNames()).toContain("mcp__demo__search");
       await writeFile(`${h.cachePath}.replacement`, JSON.stringify(h.cache("updated")));
       await rename(`${h.cachePath}.replacement`, h.cachePath);
       await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
       await setImmediate();
-      expect(active()).toEqual(["demo_pinned", "mcp"]);
+      expect(active()).toEqual(["mcp", "mcp__demo__pinned"]);
       expect(search()?.description).toBe("updated");
       expect(search()?.parameters).toMatchObject({
         properties: { query: { description: "updated" } },
@@ -355,7 +355,7 @@ describe("cached tool surface through Pi SessionManager", () => {
       await setImmediate();
       expect(active()).toEqual(["mcp"]);
       expect(search()?.exposure).toBe("hidden");
-      expect(h.session.getCallableToolNames()).not.toContain("demo_search");
+      expect(h.session.getCallableToolNames()).not.toContain("mcp__demo__search");
       expect(h.errors).toEqual([]);
     } finally {
       await h.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
@@ -625,7 +625,7 @@ describe("MCP tool cards through Pi's HTML export and terminal card", () => {
       h.session.sessionManager.appendMessage(
         assistantMessage(
           [
-            { type: "toolCall", id: "typed", name: "demo_pinned", arguments: cardArguments },
+            { type: "toolCall", id: "typed", name: "mcp__demo__pinned", arguments: cardArguments },
             {
               type: "toolCall",
               id: "gateway",
@@ -639,7 +639,7 @@ describe("MCP tool cards through Pi's HTML export and terminal card", () => {
       h.session.sessionManager.appendMessage({
         role: "toolResult",
         toolCallId: "typed",
-        toolName: "demo_pinned",
+        toolName: "mcp__demo__pinned",
         timestamp: Date.now(),
         ...cardResult,
       });
@@ -647,7 +647,7 @@ describe("MCP tool cards through Pi's HTML export and terminal card", () => {
       const cards = await exportedCards(await h.session.exportToHtml(join(h.root, "export.html")));
 
       // An exported call has no expanded form, so it must hold every argument.
-      expect(htmlRows(cards.typed?.callHtml)).toEqual(["demo_pinned", ...cardArgumentRows]);
+      expect(htmlRows(cards.typed?.callHtml)).toEqual(["mcp__demo__pinned", ...cardArgumentRows]);
       expect(htmlRows(cards.gateway?.callHtml)).toEqual([
         "mcp call pinned @ demo",
         ...cardArgumentRows,
@@ -670,11 +670,11 @@ describe("MCP tool cards through Pi's HTML export and terminal card", () => {
         // Exercise the card without drawing to the user's terminal.
       });
       const card = new ToolExecutionComponent(
-        "demo_pinned",
+        "mcp__demo__pinned",
         "typed",
         cardArguments,
         {},
-        h.session.getToolDefinition("demo_pinned"),
+        h.session.getToolDefinition("mcp__demo__pinned"),
         tui,
         h.root,
       );
@@ -709,13 +709,13 @@ describe("live catalog through Pi and MCP stdio", () => {
     const search = (query: string) => h.run("mcp", { action: "search", query, server: "demo" });
     const resources = () => h.run("mcp", { action: "resources", server: "demo" });
     try {
-      expect(matchedTools(await search("saffron"))).toEqual(["demo_probe"]);
+      expect(matchedTools(await search("saffron"))).toEqual(["mcp__demo__probe"]);
       expect(matchedTools(await search("indigo"))).toEqual([]);
-      expect(matchedTools(await search("advance"))).toEqual(["demo_advance"]);
+      expect(matchedTools(await search("advance"))).toEqual(["mcp__demo__advance"]);
       expect(add).toHaveBeenCalled();
       add.mockClear();
-      expect(resultText(await h.run("demo_probe", { value: "first" }))).toContain("probe 0");
-      expect(matchedTools(await search("saffron"))).toEqual(["demo_probe"]);
+      expect(resultText(await h.run("mcp__demo__probe", { value: "first" }))).toContain("probe 0");
+      expect(matchedTools(await search("saffron"))).toEqual(["mcp__demo__probe"]);
       expect(add).not.toHaveBeenCalled();
       expect(
         resultText(await h.run("mcp", { action: "call", server: "demo", tool: "probe", args: {} })),
@@ -726,7 +726,7 @@ describe("live catalog through Pi and MCP stdio", () => {
           await h.run("mcp", { action: "read-resource", server: "demo", uri: "fixture://old" }),
         ),
       ).toContain("resource 0");
-      expect(matchedTools(await search("saffron"))).toEqual(["demo_probe"]);
+      expect(matchedTools(await search("saffron"))).toEqual(["mcp__demo__probe"]);
       expect(add).not.toHaveBeenCalled();
 
       expect(
@@ -736,17 +736,17 @@ describe("live catalog through Pi and MCP stdio", () => {
       ).toContain("catalog updated");
       await expect
         .poll(async () => matchedTools(await search("quartz")), { timeout: 10000 })
-        .toEqual(["demo_probe"]);
+        .toEqual(["mcp__demo__probe"]);
       expect(add).toHaveBeenCalled();
       await expect
         .poll(async () => resourceUris(await resources()), { timeout: 10000 })
         .toEqual(["fixture://new"]);
       expect(matchedTools(await search("saffron"))).toEqual([]);
-      expect(matchedTools(await search("indigo"))).toEqual(["demo_hidden"]);
+      expect(matchedTools(await search("indigo"))).toEqual(["mcp__demo__hidden"]);
       expect(
-        h.session.getAllTools().find((tool) => tool.name === "demo_probe")?.parameters,
+        h.session.getAllTools().find((tool) => tool.name === "mcp__demo__probe")?.parameters,
       ).toMatchObject({ properties: { value: { description: "quartz" } } });
-      expect(resultText(await h.run("demo_probe", { value: "second" }))).toContain("probe 1");
+      expect(resultText(await h.run("mcp__demo__probe", { value: "second" }))).toContain("probe 1");
       expect(
         resultText(
           await h.run("mcp", { action: "read-resource", server: "demo", uri: "fixture://new" }),
@@ -756,7 +756,7 @@ describe("live catalog through Pi and MCP stdio", () => {
       expect(
         (await h.run("mcp", { action: "connect", server: "demo" })).details.error,
       ).toBeUndefined();
-      expect(matchedTools(await search("quartz"))).toEqual(["demo_probe"]);
+      expect(matchedTools(await search("quartz"))).toEqual(["mcp__demo__probe"]);
       expect(resourceUris(await resources())).toEqual(["fixture://new"]);
 
       const callsBeforeDenial = await readFile(h.callsPath, "utf8");

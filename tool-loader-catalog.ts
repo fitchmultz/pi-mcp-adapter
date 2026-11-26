@@ -10,6 +10,7 @@ import type { McpExtensionState } from "./state.ts";
 import { createMcpDirectToolCallRenderer, renderMcpToolResult } from "./tool-result-renderer.ts";
 import { nativeMcpOutputSchema } from "./mcp-script-output.ts";
 import {
+  DEFAULT_TOOL_PREFIX,
   isServerDisabled,
   type DirectToolSpec,
   type McpAdapterOptions,
@@ -57,7 +58,7 @@ function serverMetadata(
   return reconstructToolMetadata(
     server,
     entry,
-    config.settings?.toolPrefix ?? "server",
+    config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX,
     definition,
   );
 }

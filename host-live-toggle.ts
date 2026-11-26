@@ -195,6 +195,7 @@ export function bindHostMetadataUpdates(input: {
   syncPrompts: () => void;
   syncSkills: (state: McpExtensionState) => void;
   syncTools: () => void;
+  syncDeferred?: () => void;
   isFrozen: () => boolean;
 }): void {
   const state = input.session.currentState;
@@ -208,7 +209,10 @@ export function bindHostMetadataUpdates(input: {
     input.syncPrompts();
     input.syncSkills(state);
     if (input.isFrozen()) {
-      logger.debug(`MCP: metadata update for ${server} (${reason}) skipped — directTools frozen`);
+      input.syncDeferred?.();
+      logger.debug(
+        `MCP: metadata update for ${server} (${reason}) refreshed deferred catalog — directTools frozen`,
+      );
       return;
     }
     input.syncTools();
@@ -282,6 +286,7 @@ export function launchHostInitialization(input: {
   syncPrompts: () => void;
   syncSkills: (state: McpExtensionState) => void;
   syncTools: () => void;
+  syncDeferred?: () => void;
 }): Promise<void> {
   const { init, ctx, owner, session, oauthRuntime, runtimeConfig, generation } = input;
   const promise = init.initializeMcp(
@@ -311,6 +316,7 @@ export function launchHostInitialization(input: {
         syncPrompts: input.syncPrompts,
         syncSkills: input.syncSkills,
         syncTools: input.syncTools,
+        ...(input.syncDeferred ? { syncDeferred: input.syncDeferred } : {}),
         isFrozen: input.isFrozen,
       });
       await completeHostInitialization({

@@ -101,7 +101,6 @@ export function shouldAwaitDirectToolBootstrap(input: {
   readonly cache: MetadataCache | null;
 }): boolean {
   return (
-    input.envRaw !== undefined &&
     input.envRaw !== "__none__" &&
     getMissingConfiguredDirectToolServers(input.config, input.cache, input.envDirectToolOverride)
       .length > 0
