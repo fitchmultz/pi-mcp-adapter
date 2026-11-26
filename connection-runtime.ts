@@ -1,8 +1,20 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
+import {
+  Client,
+  ProtocolError,
+  ProtocolErrorCode,
+  SdkError,
+  SdkErrorCode,
+} from "@modelcontextprotocol/client";
 import type { McpOAuthProvider } from "./mcp-oauth-provider.ts";
 import { clientOperations, type ClientOperation } from "./client-operations.ts";
 import { throwIfAborted } from "./abort.ts";
+
+const METHOD_NOT_FOUND_CODE: number = ProtocolErrorCode.MethodNotFound;
+
+export function isMethodNotFoundError(error: unknown): boolean {
+  return error instanceof ProtocolError && error.code === METHOD_NOT_FOUND_CODE;
+}
 
 export function isSdkTransportError(error: unknown): boolean {
   return (

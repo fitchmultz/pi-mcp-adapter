@@ -293,6 +293,7 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     });
 
     // Server B serves dynamic templates and persists them in metadata cache.
+    let resources = [{ name: "index", uri: "docs://index" }];
     let templates = [{ name: "doc", uriTemplate: "docs://v1/{slug}" }];
     let rejectTemplatesMethodNotFound = false;
     const templateServer = new Server({ name: "with-templates", version: "1.0.0" });
@@ -302,7 +303,7 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     });
     templateServer.server.setRequestHandler("tools/list", () => ({ tools: [] }));
     templateServer.server.setRequestHandler("resources/list", () => ({
-      resources: [{ name: "index", uri: "docs://index" }],
+      resources,
     }));
     templateServer.server.setRequestHandler("resources/templates/list", () => {
       if (rejectTemplatesMethodNotFound) {
@@ -318,6 +319,10 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     const def: ServerDefinition = { url: "https://templates.invalid/mcp", auth: false };
     const { state, connection } = await connectInMemory("docs", templateServer, def, {
       metadataCacheEnabled: true,
+    });
+    state.manager.setMetadataListChangedListener((serverName) => {
+      updateServerMetadata(state, serverName);
+      updateMetadataCache(state, serverName, { preserveEmptyResources: false });
     });
     updateMetadataCache(state, "docs");
 
@@ -336,16 +341,16 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
       resourceTemplates: [{ name: "doc", uriTemplate: "docs://v1/{slug}" }],
     });
 
-    // Connected server reflects live templates after resources/list_changed.
+    // resources/list_changed refreshes BOTH resources and resourceTemplates before persisting
+    // state/cache, so even without an intervening live resources call, cold cache is consistent.
+    resources = [{ name: "index_v2", uri: "docs://index-v2" }];
     templates = [{ name: "doc_v2", uriTemplate: "docs://v2/{slug}" }];
     await templateServer.server.sendResourceListChanged();
-    await expect.poll(() => connection.resourceTemplatesStale).toBe(true);
-    const liveList = await executeResourceList(state, { server: "docs" });
-    expect(liveList.details).toMatchObject({
-      resourceTemplates: [{ name: "doc_v2", uriTemplate: "docs://v2/{slug}" }],
-    });
+    await expect
+      .poll(() => state.resourceTemplates.get("docs")?.[0]?.uriTemplate)
+      .toBe("docs://v2/{slug}");
+    expect(connection.resourceTemplatesStale).toBe(false);
 
-    // Successful template refresh after list_changed persists updated templates to disk cache.
     const coldAfterChange = createTestState({
       config: { settings: {}, mcpServers: { docs: def } },
       metadataCacheEnabled: true,
@@ -356,15 +361,15 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     const cachedAfterChange = await executeResourceList(coldAfterChange, { server: "docs" });
     expect(coldAfterSpy).not.toHaveBeenCalled();
     expect(cachedAfterChange.details).toMatchObject({
+      items: [{ name: "index_v2", uri: "docs://index-v2" }],
       resourceTemplates: [{ name: "doc_v2", uriTemplate: "docs://v2/{slug}" }],
     });
 
-    // Clearing all templates after list_changed also clears them from disk cache (not preserved).
+    // Clearing all templates after list_changed also clears them from memory and disk cache.
     templates = [];
     await templateServer.server.sendResourceListChanged();
-    await expect.poll(() => connection.resourceTemplatesStale).toBe(true);
-    const liveCleared = await executeResourceList(state, { server: "docs" });
-    expect(liveCleared.details).toMatchObject({ resourceTemplates: [] });
+    await expect.poll(() => state.resourceTemplates.get("docs")).toEqual([]);
+    expect(connection.resourceTemplatesStale).toBe(false);
     const coldAfterClear = createTestState({
       config: { settings: {}, mcpServers: { docs: def } },
       metadataCacheEnabled: true,
@@ -380,17 +385,13 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     // templates both in memory and in the metadata cache.
     templates = [{ name: "doc_v3", uriTemplate: "docs://v3/{slug}" }];
     await templateServer.server.sendResourceListChanged();
-    await expect.poll(() => connection.resourceTemplatesStale).toBe(true);
-    expect((await executeResourceList(state, { server: "docs" })).details).toMatchObject({
-      resourceTemplates: [{ name: "doc_v3", uriTemplate: "docs://v3/{slug}" }],
-    });
+    await expect
+      .poll(() => state.resourceTemplates.get("docs")?.[0]?.uriTemplate)
+      .toBe("docs://v3/{slug}");
 
     rejectTemplatesMethodNotFound = true;
     await templateServer.server.sendResourceListChanged();
-    await expect.poll(() => connection.resourceTemplatesStale).toBe(true);
-    expect((await executeResourceList(state, { server: "docs" })).details).toMatchObject({
-      resourceTemplates: [],
-    });
+    await expect.poll(() => state.resourceTemplates.get("docs")).toEqual([]);
     expect(connection.resourceTemplatesStale).toBe(false);
     const coldAfterMethodNotFound = createTestState({
       config: { settings: {}, mcpServers: { docs: def } },
@@ -962,14 +963,14 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
 
     // 2) Transient resources/templates/list failure keeps stale flag so the next resources call retries.
     let templatesVersion = 1;
-    let failNextTemplateList = false;
+    let failTemplateList = false;
+    let listChangedNotifications = 0;
     const retryServer = new Server({ name: "template-retry", version: "1.0.0" });
     retryServer.server.registerCapabilities({ tools: {}, resources: { listChanged: true } });
     retryServer.server.setRequestHandler("tools/list", () => ({ tools: [] }));
     retryServer.server.setRequestHandler("resources/list", () => ({ resources: [] }));
     retryServer.server.setRequestHandler("resources/templates/list", () => {
-      if (failNextTemplateList) {
-        failNextTemplateList = false;
+      if (failTemplateList) {
         throw new Error("transient template backend failure");
       }
       return {
@@ -977,12 +978,14 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
       };
     });
     const { state: retryState } = await connectInMemory("docs", retryServer);
+    retryState.manager.setMetadataListChangedListener(() => {
+      listChangedNotifications += 1;
+    });
     templatesVersion = 2;
-    failNextTemplateList = true;
+    failTemplateList = true;
     await retryServer.server.sendResourceListChanged();
-    await expect
-      .poll(() => retryState.manager.getConnection("docs")?.resourceTemplatesStale)
-      .toBe(true);
+    await expect.poll(() => listChangedNotifications).toBe(1);
+    expect(retryState.manager.getConnection("docs")?.resourceTemplatesStale).toBe(true);
 
     const afterFailure = await executeResourceList(retryState, { server: "docs" });
     expect(afterFailure.details.resourceTemplates).toEqual([
@@ -990,6 +993,7 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     ]);
     expect(retryState.manager.getConnection("docs")?.resourceTemplatesStale).toBe(true);
 
+    failTemplateList = false;
     const afterRetry = await executeResourceList(retryState, { server: "docs" });
     expect(afterRetry.details.resourceTemplates).toEqual([
       { name: "doc", uriTemplate: "docs://v2/{slug}" },

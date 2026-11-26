@@ -22,6 +22,7 @@ export class ConnectionCallbacks {
   private readonly acceptedUrlElicitations = new Map<string, Set<string>>();
   private readonly uiStreamListeners = new Map<string, UiStreamListener>();
   private readonly catalogs = new WeakMap<Client, ConnectionCatalogs>();
+  private readonly templateRefreshGenerations = new WeakMap<Client, number>();
 
   private readonly lifecycle: ConnectionLifecycle;
 
@@ -106,7 +107,12 @@ export class ConnectionCallbacks {
           },
           resources: {
             onChanged: (error: Error | null) => {
-              this.handleResourcesListChanged(serverName, client, error);
+              this.handleResourcesListChanged(
+                serverName,
+                client,
+                error,
+                runtime.isMethodNotFoundError,
+              );
             },
           },
           prompts: {
@@ -199,6 +205,7 @@ export class ConnectionCallbacks {
     serverName: string,
     client: Client,
     error: Error | null,
+    isMethodNotFound: (error: unknown) => boolean,
   ): void {
     if (error) {
       logger.debug(
@@ -216,6 +223,81 @@ export class ConnectionCallbacks {
     }
     connection.resources = resources;
     connection.resourceTemplatesStale = true;
+    const generation = (this.templateRefreshGenerations.get(client) ?? 0) + 1;
+    this.templateRefreshGenerations.set(client, generation);
+    this.refreshTemplatesOnResourcesChanged({
+      serverName,
+      client,
+      connection,
+      generation,
+      isMethodNotFound,
+    }).catch((refreshError: unknown) => {
+      const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
+      logger.debug(`MCP: resources/templates/list refresh failed for ${serverName}: ${message}`);
+    });
+  }
+
+  private async fetchTemplatesForListChanged(
+    serverName: string,
+    client: Client,
+    signal: AbortSignal | undefined,
+    isMethodNotFound: (error: unknown) => boolean,
+  ): Promise<ServerConnection["resourceTemplates"] | undefined> {
+    try {
+      const result = await client.listResourceTemplates(undefined, {
+        ...(signal ? { signal } : {}),
+        cacheMode: "refresh",
+      });
+      return result.resourceTemplates;
+    } catch (error) {
+      if (signal?.aborted === true) {
+        return undefined;
+      }
+      if (isMethodNotFound(error)) {
+        return [];
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      logger.debug(`MCP: resources/templates/list refresh failed for ${serverName}: ${message}`);
+      return undefined;
+    }
+  }
+
+  private isCurrentTemplateRefresh(
+    serverName: string,
+    client: Client,
+    connection: ServerConnection,
+    generation: number,
+  ): boolean {
+    return (
+      this.lifecycle.runtimeSignal?.aborted !== true &&
+      this.templateRefreshGenerations.get(client) === generation &&
+      this.lifecycle.getConnection(serverName) === connection &&
+      connection.client === client &&
+      connection.status === "connected"
+    );
+  }
+
+  private async refreshTemplatesOnResourcesChanged(input: {
+    readonly serverName: string;
+    readonly client: Client;
+    readonly connection: ServerConnection;
+    readonly generation: number;
+    readonly isMethodNotFound: (error: unknown) => boolean;
+  }): Promise<void> {
+    const { serverName, client, connection, generation, isMethodNotFound } = input;
+    const refreshed = await this.fetchTemplatesForListChanged(
+      serverName,
+      client,
+      this.lifecycle.runtimeSignal,
+      isMethodNotFound,
+    );
+    if (!this.isCurrentTemplateRefresh(serverName, client, connection, generation)) {
+      return;
+    }
+    if (refreshed !== undefined) {
+      connection.resourceTemplates = refreshed;
+      connection.resourceTemplatesStale = false;
+    }
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
   }
 
