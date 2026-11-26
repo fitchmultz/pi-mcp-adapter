@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createToolLoader } from "../tool-loader.ts";
 import { computeServerHash } from "../metadata-cache.ts";
+import { executeCall, executeDescribe, executeSearch } from "../proxy-modes.ts";
+import { buildToolMetadata } from "../tool-metadata.ts";
 import type { DirectToolSpec, McpConfig, McpTool, MetadataCache } from "../types.ts";
 import { createLoaderHost, loaderFixtureTool } from "./fixtures/loader-host.ts";
+import { createTestState } from "./test-state.ts";
 
 const hosts: Awaited<ReturnType<typeof createLoaderHost>>[] = [];
 async function host(allow?: (ref: { name: string }) => boolean) {
@@ -323,5 +326,128 @@ describe("MCP catalog registration", () => {
     expect(definition(h, "mcp__demo__search").description).toBe("search");
     expect(definition(h, "mcp__demo__fresh").exposure).toBe("deferred");
     expect(definition(h, "mcp__other__search").exposure).toBe("hidden");
+  });
+
+  it("hides and deactivates previous public names on collision rename and restores cleanly when collision clears", async () => {
+    const h = await host();
+    const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
+    const alphaOnly: McpConfig = {
+      settings: { toolPrefix: "none" },
+      mcpServers: { alpha: { command: "unused", directTools: ["search"] } },
+    };
+    const colliding: McpConfig = {
+      settings: { toolPrefix: "none" },
+      mcpServers: {
+        alpha: { command: "unused", directTools: ["search"] },
+        beta: { command: "unused", directTools: ["search"] },
+      },
+    };
+    const buildCache = (cfg: McpConfig): MetadataCache => ({
+      version: 2,
+      servers: Object.fromEntries(
+        Object.entries(cfg.mcpServers).map(([server, entry]) => [
+          server,
+          {
+            configHash: computeServerHash(entry),
+            tools: [tool("search")],
+            resources: [],
+            cachedAt: Date.now(),
+          },
+        ]),
+      ),
+    });
+
+    loader.sync(alphaOnly, buildCache(alphaOnly));
+    expect(h.active()).toContainEqual({ name: "search" });
+    expect(loader.serverForTool("search")).toBe("alpha");
+
+    loader.sync(colliding, buildCache(colliding));
+    const hashed = [...h.definitions.keys()].filter((name) => name.startsWith("search_")).sort();
+    expect(hashed).toHaveLength(2);
+    expect(definition(h, "search").exposure).toBe("hidden");
+    expect(h.active().map((entry) => entry.name)).not.toContain("search");
+    expect(h.active().map((entry) => entry.name)).toEqual(expect.arrayContaining(hashed));
+    expect(loader.serverForTool("search")).toBeUndefined();
+
+    // Removing the colliding server restores the natural unhashed name and hides the hashed ones.
+    loader.sync(alphaOnly, buildCache(alphaOnly));
+    expect(definition(h, "search")).not.toHaveProperty("exposure");
+    expect(h.active().map((entry) => entry.name)).toContain("search");
+    for (const oldName of hashed) {
+      expect(definition(h, oldName).exposure).toBe("hidden");
+      expect(h.active().map((entry) => entry.name)).not.toContain(oldName);
+    }
+    expect(loader.serverForTool("search")).toBe("alpha");
+  });
+
+  it("propagates disambiguated catalog names into state.toolMetadata for gateway search, describe, and call", async () => {
+    const h = await host();
+    const collidingConfig: McpConfig = {
+      settings: { toolPrefix: "none" },
+      mcpServers: {
+        alpha: { command: "unused" },
+        beta: { command: "unused" },
+      },
+    };
+    const alphaDef = collidingConfig.mcpServers.alpha;
+    const betaDef = collidingConfig.mcpServers.beta;
+    assert.ok(alphaDef && betaDef);
+    const state = createTestState({
+      config: collidingConfig,
+      toolMetadata: new Map([
+        [
+          "alpha",
+          buildToolMetadata({
+            tools: [tool("search")],
+            resources: [],
+            definition: alphaDef,
+            serverName: "alpha",
+            prefix: "none",
+          }).metadata,
+        ],
+        [
+          "beta",
+          buildToolMetadata({
+            tools: [tool("search")],
+            resources: [],
+            definition: betaDef,
+            serverName: "beta",
+            prefix: "none",
+          }).metadata,
+        ],
+      ]),
+    });
+
+    const loader = createToolLoader(h.api, {
+      getState: () => state,
+      getInitPromise: () => null,
+    });
+    loader.sync(collidingConfig, null);
+
+    const alphaName = state.toolMetadata.get("alpha")?.[0]?.name;
+    const betaName = state.toolMetadata.get("beta")?.[0]?.name;
+    assert.ok(alphaName !== undefined && betaName !== undefined);
+    expect(alphaName).toMatch(/^search_[a-f0-9]{8}$/);
+    expect(betaName).toMatch(/^search_[a-f0-9]{8}$/);
+    expect(alphaName).not.toBe(betaName);
+
+    const searched = executeSearch(state, { query: "search" });
+    const searchText = searched.content[0]?.type === "text" ? searched.content[0].text : "";
+    expect(searchText).toContain(`- ${alphaName} - search`);
+    expect(searchText).toContain(`- ${betaName} - search`);
+    expect(searchText).not.toContain("\n- search -");
+
+    const described = executeDescribe(state, alphaName);
+    expect(described.details).toMatchObject({ server: "alpha" });
+    expect(described.details.error).toBeUndefined();
+
+    const ambiguous = await executeCall(state, { toolName: "search" });
+    expect(ambiguous.details).toMatchObject({ error: "ambiguous_tool" });
+
+    // Calling the exact hashed public name targets alpha unambiguously (reaches connection layer, not tool_not_found/ambiguous).
+    const targeted = await executeCall(state, { toolName: alphaName });
+    expect(targeted.details.error).not.toBe("tool_not_found");
+    expect(targeted.details.error).not.toBe("ambiguous_tool");
+    expect(targeted.details.server).toBe("alpha");
   });
 });

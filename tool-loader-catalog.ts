@@ -9,8 +9,10 @@ import {
 import type { McpExtensionState } from "./state.ts";
 import { createMcpDirectToolCallRenderer, renderMcpToolResult } from "./tool-result-renderer.ts";
 import { nativeMcpOutputSchema } from "./mcp-script-output.ts";
+import { logger } from "./logger.ts";
 import {
   DEFAULT_TOOL_PREFIX,
+  disambiguateToolName,
   isServerDisabled,
   type DirectToolSpec,
   type McpAdapterOptions,
@@ -229,4 +231,66 @@ export function catalogDefinition(
     renderCall: createMcpDirectToolCallRenderer(spec.prefixedName),
     renderResult: renderMcpToolResult,
   };
+}
+
+const RESERVED_TOOL_NAMES = new Set([
+  "read",
+  "bash",
+  "powershell",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+  "mcp",
+]);
+
+function uniqueCatalogName(
+  item: CatalogTool,
+  blocked: ReadonlySet<string>,
+  assigned: ReadonlySet<string>,
+): string {
+  const identity = `${item.selection.server}\0${item.selection.tool}`;
+  let candidate = disambiguateToolName(item.name, identity);
+  let attempt = 1;
+  while (blocked.has(candidate) || assigned.has(candidate)) {
+    candidate = disambiguateToolName(item.name, `${identity}\0${attempt}`);
+    attempt += 1;
+  }
+  return candidate;
+}
+
+/**
+ * Resolve unique, provider-safe catalog names without overwriting reserved or foreign tools.
+ * Colliding tools receive deterministic hash suffixes instead of being dropped.
+ */
+export function resolveCatalogNames(
+  specs: readonly CatalogTool[],
+  foreignNames: ReadonlySet<string>,
+): CatalogTool[] {
+  const blocked = new Set<string>([...RESERVED_TOOL_NAMES, ...foreignNames]);
+  const counts = new Map<string, number>();
+  for (const { name } of specs) {
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  const assigned = new Set<string>(
+    specs
+      .filter(({ name }) => !blocked.has(name) && counts.get(name) === 1)
+      .map(({ name }) => name),
+  );
+  const resolved: CatalogTool[] = [];
+  for (const item of specs) {
+    const collides = blocked.has(item.name) || (counts.get(item.name) ?? 0) > 1;
+    if (!collides) {
+      resolved.push(item);
+      continue;
+    }
+    const renamed = uniqueCatalogName(item, blocked, assigned);
+    assigned.add(renamed);
+    logger.debug(
+      `MCP: disambiguated catalog tool "${item.selection.tool}" on ${item.selection.server} (${item.name} -> ${renamed})`,
+    );
+    resolved.push({ ...item, name: renamed, spec: { ...item.spec, prefixedName: renamed } });
+  }
+  return resolved;
 }
