@@ -421,14 +421,7 @@ class ToolCallRuntime {
       return false;
     }
     const { sdk } = this.deps;
-    if (error instanceof sdk.SdkError && error.code === sdk.SdkErrorCode.RequestTimeout) {
-      return true;
-    }
-    return (
-      error instanceof Error &&
-      (error.name === "TimeoutError" ||
-        (error.name === "AbortError" && /\b(?:timeout|timed out)\b/i.test(error.message)))
-    );
+    return sdk.SdkError.isInstance(error) && error.code === sdk.SdkErrorCode.RequestTimeout;
   }
   private async failure(error: unknown): Promise<ProxyToolResult> {
     const { serverName, target, options } = this.request;
