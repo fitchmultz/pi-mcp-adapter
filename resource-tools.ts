@@ -14,7 +14,11 @@ import { paginate } from "./search-ranking.ts";
 import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { isUiResourceUri } from "./tool-metadata.ts";
-import { updateMetadataCache } from "./init-metadata.ts";
+import {
+  applyServerMetadata,
+  notifyToolMetadataUpdated,
+  updateMetadataCache,
+} from "./init-metadata.ts";
 import type { ServerConnection } from "./server-manager.ts";
 
 export async function executeResourceList(
@@ -85,13 +89,26 @@ function applyRefreshedResourceTemplates(
 ): void {
   const current = state.manager.getConnection(server);
   if (current === connection && current.status === "connected") {
+    const hadPendingResources = current.pendingResources !== undefined;
+    if (current.pendingResources !== undefined) {
+      current.resources = current.pendingResources;
+      current.pendingResources = undefined;
+    }
     current.resourceTemplates = templates;
     current.resourceTemplatesStale = false;
-    state.resourceTemplates.set(
-      server,
-      templates.filter((template) => !isUiResourceUri(template.uriTemplate)),
-    );
+    const definition = state.config.mcpServers[server];
+    if (definition) {
+      applyServerMetadata(state, { serverName: server, connection: current, definition });
+    } else {
+      state.resourceTemplates.set(
+        server,
+        templates.filter((template) => !isUiResourceUri(template.uriTemplate)),
+      );
+    }
     updateMetadataCache(state, server, { preserveEmptyResources: false });
+    if (hadPendingResources) {
+      notifyToolMetadataUpdated(state, server, "resources-list-changed");
+    }
   }
 }
 

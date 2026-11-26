@@ -26,7 +26,7 @@ import { createPromptCommand } from "../prompts.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { executeGateway } from "../host-gateway.ts";
 import { reconnectServer } from "../mcp-connection-commands.ts";
-import { updateMetadataCache, updateServerMetadata } from "../init.ts";
+import { flushMetadataCache, updateMetadataCache, updateServerMetadata } from "../init.ts";
 import { registerServers } from "../init-startup.ts";
 import { formatPromptCommandName, type PromptMetadata, type ServerDefinition } from "../types.ts";
 
@@ -961,44 +961,90 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     expect(promptsSeen).toHaveLength(2);
     expect(promptsSeen[1]).toContain("ENG-999");
 
-    // 2) Transient resources/templates/list failure keeps stale flag so the next resources call retries.
-    let templatesVersion = 1;
+    // 2) Transient resources/templates/list failure keeps stale flag without persisting mixed
+    //    resources+templates to state or disk cache, and commits both atomically once retry succeeds.
+    const retryAgentDir = mkdtempSync(join(tmpdir(), "mcp-210-transient-cache-"));
+    process.env.PI_CODING_AGENT_DIR = retryAgentDir;
+    onTestFinished(() => rmSync(retryAgentDir, { recursive: true, force: true }));
+
+    let version = 1;
     let failTemplateList = false;
     let listChangedNotifications = 0;
+    let templateAttempts = 0;
     const retryServer = new Server({ name: "template-retry", version: "1.0.0" });
     retryServer.server.registerCapabilities({ tools: {}, resources: { listChanged: true } });
     retryServer.server.setRequestHandler("tools/list", () => ({ tools: [] }));
-    retryServer.server.setRequestHandler("resources/list", () => ({ resources: [] }));
+    retryServer.server.setRequestHandler("resources/list", () => ({
+      resources: [{ name: `index_v${version}`, uri: `docs://index-v${version}` }],
+    }));
     retryServer.server.setRequestHandler("resources/templates/list", () => {
+      templateAttempts += 1;
       if (failTemplateList) {
         throw new Error("transient template backend failure");
       }
       return {
-        resourceTemplates: [{ name: "doc", uriTemplate: `docs://v${templatesVersion}/{slug}` }],
+        resourceTemplates: [{ name: "doc", uriTemplate: `docs://v${version}/{slug}` }],
       };
     });
-    const { state: retryState } = await connectInMemory("docs", retryServer);
-    retryState.manager.setMetadataListChangedListener(() => {
-      listChangedNotifications += 1;
+    const retryDef: ServerDefinition = { url: "https://retry.invalid/mcp", auth: false };
+    const { state: retryState } = await connectInMemory("docs", retryServer, retryDef, {
+      metadataCacheEnabled: true,
     });
-    templatesVersion = 2;
+    updateMetadataCache(retryState, "docs");
+    retryState.manager.setMetadataListChangedListener((serverName) => {
+      listChangedNotifications += 1;
+      updateServerMetadata(retryState, serverName);
+      updateMetadataCache(retryState, serverName, { preserveEmptyResources: false });
+    });
+
+    version = 2;
     failTemplateList = true;
+    const attemptsBefore = templateAttempts;
     await retryServer.server.sendResourceListChanged();
-    await expect.poll(() => listChangedNotifications).toBe(1);
+    await expect.poll(() => templateAttempts).toBeGreaterThan(attemptsBefore);
     expect(retryState.manager.getConnection("docs")?.resourceTemplatesStale).toBe(true);
+    expect(listChangedNotifications).toBe(0);
+
+    // Flushing cache or starting cold before retry never mixes index-v2 with v1 templates.
+    flushMetadataCache(retryState);
+    const coldDuringTransient = createTestState({
+      config: { settings: {}, mcpServers: { docs: retryDef } },
+      metadataCacheEnabled: true,
+    });
+    onTestFinished(() => coldDuringTransient.owner.stop());
+    registerServers(coldDuringTransient, [["docs", retryDef]]);
+    expect(
+      (await executeResourceList(coldDuringTransient, { server: "docs" })).details,
+    ).toMatchObject({
+      items: [{ name: "index_v1", uri: "docs://index-v1" }],
+      resourceTemplates: [{ name: "doc", uriTemplate: "docs://v1/{slug}" }],
+    });
 
     const afterFailure = await executeResourceList(retryState, { server: "docs" });
-    expect(afterFailure.details.resourceTemplates).toEqual([
-      { name: "doc", uriTemplate: "docs://v1/{slug}" },
-    ]);
+    expect(afterFailure.details).toMatchObject({
+      items: [{ name: "index_v1", uri: "docs://index-v1" }],
+      resourceTemplates: [{ name: "doc", uriTemplate: "docs://v1/{slug}" }],
+    });
     expect(retryState.manager.getConnection("docs")?.resourceTemplatesStale).toBe(true);
 
     failTemplateList = false;
     const afterRetry = await executeResourceList(retryState, { server: "docs" });
-    expect(afterRetry.details.resourceTemplates).toEqual([
-      { name: "doc", uriTemplate: "docs://v2/{slug}" },
-    ]);
+    expect(afterRetry.details).toMatchObject({
+      items: [{ name: "index_v2", uri: "docs://index-v2" }],
+      resourceTemplates: [{ name: "doc", uriTemplate: "docs://v2/{slug}" }],
+    });
     expect(retryState.manager.getConnection("docs")?.resourceTemplatesStale).toBe(false);
+
+    const coldAfterRetry = createTestState({
+      config: { settings: {}, mcpServers: { docs: retryDef } },
+      metadataCacheEnabled: true,
+    });
+    onTestFinished(() => coldAfterRetry.owner.stop());
+    registerServers(coldAfterRetry, [["docs", retryDef]]);
+    expect((await executeResourceList(coldAfterRetry, { server: "docs" })).details).toMatchObject({
+      items: [{ name: "index_v2", uri: "docs://index-v2" }],
+      resourceTemplates: [{ name: "doc", uriTemplate: "docs://v2/{slug}" }],
+    });
 
     // 3) Cached disconnected server lacking resourceTemplates serves cached resources without connecting,
     //    and tool-only catalog entries do not mark prompt coverage as complete.

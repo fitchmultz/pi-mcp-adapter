@@ -221,7 +221,7 @@ export class ConnectionCallbacks {
     if (!connection || connection.client !== client || connection.status !== "connected") {
       return;
     }
-    connection.resources = resources;
+    connection.pendingResources = resources;
     connection.resourceTemplatesStale = true;
     const generation = (this.templateRefreshGenerations.get(client) ?? 0) + 1;
     this.templateRefreshGenerations.set(client, generation);
@@ -229,6 +229,7 @@ export class ConnectionCallbacks {
       serverName,
       client,
       connection,
+      resources,
       generation,
       isMethodNotFound,
     }).catch((refreshError: unknown) => {
@@ -281,23 +282,27 @@ export class ConnectionCallbacks {
     readonly serverName: string;
     readonly client: Client;
     readonly connection: ServerConnection;
+    readonly resources: ServerConnection["resources"];
     readonly generation: number;
     readonly isMethodNotFound: (error: unknown) => boolean;
   }): Promise<void> {
-    const { serverName, client, connection, generation, isMethodNotFound } = input;
+    const { serverName, client, connection, resources, generation, isMethodNotFound } = input;
     const refreshed = await this.fetchTemplatesForListChanged(
       serverName,
       client,
       this.lifecycle.runtimeSignal,
       isMethodNotFound,
     );
-    if (!this.isCurrentTemplateRefresh(serverName, client, connection, generation)) {
+    if (
+      refreshed === undefined ||
+      !this.isCurrentTemplateRefresh(serverName, client, connection, generation)
+    ) {
       return;
     }
-    if (refreshed !== undefined) {
-      connection.resourceTemplates = refreshed;
-      connection.resourceTemplatesStale = false;
-    }
+    connection.resources = resources;
+    connection.pendingResources = undefined;
+    connection.resourceTemplates = refreshed;
+    connection.resourceTemplatesStale = false;
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
   }
 

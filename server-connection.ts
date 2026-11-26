@@ -15,6 +15,8 @@ export interface ServerConnection {
   definition: ServerDefinition;
   tools: McpTool[];
   resources: McpResource[];
+  /** Refreshed resources held until resourceTemplates refresh completes atomically. */
+  pendingResources?: McpResource[] | undefined;
   resourceTemplates?: McpResourceTemplate[];
   /** True after resources/list_changed until resourceTemplates are refreshed. */
   resourceTemplatesStale?: boolean;
