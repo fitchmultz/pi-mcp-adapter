@@ -3,15 +3,15 @@ import {
   type ProxyToolResult,
   type ProxyToolUpdateCallback,
   disabledResult,
+  dynamicResourceTarget,
+  resourcesDisabledResult,
 } from "./proxy-result.ts";
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import {
   type ToolMetadata,
   type ServerEntry,
-  type ToolPrefix,
   type McpOperationContext,
   type McpToolCallIdentity,
-  formatToolName,
   getServerPrefix,
   isServerDisabled,
   resolveToolPrefix,
@@ -126,27 +126,6 @@ function approvalFailure(
       server: serverName,
       tool: toolMeta.originalName,
     },
-  };
-}
-function resourcesDisabledResult(serverName: string, resourceUri: string): ProxyToolResult {
-  return {
-    content: [{ type: "text", text: `Resources are disabled for server "${serverName}".` }],
-    details: { mode: "call", error: "resources_disabled", server: serverName, resourceUri },
-  };
-}
-function dynamicResourceTarget(
-  serverName: string,
-  uri: string,
-  definition: ServerEntry | undefined,
-  globalPrefix: ToolPrefix | undefined,
-): ToolMetadata {
-  const originalName = "read_resource";
-  const prefix = resolveToolPrefix(definition, globalPrefix);
-  return {
-    name: formatToolName(originalName, serverName, prefix),
-    originalName,
-    description: `Read resource: ${uri}`,
-    resourceUri: uri,
   };
 }
 class CallLookup {

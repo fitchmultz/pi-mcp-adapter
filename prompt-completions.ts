@@ -10,9 +10,6 @@ import {
   unquotePartial,
 } from "./prompt-args.ts";
 
-// Bound TUI autocomplete latency so slow completion servers never stall typing.
-const COMPLETION_TIMEOUT_MS = 1_500;
-
 interface CompletionTarget {
   name: string;
   value: string;
@@ -64,11 +61,7 @@ async function fetchCompletionItems(
   },
 ): Promise<AutocompleteItem[] | null> {
   const { live, target, controller } = input;
-  const signal = combineAbortSignals(
-    state.owner.signal,
-    controller.signal,
-    AbortSignal.timeout(COMPLETION_TIMEOUT_MS),
-  );
+  const signal = combineAbortSignals(state.owner.signal, controller.signal);
   try {
     const result = await state.manager.complete(
       live.serverName,

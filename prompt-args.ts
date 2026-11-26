@@ -52,36 +52,49 @@ export function parsePromptTokens(tokens: readonly string[]): {
   return { positional, named };
 }
 
-class ActiveArgumentScanner {
-  private readonly input: string;
-  private readonly tokens: string[] = [];
-  private quote: '"' | "'" | null = null;
-  private escaped = false;
+interface ScannedArgToken {
+  readonly value: string;
+  readonly start: number;
+}
+
+class PromptArgTokenizer {
+  private readonly tokens: ScannedArgToken[] = [];
+  private current = "";
   private tokenStart = 0;
   private inToken = false;
+  private quote: '"' | "'" | null = null;
+  private escaped = false;
 
-  constructor(input: string) {
-    this.input = input;
-  }
-
-  private markStart(index: number): void {
+  private startToken(index: number): void {
     if (!this.inToken) {
       this.tokenStart = index;
       this.inToken = true;
     }
   }
 
+  private flushToken(): void {
+    if (this.inToken) {
+      if (this.current.length > 0) {
+        this.tokens.push({ value: this.current, start: this.tokenStart });
+      }
+      this.current = "";
+      this.inToken = false;
+    }
+  }
+
   private step(index: number, char: string): void {
     if (this.escaped) {
+      this.current += char;
       this.escaped = false;
       return;
     }
     if (char === "\\" && this.quote !== "'") {
-      this.markStart(index);
+      this.startToken(index);
       this.escaped = true;
       return;
     }
     if (this.quote !== null) {
+      this.current += char;
       if (char === this.quote) {
         this.quote = null;
       }
@@ -92,33 +105,37 @@ class ActiveArgumentScanner {
 
   private stepUnquoted(index: number, char: string): void {
     if (isQuote(char)) {
-      this.markStart(index);
+      this.startToken(index);
       this.quote = char;
+      this.current += char;
       return;
     }
     if (/\s/.test(char)) {
-      if (this.inToken) {
-        this.tokens.push(this.input.slice(this.tokenStart, index));
-        this.inToken = false;
-      }
+      this.flushToken();
       return;
     }
-    this.markStart(index);
+    this.startToken(index);
+    this.current += char;
   }
 
-  scan(): ActiveArgumentSplit {
-    for (let i = 0; i < this.input.length; i++) {
-      this.step(i, this.input.charAt(i));
+  scan(input: string): {
+    readonly tokens: ScannedArgToken[];
+    readonly activeStart: number | null;
+  } {
+    for (let i = 0; i < input.length; i++) {
+      this.step(i, input.charAt(i));
     }
-    if (this.inToken) {
-      return {
-        priorTokens: this.tokens,
-        prefixBeforeActive: this.input.slice(0, this.tokenStart),
-        activeToken: this.input.slice(this.tokenStart),
-      };
-    }
-    return { priorTokens: this.tokens, prefixBeforeActive: this.input, activeToken: "" };
+    const activeStart = this.inToken ? this.tokenStart : null;
+    this.flushToken();
+    return { tokens: this.tokens, activeStart };
   }
+}
+
+function scanArgs(input: string): {
+  readonly tokens: ScannedArgToken[];
+  readonly activeStart: number | null;
+} {
+  return new PromptArgTokenizer().scan(input);
 }
 
 /**
@@ -127,53 +144,24 @@ class ActiveArgumentScanner {
  * the active token currently being typed.
  */
 export function splitActiveArgument(input: string): ActiveArgumentSplit {
-  return new ActiveArgumentScanner(input).scan();
+  const { tokens, activeStart } = scanArgs(input);
+  if (activeStart === null) {
+    return {
+      priorTokens: tokens.map((token) => token.value),
+      prefixBeforeActive: input,
+      activeToken: "",
+    };
+  }
+  const completed = tokens.filter((token) => token.start < activeStart);
+  return {
+    priorTokens: completed.map((token) => token.value),
+    prefixBeforeActive: input.slice(0, activeStart),
+    activeToken: input.slice(activeStart),
+  };
 }
 
 function tokenizeArgs(input: string): string[] {
-  const tokens: string[] = [];
-  let current = "";
-  let quote: '"' | "'" | null = null;
-  let escaped = false;
-
-  for (const char of input) {
-    if (escaped) {
-      current += char;
-      escaped = false;
-      continue;
-    }
-    if (char === "\\" && quote !== "'") {
-      escaped = true;
-      continue;
-    }
-    if (quote !== null) {
-      current += char;
-      if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (isQuote(char)) {
-      quote = char;
-      current += char;
-      continue;
-    }
-    if (/\s/.test(char)) {
-      appendToken(tokens, current);
-      current = "";
-      continue;
-    }
-    current += char;
-  }
-
-  appendToken(tokens, current);
-  return tokens;
-}
-
-function appendToken(tokens: string[], token: string): void {
-  if (token.length > 0) {
-    tokens.push(token);
-  }
+  return scanArgs(input).tokens.map((token) => token.value);
 }
 
 function isQuote(value: string): value is "'" | '"' {
