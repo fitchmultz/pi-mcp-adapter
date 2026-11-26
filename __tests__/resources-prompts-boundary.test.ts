@@ -27,7 +27,9 @@ import { executeCall } from "../proxy-modes.ts";
 import { executeGateway } from "../host-gateway.ts";
 import { reconnectServer } from "../mcp-connection-commands.ts";
 import { flushMetadataCache, updateMetadataCache, updateServerMetadata } from "../init.ts";
+import { createInitialState } from "../init-state.ts";
 import { registerServers } from "../init-startup.ts";
+import { createMcpRuntimeOwner } from "../runtime-owner.ts";
 import { formatPromptCommandName, type PromptMetadata, type ServerDefinition } from "../types.ts";
 
 const PNG_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
@@ -50,6 +52,40 @@ async function connectInMemory(
   const state = createTestState({
     config: { settings: {}, mcpServers: { [serverName]: definition } },
     ...overrides,
+  });
+  onTestFinished(async () => {
+    await state.owner.stop();
+    await state.manager.closeAll();
+    await server.close();
+  });
+  const connectSpy = vi.spyOn(Client.prototype, "connect").mockImplementation(function (
+    this: Client,
+    _transport,
+    options,
+  ) {
+    connectSpy.mockRestore();
+    return this.connect(clientTransport, options);
+  });
+  try {
+    const connection = await state.manager.connect(serverName, definition);
+    updateServerMetadata(state, serverName);
+    return { state, connection };
+  } finally {
+    connectSpy.mockRestore();
+  }
+}
+
+async function connectWithProductionRuntime(
+  host: Awaited<ReturnType<typeof createTestExtensionContext>>,
+  serverName: string,
+  server: Server,
+  definition: ServerDefinition = { url: "https://unused.invalid/mcp", auth: false },
+) {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const owner = createMcpRuntimeOwner();
+  const state = createInitialState(host.api, host.context, owner, {
+    config: { settings: {}, mcpServers: { [serverName]: definition } },
   });
   onTestFinished(async () => {
     await state.owner.stop();
@@ -317,13 +353,12 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
       };
     });
     const def: ServerDefinition = { url: "https://templates.invalid/mcp", auth: false };
-    const { state, connection } = await connectInMemory("docs", templateServer, def, {
-      metadataCacheEnabled: true,
-    });
-    state.manager.setMetadataListChangedListener((serverName) => {
-      updateServerMetadata(state, serverName);
-      updateMetadataCache(state, serverName, { preserveEmptyResources: false });
-    });
+    const { state, connection } = await connectWithProductionRuntime(
+      host,
+      "docs",
+      templateServer,
+      def,
+    );
     updateMetadataCache(state, "docs");
 
     // Fresh cold state restores cached templates without connecting.
@@ -987,15 +1022,16 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
       };
     });
     const retryDef: ServerDefinition = { url: "https://retry.invalid/mcp", auth: false };
-    const { state: retryState } = await connectInMemory("docs", retryServer, retryDef, {
-      metadataCacheEnabled: true,
-    });
+    const { state: retryState } = await connectWithProductionRuntime(
+      host,
+      "docs",
+      retryServer,
+      retryDef,
+    );
     updateMetadataCache(retryState, "docs");
-    retryState.manager.setMetadataListChangedListener((serverName) => {
+    retryState.onToolMetadataUpdated = () => {
       listChangedNotifications += 1;
-      updateServerMetadata(retryState, serverName);
-      updateMetadataCache(retryState, serverName, { preserveEmptyResources: false });
-    });
+    };
 
     version = 2;
     failTemplateList = true;
@@ -1176,14 +1212,8 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     });
 
     const def: ServerDefinition = { url: "https://overlap.invalid/mcp", auth: false };
-    const { state } = await connectInMemory("overlap", server, def, {
-      metadataCacheEnabled: true,
-    });
+    const { state } = await connectWithProductionRuntime(host, "overlap", server, def);
     updateMetadataCache(state, "overlap");
-    state.manager.setMetadataListChangedListener((serverName) => {
-      updateServerMetadata(state, serverName);
-      updateMetadataCache(state, serverName, { preserveEmptyResources: false });
-    });
 
     // 1) list_changed v2 starts a gated callback template refresh.
     version = 2;

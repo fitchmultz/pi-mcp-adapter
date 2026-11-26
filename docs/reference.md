@@ -721,7 +721,7 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
     "figma": {
       "url": "http://localhost:3845/mcp",
       "directTools": true,
-      "excludeTools": ["read_figjam", "figma_get_code_connect_map"]
+      "excludeTools": ["get_metadata", "figma_get_code_connect_map"]
     }
   }
 }
