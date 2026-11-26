@@ -385,9 +385,12 @@ export class ConnectionCallbacks {
     if (!this.isCurrentResourceGeneration(serverName, client, connection, generation)) {
       return;
     }
-    if (skillResult.supported && skillResult.failed !== true) {
-      connection.skills = skillResult.skills.map((bundle) => bundle.metadata);
-      connection.verifiedSkillBundles = skillResult.skills;
+    if (skillResult.supported) {
+      connection.skillDiscoveryFailed = skillResult.failed === true;
+      if (skillResult.failed !== true) {
+        connection.skills = skillResult.skills.map((bundle) => bundle.metadata);
+        connection.verifiedSkillBundles = skillResult.skills;
+      }
     }
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
   }

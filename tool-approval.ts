@@ -45,6 +45,12 @@ async function runSerializedApproval(
     () => gate,
   );
   chains.set(cacheKey, nextChain);
+  const releaseChain = () => {
+    if (chains.get(cacheKey) === nextChain) {
+      chains.delete(cacheKey);
+    }
+  };
+  void nextChain.then(releaseChain, releaseChain);
   try {
     if (previous) {
       await abortable(previous, ownedSignal);
@@ -52,9 +58,6 @@ async function runSerializedApproval(
     return await task();
   } finally {
     release?.();
-    if (chains.get(cacheKey) === nextChain) {
-      chains.delete(cacheKey);
-    }
   }
 }
 

@@ -73,29 +73,51 @@ function getSkillMaps(state: McpExtensionState): StateSkillMaps {
   return maps;
 }
 
+export interface SkillTrustContext {
+  readonly projectTrusted: boolean;
+  readonly cwd: string;
+}
+
+function hasUntrustedProvenanceOrCwd(input: {
+  state: McpExtensionState;
+  serverName: string;
+  definition: ServerEntry;
+  cwd: string;
+}): boolean {
+  const { state, serverName, definition, cwd } = input;
+  const options = state.includeNativePi === false ? { includeNativePi: false } : undefined;
+  const provenance = getServerProvenance(state.configPath, cwd, options).get(serverName);
+  if (!provenance || provenance.kind === "project") {
+    return true;
+  }
+  if (isPathInsideProject(provenance.path, cwd)) {
+    return true;
+  }
+  return definition.cwd !== undefined && isPathInsideProject(definition.cwd, cwd);
+}
+
 function isTrustedSkillOrigin(
   state: McpExtensionState,
   serverName: string,
   definition: ServerEntry,
+  context?: SkillTrustContext,
 ): boolean {
-  if (state.projectTrusted !== false) {
+  const projectTrusted = context?.projectTrusted ?? state.projectTrusted;
+  if (projectTrusted !== false) {
     return true;
   }
-  if (state.programmaticConfig === true || state.cwd === undefined) {
+  const cwd = context?.cwd ?? state.cwd;
+  if (state.programmaticConfig === true || cwd === undefined) {
     return false;
   }
-  const options = state.includeNativePi === false ? { includeNativePi: false } : undefined;
-  const provenance = getServerProvenance(state.configPath, state.cwd, options).get(serverName);
-  if (!provenance || provenance.kind === "project") {
-    return false;
-  }
-  if (isPathInsideProject(provenance.path, state.cwd)) {
-    return false;
-  }
-  return definition.cwd === undefined || !isPathInsideProject(definition.cwd, state.cwd);
+  return !hasUntrustedProvenanceOrCwd({ state, serverName, definition, cwd });
 }
 
-export function canExposeServerSkills(state: McpExtensionState, serverName: string): boolean {
+export function canExposeServerSkills(
+  state: McpExtensionState,
+  serverName: string,
+  context?: SkillTrustContext,
+): boolean {
   if (state.config.settings?.exposeSkills === false) {
     return false;
   }
@@ -103,7 +125,7 @@ export function canExposeServerSkills(state: McpExtensionState, serverName: stri
   if (!definition || isServerDisabled(definition) || definition.exposeSkills === false) {
     return false;
   }
-  return isTrustedSkillOrigin(state, serverName, definition);
+  return isTrustedSkillOrigin(state, serverName, definition, context);
 }
 
 export function cleanupServerSkills(state: McpExtensionState, serverName: string): void {
@@ -192,13 +214,15 @@ export function syncConnectedServerSkills(
   }
 }
 
-function syncSingleServerSkillState(
-  state: McpExtensionState,
-  maps: StateSkillMaps,
-  name: string,
-  definition: ServerEntry,
-): void {
-  if (isServerDisabled(definition) || !canExposeServerSkills(state, name)) {
+function syncSingleServerSkillState(input: {
+  state: McpExtensionState;
+  maps: StateSkillMaps;
+  name: string;
+  definition: ServerEntry;
+  context: SkillTrustContext | undefined;
+}): void {
+  const { state, maps, name, definition, context } = input;
+  if (isServerDisabled(definition) || !canExposeServerSkills(state, name, context)) {
     cleanupServerSkills(state, name);
     return;
   }
@@ -212,23 +236,26 @@ function syncSingleServerSkillState(
   }
 }
 
-export function syncAllStateSkills(state: McpExtensionState): void {
+export function syncAllStateSkills(state: McpExtensionState, context?: SkillTrustContext): void {
   const maps = getSkillMaps(state);
   for (const name of Array.from(maps.metadata.keys())) {
-    if (!canExposeServerSkills(state, name)) {
+    if (!canExposeServerSkills(state, name, context)) {
       cleanupServerSkills(state, name);
     }
   }
   for (const [name, definition] of Object.entries(state.config.mcpServers)) {
-    syncSingleServerSkillState(state, maps, name, definition);
+    syncSingleServerSkillState({ state, maps, name, definition, context });
   }
 }
 
-export function getActiveSkillPaths(state: McpExtensionState): string[] {
+export function getActiveSkillPaths(
+  state: McpExtensionState,
+  context?: SkillTrustContext,
+): string[] {
   const maps = getSkillMaps(state);
   const paths = new Set<string>();
   for (const [name, serverPaths] of maps.paths.entries()) {
-    if (!canExposeServerSkills(state, name)) {
+    if (!canExposeServerSkills(state, name, context)) {
       continue;
     }
     for (const dirPath of serverPaths) {
@@ -252,13 +279,20 @@ async function refreshServerSkillsForConnection(
   if (state.owner.signal.aborted || state.manager.getConnection(name) !== connection) {
     return;
   }
-  if (result.failed !== true && result.supported) {
+  if (result.failed === true) {
+    Object.assign(connection, { skillDiscoveryFailed: true });
+    return;
+  }
+  if (result.supported) {
     Object.assign(connection, {
+      skillDiscoveryFailed: false,
       skills: result.skills.map((bundle) => bundle.metadata),
       verifiedSkillBundles: result.skills,
     });
     syncConnectedServerSkills(state, name, connection);
+    return;
   }
+  Object.assign(connection, { skillDiscoveryFailed: false });
 }
 
 export async function refreshLiveSkillsForEnabledServers(state: McpExtensionState): Promise<void> {
@@ -330,21 +364,21 @@ export class HostSkillsTracker {
     if (canAnyStartupServerExposeSkills(input.readHostState().state)) {
       await awaitPromiseWithGrace(input.readHostState().initPromise);
     }
+    this.activeContext = { projectTrusted: input.ctx.isProjectTrusted(), cwd: input.ctx.cwd };
     const state = input.readHostState().state;
     if (!state) {
+      this.discovered = true;
+      this.delivered.clear();
+      this.pendingReload = false;
+      this.lastNotifiedKey = "";
       return undefined;
     }
-    this.activeContext = { projectTrusted: input.ctx.isProjectTrusted(), cwd: input.ctx.cwd };
-    const scopedState: McpExtensionState = {
-      ...state,
-      projectTrusted: this.activeContext.projectTrusted,
-      cwd: this.activeContext.cwd,
-    };
-    syncAllStateSkills(scopedState);
-    const skillPaths = getActiveSkillPaths(scopedState);
+    syncAllStateSkills(state, this.activeContext);
+    const skillPaths = getActiveSkillPaths(state, this.activeContext);
     this.discovered = true;
     this.delivered = new Set(skillPaths);
     this.pendingReload = false;
+    this.lastNotifiedKey = skillPaths.join("\n");
     return skillPaths.length > 0 ? { skillPaths } : undefined;
   }
 
@@ -352,19 +386,11 @@ export class HostSkillsTracker {
     if (!state) {
       return;
     }
-    const scopedState =
-      this.activeContext === undefined
-        ? state
-        : {
-            ...state,
-            projectTrusted: this.activeContext.projectTrusted,
-            cwd: this.activeContext.cwd,
-          };
-    syncAllStateSkills(scopedState);
+    syncAllStateSkills(state, this.activeContext);
     if (!this.discovered) {
       return;
     }
-    const nextPaths = getActiveSkillPaths(scopedState);
+    const nextPaths = getActiveSkillPaths(state, this.activeContext);
     const unchanged =
       nextPaths.length === this.delivered.size &&
       nextPaths.every((dirPath) => this.delivered.has(dirPath));

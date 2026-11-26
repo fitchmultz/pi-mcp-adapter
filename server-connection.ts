@@ -28,6 +28,8 @@ export interface ServerConnection {
   prompts: McpPrompt[];
   /** True when prompts were advertised but prompts/list failed. */
   promptDiscoveryFailed?: boolean;
+  /** True when skills discovery or verification failed transiently. */
+  skillDiscoveryFailed?: boolean;
   /** Verified MCP skill metadata discovered from SEP-2640 skills extension. */
   skills?: SkillMetadata[];
   /** Verified in-memory skill file bundles ready for adapter-managed materialization. */

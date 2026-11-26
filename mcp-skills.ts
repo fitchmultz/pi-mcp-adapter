@@ -145,6 +145,9 @@ async function appendVerifiedResources(input: {
   }
   const seenPaths = new Set<string>(["skill.md"]);
   let totalBytes = files[0]?.content.byteLength ?? 0;
+  if (totalBytes > sdk.SKILL_LIMITS.bytes) {
+    throw new Error(`Skill exceeds maximum byte size (${sdk.SKILL_LIMITS.bytes})`);
+  }
 
   for (const resource of skill.resources) {
     if (resource.uri === mainUri) {

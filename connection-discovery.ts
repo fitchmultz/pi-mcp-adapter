@@ -124,6 +124,7 @@ export async function populateConnectionCatalogs(input: {
   connection.resourceTemplates = resourceTemplates;
   connection.prompts = promptResult.prompts;
   connection.promptDiscoveryFailed = promptResult.failed;
+  connection.skillDiscoveryFailed = skillResult.failed === true;
   if (skillResult.skills.length > 0) {
     connection.skills = skillResult.skills.map((bundle) => bundle.metadata);
     connection.verifiedSkillBundles = skillResult.skills;

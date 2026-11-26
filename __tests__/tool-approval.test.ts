@@ -310,4 +310,59 @@ describe("tool approval", () => {
     expect(select).toHaveBeenCalledTimes(2);
     expect(maxConcurrent).toBe(1);
   });
+
+  it("keeps the approval chain serialized if a waiting caller aborts while the first prompt is open", async () => {
+    const { state, select } = await createState({ approveTools: true });
+    const waiters: Array<() => void> = [];
+    let openDialogs = 0;
+    let maxConcurrent = 0;
+    select.mockImplementation(
+      () =>
+        new Promise<string | undefined>((resolve) => {
+          openDialogs += 1;
+          maxConcurrent = Math.max(maxConcurrent, openDialogs);
+          waiters.push(() => {
+            openDialogs -= 1;
+            resolve("Allow once");
+          });
+        }),
+    );
+
+    const p1 = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: { n: 1 },
+    });
+    const controller2 = new AbortController();
+    const p2 = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: { n: 2 },
+      signal: controller2.signal,
+    });
+    const p3 = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: { n: 3 },
+    });
+
+    await expect.poll(() => waiters.length).toBe(1);
+    controller2.abort();
+    await expect(p2).rejects.toThrow(/abort/i);
+
+    // Waiter #3 must still remain queued behind p1's open prompt.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(maxConcurrent).toBe(1);
+
+    waiters.shift()?.();
+    await expect.poll(() => waiters.length).toBe(1);
+    expect(maxConcurrent).toBe(1);
+    waiters.shift()?.();
+
+    await expect(Promise.all([p1, p3])).resolves.toEqual([{ ok: true }, { ok: true }]);
+    expect(select).toHaveBeenCalledTimes(2);
+    expect(maxConcurrent).toBe(1);
+  });
 });

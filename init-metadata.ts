@@ -243,9 +243,15 @@ function cacheSkills(
   exposeSkillsGlobal: boolean,
   definition: ServerDefinition,
   connection: ServerConnection,
+  matchingEntry: ServerCacheEntry | undefined,
 ): ServerCacheEntry["skills"] | undefined {
   if (!exposeSkillsGlobal || definition.exposeSkills === false) {
     return undefined;
+  }
+  if (connection.skillDiscoveryFailed === true) {
+    return matchingEntry?.skills !== undefined && matchingEntry.skills.length > 0
+      ? matchingEntry.skills
+      : undefined;
   }
   const skills = serializeSkills(connection.skills ?? []);
   return skills.length > 0 ? skills : undefined;
@@ -285,7 +291,7 @@ function cacheEntry(
     connection.promptDiscoveryFailed === true
       ? matchingEntry?.prompts
       : serializePrompts(connection.prompts);
-  const skills = cacheSkills(exposeSkillsGlobal, definition, connection);
+  const skills = cacheSkills(exposeSkillsGlobal, definition, connection, matchingEntry);
 
   const entry: ServerCacheEntry = {
     configHash,

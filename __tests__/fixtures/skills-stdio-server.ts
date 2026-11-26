@@ -64,7 +64,7 @@ async function attachControlledSkills(server: McpServer): Promise<void> {
     entries.set(name, { skill: await skillEntry(name, { "SKILL.md": text }), text });
   }
   let currentName = "v1-skill";
-  let failList = false;
+  let failList = process.env.PI_MCP_TEST_FAIL_SKILLS_LIST === "1";
   let listDelayMs = 0;
   let started = 0;
   let completed = 0;

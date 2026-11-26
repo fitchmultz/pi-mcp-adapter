@@ -521,4 +521,137 @@ describe("MCP Skills (SEP-2640) integration", () => {
     await expect(manager.close("live")).resolves.toBeUndefined();
     await expect(manager.closeAll()).resolves.toBeUndefined();
   });
+
+  it("refuses a skill whose SKILL.md alone exceeds SKILL_LIMITS.bytes", async () => {
+    const { Client, InMemoryTransport } = await import("@modelcontextprotocol/client");
+    const { McpServer } = await import("@modelcontextprotocol/server");
+    const { SkillsExtension, skillEntry } = await import("@modelcontextprotocol/server/ext/skills");
+    const { discoverServerSkills } = await import("../mcp-skills.ts");
+    const { logger } = await import("../logger.ts");
+
+    const server = new McpServer({ name: "skills-oversized", version: "1.0.0" });
+    server.registerTool(
+      "ping",
+      { description: "Health ping tool", inputSchema: z.object({}) },
+      async () => ({ content: [{ type: "text" as const, text: "pong:oversized-main" }] }),
+    );
+    const prefix = "---\nname: oversized-skill\ndescription: Too large.\n---\n";
+    const oversized = `${prefix}${"a".repeat(16 * 1024 * 1024 + 64 - Buffer.byteLength(prefix, "utf8"))}`;
+    const skill = await skillEntry("oversized-skill", { "SKILL.md": oversized });
+    new SkillsExtension({
+      source: {
+        list: async () => ({ skills: [skill] }),
+        get: async (uri) => (uri === skill.uri ? skill : undefined),
+        read: async (uri) =>
+          uri === skill.uri ? { text: oversized, mimeType: "text/markdown" } : undefined,
+      },
+    }).attach(server);
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test-client", version: "1.0.0" });
+    const warnSpy = vi.spyOn(logger, "warn");
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    try {
+      const discovered = await discoverServerSkills({
+        serverName: "oversized",
+        client,
+        exposeSkills: true,
+      });
+      expect(discovered).toEqual({ supported: true, rejectedCount: 1, skills: [] });
+      expect(
+        warnSpy.mock.calls.some(
+          ([message]) =>
+            typeof message === "string" && message.includes("Skill exceeds maximum byte size"),
+        ),
+      ).toBe(true);
+      const ping = await client.callTool({ name: "ping", arguments: {} });
+      expect(ping.content).toEqual([{ type: "text", text: "pong:oversized-main" }]);
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  });
+
+  it("preserves cached skills when startup skills/list fails transiently on a lazy server", async () => {
+    const ws = createWorkspace();
+    writeJson(join(ws.project, ".mcp.json"), {
+      mcpServers: { lazyCtrl: skillsServer("controlled") },
+    });
+
+    const firstHost = await mountAdapter({ cwd: ws.project, trusted: true });
+    await firstHost.start();
+    await firstHost.discover();
+    await firstHost.callMcp({ action: "connect", server: "lazyCtrl" });
+    await firstHost.runMcpCommand("reconnect lazyCtrl");
+    expect(loadMetadataCache(true)?.servers.lazyCtrl?.skills?.map((s) => s.name)).toEqual([
+      "v1-skill",
+    ]);
+
+    process.env.PI_MCP_TEST_FAIL_SKILLS_LIST = "1";
+    try {
+      const secondHost = await mountAdapter({ cwd: ws.project, trusted: true });
+      await secondHost.start();
+      await secondHost.discover();
+      expect(loadMetadataCache(true)?.servers.lazyCtrl?.skills?.map((s) => s.name)).toEqual([
+        "v1-skill",
+      ]);
+    } finally {
+      delete process.env.PI_MCP_TEST_FAIL_SKILLS_LIST;
+    }
+  });
+
+  it("sets pendingReload and notifies once late state arrives after startup grace timeout", async () => {
+    const ws = createWorkspace();
+    const { HostSkillsTracker, getActiveSkillPaths } = await import("../mcp-skills-store.ts");
+    const { discoverServerSkills } = await import("../mcp-skills.ts");
+    const { createTestState } = await import("./test-state.ts");
+
+    const tracker = new HostSkillsTracker();
+    const hostCtx = await createTestExtensionContext();
+    const pendingInit = Promise.withResolvers<never>();
+    const initial = await tracker.discover({
+      readHostState: () => ({
+        initPromise: pendingInit.promise,
+        startPromise: null,
+        state: null,
+      }),
+      ctx: { ...hostCtx.context, cwd: ws.project, isProjectTrusted: () => true },
+    });
+    expect(initial).toBeUndefined();
+
+    const definition = skillsServer("valid", { lifecycle: "eager" });
+    const notify = vi.fn<ExtensionUIContext["notify"]>();
+    const lateState = createTestState({
+      config: { mcpServers: { late: definition } },
+      projectTrusted: true,
+      cwd: ws.project,
+      ui: { ...hostCtx.context.ui, notify },
+    });
+    const connection = await lateState.manager.connect("late", definition);
+    const skillResult = await discoverServerSkills({
+      serverName: "late",
+      client: connection.client,
+      exposeSkills: true,
+    });
+    expect(skillResult.skills.length).toBeGreaterThan(0);
+    connection.skills = skillResult.skills.map((bundle) => bundle.metadata);
+    connection.verifiedSkillBundles = skillResult.skills;
+
+    try {
+      tracker.handleStateUpdate(lateState);
+      expect(tracker.consumePendingReload()).toBe(true);
+      expect(notify).toHaveBeenCalledWith(
+        "MCP verified skills updated — run /reload to refresh Pi skills.",
+        "info",
+      );
+      expect(
+        getActiveSkillPaths(lateState)
+          .map((dirPath) => dirPath.split("/").at(-1) ?? "")
+          .sort((a, b) => a.localeCompare(b)),
+      ).toEqual(["alpha-skill", "beta-skill"]);
+    } finally {
+      await lateState.manager.closeAll();
+      await hostCtx.dispose();
+    }
+  });
 });
