@@ -6,7 +6,7 @@ import type { McpAdapterOptions, McpConfig } from "./types.ts";
 import { cloneMcpConfig, isPathInsideProject } from "./config.ts";
 import { getMetadataCachePath, loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 import { createMcpRuntimeOwner, type McpRuntimeOwner } from "./runtime-owner.ts";
-import { createOAuthRuntime, shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
+import { createOAuthRuntime, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import { formatTerminalError } from "./utils.ts";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
 import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
@@ -20,7 +20,12 @@ import {
   withDirectToolOverrides,
 } from "./host-registered-servers.ts";
 import { canPreserveFrozenTools, HostSession } from "./host-session.ts";
-import { McpStateCleanup, stopRuntimeSession } from "./host-state-cleanup.ts";
+import {
+  HostReconcileCoordinator,
+  stopRejectedInitialization,
+  stopRuntimeSession,
+  stopStaleInitState,
+} from "./host-state-cleanup.ts";
 import { McpHostTools } from "./host-tools.ts";
 import {
   registerWorkingSessionSaveHandler,
@@ -49,7 +54,7 @@ export class McpHostRuntime implements McpAdapterHost {
   private initModule: typeof Init | undefined;
   private readonly prompts: HostPromptRegistry;
   private readonly workingSession = new WorkingSessionCoordinator();
-  private reconcileQueue: Promise<void> = Promise.resolve();
+  private readonly reconcile = new HostReconcileCoordinator();
   private readonly envRaw = process.env.MCP_DIRECT_TOOLS;
   private readonly envDirectToolOverride = this.envRaw
     ?.split(",")
@@ -132,7 +137,7 @@ export class McpHostRuntime implements McpAdapterHost {
     this.pi.on("before_agent_start", async (event, ctx) => {
       if (this.runtimeCwd === undefined) {
         await this.startSession(ctx, this.directToolsFrozen);
-      } else if (ctx.cwd !== this.runtimeCwd) {
+      } else if (ctx.cwd !== this.runtimeCwd || this.reconcile.retryPending) {
         await this.syncWorkingDirectory(ctx);
       }
       if (event.messageType !== "user") {
@@ -238,6 +243,7 @@ export class McpHostRuntime implements McpAdapterHost {
     this.runtimeCwd = undefined;
     this.runtimeCacheEnabled = undefined;
     this.directToolsFrozen = false;
+    this.reconcile.reset();
     this.prompts.clear();
     this.workingSession.reset();
     const failures = await stopRuntimeSession({
@@ -266,14 +272,20 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   syncWorkingDirectory(ctx: ExtensionContext): Promise<void> {
-    if (this.runtimeCwd === undefined || ctx.cwd === this.runtimeCwd) {
+    if (
+      this.runtimeCwd === undefined ||
+      (ctx.cwd === this.runtimeCwd && !this.reconcile.retryPending)
+    ) {
       return Promise.resolve();
     }
-    return this.enqueueReconcile(async () => {
-      if (this.runtimeCwd === undefined || ctx.cwd === this.runtimeCwd) {
+    return this.reconcile.enqueue(async () => {
+      if (
+        this.runtimeCwd === undefined ||
+        (ctx.cwd === this.runtimeCwd && !this.reconcile.retryPending)
+      ) {
         return;
       }
-      await this.reconcileLiveSession(ctx, true);
+      await this.reconcileLiveSession(ctx, ctx.cwd !== this.runtimeCwd);
     });
   }
 
@@ -281,15 +293,7 @@ export class McpHostRuntime implements McpAdapterHost {
     if (this.programmaticConfig || isBuiltinMcpActive(this.pi) || this.runtimeCwd === undefined) {
       return Promise.resolve();
     }
-    return this.enqueueReconcile(() => this.reconcileLiveSession(ctx, false));
-  }
-
-  private enqueueReconcile(task: () => Promise<void>): Promise<void> {
-    const next = this.reconcileQueue.then(task, task);
-    this.reconcileQueue = next.catch(() => {
-      // Keep the reconcile queue alive after an individual reconciliation failure.
-    });
-    return next;
+    return this.reconcile.enqueue(() => this.reconcileLiveSession(ctx, false));
   }
 
   private async reconcileLiveSession(ctx: ExtensionContext, cwdChanged: boolean): Promise<void> {
@@ -312,22 +316,27 @@ export class McpHostRuntime implements McpAdapterHost {
         cacheEnabled: this.runtimeCacheEnabled,
       },
     });
-    const { reconcileSessionState } = await import("./host-reconcile.ts");
-    if (!this.session.isLiveOwner(owner) || this.state !== state) {
-      return;
-    }
-    await reconcileSessionState({
-      state,
-      ctx,
-      previousConfig: staged.previousConfig,
-      nextConfig: staged.nextConfig,
-      cwd: staged.cwd,
-      cacheEnabled: staged.cacheEnabled,
-      cwdChanged,
-      envRaw: this.envRaw,
-      envDirectToolOverride: this.envDirectToolOverride,
-      owner,
-      onSurfaceChanged: () => {
+    await this.reconcile.execute(
+      async (hooks) => {
+        const { reconcileSessionState } = await import("./host-reconcile.ts");
+        if (!this.session.isLiveOwner(owner) || this.state !== state) {
+          return;
+        }
+        await reconcileSessionState({
+          state,
+          ctx,
+          previousConfig: staged.previousConfig,
+          nextConfig: staged.nextConfig,
+          cwd: staged.cwd,
+          cacheEnabled: staged.cacheEnabled,
+          cwdChanged,
+          envRaw: this.envRaw,
+          envDirectToolOverride: this.envDirectToolOverride,
+          owner,
+          ...hooks,
+        });
+      },
+      () => {
         this.runtimeCwd = staged.cwd;
         this.config = staged.nextConfig;
         this.configPath = staged.nextConfigPath;
@@ -335,7 +344,8 @@ export class McpHostRuntime implements McpAdapterHost {
         this.directToolsFrozen = staged.directToolsFrozen;
         this.onReconciledSurface();
       },
-    });
+      () => this.session.isLiveOwner(owner) && this.state === state,
+    );
   }
 
   private onReconciledSurface(): void {
@@ -440,16 +450,7 @@ export class McpHostRuntime implements McpAdapterHost {
     return promise
       .then(async (state) => {
         if (!this.session.owns(owner, generation)) {
-          try {
-            await new McpStateCleanup(state).stop(
-              "stale_session_start",
-              this.initModule?.flushMetadataCache,
-            );
-          } catch (error) {
-            console.error(
-              `MCP: failed to clean stale initialization state: ${formatTerminalError(error)}`,
-            );
-          }
+          await stopStaleInitState(state, this.initModule?.flushMetadataCache);
           return;
         }
         this.session.ready(state);
@@ -511,13 +512,7 @@ export class McpHostRuntime implements McpAdapterHost {
       return;
     }
     this.session.fail(formatTerminalError(error));
-    try {
-      await Promise.all([owner.stop("MCP initialization failed"), shutdownOAuth(oauthRuntime)]);
-    } catch (cleanupError) {
-      console.error(
-        `MCP: failed to clean rejected initialization: ${formatTerminalError(cleanupError)}`,
-      );
-    }
+    await stopRejectedInitialization(owner, oauthRuntime);
   }
 
   ensureCommandState(

@@ -95,6 +95,8 @@ export interface ReconcileSessionInput {
   readonly envRaw: string | undefined;
   readonly envDirectToolOverride: string[] | undefined;
   readonly owner: McpRuntimeOwner;
+  readonly interruptedServers?: ReadonlyMap<string, boolean>;
+  readonly onReconcileInterrupted?: (name: string, wasConnected: boolean) => void;
   readonly onSurfaceChanged: () => void;
 }
 
@@ -149,14 +151,8 @@ class SessionReconciler {
 
     // Unregister and tear down removed/reconnecting servers before awaiting close or mutating config,
     // so health ticks during a slow close cannot resurrect stale keep-alive definitions and a close()
-    // failure never leaves half-applied cwd/config that blocks a retry on the next turn.
-    for (const transition of transitions) {
-      if (transition.kind === "remove" || transition.kind === "reconnect") {
-        this.state.lifecycle.unregisterServer(transition.name);
-        await this.state.manager.close(transition.name);
-        this.input.owner.throwIfInactive();
-      }
-    }
+    // failure never leaves half-applied cwd/config or permanently dropped connections across retries.
+    await this.closeRemovedAndReconnecting(transitions, previousConfig);
 
     this.applyGlobalSettings();
     for (const transition of transitions) {
@@ -168,6 +164,49 @@ class SessionReconciler {
     this.refreshFooter();
     publishMcpStatusSnapshot(this.state);
     this.input.onSurfaceChanged();
+  }
+
+  private async closeRemovedAndReconnecting(
+    transitions: ServerTransition[],
+    previousConfig: McpConfig,
+  ): Promise<void> {
+    const tornDown: Array<{ name: string; wasConnected: boolean; definition?: ServerEntry }> = [];
+    for (const transition of transitions) {
+      if (transition.kind !== "remove" && transition.kind !== "reconnect") {
+        continue;
+      }
+      const wasConnected =
+        this.state.manager.getConnection(transition.name)?.status === "connected" ||
+        this.input.interruptedServers?.get(transition.name) === true;
+      const prev = previousConfig.mcpServers[transition.name];
+      tornDown.push({
+        name: transition.name,
+        wasConnected,
+        ...(prev !== undefined && !isServerDisabled(prev) ? { definition: prev } : {}),
+      });
+      this.state.lifecycle.unregisterServer(transition.name);
+      try {
+        await this.state.manager.close(transition.name);
+        this.input.owner.throwIfInactive();
+      } catch (error) {
+        this.rollbackInterruptedCloses(tornDown);
+        throw error;
+      }
+    }
+  }
+
+  private rollbackInterruptedCloses(
+    tornDown: ReadonlyArray<{ name: string; wasConnected: boolean; definition?: ServerEntry }>,
+  ): void {
+    if (!this.input.owner.isActive()) {
+      return;
+    }
+    for (const entry of tornDown) {
+      if (entry.definition) {
+        registerLifecycle(this.state, entry.name, entry.definition);
+      }
+      this.input.onReconcileInterrupted?.(entry.name, entry.wasConnected);
+    }
   }
 
   private planTransitions(
@@ -190,7 +229,9 @@ class SessionReconciler {
       } else if (!prevActive) {
         transitions.push({ kind: "add", name, next });
       } else if (this.needsReconnect(prev, next, requestPolicyChanged)) {
-        const wasConnected = this.state.manager.getConnection(name)?.status === "connected";
+        const wasConnected =
+          this.state.manager.getConnection(name)?.status === "connected" ||
+          this.input.interruptedServers?.get(name) === true;
         transitions.push({ kind: "reconnect", name, next, wasConnected });
       } else {
         transitions.push({ kind: "update", name, prev, next });
@@ -284,9 +325,20 @@ class SessionReconciler {
         this.restoreCache(name, next);
       }
     }
-    if (!connected && this.shouldAutoConnect(name, next) && !this.hasAttemptedStartup(prev)) {
+    if (this.shouldConnectInPlace(name, prev, next)) {
       this.serversToConnect.push([name, next]);
     }
+  }
+
+  private shouldConnectInPlace(name: string, prev: ServerEntry, next: ServerEntry): boolean {
+    if (this.state.manager.getConnection(name)?.status === "connected") {
+      return false;
+    }
+    const interrupted = this.input.interruptedServers?.get(name);
+    if (interrupted !== undefined) {
+      return interrupted || this.shouldAutoConnect(name, next);
+    }
+    return this.shouldAutoConnect(name, next) && !this.hasAttemptedStartup(prev);
   }
 
   private hasAttemptedStartup(definition: ServerEntry): boolean {

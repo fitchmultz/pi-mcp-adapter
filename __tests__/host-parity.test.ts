@@ -1206,6 +1206,94 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
     }
   }, 15_000);
 
+  it("retries interrupted mcp_servers_change closes on the next same-cwd turn without stranding closed servers", async () => {
+    const { root } = createWorkspace();
+    const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
+    const project = join(root, "retry-same-cwd");
+    mkdirSync(project, { recursive: true });
+    writeJson(join(project, ".mcp.json"), {
+      mcpServers: {
+        alpha: {
+          command: process.execPath,
+          args: [fixtureServer],
+          env: { MARK: "1" },
+          lifecycle: "eager",
+        },
+        beta: {
+          command: process.execPath,
+          args: [fixtureServer],
+          env: { MARK: "1" },
+          lifecycle: "eager",
+        },
+      },
+    });
+
+    const host = await createLifecycleHost();
+    const runtime = new McpHostRuntime(host.api, {});
+    runtime.install();
+    try {
+      await host.handlers.get("session_start")({}, { cwd: project });
+      await waitFor(() => {
+        const current = runtime.state;
+        return (
+          current?.manager.getConnection("alpha")?.status === "connected" &&
+          current.manager.getConnection("beta")?.status === "connected"
+        );
+      });
+      const state = requireValue(runtime.state);
+      const runnerErrors: ExtensionError[] = [];
+      host.runner.onError((error) => {
+        runnerErrors.push(error);
+      });
+
+      writeJson(join(project, ".mcp.json"), {
+        mcpServers: {
+          alpha: {
+            command: process.execPath,
+            args: [fixtureServer],
+            env: { MARK: "2" },
+            lifecycle: "eager",
+          },
+          beta: {
+            command: process.execPath,
+            args: [fixtureServer],
+            env: { MARK: "2" },
+            lifecycle: "eager",
+          },
+        },
+      });
+
+      const origClose = state.manager.close.bind(state.manager);
+      let failedBetaOnce = false;
+      const closeSpy = vi.spyOn(state.manager, "close").mockImplementation(async (name) => {
+        await origClose(name);
+        if (name === "beta" && !failedBetaOnce) {
+          failedBetaOnce = true;
+          throw new Error("beta close boom");
+        }
+      });
+
+      await host.runner.emit({ type: "mcp_servers_change", servers: [] });
+      expect(runnerErrors.some((entry) => entry.error.includes("beta close boom"))).toBe(true);
+      expect(state.config.mcpServers.alpha?.env?.MARK).toBe("1");
+      expect(state.config.mcpServers.beta?.env?.MARK).toBe("1");
+
+      closeSpy.mockRestore();
+      await host.handlers.emitBeforeAgentStart({ cwd: project });
+      await waitFor(
+        () =>
+          state.manager.getConnection("alpha")?.status === "connected" &&
+          state.manager.getConnection("beta")?.status === "connected",
+      );
+      expect(state.config.mcpServers.alpha?.env?.MARK).toBe("2");
+      expect(state.config.mcpServers.beta?.env?.MARK).toBe("2");
+      expect(state.manager.getConnection("alpha")?.definition.env?.MARK).toBe("2");
+      expect(state.manager.getConnection("beta")?.definition.env?.MARK).toBe("2");
+    } finally {
+      await host.dispose();
+    }
+  }, 15_000);
+
   it("honors adapter-format toolExposure direct, deferred, codemode, and hidden values", async () => {
     initTheme();
     const { root, agentDir, project } = createWorkspace();
