@@ -439,7 +439,7 @@ function pendingAuthSatisfiesChallenge(
   existing: PendingAuth,
   request: OAuthRequest | undefined,
 ): boolean {
-  const requiredScope = request?.challenge?.requiredScope;
+  const requiredScope = request?.challenge?.requiredScope ?? request?.discovered?.scope;
   return (
     requiredScope === undefined ||
     requiredScope === "" ||

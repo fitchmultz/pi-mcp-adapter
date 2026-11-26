@@ -9,7 +9,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OAuthClientMetadataSchema } from "@modelcontextprotocol/core";
 import { z } from "zod";
 import { clearAllCredentials, getAuthBaseDir, getAuthForUrl, saveAuthEntry } from "../mcp-auth.ts";
-import { createOAuthRuntime, getOAuthRequest } from "../mcp-oauth-runtime.ts";
+import { startAuth } from "../mcp-auth-flow.ts";
+import {
+  createOAuthRuntime,
+  getOAuthRequest,
+  recordOAuthDiscovery,
+  shutdownOAuth,
+} from "../mcp-oauth-runtime.ts";
 import { prepareMcpConnection } from "../proxy-connection.ts";
 import { withSessionRecovery } from "../session-recovery.ts";
 import { McpServerManager } from "../server-manager.ts";
@@ -925,5 +931,42 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     expect(recovered.error).toBeUndefined();
     expect(recovered.connection?.status).toBe("connected");
     expect(mcpRequests).toBeGreaterThan(requestsBeforePartial);
+  });
+
+  it("replaces a narrower pending authorization URL when a 401 records a wider discovered scope", async () => {
+    const { server, url } = await startServer();
+    const oauthRuntime = createOAuthRuntime();
+    const definition = { url, auth: "oauth" as const };
+    try {
+      recordOAuthDiscovery(
+        {
+          serverName: "pending-scope",
+          serverUrl: url,
+          storageBase: getAuthBaseDir(),
+          runtime: oauthRuntime,
+        },
+        {
+          resourceMetadataUrl: new URL(`${server.origin}/.well-known/oauth-protected-resource`),
+          scope: "read",
+        },
+      );
+      const first = await startAuth("pending-scope", url, definition, { runtime: oauthRuntime });
+      expect(new URL(first.authorizationUrl).searchParams.get("scope")).toBe("read");
+
+      recordOAuthDiscovery(
+        {
+          serverName: "pending-scope",
+          serverUrl: url,
+          storageBase: getAuthBaseDir(),
+          runtime: oauthRuntime,
+        },
+        { scope: "write" },
+      );
+      const second = await startAuth("pending-scope", url, definition, { runtime: oauthRuntime });
+      expect(second.authorizationUrl).not.toBe(first.authorizationUrl);
+      expect(new URL(second.authorizationUrl).searchParams.get("scope")).toBe("write");
+    } finally {
+      await shutdownOAuth(oauthRuntime);
+    }
   });
 });
