@@ -963,4 +963,111 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
     expect(first.text).toBe("retried after progress");
     expect(updateTexts(updates)).toEqual(["Retried step 1"]);
   });
+
+  it("gives a full requestTimeoutMs window to a same-connection retry after slow input_required fulfillment", async () => {
+    let calls = 0;
+    const server = await startModernServer(async (_req, res, body) => {
+      if (body.method !== "tools/call") {
+        return false;
+      }
+      calls += 1;
+      if (calls === 1) {
+        sendJson(res, {
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            resultType: "input_required",
+            requestState: "elicit-retry-1",
+            inputRequests: {
+              confirm: {
+                method: "elicitation/create",
+                params: {
+                  mode: "form",
+                  message: "Confirm retry target",
+                  requestedSchema: {
+                    type: "object",
+                    properties: { env: { type: "string", title: "Environment" } },
+                    required: ["env"],
+                  },
+                },
+              },
+            },
+          },
+        });
+        return true;
+      }
+      if (calls === 2) {
+        // Drop the post-elicitation SSE stream to trigger a same-connection transport retry.
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(": open\n\n");
+        await delay(10);
+        res.destroy();
+        return true;
+      }
+      // Replay runs comfortably within the full 150ms requestTimeoutMs (would fail at 1ms leftover).
+      await delay(60);
+      sendJson(res, {
+        jsonrpc: "2.0",
+        id: body.id,
+        result: {
+          resultType: "complete",
+          content: [{ type: "text", text: "replayed after elicitation" }],
+        },
+      });
+      return true;
+    });
+
+    const manager = new McpServerManager();
+    cleanups.push(() => manager.closeAll());
+    let selectCount = 0;
+    manager.setElicitationConfig({
+      allowUrl: false,
+      ui: {
+        select: async () => {
+          selectCount += 1;
+          if (selectCount === 1) {
+            await delay(240);
+            return "Continue";
+          }
+          return "Submit";
+        },
+        input: async () => "prod",
+        notify: vi.fn<() => void>(),
+      },
+    });
+    const definition = {
+      url: server.url,
+      auth: false as const,
+      requestTimeoutMs: 150,
+      retryOnTransportFailure: true,
+    };
+    const connection = await manager.connect("elicit_retry", definition);
+    const state = createTestState({
+      manager,
+      config: { mcpServers: { elicit_retry: definition }, settings: { toolPrefix: "server" } },
+      toolMetadata: new Map([
+        [
+          "elicit_retry",
+          buildToolMetadata({
+            tools: connection.tools,
+            resources: [],
+            definition,
+            serverName: "elicit_retry",
+            prefix: "server",
+          }).metadata,
+        ],
+      ]),
+    });
+
+    const output = await executeCall(state, {
+      toolName: "elicit_retry_slow_work",
+      args: {},
+    });
+
+    expect(calls).toBe(3);
+    expect(output.details.error, String(output.details.message)).toBeUndefined();
+    const first = output.content[0];
+    assert(first?.type === "text");
+    expect(first.text).toBe("replayed after elicitation");
+  });
 });

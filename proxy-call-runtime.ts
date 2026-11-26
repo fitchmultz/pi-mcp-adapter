@@ -259,9 +259,10 @@ class ToolCallRuntime {
             async (connection) => {
               this.activeConnection = connection;
               const sameConnectionRetry = lastConnection === connection;
-              const remainingTimeoutMs = sameConnectionRetry
-                ? Math.max(1, this.effectiveTimeoutMs() - (Date.now() - attemptStartedAt))
-                : undefined;
+              const remainingTimeoutMs =
+                sameConnectionRetry && !sawProgress
+                  ? Math.max(1, this.effectiveTimeoutMs() - (Date.now() - attemptStartedAt))
+                  : undefined;
               if (!sameConnectionRetry || sawProgress) {
                 lastConnection = connection;
                 attemptStartedAt = Date.now();
@@ -270,7 +271,6 @@ class ToolCallRuntime {
               const budget = createNoProgressBudget(signal, remainingTimeoutMs, this.deps.sdk);
               const trackedProgress: NonNullable<RequestOptions["onprogress"]> = (progress) => {
                 sawProgress = true;
-                attemptStartedAt = Date.now();
                 budget.clear?.();
                 onprogress(progress);
               };
