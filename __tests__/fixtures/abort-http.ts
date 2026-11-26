@@ -78,6 +78,8 @@ function responseResult(method: string): unknown {
       };
     case "resources/list":
       return { resources: [{ uri: "resource://demo", name: "demo" }] };
+    case "resources/templates/list":
+      return { resourceTemplates: [] };
     case "resources/read":
       return { contents: [{ uri: "resource://demo", text: "resource bytes" }] };
     case "tools/call":

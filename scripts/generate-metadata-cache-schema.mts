@@ -3,7 +3,12 @@ import { hash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PromptSchema, ResourceSchema, ToolSchema } from "@modelcontextprotocol/core";
+import {
+  PromptSchema,
+  ResourceSchema,
+  ResourceTemplateSchema,
+  ToolSchema,
+} from "@modelcontextprotocol/core";
 import { z } from "zod";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -23,6 +28,7 @@ const cacheEntrySchema = z.object({
     }),
   ),
   resources: z.array(ResourceSchema),
+  resourceTemplates: z.array(ResourceTemplateSchema).optional(),
   prompts: z
     .array(PromptSchema.pick({ name: true, title: true, description: true, arguments: true }))
     .optional(),

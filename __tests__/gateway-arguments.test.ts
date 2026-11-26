@@ -12,6 +12,20 @@ it("advertises explicit actions and validates each action's required fields", ()
   expect(Value.Check(gatewayParameters, { action: "call" })).toBe(false);
   expect(Value.Check(gatewayParameters, { action: "call", tool: "demo", args: {} })).toBe(true);
   expect(Value.Check(gatewayParameters, { action: "read-resource", server: "demo" })).toBe(false);
+  expect(Value.Check(gatewayParameters, { action: "prompts" })).toBe(true);
+  expect(Value.Check(gatewayParameters, { action: "prompts", server: "demo", limit: 10 })).toBe(
+    true,
+  );
+  expect(Value.Check(gatewayParameters, { action: "prompts", limit: 101 })).toBe(false);
+  expect(Value.Check(gatewayParameters, { action: "get-prompt", server: "demo" })).toBe(false);
+  expect(
+    Value.Check(gatewayParameters, {
+      action: "get-prompt",
+      server: "demo",
+      prompt: "brief",
+      args: { topic: "mcp" },
+    }),
+  ).toBe(true);
   expect(Value.Check(gatewayParameters, { action: "read-result", ref: "saved", limit: 2000 })).toBe(
     true,
   );
@@ -95,6 +109,23 @@ it("prepares stored v5 calls without advertising the old precedence schema", () 
     server: "demo",
   });
   expect(() => prepareGatewayArguments({ action: "read-resource", server: "demo" })).toThrow("uri");
+  expect(() => prepareGatewayArguments({ action: "get-prompt", server: "demo" })).toThrow("prompt");
+  expect(() => prepareGatewayArguments({ action: "get-prompt", prompt: "brief" })).toThrow(
+    "server",
+  );
+  expect(
+    prepareGatewayArguments({
+      action: "get-prompt",
+      server: "demo",
+      prompt: "brief",
+      args: '{"topic":"mcp"}',
+    }),
+  ).toEqual({
+    action: "get-prompt",
+    server: "demo",
+    prompt: "brief",
+    args: { topic: "mcp" },
+  });
   expect(() => prepareGatewayArguments({ tool: "demo", args: "[]" })).toThrow("JSON object");
   expect(() => prepareGatewayArguments({ action: 5 })).toThrow("Unknown MCP action: 5");
   expect(() => prepareGatewayArguments({ action: "missing" })).toThrow(

@@ -117,6 +117,8 @@ export class WireFixture {
         };
       case "resources/list":
         return { resultType: "complete", resources: [] };
+      case "resources/templates/list":
+        return { resultType: "complete", resourceTemplates: [] };
       default:
         return { resultType: "complete" };
     }

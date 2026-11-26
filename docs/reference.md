@@ -316,8 +316,8 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 | `exposeResources`                    | Make MCP resources available through resource listing/reading (default: true)                                                                                                                                                                                          |
 | `directTools`                        | `true`, `string[]`, or `false` — pin real tools into the initial active tool set                                                                                                                                                                                       |
 | `toolPrefix`                         | Override global `settings.toolPrefix` for this server (`"server"`, `"short"`, `"none"`, or `"mcp"`)                                                                                                                                                                    |
-| `includeTools`                       | `string[]` of tool names or glob patterns to expose (matches original names like `get_screenshot`, legacy resource filter aliases like `read_figjam`, and prefixed names like `figma_get_screenshot`)                                                                  |
-| `excludeTools`                       | `string[]` of tool names or glob patterns to hide (applied after `includeTools`)                                                                                                                                                                                       |
+| `includeTools`                       | `string[]` of tool names or glob patterns to expose (matches original names like `get_screenshot` and prefixed names like `figma_get_screenshot`; filters tools only, never resources)                                                                                 |
+| `excludeTools`                       | `string[]` of tool names or glob patterns to hide (applied after `includeTools`; filters tools only, never resources)                                                                                                                                                  |
 | `uiViewer`                           | Override global `settings.uiViewer` for MCP App UI from this server (`"auto"`, `"browser"`, `"glimpse"`, or `"none"` to disable MCP App UI completely)                                                                                                                 |
 | `uiToolConsent`                      | Override global `settings.uiToolConsent` for MCP App UI tool calls from this server (`"once-per-server"`, `"always"`, or `"never"`)                                                                                                                                    |
 | `debug`                              | Show server stderr (default: false)                                                                                                                                                                                                                                    |
@@ -599,13 +599,31 @@ Resources are catalog entries addressed by URI, separate from tools:
 ```js
 mcp({ action: "resources", server: "docs", limit: 12, offset: 0 });
 mcp({ action: "read-resource", server: "docs", uri: "docs://guide" });
+mcp({ action: "read-resource", server: "linear", uri: "linear://issue/ENG-123" });
 ```
 
-List first, then use the exact URI. Listings preserve the server's resource descriptor fields, including name, title, MIME type, icons, and `_meta` when supplied. `exposeResources`, include/exclude filters, disabled servers, authentication, and approval policy remain binding. Existing `read_<resource>` filter names still select resources, but these compatibility aliases are not typed functions and cannot be pinned in `/mcp`.
+`resources` returns both static resources (`items`, preserving native descriptor fields such as name, title, MIME type, icons, and `_meta`) and URI templates (`resourceTemplates`, fetched from `resources/templates/list` when advertised). Connected servers reflect their live resources and templates rather than stale cached lists. MCP App UI bundles (`ui://` URIs) are excluded from model-facing resource listings while remaining available to MCP App sessions.
+
+`read-resource` accepts any valid URI on an enabled server — static resources, templated URIs instantiated from `resourceTemplates`, or URIs returned in `resource_link` blocks — without requiring the URI to pre-exist in the static catalog. `exposeResources`, disabled servers, authentication, session recovery, approval policy (`approveTools`), `beforeExecute`, `onToolCall`, and output/media rendering remain binding. `includeTools` and `excludeTools` filter tools only and never hide or block resources.
 
 ### MCP Prompts
 
-MCP servers can advertise prompt templates alongside tools and resources. The adapter registers cached prompt definitions as Pi slash commands under `/mcp__<server>__<prompt>`, and refreshes their metadata whenever a server connects. Arguments support positional and `key=value` forms with quoting; required arguments are validated before `prompts/get` is called.
+MCP servers can advertise prompt templates alongside tools and resources. Both users (via slash commands) and agents (via the `mcp` gateway) can discover and render them:
+
+```js
+mcp({ action: "prompts" });
+mcp({ action: "prompts", server: "agent-board" });
+mcp({
+  action: "get-prompt",
+  server: "agent-board",
+  prompt: "create_plan",
+  args: { topic: "retry policy" },
+});
+```
+
+`prompts` lists prompt names, descriptions, and arguments (with `required` flags) across known servers, or connects on demand when `server` is specified. `get-prompt` fetches and renders a prompt through `prompts/get` with automatic OAuth and expired-session recovery, returning native Pi content blocks (text, vision-safe `ImageContent`, embedded resource text/blobs, and `resource_link` metadata) bounded by the output guard.
+
+The adapter also registers cached prompt definitions as Pi slash commands under `/mcp__<server>__<prompt>` (never double-prefixing when `toolPrefix: "mcp"`), refreshes their metadata whenever a server connects, and wires MCP `completion/complete` into slash-command argument autocomplete when a connected server advertises `capabilities.completions`. Arguments support positional and `key=value` forms with quoting; required arguments are validated before `prompts/get` is called.
 
 ```text
 /mcp__agent_board__create_plan "harden retry policy"
@@ -613,7 +631,7 @@ MCP servers can advertise prompt templates alongside tools and resources. The ad
 /mcp prompts
 ```
 
-Prompt results are flattened into one user message, preserving `[user]` and `[assistant]` role markers for multi-message results. Servers without the `prompts` capability are not probed.
+Prompt messages preserve `[user]` and `[assistant]` role markers for multi-message results and forward vision-safe embedded images as native Pi `ImageContent` instead of collapsing them to placeholders. Servers without the `prompts` capability are not probed.
 
 ### MCP Elicitation
 
@@ -681,7 +699,7 @@ Per-server `directTools` overrides the global setting. The example above pins to
 
 Set `MCP_DIRECT_TOOLS=__none__` before loading the adapter to suppress all typed-tool registration, including pins and deferred catalog tools. Gateway search can still discover schemas; use gateway calls instead. Normal tool filters, host allowlists, and disabled-server settings still apply.
 
-To expose only a subset of a server, add `includeTools`. Values can be exact original names, prefixed names, or simple glob patterns. Legacy `read_<resource>` names continue to filter resource access:
+To expose only a subset of a server's tools, add `includeTools`. Values can be exact original names, prefixed names, or simple glob patterns (`includeTools` and `excludeTools` filter tools only; use `exposeResources: false` to disable resources):
 
 ```json
 {
@@ -709,7 +727,7 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
 }
 ```
 
-`includeTools` and `excludeTools` filter typed tools, gateway discovery, resource access, and the `/mcp` panel. App-only tools stay out of the model catalog and pin choices.
+`includeTools` and `excludeTools` filter typed tools, gateway tool discovery, and the `/mcp` panel; resources are gated separately by `exposeResources`. App-only tools stay out of the model catalog and pin choices.
 
 Active schemas consume context; inactive cached schemas do not. Pin the tools you routinely need and discover the rest as the task requires.
 
@@ -821,14 +839,16 @@ Prefer `.mcp.json` for project-local shared MCP config. Use `.pi/fitch-mcp-adapt
 | Instructions                  | `mcp({ action: "instructions", server: "name" })`                                                                       |
 | Call                          | `mcp({ action: "call", tool: "tool_name", args: { key: "value" } })`                                                    |
 | Connect or refresh            | `mcp({ action: "connect", server: "name", limit: 12, offset: 0 })`                                                      |
-| List resources                | `mcp({ action: "resources", server: "name" })`                                                                          |
+| List resources and templates  | `mcp({ action: "resources", server: "name" })`                                                                          |
 | Read resource                 | `mcp({ action: "read-resource", server: "name", uri: "docs://guide" })`                                                 |
+| List prompts                  | `mcp({ action: "prompts", server: "name" })` (omit `server` to list all known prompts)                                  |
+| Get prompt                    | `mcp({ action: "get-prompt", server: "name", prompt: "brief", args: { topic: "mcp" } })`                                |
 | Read saved result             | `mcp({ action: "read-result", ref: "/returned/result/path", path: "/structuredContent" })`                              |
 | UI messages                   | `mcp({ action: "ui-messages" })`                                                                                        |
 | Auth start                    | `mcp({ action: "auth-start", server: "name" })`                                                                         |
 | Auth complete                 | `mcp({ action: "auth-complete", server: "name" })` after the browser callback, or supply `args: { redirectUrl: "..." }` |
 
-`action` is required. Search requires `query`; describe/call require `tool`; list/connect/instructions/resources/auth require `server`; resource reads require `server` and `uri`; saved-result reads require `ref`. Pass object `args`. Optional `server` disambiguates tool calls and descriptions.
+`action` is required. Search requires `query`; describe/call require `tool`; list/connect/instructions/resources/auth require `server`; resource reads require `server` and `uri`; `get-prompt` requires `server` and `prompt`; saved-result reads require `ref`. Pass object `args`. Optional `server` disambiguates tool calls and descriptions, or connects on demand for `prompts`.
 
 `connect` refreshes an already connected server, including tools, resources, prompts, and instructions. Server-scoped discovery connects that server if its catalog is unknown. Global search uses known catalogs and returns `coverage: { complete, knownServers, unknownServers }`; partial coverage is never presented as an exhaustive result. Gateway search provides schemas without activating functions, so it works for gateway-only hosts.
 

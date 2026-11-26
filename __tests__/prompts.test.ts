@@ -13,6 +13,7 @@ import {
 import { Client, InMemoryTransport, type GetPromptResult } from "@modelcontextprotocol/client";
 import {
   createPromptCommand,
+  formatPromptContent,
   formatPromptResult,
   parsePromptArgs,
   resolvePromptArgs,
@@ -81,6 +82,10 @@ describe("prompt command naming", () => {
 
   it("falls back to the server name when toolPrefix is 'none'", () => {
     expect(formatPromptCommandName("plan", "agent-board", "none")).toBe("mcp__agent_board__plan");
+  });
+
+  it("never double-prefixes when toolPrefix is 'mcp'", () => {
+    expect(formatPromptCommandName("plan", "agent-board", "mcp")).toBe("mcp__agent_board__plan");
   });
 
   it("sanitizes prompt names with unusual characters", () => {
@@ -211,6 +216,33 @@ describe("formatPromptResult", () => {
     // Images still produce a placeholder marker so the model sees the intent.
     expect(formatPromptResult(result)).toBe("[image image/png (embedded)]");
   });
+
+  it("preserves vision-safe image blocks and embedded image resource blobs as native ImageContent", () => {
+    const result: GetPromptResult = {
+      messages: [
+        { role: "user", content: { type: "text", text: "Review this screenshot:" } },
+        {
+          role: "user",
+          content: { type: "image", data: "aW1n", mimeType: "image/png; charset=utf-8" },
+        },
+        {
+          role: "user",
+          content: {
+            type: "resource",
+            resource: { uri: "img://chart.webp", mimeType: "image/webp", blob: "d2VicA==" },
+          },
+        },
+        { role: "user", content: { type: "image", data: "dGlmZg==", mimeType: "image/tiff" } },
+      ],
+    };
+
+    expect(formatPromptContent(result)).toEqual([
+      { type: "text", text: "[user] Review this screenshot:" },
+      { type: "image", data: "aW1n", mimeType: "image/png" },
+      { type: "image", data: "d2VicA==", mimeType: "image/webp" },
+      { type: "text", text: "[user] [image image/tiff (embedded)]" },
+    ]);
+  });
 });
 
 describe("createPromptCommand handler", () => {
@@ -288,6 +320,26 @@ describe("createPromptCommand handler", () => {
 
     expect(sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("needs authentication"), "error");
+  });
+
+  it("forwards vision-safe embedded images as native Pi ImageContent in sendUserMessage", async () => {
+    const promptMetadata = new Map<string, PromptMetadata[]>([["demo", [meta()]]]);
+    const { state, getPrompt } = baseState(promptMetadata);
+    getPrompt.mockResolvedValue({
+      messages: [
+        { role: "user", content: { type: "text", text: "Inspect this diagram" } },
+        { role: "user", content: { type: "image", data: "cG5n", mimeType: "image/png" } },
+      ],
+    });
+    const { context, sendUserMessage } = commandHost();
+
+    const command = createPromptCommand(host.api, () => state, meta());
+    await command.handler("ai", context);
+
+    expect(sendUserMessage).toHaveBeenCalledWith([
+      { type: "text", text: "[user] Inspect this diagram" },
+      { type: "image", data: "cG5n", mimeType: "image/png" },
+    ]);
   });
 
   it("warns when the prompt returns no textual content", async () => {

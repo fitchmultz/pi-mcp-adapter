@@ -132,6 +132,7 @@ export function createInitialState(
     config,
     toolMetadata: new Map(),
     resourceCounts: new Map(),
+    resourceTemplates: new Map(),
     promptMetadata: new Map(),
     promptMetadataLive: new Set(),
     serverInstructions: new Map(),

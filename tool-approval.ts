@@ -46,6 +46,20 @@ export function isToolCallApprovalRequired(
   );
 }
 
+function approvalPreviewArgs(
+  toolMeta: Pick<ToolMetadata, "resourceUri">,
+  args: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (
+    toolMeta.resourceUri !== undefined &&
+    toolMeta.resourceUri !== "" &&
+    Object.keys(args ?? {}).length === 0
+  ) {
+    return { uri: toolMeta.resourceUri };
+  }
+  return args ?? {};
+}
+
 export async function ensureToolCallApproved(
   state: ToolApprovalState,
   {
@@ -73,7 +87,7 @@ export async function ensureToolCallApproved(
     return { ok: false, reason: "approval_required_headless" };
   }
 
-  const json = JSON.stringify(args ?? {}, null, 2);
+  const json = JSON.stringify(approvalPreviewArgs(toolMeta, args), null, 2);
   const sanitized = sanitizeTerminalText(json);
   const preview = sanitized.length > 500 ? `${sanitized.slice(0, 500)}...` : sanitized;
   const title = `MCP: ${sanitizeTerminalText(serverName)} wants to run ${sanitizeTerminalText(toolMeta.originalName)}`;

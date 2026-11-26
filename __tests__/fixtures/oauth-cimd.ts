@@ -95,6 +95,12 @@ function mcpResult(method: string): z.infer<typeof JSONObjectSchema> {
         cacheScope: "private",
         resources: [{ name: "document", uri: "test://document" }],
       };
+    case "resources/templates/list":
+      return {
+        ttlMs: 10000,
+        cacheScope: "private",
+        resourceTemplates: [],
+      };
     case "resources/read":
       return {
         ttlMs: 10000,

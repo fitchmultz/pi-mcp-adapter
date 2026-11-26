@@ -2,6 +2,7 @@ import { InMemoryResponseCacheStore, type CacheKey } from "@modelcontextprotocol
 import {
   ListToolsResultSchema,
   ListResourcesResultSchema,
+  ListResourceTemplatesResultSchema,
   ListPromptsResultSchema,
 } from "@modelcontextprotocol/core";
 
@@ -11,7 +12,11 @@ export class ConnectionCatalogs extends InMemoryResponseCacheStore {
 
   override set(...args: Parameters<InMemoryResponseCacheStore["set"]>): number {
     const stamp = super.set(...args);
-    if (["tools/list", "resources/list", "prompts/list"].includes(args[0].method)) {
+    if (
+      ["tools/list", "resources/list", "resources/templates/list", "prompts/list"].includes(
+        args[0].method,
+      )
+    ) {
       this.keys.set(args[0].method, args[0]);
     }
     return stamp;
@@ -31,6 +36,15 @@ export class ConnectionCatalogs extends InMemoryResponseCacheStore {
   resources(): ReturnType<typeof ListResourcesResultSchema.parse>["resources"] | undefined {
     const value = this.read("resources/list");
     return value === undefined ? undefined : ListResourcesResultSchema.parse(value).resources;
+  }
+
+  resourceTemplates():
+    | ReturnType<typeof ListResourceTemplatesResultSchema.parse>["resourceTemplates"]
+    | undefined {
+    const value = this.read("resources/templates/list");
+    return value === undefined
+      ? undefined
+      : ListResourceTemplatesResultSchema.parse(value).resourceTemplates;
   }
 
   prompts(): ReturnType<typeof ListPromptsResultSchema.parse>["prompts"] | undefined {

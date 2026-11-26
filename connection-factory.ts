@@ -20,6 +20,7 @@ import {
   type McpTraceSettings,
   type McpTool,
   type McpResource,
+  type McpResourceTemplate,
   type McpPrompt,
   validateServerProtocolConfig,
 } from "./types.ts";
@@ -409,6 +410,7 @@ class ConnectionSetup {
       definition: this.options.definition,
       tools: [],
       resources: [],
+      resourceTemplates: [],
       prompts: [],
       lastUsedAt: Date.now(),
       status,
@@ -442,6 +444,7 @@ class ConnectionSetup {
     const catalogs = [
       fetchAllTools(this.client, requestOptions),
       fetchAllResources(this.client, requestOptions),
+      fetchAllResourceTemplates(this.client, requestOptions),
       fetchAllPrompts(this.client, requestOptions),
     ] as const;
     const [toolResult] = await Promise.allSettled(catalogs);
@@ -453,9 +456,10 @@ class ConnectionSetup {
     if (this.authError) {
       throw this.authError;
     }
-    const [tools, resources, promptResult] = await Promise.all(catalogs);
+    const [tools, resources, resourceTemplates, promptResult] = await Promise.all(catalogs);
     connection.tools = tools;
     connection.resources = resources;
+    connection.resourceTemplates = resourceTemplates;
     connection.prompts = promptResult.prompts;
     connection.promptDiscoveryFailed = promptResult.failed;
     return connection;
@@ -532,6 +536,28 @@ async function fetchAllResources(
     if (requestOptions?.signal?.aborted === true) {
       throwIfAborted(requestOptions.signal);
     }
+    return [];
+  }
+}
+
+async function fetchAllResourceTemplates(
+  client: Client,
+  requestOptions?: RequestOptions,
+): Promise<McpResourceTemplate[]> {
+  if (!client.getServerCapabilities()?.resources) {
+    return [];
+  }
+  try {
+    return (
+      await client.listResourceTemplates(undefined, { ...requestOptions, cacheMode: "refresh" })
+    ).resourceTemplates;
+  } catch (error) {
+    if (requestOptions?.signal?.aborted === true) {
+      throwIfAborted(requestOptions.signal);
+    }
+    logger.debug(
+      `MCP: resources/templates/list failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return [];
   }
 }

@@ -125,6 +125,16 @@ export class ManagedClient extends Client {
     );
   }
 
+  override listResourceTemplates(
+    ...args: Parameters<Client["listResourceTemplates"]>
+  ): ReturnType<Client["listResourceTemplates"]> {
+    return this.track(
+      (signal) =>
+        super.listResourceTemplates(args[0], { ...args[1], ...(signal ? { signal } : {}) }),
+      args[1]?.signal,
+    );
+  }
+
   override listPrompts(
     ...args: Parameters<Client["listPrompts"]>
   ): ReturnType<Client["listPrompts"]> {

@@ -65,6 +65,9 @@ export async function createManagerBoundaryHttp(
       case "resources/list":
         reply(response, message.id, { resources: [] });
         return;
+      case "resources/templates/list":
+        reply(response, message.id, { resourceTemplates: [] });
+        return;
       default:
         assert.fail(`Unexpected manager fixture request: ${message.method}`);
     }

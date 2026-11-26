@@ -1,7 +1,7 @@
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type ServerDefinition } from "./types.ts";
 import type { ServerConnection } from "./server-manager.ts";
-import { buildToolMetadata } from "./tool-metadata.ts";
+import { buildToolMetadata, isUiResourceUri } from "./tool-metadata.ts";
 import {
   computeServerHash,
   loadMetadataCache,
@@ -9,6 +9,7 @@ import {
   reconstructPromptMetadata,
   serializeTools,
   serializeResources,
+  serializeResourceTemplates,
   serializePrompts,
   type MetadataCache,
   type ServerCacheEntry,
@@ -37,6 +38,7 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
   if (isServerDisabled(definition)) {
     state.toolMetadata.delete(serverName);
     state.resourceCounts.delete(serverName);
+    state.resourceTemplates.delete(serverName);
     state.promptMetadata.delete(serverName);
     state.promptMetadataLive.delete(serverName);
     state.serverInstructions.delete(serverName);
@@ -62,7 +64,19 @@ export function applyServerMetadata(
     prefix,
   });
   state.toolMetadata.set(serverName, metadata);
-  state.resourceCounts.set(serverName, connection.resources.length);
+  const exposedResources =
+    definition.exposeResources === false
+      ? []
+      : connection.resources.filter((resource) => !isUiResourceUri(resource.uri));
+  state.resourceCounts.set(serverName, exposedResources.length);
+  state.resourceTemplates.set(
+    serverName,
+    definition.exposeResources === false
+      ? []
+      : (connection.resourceTemplates ?? []).filter(
+          (template) => !isUiResourceUri(template.uriTemplate),
+        ),
+  );
   if (connection.promptDiscoveryFailed !== true) {
     state.promptMetadata.set(
       serverName,
@@ -168,6 +182,12 @@ function cacheEntry(
     matchingEntry,
     options.preserveEmptyResources !== false,
   );
+  const resourceTemplates = cacheResourceTemplates(
+    definition,
+    connection,
+    matchingEntry,
+    options.preserveEmptyResources !== false,
+  );
   const prompts =
     connection.promptDiscoveryFailed === true
       ? matchingEntry?.prompts
@@ -177,6 +197,7 @@ function cacheEntry(
     configHash,
     tools,
     resources,
+    resourceTemplates,
     ...(prompts !== undefined ? { prompts } : {}),
     ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
     cachedAt: Date.now(),
@@ -242,4 +263,21 @@ function cacheResources(
     return cached;
   }
   return resources;
+}
+
+function cacheResourceTemplates(
+  definition: ServerDefinition,
+  connection: ServerConnection,
+  existing: Partial<ServerCacheEntry> | undefined,
+  preserveEmpty: boolean,
+): NonNullable<ServerCacheEntry["resourceTemplates"]> {
+  if (definition.exposeResources === false) {
+    return [];
+  }
+  const templates = serializeResourceTemplates(connection.resourceTemplates ?? []);
+  const cached = existing?.resourceTemplates;
+  if (templates.length === 0 && cached !== undefined && cached.length > 0 && preserveEmpty) {
+    return cached;
+  }
+  return templates;
 }

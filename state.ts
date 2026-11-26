@@ -9,6 +9,7 @@ import type {
   McpConfig,
   McpAdapterOptions,
   UiModelContextUpdate,
+  McpResourceTemplate,
   UiSessionMessages,
   UiStreamSummary,
 } from "./types.ts";
@@ -50,6 +51,8 @@ export interface McpExtensionState {
   toolMetadata: Map<string, ToolMetadata[]>;
   /** Native resource counts, separate from callable tools. */
   resourceCounts: Map<string, number>;
+  /** Discovered or cached MCP resource URI templates per server. */
+  resourceTemplates: Map<string, McpResourceTemplate[]>;
   promptMetadata: Map<string, PromptMetadata[]>;
   /** Servers whose prompt inventory came from successful live discovery. */
   promptMetadataLive: Set<string>;

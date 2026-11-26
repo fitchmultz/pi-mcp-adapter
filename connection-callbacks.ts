@@ -34,10 +34,12 @@ export class ConnectionCallbacks {
     const catalogs = this.catalogs.get(connection.client);
     const tools = catalogs?.tools();
     const resources = catalogs?.resources();
+    const resourceTemplates = catalogs?.resourceTemplates();
     const prompts = catalogs?.prompts();
     Object.assign(connection, {
       ...(tools === undefined ? {} : { tools }),
       ...(resources === undefined ? {} : { resources }),
+      ...(resourceTemplates === undefined ? {} : { resourceTemplates }),
       ...(prompts === undefined ? {} : { prompts, promptDiscoveryFailed: false }),
     });
   }
@@ -213,6 +215,7 @@ export class ConnectionCallbacks {
       return;
     }
     connection.resources = resources;
+    connection.resourceTemplatesStale = true;
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
   }
 

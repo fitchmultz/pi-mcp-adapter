@@ -3,18 +3,16 @@ import type { McpExtensionState } from "./state.ts";
 import type { ProxyToolUpdateCallback } from "./proxy-result.ts";
 import {
   isServerDisabled,
-  isToolAllowed,
-  resolveToolPrefix,
   type McpOperationContext,
   type McpToolCallIdentity,
-  type ToolMetadata,
-  type ServerEntry,
   type McpResource,
+  type McpResourceTemplate,
 } from "./types.ts";
 import { executeCall, prepareMcpConnection } from "./proxy-modes.ts";
 import { paginate } from "./search-ranking.ts";
 import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
+import { isUiResourceUri } from "./tool-metadata.ts";
 
 export async function executeResourceList(
   state: McpExtensionState,
@@ -37,28 +35,72 @@ export async function executeResourceList(
   if (!definition || isServerDisabled(definition)) {
     return unavailableResourceList(server, definition !== undefined);
   }
+  if (definition.exposeResources === false) {
+    const empty = { ...paginate<McpResource>([], offset, limit), resourceTemplates: [] };
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ server, ...empty }, null, 2) }],
+      details: { mode: "resources", server, ...empty },
+    };
+  }
   if (needsResourceDiscovery(state, server)) {
     const prepared = await prepareMcpConnection(state, server, signal, onUpdate);
     if (prepared.error) {
       return prepared.error;
     }
+    await refreshStaleResourceTemplates(state, server, signal);
   }
-  const prefix = resolveToolPrefix(definition, state.config.settings?.toolPrefix);
-  const page = paginate(
-    listAllowedResources(state.toolMetadata.get(server) ?? [], { definition, server, prefix }),
-    offset,
-    limit,
-  );
+  const page = paginate(listExposedResources(state, server), offset, limit);
+  const resourceTemplates = listExposedResourceTemplates(state, server);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ server, ...page }, null, 2) }],
-    details: { mode: "resources", server, ...page },
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ server, ...page, resourceTemplates }, null, 2),
+      },
+    ],
+    details: { mode: "resources", server, ...page, resourceTemplates },
   };
 }
 
 function needsResourceDiscovery(state: McpExtensionState, server: string): boolean {
   return (
-    !state.toolMetadata.has(server) || state.manager.getConnection(server)?.status === "connected"
+    !state.toolMetadata.has(server) ||
+    !state.resourceTemplates.has(server) ||
+    state.manager.getConnection(server)?.status === "connected"
   );
+}
+
+async function refreshStaleResourceTemplates(
+  state: McpExtensionState,
+  server: string,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const connection = state.manager.getConnection(server);
+  if (connection?.status !== "connected" || connection.resourceTemplatesStale !== true) {
+    return;
+  }
+  const ownedSignal = combineAbortSignals(state.owner.signal, signal);
+  const options = state.manager.getRequestOptions(server, ownedSignal);
+  try {
+    const result = await connection.client.listResourceTemplates(undefined, {
+      ...options,
+      cacheMode: "refresh",
+    });
+    const current = state.manager.getConnection(server);
+    if (current === connection && current.status === "connected") {
+      current.resourceTemplates = result.resourceTemplates;
+      current.resourceTemplatesStale = false;
+      state.resourceTemplates.set(
+        server,
+        result.resourceTemplates.filter((template) => !isUiResourceUri(template.uriTemplate)),
+      );
+    }
+  } catch {
+    if (ownedSignal?.aborted === true) {
+      throwIfAborted(ownedSignal);
+    }
+    connection.resourceTemplatesStale = false;
+  }
 }
 
 function unavailableResourceList(
@@ -80,33 +122,38 @@ function unavailableResourceList(
   };
 }
 
-function listAllowedResources(
-  tools: ToolMetadata[],
-  context: {
-    definition: ServerEntry;
-    server: string;
-    prefix: ReturnType<typeof resolveToolPrefix>;
-  },
+function listExposedResources(
+  state: McpExtensionState,
+  server: string,
 ): Array<Pick<McpResource, "uri" | "description">> {
-  const { definition, server, prefix } = context;
-  if (definition.exposeResources === false) {
-    return [];
+  const connection = state.manager.getConnection(server);
+  if (connection?.status === "connected") {
+    return connection.resources.filter(
+      (resource) => resource.name !== "" && resource.uri !== "" && !isUiResourceUri(resource.uri),
+    );
   }
+  const tools = state.toolMetadata.get(server) ?? [];
   return tools.flatMap((tool) => {
-    if (
-      tool.resourceUri === undefined ||
-      !isToolAllowed(
-        tool.originalName,
-        server,
-        prefix,
-        definition.includeTools,
-        definition.excludeTools,
-      )
-    ) {
+    if (tool.resourceUri === undefined || isUiResourceUri(tool.resourceUri)) {
       return [];
     }
     return [tool.resourceDescriptor ?? { uri: tool.resourceUri, description: tool.description }];
   });
+}
+
+function listExposedResourceTemplates(
+  state: McpExtensionState,
+  server: string,
+): McpResourceTemplate[] {
+  const connection = state.manager.getConnection(server);
+  const templates =
+    connection?.status === "connected"
+      ? (connection.resourceTemplates ?? [])
+      : (state.resourceTemplates.get(server) ?? []);
+  return templates.filter(
+    (template) =>
+      template.name !== "" && template.uriTemplate !== "" && !isUiResourceUri(template.uriTemplate),
+  );
 }
 
 export async function executeResourceRead(

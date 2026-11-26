@@ -488,6 +488,12 @@ export class OAuthRecoveryHttp {
           ...catalog,
         });
         break;
+      case "resources/templates/list":
+        this.#result(body, response, {
+          resourceTemplates: [],
+          ...catalog,
+        });
+        break;
       case "prompts/list":
         this.#result(body, response, { prompts: [{ name: "prompt" }], ...catalog });
         break;

@@ -13,6 +13,8 @@ const actions = [
   "instructions",
   "resources",
   "read-resource",
+  "prompts",
+  "get-prompt",
   "read-result",
   "auth-start",
   "auth-complete",
@@ -22,6 +24,7 @@ export type GatewayArguments = {
   action: (typeof actions)[number];
   server?: string;
   tool?: string;
+  prompt?: string;
   args?: Record<string, unknown>;
   query?: string;
   includeSchemas?: boolean;
@@ -44,6 +47,7 @@ const requirements: Partial<Record<GatewayArguments["action"], string[]>> = {
   instructions: ["server"],
   resources: ["server"],
   "read-resource": ["server", "uri"],
+  "get-prompt": ["server", "prompt"],
   "read-result": ["ref"],
   "auth-start": ["server"],
   "auth-complete": ["server"],
@@ -53,12 +57,19 @@ export const gatewayParameters = Type.Object(
   {
     action: Type.Unsafe<GatewayArguments["action"]>({ type: "string", enum: [...actions] }),
     server: Type.Optional(
-      Type.String({ description: "MCP server; required for server and resource actions." }),
+      Type.String({
+        description: "MCP server; required for server, resource, and get-prompt actions.",
+      }),
     ),
     tool: Type.Optional(
       Type.String({
         maxLength: MAX_TOOL_NAME_LENGTH,
         description: "Exact tool name for call or describe. Use server to disambiguate.",
+      }),
+    ),
+    prompt: Type.Optional(
+      Type.String({
+        description: "Exact MCP prompt name for get-prompt.",
       }),
     ),
     args: Type.Optional(
@@ -67,7 +78,7 @@ export const gatewayParameters = Type.Object(
           {},
           {
             additionalProperties: true,
-            description: "Tool arguments, or {redirectUrl} for auth-complete.",
+            description: "Tool or prompt arguments, or {redirectUrl} for auth-complete.",
           },
         ),
       ),
@@ -135,7 +146,7 @@ export const gatewayParameters = Type.Object(
       ),
       Type.Dependent(
         Type.Unsafe({
-          properties: { action: { enum: ["search", "list", "connect", "resources"] } },
+          properties: { action: { enum: ["search", "list", "connect", "resources", "prompts"] } },
         }),
         Type.Unsafe({ properties: { limit: { maximum: MAX_PAGE_SIZE } } }),
         Type.Unknown(),

@@ -21,6 +21,7 @@ const plainTheme: RenderTheme = {
 
 export interface McpProxyToolCallInput {
   tool?: string;
+  prompt?: string;
   args?: string | object;
   connect?: string;
   describe?: string;
@@ -207,21 +208,25 @@ function actionServerLabel(server: string | undefined, target: string | undefine
   return `${hasText(target) ? " @" : ""} ${server}`;
 }
 
+function actionTarget(args: McpProxyToolCallInput): string | undefined {
+  return args.tool ?? args.prompt ?? args.query ?? args.uri ?? args.ref;
+}
+
 function actionCallLines(
   args: McpProxyToolCallInput,
   maxInputChars: number,
   action: string,
 ): string[] {
-  const target = args.tool ?? args.query ?? args.uri ?? args.ref;
+  const target = actionTarget(args);
   const targetLabel = hasText(target) ? ` ${target}` : "";
   const serverLabel = actionServerLabel(args.server, target);
   let line = `mcp ${action}${targetLabel}${serverLabel}`;
   if (action === "search" && args.includeSchemas === false) {
     line += " (schemas hidden)";
   }
-  return action === "call" && args.args !== undefined && args.args !== ""
-    ? [line, formatJsonish(args.args, maxInputChars)]
-    : [line];
+  const hasPayloadArgs =
+    (action === "call" || action === "get-prompt") && args.args !== undefined && args.args !== "";
+  return hasPayloadArgs ? [line, formatJsonish(args.args, maxInputChars)] : [line];
 }
 
 export function formatMcpProxyToolCallLines(

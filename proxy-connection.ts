@@ -27,7 +27,7 @@ import {
   clearFailure,
   recordFailure,
 } from "./init.ts";
-import { buildToolMetadata } from "./tool-metadata.ts";
+import { buildToolMetadata, isUiResourceUri } from "./tool-metadata.ts";
 import { reconstructPromptMetadata } from "./metadata-cache.ts";
 import { executeList } from "./proxy-list.ts";
 
@@ -162,7 +162,19 @@ function saveConnectedMetadata(
     prefix,
   });
   state.toolMetadata.set(serverName, metadata);
-  state.resourceCounts.set(serverName, connection.resources.length);
+  const exposedResources =
+    definition.exposeResources === false
+      ? []
+      : connection.resources.filter((resource) => !isUiResourceUri(resource.uri));
+  state.resourceCounts.set(serverName, exposedResources.length);
+  state.resourceTemplates.set(
+    serverName,
+    definition.exposeResources === false
+      ? []
+      : (connection.resourceTemplates ?? []).filter(
+          (template) => !isUiResourceUri(template.uriTemplate),
+        ),
+  );
   if (connection.promptDiscoveryFailed !== true) {
     state.promptMetadata.set(
       serverName,
@@ -187,17 +199,38 @@ function refreshCallMetadata(
   connection: ServerConnection,
   definition: ServerDefinition,
 ): void {
+  const prefix = state.config.settings?.toolPrefix ?? "server";
   // Use the live descriptor for visibility, filtering, approval, schema and UI hints.
   const { metadata } = buildToolMetadata({
     tools: connection.tools,
     resources: connection.resources,
     definition,
     serverName,
-    prefix: state.config.settings?.toolPrefix ?? "server",
+    prefix,
   });
   // Search indexes by metadata-array identity, so retain it for unchanged projections.
   if (!isDeepStrictEqual(state.toolMetadata.get(serverName), metadata)) {
     state.toolMetadata.set(serverName, metadata);
+  }
+  const exposedResources =
+    definition.exposeResources === false
+      ? []
+      : connection.resources.filter((resource) => !isUiResourceUri(resource.uri));
+  state.resourceCounts.set(serverName, exposedResources.length);
+  state.resourceTemplates.set(
+    serverName,
+    definition.exposeResources === false
+      ? []
+      : (connection.resourceTemplates ?? []).filter(
+          (template) => !isUiResourceUri(template.uriTemplate),
+        ),
+  );
+  if (connection.promptDiscoveryFailed !== true) {
+    state.promptMetadata.set(
+      serverName,
+      reconstructPromptMetadata(serverName, connection.prompts, prefix, definition),
+    );
+    state.promptMetadataLive.add(serverName);
   }
 }
 function connectionErrorMessage(
