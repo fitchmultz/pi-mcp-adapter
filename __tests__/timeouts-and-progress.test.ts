@@ -207,7 +207,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
           { progress: 4, total: 4, message: "Finalizing" },
         ];
         for (const step of steps) {
-          await delay(70);
+          await delay(140);
           writeSseEvent(res, {
             jsonrpc: "2.0",
             method: "notifications/progress",
@@ -232,7 +232,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       const definition = {
         url: server.url,
         auth: false as const,
-        requestTimeoutMs: 130,
+        requestTimeoutMs: 350,
       };
       const state = createTestState({
         manager,
@@ -288,9 +288,9 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       }
 
       const elapsedMs = performance.now() - startedAt;
-      // Cross the 130ms requestTimeoutMs boundary (~320ms total across 4 progress ticks).
-      expect(elapsedMs).toBeGreaterThanOrEqual(260);
-      expect(output.details.error).toBeUndefined();
+      // Cross the 350ms requestTimeoutMs boundary (~600ms total across 4 progress ticks).
+      expect(elapsedMs).toBeGreaterThanOrEqual(500);
+      expect(output.details.error, String(output.details.message)).toBeUndefined();
       const first = output.content[0];
       assert(first?.type === "text");
       expect(first.text).toBe("finished after progress");
@@ -317,14 +317,14 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       assert(token !== undefined);
       res.writeHead(200, { "content-type": "text/event-stream" });
       for (let step = 1; step <= 3; step += 1) {
-        await delay(70);
+        await delay(140);
         writeSseEvent(res, {
           jsonrpc: "2.0",
           method: "notifications/progress",
           params: { progressToken: token, progress: step, total: 3, message: `Reading ${step}/3` },
         });
       }
-      await delay(30);
+      await delay(40);
       writeSseEvent(res, {
         jsonrpc: "2.0",
         id: body.id,
@@ -341,7 +341,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
 
     const manager = new McpServerManager();
     cleanups.push(() => manager.closeAll());
-    const definition = { url: server.url, auth: false as const, requestTimeoutMs: 120 };
+    const definition = { url: server.url, auth: false as const, requestTimeoutMs: 300 };
     const connection = await manager.connect("reports", definition);
     const state = createTestState({
       manager,
@@ -368,7 +368,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       onUpdate: (partial) => updates.push(partial),
     });
 
-    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(200);
+    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(400);
     expect(output.details.error, String(output.details.message)).toBeUndefined();
     const first = output.content[0];
     assert(first?.type === "text");
@@ -463,7 +463,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       url,
       protocolVersion: "legacy" as const,
       auth: false as const,
-      requestTimeoutMs: 100,
+      requestTimeoutMs: 250,
     };
     const connected = await manager.connect("secure", initialDef);
     const oauthDef = {
@@ -471,7 +471,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       protocolVersion: "legacy" as const,
       auth: "oauth" as const,
       oauth: { grantType: "client_credentials" as const },
-      requestTimeoutMs: 100,
+      requestTimeoutMs: 250,
     };
     const needsAuth = { ...connected, status: "needs-auth" as const };
     let currentConnection = connected;
@@ -492,8 +492,8 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       return fresh;
     });
     authMocks.authenticate.mockImplementation(async (_name, _url, _def, options) => {
-      // Exceed the 100ms requestTimeoutMs cleanly to prove auto-auth is not killed by it.
-      await delay(220);
+      // Exceed the 250ms requestTimeoutMs cleanly to prove auto-auth is not killed by it.
+      await delay(380);
       expect(options.signal?.aborted).toBe(false);
       authorized = true;
       return "authenticated";
@@ -519,7 +519,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       onUpdate: (partial) => updates.push(partial),
     });
 
-    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(200);
+    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(340);
     expect(output.details.error, String(output.details.message)).toBeUndefined();
     const first = output.content[0];
     assert(first?.type === "text");
@@ -583,8 +583,8 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
         select: async () => {
           selectCount += 1;
           if (selectCount === 1) {
-            // Exceed the 100ms requestTimeoutMs while the user reads the elicitation prompt.
-            await delay(220);
+            // Exceed the 250ms requestTimeoutMs while the user reads the elicitation prompt.
+            await delay(380);
             return "Continue";
           }
           return "Submit";
@@ -593,7 +593,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
         notify: vi.fn<() => void>(),
       },
     });
-    const definition = { url: server.url, auth: false as const, requestTimeoutMs: 100 };
+    const definition = { url: server.url, auth: false as const, requestTimeoutMs: 250 };
     const connection = await manager.connect("deploy", definition);
     const state = createTestState({
       manager,
@@ -620,7 +620,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       onUpdate: (partial) => updates.push(partial),
     });
 
-    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(200);
+    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(340);
     expect(output.details.error, String(output.details.message)).toBeUndefined();
     const first = output.content[0];
     assert(first?.type === "text");
@@ -649,7 +649,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
     const definition = {
       url: server.url,
       auth: false as const,
-      requestTimeoutMs: 90,
+      requestTimeoutMs: 250,
       retryOnTransportFailure: true,
     };
     const connection = await manager.connect("billing", definition);
@@ -687,7 +687,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
     assert(first?.type === "text");
     expect(first.text).toContain('"mutate_and_hang"');
     expect(first.text).toContain('"billing"');
-    expect(first.text).toContain("90ms");
+    expect(first.text).toContain("250ms");
     expect(first.text).toContain("requestTimeoutMs");
     expect(first.text).toContain("Read back the original operation");
     expect(first.text).toContain("Do not blindly repeat the call");
@@ -705,7 +705,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
 
     const manager = new McpServerManager();
     cleanups.push(() => manager.closeAll());
-    const definition = { url: server.url, auth: false as const, requestTimeoutMs: 85 };
+    const definition = { url: server.url, auth: false as const, requestTimeoutMs: 250 };
     const connection = await manager.connect("docs", definition);
     const state = createTestState({
       manager,
@@ -735,7 +735,7 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
     assert(first?.type === "text");
     expect(first.text).toContain('"report://slow"');
     expect(first.text).toContain('"docs"');
-    expect(first.text).toContain("85ms");
+    expect(first.text).toContain("250ms");
     expect(first.text).toContain("requestTimeoutMs");
   });
 
