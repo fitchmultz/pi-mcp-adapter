@@ -100,7 +100,7 @@ async function refreshStaleResourceTemplates(
         server,
         result.resourceTemplates.filter((template) => !isUiResourceUri(template.uriTemplate)),
       );
-      updateMetadataCache(state, server);
+      updateMetadataCache(state, server, { preserveEmptyResources: false });
     }
   } catch (error) {
     if (ownedSignal?.aborted === true) {

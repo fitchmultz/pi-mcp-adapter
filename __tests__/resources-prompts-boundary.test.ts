@@ -342,6 +342,23 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     expect(cachedAfterChange.details).toMatchObject({
       resourceTemplates: [{ name: "doc_v2", uriTemplate: "docs://v2/{slug}" }],
     });
+
+    // Clearing all templates after list_changed also clears them from disk cache (not preserved).
+    templates = [];
+    await templateServer.server.sendResourceListChanged();
+    await expect.poll(() => connection.resourceTemplatesStale).toBe(true);
+    const liveCleared = await executeResourceList(state, { server: "docs" });
+    expect(liveCleared.details).toMatchObject({ resourceTemplates: [] });
+    const coldAfterClear = createTestState({
+      config: { settings: {}, mcpServers: { docs: def } },
+      metadataCacheEnabled: true,
+    });
+    onTestFinished(() => coldAfterClear.owner.stop());
+    registerServers(coldAfterClear, [["docs", def]]);
+    const coldClearSpy = vi.spyOn(coldAfterClear.manager, "connect");
+    const cachedAfterClear = await executeResourceList(coldAfterClear, { server: "docs" });
+    expect(coldClearSpy).not.toHaveBeenCalled();
+    expect(cachedAfterClear.details).toMatchObject({ resourceTemplates: [] });
   });
 
   it("exposes prompts and get-prompt gateway actions with native images and outputGuard", async () => {
