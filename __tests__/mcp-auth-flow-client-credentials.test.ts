@@ -1201,8 +1201,12 @@ describe("mcp-auth-flow explicit auth", () => {
       "server/discover",
     );
     expect(new Headers(probeInit.headers).get("mcp-protocol-version")).toBe("2026-07-28");
-    expect(mocks.sdkAuth).toHaveBeenNthCalledWith(1, expect.anything(), {
+    const startCall = mocks.sdkAuth.mock.calls[0];
+    assert(startCall !== undefined);
+    expect(typeof startCall[1].fetchFn).toBe("function");
+    expect(startCall[1]).toEqual({
       serverUrl: "https://api.example.com/mcp",
+      fetchFn: startCall[1].fetchFn,
       resourceMetadataUrl: new URL(resourceMetadataUrl),
       scope: "mcp:read",
     });
@@ -1245,8 +1249,12 @@ describe("mcp-auth-flow explicit auth", () => {
       "authenticated",
     );
 
-    expect(mocks.sdkAuth).toHaveBeenNthCalledWith(1, expect.anything(), {
+    const startCall = mocks.sdkAuth.mock.calls[0];
+    assert(startCall !== undefined);
+    expect(typeof startCall[1].fetchFn).toBe("function");
+    expect(startCall[1]).toEqual({
       serverUrl: "https://api.example.com/mcp",
+      fetchFn: startCall[1].fetchFn,
       scope: "session:role:MCP_ROLE",
     });
     expect(mocks.sdkAuth).toHaveBeenNthCalledWith(2, expect.anything(), {
