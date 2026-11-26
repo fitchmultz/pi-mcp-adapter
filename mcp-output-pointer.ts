@@ -26,7 +26,7 @@ interface PayloadMiss {
 /** Resolve an RFC 6901 JSON Pointer on the MCP envelope or transparently inside JSON text blocks. */
 export function resolveArtifactPointer(root: unknown, path: unknown): unknown {
   const tokens = parseJsonPointer(path);
-  const outer = walkJsonPointer(root, tokens);
+  const outer = walkJsonPointer(root, tokens, true);
   if (outer.found) {
     return outer.value;
   }
@@ -37,7 +37,10 @@ export function resolveArtifactPointer(root: unknown, path: unknown): unknown {
   }
 
   const payloads = extractEmbeddedJsonPayloads(root);
-  const embedded = resolveEmbeddedPayloads(payloads, tokens);
+  const embedded =
+    outer.parentTokens.length === 0
+      ? resolveEmbeddedPayloads(payloads, tokens)
+      : { found: false as const, bestMiss: undefined };
   if (embedded.found) {
     return embedded.value;
   }
@@ -87,14 +90,44 @@ function stepJsonPointer(
   return { found: false };
 }
 
-function walkJsonPointer(root: unknown, tokens: string[]): PointerWalk {
+function isMcpResourcePath(parentTokens: readonly string[]): boolean {
+  return (
+    (parentTokens.length === 2 && parentTokens[0] === "contents") ||
+    (parentTokens.length === 3 && parentTokens[0] === "content" && parentTokens[2] === "resource")
+  );
+}
+
+function stepMcpResourceTextBlob(
+  current: unknown,
+  key: string,
+  parentTokens: readonly string[],
+): { found: true; value: string } | undefined {
+  if ((key !== "blob" && key !== "text") || !isMcpResourcePath(parentTokens)) {
+    return undefined;
+  }
+  const record = asObjectRecord(current);
+  if (key === "text" && typeof record?.text === "string") {
+    return undefined;
+  }
+  const classified = classifyResourceBlob(record);
+  return classified?.kind === "text" ? { found: true, value: classified.text } : undefined;
+}
+
+function walkJsonPointer(
+  root: unknown,
+  tokens: string[],
+  decodeResourceBlobs = false,
+): PointerWalk {
   let current = root;
   for (let index = 0; index < tokens.length; index++) {
     const key = tokens[index];
     if (key === undefined) {
       break;
     }
-    const step = stepJsonPointer(current, key);
+    const step =
+      (decodeResourceBlobs
+        ? stepMcpResourceTextBlob(current, key, tokens.slice(0, index))
+        : undefined) ?? stepJsonPointer(current, key);
     if (!step.found) {
       return { found: false, parentTokens: tokens.slice(0, index), parentValue: current };
     }

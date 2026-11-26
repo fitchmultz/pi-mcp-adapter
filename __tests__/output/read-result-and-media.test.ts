@@ -507,6 +507,39 @@ describe("MCP-209: native media/blob rendering and resource_link metadata", () =
     expect(oversizedBlock.text).toContain('{"row":"xxxx');
     expect(oversizedBlock.text).toContain("MCP text output truncated");
 
+    // Readback on the retained ref decodes UTF-8 text blobs cleanly via /contents/0/blob or /contents/0/text.
+    const oversizedRef = z.object({ resultRef: z.string() }).parse(oversizedBlob.details).resultRef;
+    const outputDirectory = state.outputDirectory;
+    assert.ok(outputDirectory !== undefined);
+    const decodedByBlob = await readMcpResult(
+      { ref: oversizedRef, path: "/contents/0/blob", limit: 10_000 },
+      { outputDirectory },
+    );
+    expect("isError" in decodedByBlob).toBe(false);
+    expect(decodedByBlob.content[0]?.text).toBe(hugeNdjson);
+    expect(decodedByBlob.details.nextOffset).toBeNull();
+    const decodedByText = await readMcpResult(
+      { ref: oversizedRef, path: "/contents/0/text", limit: 10_000 },
+      { outputDirectory },
+    );
+    expect("isError" in decodedByText).toBe(false);
+    expect(decodedByText.content[0]?.text).toBe(hugeNdjson);
+
+    // Embedded resource UTF-8 JSON blob supports both decoded text readback and nested JSON traversal.
+    const embeddedRef = z.object({ resultRef: z.string() }).parse(decodedTool.details).resultRef;
+    const embeddedText = await readMcpResult(
+      { ref: embeddedRef, path: "/content/0/resource/blob" },
+      { outputDirectory },
+    );
+    expect("isError" in embeddedText).toBe(false);
+    expect(embeddedText.content[0]?.text).toBe(jsonPayload);
+    const embeddedNested = await readMcpResult(
+      { ref: embeddedRef, path: "/content/0/resource/blob/ok" },
+      { outputDirectory },
+    );
+    expect("isError" in embeddedNested).toBe(false);
+    expect(embeddedNested.content[0]?.text).toBe("true");
+
     // Invalid UTF-8 bytes in a text/plain blob fall back cleanly to binary file on disk.
     setResourceResult({
       contents: [
@@ -713,5 +746,76 @@ describe("MCP-209: native media/blob rendering and resource_link metadata", () =
       .array(z.object({ index: z.number(), path: z.string() }))
       .parse(result.details.payloadFiles);
     expect(files.map((file) => basename(file.path).split(".").at(-1))).toEqual(["tiff"]);
+  });
+
+  it("does not fall through to embedded JSON after a partial outer-envelope miss", async () => {
+    const { state } = await createBoundaryFixture({
+      toolResult: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              structuredContent: { items: [{ id: "payload-item" }] },
+              onlyInText: "ok",
+            }),
+          },
+        ],
+        structuredContent: { status: "ok" },
+      },
+    });
+    const result = await executeCall(state, { toolName: "demo_fetch", args: {} });
+    const ref = z.object({ resultRef: z.string() }).parse(result.details).resultRef;
+    const outputDirectory = state.outputDirectory;
+    assert.ok(outputDirectory !== undefined);
+
+    // Root-level shortcut into embedded JSON still works when outer misses at root.
+    const shortcut = await readMcpResult({ ref, path: "/onlyInText" }, { outputDirectory });
+    expect("isError" in shortcut).toBe(false);
+    expect(shortcut.content[0]?.text).toBe("ok");
+
+    // Partial outer-envelope miss under /structuredContent must fail rather than reading embedded JSON.
+    const missed = await readMcpResult(
+      { ref, path: "/structuredContent/items/0/id" },
+      { outputDirectory },
+    );
+    expect("isError" in missed && missed.isError).toBe(true);
+    expect(missed.details.message).toMatch(/Nearest valid parent: \/structuredContent/);
+  });
+
+  it("falls back cleanly to .bin for prototype-key MIME types like constructor or __proto__", async () => {
+    const rawBytes = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
+    const b64 = rawBytes.toString("base64");
+    const { state } = await createBoundaryFixture({
+      toolResult: {
+        content: [
+          {
+            type: "resource",
+            resource: { uri: "bin://one", mimeType: "Constructor; charset=utf-8", blob: b64 },
+          },
+          {
+            type: "resource",
+            resource: { uri: "bin://two", mimeType: "__proto__", blob: b64 },
+          },
+          {
+            type: "audio",
+            mimeType: "toString",
+            data: b64,
+          },
+        ],
+      },
+    });
+
+    const result = await executeCall(state, { toolName: "demo_fetch", args: {} });
+    const files = z
+      .array(z.object({ index: z.number(), path: z.string() }))
+      .parse(result.details.payloadFiles);
+    expect(files.map((file) => basename(file.path).split(".").at(-1))).toEqual([
+      "bin",
+      "bin",
+      "bin",
+    ]);
+    for (const file of files) {
+      expect(await readFile(file.path)).toEqual(rawBytes);
+    }
   });
 });
