@@ -112,15 +112,36 @@ function validateSamplingFeatures(params: CreateMessageRequest["params"]): void 
   }
 }
 
+/** OpenAI models that reject `temperature` on Responses APIs when `compat.supportsTemperature` is unset. */
+const TEMPERATURE_REJECTING_MODEL_IDS = new Set([
+  "gpt-6-astra",
+  "gpt-6.1-sol",
+  "gpt-6.2-astra",
+  "gpt-6.2-sol",
+]);
+
+function modelSupportsTemperature(model: Model<Api>): boolean {
+  if (
+    model.compat &&
+    "supportsTemperature" in model.compat &&
+    model.compat.supportsTemperature !== undefined
+  ) {
+    return model.compat.supportsTemperature;
+  }
+  return !(
+    TEMPERATURE_REJECTING_MODEL_IDS.has(model.id) &&
+    (model.api === "openai-responses" ||
+      model.api === "azure-openai-responses" ||
+      model.api === "openai-codex-responses")
+  );
+}
+
 function samplingCompletionOptions(
   model: Model<Api>,
   params: CreateMessageRequest["params"],
   signal: AbortSignal | undefined,
 ): NonNullable<Parameters<ModelRegistry["complete"]>[2]> {
-  const supportsTemperature =
-    model.compat && "supportsTemperature" in model.compat
-      ? model.compat.supportsTemperature !== false
-      : true;
+  const supportsTemperature = modelSupportsTemperature(model);
   return {
     maxTokens: params.maxTokens,
     ...(supportsTemperature && params.temperature !== undefined
