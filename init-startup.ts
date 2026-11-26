@@ -1,5 +1,5 @@
 import type { McpExtensionState } from "./state.ts";
-import type { ServerDefinition } from "./types.ts";
+import { isServerDisabled, type ServerDefinition } from "./types.ts";
 import {
   loadMetadataCache,
   isServerCacheValid,
@@ -24,8 +24,8 @@ import {
   notifyToolMetadataUpdated,
   markKeepAliveAfterConnect,
   updateServerMetadata,
-  updateMetadataCache,
   applyServerMetadata,
+  applyConnectionMetadata,
 } from "./init-metadata.ts";
 import {
   recordFailure,
@@ -249,11 +249,12 @@ export async function bootstrapDirectTools(
             if (connection.status === "needs-auth") {
               return { name, ok: false };
             }
-            updateServerMetadata(state, name);
-            updateMetadataCache(state, name);
-            notifyToolMetadataUpdated(state, name, "direct-tools-bootstrap");
-            markKeepAliveAfterConnect(state, name);
-            clearFailure(state, name);
+            applyConnectionMetadata(state, {
+              serverName: name,
+              connection,
+              definition,
+              reason: "direct-tools-bootstrap",
+            });
             return { name, ok: true };
           } catch (error) {
             if (isAbortError(error, runtimeSignal)) {
@@ -286,10 +287,19 @@ export function bindLifecycle(state: McpExtensionState, runtimeSignal?: AbortSig
     if (!owner.isActive()) {
       return;
     }
-    updateServerMetadata(state, serverName);
-    updateMetadataCache(state, serverName);
-    notifyToolMetadataUpdated(state, serverName, "lifecycle-reconnect");
-    clearFailure(state, serverName);
+    const connection = state.manager.getConnection(serverName);
+    const definition = state.config.mcpServers[serverName];
+    if (connection?.status === "connected" && definition && !isServerDisabled(definition)) {
+      applyConnectionMetadata(state, {
+        serverName,
+        connection,
+        definition,
+        reason: "lifecycle-reconnect",
+      });
+    } else {
+      updateServerMetadata(state, serverName);
+      clearFailure(state, serverName);
+    }
     updateStatusBar(state);
   });
 

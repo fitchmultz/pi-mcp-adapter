@@ -744,6 +744,7 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
       syncWorkingDirectory: async () => {
         // Not used by gateway prompt dispatch.
       },
+      setServerDisabled: () => Promise.resolve({ applied: false }),
     };
     const gatewayPrompts = await executeGateway(host.api, fakeHost, {}, [
       "gw-prompts",

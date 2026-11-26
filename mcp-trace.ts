@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
@@ -35,8 +36,13 @@ export interface McpTraceWriterOptions {
   filePath: string;
   maxBytes?: number;
   maxEvents?: number;
+  truncateOnInit?: boolean;
   appendFile?: (path: string, data: string, options: { encoding: "utf8" }) => Promise<void>;
-  writeFile?: (path: string, data: string, options: { encoding: "utf8" }) => Promise<void>;
+  writeFile?: (
+    path: string,
+    data: string,
+    options: { encoding: "utf8"; flag?: string },
+  ) => Promise<void>;
   mkdir?: (path: string, options: { recursive: true }) => Promise<string | undefined>;
 }
 
@@ -80,7 +86,7 @@ function traceId(value: unknown): string | number | null | undefined {
     return value;
   }
   if (typeof value === "string") {
-    return "[REDACTED_ID]";
+    return redactTraceText(value, 160);
   }
   return undefined;
 }
@@ -177,13 +183,36 @@ export class McpTraceWriter {
     this.append = options.appendFile ?? appendFile;
     this.resetFile = options.writeFile ?? writeFile;
     this.makeDirectory = options.mkdir ?? mkdir;
-    this.fileReady = this.makeDirectory(dirname(this.options.filePath), { recursive: true })
-      .then(() => this.resetFile(this.options.filePath, "", { encoding: "utf8" }))
-      .catch((error: unknown) => {
-        // Tracing must never change MCP request/response behavior.
-        this.persistenceError = error;
-        this.stopReason = "initialization";
-      });
+    if (options.truncateOnInit !== true && options.appendFile === undefined) {
+      try {
+        this.bytesWritten = statSync(this.options.filePath).size;
+      } catch {
+        this.bytesWritten = 0;
+      }
+    }
+    this.fileReady = this.ensureFileReady();
+  }
+
+  private async ensureFileReady(): Promise<void> {
+    try {
+      await this.makeDirectory(dirname(this.options.filePath), { recursive: true });
+      if (this.options.truncateOnInit === true) {
+        await this.resetFile(this.options.filePath, "", { encoding: "utf8" });
+        return;
+      }
+      await this.resetFile(this.options.filePath, "", { encoding: "utf8", flag: "wx" });
+    } catch (error: unknown) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        Object.getOwnPropertyDescriptor(error, "code")?.value === "EEXIST"
+      ) {
+        return;
+      }
+      // Tracing must never change MCP request/response behavior.
+      this.persistenceError = error;
+      this.stopReason = "initialization";
+    }
   }
 
   get filePath(): string {
@@ -282,6 +311,184 @@ export function isMcpTraceEnabled(
   return definition.trace ?? settings?.enabled === true;
 }
 
+const MAX_PENDING_TRACE_REQUESTS = 1024;
+
+function rawRequestId(message: JSONRPCMessage): string | number | undefined {
+  if (!("id" in message)) {
+    return undefined;
+  }
+  const { id } = message;
+  if (typeof id === "string") {
+    return id;
+  }
+  if (typeof id === "number" && Number.isFinite(id)) {
+    return id;
+  }
+  return undefined;
+}
+
+function trackPendingRequest(
+  pending: Map<string | number, number>,
+  message: JSONRPCMessage,
+  startedAt: number,
+): string | number | undefined {
+  if (messageKind(message) !== "request") {
+    return undefined;
+  }
+  const id = rawRequestId(message);
+  if (id === undefined) {
+    return undefined;
+  }
+  if (!pending.has(id) && pending.size >= MAX_PENDING_TRACE_REQUESTS) {
+    const oldest = pending.keys().next().value;
+    if (oldest !== undefined) {
+      pending.delete(oldest);
+    }
+  }
+  pending.set(id, startedAt);
+  return id;
+}
+
+function consumePendingDuration(
+  pending: Map<string | number, number>,
+  message: JSONRPCMessage,
+  now: number,
+): number | undefined {
+  if (messageKind(message) !== "response") {
+    return undefined;
+  }
+  const id = rawRequestId(message);
+  if (id === undefined) {
+    return undefined;
+  }
+  const startedAt = pending.get(id);
+  if (startedAt === undefined) {
+    return undefined;
+  }
+  pending.delete(id);
+  return now - startedAt;
+}
+
+function wrapTransportSend(input: {
+  send: Transport["send"];
+  server: string;
+  transportKind: McpTraceTransport;
+  outboundPending: Map<string | number, number>;
+  inboundPending: Map<string | number, number>;
+  record: (event: McpTraceEvent) => void;
+}): Transport["send"] {
+  const { send, server, transportKind, outboundPending, inboundPending, record } = input;
+  return async (message, options) => {
+    const started = performance.now();
+    const messages: JSONRPCMessage[] = Array.isArray(message) ? message : [message];
+    const trackedIds = messages.map((item) => trackPendingRequest(outboundPending, item, started));
+    const related =
+      options?.relatedRequestId !== undefined ? { relatedRequestId: options.relatedRequestId } : {};
+    try {
+      await send(message, options);
+      const sentAt = performance.now();
+      for (const item of messages) {
+        const durationMs = consumePendingDuration(inboundPending, item, sentAt);
+        record(
+          createMcpTraceEvent({
+            direction: "outbound",
+            server,
+            transport: transportKind,
+            message: item,
+            status: "sent",
+            ...related,
+            ...(durationMs !== undefined ? { durationMs } : {}),
+          }),
+        );
+      }
+    } catch (error) {
+      for (const id of trackedIds) {
+        if (id !== undefined) {
+          outboundPending.delete(id);
+        }
+      }
+      const failedDuration = performance.now() - started;
+      for (const item of messages) {
+        record(
+          createMcpTraceEvent({
+            direction: "outbound",
+            server,
+            transport: transportKind,
+            message: item,
+            status: "error",
+            ...related,
+            durationMs: failedDuration,
+          }),
+        );
+      }
+      throw error;
+    }
+  };
+}
+
+function extractExtraRelatedRequestId(extra: MessageExtraInfo | undefined): unknown {
+  if (!extra) {
+    return undefined;
+  }
+  return Object.getOwnPropertyDescriptor(extra, "relatedRequestId")?.value;
+}
+
+function wrapTransportMessageHandler(input: {
+  handler: NonNullable<Transport["onmessage"]>;
+  server: string;
+  transportKind: McpTraceTransport;
+  outboundPending: Map<string | number, number>;
+  inboundPending: Map<string | number, number>;
+  record: (event: McpTraceEvent) => void;
+}): NonNullable<Transport["onmessage"]> {
+  const { handler, server, transportKind, outboundPending, inboundPending, record } = input;
+  return (message: JSONRPCMessage, extra?: MessageExtraInfo) => {
+    const receivedAt = performance.now();
+    trackPendingRequest(inboundPending, message, receivedAt);
+    const durationMs = consumePendingDuration(outboundPending, message, receivedAt);
+    const relatedRequestId = extractExtraRelatedRequestId(extra);
+    const status = messageKind(message) === "response" && "error" in message ? "error" : "received";
+    record(
+      createMcpTraceEvent({
+        direction: "inbound",
+        server,
+        transport: transportKind,
+        message,
+        status,
+        ...(relatedRequestId !== undefined ? { relatedRequestId } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
+      }),
+    );
+    handler(message, extra);
+  };
+}
+
+function createTransportTraceContext(
+  observer: McpTraceObserver,
+  server: string,
+  transportKind: McpTraceTransport,
+): {
+  server: string;
+  transportKind: McpTraceTransport;
+  outboundPending: Map<string | number, number>;
+  inboundPending: Map<string | number, number>;
+  record: (event: McpTraceEvent) => void;
+} {
+  return {
+    server,
+    transportKind,
+    outboundPending: new Map<string | number, number>(),
+    inboundPending: new Map<string | number, number>(),
+    record: (event: McpTraceEvent): void => {
+      try {
+        observer.record(event);
+      } catch {
+        // An observer failure must never alter SDK transport behavior.
+      }
+    },
+  };
+}
+
 /**
  * Compose the SDK's transport callbacks instead of replacing them. Protocol
  * assigns `onmessage` during connect, so the setter must keep the observer in
@@ -296,67 +503,24 @@ export function wrapTransportWithMcpTrace(
   observer: McpTraceObserver,
 ): Transport {
   let messageHandler = transport.onmessage;
-  const record = (event: McpTraceEvent): void => {
-    try {
-      observer.record(event);
-    } catch {
-      // An observer failure must never alter SDK transport behavior.
-    }
-  };
+  const traceContext = createTransportTraceContext(observer, server, transportKind);
   // The SDK requires the native stdio prototype for sibling probing and reads
   // HTTP hasPerRequestStream for cancellation. Compose callbacks in place.
   const send = transport.send.bind(transport);
   // oxlint-disable-next-line eslint/no-param-reassign -- QX-001: SDK invokes this member on the instance it holds.
-  transport.send = async (message, options) => {
-    const started = performance.now();
-    const messages: JSONRPCMessage[] = Array.isArray(message) ? message : [message];
-    try {
-      await send(message, options);
-      for (const item of messages) {
-        record(
-          createMcpTraceEvent({
-            direction: "outbound",
-            server,
-            transport: transportKind,
-            message: item,
-            status: "sent",
-            durationMs: performance.now() - started,
-          }),
-        );
-      }
-    } catch (error) {
-      for (const item of messages) {
-        record(
-          createMcpTraceEvent({
-            direction: "outbound",
-            server,
-            transport: transportKind,
-            message: item,
-            status: "error",
-            durationMs: performance.now() - started,
-          }),
-        );
-      }
-      throw error;
-    }
-  };
+  transport.send = wrapTransportSend({
+    send,
+    ...traceContext,
+  });
   Object.defineProperty(transport, "onmessage", {
     configurable: true,
     get: () => messageHandler,
     set: (handler: Transport["onmessage"]) => {
       messageHandler = handler
-        ? (message: JSONRPCMessage, extra?: MessageExtraInfo) => {
-            record(
-              createMcpTraceEvent({
-                direction: "inbound",
-                server,
-                transport: transportKind,
-                message,
-                status: "received",
-              }),
-            );
-            handler(message, extra);
-          }
+        ? wrapTransportMessageHandler({
+            handler,
+            ...traceContext,
+          })
         : undefined;
     },
   });

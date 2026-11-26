@@ -16,6 +16,19 @@ import {
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
 import { logger } from "./logger.ts";
+import { getFailureBackoffMap } from "./server-status.ts";
+
+export function clearFailure(state: McpExtensionState, serverName: string): void {
+  state.failureTracker.delete(serverName);
+  state.failureMessages.delete(serverName);
+  state.lifecycle.resetReconnectBackoff(serverName);
+  const entries = getFailureBackoffMap(state);
+  const entry = entries?.get(serverName);
+  if (entry?.timer) {
+    clearTimeout(entry.timer);
+  }
+  entries?.delete(serverName);
+}
 export function markKeepAliveAfterConnect(state: McpExtensionState, serverName: string): void {
   const definition = state.config.mcpServers[serverName];
   if (!definition || isServerDisabled(definition)) {
@@ -122,6 +135,27 @@ export function applyServerMetadata(
     syncServerInstructions(state, serverName, connection);
   }
   return failedTools.length;
+}
+
+export interface ApplyConnectionMetadataInput {
+  readonly serverName: string;
+  readonly connection: ServerConnection;
+  readonly definition: ServerDefinition;
+  readonly reason: string;
+  readonly preserveToolMetadataIdentity?: boolean;
+  readonly updateInstructions?: boolean;
+}
+
+export function applyConnectionMetadata(
+  state: McpExtensionState,
+  input: ApplyConnectionMetadataInput,
+): number {
+  const skippedCount = applyServerMetadata(state, input);
+  updateMetadataCache(state, input.serverName);
+  notifyToolMetadataUpdated(state, input.serverName, input.reason);
+  markKeepAliveAfterConnect(state, input.serverName);
+  clearFailure(state, input.serverName);
+  return skippedCount;
 }
 
 export class MetadataCacheUpdates {

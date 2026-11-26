@@ -1,4 +1,11 @@
-import type { ServerEntry, HostConfigDiscovery, ImportKind } from "./config-types.ts";
+import type {
+  HostConfigDiscovery,
+  ImportKind,
+  McpConfig,
+  McpConfigValidationError,
+  ServerEntry,
+} from "./config-types.ts";
+import type { ServerProvenance } from "./types.ts";
 
 export interface KnownServerPreset {
   id: string;
@@ -95,4 +102,31 @@ export interface LoadMcpConfigOptions {
 export interface ServerDisabledOverrideResult {
   path: string;
   changed: boolean;
+}
+
+export interface ConfigSourceReport {
+  id: string;
+  label: string;
+  path: string;
+  kind: "override" | "project" | "user" | "import" | "host";
+  scope: "global" | "project" | "override";
+  status: "loaded" | "missing" | "blocked" | "error";
+  serverCount: number;
+  importKind?: ImportKind;
+  blockedReason?: string;
+}
+
+export interface BlockedServerInfo {
+  name: string;
+  sourcePath: string;
+  reason: string;
+}
+
+export interface McpConfigSnapshot {
+  config: McpConfig;
+  provenance: Map<string, ServerProvenance>;
+  discoverySummary: McpDiscoverySummary;
+  errors: McpConfigValidationError[];
+  sources: ConfigSourceReport[];
+  blockedServers: BlockedServerInfo[];
 }

@@ -212,9 +212,30 @@ export interface McpSettings {
   oauthDir?: string;
 }
 
+export type McpConfigErrorSeverity = "error" | "warning";
+
+export type McpConfigErrorKind =
+  | "parse_error"
+  | "invalid_config_shape"
+  | "invalid_server"
+  | "invalid_setting"
+  | "invalid_import"
+  | "invalid_numeric_bound"
+  | "unknown_key";
+
+export interface McpConfigValidationError {
+  severity: McpConfigErrorSeverity;
+  kind: McpConfigErrorKind;
+  filePath: string;
+  message: string;
+  serverName?: string;
+  field?: string;
+}
+
 // Root config
 export interface McpConfig {
   mcpServers: Record<string, ServerEntry>;
   imports?: ImportKind[];
   settings?: McpSettings;
+  configErrors?: McpConfigValidationError[];
 }

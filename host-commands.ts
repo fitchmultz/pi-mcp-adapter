@@ -15,14 +15,33 @@ import { hasServerUrl, resolveServerUrl } from "./utils.ts";
 
 const MCP_SUBCOMMANDS: AutocompleteItem[] = [
   { value: "reconnect", label: "reconnect", description: "Reconnect servers" },
-  { value: "tools", label: "tools", description: "List all tools" },
+  { value: "tools", label: "tools", description: "List tools (optionally by server)" },
   { value: "prompts", label: "prompts", description: "List all MCP prompts" },
   { value: "setup", label: "setup", description: "Configure MCP servers" },
   { value: "logout", label: "logout", description: "Clear server credentials" },
   { value: "disable", label: "disable", description: "Disable a server" },
   { value: "enable", label: "enable", description: "Enable a server" },
   { value: "status", label: "status", description: "Show server status" },
+  { value: "reload", label: "reload", description: "Reload MCP config and runtime" },
+  { value: "doctor", label: "doctor", description: "Inspect config, auth, and diagnostics" },
 ];
+
+const SERVER_COMPLETION_SUBCOMMANDS = new Set([
+  "reconnect",
+  "tools",
+  "logout",
+  "disable",
+  "enable",
+  "doctor",
+]);
+
+function formatMcpUsage(unknownSubcommand?: string): string {
+  const prefix =
+    unknownSubcommand !== undefined && unknownSubcommand.length > 0
+      ? `Unknown /mcp subcommand "${unknownSubcommand}". `
+      : "";
+  return `${prefix}Usage: /mcp [status|reconnect [server]|tools [server]|prompts|setup|logout <server>|disable <server>|enable <server>|reload|doctor [server]]`;
+}
 
 type Command = {
   state: McpExtensionState;
@@ -97,13 +116,13 @@ export class McpHostCommands {
       !state ||
       subcommand === undefined ||
       query === undefined ||
-      !["reconnect", "logout", "disable", "enable"].includes(subcommand)
+      !SERVER_COMPLETION_SUBCOMMANDS.has(subcommand)
     ) {
       return null;
     }
     const servers = Object.entries(state.config.mcpServers)
       .filter(([, definition]) => {
-        if (subcommand === "reconnect") {
+        if (subcommand === "reconnect" || subcommand === "tools") {
           return !isServerDisabled(definition);
         }
         if (subcommand === "logout") {
@@ -144,7 +163,9 @@ export class McpHostCommands {
     if (!state) {
       return;
     }
-    const parts = args.trim().split(/\s+/);
+    const trimmed = args.trim();
+    const parts = trimmed.length === 0 ? [] : trimmed.split(/\s+/);
+    const subcommand = parts[0] ?? "";
     const command: Command = {
       state,
       ctx,
@@ -153,7 +174,13 @@ export class McpHostCommands {
       target: parts[1],
       rest: parts.slice(1).join(" "),
     };
-    switch (parts[0] ?? "") {
+    switch (subcommand) {
+      case "":
+        await this.status(command);
+        break;
+      case "status":
+        await commands.showStatus(state, ctx);
+        break;
       case "reconnect":
         owner?.throwIfInactive();
         await commands.reconnectServers(state, ctx, command.target);
@@ -162,7 +189,7 @@ export class McpHostCommands {
         }
         break;
       case "tools":
-        await commands.showTools(state, ctx);
+        await commands.showTools(state, ctx, command.target);
         break;
       case "prompts":
         await commands.showPrompts(state, ctx);
@@ -175,10 +202,24 @@ export class McpHostCommands {
         break;
       case "disable":
       case "enable":
-        this.setDisabled(command, parts[0] === "disable");
+        await this.setDisabled(command, subcommand === "disable");
+        break;
+      case "reload":
+        await this.reload(command);
+        break;
+      case "doctor":
+        await commands.showDoctor(
+          state,
+          ctx,
+          {
+            configOverridePath: this.host.configPath,
+            discoveryOptions: nativePiConfigOptions(this.pi),
+          },
+          command.target,
+        );
         break;
       default:
-        await this.status(command);
+        this.notify(ctx, formatMcpUsage(subcommand), "warning");
         break;
     }
   }
@@ -237,7 +278,10 @@ export class McpHostCommands {
       : this.host.configPath;
   }
 
-  private setDisabled({ state, ctx, owner, rest }: Command, disabled: boolean): void {
+  private async setDisabled(
+    { state, ctx, owner, rest }: Command,
+    disabled: boolean,
+  ): Promise<void> {
     const subcommand = disabled ? "disable" : "enable";
     if (!ctx.isProjectTrusted()) {
       this.notify(
@@ -270,10 +314,72 @@ export class McpHostCommands {
       rest,
       disabled,
     );
-    const message = result.changed
-      ? `${disabled ? "Disabled" : "Enabled"} server "${rest}" in ${result.path} — run /reload to apply`
-      : `Server "${rest}" is already ${disabled ? "disabled" : "enabled"}`;
-    this.notify(ctx, message, "info");
+    const live = await this.host.setServerDisabled(rest, disabled, ctx);
+    owner?.throwIfInactive();
+    this.notifyDisabledOutcome(ctx, { server: rest, disabled, persisted: result, live });
+  }
+
+  private notifyEnabledOutcome(
+    ctx: ExtensionContext,
+    server: string,
+    persistedPath: string,
+    live: { outcome?: string; toolCount?: number; errorMessage?: string },
+  ): void {
+    if (live.outcome === "connected") {
+      const count = live.toolCount ?? 0;
+      this.notify(
+        ctx,
+        `Enabled server "${server}" (${count} tool${count === 1 ? "" : "s"} registered)`,
+        "info",
+      );
+      return;
+    }
+    if (live.outcome === "needs-auth") {
+      this.notify(
+        ctx,
+        `Enabled server "${server}" (run /mcp-auth ${server} to sign in)`,
+        "warning",
+      );
+      return;
+    }
+    if (live.outcome === "failed") {
+      const reason = live.errorMessage ?? "unknown error";
+      this.notify(ctx, `Enabled server "${server}", but connection failed: ${reason}`, "warning");
+      return;
+    }
+    this.notify(ctx, `Enabled server "${server}" in ${persistedPath}`, "info");
+  }
+
+  private notifyDisabledOutcome(
+    ctx: ExtensionContext,
+    input: {
+      server: string;
+      disabled: boolean;
+      persisted: { path: string; changed: boolean };
+      live: { applied: boolean; outcome?: string; toolCount?: number; errorMessage?: string };
+    },
+  ): void {
+    const { server, disabled, persisted, live } = input;
+    if (!persisted.changed && !live.applied) {
+      const stateWord = disabled ? "disabled" : "enabled";
+      this.notify(ctx, `Server "${server}" is already ${stateWord}`, "info");
+      return;
+    }
+    if (disabled) {
+      const note = live.applied ? "disconnected and tools unloaded" : `saved to ${persisted.path}`;
+      this.notify(ctx, `Disabled server "${server}" (${note})`, "info");
+      return;
+    }
+    this.notifyEnabledOutcome(ctx, server, persisted.path, live);
+  }
+
+  private async reload({ ctx, owner, original }: Command): Promise<void> {
+    owner?.throwIfInactive();
+    if (typeof original.reload === "function") {
+      await original.reload();
+      return;
+    }
+    this.notify(ctx, "MCP reload is unavailable in this host context.", "warning");
   }
 
   private async status({ state, ctx, owner, original }: Command): Promise<void> {

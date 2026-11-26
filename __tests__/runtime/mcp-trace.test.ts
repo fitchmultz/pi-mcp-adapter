@@ -84,13 +84,13 @@ describe("MCP protocol tracing", () => {
       status: "received",
       relatedRequestId: "request-without-a-keyword",
     });
-    expect(sensitiveMetadata.id).toBe("[REDACTED_ID]");
-    expect(sensitiveMetadata.relatedRequestId).toBe("[REDACTED_ID]");
+    expect(sensitiveMetadata.id).toBe("opaque-sensitive-id");
+    expect(sensitiveMetadata.relatedRequestId).toBe("request-without-a-keyword");
     expect(JSON.stringify(sensitiveMetadata)).not.toContain("example.test");
     expect(JSON.stringify(sensitiveMetadata)).not.toContain("private/path");
   });
 
-  it("resets a reused destination before appending new events", async () => {
+  it("preserves existing events in a reused destination instead of truncating across session inits", async () => {
     const filePath = await tracePath();
     await writeFile(filePath, "previous session\n", "utf8");
     const writer = new McpTraceWriter({ filePath });
@@ -103,7 +103,7 @@ describe("MCP protocol tracing", () => {
     });
     writer.write(event);
     await writer.flush(true);
-    expect(await readFile(filePath, "utf8")).toBe(`${JSON.stringify(event)}\n`);
+    expect(await readFile(filePath, "utf8")).toBe(`previous session\n${JSON.stringify(event)}\n`);
   });
 
   it("bounds metadata strings and rejects events over the file limit", async () => {

@@ -24,8 +24,13 @@ export function isUnknownArray(value: unknown): value is unknown[] {
 const isString = (value: unknown): value is string => typeof value === "string";
 const isNullableString = (value: unknown): value is string | null =>
   value === null || isString(value);
-const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
-const isNumber = (value: unknown): value is number => typeof value === "number";
+export const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
+export const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+export const isPositiveNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value > 0;
+export const isNonNegativeNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= 0;
 export const isStringArray = (value: unknown): value is string[] =>
   isUnknownArray(value) && value.every(isString);
 export const isStringRecord = (value: unknown): value is Record<string, string> =>
@@ -70,7 +75,7 @@ function isPrivateKeyJwt(value: unknown): value is OAuthPrivateKeyJwtConfig {
     isString(value.algorithm) &&
     matchesOptionalFields(value, {
       audience: isString,
-      lifetimeSeconds: isNumber,
+      lifetimeSeconds: isPositiveNumber,
       claims: isConfigObject,
     } satisfies OptionalFields<Omit<OAuthPrivateKeyJwtConfig, "privateKey" | "algorithm">>)
   );
@@ -88,7 +93,7 @@ function isCrossAppAccess(value: unknown): value is OAuthCrossAppAccessConfig {
     >)
   );
 }
-const oauthFields = {
+export const oauthFields = {
   skipIssuerMetadataValidation: isBoolean,
   grantType: (value: unknown): value is OAuthConfig["grantType"] & string =>
     value === "authorization_code" || value === "client_credentials",
@@ -111,7 +116,7 @@ function isOAuth(value: unknown): value is OAuthConfig | false | null {
     (isConfigObject(value) && matchesOptionalFields(value, oauthFields))
   );
 }
-const serverFields = {
+export const serverFields = {
   description: isString,
   command: isNullableString,
   args: isStringArray,
@@ -130,8 +135,8 @@ const serverFields = {
   oauth: isOAuth,
   lifecycle: (value: unknown): value is Exclude<ServerEntry["lifecycle"], undefined> =>
     value === "keep-alive" || value === "lazy" || value === "lazy-keep-alive" || value === "eager",
-  idleTimeout: isNumber,
-  requestTimeoutMs: isNumber,
+  idleTimeout: isNonNegativeNumber,
+  requestTimeoutMs: isPositiveNumber,
   exposeResources: isBoolean,
   directTools: isToolSelection,
   toolPrefix: isToolPrefix,
@@ -148,36 +153,35 @@ const serverFields = {
 export function isServerEntry(value: unknown): value is ServerEntry {
   return isConfigObject(value) && matchesOptionalFields(value, serverFields);
 }
+export const outputGuardFields = {
+  maxBytes: isNonNegativeNumber,
+  maxLines: isNonNegativeNumber,
+  detailsMaxBytes: isNonNegativeNumber,
+} satisfies OptionalFields<McpOutputGuardSettings>;
+
 function isOutputGuard(value: unknown): value is McpOutputGuardSettings | boolean {
   return (
-    isBoolean(value) ||
-    (isConfigObject(value) &&
-      matchesOptionalFields(value, {
-        maxBytes: isNumber,
-        maxLines: isNumber,
-        detailsMaxBytes: isNumber,
-      } satisfies OptionalFields<McpOutputGuardSettings>))
+    isBoolean(value) || (isConfigObject(value) && matchesOptionalFields(value, outputGuardFields))
   );
 }
+export const traceFields = {
+  enabled: isBoolean,
+  file: isNullableString,
+  maxBytes: isNonNegativeNumber,
+  maxEvents: isNonNegativeNumber,
+} satisfies OptionalFields<McpTraceSettings>;
+
 function isTrace(value: unknown): value is McpTraceSettings {
-  return (
-    isConfigObject(value) &&
-    matchesOptionalFields(value, {
-      enabled: isBoolean,
-      file: isNullableString,
-      maxBytes: isNumber,
-      maxEvents: isNumber,
-    } satisfies OptionalFields<McpTraceSettings>)
-  );
+  return isConfigObject(value) && matchesOptionalFields(value, traceFields);
 }
-const settingsFields = {
+export const settingsFields = {
   toolPrefix: isToolPrefix,
   showStatusIcon: isBoolean,
   mcpFooterStatus: (value: unknown): value is "full" | "compact" | "off" =>
     value === "full" || value === "compact" || value === "off",
   hostConfigDiscovery: (value: unknown): value is "off" | "on" => value === "off" || value === "on",
-  idleTimeout: isNumber,
-  requestTimeoutMs: isNumber,
+  idleTimeout: isNonNegativeNumber,
+  requestTimeoutMs: isPositiveNumber,
   directTools: isBoolean,
   approveTools: isToolSelection,
   uiViewer: isUiViewer,

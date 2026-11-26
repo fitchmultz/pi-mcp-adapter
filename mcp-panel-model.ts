@@ -10,14 +10,9 @@ import {
   reconstructToolMetadata,
   type MetadataCache,
   type ServerCacheEntry,
-  type CachedTool,
 } from "./metadata-cache.ts";
+import { estimateToolTokens } from "./tool-metadata.ts";
 import { matchesFuzzy } from "./mcp-panel-text.ts";
-function estimateTokens(tool: CachedTool): number {
-  const schemaLen = JSON.stringify(tool.inputSchema ?? {}).length;
-  const descLen = tool.description?.length ?? 0;
-  return Math.ceil((tool.name.length + descLen + schemaLen) / 4) + 10;
-}
 
 /** The panel adds its local reconnect transition to the reported connection status. */
 type ConnectionStatus = McpPanelConnectionStatus | "connecting";
@@ -85,7 +80,7 @@ export class PanelServer {
           description: tool.description,
           isDirect: previous?.isDirect ?? pinned,
           wasDirect: previous?.wasDirect ?? pinned,
-          estimatedTokens: estimateTokens(tool),
+          estimatedTokens: estimateToolTokens(tool),
         };
       });
     this.data.hasCachedData = true;
@@ -187,6 +182,22 @@ function getServerItems(
   return items;
 }
 
+function serverMatchesSearchWithoutTools(server: ServerState, query: PanelQuery): boolean {
+  const keepsWithoutMatchingTools =
+    !server.hasCachedData ||
+    server.connectionStatus === "failed" ||
+    server.connectionStatus === "needs-auth" ||
+    server.connectionStatus === "blocked";
+  if (!keepsWithoutMatchingTools) {
+    return false;
+  }
+  if (query.mode === "name") {
+    return matchesFuzzy(query.text, server.name);
+  }
+  const extra = [server.definition.description ?? "", server.failureMessage ?? ""].join(" ");
+  return matchesFuzzy(query.text, server.name) || matchesFuzzy(query.text, extra);
+}
+
 export function buildVisibleItems(input: {
   servers: readonly PanelServer[];
   descSearchActive: boolean;
@@ -207,5 +218,14 @@ export function buildVisibleItems(input: {
   const matchingServers = new Set(
     items.filter((item) => item.type === "tool").map((item) => item.serverIndex),
   );
-  return items.filter((item) => item.type !== "server" || matchingServers.has(item.serverIndex));
+  return items.filter((item) => {
+    if (item.type !== "server") {
+      return true;
+    }
+    if (matchingServers.has(item.serverIndex)) {
+      return true;
+    }
+    const server = input.servers[item.serverIndex];
+    return server !== undefined && serverMatchesSearchWithoutTools(server.data, query);
+  });
 }

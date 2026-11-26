@@ -8,6 +8,13 @@ import type { McpExtensionState } from "./state.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpConfig } from "./types.ts";
 
+export interface LiveServerToggleResult {
+  readonly applied: boolean;
+  readonly outcome?: "disabled" | "connected" | "needs-auth" | "failed";
+  readonly toolCount?: number;
+  readonly errorMessage?: string;
+}
+
 export interface McpAdapterHost {
   readonly state: McpExtensionState | null;
   readonly owner: McpRuntimeOwner | null;
@@ -18,6 +25,11 @@ export interface McpAdapterHost {
   readonly directToolsFrozen: boolean;
   syncToolSurface: () => void;
   applyDirectToolConfigChanges: (changes: Map<string, true | string[] | false>) => void;
+  setServerDisabled: (
+    serverName: string,
+    disabled: boolean,
+    ctx: ExtensionContext,
+  ) => Promise<LiveServerToggleResult>;
   syncWorkingDirectory: (ctx: ExtensionContext) => Promise<void>;
   ensureCommandState: (
     owner: McpRuntimeOwner | null,

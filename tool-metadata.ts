@@ -57,6 +57,23 @@ export function buildToolMetadata({
   return { metadata, failedTools };
 }
 
+export function estimateToolTokens(tool: {
+  readonly name: string;
+  readonly description?: string | undefined;
+  readonly inputSchema?: unknown;
+}): number {
+  const schemaLen = JSON.stringify(tool.inputSchema ?? {}).length;
+  const descLen = tool.description?.length ?? 0;
+  return Math.ceil((tool.name.length + descLen + schemaLen) / 4) + 10;
+}
+
+export function formatTokenCount(tokens: number): string {
+  if (tokens >= 1000) {
+    return `${(tokens / 1000).toFixed(1)}k`;
+  }
+  return String(tokens);
+}
+
 interface MetadataContext {
   definition: ServerEntry;
   serverName: string;

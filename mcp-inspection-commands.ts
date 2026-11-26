@@ -1,31 +1,42 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import {
-  getMcpDiscoverySummary,
   getPiGlobalWriteTarget,
+  inspectMcpConfigSnapshot,
+  type BlockedServerInfo,
   type LoadMcpConfigOptions,
+  type McpDiscoverySummary,
 } from "./config.ts";
 import { loadOnboardingState } from "./onboarding-state.ts";
 import {
   isServerDisabled,
   type McpConfig,
+  type McpConfigValidationError,
   type PromptMetadata,
   type ServerProvenance,
 } from "./types.ts";
+import { estimateToolTokens, formatTokenCount } from "./tool-metadata.ts";
 import { getFailureAgeSeconds, getFailureMessage } from "./init.ts";
 import { inspectionStatus, serverStage } from "./server-status.ts";
 
-export function buildSharedConfigNoticeLines(
-  configOverridePath: string | undefined,
-  cwd: string,
-  discoveryOptions?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
+export interface PanelNoticeInput {
+  readonly discoverySummary?: McpDiscoverySummary;
+  readonly errors?: readonly McpConfigValidationError[];
+  readonly blockedServers?: readonly BlockedServerInfo[];
+}
+
+export interface PanelNoticesResult {
+  readonly noticeLines: string[];
+  readonly sharedConfigHintShown: boolean;
+}
+
+function formatSharedConfigNotice(
+  discovery: McpDiscoverySummary | undefined,
+  sharedConfigHintShownBefore: boolean,
 ): string[] {
-  const discovery = getMcpDiscoverySummary(configOverridePath, cwd, discoveryOptions);
-  const onboardingState = loadOnboardingState();
-  if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
+  if (!discovery || !discovery.hasSharedServers || sharedConfigHintShownBefore) {
     return [];
   }
-
   const sharedSources = discovery.sources.filter(
     (source) => source.kind === "shared" && source.serverCount > 0,
   );
@@ -34,6 +45,77 @@ export function buildSharedConfigNoticeLines(
     `Using standard MCP config from ${sourceList}.`,
     "Pi only writes compatibility imports and adapter-specific overrides into Pi-owned files when needed.",
   ];
+}
+
+function formatConfigErrorNotices(errors: readonly McpConfigValidationError[]): string[] {
+  const lines = errors.slice(0, 3).map((err) => {
+    const scope = [err.serverName, err.field].filter(Boolean).join(".");
+    const loc = scope.length > 0 ? `${err.filePath} (${scope})` : err.filePath;
+    return `Config ${err.severity}: ${loc} — ${err.message}`;
+  });
+  if (errors.length > 3) {
+    lines.push(`… +${errors.length - 3} more config issues (run /mcp doctor)`);
+  }
+  return lines;
+}
+
+function resolveNoticeInputs(
+  configOverridePath: string | undefined,
+  cwd: string,
+  discoveryOptions:
+    | Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">
+    | undefined,
+  precomputed: PanelNoticeInput | undefined,
+): {
+  discovery: McpDiscoverySummary | undefined;
+  errors: readonly McpConfigValidationError[];
+  blocked: readonly BlockedServerInfo[];
+} {
+  if (precomputed?.discoverySummary !== undefined) {
+    return {
+      discovery: precomputed.discoverySummary,
+      errors: precomputed.errors ?? [],
+      blocked: precomputed.blockedServers ?? [],
+    };
+  }
+  const snapshot = inspectMcpConfigSnapshot(configOverridePath, cwd, discoveryOptions);
+  return {
+    discovery: snapshot.discoverySummary,
+    errors: precomputed?.errors ?? snapshot.errors,
+    blocked: precomputed?.blockedServers ?? snapshot.blockedServers,
+  };
+}
+
+export function buildPanelNotices(
+  configOverridePath: string | undefined,
+  cwd: string,
+  discoveryOptions?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
+  precomputed?: PanelNoticeInput,
+): PanelNoticesResult {
+  const { discovery, errors, blocked } = resolveNoticeInputs(
+    configOverridePath,
+    cwd,
+    discoveryOptions,
+    precomputed,
+  );
+  const onboardingState = loadOnboardingState();
+  const sharedLines = formatSharedConfigNotice(discovery, onboardingState.sharedConfigHintShown);
+  const noticeLines = [...sharedLines, ...formatConfigErrorNotices(errors)];
+  if (blocked.length > 0) {
+    noticeLines.push(
+      `Blocked (untrusted project): ${blocked.map((entry) => entry.name).join(", ")}`,
+    );
+  }
+  return { noticeLines, sharedConfigHintShown: sharedLines.length > 0 };
+}
+
+export function buildSharedConfigNoticeLines(
+  configOverridePath: string | undefined,
+  cwd: string,
+  discoveryOptions?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
+  precomputed?: PanelNoticeInput,
+): string[] {
+  return buildPanelNotices(configOverridePath, cwd, discoveryOptions, precomputed).noticeLines;
 }
 
 export function withFallbackServerProvenance(
@@ -78,25 +160,45 @@ function serverStatusLine(state: McpExtensionState, name: string): string {
   return `${statusIcon} ${name}: ${status}${toolSuffix}`;
 }
 
+function blockedStatusEntries(state: McpExtensionState, ctx: ExtensionContext) {
+  if (state.programmaticConfig === true || ctx.isProjectTrusted()) {
+    return [];
+  }
+  return inspectMcpConfigSnapshot(state.configPath, ctx.cwd, { includeProject: false })
+    .blockedServers;
+}
+
 export async function showStatus(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
   if (!ctx.hasUI) {
     return;
   }
 
   const lines: string[] = ["MCP Server Status:", ""];
-
-  for (const name of Object.keys(state.config.mcpServers)) {
-    const definition = state.config.mcpServers[name];
-    if (isServerDisabled(definition)) {
-      lines.push(`⊘ ${name}: disabled (run /mcp enable ${name}, then /reload)`);
-      continue;
-    }
-    lines.push(serverStatusLine(state, name));
+  for (const [name, definition] of Object.entries(state.config.mcpServers)) {
+    lines.push(
+      isServerDisabled(definition)
+        ? `⊘ ${name}: disabled (run /mcp enable ${name})`
+        : serverStatusLine(state, name),
+    );
   }
 
-  if (Object.keys(state.config.mcpServers).length === 0) {
+  const blocked = blockedStatusEntries(state, ctx);
+  for (const entry of blocked) {
+    lines.push(`⊘ ${entry.name}: blocked (${entry.reason})`);
+  }
+
+  if (Object.keys(state.config.mcpServers).length === 0 && blocked.length === 0) {
     lines.push("No MCP servers configured");
     lines.push("Run /mcp setup to adopt imports or scaffold a starter .mcp.json");
+  }
+
+  const configErrors = state.configErrors ?? [];
+  if (configErrors.length > 0) {
+    lines.push("");
+    lines.push(`Config validation issues (${configErrors.length} — run /mcp doctor for details):`);
+    for (const err of configErrors.slice(0, 3)) {
+      lines.push(`  • [${err.severity}] ${err.message}`);
+    }
   }
 
   ctx.ui.notify(lines.join("\n"), "info");
@@ -165,32 +267,92 @@ export async function showPrompts(state: McpExtensionState, ctx: ExtensionContex
   ctx.ui.notify(lines.join("\n"), "info");
 }
 
-export async function showTools(state: McpExtensionState, ctx: ExtensionContext): Promise<void> {
-  if (!ctx.hasUI) {
-    return;
+function validateToolsServerTarget(
+  state: McpExtensionState,
+  ctx: ExtensionContext,
+  targetServer: string | undefined,
+): boolean {
+  if (targetServer === undefined || targetServer.length === 0) {
+    return true;
   }
-
-  const allTools = [...state.toolMetadata.entries()]
-    .filter(([serverName]) => !isServerDisabled(state.config.mcpServers[serverName]))
-    .flatMap(([, metadata]) =>
-      metadata.filter((tool) => tool.resourceUri === undefined).map((tool) => tool.name),
-    );
-
-  if (allTools.length === 0) {
+  const entry = state.config.mcpServers[targetServer];
+  if (!entry) {
+    ctx.ui.notify(`Server "${targetServer}" not found in config`, "error");
+    return false;
+  }
+  if (isServerDisabled(entry)) {
     ctx.ui.notify(
-      'No MCP tools discovered. Connect a server with mcp({ action: "connect" }).',
-      "info",
+      `Server "${targetServer}" is disabled. Run /mcp enable ${targetServer}.`,
+      "warning",
     );
+    return false;
+  }
+  return true;
+}
+
+function collectDiscoveredServerTools(
+  state: McpExtensionState,
+  targetServer: string | undefined,
+): Array<{
+  serverName: string;
+  tools: Array<{ name: string; tokens: number }>;
+  serverTokens: number;
+}> {
+  const hasFilter = targetServer !== undefined && targetServer.length > 0;
+  return [...state.toolMetadata.entries()]
+    .filter(([serverName]) => {
+      if (hasFilter && serverName !== targetServer) {
+        return false;
+      }
+      return !isServerDisabled(state.config.mcpServers[serverName]);
+    })
+    .map(([serverName, metadata]) => {
+      const tools = metadata
+        .filter((tool) => tool.resourceUri === undefined)
+        .map((tool) => ({ name: tool.name, tokens: estimateToolTokens(tool) }));
+      return {
+        serverName,
+        tools,
+        serverTokens: tools.reduce((sum, tool) => sum + tool.tokens, 0),
+      };
+    })
+    .filter((entry) => entry.tools.length > 0);
+}
+
+export async function showTools(
+  state: McpExtensionState,
+  ctx: ExtensionContext,
+  targetServer?: string,
+): Promise<void> {
+  if (!ctx.hasUI || !validateToolsServerTarget(state, ctx, targetServer)) {
     return;
   }
 
-  const lines = [
-    "Discovered MCP Tools:",
-    "",
-    ...allTools.map((t) => `  ${t}`),
-    "",
-    `Total: ${allTools.length} tool${allTools.length === 1 ? "" : "s"}`,
-  ];
+  const serverEntries = collectDiscoveredServerTools(state, targetServer);
+  const totalTools = serverEntries.reduce((sum, entry) => sum + entry.tools.length, 0);
+  if (totalTools === 0) {
+    const emptyMsg =
+      targetServer !== undefined && targetServer.length > 0
+        ? `No MCP tools discovered for "${targetServer}". Connect with mcp({ action: "connect", server: "${targetServer}" }).`
+        : 'No MCP tools discovered. Connect a server with mcp({ action: "connect" }).';
+    ctx.ui.notify(emptyMsg, "info");
+    return;
+  }
+
+  const totalTokens = serverEntries.reduce((sum, entry) => sum + entry.serverTokens, 0);
+  const lines = ["Discovered MCP Tools:", ""];
+  for (const entry of serverEntries) {
+    lines.push(
+      `${entry.serverName} (${entry.tools.length} tool${entry.tools.length === 1 ? "" : "s"}, ~${formatTokenCount(entry.serverTokens)} tokens):`,
+    );
+    for (const tool of entry.tools) {
+      lines.push(`  ${tool.name} (~${formatTokenCount(tool.tokens)} tokens)`);
+    }
+  }
+  lines.push("");
+  lines.push(
+    `Total: ${totalTools} tool${totalTools === 1 ? "" : "s"} (~${formatTokenCount(totalTokens)} tokens)`,
+  );
 
   ctx.ui.notify(lines.join("\n"), "info");
 }

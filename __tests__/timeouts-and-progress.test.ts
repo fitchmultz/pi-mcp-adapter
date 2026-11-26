@@ -797,6 +797,9 @@ describe("MCP request timeouts and progress streaming (MCP-205)", () => {
       ensureCommandState: vi.fn<() => Promise<typeof state>>(async () => state),
       getToolState: vi.fn<() => Promise<typeof state>>(async () => state),
       syncWorkingDirectory: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+      setServerDisabled: vi.fn<() => Promise<{ applied: boolean }>>(() =>
+        Promise.resolve({ applied: false }),
+      ),
     };
     const updates: Array<AgentToolResult<Record<string, unknown>>> = [];
     const onUpdate = (partial: AgentToolResult<Record<string, unknown>>) => {

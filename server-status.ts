@@ -82,6 +82,7 @@ export function formatFailureSummary(
  * those inputs with its own precedence and its own words. Each surface keeps its vocabulary below.
  */
 export type ServerStage =
+  | "blocked"
   | "disabled"
   | "connected"
   | "needs-auth"
@@ -95,6 +96,8 @@ export interface ServerStageInput {
   failedAgoSeconds: number | null;
   /** Whether a discovered or cached catalog exists; false means never discovered. */
   catalogKnown: boolean;
+  /** True when the server is prevented from running by trust or host policy. */
+  blocked?: boolean;
 }
 
 /** Age of an active failure record, or null once the retry window has passed. */
@@ -128,7 +131,11 @@ export function serverStage({
   transport,
   failedAgoSeconds,
   catalogKnown,
+  blocked,
 }: ServerStageInput): ServerStage {
+  if (blocked === true) {
+    return "blocked";
+  }
   if (isServerDisabled(definition)) {
     return "disabled";
   }
@@ -172,6 +179,8 @@ export function inspectionStatus(
   failureMessage: string | null,
 ): InspectionStatus {
   switch (stage) {
+    case "blocked":
+      return { status: "blocked", statusIcon: "⊘", failed: false };
     case "disabled":
       return { status: "disabled", statusIcon: "⊘", failed: false };
     case "connected":

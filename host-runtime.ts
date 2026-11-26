@@ -1,7 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type * as Init from "./init.ts";
 import type { McpExtensionState } from "./state.ts";
-import { isBuiltinMcpActive, type McpAdapterHost } from "./host-contract.ts";
+import {
+  isBuiltinMcpActive,
+  type LiveServerToggleResult,
+  type McpAdapterHost,
+} from "./host-contract.ts";
 import type { McpAdapterOptions, McpConfig } from "./types.ts";
 import { cloneMcpConfig, isPathInsideProject } from "./config.ts";
 import { getMetadataCachePath, loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
@@ -16,13 +20,18 @@ import {
   HostPromptRegistry,
   registerFallbackMcpToolRenderer,
   resolveHostConfig,
-  stageHostReconcile,
   withDirectToolOverrides,
 } from "./host-registered-servers.ts";
+import {
+  applyLiveServerDisabledToggle,
+  bindHostMetadataUpdates,
+  completeHostInitialization,
+  rejectHostInitialization,
+  runLiveSessionReconcile,
+} from "./host-live-toggle.ts";
 import { canPreserveFrozenTools, HostSession } from "./host-session.ts";
 import {
   HostReconcileCoordinator,
-  stopRejectedInitialization,
   stopRuntimeSession,
   stopStaleInitState,
 } from "./host-state-cleanup.ts";
@@ -297,55 +306,67 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private async reconcileLiveSession(ctx: ExtensionContext, cwdChanged: boolean): Promise<void> {
-    const ready = await this.session.awaitReadyState();
-    if (!ready) {
-      return;
-    }
-    const { state, owner } = ready;
-    const staged = stageHostReconcile({
+    await runLiveSessionReconcile({
       pi: this.pi,
       ctx,
+      cwdChanged,
       options: this.options,
       sessionConfig: this.sessionConfig,
-      runtimeCwd: this.runtimeCwd,
-      cwdChanged,
-      directToolsFrozen: this.directToolsFrozen,
-      previous: {
+      session: this.session,
+      reconcile: this.reconcile,
+      envRaw: this.envRaw,
+      envDirectToolOverride: this.envDirectToolOverride,
+      getSnapshot: () => ({
         config: this.config,
         configPath: this.configPath,
-        cacheEnabled: this.runtimeCacheEnabled,
-      },
-    });
-    await this.reconcile.execute(
-      async (hooks) => {
-        const { reconcileSessionState } = await import("./host-reconcile.ts");
-        if (!this.session.isLiveOwner(owner) || this.state !== state) {
-          return;
-        }
-        await reconcileSessionState({
-          state,
-          ctx,
-          previousConfig: staged.previousConfig,
-          nextConfig: staged.nextConfig,
-          cwd: staged.cwd,
-          cacheEnabled: staged.cacheEnabled,
-          cwdChanged,
-          envRaw: this.envRaw,
-          envDirectToolOverride: this.envDirectToolOverride,
-          owner,
-          ...hooks,
-        });
-      },
-      () => {
-        this.runtimeCwd = staged.cwd;
-        this.config = staged.nextConfig;
-        this.configPath = staged.nextConfigPath;
-        this.runtimeCacheEnabled = staged.cacheEnabled;
-        this.directToolsFrozen = staged.directToolsFrozen;
+        runtimeCwd: this.runtimeCwd,
+        runtimeCacheEnabled: this.runtimeCacheEnabled,
+        directToolsFrozen: this.directToolsFrozen,
+      }),
+      commit: (next) => {
+        this.runtimeCwd = next.runtimeCwd;
+        this.config = next.config;
+        this.configPath = next.configPath;
+        this.runtimeCacheEnabled = next.runtimeCacheEnabled;
+        this.directToolsFrozen = next.directToolsFrozen;
         this.onReconciledSurface();
       },
-      () => this.session.isLiveOwner(owner) && this.state === state,
-    );
+    });
+  }
+
+  async setServerDisabled(
+    serverName: string,
+    disabled: boolean,
+    ctx: ExtensionContext,
+  ): Promise<LiveServerToggleResult> {
+    if (this.programmaticConfig) {
+      return { applied: false };
+    }
+    let result: LiveServerToggleResult = { applied: false };
+    await this.reconcile.enqueue(async () => {
+      result = await applyLiveServerDisabledToggle({
+        serverName,
+        disabled,
+        ctx,
+        session: this.session,
+        reconcile: this.reconcile,
+        getConfig: () => this.config,
+        getRuntimeCwd: () => this.runtimeCwd,
+        envRaw: this.envRaw,
+        envDirectToolOverride: this.envDirectToolOverride,
+        initModule: this.initModule,
+        applySurface: (nextConfig) => {
+          this.config = nextConfig;
+          this.syncPromptCommands();
+          this.syncToolSurface();
+        },
+        refreshSurface: () => {
+          this.syncPromptCommands();
+          this.syncToolSurface();
+        },
+      });
+    });
+    return result;
   }
 
   private onReconciledSurface(): void {
@@ -439,6 +460,7 @@ export class McpHostRuntime implements McpAdapterHost {
     const { init, ctx, owner, oauthRuntime, runtimeConfig, generation } = input;
     const promise = init.initializeMcp(this.pi, ctx, owner, {
       ...(this.programmaticConfig ? { config: runtimeConfig } : { resolvedConfig: runtimeConfig }),
+      ...(this.configPath !== undefined ? { configPath: this.configPath } : {}),
       ...(this.options.outputDirectory !== undefined
         ? { outputDirectory: this.options.outputDirectory }
         : {}),
@@ -462,57 +484,37 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private bindMetadataUpdates(owner: McpRuntimeOwner): void {
-    const state = this.state;
-    if (!state) {
-      return;
-    }
-    state.onToolMetadataUpdated = (server, reason) => {
-      if (this.state !== state || !owner.isActive()) {
-        return;
-      }
-      this.syncPromptCommands();
-      if (this.directToolsFrozen) {
-        logger.debug(`MCP: metadata update for ${server} (${reason}) skipped — directTools frozen`);
-        return;
-      }
-      this.syncToolSurface();
-    };
+    bindHostMetadataUpdates({
+      session: this.session,
+      owner,
+      syncPrompts: () => this.syncPromptCommands(),
+      syncTools: () => this.syncToolSurface(),
+      isFrozen: () => this.directToolsFrozen,
+    });
   }
 
-  private async completeInitialization({ init, owner }: Initialization): Promise<void> {
-    const state = this.session.currentState;
-    if (!state) {
-      return;
-    }
-    owner.throwIfInactive();
-    this.syncPromptCommands();
-    if (!this.directToolsFrozen) {
-      this.syncToolSurface();
-    }
-    init.updateStatusBar(state);
-    if (!this.directToolsFrozen && state.config.settings?.freezeDirectTools === true) {
-      this.directToolsFrozen = true;
-      logger.debug(
-        'MCP: direct tools frozen after initial sync — reconnects won\'t rebuild the system prompt; use mcp({ action: "connect", server: "server" }) to rediscover',
-      );
-    }
+  private completeInitialization({ init, owner }: Initialization): Promise<void> {
+    return completeHostInitialization({
+      init,
+      owner,
+      session: this.session,
+      isFrozen: () => this.directToolsFrozen,
+      markFrozen: () => {
+        this.directToolsFrozen = true;
+      },
+      syncPrompts: () => this.syncPromptCommands(),
+      syncTools: () => this.syncToolSurface(),
+    });
   }
 
-  private async rejectInitialization(input: Initialization, error: unknown): Promise<void> {
-    const { owner, generation, oauthRuntime } = input;
-    // A newer session owns the runtime; this rejection is its predecessor's.
-    if (!this.session.owns(owner, generation)) {
-      return;
-    }
-    console.error(`MCP initialization failed: ${formatTerminalError(error)}`);
-    const state = this.session.currentState;
-    if (state) {
-      // The state was published; the failure belongs to its completion work, not the session.
-      this.session.ready(state);
-      return;
-    }
-    this.session.fail(formatTerminalError(error));
-    await stopRejectedInitialization(owner, oauthRuntime);
+  private rejectInitialization(input: Initialization, error: unknown): Promise<void> {
+    return rejectHostInitialization({
+      session: this.session,
+      owner: input.owner,
+      generation: input.generation,
+      oauthRuntime: input.oauthRuntime,
+      error,
+    });
   }
 
   ensureCommandState(

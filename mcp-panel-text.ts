@@ -1,5 +1,9 @@
-import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { fuzzyMatch } from "@earendil-works/pi-tui";
+import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
+
+export type PanelThemeInput = Pick<Theme, "fg" | "bold" | "italic" | "inverse">;
+
 interface PanelTheme {
   border: string;
   title: string;
@@ -53,6 +57,66 @@ export function rainbowProgress(filled: number, total: number): string {
     dots.push(fg(color, i < filled ? "●" : "○"));
   }
   return dots.join(" ");
+}
+
+export interface PanelStyler {
+  border: (text: string) => string;
+  title: (text: string) => string;
+  selected: (text: string) => string;
+  direct: (text: string) => string;
+  needsAuth: (text: string) => string;
+  placeholder: (text: string) => string;
+  description: (text: string) => string;
+  hint: (text: string) => string;
+  confirm: (text: string) => string;
+  cancel: (text: string) => string;
+  bold: (text: string) => string;
+  italic: (text: string) => string;
+  inverse: (text: string) => string;
+  progressBar: (filled: number, total: number) => string;
+}
+
+export function createPanelStyler(theme?: PanelThemeInput): PanelStyler {
+  if (theme) {
+    return {
+      border: (text) => theme.fg("borderMuted", text),
+      title: (text) => theme.fg("accent", theme.bold(text)),
+      selected: (text) => theme.fg("accent", text),
+      direct: (text) => theme.fg("success", text),
+      needsAuth: (text) => theme.fg("warning", text),
+      placeholder: (text) => theme.fg("muted", theme.italic(text)),
+      description: (text) => theme.fg("muted", text),
+      hint: (text) => theme.fg("dim", text),
+      confirm: (text) => theme.fg("success", text),
+      cancel: (text) => theme.fg("error", text),
+      bold: (text) => theme.bold(text),
+      italic: (text) => theme.italic(text),
+      inverse: (text) => theme.inverse(text),
+      progressBar: (filled, total) => {
+        const dots: string[] = [];
+        for (let i = 0; i < total; i++) {
+          dots.push(i < filled ? theme.fg("accent", "●") : theme.fg("dim", "○"));
+        }
+        return dots.join(" ");
+      },
+    };
+  }
+  return {
+    border: (text) => fg(DEFAULT_THEME.border, text),
+    title: (text) => fg(DEFAULT_THEME.title, text),
+    selected: (text) => fg(DEFAULT_THEME.selected, text),
+    direct: (text) => fg(DEFAULT_THEME.direct, text),
+    needsAuth: (text) => fg(DEFAULT_THEME.needsAuth, text),
+    placeholder: (text) => fg(DEFAULT_THEME.placeholder, text),
+    description: (text) => fg(DEFAULT_THEME.description, text),
+    hint: (text) => fg(DEFAULT_THEME.hint, text),
+    confirm: (text) => fg(DEFAULT_THEME.confirm, text),
+    cancel: (text) => fg(DEFAULT_THEME.cancel, text),
+    bold: (text) => `\x1b[1m${text}\x1b[22m`,
+    italic: (text) => `\x1b[3m${text}\x1b[23m`,
+    inverse: (text) => `\x1b[7m${text}\x1b[27m`,
+    progressBar: rainbowProgress,
+  };
 }
 
 /** Panel search acceptance; pi-tui's matcher keeps behavior consistent with Pi's own pickers. */
