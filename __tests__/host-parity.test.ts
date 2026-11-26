@@ -1165,6 +1165,7 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       const origClose = state.manager.close.bind(state.manager);
       const origConnect = state.manager.connect.bind(state.manager);
       const connectsDuringClose: Array<{ name: string; cwd?: string | undefined }> = [];
+      const closedNames: string[] = [];
       let releaseCloses: (() => void) | undefined;
       const closeGate = new Promise<void>((resolveGate) => {
         releaseCloses = resolveGate;
@@ -1172,9 +1173,14 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       let closing = false;
 
       vi.spyOn(state.manager, "close").mockImplementation(async (name) => {
+        if (name !== "ka-drop" && name !== "ka-keep") {
+          await origClose(name);
+          return;
+        }
         closing = true;
-        await closeGate;
         await origClose(name);
+        closedNames.push(name);
+        await closeGate;
       });
       vi.spyOn(state.manager, "connect").mockImplementation(async (name, definition, signal) => {
         if (closing) {
@@ -1188,7 +1194,9 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         10,
       );
       const reconcilePromise = host.handlers.emitBeforeAgentStart({ cwd: projectB });
-      await waitFor(() => closing);
+      await waitFor(() => closedNames.length >= 1);
+      expect(closedNames[0]).toMatch(/^ka-(drop|keep)$/);
+      expect(state.manager.getConnection(closedNames[0] ?? "")).toBeUndefined();
       await new Promise<void>((r) => {
         setTimeout(r, 45);
       });
