@@ -360,9 +360,7 @@ function promptCatalogCoverage(state: McpExtensionState): {
     (name) => !isServerDisabled(state.config.mcpServers[name]),
   );
   const isKnown = (name: string) =>
-    state.promptMetadataLive.has(name) ||
-    state.promptMetadata.has(name) ||
-    state.toolMetadata.has(name);
+    state.promptMetadataLive.has(name) || state.promptMetadata.has(name);
   const knownServers = enabled.filter(isKnown);
   const unknownServers = enabled.filter((name) => !isKnown(name));
   return { complete: unknownServers.length === 0, knownServers, unknownServers };

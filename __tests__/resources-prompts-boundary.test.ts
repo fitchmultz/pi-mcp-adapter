@@ -803,4 +803,138 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     assert.ok(noCompCmd.getArgumentCompletions);
     expect(await noCompCmd.getArgumentCompletions("al")).toBeNull();
   });
+
+  it("scopes dynamic resource session approvals per URI, retries failed template refreshes, and preserves offline cache & prompt coverage", async () => {
+    // 1) Dynamic resource session approval is scoped per URI.
+    const approvalServer = new Server({ name: "approval-res", version: "1.0.0" });
+    approvalServer.server.registerCapabilities({ tools: {}, resources: {} });
+    approvalServer.server.setRequestHandler("tools/list", () => ({ tools: [] }));
+    approvalServer.server.setRequestHandler("resources/list", () => ({ resources: [] }));
+    approvalServer.server.setRequestHandler("resources/templates/list", () => ({
+      resourceTemplates: [{ name: "issue", uriTemplate: "linear://issue/{id}" }],
+    }));
+    approvalServer.server.setRequestHandler("resources/read", (req) => ({
+      contents: [{ uri: req.params.uri, text: `Body of ${req.params.uri}` }],
+    }));
+
+    const promptsSeen: string[] = [];
+    const { state: approvalState } = await connectInMemory(
+      "linear",
+      approvalServer,
+      { url: "https://unused.invalid/mcp", auth: false, approveTools: true },
+      {
+        ui: {
+          ...host.context.ui,
+          select: vi.fn<(prompt: string) => Promise<string>>(async (prompt) => {
+            promptsSeen.push(prompt);
+            return prompt.includes("ENG-123") ? "Allow for session" : "Deny";
+          }),
+        },
+      },
+    );
+
+    const firstRead = await executeResourceRead(approvalState, {
+      server: "linear",
+      uri: "linear://issue/ENG-123",
+    });
+    expect(firstRead.details.error).toBeUndefined();
+    expect(textOf(firstRead)).toContain("Body of linear://issue/ENG-123");
+
+    // Same URI reuses the session approval without re-prompting.
+    const repeatRead = await executeResourceRead(approvalState, {
+      server: "linear",
+      uri: "linear://issue/ENG-123",
+    });
+    expect(repeatRead.details.error).toBeUndefined();
+    expect(promptsSeen).toHaveLength(1);
+
+    // A different URI on the same server still prompts and honors Deny.
+    const otherRead = await executeResourceRead(approvalState, {
+      server: "linear",
+      uri: "linear://issue/ENG-999",
+    });
+    expect(otherRead.details).toMatchObject({ error: "approval_denied" });
+    expect(promptsSeen).toHaveLength(2);
+    expect(promptsSeen[1]).toContain("ENG-999");
+
+    // 2) Transient resources/templates/list failure keeps stale flag so the next resources call retries.
+    let templatesVersion = 1;
+    let failNextTemplateList = false;
+    const retryServer = new Server({ name: "template-retry", version: "1.0.0" });
+    retryServer.server.registerCapabilities({ tools: {}, resources: { listChanged: true } });
+    retryServer.server.setRequestHandler("tools/list", () => ({ tools: [] }));
+    retryServer.server.setRequestHandler("resources/list", () => ({ resources: [] }));
+    retryServer.server.setRequestHandler("resources/templates/list", () => {
+      if (failNextTemplateList) {
+        failNextTemplateList = false;
+        throw new Error("transient template backend failure");
+      }
+      return {
+        resourceTemplates: [{ name: "doc", uriTemplate: `docs://v${templatesVersion}/{slug}` }],
+      };
+    });
+    const { state: retryState } = await connectInMemory("docs", retryServer);
+    templatesVersion = 2;
+    failNextTemplateList = true;
+    await retryServer.server.sendResourceListChanged();
+    await expect
+      .poll(() => retryState.manager.getConnection("docs")?.resourceTemplatesStale)
+      .toBe(true);
+
+    const afterFailure = await executeResourceList(retryState, { server: "docs" });
+    expect(afterFailure.details.resourceTemplates).toEqual([
+      { name: "doc", uriTemplate: "docs://v1/{slug}" },
+    ]);
+    expect(retryState.manager.getConnection("docs")?.resourceTemplatesStale).toBe(true);
+
+    const afterRetry = await executeResourceList(retryState, { server: "docs" });
+    expect(afterRetry.details.resourceTemplates).toEqual([
+      { name: "doc", uriTemplate: "docs://v2/{slug}" },
+    ]);
+    expect(retryState.manager.getConnection("docs")?.resourceTemplatesStale).toBe(false);
+
+    // 3) Cached disconnected server lacking resourceTemplates serves cached resources without connecting,
+    //    and tool-only catalog entries do not mark prompt coverage as complete.
+    const offlineState = createTestState({
+      config: {
+        settings: {},
+        mcpServers: {
+          offline: { url: "http://127.0.0.1:1/unreachable", auth: false },
+        },
+      },
+      toolMetadata: new Map([
+        [
+          "offline",
+          [
+            {
+              name: "offline_read_guide",
+              originalName: "read_guide",
+              description: "Guide",
+              resourceUri: "docs://guide",
+              resourceDescriptor: {
+                name: "guide",
+                uri: "docs://guide",
+                description: "Cached guide",
+              },
+            },
+          ],
+        ],
+      ]),
+    });
+    const connectSpy = vi.spyOn(offlineState.manager, "connect");
+    const offlineResources = await executeResourceList(offlineState, { server: "offline" });
+    expect(connectSpy).not.toHaveBeenCalled();
+    expect(offlineResources.details.error).toBeUndefined();
+    expect(offlineResources.details.items).toEqual([
+      { name: "guide", uri: "docs://guide", description: "Cached guide" },
+    ]);
+    expect(offlineResources.details.resourceTemplates).toEqual([]);
+
+    const promptList = await executePromptList(offlineState, {});
+    expect(promptList.details.coverage).toEqual({
+      complete: false,
+      knownServers: [],
+      unknownServers: ["offline"],
+    });
+  });
 });

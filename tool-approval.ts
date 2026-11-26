@@ -78,7 +78,10 @@ export async function ensureToolCallApproved(
     return { ok: true };
   }
 
-  const cacheKey = `${serverName}\u0000${toolMeta.originalName}`;
+  const cacheKey =
+    toolMeta.resourceUri !== undefined && toolMeta.resourceUri !== ""
+      ? `${serverName}\u0000${toolMeta.originalName}\u0000${toolMeta.resourceUri}`
+      : `${serverName}\u0000${toolMeta.originalName}`;
   if (state.approvedToolCalls.has(cacheKey)) {
     return { ok: true };
   }

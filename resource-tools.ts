@@ -1,3 +1,4 @@
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/client";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import type { ProxyToolUpdateCallback } from "./proxy-result.ts";
@@ -64,10 +65,14 @@ export async function executeResourceList(
 
 function needsResourceDiscovery(state: McpExtensionState, server: string): boolean {
   return (
-    !state.toolMetadata.has(server) ||
-    !state.resourceTemplates.has(server) ||
-    state.manager.getConnection(server)?.status === "connected"
+    !state.toolMetadata.has(server) || state.manager.getConnection(server)?.status === "connected"
   );
+}
+
+const METHOD_NOT_FOUND_CODE: number = ProtocolErrorCode.MethodNotFound;
+
+function isMethodNotFoundError(error: unknown): boolean {
+  return error instanceof ProtocolError && error.code === METHOD_NOT_FOUND_CODE;
 }
 
 async function refreshStaleResourceTemplates(
@@ -95,11 +100,15 @@ async function refreshStaleResourceTemplates(
         result.resourceTemplates.filter((template) => !isUiResourceUri(template.uriTemplate)),
       );
     }
-  } catch {
+  } catch (error) {
     if (ownedSignal?.aborted === true) {
       throwIfAborted(ownedSignal);
     }
-    connection.resourceTemplatesStale = false;
+    // Keep resourceTemplatesStale=true on transient errors so the next list retries;
+    // only clear when the server explicitly reports MethodNotFound.
+    if (isMethodNotFoundError(error)) {
+      connection.resourceTemplatesStale = false;
+    }
   }
 }
 
