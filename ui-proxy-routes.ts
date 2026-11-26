@@ -15,9 +15,11 @@ import {
 } from "./types.ts";
 import { isUiJsonObject } from "./ui-json.ts";
 import { sendJson } from "./ui-http.ts";
+import { isSafeOpenLinkUrl } from "./ui-link-url.ts";
 import type { logger } from "./logger.ts";
 
 const MAX_CONTEXT_UPDATES = 20;
+const MAX_HOST_ERROR_CHARS = 500;
 
 /** Authenticated UI actions and their ordered, durable history. */
 export class UiProxyRoutes {
@@ -44,7 +46,14 @@ export class UiProxyRoutes {
   }
 
   getMessages(): UiSessionMessages {
-    return { ...this.history.messages };
+    const messages = this.history.messages;
+    return {
+      ...messages,
+      prompts: [...messages.prompts],
+      intents: [...messages.intents],
+      notifications: [...messages.notifications],
+      contexts: [...messages.contexts],
+    };
   }
 
   takeModelContext(): UiModelContextUpdate | undefined {
@@ -63,6 +72,9 @@ export class UiProxyRoutes {
         break;
       case "/proxy/ui/context":
         this.context(params, res);
+        break;
+      case "/proxy/ui/error":
+        this.hostError(params, res);
         break;
       case "/proxy/ui/open-link":
         openLink(params, res);
@@ -160,6 +172,9 @@ export class UiProxyRoutes {
     }
     const update = createUiModelContextUpdate(params);
     this.pendingModelContext = update;
+    if (this.options.state) {
+      this.options.state.pendingUiModelContext = undefined;
+    }
     const messages = this.history.messages;
     if (update) {
       messages.contexts.push(update);
@@ -172,6 +187,30 @@ export class UiProxyRoutes {
       hasUpdate: Boolean(update),
     });
     sendJson(res, 200, { ok: true, result: {} });
+  }
+
+  private hostError(params: unknown, res: ServerResponse): void {
+    if (!isUiJsonObject(params) || typeof params.message !== "string") {
+      sendJson(res, 400, { ok: false, error: "Invalid UI error params" });
+      return;
+    }
+    const message = params.message.trim().slice(0, MAX_HOST_ERROR_CHARS);
+    if (message === "") {
+      sendJson(res, 400, { ok: false, error: "Invalid UI error params" });
+      return;
+    }
+    const warning = this.history.append("notifications", `UI host error: ${message}`);
+    this.log.warn("UI host error reported", { message });
+    this.options.state?.ui?.notify(
+      `MCP UI error for ${this.options.toolName} (${this.options.serverName}): ${message}`,
+      "warning",
+    );
+    this.options.onError?.(message);
+    sendJson(res, 200, {
+      ok: true,
+      result: {},
+      ...(warning !== undefined && warning !== "" ? { warning } : {}),
+    });
   }
 
   private displayMode(params: unknown, res: ServerResponse): void {
@@ -194,6 +233,8 @@ function openLink(params: unknown, res: ServerResponse): void {
     sendJson(res, 400, { ok: false, error: "Invalid open-link params" });
     return;
   }
-  const invalid = URL.parse(params.url) === null;
-  sendJson(res, 200, { ok: true, result: invalid ? { isError: true } : {} });
+  sendJson(res, 200, {
+    ok: true,
+    result: isSafeOpenLinkUrl(params.url) ? {} : { isError: true },
+  });
 }

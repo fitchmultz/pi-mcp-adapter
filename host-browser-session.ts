@@ -66,7 +66,7 @@ export class HostBrowserSession {
           : undefined,
       )
       .catch((error: unknown) => {
-        this.view.showError(`Failed to forward tool input: ${String(error)}`);
+        this.reportHostError(`Failed to forward tool input: ${String(error)}`);
       });
     this.bridge.addEventListener("initialized", () => {
       if (this.phase !== "finished") {
@@ -118,7 +118,7 @@ export class HostBrowserSession {
           .then(() => (this.initialized ? this.forwardEvent(name, event.data) : undefined))
           .catch((error: unknown) => {
             if (subject !== null) {
-              this.view.showError(`Failed to forward ${subject}: ${String(error)}`);
+              this.reportHostError(`Failed to forward ${subject}: ${String(error)}`);
             }
             // Malformed context updates are non-terminal, as in the original host.
           });
@@ -167,6 +167,13 @@ export class HostBrowserSession {
 
   private requestCompletion(reason: "done" | "cancel"): void {
     this.complete(reason).catch((error: unknown) => this.reportLifecycleError(error));
+  }
+
+  private reportHostError(message: string): void {
+    this.view.showError(message);
+    this.proxy
+      .advisory("/proxy/ui/error", { message })
+      .catch((error: unknown) => this.reportLifecycleError(error));
   }
 
   private reportLifecycleError(error: unknown): void {

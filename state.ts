@@ -8,6 +8,7 @@ import type {
   PromptMetadata,
   McpConfig,
   McpAdapterOptions,
+  UiModelContextUpdate,
   UiSessionMessages,
   UiStreamSummary,
 } from "./types.ts";
@@ -24,6 +25,12 @@ export interface CompletedUiSession {
   reason: string;
   messages: UiSessionMessages;
   stream?: UiStreamSummary;
+}
+
+export interface PendingUiModelContext {
+  serverName: string;
+  toolName: string;
+  context: UiModelContextUpdate;
 }
 
 export type SendMessageFn = (
@@ -66,6 +73,8 @@ export interface McpExtensionState {
    * clears only its own handle. Runtime cleanup closes whichever handle remains.
    */
   uiServer: UiServerHandle | null;
+  /** Latest unconsumed model context retained when a UI session closes before the next user turn. */
+  pendingUiModelContext?: PendingUiModelContext | undefined;
   completedUiSessions: CompletedUiSession[];
   activeScripts: number;
   openBrowser: (url: string) => Promise<void>;

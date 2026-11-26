@@ -112,6 +112,22 @@ export class UiEventStream {
     this.clients.delete(res);
   }
 
+  /** Probe connected SSE clients with a comment frame and drop dead sockets. */
+  pingClients(): boolean {
+    for (const client of this.clients) {
+      if (client.destroyed || client.writableEnded || client.socket?.destroyed === true) {
+        this.clients.delete(client);
+        continue;
+      }
+      try {
+        client.write(": keepalive\n\n");
+      } catch {
+        this.clients.delete(client);
+      }
+    }
+    return this.clients.size > 0;
+  }
+
   close(): void {
     for (const client of this.clients) {
       try {

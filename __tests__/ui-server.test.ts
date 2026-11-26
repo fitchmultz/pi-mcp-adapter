@@ -529,6 +529,37 @@ describe("UiServer", () => {
       expect(ctx).toBeTruthy();
       expect(ctx?.data).toEqual({ displayMode: "fullscreen" });
     });
+
+    it("keeps a background tab alive past 60s while SSE stays connected, then expires after disconnect", async () => {
+      vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+      const onComplete = vi.fn<NonNullable<UiServerOptions["onComplete"]>>();
+      let sse: Awaited<ReturnType<typeof connectSSE>> | undefined;
+      try {
+        handle = await startUiServer(createServerOptions({ onComplete }));
+        const url = `http://localhost:${handle.port}/events?session=${handle.sessionToken}`;
+        sse = await connectSSE(url, () => {
+          /* Keep SSE stream open without sending /proxy/ui/heartbeat requests. */
+        });
+
+        for (let step = 0; step < 12; step += 1) {
+          vi.advanceTimersByTime(10_000);
+        }
+        expect(onComplete).not.toHaveBeenCalled();
+        const health = await request(
+          `http://localhost:${handle.port}/health?session=${handle.sessionToken}`,
+        );
+        expect(health.status).toBe(200);
+
+        sse.close();
+        sse = undefined;
+        await delay(50);
+        vi.advanceTimersByTime(65_000);
+        expect(onComplete).toHaveBeenCalledWith("stale");
+      } finally {
+        sse?.close();
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("POST /proxy/tools/call", () => {
@@ -1397,29 +1428,41 @@ describe("UiServer", () => {
   });
 
   describe("POST /proxy/ui/open-link", () => {
-    it("validates URL", async () => {
+    it.each(["http://example.com/path", "https://example.com", "mailto:test@example.com"])(
+      "allows safe URL scheme: %s",
+      async (url) => {
+        handle = await startUiServer(createServerOptions());
+
+        const res = await request(`http://localhost:${handle.port}/proxy/ui/open-link`, {
+          method: "POST",
+          body: {
+            token: handle.sessionToken,
+            params: { url },
+          },
+        });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true, result: {} });
+      },
+    );
+
+    it.each([
+      "not-a-valid-url",
+      "javascript:alert(1)",
+      "JAVASCRIPT:alert(1)",
+      "file:///etc/passwd",
+      "data:text/html,<script>alert(1)</script>",
+      "blob:https://example.com/1234",
+      "vscode://file/etc/passwd",
+      "custom+scheme://launch",
+    ])("rejects unsafe or invalid URL: %s", async (url) => {
       handle = await startUiServer(createServerOptions());
 
       const res = await request(`http://localhost:${handle.port}/proxy/ui/open-link`, {
         method: "POST",
         body: {
           token: handle.sessionToken,
-          params: { url: "https://example.com" },
-        },
-      });
-
-      expect(res.status).toBe(200);
-      expect(res.body).toEqual({ ok: true, result: {} });
-    });
-
-    it("returns error for invalid URL", async () => {
-      handle = await startUiServer(createServerOptions());
-
-      const res = await request(`http://localhost:${handle.port}/proxy/ui/open-link`, {
-        method: "POST",
-        body: {
-          token: handle.sessionToken,
-          params: { url: "not-a-valid-url" },
+          params: { url },
         },
       });
 
@@ -1433,6 +1476,50 @@ describe("UiServer", () => {
       const res = await request(`http://localhost:${handle.port}/proxy/ui/open-link`, {
         method: "POST",
         body: { token: handle.sessionToken, params: {} },
+      });
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("POST /proxy/ui/error", () => {
+    it("records host errors in history, notifies UI, and invokes onError", async () => {
+      const context = await createTestExtensionContext();
+      cleanups.push(context.dispose);
+      const notify = vi.spyOn(context.context.ui, "notify");
+      const onError = vi.fn<NonNullable<UiServerOptions["onError"]>>();
+      handle = await startUiServer(
+        createServerOptions({
+          state: createTestState({ ui: context.context.ui }),
+          onError,
+        }),
+      );
+
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/error`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { message: "Failed to initialize AppBridge: boom" },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true, result: {} });
+      expect(onError).toHaveBeenCalledWith("Failed to initialize AppBridge: boom");
+      expect(notify).toHaveBeenCalledWith(
+        "MCP UI error for test_tool (test-server): Failed to initialize AppBridge: boom",
+        "warning",
+      );
+      const { notifications } = await materializeUiMessages(handle.getSessionMessages());
+      expect(notifications).toEqual(["UI host error: Failed to initialize AppBridge: boom"]);
+    });
+
+    it("returns 400 for missing or blank error message", async () => {
+      handle = await startUiServer(createServerOptions());
+
+      const res = await request(`http://localhost:${handle.port}/proxy/ui/error`, {
+        method: "POST",
+        body: { token: handle.sessionToken, params: { message: "   " } },
       });
 
       expect(res.status).toBe(400);

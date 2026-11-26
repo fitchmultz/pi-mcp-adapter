@@ -7,6 +7,7 @@ import {
 import type { HostBrowserProxy } from "./host-browser-proxy.ts";
 import type { HostBrowserView } from "./host-browser-view.ts";
 import type { HostConfiguration } from "./host-browser-contracts.ts";
+import { isSafeOpenLinkUrl } from "./ui-link-url.ts";
 
 const rawMessageSchema = z.looseObject({
   type: z.string(),
@@ -95,13 +96,17 @@ export class HostBrowserActions {
     this.bridge.ondownloadfile = (params) => this.proxy.downloadFile(params);
     this.bridge.onrequestdisplaymode = (params) => this.proxy.displayMode(params);
     this.bridge.onopenlink = async (params) => {
-      const result = await this.proxy.openLink(params);
+      const { url } = params;
+      if (!isSafeOpenLinkUrl(url)) {
+        return { isError: true };
+      }
+      const result = await this.proxy.openLink({ ...params, url });
       if (result.isError !== true) {
-        window.open(params.url, "_blank", "noopener,noreferrer");
+        window.open(url, "_blank", "noopener,noreferrer");
         await this.proxy.advisory("/proxy/ui/message", {
           type: "intent",
           intent: "open_link",
-          params: { url: params.url },
+          params: { url },
         });
       }
       return result;

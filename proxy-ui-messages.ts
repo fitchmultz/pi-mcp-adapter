@@ -1,5 +1,6 @@
 import type { McpExtensionState, CompletedUiSession } from "./state.ts";
 import type { ProxyToolResult } from "./proxy-result.ts";
+import type { UiServerHandle } from "./ui-server-contracts.ts";
 import { parseUiPromptHandoff, type UiSessionMessages } from "./types.ts";
 import { materializeUiMessages, uiMessages } from "./ui-message-history.ts";
 import { DEFAULT_MCP_DETAILS_MAX_BYTES } from "./mcp-output-contracts.ts";
@@ -101,9 +102,39 @@ function inlineSessionText(session: CompletedUiSession): string[] {
     ...inlineSection("Notifications", messages.notifications),
   ];
 }
+function hasSessionMessages(messages: UiSessionMessages): boolean {
+  return (
+    (messages.historyCount ?? 0) > 0 ||
+    messages.prompts.length > 0 ||
+    messages.intents.length > 0 ||
+    messages.notifications.length > 0 ||
+    messages.contexts.length > 0
+  );
+}
+
+function activeSessionSnapshot(handle: UiServerHandle | null): CompletedUiSession | undefined {
+  if (!handle) {
+    return undefined;
+  }
+  const messages = handle.getSessionMessages();
+  if (!hasSessionMessages(messages)) {
+    return undefined;
+  }
+  const stream = handle.getStreamSummary();
+  return {
+    serverName: handle.serverName,
+    toolName: handle.toolName,
+    completedAt: new Date(),
+    reason: "active",
+    messages,
+    ...(stream !== undefined ? { stream } : {}),
+  };
+}
+
 function renderInlineSessions(
   sessions: CompletedUiSession[],
   warnings: (string | undefined)[],
+  hasActive: boolean,
 ): ProxyToolResult {
   const output: string[] = [];
   output.push(
@@ -143,7 +174,8 @@ function renderInlineSessions(
       intents: [...allIntents, ...parsedHandoffs.map(({ intent, params }) => ({ intent, params }))],
       contexts: allContexts,
       handoffs: parsedHandoffs,
-      cleared: true,
+      cleared: !hasActive,
+      ...(hasActive ? { activeSession: true } : {}),
     },
   };
 }
@@ -163,19 +195,27 @@ export async function executeUiMessages(state: McpExtensionState): Promise<Proxy
   }
 }
 class UiMessageDelivery {
+  private readonly completed: CompletedUiSession[];
+  private readonly hasActive: boolean;
   private readonly pending: CompletedUiSession[];
   private readonly warnings: (string | undefined)[];
   private readonly state: McpExtensionState;
   constructor(state: McpExtensionState) {
     this.state = state;
-    this.pending = [...state.completedUiSessions];
+    this.completed = [...state.completedUiSessions];
+    const active = activeSessionSnapshot(state.uiServer);
+    this.hasActive = active !== undefined;
+    this.pending = active ? [...this.completed, active] : [...this.completed];
     this.warnings = this.pending.flatMap((session) =>
       (session.messages.historyError ?? "").length > 0 ? [session.messages.historyError] : [],
     );
   }
   private drain(): void {
+    if (this.completed.length === 0) {
+      return;
+    }
     this.state.completedUiSessions = this.state.completedUiSessions.filter(
-      (session) => !this.pending.includes(session),
+      (session) => !this.completed.includes(session),
     );
   }
   private async paged(): Promise<ProxyToolResult> {
@@ -214,7 +254,8 @@ class UiMessageDelivery {
         historyRefs: pending.flatMap((session) =>
           (session.messages.historyRef ?? "").length > 0 ? [session.messages.historyRef] : [],
         ),
-        cleared: true,
+        cleared: !this.hasActive,
+        ...(this.hasActive ? { activeSession: true } : {}),
       },
     };
   }
@@ -262,7 +303,7 @@ class UiMessageDelivery {
       };
     }
 
-    const inline = renderInlineSessions(sessions, warnings);
+    const inline = renderInlineSessions(sessions, warnings, this.hasActive);
     const text = inline.content
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("\n");

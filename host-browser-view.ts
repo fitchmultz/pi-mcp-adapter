@@ -75,8 +75,21 @@ export class HostBrowserView {
   }
 
   async load(resourceToken: string): Promise<void> {
-    const loaded = new Promise<void>((resolve) => {
-      this.iframe.addEventListener("load", () => resolve(), { once: true });
+    const loaded = new Promise<void>((resolve, reject) => {
+      const cleanup = (): void => {
+        this.iframe.removeEventListener("load", onLoad);
+        this.iframe.removeEventListener("error", onError);
+      };
+      const onLoad = (): void => {
+        cleanup();
+        resolve();
+      };
+      const onError = (): void => {
+        cleanup();
+        reject(new Error("App iframe failed to load"));
+      };
+      this.iframe.addEventListener("load", onLoad, { once: true });
+      this.iframe.addEventListener("error", onError, { once: true });
     });
     this.iframe.src = "/ui-app?resource=" + encodeURIComponent(resourceToken);
     await loaded;

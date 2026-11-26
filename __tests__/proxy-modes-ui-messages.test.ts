@@ -9,6 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createUiMessageHistory } from "../ui-message-history.ts";
 import { readMcpResult } from "../mcp-output-guard.ts";
+import { startUiServer } from "../ui-server.ts";
+import { ConsentManager } from "../consent-manager.ts";
+import { McpServerManager } from "../server-manager.ts";
 
 function completedSession(state: McpExtensionState) {
   const session = state.completedUiSessions[0];
@@ -329,5 +332,83 @@ describe("executeUiMessages", () => {
       ],
       cleared: true,
     });
+  });
+
+  it("snapshots messages from an active open UI session without closing it or losing messages", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcp-ui-active-messages-"));
+    const state = createTestState({ outputDirectory: root });
+    const handle = await startUiServer({
+      port: 0,
+      serverName: "interactive-visualizer",
+      toolName: "show_visualization",
+      toolArgs: {},
+      resource: { uri: "ui://viz", html: "<h1>Viz</h1>", mimeType: "text/html", meta: {} },
+      manager: new McpServerManager(),
+      consentManager: new ConsentManager(),
+      state,
+    });
+    state.uiServer = handle;
+    try {
+      const empty = await executeUiMessages(state);
+      expect(empty.details).toEqual({ sessions: 0 });
+      expect(firstText(empty)).toBe("No UI session messages available.");
+
+      const post = async (endpoint: string, params: unknown) => {
+        const response = await fetch(`http://127.0.0.1:${handle.port}${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: handle.sessionToken, params }),
+        });
+        expect(response.status).toBe(200);
+      };
+      await post("/proxy/ui/message", { type: "prompt", prompt: "Inspect cluster B" });
+      await post("/proxy/ui/message", {
+        type: "intent",
+        intent: "filter_rows",
+        params: { severity: "high" },
+      });
+      await post("/proxy/ui/message", { type: "notify", message: "Zoom updated" });
+      await post("/proxy/ui/context", { structuredContent: { activePanel: "logs" } });
+
+      // Include a completed session too to verify completed sessions drain while active stays open.
+      state.completedUiSessions.push({
+        serverName: "earlier-server",
+        toolName: "earlier_tool",
+        completedAt: new Date("2026-03-12T16:00:00Z"),
+        reason: "done",
+        messages: { prompts: ["Completed prompt"], notifications: [], intents: [], contexts: [] },
+      });
+
+      const firstSnapshot = await executeUiMessages(state);
+      expect(firstSnapshot.details).toMatchObject({
+        sessions: 2,
+        prompts: ["Completed prompt", "Inspect cluster B"],
+        intents: [{ intent: "filter_rows", params: { severity: "high" } }],
+        cleared: false,
+        activeSession: true,
+      });
+      expect(firstText(firstSnapshot)).toContain("interactive-visualizer / show_visualization");
+      expect(firstText(firstSnapshot)).toContain(", active)");
+      expect(firstText(firstSnapshot)).toContain("Zoom updated");
+      expect(firstText(firstSnapshot)).toContain('"activePanel":"logs"');
+      expect(state.completedUiSessions).toEqual([]);
+      expect(state.uiServer).toBe(handle);
+      expect(
+        (await fetch(`http://127.0.0.1:${handle.port}/health?session=${handle.sessionToken}`))
+          .status,
+      ).toBe(200);
+
+      // Snapshotting again while still open preserves all messages from the active session.
+      const secondSnapshot = await executeUiMessages(state);
+      expect(secondSnapshot.details).toMatchObject({
+        sessions: 1,
+        prompts: ["Inspect cluster B"],
+        cleared: false,
+        activeSession: true,
+      });
+    } finally {
+      handle.close("test-cleanup");
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

@@ -14,9 +14,10 @@ import type * as Child from "node:child_process";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeUiMessages } from "../proxy-modes.ts";
 import { maybeStartUiSession, summarizeUiSessionResult } from "../ui-session.ts";
+import { takeUiModelContextMessage } from "../ui-session-events.ts";
 
 const glimpseMocks = vi.hoisted(() => ({
-  isGlimpseAvailable: vi.fn<typeof Glimpse.isGlimpseAvailable>(() => true),
+  isGlimpseAvailable: vi.fn<typeof Glimpse.isGlimpseAvailable>(async () => true),
   openGlimpseWindow: vi.fn<typeof Glimpse.openGlimpseWindow>(),
 }));
 
@@ -597,5 +598,196 @@ describe("MCP_UI_VIEWER=none", () => {
     expect(runtime).toMatchObject({ viewer: "browser" });
     expect(state.openBrowser).toHaveBeenCalledTimes(1);
     runtime?.close("test-cleanup");
+  });
+});
+
+describe("headless defaults, session-scoped Glimpse windows, and retained modelContext", () => {
+  it("skips UI by default in headless sessions (no state.ui) when uiViewer is unset or auto", async () => {
+    const { state: headed, readResource } = await makeState();
+    const state: McpExtensionState = { ...headed };
+    delete state.ui;
+
+    const runtime = await maybeStartUiSession(state, {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    });
+    expect(runtime).toBeNull();
+    expect(state.uiServer).toBeNull();
+
+    const result = await executeCall(state, {
+      toolName: "demo_app",
+      args: {},
+      serverOverride: "demo",
+    });
+    expect(textOf(result)).toBe("tool output");
+    expect(result.details.uiOpen).toBeUndefined();
+    expect(result.details.uiViewer).toBeUndefined();
+    expect(result.details.uiUrl).toBeUndefined();
+    expect(readResource).not.toHaveBeenCalled();
+    expect(headed.openBrowser).not.toHaveBeenCalled();
+    expect(glimpseMocks.isGlimpseAvailable).not.toHaveBeenCalled();
+    expect(glimpseMocks.openGlimpseWindow).not.toHaveBeenCalled();
+
+    process.env.MCP_UI_VIEWER = "auto";
+    expect(
+      await maybeStartUiSession(state, {
+        serverName: "demo",
+        toolName: "app",
+        toolArgs: {},
+        uiResourceUri: "ui://app",
+      }),
+    ).toBeNull();
+  });
+
+  it("honors explicit uiViewer='browser' and MCP_UI_VIEWER overrides in headless sessions", async () => {
+    const { state: headed } = await makeState();
+    const state: McpExtensionState = { ...headed };
+    delete state.ui;
+    state.config.mcpServers.demo = { ...state.config.mcpServers.demo, uiViewer: "browser" };
+
+    const byConfig = await maybeStartUiSession(state, {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    });
+    expect(byConfig).toMatchObject({ viewer: "browser" });
+    expect(headed.openBrowser).toHaveBeenCalledTimes(1);
+    byConfig?.close("test-cleanup");
+
+    state.config.mcpServers.demo = { ...state.config.mcpServers.demo, uiViewer: "auto" };
+    process.env.MCP_UI_VIEWER = "browser";
+    const byEnv = await maybeStartUiSession(state, {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    });
+    expect(byEnv).toMatchObject({ viewer: "browser" });
+    expect(headed.openBrowser).toHaveBeenCalledTimes(2);
+    byEnv?.close("test-cleanup");
+  });
+
+  it("scopes Glimpse windows per session so concurrent sessions do not clobber each other", async () => {
+    process.env.MCP_UI_VIEWER = "glimpse";
+    const { state: stateA } = await makeState();
+    const { state: stateB } = await makeState();
+    const windowA = { close: vi.fn<() => void>() };
+    const windowB = { close: vi.fn<() => void>() };
+    const windowB2 = { close: vi.fn<() => void>() };
+    glimpseMocks.openGlimpseWindow
+      .mockResolvedValueOnce(windowA)
+      .mockResolvedValueOnce(windowB)
+      .mockResolvedValueOnce(windowB2);
+
+    const request = {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    };
+    const sessionA = await maybeStartUiSession(stateA, request);
+    const sessionB = await maybeStartUiSession(stateB, request);
+    assert.ok(sessionA && sessionB);
+    expect(windowA.close).not.toHaveBeenCalled();
+    expect(windowB.close).not.toHaveBeenCalled();
+
+    // Replacing session B closes only session B's Glimpse window, never session A's.
+    const sessionB2 = await maybeStartUiSession(stateB, { ...request, toolName: "other" });
+    assert.ok(sessionB2);
+    expect(windowB.close).toHaveBeenCalledOnce();
+    expect(windowA.close).not.toHaveBeenCalled();
+    expect(windowB2.close).not.toHaveBeenCalled();
+
+    sessionA.close("test-cleanup");
+    expect(windowA.close).toHaveBeenCalledOnce();
+    expect(windowB2.close).not.toHaveBeenCalled();
+
+    sessionB2.close("test-cleanup");
+    expect(windowB2.close).toHaveBeenCalledOnce();
+  });
+
+  it("retains pending modelContext across UI close until consumed, cleared, or superseded", async () => {
+    process.env.MCP_UI_VIEWER = "browser";
+    const { state } = await makeState();
+    const request = {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    };
+    const first = await maybeStartUiSession(state, request);
+    assert.ok(first);
+    const handle = state.uiServer;
+    assert.ok(handle);
+
+    const postContext = async (target: typeof handle, params: unknown) => {
+      const response = await fetch(`http://127.0.0.1:${target.port}/proxy/ui/context`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: target.sessionToken, params }),
+      });
+      expect(response.status).toBe(200);
+    };
+
+    await postContext(handle, { structuredContent: { selection: "after-close" } });
+    first.close("done");
+    expect(state.uiServer).toBeNull();
+    expect(state.pendingUiModelContext).toBeDefined();
+
+    const message = takeUiModelContextMessage(state.uiServer, state.pendingUiModelContext);
+    expect(message).toMatchObject({
+      customType: "mcp-ui-context",
+      display: false,
+      content: 'Context from the demo MCP app:\n{"structuredContent":{"selection":"after-close"}}',
+    });
+    state.pendingUiModelContext = undefined;
+
+    // A newer UI session supersedes unconsumed retained context from an earlier closed session.
+    const second = await maybeStartUiSession(state, request);
+    assert.ok(second && state.uiServer);
+    await postContext(state.uiServer, { structuredContent: { selection: "stale" } });
+    second.close("done");
+    expect(state.pendingUiModelContext).toBeDefined();
+
+    const third = await maybeStartUiSession(state, { ...request, toolName: "other" });
+    assert.ok(third);
+    expect(state.pendingUiModelContext).toBeUndefined();
+    expect(takeUiModelContextMessage(state.uiServer, state.pendingUiModelContext)).toBeUndefined();
+
+    // An empty context update clears pending context so nothing survives close.
+    await postContext(state.uiServer, { structuredContent: { selection: "will-clear" } });
+    await postContext(state.uiServer, {});
+    third.close("done");
+    expect(state.pendingUiModelContext).toBeUndefined();
+  });
+
+  it("surfaces host errors reported via /proxy/ui/error in summarizeUiSessionResult", async () => {
+    process.env.MCP_UI_VIEWER = "browser";
+    const { state } = await makeState();
+    const runtime = await maybeStartUiSession(state, {
+      serverName: "demo",
+      toolName: "app",
+      toolArgs: {},
+      uiResourceUri: "ui://app",
+    });
+    assert.ok(runtime && state.uiServer);
+
+    const response = await fetch(`http://127.0.0.1:${state.uiServer.port}/proxy/ui/error`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: state.uiServer.sessionToken,
+        params: { message: "Failed to initialize AppBridge: Error: broken" },
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(summarizeUiSessionResult(runtime)).toMatchObject({
+      uiOpen: true,
+      message: "Interactive UI reported an error: Failed to initialize AppBridge: Error: broken",
+    });
+    runtime.close("test-cleanup");
   });
 });

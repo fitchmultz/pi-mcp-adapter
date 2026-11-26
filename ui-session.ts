@@ -14,7 +14,7 @@ import type {
 } from "./ui-session-contracts.ts";
 import { createUiStreamIdentity, UiSessionStream } from "./ui-session-stream.ts";
 import { UiSessionEvents } from "./ui-session-events.ts";
-import { closeActiveUiWindow, isUiViewerDisabled, openUiViewer } from "./ui-session-viewer.ts";
+import { closeUiWindow, isUiViewerDisabled, openUiViewer } from "./ui-session-viewer.ts";
 
 export type {
   UiSessionRequest,
@@ -41,6 +41,15 @@ export function summarizeUiSessionResult(
       uiOpen: false,
     };
   }
+  const hostError = uiSession.getHostError?.();
+  if (hostError !== undefined && hostError !== "") {
+    return {
+      message: `Interactive UI reported an error: ${hostError}`,
+      uiOpen: true,
+      uiViewer: uiSession.viewer,
+      uiUrl: uiSession.url,
+    };
+  }
   return {
     message: uiSession.reused
       ? "Updated the open UI."
@@ -58,7 +67,7 @@ export async function maybeStartUiSession(
   const signal =
     combineAbortSignals(state.owner.signal, request.signal) ?? new AbortController().signal;
   throwIfAborted(signal);
-  if (isUiViewerDisabled(state.config, request.serverName)) {
+  if (isUiViewerDisabled(state, request.serverName)) {
     return null;
   }
   const session = new UiSession(state, request, signal);
@@ -88,6 +97,7 @@ class UiSession {
   private readonly log: ReturnType<typeof logger.child>;
   private handle: UiServerHandle | undefined;
   private stream: UiSessionStream | undefined;
+  private hostError: string | undefined;
 
   constructor(state: McpExtensionState, request: UiSessionRequest, signal: AbortSignal) {
     this.state = state;
@@ -154,6 +164,9 @@ class UiSession {
       ...(request.onNeedsAuth ? { onNeedsAuth: request.onNeedsAuth } : {}),
       ...(hostContext !== undefined ? { hostContext } : {}),
       onMessage: (params) => events.message(params, this.handle),
+      onError: (message) => {
+        this.hostError = message;
+      },
       onComplete: (reason) => this.complete(reason),
     });
     this.handle = handle;
@@ -164,7 +177,12 @@ class UiSession {
     }
     // Listener startup yields: replace the slot's current owner only when we can publish ours.
     this.replaceExisting();
-    const stream = new UiSessionStream(state, request, handle, { ...identity, reused: false });
+    this.state.pendingUiModelContext = undefined;
+    const stream = new UiSessionStream(state, request, handle, {
+      ...identity,
+      reused: false,
+      getHostError: () => this.hostError,
+    });
     this.stream = stream;
     stream.register();
     this.state.uiServer = handle;
@@ -184,11 +202,26 @@ class UiSession {
   }
 
   private replaceExisting(): void {
-    if (this.state.uiServer) {
-      this.state.uiServer.close("replaced");
+    const existing = this.state.uiServer;
+    if (existing) {
+      existing.close("replaced");
       this.state.uiServer = null;
+      closeUiWindow(existing);
     }
-    closeActiveUiWindow();
+  }
+
+  private retainPendingModelContext(handle: UiServerHandle, reason: string): void {
+    if (reason === "replaced") {
+      return;
+    }
+    const pendingContext = handle.takeModelContext();
+    if (pendingContext) {
+      this.state.pendingUiModelContext = {
+        serverName: handle.serverName,
+        toolName: handle.toolName,
+        context: pendingContext,
+      };
+    }
   }
 
   private complete(reason: string): void {
@@ -197,6 +230,7 @@ class UiSession {
     if (!handle || this.state.uiServer !== handle) {
       return;
     }
+    this.retainPendingModelContext(handle, reason);
     const messages = handle.getSessionMessages();
     const stream = handle.getStreamSummary();
     if (hasSessionContent(messages, stream)) {
@@ -221,7 +255,7 @@ class UiSession {
       });
     }
     this.state.uiServer = null;
-    closeActiveUiWindow();
+    closeUiWindow(handle);
   }
 }
 

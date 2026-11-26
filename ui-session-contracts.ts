@@ -25,6 +25,7 @@ export interface UiSessionRuntime {
   url: string;
   viewer: UiSessionViewer;
   isActive: () => boolean;
+  getHostError?: () => string | undefined;
   sendToolResult: (result: CallToolResult) => void;
   sendResultPatch: (result: CallToolResult) => void;
   sendToolCancelled: (reason: string) => void;
