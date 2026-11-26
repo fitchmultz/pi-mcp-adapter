@@ -1,5 +1,6 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
+import type { ProxyToolUpdateCallback } from "./proxy-result.ts";
 import {
   isServerDisabled,
   isToolAllowed,
@@ -22,11 +23,13 @@ export async function executeResourceList(
     limit = 12,
     offset = 0,
     signal,
+    onUpdate,
   }: {
     server: string;
     limit?: number | undefined;
     offset?: number | undefined;
     signal?: AbortSignal | undefined;
+    onUpdate?: ProxyToolUpdateCallback | undefined;
   },
 ): Promise<AgentToolResult<Record<string, unknown>>> {
   throwIfAborted(combineAbortSignals(state.owner.signal, signal));
@@ -35,7 +38,7 @@ export async function executeResourceList(
     return unavailableResourceList(server, definition !== undefined);
   }
   if (needsResourceDiscovery(state, server)) {
-    const prepared = await prepareMcpConnection(state, server, signal);
+    const prepared = await prepareMcpConnection(state, server, signal, onUpdate);
     if (prepared.error) {
       return prepared.error;
     }
@@ -112,12 +115,14 @@ export async function executeResourceRead(
     server,
     uri,
     signal,
+    onUpdate,
     identity = {},
     beforeDispatch,
   }: {
     server: string;
     uri: string;
     signal?: AbortSignal | undefined;
+    onUpdate?: ProxyToolUpdateCallback | undefined;
     identity?: McpToolCallIdentity | undefined;
     beforeDispatch?:
       | ((signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>)
@@ -129,6 +134,7 @@ export async function executeResourceRead(
     args: {},
     serverOverride: server,
     signal,
+    onUpdate,
     identity,
     beforeDispatch,
     options: { resourceUri: uri },

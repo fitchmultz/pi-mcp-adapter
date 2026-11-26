@@ -73,8 +73,8 @@ export class McpHostTools {
     const { pi, host, options } = this;
     const execute: HostToolExecute<Record<string, unknown>> =
       // oxlint-disable-next-line eslint/max-params -- QX-025: preserve Pi's native five-position execute callback.
-      async function executeMcpGateway(toolCallId, rawParams, signal, _onUpdate, ctx) {
-        return executeGateway(pi, host, options, [toolCallId, rawParams, signal, _onUpdate, ctx]);
+      async function executeMcpGateway(toolCallId, rawParams, signal, onUpdate, ctx) {
+        return executeGateway(pi, host, options, [toolCallId, rawParams, signal, onUpdate, ctx]);
       };
     this.registerHostTool({
       ...(beforeExecute ? { executionMode: "sequential" as const } : {}),

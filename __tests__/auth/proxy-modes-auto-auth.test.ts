@@ -371,7 +371,13 @@ describe("proxy auto auth", () => {
     expect(toolCall[0]).toEqual({ name: "search", arguments: { q: "hello" }, _meta: undefined });
     const signal = toolCall[1]?.signal;
     expect(signal).toBeInstanceOf(AbortSignal);
-    expect(toolCall[1]).toEqual({ timeout: 1234, signal });
+    const onprogress: unknown = expect.any(Function);
+    expect(toolCall[1]).toEqual({
+      timeout: 1234,
+      signal,
+      onprogress,
+      resetTimeoutOnProgress: true,
+    });
     expect(firstText(result)).toContain("ok");
     const reason = new Error("caller cancelled");
     controller.abort(reason);
@@ -442,7 +448,13 @@ describe("proxy auto auth", () => {
     expect(toolCall[0]).toEqual({ name: "search", arguments: {}, _meta: undefined });
     const signal = toolCall[1]?.signal;
     expect(signal).toBeInstanceOf(AbortSignal);
-    expect(toolCall[1]).toEqual({ ...requestOptions, signal });
+    const onprogress: unknown = expect.any(Function);
+    expect(toolCall[1]).toEqual({
+      ...requestOptions,
+      signal,
+      onprogress,
+      resetTimeoutOnProgress: true,
+    });
     expect(options.mock.calls[0]?.[1]?.reason).toBe(reason);
     expect(signal?.reason).toBe(reason);
     expect(result.details).toMatchObject({ error: "aborted", message: "request aborted" });
@@ -553,10 +565,16 @@ describe("proxy auto auth", () => {
       arguments: { text: "two" },
       _meta: undefined,
     });
+    const onprogress: unknown = expect.any(Function);
     for (const [, options] of callTool.mock.calls) {
       const signal = options?.signal;
       expect(signal).toBeInstanceOf(AbortSignal);
-      expect(options).toEqual({ timeout: 5000, signal });
+      expect(options).toEqual({
+        timeout: 5000,
+        signal,
+        onprogress,
+        resetTimeoutOnProgress: true,
+      });
     }
     const events = (await readFile(eventsPath, "utf8"))
       .trim()

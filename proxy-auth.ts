@@ -105,6 +105,7 @@ export async function attemptAutoAuth(
   state: McpExtensionState,
   serverName: string,
   signal?: AbortSignal,
+  onAuthenticate?: () => void,
 ): Promise<AutoAuthResult> {
   if (state.config.settings?.autoAuth !== true) {
     return { status: "skipped" };
@@ -131,6 +132,7 @@ export async function attemptAutoAuth(
     };
   }
 
+  onAuthenticate?.();
   return authenticateConnection(state, { serverName, serverUrl, definition, signal });
 }
 async function authenticateConnection(

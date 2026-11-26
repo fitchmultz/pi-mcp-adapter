@@ -55,7 +55,7 @@ export function createDirectToolExecutor(
 ): DirectToolExecute {
   return (
     // oxlint-disable-next-line eslint/max-params -- QX-025: Pi supplies context in the fifth callback position.
-    async function execute(toolCallId, params, signal, _onUpdate, ctx) {
+    async function execute(toolCallId, params, signal, onUpdate, ctx) {
       throwIfAborted(signal);
       let state = getState();
       const initPromise = getInitPromise();
@@ -91,6 +91,7 @@ export function createDirectToolExecutor(
         args: params,
         serverOverride: spec.serverName,
         signal,
+        onUpdate,
         identity: { toolCallId },
         beforeDispatch: beforeExecute
           ? (callSignal, operation) =>

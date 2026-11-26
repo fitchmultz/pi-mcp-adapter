@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type * as Proxy from "./proxy-modes.ts";
 import type { McpAdapterHost, HostToolArguments } from "./host-contract.ts";
+import type { ProxyToolUpdateCallback } from "./proxy-result.ts";
 import type { McpAdapterOptions, McpOperationContext } from "./types.ts";
 import type { McpExtensionState } from "./state.ts";
 import {
@@ -21,6 +22,7 @@ type Dispatch = {
   proxy: typeof Proxy;
   ready: McpExtensionState;
   signal: AbortSignal | undefined;
+  onUpdate: ProxyToolUpdateCallback | undefined;
   toolCallId: string;
   getPiTools: () => ReturnType<ExtensionAPI["getAllTools"]>;
   beforeDispatch: Parameters<typeof Proxy.executeCall>[1]["beforeDispatch"];
@@ -62,11 +64,28 @@ function authComplete(
   );
 }
 
+async function listResources(
+  { ready, signal, onUpdate }: Dispatch,
+  params: GatewayArguments,
+): Promise<GatewayResult> {
+  const resources = await import("./resource-tools.ts");
+  return present(
+    ready,
+    await resources.executeResourceList(ready, {
+      server: required(params.server, params.action, "server"),
+      limit: params.limit,
+      offset: params.offset,
+      signal,
+      onUpdate,
+    }),
+  );
+}
+
 async function dispatchGateway(
   params: GatewayArguments,
   context: Dispatch,
 ): Promise<GatewayResult> {
-  const { proxy, ready, signal, toolCallId, getPiTools, beforeDispatch } = context;
+  const { proxy, ready, signal, onUpdate, toolCallId, getPiTools, beforeDispatch } = context;
   const server = () => required(params.server, params.action, "server");
   const tool = () => required(params.tool, params.action, "tool");
   switch (params.action) {
@@ -83,6 +102,7 @@ async function dispatchGateway(
         serverOverride: params.server,
         getPiTools,
         signal,
+        onUpdate,
         identity: { toolCallId },
         beforeDispatch,
       });
@@ -90,6 +110,7 @@ async function dispatchGateway(
       const result = await proxy.executeConnect(ready, {
         serverName: server(),
         signal,
+        onUpdate,
         limit: params.limit,
         offset: params.offset,
       });
@@ -114,22 +135,13 @@ async function dispatchGateway(
     case "list":
       return present(ready, proxy.executeList(ready, server(), params.limit, params.offset));
     case "resources":
-      return present(
-        ready,
-        await (
-          await import("./resource-tools.ts")
-        ).executeResourceList(ready, {
-          server: server(),
-          limit: params.limit,
-          offset: params.offset,
-          signal,
-        }),
-      );
+      return listResources(context, params);
     case "read-resource":
       return (await import("./resource-tools.ts")).executeResourceRead(ready, {
         server: server(),
         uri: required(params.uri, params.action, "uri"),
         signal,
+        onUpdate,
         identity: { toolCallId },
         beforeDispatch,
       });
@@ -180,7 +192,7 @@ export async function executeGateway(
   pi: ExtensionAPI,
   host: McpAdapterHost,
   options: McpAdapterOptions,
-  [toolCallId, rawParams, signal, , ctx]: HostToolArguments<Record<string, unknown>>,
+  [toolCallId, rawParams, signal, onUpdate, ctx]: HostToolArguments<Record<string, unknown>>,
 ): Promise<GatewayResult> {
   const params = parseGatewayArguments(prepareGatewayArguments(rawParams));
   await beforeGateway(host, options.beforeExecute, { id: toolCallId, ctx, action: params.action });
@@ -200,7 +212,11 @@ export async function executeGateway(
     ["list", "search", "describe", "instructions"].includes(params.action) &&
     !ready.toolMetadata.has(params.server)
   ) {
-    const discovery = await proxy.executeConnect(ready, { serverName: params.server, signal });
+    const discovery = await proxy.executeConnect(ready, {
+      serverName: params.server,
+      signal,
+      onUpdate,
+    });
     const failed = Boolean(discovery.details.error);
     if (failed) {
       return discovery;
@@ -211,6 +227,7 @@ export async function executeGateway(
     proxy,
     ready,
     signal,
+    onUpdate,
     toolCallId,
     getPiTools: () => pi.getAllTools(),
     beforeDispatch,

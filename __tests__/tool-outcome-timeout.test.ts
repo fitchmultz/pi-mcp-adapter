@@ -77,6 +77,10 @@ it.each(["stdio", "unix"])(
         error: "ambiguous_outcome",
         recovery: { action: "readback" },
       });
+      expect(output.details.message).toContain('"write"');
+      expect(output.details.message).toContain('"local"');
+      expect(output.details.message).toContain("80ms");
+      expect(output.details.message).toContain("requestTimeoutMs");
       const readback = await executeCall(state, { toolName: "local_readback", args: {} });
       expect(readback.content).toEqual([{ type: "text", text: "1" }]);
     } finally {

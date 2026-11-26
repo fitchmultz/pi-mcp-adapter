@@ -206,7 +206,13 @@ describe("direct tools auto auth", () => {
     });
     const toolSignal = toolCall[1]?.signal;
     expect(toolSignal).toBeInstanceOf(AbortSignal);
-    expect(toolCall[1]).toEqual({ timeout: 4321, signal: toolSignal });
+    const onprogress: unknown = expect.any(Function);
+    expect(toolCall[1]).toEqual({
+      timeout: 4321,
+      signal: toolSignal,
+      onprogress,
+      resetTimeoutOnProgress: true,
+    });
     expect(firstText(result)).toContain("ok");
     const reason = new Error("caller cancelled");
     controller.abort(reason);
@@ -263,7 +269,13 @@ describe("direct tools auto auth", () => {
     expect(toolCall[0]).toEqual({ name: "search", arguments: {}, _meta: undefined });
     const toolSignal = toolCall[1]?.signal;
     expect(toolSignal).toBeInstanceOf(AbortSignal);
-    expect(toolCall[1]).toEqual({ ...requestOptions, signal: toolSignal });
+    const onprogress: unknown = expect.any(Function);
+    expect(toolCall[1]).toEqual({
+      ...requestOptions,
+      signal: toolSignal,
+      onprogress,
+      resetTimeoutOnProgress: true,
+    });
     expect(options.mock.calls[0]?.[1]?.reason).toBe(reason);
     expect(toolSignal?.reason).toBe(reason);
     expect(result.details).toMatchObject({ error: "aborted", server: "demo" });

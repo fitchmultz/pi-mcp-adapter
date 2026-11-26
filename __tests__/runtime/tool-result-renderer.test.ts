@@ -436,6 +436,42 @@ describe("MCP tool result renderer", () => {
 
     expect(output).toContain("Running MCP tool...");
   });
+
+  it("renders live partial progress updates in warning color and sanitizes control characters", () => {
+    const styledTheme: NonNullable<Parameters<typeof renderMcpToolResult>[2]> = {
+      fg: (name, text) => `<${name}>${text}</${name}>`,
+      bold: (text) => `**${text}**`,
+    };
+    const progress = renderMcpToolResult(
+      result([{ type: "text", text: "Indexing 3/10" }], { server: "docs", tool: "index" }),
+      { expanded: false, isPartial: true },
+      styledTheme,
+    )
+      .render(80)
+      .join("\n")
+      .trim();
+    expect(progress).toBe("<warning>Indexing 3/10</warning>");
+
+    const sanitized = renderMcpToolResult(
+      result([{ type: "text", text: "Step 1\n\x1b[31mred\x1b[0m\r\nStep 2" }]),
+      { expanded: false, isPartial: true },
+      styledTheme,
+    )
+      .render(80)
+      .join("\n")
+      .trim();
+    expect(sanitized).toBe("<warning>Step 1 red Step 2</warning>");
+
+    const blankFallback = renderMcpToolResult(
+      result([{ type: "text", text: "   \n\t  " }]),
+      { expanded: false, isPartial: true },
+      styledTheme,
+    )
+      .render(80)
+      .join("\n")
+      .trim();
+    expect(blankFallback).toBe("<warning>Running MCP tool...</warning>");
+  });
 });
 
 describe("MCP tool call renderers without a theme", () => {

@@ -1,5 +1,9 @@
 import type { McpExtensionState } from "./state.ts";
-import { type ProxyToolResult, disabledResult } from "./proxy-result.ts";
+import {
+  type ProxyToolResult,
+  type ProxyToolUpdateCallback,
+  disabledResult,
+} from "./proxy-result.ts";
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import {
   type ToolMetadata,
@@ -28,6 +32,7 @@ interface ExecuteCallRequest {
   serverOverride?: string | undefined;
   getPiTools?: (() => ToolInfo[]) | undefined;
   signal?: AbortSignal | undefined;
+  onUpdate?: ProxyToolUpdateCallback | undefined;
   identity?: McpToolCallIdentity | undefined;
   beforeDispatch?:
     | ((signal: AbortSignal | undefined, operation: McpOperationContext) => Promise<void>)
@@ -373,7 +378,7 @@ async function executeResolvedCall(
   }
   const serverName = resolved;
   const cached = state.toolMetadata.get(serverName);
-  const prepared = await prepareMcpConnection(state, serverName, ownedSignal);
+  const prepared = await prepareMcpConnection(state, serverName, ownedSignal, request.onUpdate);
   if (prepared.error) {
     return callPreparationError(prepared.error, lookup.matches(cached)[0], toolName);
   }
@@ -405,7 +410,7 @@ async function dispatchApprovedCall(
     prepared: Extract<Awaited<ReturnType<typeof prepareMcpConnection>>, { connection: unknown }>;
   },
 ): Promise<ProxyToolResult> {
-  const { args, identity, beforeDispatch, signal } = request;
+  const { args, identity, beforeDispatch, signal, onUpdate } = request;
   const approval = await ensureToolCallApproved(state, {
     serverName,
     toolMeta,
@@ -432,6 +437,7 @@ async function dispatchApprovedCall(
       },
       ownedSignal,
       signal,
+      onUpdate,
       recoverAuthConnection: prepared.recoverAuthConnection,
       authRequiredMessage: () => getAuthRequiredMessage(state, serverName),
       autoAuthAttempted: prepared.autoAuthAttempted,
