@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { setTimeout as delay } from "node:timers/promises";
 
 export class StorageLockBusyError extends Error {
   override readonly name = "StorageLockBusyError";
@@ -65,6 +66,71 @@ function releaseStorageLock(
 export interface StorageLockOptions {
   mode?: "read" | "write";
   timeoutMs?: number;
+}
+
+export interface AsyncStorageLockOptions {
+  mode?: "read" | "write";
+  timeoutMs: number;
+  initialPollMs: number;
+  maxPollMs: number;
+  signal?: AbortSignal | undefined;
+}
+
+async function waitForStorageLock(
+  database: DatabaseSync,
+  lockPath: string,
+  options: AsyncStorageLockOptions,
+): Promise<void> {
+  const mode = options.mode ?? "write";
+  const deadline = Date.now() + options.timeoutMs;
+  let pollMs = options.initialPollMs;
+  for (;;) {
+    options.signal?.throwIfAborted();
+    try {
+      acquireStorageLock(database, lockPath, mode);
+      return;
+    } catch (error) {
+      if (!(error instanceof StorageLockBusyError) || Date.now() >= deadline) {
+        throw error;
+      }
+    }
+    // Small random jitter spreads wakeups when several processes contend on the same lock.
+    const jitter = Math.floor(Math.random() * 15);
+    await delay(pollMs + jitter, undefined, {
+      ref: false,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    pollMs = Math.min(options.maxPollMs, Math.ceil(pollMs * 1.5));
+  }
+}
+
+/**
+ * Runs an asynchronous operation under a SQLite OS file lock without blocking the event loop
+ * during lock contention. Throws StorageLockBusyError when timeoutMs elapses without acquiring.
+ */
+export async function withAsyncStorageLock<T>(
+  lockPath: string,
+  operation: () => Promise<T>,
+  options: AsyncStorageLockOptions,
+): Promise<T> {
+  options.signal?.throwIfAborted();
+  mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
+  const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
+  // Omit DatabaseSync timeout so contention yields via async polling instead of blocking the thread.
+  const database = new DatabaseSync(lockPath);
+  let acquired = false;
+  let primary: { error: unknown } | undefined;
+  try {
+    chmodSync(lockPath, 0o600);
+    await waitForStorageLock(database, lockPath, options);
+    acquired = true;
+    return await operation();
+  } catch (error) {
+    primary = { error };
+    throw error;
+  } finally {
+    releaseStorageLock(database, acquired, primary);
+  }
 }
 
 /**

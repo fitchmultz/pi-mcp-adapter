@@ -8,6 +8,8 @@ import { OAuthCredentialStoreError } from "./credential-store-errors.ts";
 
 const require = createRequire(import.meta.url);
 const TEST_AUTH_STORE_ENV = "PI_MCP_ADAPTER_TEST_AUTH_STORE";
+// Bounds SQLite busy wait for short local Keychain/libsecret IPC reads and writes (~5-200ms each)
+// across ~8-10 concurrent Pi sessions without hanging the event loop past interactive thresholds.
 const AUTH_SECRET_LOCK_TIMEOUT_MS = 2500;
 
 type KeyringEntryConstructor = typeof keyring.Entry;

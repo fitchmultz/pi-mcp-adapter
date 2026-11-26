@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import { createOAuthRuntime, getOAuthRequest } from "../mcp-oauth-runtime.ts";
 import { prepareMcpConnection } from "../proxy-connection.ts";
 import { withSessionRecovery } from "../session-recovery.ts";
 import { McpServerManager } from "../server-manager.ts";
+import { StorageLockBusyError, withAsyncStorageLock, withStorageLock } from "../storage-lock.ts";
 import { createTestState } from "./test-state.ts";
 import {
   MachineHttpServer,
@@ -510,16 +511,54 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
         expect(parsedB.stored?.refreshToken).toBe("refresh-2");
 
         const locksDir = join(home, ".fitch-mcp-adapter", "locks");
-        const remainingRefreshLocks = readdirSync(locksDir).filter((name) =>
-          name.startsWith("refresh-"),
+        const refreshLocks = readdirSync(locksDir).filter(
+          (name) => name.startsWith("refresh-") && name.endsWith(".sqlite"),
         );
-        expect(remainingRefreshLocks).toEqual([]);
+        expect(refreshLocks).toHaveLength(1);
+        const refreshLockPath = join(locksDir, refreshLocks[0] ?? "");
+        expect(statSync(refreshLockPath).mode & 0o777).toBe(0o600);
+        expect(withStorageLock(refreshLockPath, () => true)).toBe(true);
       } finally {
         workerA.kill();
         workerB.kill();
       }
     },
   );
+
+  it("refuses to run unlocked when the async SQLite refresh lock stays busy past its wait budget", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-204-lock-busy-"));
+    tempDirs.push(dir);
+    const lockPath = join(dir, "refresh-busy.sqlite");
+    const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
+    const holder = new DatabaseSync(lockPath);
+    holder.exec("BEGIN EXCLUSIVE");
+    let ranUnlocked = false;
+    try {
+      await expect(
+        withAsyncStorageLock(
+          lockPath,
+          async () => {
+            ranUnlocked = true;
+            await Promise.resolve();
+          },
+          { timeoutMs: 80, initialPollMs: 10, maxPollMs: 25 },
+        ),
+      ).rejects.toBeInstanceOf(StorageLockBusyError);
+      expect(ranUnlocked).toBe(false);
+    } finally {
+      holder.exec("ROLLBACK");
+      holder.close();
+    }
+    const afterRelease = await withAsyncStorageLock(
+      lockPath,
+      async () => {
+        await Promise.resolve();
+        return "acquired";
+      },
+      { timeoutMs: 100, initialPollMs: 10, maxPollMs: 25 },
+    );
+    expect(afterRelease).toBe("acquired");
+  });
 
   it("preserves stored refreshToken and scope across multiple refreshes that omit them", async () => {
     const { server, url } = await startServer({
