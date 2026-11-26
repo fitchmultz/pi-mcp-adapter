@@ -2,12 +2,14 @@ import { isServerDisabled, type ServerDefinition } from "./types.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import { logger } from "./logger.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
+import { exponentialBackoffMs } from "./server-status.ts";
 import { formatTerminalError, sanitizeTerminalText } from "./utils.ts";
 
 export type ReconnectCallback = (serverName: string) => void;
 export type ReconnectFailureCallback = (serverName: string, error: unknown) => void;
 
 const DEFAULT_HEALTH_CHECK_INTERVAL_MS = 30_000;
+// Background polling cannot retry faster than its tick; capping at 10x (5m at 30s) stops dead-daemon respawn loops.
 const MAX_RECONNECT_BACKOFF_MULTIPLIER = 10;
 
 interface ReconnectBackoff {
@@ -172,8 +174,9 @@ export class McpLifecycleManager {
   private recordReconnectFailure(name: string): number {
     const failures = (this.reconnectBackoff.get(name)?.failures ?? 0) + 1;
     const baseMs = Math.max(1, this.healthCheckIntervalMs);
-    const delayMs = Math.min(
-      baseMs * 2 ** (failures - 1),
+    const delayMs = exponentialBackoffMs(
+      failures,
+      baseMs,
       baseMs * MAX_RECONNECT_BACKOFF_MULTIPLIER,
     );
     this.reconnectBackoff.set(name, { failures, nextRetryAt: Date.now() + delayMs });

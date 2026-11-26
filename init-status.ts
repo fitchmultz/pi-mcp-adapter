@@ -6,12 +6,13 @@ import { logger } from "./logger.ts";
 import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import {
-  clearFailureBackoffMs,
+  ensureFailureBackoffMap,
   failureAgeSeconds,
   failureBackoffMs,
   failureRemainingSeconds,
-  getFailureBackoffMs,
-  setFailureBackoffMs,
+  getFailureBackoffMap,
+  serverFailureBackoffMs,
+  type FailureBackoffEntry,
 } from "./server-status.ts";
 import {
   updateServerMetadata,
@@ -21,19 +22,8 @@ import {
 } from "./init-metadata.ts";
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
 
-interface FailureBackoffEntry {
-  consecutiveFailures: number;
-  timer: ReturnType<typeof setTimeout> | undefined;
-}
-
-const failureBackoffs = new WeakMap<McpExtensionState, Map<string, FailureBackoffEntry>>();
-
 function getFailureBackoffs(state: McpExtensionState): Map<string, FailureBackoffEntry> {
-  let entries = failureBackoffs.get(state);
-  if (!entries) {
-    entries = new Map();
-    failureBackoffs.set(state, entries);
-    const ownedEntries = entries;
+  return ensureFailureBackoffMap(state, (ownedEntries) => {
     state.owner.addCleanup(() => {
       for (const entry of ownedEntries.values()) {
         if (entry.timer) {
@@ -43,16 +33,14 @@ function getFailureBackoffs(state: McpExtensionState): Map<string, FailureBackof
       }
       ownedEntries.clear();
     });
-  }
-  return entries;
+  });
 }
 
 export function clearFailure(state: McpExtensionState, serverName: string): void {
   state.failureTracker.delete(serverName);
   state.failureMessages.delete(serverName);
-  clearFailureBackoffMs(state.failureTracker, serverName);
   state.lifecycle.resetReconnectBackoff(serverName);
-  const entries = failureBackoffs.get(state);
+  const entries = getFailureBackoffMap(state);
   const entry = entries?.get(serverName);
   if (entry?.timer) {
     clearTimeout(entry.timer);
@@ -70,9 +58,8 @@ export function recordFailure(state: McpExtensionState, serverName: string, mess
   const backoffMs = failureBackoffMs(consecutiveFailures);
   const failedAt = Date.now();
   state.failureTracker.set(serverName, failedAt);
-  setFailureBackoffMs(state.failureTracker, serverName, backoffMs);
   state.failureMessages.set(serverName, message.slice(0, MAX_FAILURE_MESSAGE_CHARS));
-  const entry: FailureBackoffEntry = { consecutiveFailures, timer: undefined };
+  const entry: FailureBackoffEntry = { consecutiveFailures, backoffMs, timer: undefined };
   const timer = setTimeout(() => {
     entry.timer = undefined;
     if (!state.owner.isActive()) {
@@ -81,7 +68,6 @@ export function recordFailure(state: McpExtensionState, serverName: string, mess
     }
     if (state.failureTracker.get(serverName) === failedAt) {
       state.failureTracker.delete(serverName);
-      clearFailureBackoffMs(state.failureTracker, serverName);
       publishMcpStatusSnapshot(state);
     }
   }, backoffMs);
@@ -133,7 +119,7 @@ export function getFailureAgeSeconds(state: McpExtensionState, serverName: strin
   return failureAgeSeconds(
     state.failureTracker.get(serverName),
     Date.now(),
-    getFailureBackoffMs(state.failureTracker, serverName),
+    serverFailureBackoffMs(state, serverName),
   );
 }
 
@@ -144,7 +130,7 @@ export function getFailureRemainingSeconds(
   return failureRemainingSeconds(
     state.failureTracker.get(serverName),
     Date.now(),
-    getFailureBackoffMs(state.failureTracker, serverName),
+    serverFailureBackoffMs(state, serverName),
   );
 }
 

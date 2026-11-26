@@ -10,42 +10,53 @@ import { sanitizeTerminalText } from "./utils.ts";
 /** Maximum backoff window for repeated lazy-connect failures. */
 export const FAILURE_BACKOFF_MS = 60 * 1000;
 
-/** Progressive backoff windows for repeated lazy-connect failures. */
+/**
+ * Progressive backoff windows for repeated lazy-connect failures:
+ * recovers from a transient first failure in 2s and converges to the existing 60s cap.
+ */
 export const FAILURE_BACKOFF_STEPS_MS = [2_000, 10_000, 30_000, FAILURE_BACKOFF_MS] as const;
 
+// Keeps per-server status and server_backoff lines scannable in multi-server output; raw storage stays at 8 KiB.
 const MAX_DIAGNOSTIC_SUMMARY_CHARS = 500;
-const trackerBackoffDurations = new WeakMap<ReadonlyMap<string, number>, Map<string, number>>();
+
+export interface FailureBackoffEntry {
+  consecutiveFailures: number;
+  backoffMs: number;
+  timer: ReturnType<typeof setTimeout> | undefined;
+}
+
+const stateFailureBackoffs = new WeakMap<object, Map<string, FailureBackoffEntry>>();
+
+export function getFailureBackoffMap(state: object): Map<string, FailureBackoffEntry> | undefined {
+  return stateFailureBackoffs.get(state);
+}
+
+export function ensureFailureBackoffMap(
+  state: object,
+  onCreate: (entries: Map<string, FailureBackoffEntry>) => void,
+): Map<string, FailureBackoffEntry> {
+  let entries = stateFailureBackoffs.get(state);
+  if (!entries) {
+    entries = new Map();
+    stateFailureBackoffs.set(state, entries);
+    onCreate(entries);
+  }
+  return entries;
+}
+
+/** Shared bounded exponential backoff helper (doubles baseMs per failure up to maxMs). */
+export function exponentialBackoffMs(failures: number, baseMs: number, maxMs: number): number {
+  const safeBase = Math.max(1, baseMs);
+  return Math.min(safeBase * 2 ** Math.max(0, failures - 1), Math.max(safeBase, maxMs));
+}
 
 export function failureBackoffMs(consecutiveFailures: number): number {
   const index = Math.min(Math.max(0, consecutiveFailures - 1), FAILURE_BACKOFF_STEPS_MS.length - 1);
   return FAILURE_BACKOFF_STEPS_MS[index] ?? FAILURE_BACKOFF_MS;
 }
 
-export function setFailureBackoffMs(
-  tracker: ReadonlyMap<string, number>,
-  serverName: string,
-  backoffMs: number,
-): void {
-  let durations = trackerBackoffDurations.get(tracker);
-  if (!durations) {
-    durations = new Map();
-    trackerBackoffDurations.set(tracker, durations);
-  }
-  durations.set(serverName, backoffMs);
-}
-
-export function getFailureBackoffMs(
-  tracker: ReadonlyMap<string, number>,
-  serverName: string,
-): number {
-  return trackerBackoffDurations.get(tracker)?.get(serverName) ?? FAILURE_BACKOFF_MS;
-}
-
-export function clearFailureBackoffMs(
-  tracker: ReadonlyMap<string, number>,
-  serverName: string,
-): void {
-  trackerBackoffDurations.get(tracker)?.delete(serverName);
+export function serverFailureBackoffMs(state: object, serverName: string): number {
+  return stateFailureBackoffs.get(state)?.get(serverName)?.backoffMs ?? FAILURE_BACKOFF_MS;
 }
 
 /** Sanitize and bound a failure message for status and backoff diagnostics. */

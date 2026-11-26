@@ -9,23 +9,19 @@ import { logger } from "./logger.ts";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
+// Fits a typical crash traceback inside an inline tool error without tripping the 50 KiB output guard.
 const MAX_STDERR_TAIL_BYTES = 2 * 1024;
 const MAX_STDERR_TAIL_LINES = 20;
 
-const TRANSPORT_ERROR_CODES = new Set([
-  "CONNECTION_CLOSED",
-  "NOT_CONNECTED",
-  "SEND_FAILED",
+const NODE_STREAM_ERROR_CODES = new Set([
   "EPIPE",
   "ECONNRESET",
   "ERR_STREAM_DESTROYED",
   "ERR_STREAM_WRITE_AFTER_END",
 ]);
 
-const TRANSPORT_ERROR_PATTERN =
-  /\b(?:connection closed|transport closed|not connected|broken pipe|epipe)\b/i;
-
 const connectionDiagnostics = new WeakMap<ServerConnection, StdioDiagnostics>();
+let checkSdkTransportError: ((error: unknown) => boolean) | undefined;
 
 function boundedStderrChunk(chunk: Buffer | string): Buffer {
   if (Buffer.isBuffer(chunk)) {
@@ -170,14 +166,6 @@ export function detachStdioDiagnostics(connection: ServerConnection): void {
   connectionDiagnostics.get(connection)?.detach();
 }
 
-function isServerAnsweredError(error: Error, code: unknown): boolean {
-  return (
-    typeof code === "number" ||
-    error.name === "ProtocolError" ||
-    ("status" in error && typeof error.status === "number")
-  );
-}
-
 export function isConnectionTransportError(error: unknown): boolean {
   const pending: unknown[] = [error];
   const seen = new Set<unknown>();
@@ -187,11 +175,11 @@ export function isConnectionTransportError(error: unknown): boolean {
       continue;
     }
     seen.add(current);
-    const code = "code" in current ? current.code : undefined;
-    if (typeof code === "string" && TRANSPORT_ERROR_CODES.has(code)) {
+    if (checkSdkTransportError?.(current) === true) {
       return true;
     }
-    if (!isServerAnsweredError(current, code) && TRANSPORT_ERROR_PATTERN.test(current.message)) {
+    const code = "code" in current ? current.code : undefined;
+    if (typeof code === "string" && NODE_STREAM_ERROR_CODES.has(code)) {
       return true;
     }
     if (current.cause !== undefined) {
@@ -265,6 +253,7 @@ export function createStdioConnection(
     // onclose ends that stdio-only wait; other client operations still drain.
     await abortable(send(message), closed.signal);
   };
+  checkSdkTransportError = runtime.isSdkTransportError;
   return transport;
 }
 

@@ -10,8 +10,8 @@ import {
 } from "./types.ts";
 import {
   failureAgeSeconds,
-  getFailureBackoffMs,
   runtimeStatus,
+  serverFailureBackoffMs,
   serverStage,
 } from "./server-status.ts";
 
@@ -41,7 +41,7 @@ function getServerSnapshot(state: McpExtensionState, name: string): McpServerSta
   const failedAgoSeconds = failureAgeSeconds(
     state.failureTracker.get(name),
     Date.now(),
-    getFailureBackoffMs(state.failureTracker, name),
+    serverFailureBackoffMs(state, name),
   );
   const status = runtimeStatus(
     serverStage({
