@@ -22,7 +22,6 @@ export class ConnectionCallbacks {
   private readonly acceptedUrlElicitations = new Map<string, Set<string>>();
   private readonly uiStreamListeners = new Map<string, UiStreamListener>();
   private readonly catalogs = new WeakMap<Client, ConnectionCatalogs>();
-  private readonly templateRefreshGenerations = new WeakMap<Client, number>();
 
   private readonly lifecycle: ConnectionLifecycle;
 
@@ -223,8 +222,8 @@ export class ConnectionCallbacks {
     }
     connection.pendingResources = resources;
     connection.resourceTemplatesStale = true;
-    const generation = (this.templateRefreshGenerations.get(client) ?? 0) + 1;
-    this.templateRefreshGenerations.set(client, generation);
+    const generation = (connection.resourceTemplatesGeneration ?? 0) + 1;
+    connection.resourceTemplatesGeneration = generation;
     this.refreshTemplatesOnResourcesChanged({
       serverName,
       client,
@@ -271,7 +270,8 @@ export class ConnectionCallbacks {
   ): boolean {
     return (
       this.lifecycle.runtimeSignal?.aborted !== true &&
-      this.templateRefreshGenerations.get(client) === generation &&
+      connection.resourceTemplatesStale === true &&
+      (connection.resourceTemplatesGeneration ?? 0) === generation &&
       this.lifecycle.getConnection(serverName) === connection &&
       connection.client === client &&
       connection.status === "connected"

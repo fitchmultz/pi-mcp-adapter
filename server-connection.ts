@@ -20,6 +20,8 @@ export interface ServerConnection {
   resourceTemplates?: McpResourceTemplate[];
   /** True after resources/list_changed until resourceTemplates are refreshed. */
   resourceTemplatesStale?: boolean;
+  /** Monotonic generation bumped on each resources/list_changed to guard overlapping template refreshes. */
+  resourceTemplatesGeneration?: number;
   prompts: McpPrompt[];
   /** True when prompts were advertised but prompts/list failed. */
   promptDiscoveryFailed?: boolean;

@@ -83,32 +83,43 @@ function isMethodNotFoundError(error: unknown): boolean {
 
 function applyRefreshedResourceTemplates(
   state: McpExtensionState,
-  server: string,
-  connection: ServerConnection,
-  templates: McpResourceTemplate[],
+  input: {
+    readonly server: string;
+    readonly connection: ServerConnection;
+    readonly generation: number;
+    readonly pendingResources: ServerConnection["resources"] | undefined;
+    readonly templates: McpResourceTemplate[];
+  },
 ): void {
+  const { server, connection, generation, pendingResources, templates } = input;
   const current = state.manager.getConnection(server);
-  if (current === connection && current.status === "connected") {
-    const hadPendingResources = current.pendingResources !== undefined;
-    if (current.pendingResources !== undefined) {
-      current.resources = current.pendingResources;
-      current.pendingResources = undefined;
-    }
-    current.resourceTemplates = templates;
-    current.resourceTemplatesStale = false;
-    const definition = state.config.mcpServers[server];
-    if (definition) {
-      applyServerMetadata(state, { serverName: server, connection: current, definition });
-    } else {
-      state.resourceTemplates.set(
-        server,
-        templates.filter((template) => !isUiResourceUri(template.uriTemplate)),
-      );
-    }
-    updateMetadataCache(state, server, { preserveEmptyResources: false });
-    if (hadPendingResources) {
-      notifyToolMetadataUpdated(state, server, "resources-list-changed");
-    }
+  if (
+    current !== connection ||
+    current.status !== "connected" ||
+    current.resourceTemplatesStale !== true ||
+    (current.resourceTemplatesGeneration ?? 0) !== generation
+  ) {
+    return;
+  }
+  const hadPendingResources = pendingResources !== undefined;
+  if (pendingResources !== undefined) {
+    current.resources = pendingResources;
+    current.pendingResources = undefined;
+  }
+  current.resourceTemplates = templates;
+  current.resourceTemplatesStale = false;
+  const definition = state.config.mcpServers[server];
+  if (definition) {
+    applyServerMetadata(state, { serverName: server, connection: current, definition });
+  } else {
+    state.resourceTemplates.set(
+      server,
+      templates.filter((template) => !isUiResourceUri(template.uriTemplate)),
+    );
+  }
+  updateMetadataCache(state, server, { preserveEmptyResources: false });
+  if (hadPendingResources) {
+    notifyToolMetadataUpdated(state, server, "resources-list-changed");
   }
 }
 
@@ -121,6 +132,8 @@ async function refreshStaleResourceTemplates(
   if (connection?.status !== "connected" || connection.resourceTemplatesStale !== true) {
     return;
   }
+  const generation = connection.resourceTemplatesGeneration ?? 0;
+  const pendingResources = connection.pendingResources;
   const ownedSignal = combineAbortSignals(state.owner.signal, signal);
   const options = state.manager.getRequestOptions(server, ownedSignal);
   try {
@@ -128,7 +141,13 @@ async function refreshStaleResourceTemplates(
       ...options,
       cacheMode: "refresh",
     });
-    applyRefreshedResourceTemplates(state, server, connection, result.resourceTemplates);
+    applyRefreshedResourceTemplates(state, {
+      server,
+      connection,
+      generation,
+      pendingResources,
+      templates: result.resourceTemplates,
+    });
   } catch (error) {
     if (ownedSignal?.aborted === true) {
       throwIfAborted(ownedSignal);
@@ -136,7 +155,13 @@ async function refreshStaleResourceTemplates(
     // Keep resourceTemplatesStale=true on transient errors so the next list retries;
     // on MethodNotFound clear any previously advertised templates and update the cache.
     if (isMethodNotFoundError(error)) {
-      applyRefreshedResourceTemplates(state, server, connection, []);
+      applyRefreshedResourceTemplates(state, {
+        server,
+        connection,
+        generation,
+        pendingResources,
+        templates: [],
+      });
     }
   }
 }

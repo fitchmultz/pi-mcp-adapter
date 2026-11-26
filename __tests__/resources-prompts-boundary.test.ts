@@ -1146,4 +1146,95 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
       ],
     });
   });
+
+  it("drops stale overlapping executeResourceList template refreshes when a newer resources/list_changed arrives", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "mcp-210-overlap-cache-"));
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    onTestFinished(() => rmSync(agentDir, { recursive: true, force: true }));
+
+    let version = 1;
+    let holdTemplates = false;
+    const heldResolvers: Array<() => void> = [];
+    const server = new Server({ name: "overlap-templates", version: "1.0.0" });
+    server.server.registerCapabilities({ tools: {}, resources: { listChanged: true } });
+    server.server.setRequestHandler("tools/list", () => ({ tools: [] }));
+    server.server.setRequestHandler("resources/list", () => ({
+      resources: [{ name: `index_v${version}`, uri: `docs://index-v${version}` }],
+    }));
+    server.server.setRequestHandler("resources/templates/list", async () => {
+      const captured = version;
+      if (holdTemplates) {
+        await new Promise<void>((resolve) => {
+          heldResolvers.push(resolve);
+        });
+      }
+      return {
+        resourceTemplates: [
+          { name: `doc_v${captured}`, uriTemplate: `docs://v${captured}/{slug}` },
+        ],
+      };
+    });
+
+    const def: ServerDefinition = { url: "https://overlap.invalid/mcp", auth: false };
+    const { state } = await connectInMemory("overlap", server, def, {
+      metadataCacheEnabled: true,
+    });
+    updateMetadataCache(state, "overlap");
+    state.manager.setMetadataListChangedListener((serverName) => {
+      updateServerMetadata(state, serverName);
+      updateMetadataCache(state, serverName, { preserveEmptyResources: false });
+    });
+
+    // 1) list_changed v2 starts a gated callback template refresh.
+    version = 2;
+    holdTemplates = true;
+    await server.server.sendResourceListChanged();
+    await expect.poll(() => heldResolvers.length).toBe(1);
+
+    // 2) Concurrent executeResourceList starts a second gated v2 template refresh.
+    const inFlightList = executeResourceList(state, { server: "overlap" });
+    await expect.poll(() => heldResolvers.length).toBe(2);
+
+    // 3) Newer list_changed v3 arrives while both v2 refreshes are in flight.
+    version = 3;
+    await server.server.sendResourceListChanged();
+    await expect.poll(() => heldResolvers.length).toBe(3);
+
+    // 4) Resolve both older v2 responses first: neither live state nor disk cache may mix index-v3 with v2 templates.
+    heldResolvers[0]?.();
+    heldResolvers[1]?.();
+    const listResult = await inFlightList;
+    expect(listResult.details).toMatchObject({
+      items: [{ name: "index_v1", uri: "docs://index-v1" }],
+      resourceTemplates: [{ name: "doc_v1", uriTemplate: "docs://v1/{slug}" }],
+    });
+    const coldMidFlight = createTestState({
+      config: { settings: {}, mcpServers: { overlap: def } },
+      metadataCacheEnabled: true,
+    });
+    onTestFinished(() => coldMidFlight.owner.stop());
+    registerServers(coldMidFlight, [["overlap", def]]);
+    expect((await executeResourceList(coldMidFlight, { server: "overlap" })).details).toMatchObject(
+      {
+        items: [{ name: "index_v1", uri: "docs://index-v1" }],
+        resourceTemplates: [{ name: "doc_v1", uriTemplate: "docs://v1/{slug}" }],
+      },
+    );
+
+    // 5) Resolving the v3 refresh commits (index-v3, v3) atomically to live state and disk cache.
+    heldResolvers[2]?.();
+    await expect
+      .poll(() => state.resourceTemplates.get("overlap")?.[0]?.uriTemplate)
+      .toBe("docs://v3/{slug}");
+    const coldAfterV3 = createTestState({
+      config: { settings: {}, mcpServers: { overlap: def } },
+      metadataCacheEnabled: true,
+    });
+    onTestFinished(() => coldAfterV3.owner.stop());
+    registerServers(coldAfterV3, [["overlap", def]]);
+    expect((await executeResourceList(coldAfterV3, { server: "overlap" })).details).toMatchObject({
+      items: [{ name: "index_v3", uri: "docs://index-v3" }],
+      resourceTemplates: [{ name: "doc_v3", uriTemplate: "docs://v3/{slug}" }],
+    });
+  });
 });
