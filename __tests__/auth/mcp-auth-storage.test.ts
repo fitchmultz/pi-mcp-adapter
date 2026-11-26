@@ -376,6 +376,84 @@ describe("cross-process credential locking", () => {
       }
     },
   );
+
+  it(
+    "waits for a concurrent writer under 2.5s instead of aborting credential reads on SQLITE_BUSY",
+    { timeout: 15_000 },
+    async () => {
+      successful("seed");
+      const locks = join(home, ".fitch-mcp-adapter", "locks");
+      const lockPath = join(locks, z.string().parse(readdirSync(locks)[0]));
+      const holder = spawn(
+        process.execPath,
+        [
+          fileURLToPath(new URL("../fixtures/storage-lock-worker.ts", import.meta.url)),
+          "lock",
+          lockPath,
+          "write",
+        ],
+        { env: environment(), stdio: ["pipe", "pipe", "pipe"] },
+      );
+      holder.stdout.setEncoding("utf8");
+      const closed = once(holder, "close");
+      try {
+        expect(await once(holder.stdout, "data")).toEqual(["locked\n"]);
+        const pendingRead = runAsync("read", firstUrl);
+        setTimeout(() => {
+          holder.stdin.end("x");
+        }, 350);
+        const readResult = await pendingRead;
+        expect(readResult.status, readResult.stderr).toBe(0);
+        expect(await closed).toEqual([0, null]);
+        expect(JSON.parse(readResult.stdout)).toMatchObject({
+          entry: original,
+          other,
+        });
+      } finally {
+        holder.kill("SIGKILL");
+        await closed;
+      }
+    },
+  );
+
+  it(
+    "does not keep Node alive when waiting on a contended async storage lock",
+    { timeout: 10_000 },
+    async () => {
+      const lockPath = join(home, ".fitch-mcp-adapter", "locks", "unref-wait.sqlite");
+      const holder = spawn(
+        process.execPath,
+        [
+          fileURLToPath(new URL("../fixtures/storage-lock-worker.ts", import.meta.url)),
+          "lock",
+          lockPath,
+          "write",
+        ],
+        { env: environment(), stdio: ["pipe", "pipe", "pipe"] },
+      );
+      holder.stdout.setEncoding("utf8");
+      const holderClosed = once(holder, "close");
+      try {
+        expect(await once(holder.stdout, "data")).toEqual(["locked\n"]);
+        const waiterCode = [
+          `import { withAsyncStorageLock } from ${JSON.stringify(new URL("../../storage-lock.ts", import.meta.url).href)};`,
+          `void withAsyncStorageLock(${JSON.stringify(lockPath)}, async () => {}, { mode: "write", timeoutMs: 15_000, initialPollMs: 50, maxPollMs: 250, ref: false });`,
+        ].join("\n");
+        const startedAt = Date.now();
+        const waiter = spawn(process.execPath, ["--input-type=module", "-e", waiterCode], {
+          env: environment(),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const closed = await once(waiter, "close");
+        const elapsedMs = Date.now() - startedAt;
+        expect(closed).toEqual([0, null]);
+        expect(elapsedMs).toBeLessThan(3_000);
+      } finally {
+        holder.kill("SIGKILL");
+        await holderClosed;
+      }
+    },
+  );
 });
 
 describe("OAuth credential-store diagnostics", () => {
@@ -410,6 +488,7 @@ describe("OAuth credential-store diagnostics", () => {
         "config-writes.ts",
         "types.ts",
         "ui-stream-types.ts",
+        "abort.ts",
         "utils.ts",
         "mcp-output-values.ts",
       ]) {
@@ -514,18 +593,18 @@ describe("mcp-auth storage paths", () => {
     rmSync(authDir, { recursive: true, force: true });
   });
 
-  it("keeps arbitrary configured server names under safe hashed legacy import paths", () => {
+  it("keeps arbitrary configured server names under safe hashed legacy import paths", async () => {
     const names = ["Cloudflare Workers", "сервер", "../escape", "@scope/name", ""];
 
     for (const [index, name] of names.entries()) {
       const token = `token-${index}`;
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName: name, serverUrl: "https://example.com/mcp" },
         { tokens: { accessToken: token } },
       );
 
       expect(
-        getAuthEntry({ serverName: name, serverUrl: "https://example.com/mcp" })?.tokens
+        (await getAuthEntry({ serverName: name, serverUrl: "https://example.com/mcp" }))?.tokens
           ?.accessToken,
       ).toBe(token);
       const filePath = getAuthEntryFilePath(name);
@@ -543,7 +622,7 @@ describe("mcp-auth storage paths", () => {
     expect(() => getAuthEntryFilePath(name)).toThrow(/Invalid MCP server name/);
   });
 
-  it("namespaces the configured oauthDir legacy import source", () => {
+  it("namespaces the configured oauthDir legacy import source", async () => {
     delete process.env.FITCH_MCP_OAUTH_DIR;
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
     const options = getAuthStorageOptions(".pi/oauth", project);
@@ -559,19 +638,27 @@ describe("mcp-auth storage paths", () => {
     );
 
     expect(
-      getAuthEntry({ serverName: "configured", serverUrl: "https://example.com/mcp" }, options)
-        ?.tokens?.accessToken,
+      (
+        await getAuthEntry(
+          { serverName: "configured", serverUrl: "https://example.com/mcp" },
+          options,
+        )
+      )?.tokens?.accessToken,
     ).toBe("legacy-token");
     expect(filePath.startsWith(join(project, ".pi", "oauth", "fitch-mcp-adapter"))).toBe(true);
     expect(existsSync(filePath)).toBe(false);
     expect(
-      getAuthEntry({ serverName: "configured", serverUrl: "https://example.com/mcp" }, options)
-        ?.tokens?.accessToken,
+      (
+        await getAuthEntry(
+          { serverName: "configured", serverUrl: "https://example.com/mcp" },
+          options,
+        )
+      )?.tokens?.accessToken,
     ).toBe("legacy-token");
     rmSync(project, { recursive: true, force: true });
   });
 
-  it("does not migrate legacy credentials during status-only inspection", () => {
+  it("does not migrate legacy credentials during status-only inspection", async () => {
     const filePath = getAuthEntryFilePath("status-only");
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(
@@ -584,13 +671,14 @@ describe("mcp-auth storage paths", () => {
     );
 
     expect(
-      inspectAuthForUrl({ serverName: "status-only", serverUrl: "https://example.com/mcp" }).status,
+      (await inspectAuthForUrl({ serverName: "status-only", serverUrl: "https://example.com/mcp" }))
+        .status,
     ).toBe("present");
     expect(existsSync(filePath)).toBe(true);
 
     expect(
-      getAuthEntry({ serverName: "status-only", serverUrl: "https://example.com/mcp" })?.tokens
-        ?.accessToken,
+      (await getAuthEntry({ serverName: "status-only", serverUrl: "https://example.com/mcp" }))
+        ?.tokens?.accessToken,
     ).toBe("legacy-token");
     expect(existsSync(filePath)).toBe(false);
   });
@@ -599,22 +687,24 @@ describe("mcp-auth storage paths", () => {
     { name: "tokens", payload: { tokens: { accessToken: 17 } } },
     { name: "client", payload: { clientInfo: { clientId: 17 } } },
     { name: "record", payload: [] },
-  ])("keeps malformed legacy $name data out of secure storage", ({ name, payload }) => {
+  ])("keeps malformed legacy $name data out of secure storage", async ({ name, payload }) => {
     const serverName = `invalid-${name}`;
     const filePath = getAuthEntryFilePath(serverName);
     const bytes = JSON.stringify(payload);
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, bytes);
 
-    expect(() => getAuthEntry({ serverName, serverUrl: "https://example.com/mcp" })).toThrow(
-      /Invalid OAuth credential record/,
-    );
+    await expect(
+      getAuthEntry({ serverName, serverUrl: "https://example.com/mcp" }),
+    ).rejects.toThrow(/Invalid OAuth credential record/);
     expect(readFileSync(filePath, "utf8")).toBe(bytes);
     rmSync(filePath);
-    expect(getAuthEntry({ serverName, serverUrl: "https://example.com/mcp" })).toBeUndefined();
+    expect(
+      await getAuthEntry({ serverName, serverUrl: "https://example.com/mcp" }),
+    ).toBeUndefined();
   });
 
-  it("preserves future JSON fields across legacy import and secure reads", () => {
+  it("preserves future JSON fields across legacy import and secure reads", async () => {
     const entry = {
       tokens: { accessToken: "legacy-token", futureTokenMetadata: { version: 1 } },
       serverUrl: "https://example.com/mcp",
@@ -625,49 +715,57 @@ describe("mcp-auth storage paths", () => {
     writeFileSync(filePath, JSON.stringify(entry));
 
     expect(
-      getAuthEntry({ serverName: "future-fields", serverUrl: "https://example.com/mcp" }),
+      await getAuthEntry({ serverName: "future-fields", serverUrl: "https://example.com/mcp" }),
     ).toEqual(entry);
     expect(existsSync(filePath)).toBe(false);
     expect(
-      getAuthEntry({ serverName: "future-fields", serverUrl: "https://example.com/mcp" }),
+      await getAuthEntry({ serverName: "future-fields", serverUrl: "https://example.com/mcp" }),
     ).toEqual(entry);
   });
 
-  it("does not use configured oauthDir values as secure-store namespaces", () => {
+  it("does not use configured oauthDir values as secure-store namespaces", async () => {
     delete process.env.FITCH_MCP_OAUTH_DIR;
     const projectA = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-a-"));
     const projectB = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-b-"));
     const optionsA = getAuthStorageOptions(".pi/oauth", projectA);
     const optionsB = getAuthStorageOptions(".pi/oauth", projectB);
 
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: "same-server", serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken: "token-a" } },
       optionsA,
     );
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: "same-server", serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken: "token-b" } },
       optionsB,
     );
 
     expect(
-      getAuthEntry({ serverName: "same-server", serverUrl: "https://example.com/mcp" }, optionsA)
-        ?.tokens?.accessToken,
+      (
+        await getAuthEntry(
+          { serverName: "same-server", serverUrl: "https://example.com/mcp" },
+          optionsA,
+        )
+      )?.tokens?.accessToken,
     ).toBe("token-b");
     expect(
-      getAuthEntry({ serverName: "same-server", serverUrl: "https://example.com/mcp" }, optionsB)
-        ?.tokens?.accessToken,
+      (
+        await getAuthEntry(
+          { serverName: "same-server", serverUrl: "https://example.com/mcp" },
+          optionsB,
+        )
+      )?.tokens?.accessToken,
     ).toBe("token-b");
     rmSync(projectA, { recursive: true, force: true });
     rmSync(projectB, { recursive: true, force: true });
   });
 
-  it("keeps FITCH_MCP_OAUTH_DIR as the explicit override over settings.oauthDir", () => {
+  it("keeps FITCH_MCP_OAUTH_DIR as the explicit override over settings.oauthDir", async () => {
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-auth-project-"));
     const options = getAuthStorageOptions(".pi/oauth", project);
 
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: "env-override", serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken: "token" } },
       options,
@@ -679,15 +777,15 @@ describe("mcp-auth storage paths", () => {
     rmSync(project, { recursive: true, force: true });
   });
 
-  it("round-trips large secure-store entries", () => {
+  it("round-trips large secure-store entries", async () => {
     const accessToken = "x".repeat(5000);
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: "large-entry", serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken } },
     );
     expect(
-      getAuthEntry({ serverName: "large-entry", serverUrl: "https://example.com/mcp" })?.tokens
-        ?.accessToken,
+      (await getAuthEntry({ serverName: "large-entry", serverUrl: "https://example.com/mcp" }))
+        ?.tokens?.accessToken,
     ).toBe(accessToken);
   });
 
@@ -703,27 +801,27 @@ describe("mcp-auth storage paths", () => {
       rmSync(harnessDir, { recursive: true, force: true });
     });
 
-    it("routes revoked keyring operations through the helper", () => {
-      saveAuthEntry(
+    it("routes revoked keyring operations through the helper", async () => {
+      await saveAuthEntry(
         { serverName: "recovered", serverUrl: "https://example.com/mcp" },
         { tokens: { accessToken: "token" } },
       );
       expect(
-        getAuthEntry({ serverName: "recovered", serverUrl: "https://example.com/mcp" })?.tokens
-          ?.accessToken,
+        (await getAuthEntry({ serverName: "recovered", serverUrl: "https://example.com/mcp" }))
+          ?.tokens?.accessToken,
       ).toBe("token");
-      clearAllCredentials({ serverName: "recovered", serverUrl: "https://example.com/mcp" });
+      await clearAllCredentials({ serverName: "recovered", serverUrl: "https://example.com/mcp" });
       expect(readRecoveryStore(storePath)).toEqual({});
     });
 
-    it("chunks large entries within the secure-store payload limit", () => {
+    it("chunks large entries within the secure-store payload limit", async () => {
       const accessToken = "x".repeat(5000);
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName: "large", serverUrl: "https://example.com/mcp" },
         { tokens: { accessToken } },
       );
       expect(
-        getAuthEntry({ serverName: "large", serverUrl: "https://example.com/mcp" })?.tokens
+        (await getAuthEntry({ serverName: "large", serverUrl: "https://example.com/mcp" }))?.tokens
           ?.accessToken,
       ).toBe(accessToken);
 
@@ -741,9 +839,9 @@ describe("mcp-auth storage paths", () => {
       expect(chunkEntries.every(([, payload]) => payload.length <= 1800)).toBe(true);
     });
 
-    it("reports unavailable status when a chunk is missing", () => {
+    it("reports unavailable status when a chunk is missing", async () => {
       const serverUrl = "https://example.com/mcp";
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName: "corrupt", serverUrl },
         { tokens: { accessToken: "x".repeat(5000) } },
       );
@@ -753,42 +851,85 @@ describe("mcp-auth storage paths", () => {
         .parse(Object.keys(store).find((account) => account.includes(".chunk.")));
       delete store[missingChunk];
       writeFileSync(storePath, JSON.stringify(store));
-      expect(inspectAuthForUrl({ serverName: "corrupt", serverUrl }).status).toBe("unavailable");
+      expect((await inspectAuthForUrl({ serverName: "corrupt", serverUrl })).status).toBe(
+        "unavailable",
+      );
     });
 
-    it("cleans stale chunks when a large entry is replaced", () => {
-      saveAuthEntry(
+    it("cleans stale chunks when a large entry is replaced", async () => {
+      await saveAuthEntry(
         { serverName: "shrinking", serverUrl: "https://example.com/mcp" },
         { tokens: { accessToken: "x".repeat(5000) } },
       );
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName: "shrinking", serverUrl: "https://example.com/mcp" },
         { tokens: { accessToken: "small" } },
       );
 
       expect(
-        getAuthEntry({ serverName: "shrinking", serverUrl: "https://example.com/mcp" })?.tokens
-          ?.accessToken,
+        (await getAuthEntry({ serverName: "shrinking", serverUrl: "https://example.com/mcp" }))
+          ?.tokens?.accessToken,
       ).toBe("small");
       const accounts = Object.keys(readRecoveryStore(storePath));
       expect(accounts).toHaveLength(1);
       expect(accounts[0]).not.toContain(".chunk.");
     });
 
-    it("removes chunk payloads when credentials are cleared", () => {
-      saveAuthEntry(
+    it("removes chunk payloads when credentials are cleared", async () => {
+      await saveAuthEntry(
         { serverName: "removing", serverUrl: "https://example.com/mcp" },
         { tokens: { accessToken: "x".repeat(5000) } },
       );
       expect(
         Object.keys(readRecoveryStore(storePath)).some((account) => account.includes(".chunk.")),
       ).toBe(true);
-      clearAllCredentials({ serverName: "removing", serverUrl: "https://example.com/mcp" });
+      await clearAllCredentials({ serverName: "removing", serverUrl: "https://example.com/mcp" });
       expect(readRecoveryStore(storePath)).toEqual({});
+    });
+
+    it("runs keyctl recovery asynchronously without blocking the event loop", async () => {
+      const marker = join(harnessDir, "event-loop-ticked");
+      const keyctlPath = process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL;
+      expect(keyctlPath).toBeDefined();
+      writeFileSync(
+        z.string().parse(keyctlPath),
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" != "session" ] || [ "$2" != "-" ]; then exit 64; fi
+for _ in $(seq 1 200); do
+  if [ -f "${marker}" ]; then break; fi
+  sleep 0.01
+done
+if [ ! -f "${marker}" ]; then exit 77; fi
+shift 2
+exec "$@"
+`,
+        { mode: 0o755 },
+      );
+      const timer = setTimeout(() => {
+        writeFileSync(marker, "ticked");
+      }, 25);
+      try {
+        await saveAuthEntry(
+          { serverName: "async-recovery", serverUrl: "https://example.com/mcp" },
+          { tokens: { accessToken: "non-blocking-token" } },
+        );
+        expect(existsSync(marker)).toBe(true);
+        expect(
+          (
+            await getAuthEntry({
+              serverName: "async-recovery",
+              serverUrl: "https://example.com/mcp",
+            })
+          )?.tokens?.accessToken,
+        ).toBe("non-blocking-token");
+      } finally {
+        clearTimeout(timer);
+      }
     });
   });
 
-  it("does not use the recovery helper for generic secure-store failures", () => {
+  it("does not use the recovery helper for generic secure-store failures", async () => {
     const harnessDir = mkdtempSync(join(tmpdir(), "pi-mcp-keyring-no-recovery-"));
     const keyctlPath = join(harnessDir, "keyctl");
     const storePath = join(harnessDir, "store.json");
@@ -799,9 +940,9 @@ describe("mcp-auth storage paths", () => {
     process.env.PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL = keyctlPath;
     process.env.PI_MCP_ADAPTER_FAKE_KEYRING_STORE = storePath;
 
-    expect(() =>
+    await expect(
       getAuthEntry({ serverName: "generic-unavailable", serverUrl: "https://example.com/mcp" }),
-    ).toThrow(/OS secure credential store/);
+    ).rejects.toThrow(/OS secure credential store/);
     expect(existsSync(storePath)).toBe(false);
     rmSync(harnessDir, { recursive: true, force: true });
   });

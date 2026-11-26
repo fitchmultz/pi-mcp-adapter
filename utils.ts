@@ -1,10 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { spawnSync } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import type { McpConfig, ServerEntry } from "./types.ts";
 import { asObjectRecord } from "./mcp-output-values.ts";
+import { throwIfAborted } from "./abort.ts";
 
 function readAdapterVersion(): string {
   // Source modules sit beside package.json; compiled modules sit one level down in dist/.
@@ -149,20 +150,150 @@ export function interpolateEnvRecord(
   );
 }
 
+// Match the prior synchronous 10s limit so hung secret-manager CLIs (e.g., op, security, pass) fail fast.
 const COMMAND_SECRET_TIMEOUT_MS = 10_000;
+// Short grace window after SIGTERM before SIGKILL so unresponsive shell/npm child trees do not linger.
+const CHILD_KILL_GRACE_MS = 1_000;
+// Match Node execFile/execFileSync's 1 MiB default maxBuffer so a runaway secret command cannot exhaust RAM.
 const COMMAND_SECRET_MAX_OUTPUT_BYTES = 1024 * 1024;
 
+function signalChildProcess(
+  proc: ChildProcess,
+  signal: NodeJS.Signals,
+  processGroup: boolean,
+): void {
+  if (proc.exitCode !== null || proc.signalCode !== null) {
+    return;
+  }
+  if (processGroup && process.platform !== "win32" && proc.pid !== undefined) {
+    try {
+      process.kill(-proc.pid, signal);
+      return;
+    } catch {
+      // Fall back to signaling the direct child when no process group exists.
+    }
+  }
+  try {
+    proc.kill(signal);
+  } catch {
+    // Child exited concurrently before signal delivery.
+  }
+}
+
+/** Send SIGTERM and escalate to SIGKILL after a short unref'd grace window if the child ignores it. */
+export function terminateChildProcess(proc: ChildProcess, processGroup = false): void {
+  signalChildProcess(proc, "SIGTERM", processGroup);
+  const killTimer = setTimeout(() => {
+    signalChildProcess(proc, "SIGKILL", processGroup);
+  }, CHILD_KILL_GRACE_MS);
+  killTimer.unref();
+  const clear = () => clearTimeout(killTimer);
+  proc.once("exit", clear);
+  proc.once("close", clear);
+}
+
+function abortReasonError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error(String(signal.reason ?? "MCP request aborted"));
+}
+
+function runCommandSecret(command: string, context: string, signal?: AbortSignal): Promise<string> {
+  throwIfAborted(signal);
+  return new Promise<string>((resolve, reject) => {
+    let proc: ChildProcess;
+    try {
+      proc = spawn(command, {
+        shell: true,
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        detached: process.platform !== "win32",
+      });
+    } catch {
+      reject(new Error(`Failed to resolve ${context}: command failed to start`));
+      return;
+    }
+    let settled = false;
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    const finish = (outcome: { value?: string; error?: Error }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (outcome.error !== undefined) {
+        reject(outcome.error);
+        return;
+      }
+      resolve(outcome.value ?? "");
+    };
+    const onAbort = () => {
+      terminateChildProcess(proc, true);
+      finish({ error: signal ? abortReasonError(signal) : new Error("MCP request aborted") });
+    };
+    const timer = setTimeout(() => {
+      terminateChildProcess(proc, true);
+      finish({
+        error: new Error(`Failed to resolve ${context}: command timed out after 10 seconds`),
+      });
+    }, COMMAND_SECRET_TIMEOUT_MS);
+    timer.unref();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    proc.stdout?.on("data", (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
+      totalBytes += bytes.byteLength;
+      if (totalBytes > COMMAND_SECRET_MAX_OUTPUT_BYTES) {
+        terminateChildProcess(proc, true);
+        finish({ error: new Error(`Failed to resolve ${context}: command output exceeded 1 MiB`) });
+        return;
+      }
+      chunks.push(bytes);
+    });
+    proc.on("error", () => {
+      finish({ error: new Error(`Failed to resolve ${context}: command failed to start`) });
+    });
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        finish({
+          error: new Error(
+            `Failed to resolve ${context}: command exited with code ${code ?? "unknown"}`,
+          ),
+        });
+        return;
+      }
+      const resolved = Buffer.concat(chunks).toString("utf8").trim();
+      finish(
+        resolved === ""
+          ? { error: new Error(`Failed to resolve ${context}: command returned empty output`) }
+          : { value: resolved },
+      );
+    });
+  });
+}
+
 /** Resolve a secret value, executing only a single leading `!` command marker. */
-export function resolveCommandSecret(value: string, context: string): string;
-export function resolveCommandSecret(value: undefined, context: string): undefined;
-export function resolveCommandSecret(
+export async function resolveCommandSecret(
+  value: string,
+  context: string,
+  signal?: AbortSignal,
+): Promise<string>;
+export async function resolveCommandSecret(
+  value: undefined,
+  context: string,
+  signal?: AbortSignal,
+): Promise<undefined>;
+export async function resolveCommandSecret(
   value: string | undefined,
   context: string,
-): string | undefined;
-export function resolveCommandSecret(
+  signal?: AbortSignal,
+): Promise<string | undefined>;
+export async function resolveCommandSecret(
   value: string | undefined,
   context: string,
-): string | undefined {
+  signal?: AbortSignal,
+): Promise<string | undefined> {
   if (value === undefined) {
     return undefined;
   }
@@ -172,49 +303,32 @@ export function resolveCommandSecret(
   if (!value.startsWith("!")) {
     return interpolateEnvVars(value);
   }
-
-  let result;
-  try {
-    result = spawnSync(value.slice(1), {
-      shell: true,
-      encoding: "utf8",
-      timeout: COMMAND_SECRET_TIMEOUT_MS,
-      maxBuffer: COMMAND_SECRET_MAX_OUTPUT_BYTES,
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true,
-    });
-  } catch {
-    throw new Error(`Failed to resolve ${context}: command failed to start`);
-  }
-  if (result.error) {
-    const reason = commandFailureReason(result.error);
-    throw new Error(`Failed to resolve ${context}: ${reason}`);
-  }
-  if (result.status !== 0) {
-    throw new Error(
-      `Failed to resolve ${context}: command exited with code ${result.status ?? "unknown"}`,
-    );
-  }
-
-  const resolved = result.stdout.trim();
-  if (resolved === "") {
-    throw new Error(`Failed to resolve ${context}: command returned empty output`);
-  }
-  return resolved;
+  return await runCommandSecret(value.slice(1), context, signal);
 }
 
-/** Resolve command markers in a configured record without mutating the input. */
-export function resolveCommandSecretsRecord(
+/** Resolve command markers in a configured record concurrently without mutating the input. */
+export async function resolveCommandSecretsRecord(
   values: Record<string, string> | undefined,
   context: (key: string) => string,
-): Record<string, string> | undefined {
+  signal?: AbortSignal,
+): Promise<Record<string, string> | undefined> {
   if (!values) {
     return undefined;
   }
-
-  return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, resolveCommandSecret(value, context(key))]),
-  );
+  const controller = new AbortController();
+  const effectiveSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  try {
+    const entries = await Promise.all(
+      Object.entries(values).map(
+        async ([key, value]) =>
+          [key, await resolveCommandSecret(value, context(key), effectiveSignal)] as const,
+      ),
+    );
+    return Object.fromEntries(entries);
+  } catch (error) {
+    controller.abort();
+    throw error;
+  }
 }
 
 export function hasServerUrl(definition: Pick<ServerEntry, "url">): boolean {
@@ -309,18 +423,6 @@ function oscEnd(text: string, start: number): number {
     }
   }
   return index;
-}
-
-function commandFailureReason(error: Error): string {
-  const code = "code" in error ? error.code : undefined;
-  switch (code) {
-    case "ETIMEDOUT":
-      return "command timed out after 10 seconds";
-    case "ENOBUFS":
-      return "command output exceeded 1 MiB";
-    default:
-      return "command failed to start";
-  }
 }
 
 export function sanitizeTerminalText(text: string): string {

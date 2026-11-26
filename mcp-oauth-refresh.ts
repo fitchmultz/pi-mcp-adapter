@@ -63,7 +63,7 @@ class InFlightRefresh {
 
 export interface RefreshTokenTarget {
   readonly currentCachedTokens: StoredTokens | undefined;
-  reloadTokensFromStorage: () => StoredTokens | undefined;
+  reloadTokensFromStorage: () => Promise<StoredTokens | undefined>;
 }
 
 export interface CoordinateOAuthRefreshOptions {
@@ -248,9 +248,12 @@ export class ProviderTokenCache {
     return target;
   }
 
-  reload(identity: AuthIdentity, storageOptions: AuthStorageOptions): StoredTokens | undefined {
+  async reload(
+    identity: AuthIdentity,
+    storageOptions: AuthStorageOptions,
+  ): Promise<StoredTokens | undefined> {
     this.cached = undefined;
-    const tokens = getAuthForUrl(identity, storageOptions)?.tokens;
+    const tokens = (await getAuthForUrl(identity, storageOptions))?.tokens;
     if (tokens) {
       this.record(identity, tokens);
     } else {
@@ -280,6 +283,7 @@ export async function withCrossProcessRefreshLock<T>(
     timeoutMs: REFRESH_LOCK_WAIT_MS,
     initialPollMs: INITIAL_LOCK_POLL_MS,
     maxPollMs: MAX_LOCK_POLL_MS,
+    ref: false,
     signal,
   });
 }
@@ -336,7 +340,7 @@ async function runLockedRefresh(
   refreshSignal: AbortSignal,
   baseline: RefreshBaseline,
 ): Promise<"AUTHORIZED" | "REDIRECT"> {
-  const afterLock = options.provider.reloadTokensFromStorage();
+  const afterLock = await options.provider.reloadTokensFromStorage();
   if (adoptFreshToken(afterLock, options, baseline)) {
     return "AUTHORIZED";
   }
@@ -344,15 +348,15 @@ async function runLockedRefresh(
     const outcome = await options.runRefresh(refreshSignal);
     if (outcome === "AUTHORIZED") {
       const latest =
-        options.provider.currentCachedTokens ?? options.provider.reloadTokensFromStorage();
+        options.provider.currentCachedTokens ?? (await options.provider.reloadTokensFromStorage());
       recordProactiveRefreshOutcome(options.identity, "refreshed", latest);
       return "AUTHORIZED";
     }
-    const recovered = options.provider.reloadTokensFromStorage();
+    const recovered = await options.provider.reloadTokensFromStorage();
     return adoptFreshToken(recovered, options, baseline) ? "AUTHORIZED" : outcome;
   } catch (error) {
     if (options.isUnauthorizedError(error)) {
-      const recovered = options.provider.reloadTokensFromStorage();
+      const recovered = await options.provider.reloadTokensFromStorage();
       if (adoptFreshToken(recovered, options, baseline)) {
         return "AUTHORIZED";
       }
@@ -366,14 +370,22 @@ async function executeSerializedRefresh(
   refreshSignal: AbortSignal,
   baseline: RefreshBaseline,
 ): Promise<"AUTHORIZED" | "REDIRECT"> {
+  const beforeLock = await options.provider.reloadTokensFromStorage();
+  if (adoptFreshToken(beforeLock, options, baseline)) {
+    return "AUTHORIZED";
+  }
+  const effectiveBaseline: RefreshBaseline = {
+    accessToken: baseline.accessToken ?? beforeLock?.accessToken,
+    expiresAt: baseline.expiresAt ?? beforeLock?.expiresAt,
+  };
   try {
     return await withCrossProcessRefreshLock(options.identity, refreshSignal, () =>
-      runLockedRefresh(options, refreshSignal, baseline),
+      runLockedRefresh(options, refreshSignal, effectiveBaseline),
     );
   } catch (error) {
     if (error instanceof StorageLockBusyError) {
-      const recovered = options.provider.reloadTokensFromStorage();
-      if (adoptFreshToken(recovered, options, baseline)) {
+      const recovered = await options.provider.reloadTokensFromStorage();
+      if (adoptFreshToken(recovered, options, effectiveBaseline)) {
         return "AUTHORIZED";
       }
     }
@@ -402,24 +414,18 @@ export async function coordinateOAuthRefresh(
   throwIfAborted(options.signal);
   const baseline = initialRefreshBaseline(options);
   const key = refreshKey(options.identity);
-  const existing = inFlightRefreshes.get(key);
-  if (existing) {
+  let existing = inFlightRefreshes.get(key);
+  while (existing) {
     const outcome = await existing.wait(options.signal);
-    const reloaded = options.provider.reloadTokensFromStorage();
+    const reloaded = await options.provider.reloadTokensFromStorage();
     if (outcome !== "AUTHORIZED" || adoptFreshToken(reloaded, options, baseline)) {
       return outcome;
     }
+    existing = inFlightRefreshes.get(key);
   }
-  const beforeLock = options.provider.reloadTokensFromStorage();
-  if (adoptFreshToken(beforeLock, options, baseline)) {
-    return "AUTHORIZED";
-  }
-  const effectiveBaseline: RefreshBaseline = {
-    accessToken: baseline.accessToken ?? beforeLock?.accessToken,
-    expiresAt: baseline.expiresAt ?? beforeLock?.expiresAt,
-  };
+  // Register before any await so concurrent callers on the same tick coalesce onto one flight.
   const entry = new InFlightRefresh((refreshSignal) =>
-    executeSerializedRefresh(options, refreshSignal, effectiveBaseline).finally(() => {
+    executeSerializedRefresh(options, refreshSignal, baseline).finally(() => {
       if (inFlightRefreshes.get(key) === entry) {
         inFlightRefreshes.delete(key);
       }

@@ -77,7 +77,7 @@ try {
       name: "echo",
       arguments: { worker: workerId },
     });
-    const stored = auth.getAuthForUrl({ serverName, serverUrl: url })?.tokens;
+    const stored = (await auth.getAuthForUrl({ serverName, serverUrl: url }))?.tokens;
     writeSync(1, JSON.stringify({ ok: true, workerId, result, stored }));
   }
 } finally {

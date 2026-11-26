@@ -97,7 +97,7 @@ class ConnectionAuthRecovery {
     if (
       !definition ||
       isServerDisabled(definition) ||
-      !this.state.manager.hasFreshOAuthCredentials(this.serverName, definition, current)
+      !(await this.state.manager.hasFreshOAuthCredentials(this.serverName, definition, current))
     ) {
       return;
     }

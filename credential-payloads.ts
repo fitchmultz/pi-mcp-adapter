@@ -86,13 +86,13 @@ function readChunkManifestFromPayload(
   return isAuthEntryChunkManifest(parsed) ? parsed : undefined;
 }
 
-function readExistingChunkManifest(
+async function readExistingChunkManifest(
   store: AuthSecretStore,
   serverName: string,
   account: string,
-): AuthEntryChunkManifest | undefined {
+): Promise<AuthEntryChunkManifest | undefined> {
   try {
-    const payload = store.read(account);
+    const payload = await store.read(account);
     return payload === undefined
       ? undefined
       : readChunkManifestFromPayload(serverName, payload, "OS secure credential store");
@@ -101,26 +101,26 @@ function readExistingChunkManifest(
   }
 }
 
-function removeChunkPayloads(
+async function removeChunkPayloads(
   store: AuthSecretStore,
   account: string,
   manifest: AuthEntryChunkManifest,
-): void {
+): Promise<void> {
   for (const chunkAccount of getAuthEntryChunkAccounts(account, manifest)) {
-    store.remove(chunkAccount);
+    await store.remove(chunkAccount);
   }
 }
 
-function tryRemoveChunkPayloads(
+async function tryRemoveChunkPayloads(
   store: AuthSecretStore,
   account: string,
   manifest: AuthEntryChunkManifest | undefined,
-): void {
+): Promise<void> {
   if (!manifest) {
     return;
   }
   try {
-    removeChunkPayloads(store, account, manifest);
+    await removeChunkPayloads(store, account, manifest);
   } catch {
     // Stale chunk cleanup must not hide a successful credential write.
   }
@@ -134,19 +134,20 @@ function createChunkManifest(payload: string): AuthEntryChunkManifest {
   };
 }
 
-function readChunkedAuthPayload(
+async function readChunkedAuthPayload(
   store: AuthSecretStore,
   serverName: string,
   account: string,
   manifest: AuthEntryChunkManifest,
-): string {
-  const chunks = getAuthEntryChunkAccounts(account, manifest).map((chunkAccount) => {
+): Promise<string> {
+  const chunks: string[] = [];
+  for (const chunkAccount of getAuthEntryChunkAccounts(account, manifest)) {
     try {
-      const chunk = store.read(chunkAccount);
+      const chunk = await store.read(chunkAccount);
       if (chunk === undefined) {
         throw new Error(`Missing OAuth credential chunk ${chunkAccount} for ${serverName}`);
       }
-      return chunk;
+      chunks.push(chunk);
     } catch (error) {
       throw new OAuthCredentialStoreError(
         `Failed to read OAuth credentials for ${serverName} from the OS secure credential store`,
@@ -154,18 +155,18 @@ function readChunkedAuthPayload(
         error,
       );
     }
-  });
+  }
   return chunks.join("");
 }
 
-export function writeSecureAuthEntryToStore(
+export async function writeSecureAuthEntryToStore(
   store: AuthSecretStore,
   serverName: string,
   account: string,
   entry: AuthEntry,
-): void {
+): Promise<void> {
   const payload = JSON.stringify(entry);
-  const previousManifest = readExistingChunkManifest(store, serverName, account);
+  const previousManifest = await readExistingChunkManifest(store, serverName, account);
   const manifest =
     payload.length > AUTH_SECRET_CHUNK_SIZE ? createChunkManifest(payload) : undefined;
 
@@ -176,18 +177,18 @@ export function writeSecureAuthEntryToStore(
           index * AUTH_SECRET_CHUNK_SIZE,
           (index + 1) * AUTH_SECRET_CHUNK_SIZE,
         );
-        store.write(getAuthEntryChunkAccount(account, manifest, index), chunk);
+        await store.write(getAuthEntryChunkAccount(account, manifest, index), chunk);
       }
-      store.write(account, JSON.stringify(manifest));
+      await store.write(account, JSON.stringify(manifest));
     } else {
       // Compact: multiline secrets corrupt gnome-keyring plaintext (GKeyFile) collections.
-      store.write(account, payload);
+      await store.write(account, payload);
     }
     if (previousManifest?.chunkDigest !== manifest?.chunkDigest) {
-      tryRemoveChunkPayloads(store, account, previousManifest);
+      await tryRemoveChunkPayloads(store, account, previousManifest);
     }
   } catch (error) {
-    tryRemoveChunkPayloads(store, account, manifest);
+    await tryRemoveChunkPayloads(store, account, manifest);
     throw new OAuthCredentialStoreError(
       `Failed to write OAuth credentials for ${serverName} to the OS secure credential store`,
       "write",
@@ -196,14 +197,14 @@ export function writeSecureAuthEntryToStore(
   }
 }
 
-export function readSecureAuthPayloadFromStore(
+export async function readSecureAuthPayloadFromStore(
   store: AuthSecretStore,
   serverName: string,
   account: string,
-): CredentialPayload | undefined {
+): Promise<CredentialPayload | undefined> {
   let payload: string | undefined;
   try {
-    payload = store.read(account);
+    payload = await store.read(account);
   } catch (error) {
     throw new OAuthCredentialStoreError(
       `Failed to read OAuth credentials for ${serverName} from the OS secure credential store`,
@@ -218,27 +219,27 @@ export function readSecureAuthPayloadFromStore(
   const manifest = readChunkManifestFromPayload(serverName, payload, "OS secure credential store");
   return manifest
     ? {
-        payload: readChunkedAuthPayload(store, serverName, account, manifest),
+        payload: await readChunkedAuthPayload(store, serverName, account, manifest),
         source: "OS secure credential store chunks",
       }
     : { payload, source: "OS secure credential store" };
 }
 
-export function removeAuthEntryFromStore(
+export async function removeAuthEntryFromStore(
   store: AuthSecretStore,
   serverName: string,
   account: string,
-): void {
+): Promise<void> {
   try {
-    const payload = store.read(account);
+    const payload = await store.read(account);
     const manifest =
       payload === undefined
         ? undefined
         : readChunkManifestFromPayload(serverName, payload, "OS secure credential store");
     if (manifest) {
-      removeChunkPayloads(store, account, manifest);
+      await removeChunkPayloads(store, account, manifest);
     }
-    store.remove(account);
+    await store.remove(account);
   } catch (error) {
     throw new OAuthCredentialStoreError(
       `Failed to remove OAuth credentials for ${serverName} from the OS secure credential store`,

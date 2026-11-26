@@ -109,7 +109,7 @@ function invalidErrorCallback(
 async function startAcceptedEffect() {
   const f = await fixture();
   f.definition.auth = "oauth";
-  f.seed("basic");
+  await f.seed("basic");
   f.controls.holdEffect = true;
   f.signIn();
   f.settings.autoAuth = true;
@@ -154,7 +154,7 @@ async function collidingAuthBindings(kind: "pending" | "single-flight") {
   b.definition.url = a.definition.url;
   for (const f of [a, b]) {
     f.definition.auth = "oauth";
-    updateTokens(
+    await updateTokens(
       { serverName: f.name, serverUrl: a.definition.url },
       { accessToken: "basic-token", scope: "basic", issuer: a.origin },
     );
@@ -185,9 +185,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.definition.oauth = { redirectUri: `http://127.0.0.1:${address.port}/callback` };
     const binding = vi.spyOn(callbackServer, "ensureCallbackServer");
     const cleanup = new Error("state cleanup unavailable");
-    vi.spyOn(authStorage, "clearOAuthState").mockImplementationOnce(() => {
-      throw cleanup;
-    });
+    vi.spyOn(authStorage, "clearOAuthState").mockRejectedValueOnce(cleanup);
 
     const outcome = await settled(f.start());
     assert(outcome.status === "rejected" && outcome.reason instanceof AggregateError);
@@ -208,9 +206,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const primary = new Error("client credentials unavailable");
     const cleanup = new Error("state cleanup unavailable");
     vi.spyOn(McpOAuthProvider.prototype, "clientInformation").mockRejectedValueOnce(primary);
-    vi.spyOn(authStorage, "getOAuthState").mockImplementationOnce(() => {
-      throw cleanup;
-    });
+    vi.spyOn(authStorage, "getOAuthState").mockRejectedValueOnce(cleanup);
 
     const outcome = await settled(f.start());
     assert(outcome.status === "rejected" && outcome.reason instanceof AggregateError);
@@ -231,9 +227,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const primary = new Error("token persistence unavailable");
     const cleanup = new Error("state cleanup unavailable");
     vi.spyOn(McpOAuthProvider.prototype, "saveTokens").mockRejectedValueOnce(primary);
-    vi.spyOn(authStorage, "getOAuthState").mockImplementationOnce(() => {
-      throw cleanup;
-    });
+    vi.spyOn(authStorage, "getOAuthState").mockRejectedValueOnce(cleanup);
 
     const outcome = await settled(completeAuthFromInput(f.name, callback, { runtime: f.runtime }));
     assert(outcome.status === "rejected" && outcome.reason instanceof AggregateError);
@@ -243,7 +237,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(outcome.reason.errors[1]).toBe(cleanup);
     expect(outcome.reason.cause).toBe(cleanup);
     expect(f.exchanges).toHaveLength(1);
-    expect(f.stored()?.tokens).toBeUndefined();
+    expect((await f.stored())?.tokens).toBeUndefined();
     expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     expect((await fetch(callback)).status).toBe(400);
   });
@@ -258,9 +252,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         runtime: f.runtime,
         signal: controller.signal,
         onAuthorizationUrl: () => {
-          vi.spyOn(authStorage, "getOAuthState").mockImplementationOnce(() => {
-            throw cleanup;
-          });
+          vi.spyOn(authStorage, "getOAuthState").mockRejectedValueOnce(cleanup);
           controller.abort(primary);
         },
       }),
@@ -292,7 +284,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
 
   it("uses a saved token after wholly public bootstrap and a first protected tool", async () => {
     const f = await fixture();
-    f.seed("basic write");
+    await f.seed("basic write");
     expect((await f.connect()).status).toBe("connected");
     expect((await f.call()).details.error).toBeUndefined();
     expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(2);
@@ -305,14 +297,14 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const f = await fixture();
       f.definition.auth = "oauth";
       f.definition.oauth = { scope: "basic" };
-      f.seed("basic", refresh);
+      await f.seed("basic", refresh);
       await f.connect();
       expect((await f.call()).details.error).toBe("auth_required");
       const url = await f.manual();
       expect(scopes(new URL(url).searchParams.get("scope"))).toEqual(["basic", "write"]);
       expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual(["basic", "write"]);
       expect(requireValue(f.exchanges[0]).get("grant_type")).toBe("authorization_code");
-      expect(f.stored()?.tokens?.scope).toBe("basic write");
+      expect((await f.stored())?.tokens?.scope).toBe("basic write");
       expect((await f.call()).details.error).toBeUndefined();
     },
   );
@@ -370,7 +362,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       ])(`${era} ${host} warm scope policy autoAuth=%s UI=%s`, async (autoAuth, ui) => {
         const f = await fixture(era);
         f.definition.auth = "oauth";
-        f.seed("basic");
+        await f.seed("basic");
         f.signIn();
         f.settings.autoAuth = autoAuth;
         if (ui) {
@@ -398,7 +390,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       async (status) => {
         const f = await fixture(era);
         f.controls.challengeStatus = status;
-        f.seed("basic write");
+        await f.seed("basic write");
         await f.connect();
         expect((await f.call()).details.error).toBeUndefined();
         expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(2);
@@ -444,7 +436,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const f = await fixture("modern");
     f.definition.auth = "oauth";
     f.definition.retryOnTransportFailure = true;
-    f.seed("basic", true);
+    await f.seed("basic", true);
     f.controls.tokenFailure = true;
     f.controls.toolStatuses = [401];
     f.signIn();
@@ -491,12 +483,12 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   ])("captures native %s before formatting without changing stored tokens", async (method) => {
     const f = await fixture("modern");
     f.definition.auth = "oauth";
-    f.seed("basic");
+    await f.seed("basic");
     const dir = await mkdtemp(join(tmpdir(), "oauth-trace-"));
     cleanups.unshift(() => rm(dir, { recursive: true, force: true }));
     f.manager.setTraceConfig({ enabled: true, file: join(dir, "trace.jsonl") });
     const connection = await f.connect();
-    const before = f.stored();
+    const before = await f.stored();
     f.controls.protectedMethod = method;
     f.controls.protectScope = true;
     const operations: Record<string, () => Promise<unknown>> = {
@@ -509,7 +501,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     };
     await expect(requireValue(operations[method])()).rejects.toBeInstanceOf(InsufficientScopeError);
     expect(f.request()?.challenge?.requiredScope).toBe("write");
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
     expect(browser.open).not.toHaveBeenCalled();
     const { authorizationUrl } = await f.start();
     expect(scopes(new URL(authorizationUrl).searchParams.get("scope"))).toEqual(["basic", "write"]);
@@ -521,7 +513,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const f = await fixture();
       f.definition.auth = "oauth";
       f.controls.notifications = true;
-      f.seed("basic");
+      await f.seed("basic");
       await f.connect();
       await expect.poll(() => f.controls.stream).toBeDefined();
       f.controls.protectedMethod = `${catalog}/list`;
@@ -545,6 +537,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     }
     expect(f.request()).toBeUndefined();
     await f.manager.close(f.name);
+    f.manager.invalidatePriorDiscovery(f.name);
     f.controls.protectedMethod = "server/discover";
     f.controls.challengeStatus = 403;
     expect((await f.connect()).status).toBe("needs-auth");
@@ -580,7 +573,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const f = await fixture();
     f.definition.auth = "oauth";
     f.definition.headers = { "X-Test": "yes" };
-    f.seed("basic");
+    await f.seed("basic");
     f.signIn();
     f.settings.autoAuth = true;
     f.state.ui = f.ui;
@@ -605,7 +598,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         clientId: "machine",
         clientSecret: "secret",
       };
-      f.seed("basic");
+      await f.seed("basic");
       f.settings.autoAuth = true;
       await f.connect();
       expect((await f.call()).details.error).toBeUndefined();
@@ -623,7 +616,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   it("keeps exhausted native interactive 401 terminal with autoAuth enabled", async () => {
     const f = await fixture("modern");
     f.definition.auth = "oauth";
-    f.seed("basic", true);
+    await f.seed("basic", true);
     f.controls.toolStatuses = [401, 401];
     f.signIn();
     f.settings.autoAuth = true;
@@ -642,7 +635,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const f = await fixture();
       f.definition.auth = "oauth";
       f.definition.oauth = { scope: "basic" };
-      f.seed("basic");
+      await f.seed("basic");
       f.controls.issuedScope = grant;
       f.signIn();
       f.settings.autoAuth = true;
@@ -653,7 +646,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         expect(browser.open).toHaveBeenCalledTimes(invocation);
         expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(invocation * 2);
         expect(f.exchanges).toHaveLength(invocation);
-        expect(f.stored()?.tokens?.scope).toBe(grant ?? undefined);
+        expect((await f.stored())?.tokens?.scope).toBe(grant ?? undefined);
         expect(f.request()?.challenge?.requiredScope).toBe("write");
       }
     },
@@ -665,7 +658,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const f = await fixture();
       f.definition.auth = "oauth";
       f.definition.oauth = { scope: "basic" };
-      f.seed("basic", true);
+      await f.seed("basic", true);
       f.controls.requiredScope = required;
       f.controls.toolStatuses = [403, 403];
       f.signIn();
@@ -677,7 +670,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       expect(f.exchanges).toHaveLength(1);
       expect(requireValue(f.exchanges[0]).get("grant_type")).toBe("refresh_token");
       expect(browser.open).not.toHaveBeenCalled();
-      expect(f.stored()?.tokens?.scope).toBe("basic");
+      expect((await f.stored())?.tokens?.scope).toBe("basic");
     },
   );
 
@@ -688,7 +681,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         const f = await fixture(era);
         f.definition.auth = "oauth";
         f.definition.retryOnTransportFailure = true;
-        f.seed("basic");
+        await f.seed("basic");
         f.controls.toolStatuses = [403, second];
         f.signIn();
         f.settings.autoAuth = true;
@@ -711,7 +704,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const f = await fixture(era);
       f.definition.auth = "oauth";
       f.definition.retryOnTransportFailure = true;
-      f.seed("basic");
+      await f.seed("basic");
       f.controls.toolStatuses = [era === "legacy" ? 404 : 503, 403];
       f.signIn();
       f.settings.autoAuth = true;
@@ -734,11 +727,11 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const f = await fixture();
     f.definition.auth = "oauth";
     f.definition.oauth = { scope: "basic" };
-    f.seed(undefined, true);
+    await f.seed(undefined, true);
     await f.connect();
-    const before = f.stored();
+    const before = await f.stored();
     expect((await f.call()).details.error).toBe("auth_required");
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
     const url = await f.manual();
     expect(scopes(new URL(url).searchParams.get("scope"))).toEqual(["basic", "write"]);
     expect(requireValue(f.exchanges[0]).get("grant_type")).toBe("authorization_code");
@@ -751,7 +744,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       const f = await fixture();
       f.definition.auth = "oauth";
       f.definition.oauth = { scope: "basic" };
-      f.seed("basic");
+      await f.seed("basic");
       await f.connect();
       await f.call();
       const other = await fixture();
@@ -852,9 +845,11 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
                 { status: "fulfilled", value: "authenticated" },
               ],
         );
-        expect(a.stored()?.tokens?.scope).toBe("basic write");
-        expect(b.stored()?.tokens?.scope).toBe("basic admin");
-        expect(b.stored()?.tokens?.accessToken).not.toBe(a.stored()?.tokens?.accessToken);
+        expect((await a.stored())?.tokens?.scope).toBe("basic write");
+        expect((await b.stored())?.tokens?.scope).toBe("basic admin");
+        expect((await b.stored())?.tokens?.accessToken).not.toBe(
+          (await a.stored())?.tokens?.accessToken,
+        );
         expect(a.exchanges).toHaveLength(2);
         expect(requireValue(a.exchanges[0]).get("code_verifier")).not.toBe(
           requireValue(a.exchanges[1]).get("code_verifier"),
@@ -871,7 +866,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   it("retains only scope intent after cancellation and rejects a changed known issuer", async () => {
     const f = await fixture();
     f.definition.auth = "oauth";
-    f.seed("basic");
+    await f.seed("basic");
     await f.connect();
     await f.call();
     const controller = new AbortController();
@@ -900,15 +895,15 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       clientId: "machine",
       clientSecret: "secret",
     };
-    f.seed("basic");
+    await f.seed("basic");
     await f.connect();
     expect(f.request()).toBeUndefined();
-    const before = f.stored();
+    const before = await f.stored();
     f.controls.issuerPath = "/changed";
     expect((await f.call()).details.error).toBe("call_failed");
     expect(f.authorizations).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
     expect(f.requests.filter((request) => request.method === "tools/call")).toHaveLength(2);
     f.controls.issuerPath = "";
     await f.manager.reconnect(f.name, f.definition, requireValue(f.manager.getConnection(f.name)));
@@ -925,16 +920,16 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   it("does not poison a fresh scope request with a rejected discovery issuer", async () => {
     const f = await fixture();
     f.definition.auth = "oauth";
-    f.seed("basic");
+    await f.seed("basic");
     await f.connect();
     expect((await f.call()).details.error).toBe("auth_required");
     expect(f.request()?.issuer).toBeUndefined();
-    const before = f.stored();
+    const before = await f.stored();
     f.controls.issuerPath = "/changed";
     await expect(f.start()).rejects.toThrow("issuer changed");
     expect(f.authorizations).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
     expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
     f.controls.issuerPath = "";
     const restarting = f.start();
@@ -942,13 +937,13 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const { authorizationUrl } = await restarting;
     expect(scopes(new URL(authorizationUrl).searchParams.get("scope"))).toEqual(["basic", "write"]);
     expect(f.request()?.issuer).toBe(f.origin);
-    expect(f.stored()?.tokens).toEqual(before?.tokens);
+    expect((await f.stored())?.tokens).toEqual(before?.tokens);
     expect(f.authorizations).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
     await f.manual();
     expect(f.authorizations).toHaveLength(1);
     expect(f.exchanges).toHaveLength(1);
-    expect(f.stored()?.tokens?.scope).toBe("basic write");
+    expect((await f.stored())?.tokens?.scope).toBe("basic write");
     expect((await f.call()).details.error).toBeUndefined();
   });
 
@@ -956,7 +951,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const f = await fixture();
     f.definition.auth = "oauth";
     f.definition.oauth = { scope: "basic" };
-    f.seed("basic");
+    await f.seed("basic");
     await f.connect();
     await f.call();
     const first = await f.start();
@@ -986,7 +981,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(await completeAuthFromInput(f.name, callback, { runtime: f.runtime })).toBe(
       "authenticated",
     );
-    expect(scopes(f.stored()?.tokens?.scope)).toEqual(["admin", "basic", "write"]);
+    expect(scopes((await f.stored())?.tokens?.scope)).toEqual(["admin", "basic", "write"]);
     expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual(["admin", "basic", "write"]);
     expect(f.request()?.challenge).toBeUndefined();
     expect((await f.call()).details.error).toBeUndefined();
@@ -1020,7 +1015,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   it("skips redundant probeAuthDiscovery when a challenge already captured resource metadata", async () => {
     const f = await fixture("modern");
     f.definition.auth = "oauth";
-    f.seed("basic");
+    await f.seed("basic");
     await f.connect();
     const discoverBefore = f.requests.filter((r) => r.method === "server/discover").length;
     await f.call();
@@ -1033,7 +1028,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   it("shares one automatic flow and replacement between concurrent challenged callers", async () => {
     const f = await fixture();
     f.definition.auth = "oauth";
-    f.seed("basic");
+    await f.seed("basic");
     f.signIn();
     f.settings.autoAuth = true;
     f.state.ui = f.ui;
@@ -1067,11 +1062,11 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     async (phase) => {
       const f = await fixture("modern");
       f.definition.auth = "oauth";
-      f.seed("basic");
+      await f.seed("basic");
       f.settings.autoAuth = true;
       f.state.ui = f.ui;
       await f.connect();
-      const before = f.stored();
+      const before = await f.stored();
       const saveTokens = vi.spyOn(McpOAuthProvider.prototype, "saveTokens");
       const controller = new AbortController();
       if (phase === "discovery") {
@@ -1108,7 +1103,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         expect(save).toHaveProperty("reason", expect.any(Error));
         expect(save).toHaveProperty("reason.message", expect.stringContaining("no longer active"));
       }
-      expect(f.stored()?.tokens).toEqual(before?.tokens);
+      expect((await f.stored())?.tokens).toEqual(before?.tokens);
       expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(1);
       expect(f.request()?.challenge?.requiredScope).toBe("write");
     },
@@ -1119,7 +1114,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     async (cancellation) => {
       const f = await fixture();
       f.definition.auth = "oauth";
-      f.seed("basic");
+      await f.seed("basic");
       f.settings.autoAuth = true;
       f.state.ui = f.ui;
       await f.connect();
@@ -1178,7 +1173,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(html).toContain("auth-complete");
     expect(html).not.toContain(requireValue(callback.searchParams.get("code")));
     expect(f.exchanges).toHaveLength(0);
-    expect(f.stored()?.tokens).toBeUndefined();
+    expect((await f.stored())?.tokens).toBeUndefined();
 
     const cancelled = new AbortController();
     cancelled.abort(new Error("completion cancelled"));
@@ -1189,7 +1184,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(completed.details.authenticated).toBe(true);
     expect(f.exchanges).toHaveLength(1);
     expect(requireValue(f.exchanges[0]).get("code")).toBe(callback.searchParams.get("code"));
-    expect(f.stored()?.tokens?.issuer).toBe(f.origin);
+    expect((await f.stored())?.tokens?.issuer).toBe(f.origin);
     for (const secret of [
       callback.href,
       requireValue(callback.searchParams.get("code")),
@@ -1351,7 +1346,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     }
     expect(await starting).toHaveProperty("status", "rejected");
     expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
-    expect(f.stored()).toBeUndefined();
+    expect(await f.stored()).toBeUndefined();
   });
 
   it("replaces an unpublished start without letting it replace the newer flow", async () => {
@@ -1371,7 +1366,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       "authenticated",
     );
     expect(newer.exchanges).toHaveLength(1);
-    expect(older.stored()).toBeUndefined();
+    expect(await older.stored()).toBeUndefined();
   });
 
   it("cancels a joining start caller without cancelling the shared start", async () => {
@@ -1565,7 +1560,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const f = await fixture();
     const description = "<script>legitimate denial</script>";
     f.definition.auth = "oauth";
-    f.seed("basic");
+    await f.seed("basic");
     await f.connect();
     await f.call();
     browser.open.mockImplementation(async (url: string) => {
@@ -1608,8 +1603,8 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect(await completeAuthFromInput(a.name, callbackA.href, { runtime: a.runtime })).toBe(
       "authenticated",
     );
-    expect(a.stored()?.tokens?.issuer).toBe(a.origin);
-    expect(b.stored()?.tokens?.issuer).toBe(b.origin);
+    expect((await a.stored())?.tokens?.issuer).toBe(a.origin);
+    expect((await b.stored())?.tokens?.issuer).toBe(b.origin);
     expect((await fetch(callbackA)).status).toBe(400);
     expect((await fetch(callbackB)).status).toBe(400);
     expect(a.exchanges).toHaveLength(1);
@@ -1664,7 +1659,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     async (afterAuth) => {
       const f = await fixture();
       f.definition.auth = "oauth";
-      f.seed("basic");
+      await f.seed("basic");
       f.controls.holdEffect = true;
       f.signIn();
       const host = await createLifecycleHost();
@@ -1728,7 +1723,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     f.definition.auth = "oauth";
     f.definition.oauth = { scope: "basic" };
     f.controls.offlineAccess = true;
-    f.seed("basic");
+    await f.seed("basic");
     await f.connect();
     await f.call();
     const authorizationUrl = await f.manual();
@@ -1744,7 +1739,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       `${era} activates a fresh runtime's stored token at %s without consent`,
       async (phase) => {
         const f = await fixture(era);
-        f.seed("basic write");
+        await f.seed("basic write");
         const handshake = era === "legacy" ? "initialize" : "server/discover";
         const method = phase === "handshake" ? handshake : phase;
         f.controls.protectedMethod = method;
@@ -1838,7 +1833,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
   it("allows a retired native operation to retain its late scope challenge until explicit shutdown", async () => {
     const f = await fixture();
     f.definition.auth = "oauth";
-    f.seed("basic");
+    await f.seed("basic");
     f.controls.holdResource = true;
     const old = await f.connect();
     const close = vi.spyOn(old.client, "close");
@@ -1864,7 +1859,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     b.manager.setOAuthRuntime(a.runtime);
     for (const f of [a, b]) {
       f.definition.auth = "oauth";
-      f.seed("basic");
+      await f.seed("basic");
       const connection = await f.connect();
       await expect(connection.client.callTool({ name: "write" })).rejects.toBeInstanceOf(
         InsufficientScopeError,
@@ -1891,7 +1886,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     b.definition.url = a.definition.url;
     for (const f of [a, b]) {
       f.definition.auth = "oauth";
-      updateTokens(
+      await updateTokens(
         { serverName: f.name, serverUrl: a.definition.url },
         { accessToken: "basic-token", scope: "basic", issuer: a.origin },
       );
@@ -1960,7 +1955,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     async (options) => {
       const f = await fixture();
       f.definition.auth = "oauth";
-      f.seed("basic");
+      await f.seed("basic");
       const connection = await f.connect();
       Object.assign(f.definition, options);
       await expect(connection.client.callTool({ name: "write" })).rejects.toBeInstanceOf(
@@ -1975,7 +1970,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     const f = await fixture();
     f.definition.auth = "oauth";
     f.definition.oauth = { scope: "configured" };
-    f.seed("basic");
+    await f.seed("basic");
     f.controls.advertisedScopes.push("unrelated");
     await f.connect();
     await f.call();
@@ -1999,7 +1994,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     async (host) => {
       const f = await fixture("modern");
       f.definition.auth = "oauth";
-      f.seed("basic");
+      await f.seed("basic");
       f.settings.autoAuth = true;
       f.state.ui = f.ui;
       browser.open.mockImplementation(async (authorizationUrl: string) => {
@@ -2020,7 +2015,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
       expect(f.requests.filter((request) => request.method === "tools/call")).toHaveLength(1);
       expect(f.request()?.challenge?.requiredScope).toBe("write");
       expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
-      expect(f.stored()?.tokens?.scope).toBe("basic");
+      expect((await f.stored())?.tokens?.scope).toBe("basic");
     },
   );
 

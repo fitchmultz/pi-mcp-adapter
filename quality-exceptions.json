@@ -144,19 +144,6 @@
     "guards": []
   },
   {
-    "id": "QX-018",
-    "file": "keyring-store.ts",
-    "rule": "typescript/no-unsafe-type-assertion",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "loadKeyringEntryClass"
-    },
-    "path": ["body", "body", 0, "block", "body", 0],
-    "nodeType": "ReturnStatement",
-    "operation": "return (require(\"@napi-rs/keyring\") as KeyringModule).Entry;",
-    "guards": []
-  },
-  {
     "id": "QX-013",
     "file": "keyring-store.ts",
     "rule": "eslint/preserve-caught-error",
@@ -210,19 +197,6 @@
     ],
     "nodeType": "CallExpression",
     "operation": "requireFromHere(path.join(path.dirname(packageJsonPath), `keyring.${suffix}.node`))",
-    "guards": []
-  },
-  {
-    "id": "QX-021",
-    "file": "auth-record-types.ts",
-    "rule": "typescript/no-unsafe-type-assertion",
-    "scope": {
-      "type": "FunctionDeclaration",
-      "name": "createAuthRecordSchemas"
-    },
-    "path": ["body", "body", 0],
-    "nodeType": "VariableDeclaration",
-    "operation": "const { z } = require(\"zod\") as typeof Zod;",
     "guards": []
   },
   {

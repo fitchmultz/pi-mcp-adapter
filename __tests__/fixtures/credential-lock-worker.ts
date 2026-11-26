@@ -56,7 +56,7 @@ async function verifyHttpReads(): Promise<void> {
   const manager = new McpServerManager();
   try {
     const url = `${await http.listen()}/mcp`;
-    auth.saveAuthEntry({ ...identity, serverUrl: url }, { tokens: { accessToken: token } });
+    await auth.saveAuthEntry({ ...identity, serverUrl: url }, { tokens: { accessToken: token } });
     writeSync(1, `${JSON.stringify({ url })}\n`);
     assert.equal(readSync(0, Buffer.alloc(1), 0, 1, null), 1);
     const connection = await manager.connect(identity.serverName, { url, auth: "oauth" });
@@ -74,7 +74,7 @@ try {
     await verifyHttpReads();
     process.exit(0);
   } else if (action === "legacy-source") {
-    auth.removeAuthEntry(identity);
+    await auth.removeAuthEntry(identity);
     const path = auth.getAuthEntryFilePath(identity.serverName);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(
@@ -87,36 +87,39 @@ try {
     writeSync(1, JSON.stringify({ path }));
     process.exit(0);
   } else if (action === "seed") {
-    auth.saveAuthEntry(identity, {
+    await auth.saveAuthEntry(identity, {
       tokens: { accessToken: "x".repeat(5000), refreshToken: "refresh" },
       clientInfo: { clientId: "first-client" },
       codeVerifier: "verifier",
       oauthState: "state",
       futureMetadata: { kept: true },
     });
-    auth.saveAuthEntry(other, {
+    await auth.saveAuthEntry(other, {
       tokens: { accessToken: "second-token" },
       clientInfo: { clientId: "second-client" },
     });
   } else if (action === "clear") {
-    auth.clearCodeVerifier(identity);
+    await auth.clearCodeVerifier(identity);
   } else if (action === "update") {
-    auth.updateTokens(identity, { accessToken: "updated-token" });
+    await auth.updateTokens(identity, { accessToken: "updated-token" });
   } else if (action === "client") {
-    auth.updateClientInfo(identity, { clientId: "updated-client" });
+    await auth.updateClientInfo(identity, { clientId: "updated-client" });
   } else if (action === "logout") {
-    auth.clearAllCredentials(identity);
+    await auth.clearAllCredentials(identity);
   } else if (action === "migrate") {
-    auth.migrateLegacyAuthEntry(identity);
+    await auth.migrateLegacyAuthEntry(identity);
   } else if (action === "inspect") {
-    writeSync(1, JSON.stringify(auth.inspectAuthForUrl(identity)));
+    writeSync(1, JSON.stringify(await auth.inspectAuthForUrl(identity)));
     process.exit(0);
   } else if (action !== "read") {
     throw new Error(`Unknown credential worker action: ${action ?? "missing"}`);
   }
   writeSync(
     1,
-    JSON.stringify({ entry: auth.getAuthEntry(identity), other: auth.getAuthEntry(other) }),
+    JSON.stringify({
+      entry: await auth.getAuthEntry(identity),
+      other: await auth.getAuthEntry(other),
+    }),
   );
 } catch (error) {
   if (!(error instanceof auth.OAuthCredentialStoreError)) {

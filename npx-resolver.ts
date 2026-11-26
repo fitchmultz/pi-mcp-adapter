@@ -1,4 +1,5 @@
 // npx-resolver.ts - Resolve npx/npm exec binaries to avoid npm parent processes
+import type { ChildProcess } from "node:child_process";
 import {
   existsSync,
   readFileSync,
@@ -9,15 +10,18 @@ import {
   readSync,
   closeSync,
 } from "node:fs";
-import { join, extname, resolve, sep } from "node:path";
+import { dirname, join, extname, resolve, sep } from "node:path";
 import { asObjectRecord } from "./mcp-output-values.ts";
-import { parseInvocation, parsePackageSpec } from "./npx-invocation.ts";
+import { classifyNpxCommand, parseInvocation, parsePackageSpec } from "./npx-invocation.ts";
 import { loadCacheEntry, saveCacheEntry, type NpxCacheEntry } from "./npx-resolution-cache.ts";
-import { throwIfAborted } from "./abort.ts";
+import { abortable, throwIfAborted } from "./abort.ts";
 import crossSpawn from "cross-spawn";
 import { logger } from "./logger.ts";
+import { terminateChildProcess } from "./utils.ts";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// Match the prior synchronous 10s npm config cap so slow/broken npm setups fall back without stalling startup.
+const NPM_CONFIG_TIMEOUT_MS = 10_000;
 interface PackageManifest {
   bin: string | Record<string, string>;
   version?: string;
@@ -57,17 +61,30 @@ export async function resolveNpxBinary(
     return { binPath: cached.resolvedBin, extraArgs: parsed.extraArgs, isJs: cached.isJs };
   }
 
-  let resolved = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
+  const npmCommand = resolveNpmExecutable(command);
+  let resolved = await resolveFromNpmCache(parsed.packageSpec, npmCommand, parsed.binName, signal);
   if (!resolved) {
     // Slow path: force npx cache population.
-    await forceNpxCache(parsed.packageSpec, signal);
-    resolved = resolveFromNpmCache(parsed.packageSpec, parsed.binName);
+    await forceNpxCache(parsed.packageSpec, npmCommand, signal);
+    resolved = await resolveFromNpmCache(parsed.packageSpec, npmCommand, parsed.binName, signal);
   }
   if (!resolved) {
     return null;
   }
   saveResolvedBinary(cacheKey, resolved);
   return { binPath: resolved.resolvedBin, extraArgs: parsed.extraArgs, isJs: resolved.isJs };
+}
+
+function resolveNpmExecutable(command: string): string {
+  if (!command.includes("/") && !command.includes("\\")) {
+    return "npm";
+  }
+  if (classifyNpxCommand(command) === "npm" && existsSync(command)) {
+    return command;
+  }
+  const siblingName = process.platform === "win32" ? "npm.cmd" : "npm";
+  const sibling = join(dirname(command), siblingName);
+  return existsSync(sibling) ? sibling : "npm";
 }
 
 function saveResolvedBinary(cacheKey: string, resolved: NpxCacheEntry): void {
@@ -78,8 +95,13 @@ function saveResolvedBinary(cacheKey: string, resolved: NpxCacheEntry): void {
   }
 }
 
-function resolveFromNpmCache(packageSpec: string, binName?: string): NpxCacheEntry | null {
-  const cacheDir = getNpmCacheDir();
+async function resolveFromNpmCache(
+  packageSpec: string,
+  npmCommand: string,
+  binName?: string,
+  signal?: AbortSignal,
+): Promise<NpxCacheEntry | null> {
+  const cacheDir = await getNpmCacheDir(npmCommand, signal);
   if (cacheDir === null) {
     return null;
   }
@@ -185,21 +207,25 @@ function resolveBinPath(packageDir: string, bin: BinChoice): string | null {
   return existsSync(path) ? path : null;
 }
 
-async function forceNpxCache(packageSpec: string, signal?: AbortSignal): Promise<void> {
+async function forceNpxCache(
+  packageSpec: string,
+  npmCommand: string,
+  signal?: AbortSignal,
+): Promise<void> {
   throwIfAborted(signal);
   try {
     await new Promise<void>((complete, reject) => {
       const proc = crossSpawn(
-        "npm",
+        npmCommand,
         ["exec", "--yes", "--package", packageSpec, "--", "node", "-e", "1"],
         { stdio: "ignore" },
       );
       const timer = setTimeout(() => {
-        proc.kill();
+        terminateChildProcess(proc);
         reject(new Error("timeout"));
       }, FORCE_CACHE_TIMEOUT_MS);
       const abort = () => {
-        proc.kill();
+        terminateChildProcess(proc);
         reject(signal?.reason instanceof Error ? signal.reason : new Error("MCP request aborted"));
       };
       signal?.addEventListener("abort", abort, { once: true });
@@ -332,29 +358,75 @@ function detectJsBinary(binPath: string): boolean {
   }
 }
 
-let npmCacheDirCached: string | null | undefined;
+const npmCacheDirCache = new Map<string, string | null>();
+const npmCacheDirInFlight = new Map<string, Promise<string | null>>();
 
-function getNpmCacheDir(): string | null {
-  if (npmCacheDirCached !== undefined) {
-    return npmCacheDirCached;
-  }
-  if (process.env.NPM_CONFIG_CACHE !== undefined && process.env.NPM_CONFIG_CACHE !== "") {
-    npmCacheDirCached = process.env.NPM_CONFIG_CACHE;
-    return npmCacheDirCached;
-  }
-  try {
-    const result = crossSpawn.sync("npm", ["config", "get", "cache"], { encoding: "utf-8" });
-    if (result.status === 0) {
-      const path = result.stdout.trim();
-      npmCacheDirCached = path !== "" ? path : null;
-      return npmCacheDirCached;
+function readNpmCacheDir(npmCommand: string): Promise<string | null> {
+  return new Promise<string | null>((complete) => {
+    let settled = false;
+    const finish = (value: string | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      complete(value);
+    };
+    let proc: ChildProcess;
+    try {
+      proc = crossSpawn(npmCommand, ["config", "get", "cache"], {
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      });
+    } catch {
+      finish(null);
+      return;
     }
-  } catch {
-    npmCacheDirCached = null;
-    return null;
+    let stdout = "";
+    const timer = setTimeout(() => {
+      terminateChildProcess(proc);
+      finish(null);
+    }, NPM_CONFIG_TIMEOUT_MS);
+    timer.unref();
+    proc.stdout?.setEncoding("utf-8");
+    proc.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    proc.on("close", (code) => {
+      const path = code === 0 ? stdout.trim() : "";
+      finish(path !== "" ? path : null);
+    });
+    proc.on("error", () => {
+      finish(null);
+    });
+  });
+}
+
+async function getNpmCacheDir(npmCommand: string, signal?: AbortSignal): Promise<string | null> {
+  throwIfAborted(signal);
+  if (process.env.NPM_CONFIG_CACHE !== undefined && process.env.NPM_CONFIG_CACHE !== "") {
+    return process.env.NPM_CONFIG_CACHE;
   }
-  npmCacheDirCached = null;
-  return null;
+  const cached = npmCacheDirCache.get(npmCommand);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let inFlight = npmCacheDirInFlight.get(npmCommand);
+  if (!inFlight) {
+    inFlight = readNpmCacheDir(npmCommand)
+      .then((value) => {
+        // Do not permanently negative-cache transient npm config failures or timeouts.
+        if (value !== null) {
+          npmCacheDirCache.set(npmCommand, value);
+        }
+        return value;
+      })
+      .finally(() => {
+        npmCacheDirInFlight.delete(npmCommand);
+      });
+    npmCacheDirInFlight.set(npmCommand, inFlight);
+  }
+  return abortable(inFlight, signal);
 }
 
 function safeRealpath(path: string): string {

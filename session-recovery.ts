@@ -142,8 +142,9 @@ class RecoveryAttempt<T> {
     let fresh = stale;
     if (
       fresh.status !== "needs-auth" ||
-      this.deps.manager.hasFreshOAuthCredentials(this.serverName, definition, fresh)
+      (await this.deps.manager.hasFreshOAuthCredentials(this.serverName, definition, fresh))
     ) {
+      throwIfAborted(this.deps.signal);
       fresh = this.deps.signal
         ? await this.deps.manager.reconnect(this.serverName, definition, stale, this.deps.signal)
         : await this.deps.manager.reconnect(this.serverName, definition, stale);

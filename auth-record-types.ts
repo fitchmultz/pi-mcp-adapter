@@ -1,11 +1,7 @@
-import { createRequire } from "node:module";
 import type * as Zod from "zod";
 
-const require = createRequire(import.meta.url);
-
-function createAuthRecordSchemas() {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-021: load the declared Zod API only when credentials are read.
-  const { z } = require("zod") as typeof Zod;
+async function createAuthRecordSchemas() {
+  const { z } = await import("zod");
   const tokens = z.looseObject({
     accessToken: z.string(),
     refreshToken: z.string().exactOptional(),
@@ -36,17 +32,21 @@ function createAuthRecordSchemas() {
   return { tokens, clientInfo, entry };
 }
 
-type AuthRecordSchemas = ReturnType<typeof createAuthRecordSchemas>;
+type AuthRecordSchemas = Awaited<ReturnType<typeof createAuthRecordSchemas>>;
 let schemas: AuthRecordSchemas | undefined;
 
 export type StoredTokens = Zod.infer<AuthRecordSchemas["tokens"]>;
 export type StoredClientInfo = Zod.infer<AuthRecordSchemas["clientInfo"]>;
 export type AuthEntry = Zod.infer<AuthRecordSchemas["entry"]>;
 
+function matchesAuthEntry(schema: AuthRecordSchemas["entry"], value: unknown): value is AuthEntry {
+  return schema.safeParse(value).success;
+}
+
 /** Structural validation leaves parsed records untouched, preserving legacy JSON property order. */
-export function isAuthEntry(value: unknown): value is AuthEntry {
-  schemas ??= createAuthRecordSchemas();
-  return schemas.entry.safeParse(value).success;
+export async function validateAuthEntry(value: unknown): Promise<AuthEntry | undefined> {
+  schemas ??= await createAuthRecordSchemas();
+  return matchesAuthEntry(schemas.entry, value) ? value : undefined;
 }
 
 /** Credentials belong to one configured name and exact, unnormalized URL. */

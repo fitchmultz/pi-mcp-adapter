@@ -21,6 +21,7 @@ async function connectServer(
   afterAuth: boolean,
 ): Promise<ServerConnection> {
   const previous = afterAuth ? state.manager.getConnection(name) : undefined;
+  state.manager.invalidatePriorDiscovery(name);
   if (!afterAuth) {
     await state.manager.close(name);
   }

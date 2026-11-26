@@ -168,9 +168,7 @@ async function clearSatisfiedChallenge(context: CompletionContext): Promise<void
     return;
   }
   const issuedScope = (
-    await Promise.resolve(
-      getAuthForUrl({ serverName, serverUrl: pendingAuth.serverUrl }, authStorageOptions),
-    )
+    await getAuthForUrl({ serverName, serverUrl: pendingAuth.serverUrl }, authStorageOptions)
   )?.tokens?.scope;
   if (issuedScope !== undefined && !isStrictScopeSuperset(requiredScope, issuedScope)) {
     delete request.challenge;
@@ -456,7 +454,7 @@ export async function removeAuth(
     await Promise.allSettled([starting.operation]);
     throwIfAborted(signal);
   }
-  const oauthState = await Promise.resolve(getOAuthState(identity, authStorageOptions));
+  const oauthState = await getOAuthState(identity, authStorageOptions);
   throwIfAborted(signal);
   if (oauthState !== undefined && oauthState !== "") {
     cancelPendingCallback(oauthState);
@@ -468,8 +466,7 @@ export async function removeAuth(
       getRuntimeState(runtime).requests.delete(key);
     }
   }
-  clearAllCredentials(identity, authStorageOptions);
-  await Promise.resolve();
+  await clearAllCredentials(identity, authStorageOptions);
   throwIfAborted(signal);
   console.log(`MCP Auth: Removed credentials for ${serverName}`);
 }

@@ -323,14 +323,14 @@ describe("commands onboarding", () => {
         serverUrl: "https://resolved.example.com/mcp",
       };
       const other = { ...identity, serverUrl: identity.serverUrl + "/" };
-      saveAuthEntry(identity, { tokens: { accessToken: "resolved-token" } });
-      saveAuthEntry(other, { tokens: { accessToken: "other-token" } });
+      await saveAuthEntry(identity, { tokens: { accessToken: "resolved-token" } });
+      await saveAuthEntry(other, { tokens: { accessToken: "other-token" } });
       const state = await createState({
         config: { mcpServers: { interpolated: { url, auth: "oauth" } } },
       });
       expect((await logoutServer("interpolated", state, host.context)).ok).toBe(true);
-      expect(getAuthEntry(identity)).toBeUndefined();
-      expect(getAuthEntry(other)?.tokens?.accessToken).toBe("other-token");
+      expect(await getAuthEntry(identity)).toBeUndefined();
+      expect((await getAuthEntry(other))?.tokens?.accessToken).toBe("other-token");
     },
   );
 
@@ -343,7 +343,7 @@ describe("commands onboarding", () => {
       const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");
       const { logoutServer } = await import("../../commands.ts");
       const identity = { serverName: "unresolved", serverUrl: "https://preserved.example.com/mcp" };
-      saveAuthEntry(identity, { tokens: { accessToken: "preserved-token" } });
+      await saveAuthEntry(identity, { tokens: { accessToken: "preserved-token" } });
       const state = await createState({
         config: {
           mcpServers: { unresolved: { ...(url === undefined ? {} : { url }), auth: "oauth" } },
@@ -352,7 +352,7 @@ describe("commands onboarding", () => {
       const result = await logoutServer("unresolved", state, host.context);
       expect(result.ok).toBe(false);
       expect(result.message).toMatch(/URL/);
-      expect(getAuthEntry(identity)?.tokens?.accessToken).toBe("preserved-token");
+      expect((await getAuthEntry(identity))?.tokens?.accessToken).toBe("preserved-token");
       expect(host.context.ui.notify).not.toHaveBeenCalledWith(
         expect.stringContaining("OAuth credentials cleared"),
         "info",
@@ -365,7 +365,7 @@ describe("commands onboarding", () => {
     const { getAuthEntry, saveAuthEntry } = await import("../../mcp-auth.ts");
     const { waitForCallback } = await import("../../mcp-callback-server.ts");
     const { logoutServer } = await import("../../commands.ts");
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: "oauth-server", serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken: "token", refreshToken: "refresh" }, oauthState: "pending-state" },
     );
@@ -380,7 +380,7 @@ describe("commands onboarding", () => {
     ]);
     expect(result.ok).toBe(true);
     expect(
-      getAuthEntry({ serverName: "oauth-server", serverUrl: "https://example.com/mcp" }),
+      await getAuthEntry({ serverName: "oauth-server", serverUrl: "https://example.com/mcp" }),
     ).toBeUndefined();
     expect(close).toHaveBeenCalledWith("oauth-server");
     expect(host.context.ui.notify).toHaveBeenCalledWith(
@@ -393,11 +393,11 @@ describe("commands onboarding", () => {
     vi.stubEnv("FITCH_MCP_OAUTH_DIR", temporaryDirectory("pi-mcp-commands-oauth-"));
     const { updateTokens } = await import("../../mcp-auth.ts");
     const { openMcpPanel } = await import("../../commands.ts");
-    updateTokens(
+    await updateTokens(
       { serverName: "legacy", serverUrl: "https://api.example.com/mcp" },
       { accessToken: "legacy-token" },
     );
-    updateTokens(
+    await updateTokens(
       { serverName: "stale", serverUrl: "https://old.example.com/mcp" },
       { accessToken: "stale-token" },
     );
@@ -421,7 +421,7 @@ describe("commands onboarding", () => {
   it("panel reconnect force-clears stale needs-auth state", async () => {
     vi.stubEnv("HOME", temporaryDirectory("pi-mcp-commands-reconnect-"));
     const { updateTokens } = await import("../../mcp-auth.ts");
-    updateTokens(
+    await updateTokens(
       { serverName: "notion", serverUrl: "https://mcp.notion.com/mcp" },
       { accessToken: "token" },
     );

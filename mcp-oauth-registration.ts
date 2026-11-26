@@ -4,7 +4,7 @@ import {
   type StoredOAuthTokens,
   type StoredOAuthClientInformation,
 } from "@modelcontextprotocol/client";
-import type { StoredTokens, StoredClientInfo } from "./mcp-auth.ts";
+import type { AuthEntry, StoredTokens, StoredClientInfo } from "./mcp-auth.ts";
 import { isNonInteractiveOAuth } from "./types.ts";
 import {
   loopbackRedirectsMatch,
@@ -70,6 +70,19 @@ function compatibleIssuer(stored: string | undefined, current: string | undefine
     return true;
   }
   return issuersMatch(stored, current);
+}
+
+export function hasStoredIssuerMismatch(
+  entry: AuthEntry | undefined,
+  issuer: string | undefined,
+): boolean {
+  if (!entry || issuer === undefined || issuer === "") {
+    return false;
+  }
+  const storedIssuers = [entry.clientInfo?.issuer, entry.tokens?.issuer].filter(
+    (storedIssuer): storedIssuer is string => storedIssuer !== undefined,
+  );
+  return storedIssuers.some((storedIssuer) => !issuersMatch(storedIssuer, issuer));
 }
 
 export function storedTokenInformation(tokens: StoredTokens): StoredOAuthTokens {

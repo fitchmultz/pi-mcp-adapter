@@ -281,10 +281,9 @@ async function clearMatchingStoredState(
   state: string,
   options: AuthStorageOptions,
 ): Promise<void> {
-  const stored = await Promise.resolve(getOAuthState(identity, options));
+  const stored = await getOAuthState(identity, options);
   if (stored === state) {
-    clearOAuthState(identity, options);
-    await Promise.resolve();
+    await clearOAuthState(identity, options);
   }
 }
 

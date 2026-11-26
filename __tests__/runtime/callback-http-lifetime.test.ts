@@ -135,7 +135,7 @@ async function runtime(config: McpConfig, suppliedHost?: Awaited<ReturnType<type
 it("joins refresh persistence and reconstructs a new client without replaying calls", async () => {
   const f = await wire({ oauth: true });
   const state = await runtime(f.config);
-  f.expire();
+  await f.expire();
   f.delay("token");
   const pending = requireValue(state.manager.getConnection(f.name)).client.callTool({
     name: "echo",
@@ -144,9 +144,9 @@ it("joins refresh persistence and reconstructs a new client without replaying ca
   await expect.poll(f.started).toBe(true);
   f.release();
   await pending;
-  expect(getAuthForUrl({ serverName: f.name, serverUrl: f.url })?.tokens?.refreshToken).toBe(
-    "SYNTHETIC-REFRESH-UPDATED",
-  );
+  expect(
+    (await getAuthForUrl({ serverName: f.name, serverUrl: f.url }))?.tokens?.refreshToken,
+  ).toBe("SYNTHETIC-REFRESH-UPDATED");
   await state.owner.stop();
   const before = f.calls();
   const restored = await runtime(f.config);
@@ -502,9 +502,9 @@ it.each([false, true])(
     expect(stopped).not.toHaveBeenCalled();
     gate.resolve();
     await stopping;
-    expect(getAuthForUrl({ serverName: f.name, serverUrl: f.url })?.tokens?.refreshToken).toBe(
-      "SYNTHETIC-REFRESH",
-    );
+    expect(
+      (await getAuthForUrl({ serverName: f.name, serverUrl: f.url }))?.tokens?.refreshToken,
+    ).toBe("SYNTHETIC-REFRESH");
   },
 );
 
@@ -571,9 +571,12 @@ it("reconstructs implicit OAuth challenge caches on a fresh runtime without repl
   const f = await wire({ oauth: true });
   delete f.definition.auth;
   const saved = requireValue(
-    requireValue(getAuthForUrl({ serverName: f.name, serverUrl: f.url })).tokens,
+    requireValue(await getAuthForUrl({ serverName: f.name, serverUrl: f.url })).tokens,
   );
-  updateTokens({ serverName: f.name, serverUrl: f.url }, { ...saved, scope: "synthetic.read" });
+  await updateTokens(
+    { serverName: f.name, serverUrl: f.url },
+    { ...saved, scope: "synthetic.read" },
+  );
   const state = await runtime(f.config);
   expect(f.unauthorized()).toBe(1);
   await state.owner.stop();
@@ -581,7 +584,7 @@ it("reconstructs implicit OAuth challenge caches on a fresh runtime without repl
   expect(f.unauthorized()).toBe(2);
   expect(f.calls()).toBe(0);
   expect(f.refreshes()).toBe(0);
-  expect(getAuthForUrl({ serverName: f.name, serverUrl: f.url })?.tokens).toMatchObject({
+  expect((await getAuthForUrl({ serverName: f.name, serverUrl: f.url }))?.tokens).toMatchObject({
     issuer: f.origin,
     scope: "synthetic.read",
   });

@@ -1,6 +1,6 @@
 # Native keyring boundary comparison
 
-The selected loader trusts two published native module entrypoints. Its constructor and method types come from `@napi-rs/keyring`, not a locally invented declaration. The normal package exports the native binding's `Entry` directly. The fallback resolves an enumerated platform package and loads that package's native binary.
+The primary `@napi-rs/keyring` package load in `keyring-store.ts` uses typed dynamic `await import("@napi-rs/keyring")` for `AsyncEntry` and needs no assertion. QX-018 remains only for the two resolved `.node` binary fallbacks (`keyring-store.ts:loadKeyringNativeBindingFallback` for `AsyncEntry` and `mcp-keyring-helper.cjs` for CommonJS `Entry`), because Node's ESM loader cannot directly `import()` `.node` native addons (`ERR_UNKNOWN_FILE_EXTENSION`). Their constructor and method types come from `@napi-rs/keyring`, not a locally invented declaration.
 
 A cast-free alternative must validate an unknown constructor and each method result. This complete adapter uses the same three published methods as the credential store:
 
@@ -74,4 +74,4 @@ The comparison was compiled in the root project and checked with `oxlint --deny-
 
 On Node 24.22.2, macOS arm64 and keyring 2.1.2, both the package constructor and the independently resolved native binary passed real synthetic credential write/read/delete round trips through this adapter. Invalid constructor metadata and a password method returning a number reject with the adapter's expected errors. The direct constructors also passed a cross-entrypoint round trip: the package writes a synthetic secret, the resolved binary reads and deletes it, and the package observes absence. All synthetic credentials were removed.
 
-These checks establish the local native API and the alternative's validation, not physical execution on every supported operating system. Published declarations, the native loader source, the existing platform child-process tests and selected-host CI cover the remaining stated contracts. Revisit [QX-018](../quality-exceptions.md#qx-018-type-the-two-lazy-native-keyring-loads) when the native package, exports or available synchronous import facilities change.
+These checks establish the local native API and the alternative's validation, not physical execution on every supported operating system. Published declarations, the native loader source, the existing platform child-process tests and selected-host CI cover the remaining stated contracts. Revisit [QX-018](../quality-exceptions.md#qx-018-type-the-two-lazy-native-keyring-loads) when the native package, exports or Node's `.node` dynamic-import support change.

@@ -77,8 +77,10 @@ export class ConnectionLifecycle {
   private readonly flushTrace: () => Promise<void> | undefined;
   private readonly callbacks: {
     publish: (connection: ServerConnection) => void;
+    activateSubscription: (name: string, connection: ServerConnection) => void;
     close: (name: string) => void;
     closeAll: () => void;
+    invalidatePrior: (name: string) => void;
   };
 
   constructor(
@@ -182,6 +184,7 @@ export class ConnectionLifecycle {
     }
     this.callbacks.publish(connection);
     this.connections.set(name, connection);
+    this.callbacks.activateSubscription(name, connection);
     return connection;
   }
 
@@ -249,6 +252,7 @@ export class ConnectionLifecycle {
       return current;
     }
 
+    this.callbacks.invalidatePrior(name);
     this.retire(name, staleConnection);
     return this.connect(name, definition, signal);
   }

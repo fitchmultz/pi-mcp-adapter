@@ -238,7 +238,7 @@ async function runInit(argv, log = console.log) {
 async function runMigration(argv, log) {
   const { migrateLegacyState } = await import("./dist/legacy-migration.js");
   const dryRun = argv.includes("--dry-run");
-  const result = migrateLegacyState({ dryRun });
+  const result = await migrateLegacyState({ dryRun });
   for (const file of result.files) {
     log(`${file.status}: ${file.source} -> ${file.destination}`);
   }

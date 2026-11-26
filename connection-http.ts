@@ -36,6 +36,7 @@ type HttpConnectionOptions = {
   authStorageOptions: AuthStorageOptions;
   oauthRuntime: McpOAuthRuntime | undefined;
   lifecycle: ConnectionLifecycle;
+  signal?: AbortSignal | undefined;
 };
 
 type InteractiveAuthProvider = AuthProvider &
@@ -45,20 +46,24 @@ function isCommandSecret(value: unknown): value is string {
   return typeof value === "string" && value.startsWith("!") && !value.startsWith("!!");
 }
 
-function resolveHttpRequestInit(
+async function resolveHttpRequestInit(
   definition: ServerDefinition,
   serverName: string,
-): Pick<RequestInit, "headers"> | undefined {
+  signal?: AbortSignal,
+): Promise<Pick<RequestInit, "headers"> | undefined> {
   const hasCommandHeader = Object.values(definition.headers ?? {}).some(isCommandSecret);
-  const headers =
-    resolveCommandSecretsRecord(
-      definition.headers,
-      (key) => `MCP server "${serverName}" HTTP header "${key}"`,
-    ) ?? {};
   const commandBearer = isCommandSecret(definition.bearerToken)
     ? definition.bearerToken
     : undefined;
-  const authorization = resolveHttpAuthorization(definition, serverName, commandBearer);
+  const [resolvedHeaders, authorization] = await Promise.all([
+    resolveCommandSecretsRecord(
+      definition.headers,
+      (key) => `MCP server "${serverName}" HTTP header "${key}"`,
+      signal,
+    ),
+    resolveHttpAuthorization(definition, serverName, commandBearer, signal),
+  ]);
+  const headers = resolvedHeaders ?? {};
   if (authorization !== undefined) {
     headers.Authorization = authorization;
   }
@@ -76,17 +81,22 @@ function resolveHttpRequestInit(
   return Object.keys(headers).length > 0 ? { headers } : undefined;
 }
 
-function resolveHttpAuthorization(
+async function resolveHttpAuthorization(
   definition: ServerDefinition,
   serverName: string,
   commandBearer: string | undefined,
-): string | undefined {
+  signal?: AbortSignal,
+): Promise<string | undefined> {
   if (definition.auth !== "bearer") {
     return undefined;
   }
   const token =
     commandBearer !== undefined
-      ? resolveCommandSecret(commandBearer, `MCP server "${serverName}" HTTP bearer token`)
+      ? await resolveCommandSecret(
+          commandBearer,
+          `MCP server "${serverName}" HTTP bearer token`,
+          signal,
+        )
       : resolveBearerToken(definition);
   return token !== undefined && token.length > 0 ? `Bearer ${token}` : undefined;
 }
@@ -120,14 +130,17 @@ class HttpConnection {
 
   private readonly options: HttpConnectionOptions;
 
-  constructor(options: HttpConnectionOptions) {
+  constructor(
+    options: HttpConnectionOptions,
+    initialRequestInit: Pick<RequestInit, "headers"> | undefined,
+  ) {
     this.options = options;
     this.generation = options.lifecycle.closeGenerations.get(options.serverName) ?? 0;
     // The caller's validated HTTP branch establishes the URL.
     this.serverUrl = resolveServerUrl(options.definition) ?? "";
     this.storageBase = getAuthBaseDir(options.authStorageOptions);
-    const { runtime, definition, serverName, client, legacySse } = this.options;
-    const requestInit = resolveHttpRequestInit(definition, serverName);
+    const { runtime, definition, client, legacySse } = this.options;
+    const requestInit = initialRequestInit;
     const provider = this.createProvider();
     this.provider = provider;
     client.oauthProvider = provider;
@@ -462,9 +475,14 @@ class HttpConnection {
   }
 }
 
-export function createHttpConnection(options: HttpConnectionOptions): {
+export async function createHttpConnection(options: HttpConnectionOptions): Promise<{
   transport: Transport;
   oauthProvider: boolean;
-} {
-  return new HttpConnection(options).create();
+}> {
+  const requestInit = await resolveHttpRequestInit(
+    options.definition,
+    options.serverName,
+    options.signal,
+  );
+  return new HttpConnection(options, requestInit).create();
 }

@@ -1,4 +1,4 @@
-import type { RequestOptions, Transport } from "@modelcontextprotocol/client";
+import type { ConnectOptions, RequestOptions, Transport } from "@modelcontextprotocol/client";
 import type * as ConnectionRuntime from "./connection-runtime.ts";
 import type { ManagedClient } from "./connection-runtime.ts";
 import type { ServerConnection } from "./server-connection.ts";
@@ -16,6 +16,7 @@ import {
   type TokenSnapshot,
 } from "./mcp-auth.ts";
 import {
+  type CachedPriorDiscovery,
   type ServerDefinition,
   type McpTraceSettings,
   validateServerProtocolConfig,
@@ -45,6 +46,14 @@ import {
   resolveStdioCommand,
   StdioDiagnostics,
 } from "./connection-stdio.ts";
+import { isResolvableNpxCommand } from "./npx-invocation.ts";
+import {
+  PriorDiscoveryCache,
+  capturePriorDiscovery,
+  safeResolveServerUrl,
+  supportsPriorDiscovery,
+  toSdkPriorDiscovery,
+} from "./prior-discovery.ts";
 import { drainClientCallbacks } from "./client-operations.ts";
 import { cleanupFailures } from "./connection-disposal.ts";
 import {
@@ -56,20 +65,12 @@ import {
 
 import { ConnectionHandshake } from "./connection-handshake.ts";
 
-function safeResolveServerUrl(definition: ServerDefinition): string | undefined {
-  try {
-    const resolved = resolveServerUrl(definition);
-    return resolved !== undefined && resolved.length > 0 ? resolved : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export class ConnectionFactory {
   authStorageOptions: AuthStorageOptions = {};
   oauthRuntime: McpOAuthRuntime | undefined;
   defaultRequestTimeoutMs: number | undefined;
   traceSettings: McpTraceSettings | undefined;
+  readonly priorDiscovery = new PriorDiscoveryCache();
   private traceWriter: McpTraceWriter | undefined;
   private readonly needsAuthTokens = new WeakMap<ServerConnection, TokenSnapshot | undefined>();
 
@@ -102,16 +103,19 @@ export class ConnectionFactory {
     return request?.challenge?.requiredScope ?? request?.discovered?.scope;
   }
 
-  hasFreshOAuthCredentials(
+  async hasFreshOAuthCredentials(
     name: string,
     definition: ServerDefinition,
     stale: ServerConnection,
-  ): boolean {
+  ): Promise<boolean> {
     const serverUrl = supportsOAuth(definition) ? safeResolveServerUrl(definition) : undefined;
     if (serverUrl === undefined) {
       return false;
     }
-    const status = inspectAuthForUrl({ serverName: name, serverUrl }, this.authStorageOptions);
+    const status = await inspectAuthForUrl(
+      { serverName: name, serverUrl },
+      this.authStorageOptions,
+    );
     const tokens = status.status === "present" ? status.entry.tokens : undefined;
     if (
       !tokens ||
@@ -185,7 +189,7 @@ export class ConnectionFactory {
         implicitOAuth,
       );
       const resolving = setup.resolveCommand();
-      const built = resolving ? setup.prepare(await resolving) : setup.prepare();
+      const built = await (resolving ? setup.prepare(await resolving) : setup.prepare());
       // connect() takes over the claim from here: its own failure path closes and releases
       // the client, so this catch must only see failures from before connect() starts.
       connect = () => setup.connect(built);
@@ -236,6 +240,8 @@ class ConnectionSetup {
   private attempt: SetupAttempt;
   private oauthProvider = false;
   private authError: Error | undefined;
+  private usedPrior: CachedPriorDiscovery | undefined;
+  private bypassPrior = false;
   private readonly stderr = new StdioDiagnostics();
 
   private readonly options: SetupOptions;
@@ -257,25 +263,25 @@ class ConnectionSetup {
 
   resolveCommand(): Promise<StdioCommand> | undefined {
     const { command, args } = this.command;
-    if (command !== "npx" && command !== "npm") {
+    if (!isResolvableNpxCommand(command)) {
       return;
     }
     const { name, signal } = this.options;
     return resolveStdioCommand(command, args, { name, signal });
   }
 
-  prepare(command: StdioCommand = this.command): Transport {
+  async prepare(command: StdioCommand = this.command): Promise<Transport> {
     const { runtime, definition, signal, factory, name } = this.options;
     let transport: Transport;
     if (typeof definition.command === "string" && definition.command.length > 0) {
-      transport = createStdioConnection(runtime, definition, this.stderr, {
+      transport = await createStdioConnection(runtime, definition, this.stderr, {
         name,
         defaultCwd: factory.defaultCwd,
         signal,
         ...command,
       });
     } else if (hasServerUrl(definition)) {
-      transport = this.createHttp();
+      transport = await this.createHttp();
     } else {
       transport = new runtime.UnixSocketClientTransport(resolveConfigPath(definition.socket) ?? "");
     }
@@ -287,9 +293,9 @@ class ConnectionSetup {
     return traced;
   }
 
-  private createHttp(): Transport {
-    const { factory, runtime, definition, name } = this.options;
-    const result = createHttpConnection({
+  private async createHttp(): Promise<Transport> {
+    const { factory, runtime, definition, name, signal } = this.options;
+    const result = await createHttpConnection({
       runtime,
       definition,
       serverName: name,
@@ -302,6 +308,7 @@ class ConnectionSetup {
       authStorageOptions: factory.authStorageOptions,
       oauthRuntime: factory.oauthRuntime,
       lifecycle: factory.lifecycle,
+      signal,
     });
     this.oauthProvider = result.oauthProvider;
     return result.transport;
@@ -325,18 +332,25 @@ class ConnectionSetup {
         : definition,
       runtime,
     );
-    return this.traceTransport(this.createHttp());
+    return this.traceTransport(await this.createHttp());
+  }
+
+  private selectPrior(): CachedPriorDiscovery | undefined {
+    if (this.bypassPrior || this.attempt.transport !== "streamable-http") {
+      return undefined;
+    }
+    return this.options.factory.priorDiscovery.get(this.options.name, this.options.definition);
   }
 
   private async handshake(transport: Transport): Promise<Transport | undefined> {
-    const { runtime, definition, signal, requestSignal, factory } = this.options;
+    const { runtime, definition, signal, requestSignal, factory, name } = this.options;
+    const prior = this.selectPrior();
+    this.usedPrior = prior;
+    const baseOptions = factory.requestOptions(definition, requestSignal);
+    const connectOptions: ConnectOptions | undefined =
+      prior !== undefined ? { ...baseOptions, prior: toSdkPriorDiscovery(prior) } : baseOptions;
     try {
-      await new ConnectionHandshake(
-        this.client,
-        transport,
-        factory.requestOptions(definition, requestSignal),
-        signal,
-      ).run();
+      await new ConnectionHandshake(this.client, transport, connectOptions, signal).run();
       return;
     } catch (error) {
       // Only handshake failures establish that HTTP is unsupported.
@@ -349,6 +363,7 @@ class ConnectionSetup {
       ) {
         throw error;
       }
+      factory.priorDiscovery.invalidate(name);
       this.attempt = { ...this.attempt, transport: "legacy-sse" };
       return await this.replaceClient();
     }
@@ -382,12 +397,25 @@ class ConnectionSetup {
       }
       return { kind: "connected", connection: await this.discover(transport) };
     } catch (error) {
-      if (!this.canActivateOAuth(error)) {
-        throw error;
+      if (this.canActivateOAuth(error)) {
+        if (this.usedPrior !== undefined) {
+          this.invalidateStalePrior();
+        }
+        this.attempt = { ...this.attempt, auth: "implicit-oauth" };
+        return { kind: "retry", transport: await this.replaceClient() };
       }
-      this.attempt = { ...this.attempt, auth: "implicit-oauth" };
-      return { kind: "retry", transport: await this.replaceClient() };
+      if (this.usedPrior !== undefined && this.options.signal?.aborted !== true) {
+        this.invalidateStalePrior();
+        return { kind: "retry", transport: await this.replaceClient() };
+      }
+      throw error;
     }
+  }
+
+  private invalidateStalePrior(): void {
+    this.options.factory.priorDiscovery.invalidate(this.options.name);
+    this.bypassPrior = true;
+    this.usedPrior = undefined;
   }
 
   private canActivateOAuth(error: unknown): boolean {
@@ -463,7 +491,28 @@ class ConnectionSetup {
     connection.resourceTemplates = resourceTemplates;
     connection.prompts = promptResult.prompts;
     connection.promptDiscoveryFailed = promptResult.failed;
+    const priorDiscovery = this.recordPriorDiscovery();
+    if (priorDiscovery !== undefined) {
+      connection.priorDiscovery = priorDiscovery;
+    }
+    await factory.callbacks.prepareSubscription(name, connection, {
+      priorModern: this.usedPrior?.kind === "modern",
+      ...(requestOptions !== undefined ? { requestOptions } : {}),
+      ...(signal !== undefined ? { signal } : {}),
+    });
     return connection;
+  }
+
+  private recordPriorDiscovery(): CachedPriorDiscovery | undefined {
+    const { factory, name, definition } = this.options;
+    if (this.attempt.transport !== "streamable-http" || !supportsPriorDiscovery(definition)) {
+      return undefined;
+    }
+    const captured = capturePriorDiscovery(this.client, this.usedPrior);
+    if (captured !== undefined) {
+      factory.priorDiscovery.record(name, definition, captured);
+    }
+    return captured;
   }
 
   private async failSetup(failure: unknown, transport: Transport): Promise<ServerConnection> {

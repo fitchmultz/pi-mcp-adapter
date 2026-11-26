@@ -46,7 +46,7 @@ describe("Pi agent dir paths", () => {
       join(agentDir, "fitch-mcp-adapter", "mcp-onboarding.json"),
     );
 
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: "demo", serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken: "token" } },
     );
@@ -84,7 +84,7 @@ describe("Pi agent dir paths", () => {
 
     const { getAuthEntryFilePath, saveAuthEntry } = await import("../mcp-auth.ts");
 
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: "demo", serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken: "token" } },
     );

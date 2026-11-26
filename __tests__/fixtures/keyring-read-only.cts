@@ -1,6 +1,9 @@
-import type { Entry as NativeEntry } from "@napi-rs/keyring";
+import type { AsyncEntry as NativeAsyncEntry } from "@napi-rs/keyring";
 
-class Entry implements Pick<NativeEntry, "getPassword" | "setPassword" | "deleteCredential"> {
+class AsyncEntry implements Pick<
+  NativeAsyncEntry,
+  "getPassword" | "setPassword" | "deleteCredential"
+> {
   readonly service: string;
   readonly account: string;
 
@@ -9,17 +12,21 @@ class Entry implements Pick<NativeEntry, "getPassword" | "setPassword" | "delete
     this.account = account;
   }
 
-  getPassword(): null {
+  async getPassword(): Promise<null> {
+    // Yield across a real timer so tests can observe event-loop progress during keyring IPC.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 15);
+    });
     return null;
   }
 
-  setPassword(): never {
+  async setPassword(): Promise<never> {
     throw new Error("The native loader read probe must not write a credential");
   }
 
-  deleteCredential(): never {
+  async deleteCredential(): Promise<never> {
     throw new Error("The native loader read probe must not delete a credential");
   }
 }
 
-module.exports = { Entry };
+module.exports = { AsyncEntry };

@@ -73,7 +73,7 @@ export interface CallbackHttpFixture {
   delay: (method: string) => void;
   started: () => boolean;
   release: () => void;
-  expire: () => void;
+  expire: () => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -127,7 +127,7 @@ export async function createCallbackHttpFixture(
     },
   };
   if (options.oauth === true) {
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: name, serverUrl: url },
       {
         tokens: {
@@ -412,9 +412,9 @@ export async function createCallbackHttpFixture(
       delayed = undefined;
       held?.gate.resolve();
     },
-    expire: () => {
+    expire: async () => {
       token = "SYNTHETIC-UPDATED";
-      updateTokens(
+      await updateTokens(
         { serverName: name, serverUrl: url },
         {
           accessToken: "SYNTHETIC-INITIAL",

@@ -16,7 +16,7 @@ Use Pi 1.6.1 or later and Node.js `^24.22.3 || >=26.13.1`.
 
 Cache, config and onboarding writes and persistent OAuth credential operations use Node's built-in [`node:sqlite`](https://nodejs.org/docs/latest-v24.x/api/sqlite.html) module for cross-process locking. This module is experimental in Node 24 and may emit an experimental warning on first use. These operations require it to be enabled, without `--no-experimental-sqlite`.
 
-Credential readers share locks with other readers; writers exclude readers and other writers. Contended credential locks wait up to 2.5 seconds via Node SQLite's `busy_timeout` before failing closed with a busy-storage message; cache, config, and onboarding locks fail immediately when busy. A busy cache logs a not-saved warning without aborting server startup or binary resolution. Pending metadata stays with the adapter state for the next normal save opportunity. Other cache I/O errors still propagate.
+Credential readers share locks with other readers; writers exclude readers and other writers. Contended credential locks wait up to 2.5 seconds asynchronously on the SQLite lock before failing closed with a busy-storage message; cache, config, and onboarding locks fail immediately when busy. A busy cache logs a not-saved warning without aborting server startup or binary resolution. Pending metadata stays with the adapter state for the next normal save opportunity. Other cache I/O errors still propagate.
 
 Config and onboarding writers hold a lock across the fresh read, update and write. A busy writer fails before changing the file; retry after the other writer finishes. Their persistent sidecar is `<file-path>.lock.sqlite`, including for CLI and standalone example config writes. Scaffolding a project config never replaces an existing `.mcp.json`.
 
@@ -246,7 +246,7 @@ In the configuration examples below, `30000` is illustrative only. If `requestTi
 
 ### Transport compatibility
 
-The adapter uses official split MCP SDK 2.4.0. HTTP connections automatically negotiate protocol `2026-07-28` and fall back to older revisions using the SDK's native rules. The SDK generates protocol metadata, method/name headers, and schema-driven `Mcp-Param-*` headers. Modern HTTP supports streamed POST responses without opening a legacy standalone GET stream. Deprecated SSE is tried only when the Streamable HTTP handshake rejects the endpoint with HTTP 404, 405, 406, or 415—not after a timeout, network failure, or authentication failure.
+The adapter uses official split MCP SDK 2.4.0. HTTP connections automatically negotiate protocol `2026-07-28` and fall back to older revisions using the SDK's native rules. Successful HTTP negotiations cache SDK `PriorDiscovery` verdicts in memory and `mcp-cache.json` (24-hour TTL for legacy verdicts so upgraded servers are re-probed; 7-day TTL for modern verdicts, invalidated automatically on failure, logout, or explicit reconnect) to skip redundant `server/discover` round trips on repeat connects. The SDK generates protocol metadata, method/name headers, and schema-driven `Mcp-Param-*` headers. Modern HTTP supports streamed POST responses without opening a legacy standalone GET stream. Catalog `list_changed` notifications are debounced (250 ms) before refreshing, and unexpected remote drops on modern subscription streams trigger bounded re-subscription. Deprecated SSE is tried only when the Streamable HTTP handshake rejects the endpoint with HTTP 404, 405, 406, or 415—not after a timeout, network failure, or authentication failure.
 
 Native catalog discovery follows changing pages even when their opaque cursor repeats. Catalogs exceeding 1,024 pages fail explicitly instead of publishing a partial list or walking indefinitely; this also bounds automatic catalog refreshes.
 
@@ -326,7 +326,7 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 
 For pre-registered browser OAuth clients, set `oauth.redirectUri` to the exact callback registered with the provider, for example `"http://localhost:3118/callback"`. Dynamic clients normally omit it and use a lazy OS-assigned localhost callback port.
 
-Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, `oauth.privateKeyJwt.privateKey`, `oauth.crossAppAccess` fields, and stdio `env` may use a leading `!command` to obtain their value at connection or authentication time. The command runs with stdin and stderr suppressed, stdout is limited to 1 MiB and trimmed, and it must finish within 10 seconds with non-empty output; failures stop the connection or authentication flow. Commands are not run during OAuth discovery or while reading, merging, previewing, hashing, or rendering configuration. Use `!!` to escape a literal leading `!`; ordinary and escaped values retain environment interpolation.
+Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, `oauth.privateKeyJwt.privateKey`, `oauth.crossAppAccess` fields, and stdio `env` may use a leading `!command` to obtain their value asynchronously at connection or authentication time (resolving multiple entries concurrently without blocking the event loop). The command runs with stdin and stderr suppressed, stdout is limited to 1 MiB and trimmed, and it must finish within 10 seconds with non-empty output; failures or cancellation terminate the child process and stop the connection or authentication flow. Commands are not run during OAuth discovery or while reading, merging, previewing, hashing, or rendering configuration. Use `!!` to escape a literal leading `!`; ordinary and escaped values retain environment interpolation.
 
 ### OAuth client registration
 
@@ -731,7 +731,7 @@ To hide specific tools while still using `directTools: true`, add `excludeTools`
 
 Active schemas consume context; inactive cached schemas do not. Pin the tools you routinely need and discover the rest as the task requires.
 
-Valid cached descriptors avoid startup connections. Missing or stale metadata for configured pins is discovered intentionally at startup; eager and keep-alive servers also connect as configured. An empty cache does not trigger discovery of every lazy server. Search coverage reports which configured servers are still unknown.
+Valid cached descriptors avoid startup connections. Missing or stale metadata for configured pins is discovered intentionally at startup concurrently with eager and keep-alive startup connections (so slow startup servers do not stall lazy `directTools` discovery). An empty cache does not trigger discovery of every lazy server. Search coverage reports which configured servers are still unknown.
 
 MCP catalog notifications and reconnects refresh eligible metadata. Removed tools leave the active set. `settings.freezeDirectTools: true` keeps the automatic registered surface stable after initial sync; deliberate `mcp({ action: "connect", server: "name" })` or `/mcp reconnect <server>` refreshes remain available.
 

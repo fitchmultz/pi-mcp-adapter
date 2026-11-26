@@ -33,6 +33,29 @@ export {
   flushMetadataCache,
 } from "./init-metadata.ts";
 
+async function connectInitialServers(
+  state: McpExtensionState,
+  startupServers: Array<[string, McpExtensionState["config"]["mcpServers"][string]]>,
+  signals: { initial: AbortSignal | undefined; runtime: AbortSignal | undefined },
+): Promise<void> {
+  const startupNames = new Set(startupServers.map(([name]) => name));
+  const [connectedStartupServers] = await Promise.all([
+    connectStartupServers(state, startupServers, signals),
+    signals.initial?.aborted === true
+      ? Promise.resolve()
+      : bootstrapDirectTools(state, (name) => !startupNames.has(name), signals.runtime),
+  ]);
+  if (signals.initial?.aborted === true) {
+    return;
+  }
+  const failedStartupNames = new Set(
+    [...startupNames].filter((name) => !connectedStartupServers.has(name)),
+  );
+  if (failedStartupNames.size > 0) {
+    await bootstrapDirectTools(state, (name) => failedStartupNames.has(name), signals.runtime);
+  }
+}
+
 export async function initializeMcp(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -60,13 +83,10 @@ export async function initializeMcp(
     const mode = definition.lifecycle ?? "lazy";
     return mode === "keep-alive" || mode === "eager";
   });
-  const connected = await connectStartupServers(state, startupServers, {
+  await connectInitialServers(state, startupServers, {
     initial: initialSignal,
     runtime: runtimeSignal,
   });
-  if (initialSignal?.aborted !== true) {
-    await bootstrapDirectTools(state, connected, runtimeSignal);
-  }
   bindLifecycle(state, owner.signal);
   publishMcpStatusSnapshot(state);
   return state;

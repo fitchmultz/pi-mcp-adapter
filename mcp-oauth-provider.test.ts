@@ -162,7 +162,7 @@ nodeDescribe("McpOAuthProvider", () => {
       const provider = createProvider();
 
       // Save client info directly
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName, serverUrl },
         {
           clientInfo: {
@@ -181,11 +181,11 @@ nodeDescribe("McpOAuthProvider", () => {
     });
 
     nodeIt("should return undefined when URL doesn't match", async () => {
-      clearAllCredentials({ serverName, serverUrl });
+      await clearAllCredentials({ serverName, serverUrl });
       const provider = createProvider();
 
       // Save client info with different URL
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName, serverUrl: "https://different.com" },
         {
           clientInfo: {
@@ -204,7 +204,7 @@ nodeDescribe("McpOAuthProvider", () => {
       const provider = createProvider();
 
       // Save client info with expired secret
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName, serverUrl },
         {
           clientInfo: {
@@ -226,7 +226,7 @@ nodeDescribe("McpOAuthProvider", () => {
         // Stub written by the config-clientId path of saveClientInformation
         // (SEP-2352 stamp-and-resave): {clientId, issuer} with the marker.
         const provider = createProvider();
-        saveAuthEntry(
+        await saveAuthEntry(
           { serverName, serverUrl },
           {
             clientInfo: {
@@ -246,7 +246,7 @@ nodeDescribe("McpOAuthProvider", () => {
       "should not serve a legacy unmarked {clientId, issuer} stub when no config clientId is present",
       async () => {
         const provider = createProvider();
-        saveAuthEntry(
+        await saveAuthEntry(
           { serverName, serverUrl },
           {
             clientInfo: {
@@ -265,7 +265,7 @@ nodeDescribe("McpOAuthProvider", () => {
       "should still serve a dynamically-registered public client (no secret) with registration metadata",
       async () => {
         const provider = createProvider();
-        saveAuthEntry(
+        await saveAuthEntry(
           { serverName, serverUrl },
           {
             clientInfo: {
@@ -287,7 +287,7 @@ nodeDescribe("McpOAuthProvider", () => {
       const provider = createProvider({ clientId: "config-client" });
 
       // Save different client info
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName, serverUrl },
         {
           clientInfo: {
@@ -320,9 +320,10 @@ nodeDescribe("McpOAuthProvider", () => {
       const storedInfo = await provider.clientInformation();
       assert.strictEqual(storedInfo?.client_id, "new-client");
       assert.strictEqual(storedInfo.client_secret, "new-secret");
-      assert.deepStrictEqual(getAuthForUrl({ serverName, serverUrl })?.clientInfo?.redirectUris, [
-        "http://localhost:3118/callback",
-      ]);
+      assert.deepStrictEqual(
+        (await getAuthForUrl({ serverName, serverUrl }))?.clientInfo?.redirectUris,
+        ["http://localhost:3118/callback"],
+      );
     });
 
     nodeIt(
@@ -345,7 +346,8 @@ nodeDescribe("McpOAuthProvider", () => {
         });
 
         assert.deepStrictEqual(
-          getAuthForUrl({ serverName: "redirect-fallback", serverUrl })?.clientInfo?.redirectUris,
+          (await getAuthForUrl({ serverName: "redirect-fallback", serverUrl }))?.clientInfo
+            ?.redirectUris,
           ["http://localhost:3118/custom"],
         );
       },
@@ -364,7 +366,7 @@ nodeDescribe("McpOAuthProvider", () => {
             },
           },
         });
-        saveAuthEntry(
+        await saveAuthEntry(
           { serverName: "stale-redirect-client", serverUrl },
           {
             clientInfo: {
@@ -418,11 +420,11 @@ nodeDescribe("McpOAuthProvider", () => {
     });
 
     nodeIt("should return undefined when URL doesn't match", async () => {
-      clearAllCredentials({ serverName, serverUrl });
+      await clearAllCredentials({ serverName, serverUrl });
       const provider = createProvider();
 
       // Save tokens with different URL
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName, serverUrl: "https://different.com" },
         {
           tokens: {
@@ -439,7 +441,7 @@ nodeDescribe("McpOAuthProvider", () => {
     nodeIt(
       "should preserve stored refreshToken and scope when a same-issuer refresh omits them",
       async () => {
-        clearAllCredentials({ serverName, serverUrl });
+        await clearAllCredentials({ serverName, serverUrl });
         const provider = createProvider();
 
         await provider.saveTokens(
@@ -462,7 +464,7 @@ nodeDescribe("McpOAuthProvider", () => {
           { issuer: "https://auth.example.com" },
         );
 
-        const stored = getAuthForUrl({ serverName, serverUrl })?.tokens;
+        const stored = (await getAuthForUrl({ serverName, serverUrl }))?.tokens;
         assert.strictEqual(stored?.accessToken, "access-2");
         assert.strictEqual(stored.refreshToken, "refresh-1");
         assert.strictEqual(stored.scope, "read write");
@@ -471,7 +473,7 @@ nodeDescribe("McpOAuthProvider", () => {
     );
 
     nodeIt("should not preserve refreshToken across a different issuer", async () => {
-      clearAllCredentials({ serverName, serverUrl });
+      await clearAllCredentials({ serverName, serverUrl });
       const provider = createProvider();
 
       await provider.saveTokens(
@@ -492,7 +494,7 @@ nodeDescribe("McpOAuthProvider", () => {
         { issuer: "https://auth-b.example.com" },
       );
 
-      const stored = getAuthForUrl({ serverName, serverUrl })?.tokens;
+      const stored = (await getAuthForUrl({ serverName, serverUrl }))?.tokens;
       assert.strictEqual(stored?.accessToken, "access-2");
       assert.strictEqual(stored.refreshToken, undefined);
       assert.strictEqual(stored.scope, undefined);
@@ -555,7 +557,7 @@ nodeDescribe("McpOAuthProvider", () => {
             },
           },
         });
-        saveAuthEntry(
+        await saveAuthEntry(
           { serverName: "redirect-url-bound", serverUrl: "https://different.example.com" },
           {
             oauthState: "stale-state",
@@ -590,7 +592,10 @@ nodeDescribe("McpOAuthProvider", () => {
 
       const verifier = await provider.codeVerifier();
       assert.strictEqual(verifier, "verifier-abc-123");
-      assert.strictEqual(getAuthForUrl({ serverName: "code-verifier-test", serverUrl }), undefined);
+      assert.strictEqual(
+        await getAuthForUrl({ serverName: "code-verifier-test", serverUrl }),
+        undefined,
+      );
     });
 
     nodeIt("should throw when no code verifier", async () => {
@@ -619,7 +624,7 @@ nodeDescribe("McpOAuthProvider", () => {
           },
         },
       });
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName: "code-verifier-url-bound", serverUrl: "https://different.example.com" },
         {
           codeVerifier: "stale-verifier",
@@ -648,7 +653,10 @@ nodeDescribe("McpOAuthProvider", () => {
 
       const state = await provider.state();
       assert.strictEqual(state, "state-xyz-789");
-      assert.strictEqual(getAuthForUrl({ serverName: "state-test-save", serverUrl }), undefined);
+      assert.strictEqual(
+        await getAuthForUrl({ serverName: "state-test-save", serverUrl }),
+        undefined,
+      );
     });
 
     nodeIt("should throw UnauthorizedError when no state is saved", async () => {
@@ -681,7 +689,7 @@ nodeDescribe("McpOAuthProvider", () => {
           },
         },
       });
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName: "state-url-bound", serverUrl: "https://different.example.com" },
         {
           oauthState: "stale-state",
@@ -766,7 +774,7 @@ nodeDescribe("McpOAuthProvider", () => {
     nodeIt(
       "should not wipe newer tokens when invalidateCredentials('tokens') runs after another session refreshed",
       async () => {
-        clearAllCredentials({ serverName, serverUrl });
+        await clearAllCredentials({ serverName, serverUrl });
         const staleProvider = createProvider();
         const freshProvider = createProvider();
 
@@ -788,7 +796,7 @@ nodeDescribe("McpOAuthProvider", () => {
 
         await staleProvider.invalidateCredentials("tokens");
 
-        const stored = getAuthForUrl({ serverName, serverUrl })?.tokens;
+        const stored = (await getAuthForUrl({ serverName, serverUrl }))?.tokens;
         assert.strictEqual(stored?.accessToken, "fresh-access");
         assert.strictEqual(stored.refreshToken, "fresh-refresh");
         assert.strictEqual((await staleProvider.tokens())?.access_token, "fresh-access");

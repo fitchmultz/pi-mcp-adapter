@@ -139,16 +139,16 @@ export function getFailureMessage(state: McpExtensionState, serverName: string):
   return state.failureMessages.get(serverName) ?? null;
 }
 
-function canReconnectNeedsAuth(
+async function canReconnectNeedsAuth(
   state: McpExtensionState,
   serverName: string,
   connection: ServerConnection,
-): NonNullable<McpExtensionState["config"]["mcpServers"][string]> | undefined {
+): Promise<NonNullable<McpExtensionState["config"]["mcpServers"][string]> | undefined> {
   const definition = state.config.mcpServers[serverName];
   if (
     !definition ||
     isServerDisabled(definition) ||
-    !state.manager.hasFreshOAuthCredentials(serverName, definition, connection)
+    !(await state.manager.hasFreshOAuthCredentials(serverName, definition, connection))
   ) {
     return undefined;
   }
@@ -164,7 +164,8 @@ export async function lazyConnect(
   throwIfAborted(ownedSignal);
   const connection = state.manager.getConnection(serverName);
   if (connection?.status === "needs-auth") {
-    const definition = canReconnectNeedsAuth(state, serverName, connection);
+    const definition = await canReconnectNeedsAuth(state, serverName, connection);
+    throwIfAborted(ownedSignal);
     return definition
       ? connectLazyServer(state, serverName, {
           definition,

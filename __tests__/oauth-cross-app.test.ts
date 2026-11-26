@@ -495,7 +495,7 @@ async function fixture(identity: "secret" | "public" | "private" | "private-cimd
         })}\n`,
       );
     }
-    clearAllCredentials({ serverName: name, serverUrl: definition.url });
+    await clearAllCredentials({ serverName: name, serverUrl: definition.url });
     for (const server of [resourceServer, asServer, idpServer]) {
       await server.close();
     }
@@ -623,7 +623,7 @@ it.each([
     expect(f.requests.find((r) => r.method === "tools/call")?.headers["x-resource-only"]).toBe(
       "resource-secret",
     );
-    const saved = JSON.stringify(f.stored());
+    const saved = JSON.stringify(await f.stored());
     const exchange = f.exchanges[0];
     assert(exchange !== undefined);
     for (const value of [
@@ -637,7 +637,7 @@ it.each([
     expect(f.registrations).toHaveLength(0);
     expect(browser.open).not.toHaveBeenCalled();
     expect(hasPendingAuth(f.name, f.runtime)).toBe(false);
-    expect(f.stored()?.clientInfo).toMatchObject(clientInfo);
+    expect((await f.stored())?.clientInfo).toMatchObject(clientInfo);
   },
 );
 
@@ -683,7 +683,7 @@ it.each(["client", "tokens"])(
     const f = await fixture();
     const marker = join(scratch(), "ran");
     f.oauth.crossAppAccess.idToken = `!touch '${marker}'; printf TOKEN_SENTINEL`;
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: f.name, serverUrl: f.definition.url },
       {
         clientInfo: {
@@ -697,13 +697,13 @@ it.each(["client", "tokens"])(
         },
       },
     );
-    const before = f.stored();
+    const before = await f.stored();
     assert(before !== undefined);
     await expect(f.start()).rejects.toThrow(/issuer/i);
     expect(existsSync(marker)).toBe(false);
     expect(f.idpRequests).toHaveLength(0);
     expect(f.exchanges).toHaveLength(0);
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
   },
 );
 
@@ -785,7 +785,7 @@ it.each([
 ])("keeps IdP %s failures private and never erases the existing MCP login", async (failure) => {
   const f = await fixture();
   await f.start();
-  const before = f.stored();
+  const before = await f.stored();
   if (failure === "issuer") {
     f.wrongIdp();
   } else if (failure === "command") {
@@ -807,7 +807,7 @@ it.each([
   expect(rejected.message).toContain("crossAppAccess");
   expect(String(rejected)).not.toContain("TOKEN_SENTINEL");
   expect(rejected.cause).toBeUndefined();
-  expect(f.stored()).toEqual(before);
+  expect(await f.stored()).toEqual(before);
   expect(f.exchanges).toHaveLength(1);
   expect(browser.open).not.toHaveBeenCalled();
 });
@@ -866,13 +866,13 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
       controller = new AbortController();
     const pending = f.start(controller.signal).catch((error: unknown) => error);
     await hold.started;
-    const before = structuredClone(f.stored());
+    const before = structuredClone(await f.stored());
     controller.abort();
     await hold.aborted;
     expect(await pending).toBeInstanceOf(Error);
     hold.release();
     expect(hold.wasAborted()).toBe(true);
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
     expect(f.exchanges).toHaveLength(stage === "mcp-token" ? 1 : 0);
     expect(f.runtime.signal.aborted).toBe(false);
   },
@@ -890,7 +890,7 @@ it.each(["auto", "legacy"] as const)(
     try {
       const pending = f.connect().catch((error: unknown) => error);
       await hold.started;
-      const before = structuredClone(f.stored());
+      const before = structuredClone(await f.stored());
       await f.manager.close(f.name);
       await hold.aborted;
       hold.release();
@@ -898,7 +898,7 @@ it.each(["auto", "legacy"] as const)(
       expect(await pending).toBeInstanceOf(Error);
       expect(sends.count()).toBe(0);
       expect(f.exchanges).toHaveLength(0);
-      expect(f.stored()).toEqual(before);
+      expect(await f.stored()).toEqual(before);
       sibling.expire();
       expect(await connected.client.callTool({ name: "echo" })).toMatchObject({
         content: [{ text: "enterprise tool" }],
@@ -926,7 +926,7 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
         .callTool({ name: "echo" }, { signal: controller.signal })
         .catch((error: unknown) => error);
       await hold.started;
-      const before = structuredClone(f.stored());
+      const before = structuredClone(await f.stored());
       controller.abort();
       expect(await pending).toBeInstanceOf(Error);
       await Promise.race([
@@ -939,7 +939,7 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
       await sends.finish();
       const outcome = {
         networkAborted: hold.wasAborted(),
-        storageChanged: JSON.stringify(f.stored()) !== JSON.stringify(before),
+        storageChanged: JSON.stringify(await f.stored()) !== JSON.stringify(before),
         tokenPosts: f.exchanges.length,
         pendingNativeSends: sends.count(),
       };
@@ -993,7 +993,7 @@ it.each([
         )
         .catch((error: unknown) => error);
       await hold.started;
-      const before = structuredClone(f.stored());
+      const before = structuredClone(await f.stored());
       if (mode === "abort") {
         controller.abort();
       }
@@ -1008,7 +1008,7 @@ it.each([
       await sends.finish();
       const outcome = {
         networkAborted: hold.wasAborted(),
-        storageChanged: JSON.stringify(f.stored()) !== JSON.stringify(before),
+        storageChanged: JSON.stringify(await f.stored()) !== JSON.stringify(before),
         tokenPosts: f.exchanges.length,
         pendingNativeSends: sends.count(),
       };
@@ -1092,7 +1092,7 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
           connection ? connection.client.callTool({ name: "echo" }) : f.connect(controller.signal)
         ).catch((error: unknown) => error);
         await hold.started;
-        const before = structuredClone(f.stored()),
+        const before = structuredClone(await f.stored()),
           count = f.exchanges.length;
         if (mode === "shutdown") {
           await shutdownOAuth(f.runtime);
@@ -1107,7 +1107,7 @@ it.each(["idp-discovery", "idp-token", "mcp-token"] as const)(
         expect(await pending).toBeInstanceOf(Error);
         expect(sends.count()).toBe(0);
         expect(f.exchanges).toHaveLength(count);
-        expect(f.stored()).toEqual(before);
+        expect(await f.stored()).toEqual(before);
       } finally {
         hold.release();
         await sends.finish();
@@ -1268,7 +1268,7 @@ it("keeps the native noninteractive scope retry bound and transport-failure trac
 
 it("refuses positively identified stored shared CIMD without deleting it, but preserves opaque/static identity priority", async () => {
   const f = await fixture("public");
-  saveAuthEntry(
+  await saveAuthEntry(
     { serverName: f.name, serverUrl: f.definition.url },
     {
       clientInfo: {
@@ -1280,13 +1280,13 @@ it("refuses positively identified stored shared CIMD without deleting it, but pr
       tokens: { accessToken: "old", issuer: f.as },
     },
   );
-  const before = f.stored();
+  const before = await f.stored();
   await expect(f.start()).rejects.toThrow(/shared browser registration/);
   expect(f.idpRequests).toHaveLength(0);
-  expect(f.stored()).toEqual(before);
+  expect(await f.stored()).toEqual(before);
   for (const configured of [false, true]) {
     const provider = f.provider();
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: f.name, serverUrl: f.definition.url },
       { clientInfo: { clientId: sharedDocument.client_id, issuer: f.as, redirectUris: [] } },
     );

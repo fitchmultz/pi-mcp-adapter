@@ -50,7 +50,11 @@ export function registerServers(state: McpExtensionState, serverEntries: ServerE
   const prefix = config.settings?.toolPrefix ?? "server";
   for (const [name, definition] of serverEntries) {
     registerLifecycle(state, name, definition);
-    restoreCachedMetadata(state, { name, definition, prefix, cachedEntry: cache?.servers[name] });
+    const cachedEntry = cache?.servers[name];
+    restoreCachedMetadata(state, { name, definition, prefix, cachedEntry });
+    if (cachedEntry?.priorDiscovery !== undefined && isServerCacheValid(cachedEntry, definition)) {
+      state.manager.seedPriorDiscovery(name, definition, cachedEntry.priorDiscovery);
+    }
   }
 }
 function registerLifecycle(
@@ -214,7 +218,7 @@ export async function connectStartupServers(
 
 export async function bootstrapDirectTools(
   state: McpExtensionState,
-  connectedServers: Set<string>,
+  includeServer: (name: string) => boolean,
   runtimeSignal?: AbortSignal,
 ): Promise<void> {
   const { config, manager, owner, ui } = state;
@@ -229,11 +233,11 @@ export async function bootstrapDirectTools(
       config,
       currentCache,
       envDirectToolOverride,
-    );
+    ).filter(includeServer);
 
     if (missingCacheServers.length > 0) {
       const bootstrapResults = await parallelLimit(
-        missingCacheServers.filter((name) => !connectedServers.has(name)),
+        missingCacheServers,
         MAX_CONCURRENT_SERVER_CONNECTS,
         async (name) => {
           try {

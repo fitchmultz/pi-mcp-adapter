@@ -55,7 +55,7 @@ it("uses the default document through native PKCE, callback, refresh, resource a
   const f = await fixture();
   expect(await f.login()).toBe("authenticated");
   expect(f.authorizations[0]?.searchParams.get("client_id")).toBe(metadataDocument.client_id);
-  expect(f.stored()?.clientInfo).toMatchObject({
+  expect((await f.stored())?.clientInfo).toMatchObject({
     clientId: metadataDocument.client_id,
     registrationType: "cimd",
     issuer: f.origin,
@@ -102,14 +102,14 @@ it.each([
     const id = initial ?? metadataDocument.client_id;
     f.documents.set(id, { ...metadataDocument, client_id: id });
     await f.login();
-    const before = f.stored();
+    const before = await f.stored();
     assert(before !== undefined);
     const oldPort = getOAuthCallbackPort();
     expect(await f.restart()).toBe(oldPort);
     f.definition.oauth = metadataConfig(setting);
     expect(await f.start()).toEqual({ authorizationUrl: "" });
     expect(getOAuthCallbackPort()).not.toBe(oldPort);
-    expect(f.stored()?.clientInfo).toEqual(before.clientInfo);
+    expect((await f.stored())?.clientInfo).toEqual(before.clientInfo);
     const refresh = f.exchanges[1];
     assert(refresh !== undefined);
     expect(refresh.get("refresh_token")).toBe(before.tokens?.refreshToken);
@@ -129,7 +129,7 @@ it.each([undefined, false])(
       f.metadata.client_id_metadata_document_supported = capability;
     }
     expect(await f.login()).toBe("authenticated");
-    expect(f.stored()?.clientInfo?.registrationType).toBeUndefined();
+    expect((await f.stored())?.clientInfo?.registrationType).toBeUndefined();
     expect(f.registrations).toHaveLength(1);
     expect(f.documentFetches).toHaveLength(0);
   },
@@ -138,7 +138,7 @@ it.each([undefined, false])(
 it("does not treat opaque HTTPS DCR IDs as CIMD on a port change", async () => {
   const f = await fixture({ clientMetadataUrl: false });
   await f.login();
-  const before = f.stored();
+  const before = await f.stored();
   assert(before !== undefined);
   expect(before.clientInfo?.clientId).toMatch(/^https:/);
   expect(before.clientInfo?.registrationType).toBeUndefined();
@@ -148,7 +148,7 @@ it("does not treat opaque HTTPS DCR IDs as CIMD on a port change", async () => {
   expect(new URL(authorizationUrl).searchParams.get("client_id")).toBe(
     "https://opaque.example/registration/2",
   );
-  expect(f.stored()?.tokens).toBeUndefined();
+  expect((await f.stored())?.tokens).toBeUndefined();
   expect(f.exchanges).toHaveLength(1);
   expect(f.registrations).toHaveLength(2);
 });
@@ -166,7 +166,7 @@ it.each(["rejected", "unavailable"])(
     expect(f.exchanges).toHaveLength(0);
     expect(f.registrations).toHaveLength(0);
     expect(f.documentFetches).toEqual([metadataDocument.client_id]);
-    expect(f.stored()?.tokens).toBeUndefined();
+    expect((await f.stored())?.tokens).toBeUndefined();
   },
 );
 
@@ -188,7 +188,7 @@ it.each([
     expect(f.exchanges[0]?.get("client_id")).toBe("configured");
     expect(f.registrations).toHaveLength(0);
     expect(f.documentFetches).toHaveLength(0);
-    expect(f.stored()?.clientInfo).toEqual({
+    expect((await f.stored())?.clientInfo).toEqual({
       clientId: "configured",
       issuer: f.origin,
       configPreRegistered: true,
@@ -240,7 +240,7 @@ it.each([
   const f = await fixture({ clientMetadataUrl: id, redirectUri });
   f.documents.set(id, { ...metadataDocument, client_id: id, redirect_uris: [redirectUri] });
   expect(await f.login()).toBe("authenticated");
-  const before = f.stored();
+  const before = await f.stored();
   assert(before !== undefined);
   expect(await f.restart()).toBe(port);
   const nextRedirectUri = await callbackUri(template);
@@ -249,7 +249,7 @@ it.each([
   f.definition.oauth = { clientMetadataUrl: false, redirectUri: nextRedirectUri };
   expect(await f.start()).toEqual({ authorizationUrl: "" });
   expect(getOAuthCallbackPort()).toBe(nextPort);
-  expect(f.stored()?.clientInfo).toEqual(before.clientInfo);
+  expect((await f.stored())?.clientInfo).toEqual(before.clientInfo);
   const refresh = f.exchanges[1];
   assert(refresh !== undefined);
   expect(refresh.get("refresh_token")).toBe(before.tokens?.refreshToken);
@@ -323,10 +323,10 @@ it.each([
 ])("still clears mismatched or malformed stored CIMD callbacks %j", async (redirects) => {
   const f = await fixture();
   await f.login();
-  const before = f.stored();
+  const before = await f.stored();
   assert(before !== undefined);
   assert(before.clientInfo !== undefined);
-  clearAllCredentials({ serverName: f.name, serverUrl: f.definition.url });
+  await clearAllCredentials({ serverName: f.name, serverUrl: f.definition.url });
   const file = getAuthEntryFilePath(f.name);
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   writeFileSync(
@@ -339,19 +339,19 @@ it.each([
   );
   await f.restart();
   expect((await f.start()).authorizationUrl).toBeTruthy();
-  expect(f.stored()?.tokens).toBeUndefined();
+  expect((await f.stored())?.tokens).toBeUndefined();
   expect(f.exchanges).toHaveLength(1); // No refresh may use the old callback binding.
 });
 
 it("keeps stored client and token issuer guards after CIMD port reuse", async () => {
   const f = await fixture({ skipIssuerMetadataValidation: true });
   await f.login();
-  const before = f.stored();
+  const before = await f.stored();
   await f.restart();
   f.metadata.issuer = `${f.origin}/changed`;
   await expect(f.start()).rejects.toThrow("issuer changed");
   expect(f.exchanges).toHaveLength(1);
-  expect(f.stored()).toEqual(before);
+  expect(await f.stored()).toEqual(before);
 });
 
 it.each([undefined, metadataDocument.client_id])(
@@ -374,7 +374,7 @@ it("rejects legacy and explicit config stubs instead of sending an orphaned clie
     { clientId: "legacy", issuer: f.origin },
     { clientId: "explicit", issuer: f.origin, configPreRegistered: true, redirectUris: [] },
   ]) {
-    saveAuthEntry({ serverName: f.name, serverUrl: f.definition.url }, { clientInfo });
+    await saveAuthEntry({ serverName: f.name, serverUrl: f.definition.url }, { clientInfo });
     const provider = new McpOAuthProvider({
       serverName: f.name,
       serverUrl: f.definition.url,
@@ -389,7 +389,7 @@ it("rejects legacy and explicit config stubs instead of sending an orphaned clie
     const params = new URLSearchParams({ grant_type: "client_credentials" });
     await provider.addClientAuthentication(new Headers(), params, f.definition.url);
     expect(params.has("client_id")).toBe(false);
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: f.name, serverUrl: f.definition.url },
       { clientInfo, tokens: { accessToken: "old", refreshToken: "old", issuer: f.origin } },
     );
@@ -464,7 +464,7 @@ it("round-trips custom noninteractive CIMD as a real client_id, not a legacy con
     token_endpoint_auth_method: "none",
   });
   expect(await f.start()).toEqual({ authorizationUrl: "" });
-  expect(f.stored()?.clientInfo).toMatchObject({
+  expect((await f.stored())?.clientInfo).toMatchObject({
     clientId: id,
     redirectUris: [],
     registrationType: "cimd",
