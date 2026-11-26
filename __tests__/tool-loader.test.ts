@@ -6,6 +6,7 @@ import { executeCall, executeDescribe, executeSearch } from "../proxy-modes.ts";
 import { buildToolMetadata } from "../tool-metadata.ts";
 import type { DirectToolSpec, McpConfig, McpTool, MetadataCache } from "../types.ts";
 import { createLoaderHost, loaderFixtureTool } from "./fixtures/loader-host.ts";
+import { firstText, proxyRuntimeConnection } from "./fixtures/proxy-runtime.ts";
 import { createTestState } from "./test-state.ts";
 
 const hosts: Awaited<ReturnType<typeof createLoaderHost>>[] = [];
@@ -444,10 +445,27 @@ describe("MCP catalog registration", () => {
     const ambiguous = await executeCall(state, { toolName: "search" });
     expect(ambiguous.details).toMatchObject({ error: "ambiguous_tool" });
 
-    // Calling the exact hashed public name targets alpha unambiguously (reaches connection layer, not tool_not_found/ambiguous).
-    const targeted = await executeCall(state, { toolName: alphaName });
-    expect(targeted.details.error).not.toBe("tool_not_found");
-    expect(targeted.details.error).not.toBe("ambiguous_tool");
+    // Calling the exact hashed public name against a live connected server survives refreshCallMetadata
+    // and dispatches end-to-end without reverting state.toolMetadata back to the colliding name.
+    const alphaConnection = await proxyRuntimeConnection(alphaDef, "search");
+    vi.spyOn(state.manager, "getConnection").mockImplementation((server) =>
+      server === "alpha" ? alphaConnection : undefined,
+    );
+    const targeted = await executeCall(state, { toolName: alphaName, args: {} });
+    expect(targeted.details.error).toBeUndefined();
+    expect(targeted.isError).not.toBe(true);
     expect(targeted.details.server).toBe("alpha");
+    expect(firstText(targeted)).toBe("demo result");
+    expect(state.toolMetadata.get("alpha")?.[0]?.name).toBe(alphaName);
+
+    // Removing the colliding server restores the natural unhashed name in state.toolMetadata.
+    const alphaOnlyConfig: McpConfig = {
+      settings: { toolPrefix: "none" },
+      mcpServers: { alpha: alphaDef },
+    };
+    state.config = alphaOnlyConfig;
+    state.toolMetadata.delete("beta");
+    loader.sync(alphaOnlyConfig, null);
+    expect(state.toolMetadata.get("alpha")?.[0]?.name).toBe("search");
   });
 });

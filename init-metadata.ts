@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { McpExtensionState } from "./state.ts";
 import { DEFAULT_TOOL_PREFIX, isServerDisabled, type ServerDefinition } from "./types.ts";
 import type { ServerConnection } from "./server-manager.ts";
-import { buildToolMetadata, isUiResourceUri } from "./tool-metadata.ts";
+import { buildToolMetadata, isUiResourceUri, preserveResolvedToolNames } from "./tool-metadata.ts";
 import {
   computeServerHash,
   loadMetadataCache,
@@ -120,11 +120,12 @@ export function applyServerMetadata(
     serverName,
     prefix,
   });
+  const preserved = preserveResolvedToolNames(state.toolMetadata.get(serverName), metadata);
   if (
     input.preserveToolMetadataIdentity !== true ||
-    !isDeepStrictEqual(state.toolMetadata.get(serverName), metadata)
+    !isDeepStrictEqual(state.toolMetadata.get(serverName), preserved)
   ) {
-    state.toolMetadata.set(serverName, metadata);
+    state.toolMetadata.set(serverName, preserved);
   }
   syncServerResources(state, serverName, connection, definition);
   if (connection.promptDiscoveryFailed !== true) {

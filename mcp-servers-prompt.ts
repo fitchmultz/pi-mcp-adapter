@@ -11,11 +11,8 @@ export const MCP_SERVERS_SECTION = "mcp_servers";
 /** Character cap per server summary in `<mcp_servers>`, matching Pi and Codex deferred namespaces. */
 const MAX_SERVER_DESCRIPTION_CHARS = 250;
 
-/** Total character cap for `<mcp_servers>`, matching Pi's built-in MCP extension. */
+/** Total character cap for `<mcp_servers>` (and per-server loaded instructions), matching Pi 1.6.1. */
 export const MAX_SERVERS_SECTION_CHARS = 4096;
-
-/** Character cap for per-server instructions surfaced once when `tool_search` loads tools. */
-const TOOL_LOAD_INSTRUCTIONS_MAX_CHARS = 600;
 
 function firstLineSummary(text: string | undefined): string {
   if (text === undefined) {
@@ -132,7 +129,7 @@ export function formatLoadedServerInstructions(
     if (text === undefined || text === "") {
       continue;
     }
-    const preview = truncateAtWord(text, TOOL_LOAD_INSTRUCTIONS_MAX_CHARS);
+    const preview = truncateAtWord(text, MAX_SERVERS_SECTION_CHARS);
     const more =
       preview !== text && !disableProxyTool
         ? `\nUse mcp({ action: "instructions", server: ${JSON.stringify(server)} }) for the full text.`

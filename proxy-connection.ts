@@ -7,7 +7,7 @@ import {
 } from "./proxy-result.ts";
 import type { SessionRecoveryAuthRequiredError, SessionRecoveryDeps } from "./session-recovery.ts";
 import type { ServerConnection } from "./server-manager.ts";
-import { DEFAULT_TOOL_PREFIX, isServerDisabled, type ServerDefinition } from "./types.ts";
+import { isServerDisabled, type ServerDefinition } from "./types.ts";
 import { attemptAutoAuth, getAuthRequiredMessage } from "./proxy-auth.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import { throwIfAborted } from "./abort.ts";

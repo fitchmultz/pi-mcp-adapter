@@ -482,7 +482,7 @@ class ToolCallRuntime {
     const stderrTail = this.stderrTailForError(error);
     const message = appendStderrTail(baseMessage, stderrTail);
     const invalidParamsCode: number = sdk.ProtocolErrorCode.InvalidParams;
-    const isOutputSchemaError = /output schema/i.test(message);
+    const isOutputSchemaError = /output\s*schema/i.test(message);
     const suffix =
       !timedOut && !isOutputSchemaError && error instanceof sdk.ProtocolError && error.code === invalidParamsCode
         ? expectedParametersHint(this.request.target.inputSchema)

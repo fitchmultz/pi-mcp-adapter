@@ -298,7 +298,6 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 }
 ```
 
-<<<<<<< HEAD
 | Field                                | Description                                                                                                                                                                                                                                                            |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `description`                        | Optional short human/model-readable summary of the server                                                                                                                                                                                                              |
@@ -884,7 +883,7 @@ Gateway search ranks names, server names, descriptions, and parameter guidance u
 
 An exact, case-sensitive public tool name ranks before lexical matches; with `server`, an exact original tool name also ranks first within that server. Unscoped original names do not select an account. All remaining matches retain MiniSearch order. Gateway search continuation and retry calls remain metadata-only.
 
-Describe preserves the complete server descriptor, including JSON Schemas, annotations, `_meta`, concise `serverInstructions`, and extensions when present. Search and typed-tool discovery exclude app-only tools and resources. Legacy `<server>_<tool>`, `mcp__<server>_<tool>`, unambiguous bare `<tool>`, and hyphen/underscore aliases remain supported for compatibility; ambiguous names require an explicit server rather than executing an arbitrary match. When `server` is specified on `call` or `describe`, `tool_not_found` suggestions stay strictly within that server, and misses list any configured undiscovered servers.
+Describe preserves the complete server descriptor, including JSON Schemas, annotations, `_meta`, `serverInstructions`, and extensions when present. Search and typed-tool discovery exclude app-only tools and resources. Legacy `<server>_<tool>`, `mcp__<server>_<tool>`, unambiguous bare `<tool>`, and hyphen/underscore aliases remain supported for compatibility; ambiguous names require an explicit server rather than executing an arbitrary match. When `server` is specified on `call` or `describe`, `tool_not_found` suggestions stay strictly within that server, and misses list any configured undiscovered servers.
 
 The adapter advertises enabled servers in a cache-stable `<mcp_servers>` system prompt section (sorted server names with configured `description` or concise `serverInstructions` summary, even when `disableProxyTool: true`) without volatile connection counts or timestamps. Relevant `serverInstructions` also surface once per server when `tool_search` loads tools, in `describe` output, and via `action: "instructions"`.
 

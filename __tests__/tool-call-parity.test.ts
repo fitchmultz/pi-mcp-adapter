@@ -301,6 +301,17 @@ describe("proxy and direct tool call parity", () => {
     expect(firstText(invalidParams)).toContain("Unknown workspace");
     expect(firstText(invalidParams)).toContain("Expected parameters:\n  workspace (string)");
 
+    vi.spyOn(connection.client, "callTool").mockRejectedValueOnce(
+      new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        "Tool 'echo' has an invalid outputSchema: unsupported $schema dialect",
+      ),
+    );
+    const invalidOutputSchema = await executeCall(state, { toolName: "demo_echo", args: {} });
+    expect(invalidOutputSchema.isError).toBe(true);
+    expect(firstText(invalidOutputSchema)).toContain("invalid outputSchema");
+    expect(firstText(invalidOutputSchema)).not.toContain("Expected parameters:");
+
     vi.spyOn(connection.client, "callTool").mockResolvedValueOnce({
       isError: true,
       content: [

@@ -4,6 +4,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { MetadataCache } from "./metadata-cache.ts";
+import { applyResolvedToolName, getBaseToolName } from "./tool-metadata.ts";
 import type { DirectToolSpec, McpConfig, ToolMetadata } from "./types.ts";
 import {
   catalogDefinition,
@@ -135,7 +136,6 @@ class Loader implements ToolLoader {
   private readonly dependencies: LoaderDependencies;
   private readonly registered = new Map<string, Registration>();
   private readonly ownedToolNames = new Set<string>();
-  private readonly baseNames = new WeakMap<ToolMetadata, string>();
   private readonly toolToServer = new Map<string, string>();
   /** Pins decided since the last session boundary, so a later live deselection is not undone. */
   private readonly settled = new Set<string>();
@@ -335,8 +335,8 @@ class Loader implements ToolLoader {
   }
 
   private baseCatalogItem(item: CatalogTool): CatalogTool {
-    const baseName = this.baseNames.get(item.source);
-    if (baseName === undefined || baseName === item.name) {
+    const baseName = getBaseToolName(item.source);
+    if (baseName === item.name) {
       return item;
     }
     return { ...item, name: baseName, spec: { ...item.spec, prefixedName: baseName } };
@@ -383,11 +383,7 @@ class Loader implements ToolLoader {
         continue;
       }
       changed = true;
-      const baseName = this.baseNames.get(tool) ?? tool.name;
-      const cloned: ToolMetadata = { ...tool, name: reg.name };
-      const finalTool = Object.isFrozen(tool) ? Object.freeze(cloned) : cloned;
-      this.baseNames.set(finalTool, baseName);
-      next.push(finalTool);
+      next.push(applyResolvedToolName(tool, reg.name));
     }
     return changed ? next : undefined;
   }

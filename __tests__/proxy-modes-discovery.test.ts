@@ -455,7 +455,6 @@ describe("proxy discovery", () => {
     );
     expect(result.details).toMatchObject({ error: "native_tool", requestedTool: "read" });
   });
-<<<<<<< HEAD
 
   it("surfaces sanitized failure reasons, retry countdown, and connect bypass guidance in server_backoff", async () => {
     vi.useFakeTimers();

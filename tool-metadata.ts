@@ -19,6 +19,67 @@ import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visib
 
 export { formatSchema } from "./schema-format.ts";
 
+/** Natural pre-loader name for catalog-disambiguated ToolMetadata entries so refreshes preserve names and de-collision restores originals. */
+const baseToolNames = new WeakMap<ToolMetadata, string>();
+
+export function getBaseToolName(tool: ToolMetadata): string {
+  return baseToolNames.get(tool) ?? tool.name;
+}
+
+export function applyResolvedToolName(tool: ToolMetadata, resolvedName: string): ToolMetadata {
+  if (tool.name === resolvedName) {
+    return tool;
+  }
+  const baseName = getBaseToolName(tool);
+  const cloned: ToolMetadata = { ...tool, name: resolvedName };
+  const result = Object.isFrozen(tool) ? Object.freeze(cloned) : cloned;
+  if (resolvedName !== baseName) {
+    baseToolNames.set(result, baseName);
+  }
+  return result;
+}
+
+function collectResolvedOverrides(
+  previous: readonly ToolMetadata[] | undefined,
+): Map<string, { resolvedName: string; baseName: string }> {
+  const byOriginal = new Map<string, { resolvedName: string; baseName: string }>();
+  if (!previous) {
+    return byOriginal;
+  }
+  for (const tool of previous) {
+    const baseName = (tool.resourceUri ?? "").length > 0 ? undefined : baseToolNames.get(tool);
+    if (baseName !== undefined && tool.name !== baseName) {
+      byOriginal.set(tool.originalName, { resolvedName: tool.name, baseName });
+    }
+  }
+  return byOriginal;
+}
+
+/**
+ * Re-apply loader-resolved public names onto freshly rebuilt per-server metadata when the natural
+ * base name still matches, so live connects and call refreshes never revert disambiguated names.
+ */
+export function preserveResolvedToolNames(
+  previous: readonly ToolMetadata[] | undefined,
+  fresh: ToolMetadata[],
+): ToolMetadata[] {
+  const byOriginal = collectResolvedOverrides(previous);
+  if (byOriginal.size === 0) {
+    return fresh;
+  }
+  const preserved: ToolMetadata[] = [];
+  for (const tool of fresh) {
+    const entry =
+      (tool.resourceUri ?? "").length > 0 ? undefined : byOriginal.get(tool.originalName);
+    preserved.push(
+      entry !== undefined && entry.baseName === tool.name
+        ? applyResolvedToolName(tool, entry.resolvedName)
+        : tool,
+    );
+  }
+  return preserved;
+}
+
 export function buildToolMetadata({
   tools,
   resources,

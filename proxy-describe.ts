@@ -10,10 +10,6 @@ import {
 } from "./tool-metadata.ts";
 import { rankSuggestions } from "./search-ranking.ts";
 import { isToolCallApprovalRequired } from "./tool-approval.ts";
-import { truncateAtWord } from "./utils.ts";
-
-/** Character cap for server instructions surfaced in gateway `describe` output. */
-const DESCRIBE_INSTRUCTIONS_MAX_CHARS = 600;
 
 function matchesDisabledTool(
   state: McpExtensionState,
@@ -110,9 +106,7 @@ function describePayload(
   const approvalRequired = isToolCallApprovalRequired(state.config, serverName, toolMeta);
   const instructions = state.serverInstructions.get(serverName)?.trim();
   const serverInstructions =
-    instructions !== undefined && instructions.length > 0
-      ? truncateAtWord(instructions, DESCRIBE_INSTRUCTIONS_MAX_CHARS)
-      : undefined;
+    instructions !== undefined && instructions.length > 0 ? instructions : undefined;
   return {
     ...descriptor,
     ...((toolMeta.resourceUri ?? "").length > 0
