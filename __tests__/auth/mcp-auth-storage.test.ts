@@ -378,6 +378,45 @@ describe("cross-process credential locking", () => {
   );
 
   it(
+    "waits for a concurrent writer under 2.5s instead of aborting credential reads on SQLITE_BUSY",
+    { timeout: 15_000 },
+    async () => {
+      successful("seed");
+      const locks = join(home, ".fitch-mcp-adapter", "locks");
+      const lockPath = join(locks, z.string().parse(readdirSync(locks)[0]));
+      const holder = spawn(
+        process.execPath,
+        [
+          fileURLToPath(new URL("../fixtures/storage-lock-worker.ts", import.meta.url)),
+          "lock",
+          lockPath,
+          "write",
+        ],
+        { env: environment(), stdio: ["pipe", "pipe", "pipe"] },
+      );
+      holder.stdout.setEncoding("utf8");
+      const closed = once(holder, "close");
+      try {
+        expect(await once(holder.stdout, "data")).toEqual(["locked\n"]);
+        const pendingRead = runAsync("read", firstUrl);
+        setTimeout(() => {
+          holder.stdin.end("x");
+        }, 350);
+        const readResult = await pendingRead;
+        expect(readResult.status, readResult.stderr).toBe(0);
+        expect(await closed).toEqual([0, null]);
+        expect(JSON.parse(readResult.stdout)).toMatchObject({
+          entry: original,
+          other,
+        });
+      } finally {
+        holder.kill("SIGKILL");
+        await closed;
+      }
+    },
+  );
+
+  it(
     "does not keep Node alive when waiting on a contended async storage lock",
     { timeout: 10_000 },
     async () => {

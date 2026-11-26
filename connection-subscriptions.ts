@@ -39,9 +39,16 @@ function listChangedFilter(client: Client): SubscriptionFilter | undefined {
   return Object.keys(filter).length > 0 ? filter : undefined;
 }
 
+interface PreparedSubscription {
+  subscription: McpSubscription;
+  openedAt: number;
+  timeout: number | undefined;
+}
+
 export class ConnectionSubscriptions {
   private readonly watchers = new Map<string, SubscriptionWatcher>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly prepared = new WeakMap<ServerConnection, PreparedSubscription>();
   private readonly lifecycle: ConnectionLifecycle;
 
   constructor(lifecycle: ConnectionLifecycle) {
@@ -68,7 +75,7 @@ export class ConnectionSubscriptions {
     watcher.controller.abort(new Error(`MCP subscription watcher stopped for ${serverName}`));
   }
 
-  async attach(
+  async prepare(
     serverName: string,
     connection: ServerConnection,
     options: { priorModern: boolean; requestOptions?: RequestOptions; signal?: AbortSignal },
@@ -77,8 +84,29 @@ export class ConnectionSubscriptions {
       connection.client.autoOpenedSubscription ??
       (await this.openPrior(serverName, connection.client, options));
     if (subscription) {
-      this.observe(serverName, connection, subscription, options.requestOptions);
+      this.prepared.set(connection, {
+        subscription,
+        openedAt: Date.now(),
+        timeout: options.requestOptions?.timeout,
+      });
     }
+  }
+
+  activate(serverName: string, connection: ServerConnection): void {
+    const entry = this.prepared.get(connection);
+    if (!entry) {
+      return;
+    }
+    this.prepared.delete(connection);
+    this.stop(serverName);
+    const watcher: SubscriptionWatcher = { controller: new AbortController() };
+    this.watchers.set(serverName, watcher);
+    this.watchClose(serverName, connection, entry.subscription, {
+      watcher,
+      attempt: 0,
+      openedAt: entry.openedAt,
+      timeout: entry.timeout,
+    });
   }
 
   private async openPrior(
@@ -104,23 +132,6 @@ export class ConnectionSubscriptions {
       );
       return undefined;
     }
-  }
-
-  observe(
-    serverName: string,
-    connection: ServerConnection,
-    subscription: McpSubscription,
-    requestOptions?: RequestOptions,
-  ): void {
-    this.stop(serverName);
-    const watcher: SubscriptionWatcher = { controller: new AbortController() };
-    this.watchers.set(serverName, watcher);
-    this.watchClose(serverName, connection, subscription, {
-      watcher,
-      attempt: 0,
-      openedAt: Date.now(),
-      timeout: requestOptions?.timeout,
-    });
   }
 
   private isLiveOwner(

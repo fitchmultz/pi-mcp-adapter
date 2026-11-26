@@ -24,6 +24,13 @@ function acquireStorageLock(
       database.exec("BEGIN EXCLUSIVE");
     }
   } catch (error) {
+    if (mode === "read") {
+      try {
+        database.exec("ROLLBACK");
+      } catch {
+        // Ignore if BEGIN DEFERRED itself failed or no transaction remained open.
+      }
+    }
     // SQLite extended result codes retain the primary result in the low byte.
     if (
       error instanceof Error &&

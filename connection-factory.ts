@@ -495,7 +495,7 @@ class ConnectionSetup {
     if (priorDiscovery !== undefined) {
       connection.priorDiscovery = priorDiscovery;
     }
-    await factory.callbacks.attachSubscription(name, connection, {
+    await factory.callbacks.prepareSubscription(name, connection, {
       priorModern: this.usedPrior?.kind === "modern",
       ...(requestOptions !== undefined ? { requestOptions } : {}),
       ...(signal !== undefined ? { signal } : {}),

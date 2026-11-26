@@ -40,6 +40,8 @@ export class McpServerManager {
       () => this.factory.flushTrace(),
       {
         publish: (connection) => this.callbacks.publish(connection),
+        activateSubscription: (name, connection) =>
+          this.callbacks.activateSubscription(name, connection),
         close: (name) => this.callbacks.clearServer(name),
         closeAll: () => this.callbacks.clear(),
         invalidatePrior: (name) => this.factory.priorDiscovery.invalidate(name),

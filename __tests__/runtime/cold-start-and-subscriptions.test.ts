@@ -32,11 +32,15 @@ interface HttpTestHarness {
 async function createHttpHarness(options?: {
   capabilities?: z.infer<typeof ServerCapabilitiesSchema>;
   failResourcesList?: boolean;
+  dropFirstListenImmediately?: boolean;
+  toolsListDelayMs?: number;
 }): Promise<HttpTestHarness> {
   const methods: string[] = [];
   let mode: "modern" | "legacy" = "modern";
   let toolNames = ["initial_tool"];
   let failResourcesList = options?.failResourcesList === true;
+  const dropFirstListenImmediately = options?.dropFirstListenImmediately === true;
+  const toolsListDelayMs = options?.toolsListDelayMs ?? 0;
   const capabilities: z.infer<typeof ServerCapabilitiesSchema> = options?.capabilities ?? {
     tools: { listChanged: true },
     resources: {},
@@ -45,6 +49,7 @@ async function createHttpHarness(options?: {
   let activeStream: ServerResponse | undefined;
   let activeSubId: string | number | undefined;
   let subscriptions = 0;
+  let droppedFirstListen = false;
   let legacyInitialized = false;
 
   function buildResult(method: string): Record<string, unknown> {
@@ -123,6 +128,20 @@ async function createHttpHarness(options?: {
         })}\n\n`,
       );
       return;
+    }
+    if (body.method === "tools/list") {
+      if (dropFirstListenImmediately && !droppedFirstListen && activeStream) {
+        droppedFirstListen = true;
+        const stream = activeStream;
+        activeStream = undefined;
+        stream.destroy();
+      }
+      if (toolsListDelayMs > 0) {
+        setTimeout(() => {
+          machineJson(response, { jsonrpc: "2.0", id: body.id, result: buildResult(body.method) });
+        }, toolsListDelayMs);
+        return;
+      }
     }
     if (body.method === "resources/list" && failResourcesList) {
       machineJson(response, {
@@ -459,6 +478,27 @@ describe("MCP-213 cold-start performance, PriorDiscovery, and subscription resil
     expect(state.toolMetadata.get("slowEager")).toEqual([
       expect.objectContaining({ originalName: "echo" }),
     ]);
+  });
+
+  it("recovers list_changed when the initial listen stream ends after ack before connect resolves", async () => {
+    const harness = await createHttpHarness({
+      dropFirstListenImmediately: true,
+      toolsListDelayMs: 60,
+    });
+    cleanups.push(harness.close);
+    const manager = new McpServerManager();
+    cleanups.push(() => manager.closeAll());
+
+    const connection = await manager.connect("pre-pub-drop", { url: harness.url, auth: false });
+    expect(connection.status).toBe("connected");
+    // The initial stream dropped during discovery before publication; recovery must re-listen.
+    await expect.poll(harness.subscriptionCount, { timeout: 2_500 }).toBe(2);
+
+    harness.toolNames = ["post_pre_pub_recovery"];
+    harness.notifyToolsListChanged();
+    await expect
+      .poll(() => connection.tools.map((tool) => tool.name))
+      .toEqual(["post_pre_pub_recovery"]);
   });
 
   it("logs non-abort resources/list errors via logger.debug while keeping the server connected", async () => {

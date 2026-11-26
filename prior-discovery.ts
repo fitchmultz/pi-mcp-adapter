@@ -2,7 +2,6 @@ import { hash } from "node:crypto";
 import type { Client, PriorDiscovery } from "@modelcontextprotocol/client";
 import type { CachedPriorDiscovery, ServerDefinition } from "./types.ts";
 import { CACHE_MAX_AGE_MS } from "./metadata-cache-format.ts";
-import { asObjectRecord } from "./mcp-output-values.ts";
 import {
   hasServerUrl,
   interpolateEnvRecord,
@@ -14,20 +13,6 @@ import {
 export const PRIOR_DISCOVERY_LEGACY_TTL_MS = 24 * 60 * 60 * 1000;
 /** Modern verdicts match the metadata cache horizon; stale modern verdicts fail fast on first request. */
 export const PRIOR_DISCOVERY_MODERN_TTL_MS = CACHE_MAX_AGE_MS;
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    const serialized: unknown = JSON.stringify(value);
-    return typeof serialized === "string" ? serialized : "undefined";
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
-  }
-  const entries = Object.entries(asObjectRecord(value) ?? {}).sort(([left], [right]) =>
-    left < right ? -1 : Number(left > right),
-  );
-  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`).join(",")}}`;
-}
 
 export function safeResolveServerUrl(definition: ServerDefinition): string | undefined {
   try {
@@ -54,16 +39,23 @@ export function computePriorDiscoveryKey(definition: ServerDefinition): string |
   if (url === undefined) {
     return undefined;
   }
-  const identity = {
-    url,
-    auth: definition.auth,
-    headers: interpolateEnvRecord(definition.headers),
-    bearerToken: resolveBearerToken(definition),
-    bearerTokenEnv: definition.bearerTokenEnv,
-    oauth: definition.oauth,
-    protocolVersion: definition.protocolVersion,
-  };
-  return hash("sha256", stableStringify(identity), "hex");
+  const headers = interpolateEnvRecord(definition.headers);
+  const sortedHeaders = headers
+    ? Object.entries(headers).sort(([left], [right]) => left.localeCompare(right))
+    : undefined;
+  return hash(
+    "sha256",
+    JSON.stringify([
+      url,
+      definition.auth,
+      sortedHeaders,
+      resolveBearerToken(definition),
+      definition.bearerTokenEnv,
+      definition.oauth,
+      definition.protocolVersion,
+    ]),
+    "hex",
+  );
 }
 
 export function isPriorDiscoveryFresh(entry: CachedPriorDiscovery, now = Date.now()): boolean {

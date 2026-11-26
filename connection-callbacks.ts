@@ -69,12 +69,16 @@ export class ConnectionCallbacks {
     this.elicitationConfig = undefined;
   }
 
-  async attachSubscription(
+  async prepareSubscription(
     serverName: string,
     connection: ServerConnection,
     options: { priorModern: boolean; requestOptions?: RequestOptions; signal?: AbortSignal },
   ): Promise<void> {
-    await this.subscriptions.attach(serverName, connection, options);
+    await this.subscriptions.prepare(serverName, connection, options);
+  }
+
+  activateSubscription(serverName: string, connection: ServerConnection): void {
+    this.subscriptions.activate(serverName, connection);
   }
 
   private buildClientCapabilities(definition: ServerDefinition) {
