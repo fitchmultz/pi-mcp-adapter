@@ -82,12 +82,15 @@ export interface McpContent {
   mimeType?: string;
   resource?: {
     uri: string;
+    mimeType?: string;
     text?: string;
     blob?: string;
   };
   uri?: string;
   name?: string;
+  title?: string;
   description?: string;
+  size?: number;
 }
 
 // Pi content block type

@@ -539,18 +539,18 @@ mcp({
 });
 ```
 
-`path` is an RFC 6901 JSON Pointer from the root of the saved file, not from the displayed preview or a Pi result wrapper.
+`path` is an RFC 6901 JSON Pointer. Resolution checks the saved MCP envelope root first (such as `/structuredContent/rows` or `/content/0/text`). When that misses, `read-result` also resolves the pointer directly inside parseable JSON text blocks (`content[*].text` or `contents[*].text`) so pointers like `/rows` work without wrapping them in envelope paths. When a pointer still misses, the error names the nearest valid parent path, its available keys or array bounds, and the top-level keys of any embedded JSON payload.
 
-| Saved file                                | Pointer roots                                                                                                        |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| MCP tool result (`resultRef`)             | `/structuredContent` for structured data, or `/content/0/text` for the text of the first block if it is a text block |
-| Resource result (`resultRef`)             | `/contents` for the resource list carried by the protocol                                                            |
-| Rendered output (`outputPath`)            | Omit `path` and `fields` to page the saved text. There is no MCP envelope.                                           |
-| UI history (`resultRef` or `historyRefs`) | Omit `path` and `fields` to page grouped text or the original JSONL events. There is no MCP envelope.                |
+| Saved file                                | Pointer roots                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| MCP tool result (`resultRef`)             | `/structuredContent`, `/content/0/text`, or directly into JSON encoded inside a text block (e.g. `/rows`) |
+| Resource result (`resultRef`)             | `/contents` for the resource list, or directly into JSON encoded inside a text resource (e.g. `/items`)   |
+| Rendered output (`outputPath`)            | Omit `path` and `fields` to page the saved text. There is no MCP envelope.                                |
+| UI history (`resultRef` or `historyRefs`) | Omit `path` and `fields` to page grouped text or the original JSONL events. There is no MCP envelope.     |
 
-If a server puts JSON inside a text block, a pointer selects the entire string, not a field inside it. For example, `/content/0/text` selects the string that might contain `{"rows":[...]}`. `/rows` does not address that data in the saved envelope.
+When `path` selects a string (such as `/content/0/text`), `read-result` returns the raw unescaped string directly rather than JSON-encoding it again. Non-string JSON selections are serialized as compact JSON. Oversized MCP calls retain a single canonical `resultRef` artifact and emit one truncation notice instead of duplicating plain text into a second file.
 
-`fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count characters in the selected, pretty-printed JSON or in plain text, starting at zero. Readback defaults to 12,000 characters and stays within the output guard's byte and line limits. Continue with `details.nextOffset` until it is `null`. A failed read, including a missing pointer, returns a tool error. Readback requires an existing adapter artifact in this host's output directory and never calls the server again.
+`fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count characters in the selected text or compact JSON, starting at zero. Readback defaults to 12,000 characters and stays within the output guard's byte and line limits. Continue with `details.nextOffset` until it is `null`. A failed read, including a missing pointer, returns a tool error. Readback requires an existing adapter artifact in this host's output directory and never calls the server again.
 
 ### Multi-call work
 
@@ -582,14 +582,14 @@ Set `format: "structured"` on `read-result` to get `{ text, ref, path?, offset, 
 const ref = result.mcpAdapter.resultRef;
 const path = "/content/0/text";
 let offset = 0;
-let selected = "";
+let originalText = "";
 do {
   const page = await tools.mcp({ action: "read-result", ref, path, offset, format: "structured" });
-  selected += page.text;
+  originalText += page.text;
   offset = page.nextOffset;
 } while (offset !== null);
-const originalText = JSON.parse(selected);
-// Only decode originalText as JSON if this server's text payload is JSON.
+// originalText is already the raw unescaped string from the text block.
+// Decode with JSON.parse(originalText) only if this server's text payload is JSON.
 ```
 
 ### MCP Resources

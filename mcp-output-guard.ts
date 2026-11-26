@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, open, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { byteLength, sanitizeContent, textStats, truncatedOutput } from "./mcp-output-preview.ts";
+import {
+  classifyResourceBlob,
+  deriveBinaryExtension,
+  sanitizeExtension,
+} from "./mcp-output-media.ts";
 import type { ContentBlock, McpSettings } from "./types.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
 
@@ -108,6 +113,7 @@ export async function guardMcpOutput(
 
   const { content: guardedContent, outputGuard } = await boundedTextOutput(normalizedContent, {
     ...affixes,
+    retained,
     reference,
     includeReferenceWhenUntruncated: needsInlineReferenceWhenUntruncated,
     maxBytes: options.maxBytes ?? DEFAULT_MCP_OUTPUT_MAX_BYTES,
@@ -115,7 +121,7 @@ export async function guardMcpOutput(
     outputDirectory: options.outputDirectory,
   });
 
-  const includeReference = outputGuard !== undefined || needsInlineReferenceWhenUntruncated;
+  const includeReference = outputGuard === undefined && needsInlineReferenceWhenUntruncated;
   return {
     content: appendReference(guardedContent, reference, includeReference),
     ...(outputGuard ? { outputGuard } : {}),
@@ -191,6 +197,7 @@ function referenceForRetained(retained: RetainedMcpResult): string | undefined {
 interface BoundedOutputContext {
   prefix: string;
   suffix: string;
+  retained: RetainedMcpResult;
   reference: string | undefined;
   includeReferenceWhenUntruncated: boolean;
   maxBytes: number;
@@ -198,7 +205,25 @@ interface BoundedOutputContext {
   outputDirectory: string | undefined;
 }
 
-/** Cap the composed text output, spilling to an artifact when oversized. */
+async function truncatedTarget(
+  retained: RetainedMcpResult,
+  composedOutput: string,
+  outputDirectory: string | undefined,
+): Promise<
+  | { kind: "retained"; ref?: string; error?: string }
+  | { kind: "output"; path?: string; error?: string }
+> {
+  if (retained.resultRef !== undefined && retained.resultRef !== "") {
+    return { kind: "retained", ref: retained.resultRef };
+  }
+  if (retained.resultWriteError !== undefined && retained.resultWriteError !== "") {
+    return { kind: "retained", error: retained.resultWriteError };
+  }
+  const artifact = await saveArtifact("output", composedOutput, { outputDirectory });
+  return { kind: "output", ...artifact };
+}
+
+/** Cap the composed text output, reusing a retained artifact or spilling once when oversized. */
 async function boundedTextOutput(
   normalizedContent: ContentBlock[],
   ctx: BoundedOutputContext,
@@ -220,15 +245,14 @@ async function boundedTextOutput(
   let outputGuard: McpOutputGuardDetails | undefined;
 
   if (untruncatedStats.bytes > ctx.maxBytes || untruncatedStats.lines > ctx.maxLines) {
-    const artifact = await saveArtifact("output", composedOutput, ctx.outputDirectory);
+    const target = await truncatedTarget(ctx.retained, composedOutput, ctx.outputDirectory);
     ({ content: guardedContent, outputGuard } = truncatedOutput({
       text: composedOutput,
       stats,
-      artifact,
+      target,
       imageBlocks,
       maxBytes: ctx.maxBytes,
       maxLines: ctx.maxLines,
-      referenceSuffix,
     }));
   }
 
@@ -289,53 +313,68 @@ function resultContent(record: Recordish | undefined): unknown[] {
   return [];
 }
 
-/** Inline data of an audio/resource block, when present as base64 text. */
-function payloadData(item: Recordish | undefined, resource: Recordish | undefined): unknown {
-  if (item?.type === "audio") {
-    return item.data;
-  }
-  if (item?.type === "resource") {
-    return resource?.blob;
-  }
-  return undefined;
-}
-
-function payloadKind(
-  item: Recordish | undefined,
-  resource: Recordish | undefined,
-): "audio" | "resource" {
-  return (item?.type ?? resource?.type) === "audio" ? "audio" : "resource";
-}
-
-function payloadFileFields(
-  resource: Recordish | undefined,
-  mimeType: unknown,
-): { uri?: string; mimeType?: string } {
+function payloadFileFields(mimeType: unknown, uri?: unknown): { uri?: string; mimeType?: string } {
   return {
-    ...(typeof resource?.uri === "string" ? { uri: resource.uri } : {}),
+    ...(typeof uri === "string" ? { uri } : {}),
     ...(typeof mimeType === "string" ? { mimeType } : {}),
   };
 }
 
-/** Spill one audio/resource payload block to a file, or skip it. */
+async function audioPayloadFile(
+  item: Recordish,
+  index: number,
+  options: McpOutputGuardOptions,
+): Promise<McpPayloadFile | undefined> {
+  if (typeof item.data !== "string") {
+    return undefined;
+  }
+  const extension = deriveBinaryExtension(item.mimeType);
+  return {
+    index,
+    kind: "audio",
+    ...payloadFileFields(item.mimeType),
+    ...(await saveArtifact("payload", Buffer.from(item.data, "base64"), {
+      outputDirectory: options.outputDirectory,
+      extension,
+    })),
+  };
+}
+
+async function resourcePayloadFile(
+  item: Recordish,
+  index: number,
+  options: McpOutputGuardOptions,
+): Promise<McpPayloadFile | undefined> {
+  const resource = asObjectRecord(item.resource);
+  const classified = classifyResourceBlob(resource);
+  if (classified?.kind !== "binary") {
+    return undefined;
+  }
+  return {
+    index,
+    kind: "resource",
+    ...payloadFileFields(item.mimeType ?? resource?.mimeType, resource?.uri),
+    ...(await saveArtifact("payload", classified.bytes, {
+      outputDirectory: options.outputDirectory,
+      extension: classified.extension,
+    })),
+  };
+}
+
+/** Spill one non-rendered audio/resource payload block to a file, or skip it. */
 async function payloadFileFor(
   block: unknown,
   index: number,
   options: McpOutputGuardOptions,
 ): Promise<McpPayloadFile | undefined> {
   const item = asObjectRecord(block);
-  const resource = asObjectRecord(item?.resource);
-  const data = payloadData(item, resource);
-  if (typeof data !== "string") {
-    return undefined;
+  if (item?.type === "audio") {
+    return audioPayloadFile(item, index, options);
   }
-  const mimeType = item?.mimeType ?? resource?.mimeType;
-  return {
-    index,
-    kind: payloadKind(item, resource),
-    ...payloadFileFields(resource, mimeType),
-    ...(await saveArtifact("payload", Buffer.from(data, "base64"), options.outputDirectory)),
-  };
+  if (item?.type === "resource") {
+    return resourcePayloadFile(item, index, options);
+  }
+  return undefined;
 }
 
 /** True when the raw result must be spilled: oversized, or not a plain text result. */
@@ -379,7 +418,7 @@ export async function retainMcpResult(
   }
   const [rawPayloadFiles, artifact] = await Promise.all([
     Promise.all(content.map((block, index) => payloadFileFor(block, index, options))),
-    saveArtifact("mcp-result", raw, options.outputDirectory),
+    saveArtifact("mcp-result", raw, { outputDirectory: options.outputDirectory }),
   ]);
   const payloadFiles = rawPayloadFiles.filter((file): file is McpPayloadFile => file !== undefined);
   const envelope = retainedResultEnvelope({
@@ -429,18 +468,18 @@ export function formatMcpResultReference(ref: string): string {
 async function saveArtifact(
   kind: string,
   text: string | Uint8Array,
-  outputDirectory?: string,
+  options: { outputDirectory?: string | undefined; extension?: string | undefined } = {},
 ): Promise<{ path?: string; error?: string }> {
   try {
+    const { outputDirectory, extension } = options;
     const parent = outputDirectory === undefined ? tmpdir() : resolve(outputDirectory);
     if (outputDirectory !== undefined) {
       await mkdir(parent, { recursive: true, mode: 0o700 });
     }
     const dir = await mkdtemp(join(parent, "pi-mcp-output-"));
-    const path = join(
-      dir,
-      `${kind}-${randomBytes(4).toString("hex")}.${typeof text === "string" ? "txt" : "bin"}`,
-    );
+    const fallbackExt = typeof text === "string" ? "txt" : "bin";
+    const safeExt = sanitizeExtension(extension) ?? fallbackExt;
+    const path = join(dir, `${kind}-${randomBytes(4).toString("hex")}.${safeExt}`);
     await writeFile(path, text, { encoding: "utf8", mode: 0o600 });
     return { path };
   } catch (error) {
@@ -453,7 +492,7 @@ export async function saveMcpOutputStream(
   chunks: AsyncIterable<string>,
   outputDirectory?: string,
 ): Promise<{ path?: string; error?: string }> {
-  const artifact = await saveArtifact("output", "", outputDirectory);
+  const artifact = await saveArtifact("output", "", { outputDirectory });
   if (artifact.path === undefined || artifact.path === "") {
     return artifact;
   }

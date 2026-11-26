@@ -111,7 +111,7 @@ describe("MCP execution redesign", () => {
       { ref: result.details.resultRef, path: "/_meta/receipt" },
       { outputDirectory: directory },
     );
-    expect(JSON.parse(text(readback))).toBe("saved-42");
+    expect(text(readback)).toBe("saved-42");
   });
 
   it("retains metadata attached to otherwise plain text content blocks", async () => {
@@ -133,7 +133,7 @@ describe("MCP execution redesign", () => {
       { ref: result.details.resultRef, path: "/content/0/_meta/receipt" },
       { outputDirectory: directory },
     );
-    expect(JSON.parse(text(readback))).toBe("block-42");
+    expect(text(readback)).toBe("block-42");
   });
 
   it("saves unsupported audio/blob files and preserves images and links", async () => {

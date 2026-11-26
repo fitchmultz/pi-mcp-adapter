@@ -17,7 +17,13 @@ const probeSchema = z.object({
     }),
   }),
 });
-const savedSchema = z.object({ outputGuard: z.object({ fullOutputPath: z.string() }) });
+const savedSchema = z.object({
+  resultRef: z.string(),
+  outputGuard: z.object({
+    truncated: z.literal(true),
+    fullOutputPath: z.undefined().optional(),
+  }),
+});
 const pageSchema = z.object({
   totalCharacters: z.number(),
   nextOffset: z.number().nullable().optional(),
@@ -114,26 +120,34 @@ function firstText(result: ToolResultMessage, reason: string): string {
 
 async function verifySavedOutput(native: NativeSession): Promise<void> {
   const spilled = await native.run("mcp", { tool: "local_echo", args: { value: "large" } });
-  const ref = savedSchema.parse(spilled.details).outputGuard.fullOutputPath;
-  const historyText = readFileSync(ref, "utf8");
-  assert.ok(historyText.startsWith(largeOutput), "the saved output holds the complete text");
+  const ref = savedSchema.parse(spilled.details).resultRef;
+  const envelope = z
+    .object({ content: z.array(z.object({ text: z.string() })) })
+    .parse(JSON.parse(readFileSync(ref, "utf8")));
+  assert.equal(envelope.content[0]?.text, largeOutput, "the saved result holds the complete text");
   for (const offset of [0, 220_000, 11_000]) {
-    const page = await native.run("mcp", { action: "read-result", ref, offset, limit: 110 });
+    const page = await native.run("mcp", {
+      action: "read-result",
+      ref,
+      path: "/content/0/text",
+      offset,
+      limit: 110,
+    });
     assert.equal(
       firstText(page, "saved output must have a first content block"),
-      historyText.slice(offset, offset + 110),
+      largeOutput.slice(offset, offset + 110),
     );
-    assert.equal(pageSchema.parse(page.details).totalCharacters, historyText.length);
+    assert.equal(pageSchema.parse(page.details).totalCharacters, largeOutput.length);
     assert.equal(pageSchema.parse(page.details).nextOffset, offset + 110);
   }
-  await writeFile(ref, "redacted é😀");
+  await writeFile(ref, JSON.stringify("redacted é😀"));
   const redactedPage = await native.run("mcp", { action: "read-result", ref });
   assert.equal(
     firstText(redactedPage, "redacted page must have a first content block"),
     "redacted é😀",
   );
   assert.equal(pageSchema.parse(redactedPage.details).totalCharacters, "redacted é😀".length);
-  console.log("[native-tools] gateway saved plain-output pages and rewrite invalidation passed");
+  console.log("[native-tools] gateway single-artifact saved-result pages passed");
 }
 
 async function verifyCancellation(f: NativeFixture, native: NativeSession): Promise<void> {

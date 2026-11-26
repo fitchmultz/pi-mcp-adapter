@@ -82,13 +82,14 @@ export const gatewayParameters = Type.Object(
       Type.Integer({
         minimum: 1,
         description:
-          "Page size (default 12, max 100); for read-result, characters of selected JSON.",
+          "Page size (default 12, max 100); for read-result, characters of selected output.",
       }),
     ),
     offset: Type.Optional(
       Type.Integer({
         minimum: 0,
-        description: "Zero-based item offset; for read-result, character offset in selected JSON.",
+        description:
+          "Zero-based item offset; for read-result, character offset in selected output.",
       }),
     ),
     uri: Type.Optional(Type.String({ description: "Exact MCP resource URI for read-resource." })),
@@ -101,7 +102,7 @@ export const gatewayParameters = Type.Object(
     path: Type.Optional(
       Type.String({
         description:
-          "JSON Pointer from the saved artifact root, e.g. /structuredContent/rows or /content/0/text. JSON encoded in a text block is a string, not a nested object.",
+          "JSON Pointer from the saved artifact root (e.g. /structuredContent/rows or /content/0/text) or directly into a JSON payload inside a text block.",
       }),
     ),
     fields: Type.Optional(
