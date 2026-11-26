@@ -14,6 +14,7 @@ import { paginate } from "./search-ranking.ts";
 import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { isUiResourceUri } from "./tool-metadata.ts";
+import { updateMetadataCache } from "./init-metadata.ts";
 
 export async function executeResourceList(
   state: McpExtensionState,
@@ -99,6 +100,7 @@ async function refreshStaleResourceTemplates(
         server,
         result.resourceTemplates.filter((template) => !isUiResourceUri(template.uriTemplate)),
       );
+      updateMetadataCache(state, server);
     }
   } catch (error) {
     if (ownedSignal?.aborted === true) {

@@ -328,6 +328,20 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     expect(liveList.details).toMatchObject({
       resourceTemplates: [{ name: "doc_v2", uriTemplate: "docs://v2/{slug}" }],
     });
+
+    // Successful template refresh after list_changed persists updated templates to disk cache.
+    const coldAfterChange = createTestState({
+      config: { settings: {}, mcpServers: { docs: def } },
+      metadataCacheEnabled: true,
+    });
+    onTestFinished(() => coldAfterChange.owner.stop());
+    registerServers(coldAfterChange, [["docs", def]]);
+    const coldAfterSpy = vi.spyOn(coldAfterChange.manager, "connect");
+    const cachedAfterChange = await executeResourceList(coldAfterChange, { server: "docs" });
+    expect(coldAfterSpy).not.toHaveBeenCalled();
+    expect(cachedAfterChange.details).toMatchObject({
+      resourceTemplates: [{ name: "doc_v2", uriTemplate: "docs://v2/{slug}" }],
+    });
   });
 
   it("exposes prompts and get-prompt gateway actions with native images and outputGuard", async () => {
