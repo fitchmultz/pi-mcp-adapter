@@ -111,7 +111,7 @@ class ToolCallRuntime {
       (target.resourceUri ?? "").length === 0 &&
       target.uiResourceUri !== undefined &&
       target.uiResourceUri.length > 0 &&
-      !this.deps.ui.isUiViewerDisabled(state.config, serverName)
+      !this.deps.ui.isUiViewerDisabled(state, serverName)
     ) {
       this.uiAttempted = true;
       this.uiSession = await abortable(

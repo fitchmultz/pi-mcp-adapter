@@ -28,6 +28,11 @@ const actions = new HostBrowserActions(bridge, proxy, view, config);
 actions.listen();
 bridge.addEventListener("sizechange", (size) => view.resize(size));
 
+async function reportHostError(message: string): Promise<void> {
+  view.showError(message);
+  await proxy.advisory("/proxy/ui/error", { message });
+}
+
 // Connect before loading the app so its native initialize request cannot race us.
 try {
   if (!view.iframe.contentWindow) {
@@ -38,7 +43,7 @@ try {
   );
 } catch (error) {
   console.error("[host] Bridge connection failed:", error);
-  view.showError("Failed to initialize AppBridge: " + String(error));
+  await reportHostError("Failed to initialize AppBridge: " + String(error));
 }
 const session = new HostBrowserSession(bridge, proxy, view, {
   sessionToken: config.sessionToken,
@@ -46,4 +51,9 @@ const session = new HostBrowserSession(bridge, proxy, view, {
   initialToolInputEventId: streamMode === "stream-first" ? undefined : config.toolInputEventId,
 });
 session.listen();
-await view.load(config.uiResourceToken);
+try {
+  await view.load(config.uiResourceToken);
+} catch (error) {
+  console.error("[host] App iframe load failed:", error);
+  await reportHostError("Failed to load MCP app iframe: " + String(error));
+}

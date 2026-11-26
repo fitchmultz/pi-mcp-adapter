@@ -813,4 +813,92 @@ describe("buildHostHtmlTemplate", () => {
       expect(html).toContain("\\u2029");
     });
   });
+
+  describe("openLink scheme defense-in-depth and host error reporting", () => {
+    it("blocks unsafe openLink schemes client-side before window.open and allows http/https/mailto", async () => {
+      const host = await openHost();
+      const openSpy = vi.fn<typeof host.window.open>();
+      host.window.open = openSpy;
+
+      const blockedUrls = [
+        "javascript:alert(1)",
+        "file:///etc/passwd",
+        "data:text/html,<script>alert(1)</script>",
+        "vscode://file/etc/passwd",
+      ];
+      for (const [index, url] of blockedUrls.entries()) {
+        const id = `blocked-${index}`;
+        host.dispatchWindow({
+          jsonrpc: "2.0",
+          id,
+          method: "ui/open-link",
+          params: { url },
+        });
+        await vi.waitFor(() =>
+          expect(host.appMessages).toContainEqual({
+            jsonrpc: "2.0",
+            id,
+            result: { isError: true },
+          }),
+        );
+      }
+      await host.settleRequests();
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(host.requests("/proxy/ui/open-link")).toHaveLength(0);
+
+      const allowedUrls = ["https://example.com/docs", "mailto:test@example.com"];
+      for (const [index, url] of allowedUrls.entries()) {
+        const id = `allowed-${index}`;
+        host.dispatchWindow({
+          jsonrpc: "2.0",
+          id,
+          method: "ui/open-link",
+          params: { url },
+        });
+        await vi.waitFor(() =>
+          expect(host.appMessages).toContainEqual({
+            jsonrpc: "2.0",
+            id,
+            result: {},
+          }),
+        );
+      }
+      await host.settleRequests();
+      expect(openSpy).toHaveBeenCalledTimes(2);
+      expect(openSpy).toHaveBeenNthCalledWith(
+        1,
+        "https://example.com/docs",
+        "_blank",
+        "noopener,noreferrer",
+      );
+      expect(openSpy).toHaveBeenNthCalledWith(
+        2,
+        "mailto:test@example.com",
+        "_blank",
+        "noopener,noreferrer",
+      );
+      const { intents } = await materializeUiMessages(host.handle.getSessionMessages());
+      expect(intents).toEqual([
+        { intent: "open_link", params: { url: "https://example.com/docs" } },
+        { intent: "open_link", params: { url: "mailto:test@example.com" } },
+      ]);
+    });
+
+    it("surfaces iframe load errors back to the UI server and error overlay", async () => {
+      const onError = vi.fn<NonNullable<UiServerOptions["onError"]>>();
+      const host = await openHost({ failIframeLoad: true, onError });
+      await host.settleRequests("/proxy/ui/error");
+
+      expect(host.element("error-overlay").classList.contains("visible")).toBe(true);
+      expect(host.element("error-message").textContent).toContain("Failed to load MCP app iframe");
+      expect(host.requests("/proxy/ui/error").map((request) => request.status)).toEqual([200]);
+      expect(onError).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to load MCP app iframe"),
+      );
+      const { notifications } = await materializeUiMessages(host.handle.getSessionMessages());
+      expect(notifications).toContainEqual(
+        expect.stringContaining("UI host error: Failed to load MCP app iframe"),
+      );
+    });
+  });
 });

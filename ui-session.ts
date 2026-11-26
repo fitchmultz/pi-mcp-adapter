@@ -14,7 +14,7 @@ import type {
 } from "./ui-session-contracts.ts";
 import { createUiStreamIdentity, UiSessionStream } from "./ui-session-stream.ts";
 import { UiSessionEvents } from "./ui-session-events.ts";
-import { closeActiveUiWindow, isUiViewerDisabled, openUiViewer } from "./ui-session-viewer.ts";
+import { closeUiWindow, isUiViewerDisabled, openUiViewer } from "./ui-session-viewer.ts";
 
 export type {
   UiSessionRequest,
@@ -41,6 +41,15 @@ export function summarizeUiSessionResult(
       uiOpen: false,
     };
   }
+  const hostError = uiSession.getHostError?.();
+  if (hostError !== undefined && hostError !== "") {
+    return {
+      message: `Interactive UI reported an error: ${hostError}`,
+      uiOpen: true,
+      uiViewer: uiSession.viewer,
+      uiUrl: uiSession.url,
+    };
+  }
   return {
     message: uiSession.reused
       ? "Updated the open UI."
@@ -58,7 +67,7 @@ export async function maybeStartUiSession(
   const signal =
     combineAbortSignals(state.owner.signal, request.signal) ?? new AbortController().signal;
   throwIfAborted(signal);
-  if (isUiViewerDisabled(state.config, request.serverName)) {
+  if (isUiViewerDisabled(state, request.serverName)) {
     return null;
   }
   const session = new UiSession(state, request, signal);
@@ -164,6 +173,7 @@ class UiSession {
     }
     // Listener startup yields: replace the slot's current owner only when we can publish ours.
     this.replaceExisting();
+    this.state.pendingUiModelContext = undefined;
     const stream = new UiSessionStream(state, request, handle, { ...identity, reused: false });
     this.stream = stream;
     stream.register();
@@ -184,11 +194,26 @@ class UiSession {
   }
 
   private replaceExisting(): void {
-    if (this.state.uiServer) {
-      this.state.uiServer.close("replaced");
+    const existing = this.state.uiServer;
+    if (existing) {
+      existing.close("replaced");
       this.state.uiServer = null;
+      closeUiWindow(existing);
     }
-    closeActiveUiWindow();
+  }
+
+  private retainPendingModelContext(handle: UiServerHandle, reason: string): void {
+    if (reason === "replaced") {
+      return;
+    }
+    const pendingContext = handle.takeModelContext();
+    if (pendingContext) {
+      this.state.pendingUiModelContext = {
+        serverName: handle.serverName,
+        toolName: handle.toolName,
+        context: pendingContext,
+      };
+    }
   }
 
   private complete(reason: string): void {
@@ -197,6 +222,7 @@ class UiSession {
     if (!handle || this.state.uiServer !== handle) {
       return;
     }
+    this.retainPendingModelContext(handle, reason);
     const messages = handle.getSessionMessages();
     const stream = handle.getStreamSummary();
     if (hasSessionContent(messages, stream)) {
@@ -221,7 +247,7 @@ class UiSession {
       });
     }
     this.state.uiServer = null;
-    closeActiveUiWindow();
+    closeUiWindow(handle);
   }
 }
 

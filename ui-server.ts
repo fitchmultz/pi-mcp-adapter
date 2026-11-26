@@ -89,7 +89,14 @@ class UiHttpServer {
         });
     }
     this.watchdog = setInterval(() => {
-      if (this.phase === "open" && Date.now() - this.lastHeartbeatAt > UI_ABANDONED_GRACE_MS) {
+      if (this.phase !== "open") {
+        return;
+      }
+      if (this.events.pingClients()) {
+        this.touchHeartbeat();
+        return;
+      }
+      if (Date.now() - this.lastHeartbeatAt > UI_ABANDONED_GRACE_MS) {
         this.close("stale");
       }
     }, UI_WATCHDOG_INTERVAL_MS);
@@ -154,6 +161,7 @@ class UiHttpServer {
         close: (reason) => this.close(reason ?? "closed"),
         getMessages: () => this.proxy.getMessages(),
         takeModelContext: () => this.proxy.takeModelContext(),
+        getHostError: () => this.proxy.getHostError(),
         getSummary: () => this.events.getSummary(),
       },
     );
@@ -301,7 +309,10 @@ class UiHttpServer {
     this.touchHeartbeat();
     const lastId = req.headers["last-event-id"];
     this.events.connect(res, lastId === undefined ? undefined : String(lastId));
-    req.on("close", () => this.events.disconnect(res));
+    const disconnect = (): void => this.events.disconnect(res);
+    req.on("close", disconnect);
+    res.on("close", disconnect);
+    res.on("error", disconnect);
   }
 
   private async servePost(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
@@ -316,7 +327,9 @@ class UiHttpServer {
     // A partial upload is not accepted until its authenticated body is complete.
     if (
       this.phase === "closed" &&
-      (url.pathname === "/proxy/ui/message" || url.pathname === "/proxy/ui/context")
+      (url.pathname === "/proxy/ui/message" ||
+        url.pathname === "/proxy/ui/context" ||
+        url.pathname === "/proxy/ui/error")
     ) {
       sendJson(res, 409, { ok: false, error: "UI session is complete; message was not accepted" });
       return;

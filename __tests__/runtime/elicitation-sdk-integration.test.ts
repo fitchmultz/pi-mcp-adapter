@@ -38,11 +38,13 @@ async function createConnectedManager(
 function createState(
   manager: McpServerManager,
   metadata: readonly ToolMetadata[],
+  ui?: McpExtensionState["ui"],
 ): McpExtensionState {
   const state = createTestState({
     manager,
     config: { settings: {}, mcpServers: { real: definition } },
     toolMetadata: new Map([["real", [...metadata]]]),
+    ...(ui !== undefined ? { ui } : {}),
   });
   states.push(state);
   return state;
@@ -134,7 +136,7 @@ describe("elicitation with the real MCP SDK", () => {
       description: "integration test",
       ...spec,
     };
-    const state = createState(manager, [metadata]);
+    const state = createState(manager, [metadata], native.context.ui);
 
     const result =
       adapter === "proxy"

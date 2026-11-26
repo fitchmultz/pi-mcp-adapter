@@ -136,8 +136,16 @@ export class McpHostRuntime implements McpAdapterHost {
       if (ctx.cwd !== this.runtimeCwd) {
         await this.startSession(ctx, { preserveFrozenTools: this.directToolsFrozen });
       }
-      const message =
-        event.messageType === "user" ? takeUiModelContextMessage(this.state?.uiServer) : undefined;
+      if (event.messageType !== "user" || !this.state) {
+        return;
+      }
+      const message = takeUiModelContextMessage(
+        this.state.uiServer,
+        this.state.pendingUiModelContext,
+      );
+      if (message) {
+        this.state.pendingUiModelContext = undefined;
+      }
       return message ? { message } : undefined;
     });
     this.pi.on("session_shutdown", () => this.shutdown());

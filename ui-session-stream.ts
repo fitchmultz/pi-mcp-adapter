@@ -133,6 +133,7 @@ export class UiSessionStream {
       url: this.handle.url,
       viewer,
       isActive: () => this.isActive(),
+      getHostError: () => this.handle.getHostError?.(),
       sendToolResult: (result) => this.sendResult(result, false),
       sendResultPatch: (result) => this.sendResult(result, true),
       sendToolCancelled: (reason) => this.cancel(reason),

@@ -28,5 +28,6 @@ export interface UiServerOptions {
   sessionToken?: string;
   port?: number;
   onMessage?: (params: UiMessageParams) => Promise<void> | void;
+  onError?: (message: string) => void;
   onComplete?: (reason: string) => void;
 }

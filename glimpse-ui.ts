@@ -1,49 +1,83 @@
-import { existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { access } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { join, dirname } from "node:path";
 import { platform } from "node:os";
 import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
+import { promisify } from "node:util";
 import { z } from "zod";
 
-let glimpseAvailable: boolean | null = null;
-let resolvedBinaryPath: string | null = null;
+const execFileAsync = promisify(execFile);
+const NPM_ROOT_TIMEOUT_MS = 5_000;
 
-export function isGlimpseAvailable(): boolean {
-  if (glimpseAvailable !== null) {
-    return glimpseAvailable;
-  }
-  if (platform() !== "darwin") {
-    glimpseAvailable = false;
+let resolvedBinaryPath: string | null = null;
+let pendingLookup: Promise<string | null> | null = null;
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
     return false;
   }
-  resolvedBinaryPath = getGlimpseBinaryPath();
-  glimpseAvailable = resolvedBinaryPath !== null;
-  return glimpseAvailable;
 }
 
-function getGlimpseBinaryPath(): string | null {
+export async function isGlimpseAvailable(): Promise<boolean> {
+  if (platform() !== "darwin") {
+    return false;
+  }
+  const binaryPath = await resolveGlimpseBinaryPath();
+  return binaryPath !== null;
+}
+
+async function resolveGlimpseBinaryPath(): Promise<string | null> {
   const override = process.env.GLIMPSE_BINARY;
-  if (override !== undefined && override !== "" && existsSync(override)) {
+  if (override !== undefined && override !== "" && (await fileExists(override))) {
     return override;
   }
+  if (resolvedBinaryPath !== null) {
+    if (await fileExists(resolvedBinaryPath)) {
+      return resolvedBinaryPath;
+    }
+    resolvedBinaryPath = null;
+  }
+  if (pendingLookup) {
+    return pendingLookup;
+  }
+  pendingLookup = probeGlimpseBinaryPath().finally(() => {
+    pendingLookup = null;
+  });
+  const found = await pendingLookup;
+  if (found !== null) {
+    resolvedBinaryPath = found;
+  }
+  return found;
+}
+
+async function probeGlimpseBinaryPath(): Promise<string | null> {
   try {
     const require = createRequire(import.meta.url);
     const binaryPath = join(dirname(require.resolve("glimpseui")), "glimpse");
-    if (existsSync(binaryPath)) {
+    if (await fileExists(binaryPath)) {
       return binaryPath;
     }
   } catch {
     // The optional local installation is absent; try the global installation.
   }
   try {
-    const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf-8" }).trim();
-    const binaryPath = join(globalRoot, "glimpseui", "src", "glimpse");
-    if (existsSync(binaryPath)) {
-      return binaryPath;
+    const { stdout } = await execFileAsync("npm", ["root", "-g"], {
+      encoding: "utf8",
+      timeout: NPM_ROOT_TIMEOUT_MS,
+    });
+    const globalRoot = stdout.trim();
+    if (globalRoot !== "") {
+      const binaryPath = join(globalRoot, "glimpseui", "src", "glimpse");
+      if (await fileExists(binaryPath)) {
+        return binaryPath;
+      }
     }
   } catch {
-    // No usable optional installation was found.
+    // Do not permanently cache transient lookup failures; retry on a later session.
   }
   return null;
 }
@@ -57,9 +91,10 @@ export async function openGlimpseWindow(
     onClosed: () => void;
   },
 ): Promise<{ close: () => void }> {
+  const binaryPath = await resolveGlimpseBinaryPath();
   const modulePath =
-    resolvedBinaryPath !== null && resolvedBinaryPath !== ""
-      ? join(dirname(resolvedBinaryPath), "glimpse.mjs")
+    binaryPath !== null && binaryPath !== ""
+      ? join(dirname(binaryPath), "glimpse.mjs")
       : "glimpseui";
   const glimpse: unknown = await import(modulePath);
   if (glimpse === null || typeof glimpse !== "object" || !("open" in glimpse)) {

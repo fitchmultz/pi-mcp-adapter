@@ -247,6 +247,81 @@ describe("lazy MCP gateways through real Pi SDK", () => {
     expect(observe).toHaveBeenCalledTimes(3);
   }, 20_000);
 
+  it("delivers pending app context on the next user prompt even after the UI closes", async () => {
+    const stubBin = await mkdtemp(join(tmpdir(), "mcp-noop-browser-closed-"));
+    for (const command of ["open", "xdg-open"]) {
+      const scriptPath = join(stubBin, command);
+      await writeFile(scriptPath, "#!/bin/sh\nexit 0\n");
+      await chmod(scriptPath, 0o755);
+    }
+    vi.stubEnv("MCP_UI_VIEWER", "browser");
+    vi.stubEnv("BROWSER", "");
+    vi.stubEnv("PATH", `${stubBin}${delimiter}${process.env.PATH ?? ""}`);
+    onTestFinished(async () => {
+      vi.unstubAllEnvs();
+      await rm(stubBin, { recursive: true, force: true });
+    });
+    const h = await harness({
+      servers: {
+        selection: {
+          command: process.execPath,
+          args: [join(import.meta.dirname, "fixtures/app-context-server.mjs")],
+        },
+      },
+    });
+    const [launch] = await h.request([
+      {
+        name: "mcp",
+        arguments: {
+          action: "call",
+          server: "selection",
+          tool: "open_selector",
+        },
+      },
+    ]);
+    const output = requireValue(launch);
+    expect(output.isError).toBe(false);
+    const { uiUrl } = JSONObjectSchema.parse(output.details);
+    if (typeof uiUrl !== "string") {
+      throw new Error("Missing app URL");
+    }
+    const view = new URL(uiUrl);
+    const token = requireValue(view.searchParams.get("session"));
+
+    const contextRes = await fetch(new URL("/proxy/ui/context", view), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token,
+        params: { structuredContent: { selection: "survived-close" } },
+      }),
+    });
+    expect(contextRes.status).toBe(200);
+
+    const completeRes = await fetch(new URL("/proxy/ui/complete", view), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, params: { reason: "done" } }),
+    });
+    expect(completeRes.status).toBe(200);
+
+    const contextMessages = () =>
+      h.session.messages.filter(
+        (message) => message.role === "custom" && message.customType === "mcp-ui-context",
+      );
+
+    await h.session.prompt("Use the closed selection");
+    const [context] = contextMessages();
+    expect(context).toMatchObject({
+      display: false,
+      content:
+        'Context from the selection MCP app:\n{"structuredContent":{"selection":"survived-close"}}',
+    });
+
+    await h.session.prompt("Follow-up after consumption");
+    expect(contextMessages()).toEqual([context]);
+  }, 20_000);
+
   it("skips MCP UI cleanly when per-server uiViewer is none", async () => {
     const h = await harness({
       servers: {

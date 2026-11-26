@@ -24,5 +24,7 @@ export interface UiServerHandle {
   getSessionMessages: () => UiSessionMessages;
   /** Consume the latest pending context for the next user or app chat request. */
   takeModelContext: () => UiModelContextUpdate | undefined;
+  /** Latest error reported by the browser host page for this session, if any. */
+  getHostError?: () => string | undefined;
   getStreamSummary: () => UiStreamSummary | undefined;
 }

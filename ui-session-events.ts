@@ -1,5 +1,5 @@
 import type { BeforeAgentStartEventResult } from "@earendil-works/pi-coding-agent";
-import type { McpExtensionState } from "./state.ts";
+import type { McpExtensionState, PendingUiModelContext } from "./state.ts";
 import type { UiSessionRequest } from "./ui-session-contracts.ts";
 import type { UiServerHandle } from "./ui-server-contracts.ts";
 import {
@@ -12,19 +12,28 @@ type UiModelContextMessage = NonNullable<BeforeAgentStartEventResult["message"]>
   content: string;
 };
 
-export function takeUiModelContextMessage(
-  handle: UiServerHandle | null | undefined,
-): UiModelContextMessage | undefined {
-  const context = handle?.takeModelContext();
-  if (!handle || !context) {
-    return;
-  }
+function formatUiModelContextMessage(entry: PendingUiModelContext): UiModelContextMessage {
   return {
     customType: "mcp-ui-context",
-    content: `Context from the ${handle.serverName} MCP app:\n${context.summary}`,
+    content: `Context from the ${entry.serverName} MCP app:\n${entry.context.summary}`,
     display: false,
-    details: { server: handle.serverName, tool: handle.toolName, context },
+    details: { server: entry.serverName, tool: entry.toolName, context: entry.context },
   };
+}
+
+export function takeUiModelContextMessage(
+  handle: UiServerHandle | null | undefined,
+  retained?: PendingUiModelContext,
+): UiModelContextMessage | undefined {
+  const context = handle?.takeModelContext();
+  if (handle && context) {
+    return formatUiModelContextMessage({
+      serverName: handle.serverName,
+      toolName: handle.toolName,
+      context,
+    });
+  }
+  return retained ? formatUiModelContextMessage(retained) : undefined;
 }
 
 /** App chat requests and notifications; legacy intents only go to UI history. */
@@ -60,7 +69,10 @@ export class UiSessionEvents {
       return;
     }
     // Carry context with the request even when Pi queues it during a run.
-    const context = takeUiModelContextMessage(handle);
+    const context = takeUiModelContextMessage(handle, this.state.pendingUiModelContext);
+    if (context) {
+      this.state.pendingUiModelContext = undefined;
+    }
     const request = `Chat request from the ${this.request.serverName} MCP app (not verified as user input):\n${prompt}`;
     this.state.sendMessage(
       {

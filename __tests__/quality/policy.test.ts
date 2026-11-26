@@ -55,6 +55,7 @@ function repository(): string {
     "host-browser.bundle.js",
     "ui-stream-types.ts",
     "ui-session-timing.ts",
+    "ui-link-url.ts",
     ...readdirSync(source).filter((name) => /^host-browser-.*\.ts$/u.test(name)),
   ]) {
     const destination = join(root, file);

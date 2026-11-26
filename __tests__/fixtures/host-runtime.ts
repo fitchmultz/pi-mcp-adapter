@@ -109,12 +109,14 @@ export async function closeHosts(): Promise<void> {
 export async function openHost(
   options: {
     failCompletion?: boolean;
+    failIframeLoad?: boolean;
     holdCompletion?: "request" | "response";
     hostContext?: UiHostContext;
     toolArgs?: Record<string, unknown>;
     confirm?: boolean;
     permissions?: UiResourcePermissions;
     onMessage?: UiServerOptions["onMessage"];
+    onError?: UiServerOptions["onError"];
     beforeHostLoad?: (handle: UiServerHandle) => void;
     beforeAppLoad?: (controls: {
       clock: BrowserClock;
@@ -131,6 +133,7 @@ export async function openHost(
     toolArgs: options.toolArgs ?? {},
     ...(options.hostContext === undefined ? {} : { hostContext: options.hostContext }),
     ...(options.onMessage === undefined ? {} : { onMessage: options.onMessage }),
+    ...(options.onError === undefined ? {} : { onError: options.onError }),
     resource: {
       uri: "ui://test/app",
       html: "<h1>Test app</h1>",
@@ -232,7 +235,9 @@ export async function openHost(
           assert.equal(response.status, 200);
           await response.text();
           await options.beforeAppLoad?.({ clock, requests, settleRequests });
-          iframe.dispatchEvent(new window.Event("load"));
+          iframe.dispatchEvent(
+            new window.Event(options.failIframeLoad === true ? "error" : "load"),
+          );
           iframeLoaded.resolve();
         })
         .catch(iframeLoaded.reject);

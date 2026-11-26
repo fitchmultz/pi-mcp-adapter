@@ -14,6 +14,7 @@ export class McpStateCleanup {
       this.state.uiServer?.close(reason);
     } finally {
       this.state.uiServer = null;
+      this.state.pendingUiModelContext = undefined;
     }
   }
 

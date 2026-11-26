@@ -9,13 +9,17 @@ import { isAbortError } from "./runtime-owner.ts";
 import { throwIfAborted } from "./abort.ts";
 import { logger } from "./logger.ts";
 
-/** One process-wide optional viewer; session replacement closes it before opening another. */
-let activeGlimpseWindow: { close: () => void } | null = null;
+/** Session-scoped Glimpse windows keyed by handle so concurrent sessions stay isolated. */
+const sessionGlimpseWindows = new WeakMap<UiServerHandle, { close: () => void }>();
 
-export function closeActiveUiWindow(): void {
-  if (activeGlimpseWindow) {
-    activeGlimpseWindow.close();
-    activeGlimpseWindow = null;
+export function closeUiWindow(handle: UiServerHandle | null | undefined): void {
+  if (!handle) {
+    return;
+  }
+  const glimpseWindow = sessionGlimpseWindows.get(handle);
+  if (glimpseWindow) {
+    sessionGlimpseWindows.delete(handle);
+    glimpseWindow.close();
   }
 }
 
@@ -43,7 +47,7 @@ function resolveViewerPreference(
 ): string | undefined {
   const envValue = process.env.MCP_UI_VIEWER?.trim().toLowerCase();
   if (envValue !== undefined && envValue !== "") {
-    return envValue;
+    return envValue === "auto" ? undefined : envValue;
   }
   const configured = resolveConfiguredViewer(config, serverName);
   if (configured === undefined || configured === "auto") {
@@ -52,9 +56,16 @@ function resolveViewerPreference(
   return configured;
 }
 
-export function isUiViewerDisabled(config: McpConfig | undefined, serverName: string): boolean {
-  const preference = resolveViewerPreference(config, serverName);
-  return preference === "none" || preference === "off" || preference === "disabled";
+export function isUiViewerDisabled(
+  state: Pick<McpExtensionState, "config" | "ui">,
+  serverName: string,
+): boolean {
+  const preference = resolveViewerPreference(state.config, serverName);
+  if (preference === "none" || preference === "off" || preference === "disabled") {
+    return true;
+  }
+  // Headless runs default to autonomous data-only calls unless headed viewer is explicitly forced.
+  return preference === undefined && state.ui === undefined;
 }
 
 export async function openUiViewer(context: ViewerContext): Promise<UiSessionViewer> {
@@ -84,7 +95,9 @@ class UiViewer {
     this.assertActive();
     const remoteLikely = this.remoteByEnv || (await hasActiveRemoteLogin());
     this.assertActive();
-    const glimpseDetected = !this.remoteByEnv && isGlimpseAvailable();
+    const glimpseDetected =
+      !this.remoteByEnv && this.preference === undefined && (await isGlimpseAvailable());
+    this.assertActive();
     const useGlimpse = this.useGlimpse(glimpseDetected);
     if (useGlimpse) {
       return this.openLocalWindow(remoteLikely);
@@ -118,7 +131,7 @@ class UiViewer {
         glimpseWindow.close();
         this.assertActive();
       }
-      activeGlimpseWindow = glimpseWindow;
+      sessionGlimpseWindows.set(handle, glimpseWindow);
       if (remoteLikely) {
         await this.emitRemoteHint(null, true);
       }

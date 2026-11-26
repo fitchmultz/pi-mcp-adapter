@@ -1,6 +1,31 @@
 import { hash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import type { UiHostContext, UiResourceContent, UiResourceCsp } from "./types.ts";
+
+interface CachedAsset {
+  mtimeMs: number;
+  size: number;
+  value: string;
+}
+
+const sdkUrlCache = new Map<string, CachedAsset>();
+const browserSourceCache = new Map<string, CachedAsset>();
+
+function readCachedAsset(
+  cache: Map<string, CachedAsset>,
+  fileUrl: URL,
+  load: (url: URL) => string,
+): string {
+  const key = fileUrl.href;
+  const stats = statSync(fileUrl);
+  const cached = cache.get(key);
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
+    return cached.value;
+  }
+  const value = load(fileUrl);
+  cache.set(key, { mtimeMs: stats.mtimeMs, size: stats.size, value });
+  return value;
+}
 
 const APP_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-downloads";
 
@@ -93,8 +118,11 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
   // Use the locally bundled native SDK to avoid CDN Zod bundling issues. The
   // server caches it for a year, so its content digest versions the URL: a browser
   // never links this host against an earlier cached asset lacking its imports.
-  const sdkBundle = readFileSync(new URL("./app-bridge.bundle.js", import.meta.url));
-  const sdkUrl = `/app-bridge.bundle.js?v=${hash("sha256", sdkBundle, "base64url")}`;
+  const sdkUrl = readCachedAsset(
+    sdkUrlCache,
+    new URL("./app-bridge.bundle.js", import.meta.url),
+    (fileUrl) => `/app-bridge.bundle.js?v=${hash("sha256", readFileSync(fileUrl), "base64url")}`,
+  );
   const importMap = safeInlineJSON({
     imports: {
       // A custom bridge replaces only AppBridge and PostMessageTransport.
@@ -107,7 +135,11 @@ export function buildHostHtmlTemplate(input: HostHtmlTemplateInput): string {
   });
   // Canonical browser source: host-browser-entry.ts. The build must generate and
   // freshness-check this asset, then copy it beside the emitted host template.
-  const browserSource = readFileSync(new URL("./host-browser.bundle.js", import.meta.url), "utf8");
+  const browserSource = readCachedAsset(
+    browserSourceCache,
+    new URL("./host-browser.bundle.js", import.meta.url),
+    (fileUrl) => readFileSync(fileUrl, "utf8"),
+  );
   return `<!doctype html>
 <html lang="en">
 <head>

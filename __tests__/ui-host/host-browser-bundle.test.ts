@@ -24,6 +24,7 @@ it("checks generated browser freshness without writing, detects source drift, an
     }
     copyFileSync(join(root, "ui-stream-types.ts"), join(dir, "ui-stream-types.ts"));
     copyFileSync(join(root, "ui-session-timing.ts"), join(dir, "ui-session-timing.ts"));
+    copyFileSync(join(root, "ui-link-url.ts"), join(dir, "ui-link-url.ts"));
     copyFileSync(join(root, bundle), join(dir, bundle));
     symlinkSync(join(root, "node_modules"), join(dir, "node_modules"), "junction");
     const check = () =>
