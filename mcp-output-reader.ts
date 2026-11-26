@@ -10,14 +10,15 @@ import {
   type McpOutputGuardOptions,
 } from "./mcp-output-contracts.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
+import { resolveArtifactPointer } from "./mcp-output-pointer.ts";
 import type { McpReadPage } from "./mcp-script-output.ts";
 
 export interface ReadMcpResultInput {
   ref: string;
-  /** RFC 6901 JSON Pointer from the saved artifact root. Omit for the entire artifact. */
+  /** RFC 6901 JSON Pointer from the saved artifact root or embedded JSON text. Omit for the entire artifact. */
   path?: string;
   fields?: string[];
-  /** Zero-based character offset in the selected, pretty-printed value. */
+  /** Zero-based character offset in the selected value. */
   offset?: number;
   /** Maximum characters, additionally bounded by the configured output limits. */
   limit?: number;
@@ -291,7 +292,7 @@ function renderedPageEnd(
   return end;
 }
 
-/** Read the artifact and apply any JSON Pointer/fields selection as pretty JSON. */
+/** Read the artifact and apply any JSON Pointer/fields selection. */
 async function selectRenderedValue(ref: string, input: Record<string, unknown>): Promise<string> {
   const rendered = await readFile(ref, "utf8");
   if (
@@ -303,35 +304,12 @@ async function selectRenderedValue(ref: string, input: Record<string, unknown>):
   }
   let value: unknown = JSON.parse(rendered);
   if (input.path !== undefined && input.path !== "") {
-    value = applyJsonPointer(value, input.path);
+    value = resolveArtifactPointer(value, input.path);
   }
   if (input.fields !== undefined) {
     value = applyFieldSelection(value, input.fields);
   }
-  return JSON.stringify(value, null, 2);
-}
-
-/** Resolve an RFC 6901 JSON Pointer against a parsed value. */
-function applyJsonPointer(value: unknown, path: unknown): unknown {
-  if (typeof path !== "string" || !path.startsWith("/") || /~(?:[^01]|$)/.test(path)) {
-    throw new Error("path must be an RFC 6901 JSON Pointer");
-  }
-  let current = value;
-  for (const token of path.slice(1).split("/")) {
-    const key = token.replace(/~1/g, "/").replace(/~0/g, "~");
-    const record = asObjectRecord(current);
-    if (isUnknownArray(current)) {
-      if (!/^(0|[1-9]\d*)$/.test(key) || !Object.hasOwn(current, key)) {
-        throw new Error(`JSON Pointer does not exist in the saved artifact: ${path}`);
-      }
-      current = current[Number(key)];
-    } else if (record !== undefined && Object.hasOwn(record, key)) {
-      current = record[key];
-    } else {
-      throw new Error(`JSON Pointer does not exist in the saved artifact: ${path}`);
-    }
-  }
-  return current;
+  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 /** Project the selected keys off an object or array of objects. */

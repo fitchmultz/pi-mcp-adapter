@@ -1498,11 +1498,21 @@ describe("published SDK v2 over real local HTTP", () => {
           .map((entry) => entry.message),
       ).find((message) => message.toolCallId === "native-direct"),
     );
-    const finalPath = z
-      .object({ outputGuard: z.object({ fullOutputPath: z.string() }) })
-      .parse(directResult.details).outputGuard.fullOutputPath;
-    expect(dirname(dirname(finalPath))).toBe(outputDirectory);
-    expect(await readFile(finalPath, "utf8")).toContain(largeOutput);
+    const directDetails = z
+      .object({
+        resultRef: z.string(),
+        outputGuard: z.object({
+          truncated: z.literal(true),
+          fullOutputPath: z.undefined().optional(),
+        }),
+      })
+      .parse(directResult.details);
+    expect(dirname(dirname(directDetails.resultRef))).toBe(outputDirectory);
+    expect(
+      z
+        .object({ content: z.array(z.object({ text: z.string() })) })
+        .parse(JSON.parse(await readFile(directDetails.resultRef, "utf8"))).content[0]?.text,
+    ).toBe(largeOutput);
     const restoredPath = join(root, "restored.jsonl");
     await writeFile(restoredPath, checkpoint);
     const restored = SessionManager.open(restoredPath);

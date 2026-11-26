@@ -1,6 +1,7 @@
 // MCP protocol content to model-visible content.
 import type { McpContent, ContentBlock } from "./types.ts";
 import { formatMcpPayloadFile, type McpPayloadFile } from "./mcp-output-guard.ts";
+import { classifyResourceBlob } from "./mcp-output-media.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
 
 function stringProperty(
@@ -12,15 +13,47 @@ function stringProperty(
   return typeof value === "string" ? value : fallback;
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
 function renderResource(value: unknown): ContentBlock {
   const resource = asObjectRecord(value);
   const resourceUri = stringProperty(resource, "uri", "(no URI)");
-  const resourceContent = stringProperty(
-    resource,
-    "text",
-    resource?.blob !== undefined ? "[Binary content; not rendered]" : "(no content)",
-  );
-  return { type: "text", text: `[Resource: ${resourceUri}]\n${resourceContent}` };
+  if (typeof resource?.text === "string") {
+    return { type: "text", text: `[Resource: ${resourceUri}]\n${resource.text}` };
+  }
+  const classified = classifyResourceBlob(resource);
+  if (classified?.kind === "image") {
+    return { type: "image", data: classified.data, mimeType: classified.mimeType };
+  }
+  if (classified?.kind === "text") {
+    return { type: "text", text: `[Resource: ${resourceUri}]\n${classified.text}` };
+  }
+  const fallback = resource?.blob !== undefined ? "[Binary content; not rendered]" : "(no content)";
+  return { type: "text", text: `[Resource: ${resourceUri}]\n${fallback}` };
+}
+
+function renderResourceLink(block: Record<string, unknown> | undefined): ContentBlock {
+  const linkName = stringProperty(block, "name", stringProperty(block, "uri", "unknown"));
+  const linkUri = stringProperty(block, "uri", "(no URI)");
+  const lines = [`[Resource Link: ${linkName}]`, `URI: ${linkUri}`];
+  const labeledFields: Array<[string, unknown]> = [
+    ["Title", block?.title],
+    ["Description", block?.description],
+    ["MIME type", block?.mimeType],
+  ];
+  for (const [label, rawValue] of labeledFields) {
+    const value = nonEmptyString(rawValue);
+    if (value !== undefined) {
+      lines.push(`${label}: ${value}`);
+    }
+  }
+  const size = block?.size;
+  if (typeof size === "number" && Number.isFinite(size) && size >= 0) {
+    lines.push(`Size: ${size} bytes`);
+  }
+  return { type: "text", text: lines.join("\n") };
 }
 
 function renderContent(value: unknown): ContentBlock {
@@ -36,11 +69,8 @@ function renderContent(value: unknown): ContentBlock {
       };
     case "resource":
       return renderResource(block.resource);
-    case "resource_link": {
-      const linkName = stringProperty(block, "name", stringProperty(block, "uri", "unknown"));
-      const linkUri = stringProperty(block, "uri", "(no URI)");
-      return { type: "text", text: `[Resource Link: ${linkName}]\nURI: ${linkUri}` };
-    }
+    case "resource_link":
+      return renderResourceLink(block);
     case "audio":
       return {
         type: "text",
@@ -68,9 +98,17 @@ export function resolveMcpResultContent(result: Record<string, unknown>): Conten
 
 function renderResourceContent(resource: unknown): unknown {
   const record = asObjectRecord(resource);
-  return typeof record?.text === "string"
-    ? { type: "text", text: record.text }
-    : { type: "resource", resource };
+  if (typeof record?.text === "string") {
+    return { type: "text", text: record.text };
+  }
+  const classified = classifyResourceBlob(record);
+  if (classified?.kind === "image") {
+    return { type: "image", data: classified.data, mimeType: classified.mimeType };
+  }
+  if (classified?.kind === "text") {
+    return { type: "text", text: classified.text };
+  }
+  return { type: "resource", resource };
 }
 
 /** Persist content the model cannot consume; never imply an audio/blob payload was rendered. */

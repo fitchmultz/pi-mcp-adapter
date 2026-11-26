@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -176,47 +176,54 @@ describe("guardMcpOutput", () => {
     ]);
   });
 
-  it("truncates large text output and saves the full output to a file", async () => {
-    const text = Array.from({ length: 20 }, (_, i) => `line-${i} ${"x".repeat(40)}`).join("\n");
-    const guarded = await guardMcpOutput([{ type: "text", text }], {
-      maxBytes: 300,
-      maxLines: 8,
-      detailsMaxBytes: 200,
-      rawMcpResult: {
+  it("truncates large text output and reuses the single retained MCP result artifact", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "mcp-guard-single-spill-"));
+    try {
+      const text = Array.from({ length: 20 }, (_, i) => `line-${i} ${"x".repeat(40)}`).join("\n");
+      const rawMcpResult = {
         content: [{ type: "text", text }],
         isError: false,
         structuredContent: { rows: [text] },
-      },
-    });
+      };
+      const guarded = await guardMcpOutput([{ type: "text", text }], {
+        outputDirectory,
+        maxBytes: 300,
+        maxLines: 8,
+        detailsMaxBytes: 200,
+        rawMcpResult,
+      });
 
-    expect(guarded.outputGuard).toMatchObject({
-      truncated: true,
-      originalLines: 20,
-    });
-    expect(guarded.outputGuard?.fullOutputPath).toBeTruthy();
-    expect(guarded.content).toHaveLength(2);
-    assert.ok(typeof guarded.resultRef === "string");
-    const notice = guarded.content[1];
-    assert.ok(notice?.type === "text");
-    expect(notice.text).toContain(guarded.resultRef);
-    expect(guarded.content[0]).toMatchObject({ type: "text" });
-    const first = guarded.content[0];
-    assert.ok(first?.type === "text");
-    const returnedText = first.text;
-    expect(returnedText).toContain("MCP text output truncated");
-    expect(returnedText).toContain("Full text saved to:");
-    expect(returnedText).not.toContain("line-19");
+      expect(guarded.outputGuard).toMatchObject({
+        truncated: true,
+        originalLines: 20,
+      });
+      expect(guarded.outputGuard?.fullOutputPath).toBeUndefined();
+      expect(guarded.content).toHaveLength(1);
+      assert.ok(typeof guarded.resultRef === "string");
+      const first = guarded.content[0];
+      assert.ok(first?.type === "text");
+      const returnedText = first.text;
+      expect(returnedText).toContain("MCP text output truncated");
+      expect(returnedText).toContain(guarded.resultRef);
+      expect(returnedText).toContain("read-result");
+      expect(returnedText).not.toContain("Full text saved to:");
+      expect(returnedText).not.toContain("line-19");
 
-    assert.ok(typeof guarded.outputGuard?.fullOutputPath === "string");
-    const saved = await readFile(guarded.outputGuard.fullOutputPath, "utf8");
-    expect(saved).toBe(text);
+      const files = (await readdir(outputDirectory, { recursive: true })).filter((name) =>
+        name.endsWith(".txt"),
+      );
+      expect(files).toHaveLength(1);
+      expect(JSON.parse(await readFile(guarded.resultRef, "utf8"))).toEqual(rawMcpResult);
 
-    const summary = z.looseObject({ fullResultPath: z.string() }).parse(guarded.mcpResult);
-    expect(summary).toMatchObject({ omitted: true, isError: false, contentBlocks: 1 });
-    expect(summary.fullResultPath).toBeTruthy();
-    expect(summary.structuredContentSummary).toMatchObject({ omitted: true });
-    expect(summary).not.toHaveProperty("structuredContent");
-    expect(JSON.stringify(summary)).not.toContain("line-19");
+      const summary = z.looseObject({ fullResultPath: z.string() }).parse(guarded.mcpResult);
+      expect(summary).toMatchObject({ omitted: true, isError: false, contentBlocks: 1 });
+      expect(summary.fullResultPath).toBe(guarded.resultRef);
+      expect(summary.structuredContentSummary).toMatchObject({ omitted: true });
+      expect(summary).not.toHaveProperty("structuredContent");
+      expect(JSON.stringify(summary)).not.toContain("line-19");
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
+    }
   });
 
   it("summarizes details.mcpResult only when it exceeds detailsMaxBytes", async () => {
@@ -484,9 +491,8 @@ describe("readMcpResult readAll", () => {
         { outputDirectory, detailsMaxBytes: 1 },
       );
       assert.ok(typeof saved.resultRef === "string");
-      const expected = JSON.stringify(rows, null, 2);
+      const expected = JSON.stringify(rows);
       expect(Buffer.byteLength(expected, "utf8")).toBeGreaterThan(50 * 1024);
-      expect(expected.split("\n").length).toBeGreaterThan(2000);
 
       const full = await readMcpResult(
         {

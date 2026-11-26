@@ -51,11 +51,7 @@ describe("review regressions: saved-result readback", () => {
       const saved = await retainMcpResult({ structuredContent: { rows } }, { outputDirectory });
       const ref = saved.resultRef;
       assert.ok(ref !== undefined);
-      const expected = JSON.stringify(
-        rows.map(({ id }) => ({ id })),
-        null,
-        2,
-      );
+      const expected = JSON.stringify(rows.map(({ id }) => ({ id })));
       let offset = 0;
       let reconstructed = "";
       for (let count = 0; count <= expected.length; count++) {
@@ -85,11 +81,11 @@ describe("review regressions: saved-result readback", () => {
   );
 
   it("never splits surrogate pairs at the character limit", async () => {
-    const saved = await retainMcpResult({ value: "😀Z" }, { outputDirectory });
+    const saved = await retainMcpResult({ value: "a😀Z" }, { outputDirectory });
     const ref = saved.resultRef;
     assert.ok(ref !== undefined);
     const first = await readMcpResult({ ref, path: "/value", limit: 2 }, { outputDirectory });
-    expect(first.content[0]?.text).toBe('"');
+    expect(first.content[0]?.text).toBe("a");
     expect(first.details.nextOffset).toBe(1);
     const second = await readMcpResult(
       { ref, path: "/value", offset: first.details.nextOffset, limit: 2 },
@@ -171,10 +167,10 @@ describe("review regressions: saved-result readback", () => {
   });
 
   it("keeps tiny-cap pages progressing with complete characters and recovery notices", async () => {
-    const saved = await retainMcpResult({ value: ["😀"] }, { outputDirectory });
+    const saved = await retainMcpResult({ value: "a\n😀\nb" }, { outputDirectory });
     const ref = saved.resultRef;
     assert.ok(ref !== undefined);
-    const expected = JSON.stringify(["😀"], null, 2);
+    const expected = "a\n😀\nb";
     let offset = 0;
     let reconstructed = "";
     for (let count = 0; count < expected.length; count++) {
@@ -214,7 +210,7 @@ describe("review regressions: saved-result readback", () => {
       );
     }
     for (const [path, expected] of [
-      ["/rows/0", '"first"'],
+      ["/rows/0", "first"],
       ["/object/length", "7"],
       ["/object/01", "8"],
       ["/object/a~1b~0c", "9"],
@@ -236,6 +232,7 @@ describe("review regressions: saved-result readback", () => {
     expect(file).toMatchObject({ index: 0, kind: "audio", mimeType: "audio/wav" });
     const { path } = file;
     assert.ok(path !== undefined);
+    expect(path.endsWith(".wav")).toBe(true);
     expect(await readFile(path)).toEqual(bytes);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect((await stat(dirname(path))).mode & 0o777).toBe(0o700);

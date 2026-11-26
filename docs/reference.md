@@ -509,10 +509,10 @@ When a matching tool is called from the proxy tool, a direct MCP tool, a resourc
 
 Oversized MCP tool/resource results are guarded by default so a single huge response can't blow up the model context window or the session file:
 
-- Inline text output is capped at **50 KiB / 2,000 lines** (matching Pi's built-in `bash` guard). Larger output is truncated to a head preview and the full text is saved to a temp file whose path is included in the result, so the agent can `read`/`grep` it.
+- Inline text output is capped at **50 KiB / 2,000 lines** (matching Pi's built-in `bash` guard). Larger MCP tool/resource outputs truncate to a head preview and reuse the single canonical `resultRef` artifact (`mcp-result-*.txt`) in one truncation notice pointing to `mcp({ action: "read-result", ref, ... })` (without writing a second `output-*.txt` file or setting `outputGuard.fullOutputPath`). Plain guarded outputs without a retained MCP envelope still save full text to `output-*.txt` (`outputGuard.fullOutputPath`) for `read`/`grep` or `read-result` paging.
 - **Image content blocks pass through unchanged** — only text output is guarded. Images are delivered to the provider as native image content.
 - In gateway and direct modes, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results use a compact summary and retain the full raw JSON in a file.
-- Structured data, media, resources, extra protocol fields, and oversized results retain a saved raw result in `details.resultRef` (and `mcpAdapter.resultRef` for structured codemode calls). An inline model-visible **result reference** footer is appended only when output is truncated or the raw result contains extra unrendered top-level envelope fields. Tiny plain-text results remain inline without an artifact. `structuredContent` is shown even when the server also returns content blocks.
+- Structured data, media, resources, extra protocol fields, and oversized results retain a saved raw result in `details.resultRef` (and `mcpAdapter.resultRef` for structured codemode calls). When output is truncated, the truncation notice carries that `resultRef` directly; an additional inline `[MCP result saved: ...]` footer is appended only for untruncated results that carry extra unrendered top-level envelope fields (or a save error). Tiny plain-text results remain inline without an artifact. `structuredContent` is shown even when the server also returns content blocks.
 
 Tune the limits with the object form:
 
@@ -539,18 +539,18 @@ mcp({
 });
 ```
 
-`path` is an RFC 6901 JSON Pointer from the root of the saved file, not from the displayed preview or a Pi result wrapper.
+`path` is an RFC 6901 JSON Pointer. Resolution checks the saved MCP envelope root first (such as `/structuredContent/rows` or `/content/0/text`), automatically decoding UTF-8 text-typed resource blobs when addressed via `/contents/<i>/blob`, `/contents/<i>/text`, `/content/<i>/resource/blob`, or `/content/<i>/resource/text`. When a root-level pointer misses the outer envelope, `read-result` also resolves it directly inside parseable JSON text blocks (`content[*].text` or `contents[*].text`/UTF-8 text blobs) so pointers like `/rows` work without wrapping them in envelope paths. When a pointer still misses, the error names the nearest valid parent path, its available keys or array bounds, and the top-level keys of any embedded JSON payload.
 
-| Saved file                                | Pointer roots                                                                                                        |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| MCP tool result (`resultRef`)             | `/structuredContent` for structured data, or `/content/0/text` for the text of the first block if it is a text block |
-| Resource result (`resultRef`)             | `/contents` for the resource list carried by the protocol                                                            |
-| Rendered output (`outputPath`)            | Omit `path` and `fields` to page the saved text. There is no MCP envelope.                                           |
-| UI history (`resultRef` or `historyRefs`) | Omit `path` and `fields` to page grouped text or the original JSONL events. There is no MCP envelope.                |
+| Saved file                                | Pointer roots                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| MCP tool result (`resultRef`)             | `/structuredContent`, `/content/0/text`, or directly into JSON encoded inside a text block (e.g. `/rows`) |
+| Resource result (`resultRef`)             | `/contents` for the resource list, or directly into JSON encoded inside a text resource (e.g. `/items`)   |
+| Rendered output (`outputPath`)            | Omit `path` and `fields` to page the saved text. There is no MCP envelope.                                |
+| UI history (`resultRef` or `historyRefs`) | Omit `path` and `fields` to page grouped text or the original JSONL events. There is no MCP envelope.     |
 
-If a server puts JSON inside a text block, a pointer selects the entire string, not a field inside it. For example, `/content/0/text` selects the string that might contain `{"rows":[...]}`. `/rows` does not address that data in the saved envelope.
+When `path` selects a string (such as `/content/0/text`), `read-result` returns the raw unescaped string directly rather than JSON-encoding it again. Non-string JSON selections are serialized as compact JSON. Oversized MCP calls retain a single canonical `resultRef` artifact and emit one truncation notice instead of duplicating plain text into a second file.
 
-`fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count characters in the selected, pretty-printed JSON or in plain text, starting at zero. Readback defaults to 12,000 characters and stays within the output guard's byte and line limits. Continue with `details.nextOffset` until it is `null`. A failed read, including a missing pointer, returns a tool error. Readback requires an existing adapter artifact in this host's output directory and never calls the server again.
+`fields` keeps immediate keys on the selected object or each object in an array. Selection happens before paging. `offset` and `limit` count characters in the selected text or compact JSON, starting at zero. Readback defaults to 12,000 characters and stays within the output guard's byte and line limits. Continue with `details.nextOffset` until it is `null`. A failed read, including a missing pointer, returns a tool error. Readback requires an existing adapter artifact in this host's output directory and never calls the server again.
 
 ### Multi-call work
 
@@ -582,14 +582,14 @@ Set `format: "structured"` on `read-result` to get `{ text, ref, path?, offset, 
 const ref = result.mcpAdapter.resultRef;
 const path = "/content/0/text";
 let offset = 0;
-let selected = "";
+let originalText = "";
 do {
   const page = await tools.mcp({ action: "read-result", ref, path, offset, format: "structured" });
-  selected += page.text;
+  originalText += page.text;
   offset = page.nextOffset;
 } while (offset !== null);
-const originalText = JSON.parse(selected);
-// Only decode originalText as JSON if this server's text payload is JSON.
+// originalText is already the raw unescaped string from the text block.
+// Decode with JSON.parse(originalText) only if this server's text payload is JSON.
 ```
 
 ### MCP Resources

@@ -10,7 +10,11 @@ import type { McpAdapterOptions } from "../../types.ts";
 import { createTestExtensionContext } from "../test-extension-context.ts";
 
 const spillDetails = z.object({
-  outputGuard: z.object({ fullOutputPath: z.string() }),
+  resultRef: z.string(),
+  outputGuard: z.object({
+    truncated: z.literal(true),
+    fullOutputPath: z.undefined().optional(),
+  }),
 });
 
 let root: string;
@@ -90,11 +94,12 @@ describe("factory output directory", () => {
         adapters.map(async (adapter, index) => {
           const text = "unique".repeat(20_000);
           const result = await adapter.call("output_echo", { text });
-          const path = spillDetails.parse(result.details).outputGuard.fullOutputPath;
+          const path = spillDetails.parse(result.details).resultRef;
           expect(dirname(dirname(path))).toBe(directories[index]);
-          expect(await readFile(path, "utf8")).toBe(
-            `${text}\n${JSON.stringify({ echo: text }, null, 2)}`,
-          );
+          expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+            content: [{ type: "text", text }],
+            structuredContent: { echo: text },
+          });
         }),
       );
     } finally {
@@ -131,12 +136,9 @@ describe("factory output directory", () => {
           const details = spillDetails
             .extend({ mcpResult: z.object({ fullResultPath: z.string() }) })
             .parse(result.details);
+          expect(details.resultRef).toBe(details.mcpResult.fullResultPath);
           await check(
-            details.outputGuard.fullOutputPath,
-            `${text}\n${JSON.stringify({ echo: text }, null, 2)}`,
-          );
-          await check(
-            details.mcpResult.fullResultPath,
+            details.resultRef,
             JSON.stringify({
               content: [{ type: "text", text }],
               structuredContent: { echo: text },
@@ -144,15 +146,13 @@ describe("factory output directory", () => {
           );
         }
         const resource = await adapter.call("mcp", { tool: "output_read_large" });
-        const resourceDetails = spillDetails
-          .extend({ resultRef: z.string() })
-          .parse(resource.details);
-        await check(resourceDetails.outputGuard.fullOutputPath, "resource\n".repeat(10_000));
-        const resourceRaw = z
-          .object({ contents: z.array(z.object({ text: z.string() })) })
-          .parse(JSON.parse(await readFile(resourceDetails.resultRef, "utf8")));
-        expect(resourceRaw.contents[0]?.text).toBe("resource\n".repeat(10_000));
-        paths.push(resourceDetails.resultRef);
+        const resourceDetails = spillDetails.parse(resource.details);
+        await check(
+          resourceDetails.resultRef,
+          JSON.stringify({
+            contents: [{ uri: "test://large", text: "resource\n".repeat(10_000) }],
+          }),
+        );
         const files = (await readdir(expectedParent, { recursive: true }))
           .filter((name) => name.endsWith(".txt"))
           .map((name) => join(expectedParent, name));

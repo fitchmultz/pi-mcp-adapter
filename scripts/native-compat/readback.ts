@@ -78,7 +78,8 @@ export async function verifyMcpReadback(
   });
   const ref = z.object({ resultRef: z.string() }).parse(direct.details).resultRef;
   const good = await native.run("mcp", { action: "read-result", ref, path: "/content/0/text" });
-  const bad = await native.run("mcp", { action: "read-result", ref, path: "/rows" });
+  const traversed = await native.run("mcp", { action: "read-result", ref, path: "/rows" });
+  const bad = await native.run("mcp", { action: "read-result", ref, path: "/missing" });
   const blocked = {
     action: "call",
     server: "local",
@@ -106,7 +107,7 @@ export async function verifyMcpReadback(
         offset = page.nextOffset;
         pages++;
       }
-      const provider = JSON.parse(JSON.parse(text));
+      const provider = JSON.parse(text);
       const largeSelection = { ids: provider.rows.map(row => row.id), noteLength: provider.note.length, pages };
       const full = await tools.mcp({
         action: "read-result",
@@ -115,7 +116,7 @@ export async function verifyMcpReadback(
         format: "structured",
         readAll: true,
       });
-      const fullProvider = JSON.parse(JSON.parse(full.text));
+      const fullProvider = JSON.parse(full.text);
       const largeReadAll = {
         ids: fullProvider.rows.map(row => row.id),
         noteLength: fullProvider.note.length,
@@ -124,7 +125,7 @@ export async function verifyMcpReadback(
         totalCharacters: full.totalCharacters,
       };
       let rejected;
-      try { await read(ref, "/rows", 0); }
+      try { await read(ref, "/missing", 0); }
       catch (error) { rejected = error.message; }
       const blocked = ${JSON.stringify(blocked)};
       const denied = await tools.mcp({ ...blocked, format: "structured" });
@@ -135,7 +136,9 @@ export async function verifyMcpReadback(
 
   const [directText] = textOf(good);
   assert.equal(good.isError, false);
-  assert.equal(directText, JSON.stringify('{"rows":[{"id":7}],"note":"direct"}'));
+  assert.equal(directText, '{"rows":[{"id":7}],"note":"direct"}');
+  assert.equal(traversed.isError, false);
+  assert.deepEqual(JSON.parse(textOf(traversed)[0] ?? ""), [{ id: 7 }]);
   assert.equal(
     bad.isError,
     true,
@@ -147,6 +150,7 @@ export async function verifyMcpReadback(
   assert.deepEqual(z.object({ error: z.literal("result_read_failed") }).parse(bad.details), {
     error: "result_read_failed",
   });
+  assert.match(textOf(bad).join("\n"), /"rows"/);
   assert.equal(coded.isError, false, textOf(coded).join("\n"));
   assert.equal(coded.nestedCalls?.calls.at(-1)?.status, "error");
   const [, output] = textOf(coded);
@@ -169,7 +173,7 @@ export async function verifyMcpReadback(
     defaultDenial,
   } = codedSchema.parse(JSON.parse(output));
   assert.equal(inline.mcpResult.content[0].text, '{"rows":[{"id":7}],"note":"inline-json"}');
-  assert.equal(selected.text, JSON.stringify(inline.mcpResult.content[0].text));
+  assert.equal(selected.text, inline.mcpResult.content[0].text);
   assert.equal(defaultPage, selected.text);
   assert.deepEqual(largeSelection.ids, [7]);
   assert.equal(largeSelection.noteLength, 20_000);
@@ -180,9 +184,9 @@ export async function verifyMcpReadback(
   assert.equal(largeReadAll.nextOffset, null);
   assert.equal(
     largeReadAll.totalCharacters,
-    JSON.stringify(`{"rows":[{"id":7}],"note":"${"雪".repeat(20_000)}"}`).length,
+    `{"rows":[{"id":7}],"note":"${"雪".repeat(20_000)}"}`.length,
   );
-  assert.match(rejected, /JSON Pointer .*\/rows/);
+  assert.match(rejected, /JSON Pointer .*\/missing/);
   assert.equal(denied.mcpAdapter.message, defaultDenial);
   assert.match(defaultDenial, /approval-gated.*interactive session/);
   const retained = artifactSchema.parse(
