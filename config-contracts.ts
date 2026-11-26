@@ -85,6 +85,8 @@ export interface ConfigWritePreview {
 
 export interface LoadMcpConfigOptions {
   includeProject?: boolean;
+  /** Whether to read Pi's native `<project>/.pi/mcp.json`. Defaults to true; set false when `builtin:mcp` is active. */
+  includeNativePiProject?: boolean;
 }
 
 export interface ServerDisabledOverrideResult {

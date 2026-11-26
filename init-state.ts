@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import type { McpAdapterOptions, McpConfig } from "./types.ts";
+import { nativePiConfigOptions } from "./host-contract.ts";
 import { cloneMcpConfig, isPathInsideProject, loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
 import { McpLifecycleManager } from "./lifecycle.ts";
@@ -48,7 +49,11 @@ function resolveConfig(
     return cloneMcpConfig(options.resolvedConfig);
   }
   const flag = pi.getFlag("mcp-config");
-  return loadMcpConfig(options.configPath ?? (typeof flag === "string" ? flag : undefined), cwd);
+  return loadMcpConfig(
+    options.configPath ?? (typeof flag === "string" ? flag : undefined),
+    cwd,
+    nativePiConfigOptions(pi),
+  );
 }
 
 function configureRequests(

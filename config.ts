@@ -71,11 +71,26 @@ export const KNOWN_SERVER_PRESETS: readonly KnownServerPreset[] = [
   },
 ];
 
+function getFilteredConfigSources(
+  overridePath: string | undefined,
+  cwd: string,
+  options: LoadMcpConfigOptions = {},
+): ConfigSourceSpec[] {
+  const includeProject = options.includeProject !== false;
+  const includeNativePiProject = options.includeNativePiProject !== false;
+  return getConfigSources(overridePath, cwd).filter(
+    (source) =>
+      (includeProject || !isProjectConfigSource(source, cwd)) &&
+      (includeNativePiProject || source.id !== "native-pi-project"),
+  );
+}
+
 export function getMcpDiscoverySummary(
   overridePath?: string,
   cwd = process.cwd(),
+  options?: Pick<LoadMcpConfigOptions, "includeNativePiProject">,
 ): McpDiscoverySummary {
-  const sourceSpecs = getConfigSources(overridePath, cwd);
+  const sourceSpecs = getFilteredConfigSources(overridePath, cwd, options);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
   const loadedSources = loadDiscoverySources(sourceSpecs, cwd, hostConfigDiscovery);
   const sources = loadedSources.map(({ source, loaded }) => ({
@@ -172,9 +187,7 @@ export function loadMcpConfig(
   options: LoadMcpConfigOptions = {},
 ): McpConfig {
   const includeProject = options.includeProject !== false;
-  const sourceSpecs = getConfigSources(overridePath, cwd).filter(
-    (source) => includeProject || !isProjectConfigSource(source, cwd),
-  );
+  const sourceSpecs = getFilteredConfigSources(overridePath, cwd, options);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd, includeProject);
   // Host files are a lower-precedence fallback. This ordering means an opt-in
   // discovery cannot override a shared or Pi-owned definition, and all normal
@@ -379,6 +392,7 @@ export {
 export function getServerProvenance(
   overridePath?: string,
   cwd = process.cwd(),
+  options?: Pick<LoadMcpConfigOptions, "includeNativePiProject">,
 ): Map<string, ServerProvenance> {
   const provenance = new Map<string, ServerProvenance>();
   const userPath = getPiGlobalConfigPath(overridePath);
@@ -390,7 +404,7 @@ export function getServerProvenance(
     addDiscoveredHostProvenance(provenance, userPath, cwd);
   }
 
-  for (const source of getConfigSources(overridePath, cwd)) {
+  for (const source of getFilteredConfigSources(overridePath, cwd, options)) {
     const loaded = readConfigSource(source, cwd, merged.mcpServers);
     if (!loaded) {
       continue;

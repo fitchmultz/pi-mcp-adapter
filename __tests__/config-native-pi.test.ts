@@ -1,10 +1,11 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createAgentSession,
+  createMcpExtension,
   DefaultResourceLoader,
   initTheme,
   ModelRuntime,
@@ -560,21 +561,32 @@ describe("native Pi project .pi/mcp.json support", () => {
     });
   });
 
-  it("bootstraps direct tools from a trusted project .pi/mcp.json in a real Pi session", async () => {
+  function readStartCount(logPath: string): number {
+    if (!existsSync(logPath)) {
+      return 0;
+    }
+    return readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean).length;
+  }
+
+  it("bootstraps direct tools once from a trusted project .pi/mcp.json when replacing Pi's CLI builtin:mcp", async () => {
     initTheme();
     const { root, agentDir, project } = createWorkspace();
     const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
+    const startLog = join(root, "native-direct-starts.log");
+    const disabledLog = join(root, "native-disabled-starts.log");
     writeJson(join(project, ".pi", "mcp.json"), {
       mcpServers: {
         "native-direct": {
           command: process.execPath,
           args: [fixtureServer],
           cwd: ".",
+          env: { MCP_START_LOG_FILE: startLog },
           exposure: "direct",
         },
         "native-disabled": {
           command: process.execPath,
           args: [fixtureServer],
+          env: { MCP_START_LOG_FILE: disabledLog },
           enabled: false,
           exposure: "direct",
         },
@@ -586,6 +598,9 @@ describe("native Pi project .pi/mcp.json support", () => {
       cwd: project,
       agentDir,
       settingsManager,
+      extensionFactories: [
+        { name: "mcp", builtin: true, replaceable: true, factory: createMcpExtension() },
+      ],
       additionalExtensionPaths: [resolve("index.ts")],
     });
     await loader.reload();
@@ -608,16 +623,20 @@ describe("native Pi project .pi/mcp.json support", () => {
       });
       await waitFor(() => session.getActiveToolNames().includes("native_direct_noop"));
       expect(session.getActiveToolNames()).toContain("native_direct_noop");
+      expect(session.getActiveToolNames()).not.toContain("mcp__native_direct__noop");
       expect(session.getActiveToolNames()).not.toContain("native_disabled_noop");
+      expect(readStartCount(startLog)).toBe(1);
+      expect(readStartCount(disabledLog)).toBe(0);
     } finally {
       session.dispose();
     }
   });
 
-  it("skips project .pi/mcp.json in an untrusted real Pi session", async () => {
+  it("skips project .pi/mcp.json when an inline SDK createMcpExtension() coexists so servers never start twice", async () => {
     initTheme();
     const { root, agentDir, project } = createWorkspace();
     const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
+    const startLog = join(root, "builtin-owner-starts.log");
     writeJson(join(agentDir, "fitch-mcp-adapter", "mcp.json"), {
       mcpServers: {
         "control-global": {
@@ -633,6 +652,73 @@ describe("native Pi project .pi/mcp.json support", () => {
           command: process.execPath,
           args: [fixtureServer],
           cwd: ".",
+          env: { MCP_START_LOG_FILE: startLog },
+          exposure: "direct",
+        },
+      },
+    });
+
+    const settingsManager = SettingsManager.inMemory();
+    const loader = new DefaultResourceLoader({
+      cwd: project,
+      agentDir,
+      settingsManager,
+      extensionFactories: [createMcpExtension()],
+      additionalExtensionPaths: [resolve("index.ts")],
+    });
+    await loader.reload();
+    const modelRuntime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: null,
+    });
+    const { session } = await createAgentSession({
+      cwd: project,
+      agentDir,
+      resourceLoader: loader,
+      sessionManager: SessionManager.create(project, join(root, "sessions")),
+      settingsManager,
+      modelRuntime,
+    });
+    try {
+      await session.bindExtensions({
+        mode: "tui",
+        uiContext: session.extensionRunner.getUIContext(),
+      });
+      await waitFor(
+        () =>
+          session.getActiveToolNames().includes("control_global_noop") &&
+          session.getActiveToolNames().includes("mcp__native_direct__noop"),
+        8000,
+      );
+      expect(session.getActiveToolNames()).not.toContain("native_direct_noop");
+      expect(session.getAllTools().map((tool) => tool.name)).not.toContain("native_direct_noop");
+      expect(readStartCount(startLog)).toBe(1);
+    } finally {
+      session.dispose();
+    }
+  }, 15_000);
+
+  it("skips project .pi/mcp.json in an untrusted real Pi session", async () => {
+    initTheme();
+    const { root, agentDir, project } = createWorkspace();
+    const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
+    const startLog = join(root, "untrusted-starts.log");
+    writeJson(join(agentDir, "fitch-mcp-adapter", "mcp.json"), {
+      mcpServers: {
+        "control-global": {
+          command: process.execPath,
+          args: [fixtureServer],
+          directTools: true,
+        },
+      },
+    });
+    writeJson(join(project, ".pi", "mcp.json"), {
+      mcpServers: {
+        "native-direct": {
+          command: process.execPath,
+          args: [fixtureServer],
+          cwd: ".",
+          env: { MCP_START_LOG_FILE: startLog },
           exposure: "direct",
         },
       },
@@ -644,6 +730,9 @@ describe("native Pi project .pi/mcp.json support", () => {
       cwd: project,
       agentDir,
       settingsManager,
+      extensionFactories: [
+        { name: "mcp", builtin: true, replaceable: true, factory: createMcpExtension() },
+      ],
       additionalExtensionPaths: [resolve("index.ts")],
     });
     await loader.reload();
@@ -666,6 +755,7 @@ describe("native Pi project .pi/mcp.json support", () => {
       });
       await waitFor(() => session.getActiveToolNames().includes("control_global_noop"), 8000);
       expect(session.getActiveToolNames()).not.toContain("native_direct_noop");
+      expect(readStartCount(startLog)).toBe(0);
     } finally {
       session.dispose();
     }

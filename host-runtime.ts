@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type * as Init from "./init.ts";
 import type { McpExtensionState } from "./state.ts";
-import type { McpAdapterHost } from "./host-contract.ts";
+import { isBuiltinMcpActive, type McpAdapterHost } from "./host-contract.ts";
 import type { McpAdapterOptions, McpConfig, PromptMetadata } from "./types.ts";
 import { cloneMcpConfig, loadMcpConfig, isPathInsideProject } from "./config.ts";
 import { getMetadataCachePath, loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
@@ -243,7 +243,11 @@ export class McpHostRuntime implements McpAdapterHost {
     } else {
       const flag = this.pi.getFlag("mcp-config");
       this.configPath = this.options.configPath ?? (typeof flag === "string" ? flag : undefined);
-      config = loadMcpConfig(this.configPath, ctx.cwd, { includeProject: ctx.isProjectTrusted() });
+      const loadOptions = {
+        includeProject: ctx.isProjectTrusted(),
+        ...(isBuiltinMcpActive(this.pi) ? { includeNativePiProject: false } : {}),
+      };
+      config = loadMcpConfig(this.configPath, ctx.cwd, loadOptions);
     }
     return this.options.transformConfig
       ? cloneMcpConfig(this.options.transformConfig(cloneMcpConfig(config), ctx))

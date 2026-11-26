@@ -1,3 +1,4 @@
+import type { McpExposure, McpServerConfig } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -20,14 +21,9 @@ export interface LoadedNativePiConfig {
   readonly replacedServers: ReadonlySet<string>;
 }
 
-type NativeExposure = "codemode" | "deferred" | "direct" | "hidden";
-
-interface NativeBaseFields {
-  readonly enabled?: boolean;
-  readonly timeout?: number;
-  readonly exposure?: NativeExposure;
-  readonly toolExposure?: Record<string, NativeExposure>;
-}
+type NativeBaseFields = Readonly<
+  Pick<McpServerConfig, "enabled" | "timeout" | "exposure" | "toolExposure">
+>;
 
 const NATIVE_OVERRIDE_KEYS = new Set(["enabled", "exposure", "toolExposure"]);
 const ENV_REF_PREFIX = /^(?:\$\{\w+\}|\$env:\w+|\{env:\w+\})/;
@@ -48,7 +44,7 @@ function resolveNativeCwd(value: string, projectCwd: string): string {
     : resolve(projectCwd, expanded);
 }
 
-function resolveExposure(value: unknown): NativeExposure | undefined {
+function resolveExposure(value: unknown): McpExposure | undefined {
   if (value === "codemode-deferred") {
     return "codemode";
   }
@@ -57,14 +53,14 @@ function resolveExposure(value: unknown): NativeExposure | undefined {
     : undefined;
 }
 
-function parseToolExposure(raw: unknown): Record<string, NativeExposure> | null | undefined {
+function parseToolExposure(raw: unknown): Record<string, McpExposure> | null | undefined {
   if (raw === undefined) {
     return undefined;
   }
   if (!isConfigObject(raw)) {
     return null;
   }
-  const result: Record<string, NativeExposure> = {};
+  const result: Record<string, McpExposure> = {};
   for (const [tool, value] of Object.entries(raw)) {
     const resolved = resolveExposure(value);
     if (resolved === undefined) {
@@ -160,7 +156,7 @@ function hiddenExposureFields(
 }
 
 function directExposureFields(
-  entries: ReadonlyArray<[string, NativeExposure]>,
+  entries: ReadonlyArray<[string, McpExposure]>,
   hiddenKeys: readonly string[],
   ctx: NativeEntryContext,
 ): Partial<ServerEntry> {
@@ -180,7 +176,7 @@ function directExposureFields(
 }
 
 function defaultExposureFields(
-  exposure: NativeExposure | undefined,
+  exposure: McpExposure | undefined,
   directKeys: readonly string[],
   hiddenKeys: readonly string[],
   ctx: NativeEntryContext,
