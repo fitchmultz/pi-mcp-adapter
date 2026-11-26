@@ -54,7 +54,6 @@ import {
   supportsPriorDiscovery,
   toSdkPriorDiscovery,
 } from "./prior-discovery.ts";
-import { drainClientCallbacks } from "./client-operations.ts";
 import { cleanupFailures } from "./connection-disposal.ts";
 import {
   fetchAllPrompts,
@@ -63,17 +62,11 @@ import {
   fetchAllTools,
 } from "./connection-discovery.ts";
 
-import { ConnectionHandshake } from "./connection-handshake.ts";
-
-let connectionRuntimePromise: Promise<typeof ConnectionRuntime> | undefined;
-
-function loadConnectionRuntime(): Promise<typeof ConnectionRuntime> {
-  connectionRuntimePromise ??= import("./connection-runtime.ts").catch((error: unknown) => {
-    connectionRuntimePromise = undefined;
-    throw error;
-  });
-  return connectionRuntimePromise;
-}
+import {
+  closeFailedConnectionSetup,
+  ConnectionHandshake,
+  loadConnectionRuntime,
+} from "./connection-handshake.ts";
 export class ConnectionFactory {
   authStorageOptions: AuthStorageOptions = {};
   oauthRuntime: McpOAuthRuntime | undefined;
@@ -538,19 +531,10 @@ class ConnectionSetup {
 
   private async failSetup(failure: unknown, transport: Transport): Promise<ServerConnection> {
     const { factory, runtime, definition } = this.options;
-    const abortCleanup = ConnectionHandshake.cleanup(transport);
-    const abortCleanupFailed =
-      failure instanceof AggregateError &&
-      failure.message === "MCP connection abort cleanup failed";
-    const results = abortCleanupFailed
-      ? []
-      : await Promise.allSettled([
-          abortCleanup ?? Promise.resolve().then(() => this.client.close()),
-        ]);
-    await drainClientCallbacks(this.client);
-    this.stderr.detach();
-    factory.lifecycle.disposal.releaseWhenSettled(this.client);
-    const failures: unknown[] = cleanupFailures(results);
+    const failures = await closeFailedConnectionSetup(this.client, transport, failure, (client) => {
+      this.stderr.detach();
+      factory.lifecycle.disposal.releaseWhenSettled(client);
+    });
     if (runtime.isOAuthChallenge(failure) && supportsOAuth(definition) && failures.length === 0) {
       const connection = this.connection(transport, "needs-auth");
       factory.recordNeedsAuth(connection, this.client.oauthProvider?.lastObservedTokenSnapshot);

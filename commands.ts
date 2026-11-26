@@ -9,12 +9,10 @@ import {
   type McpPanelConnectionStatus,
   type McpPanelResult,
   type ImportKind,
-  type ServerProvenance,
 } from "./types.ts";
 import {
   ensureCompatibilityImports,
   getMcpDiscoverySummary,
-  getPiGlobalConfigPath,
   getProjectConfigPath,
   type KnownServerPreset,
   type LoadMcpConfigOptions,
@@ -39,7 +37,11 @@ import { openPath, resolveServerUrl } from "./utils.ts";
 import { createMcpPanel } from "./mcp-panel.ts";
 import { createMcpSetupPanel } from "./mcp-setup-panel.ts";
 import type { SetupPanelCallbacks } from "./mcp-setup-contract.ts";
-import { showStatus } from "./mcp-inspection-commands.ts";
+import {
+  buildSharedConfigNoticeLines,
+  showStatus,
+  withFallbackServerProvenance,
+} from "./mcp-inspection-commands.ts";
 import { reconnectServer } from "./mcp-connection-commands.ts";
 import { authenticateServer, authEligibility } from "./mcp-auth-commands.ts";
 import { logger } from "./logger.ts";
@@ -49,27 +51,6 @@ export { authenticateServer, logoutServer } from "./mcp-auth-commands.ts";
 
 export interface PanelFlowResult {
   configChanged: boolean;
-}
-
-function buildSharedConfigNoticeLines(
-  configOverridePath: string | undefined,
-  cwd: string,
-  discoveryOptions?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
-): string[] {
-  const discovery = getMcpDiscoverySummary(configOverridePath, cwd, discoveryOptions);
-  const onboardingState = loadOnboardingState();
-  if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
-    return [];
-  }
-
-  const sharedSources = discovery.sources.filter(
-    (source) => source.kind === "shared" && source.serverCount > 0,
-  );
-  const sourceList = sharedSources.map((source) => source.path).join(", ");
-  return [
-    `Using standard MCP config from ${sourceList}.`,
-    "Pi only writes compatibility imports and adapter-specific overrides into Pi-owned files when needed.",
-  ];
 }
 
 function buildSetupCallbacks(input: {
@@ -382,20 +363,6 @@ async function savePanelDirectTools(input: {
   }
   ui.notify("Direct tools updated for this session.", "info");
   return false;
-}
-
-function withFallbackServerProvenance(
-  config: McpConfig,
-  provenance: Map<string, ServerProvenance>,
-  overridePath: string | undefined,
-): Map<string, ServerProvenance> {
-  const fallbackPath = getPiGlobalConfigPath(overridePath);
-  for (const serverName of Object.keys(config.mcpServers)) {
-    if (!provenance.has(serverName)) {
-      provenance.set(serverName, { path: fallbackPath, kind: "user" });
-    }
-  }
-  return provenance;
 }
 
 export async function openMcpPanel(input: {

@@ -486,7 +486,7 @@ it('enforces clientRegistration: "cimd" without falling back to DCR when the AS 
 
 it('succeeds with clientRegistration: "cimd" when CIMD is supported and ignores stale stored DCR clients', async () => {
   const f = await fixture({ clientRegistration: "cimd" });
-  saveAuthEntry(
+  await saveAuthEntry(
     { serverName: f.name, serverUrl: `${f.origin}/mcp` },
     {
       serverUrl: `${f.origin}/mcp`,
@@ -499,7 +499,7 @@ it('succeeds with clientRegistration: "cimd" when CIMD is supported and ignores 
   );
   expect(await f.login()).toBe("authenticated");
   expect(f.authorizations[0]?.searchParams.get("client_id")).toBe(metadataDocument.client_id);
-  expect(f.stored()?.clientInfo).toMatchObject({
+  expect((await f.stored())?.clientInfo).toMatchObject({
     clientId: metadataDocument.client_id,
     registrationType: "cimd",
     issuer: f.origin,

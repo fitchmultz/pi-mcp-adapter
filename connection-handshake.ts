@@ -1,6 +1,36 @@
 import type { ConnectOptions, Transport } from "@modelcontextprotocol/client";
+import type * as ConnectionRuntime from "./connection-runtime.ts";
 import type { ManagedClient } from "./connection-runtime.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
+import { drainClientCallbacks } from "./client-operations.ts";
+import { cleanupFailures } from "./connection-disposal.ts";
+
+let connectionRuntimePromise: Promise<typeof ConnectionRuntime> | undefined;
+
+export function loadConnectionRuntime(): Promise<typeof ConnectionRuntime> {
+  connectionRuntimePromise ??= import("./connection-runtime.ts").catch((error: unknown) => {
+    connectionRuntimePromise = undefined;
+    throw error;
+  });
+  return connectionRuntimePromise;
+}
+
+export async function closeFailedConnectionSetup(
+  client: ManagedClient,
+  transport: Transport,
+  failure: unknown,
+  releaseWhenSettled: (client: ManagedClient) => void,
+): Promise<unknown[]> {
+  const abortCleanup = ConnectionHandshake.cleanup(transport);
+  const abortCleanupFailed =
+    failure instanceof AggregateError && failure.message === "MCP connection abort cleanup failed";
+  const results = abortCleanupFailed
+    ? []
+    : await Promise.allSettled([abortCleanup ?? Promise.resolve().then(() => client.close())]);
+  await drainClientCallbacks(client);
+  releaseWhenSettled(client);
+  return cleanupFailures(results);
+}
 
 export class ConnectionHandshake {
   private static readonly cleanups = new WeakMap<Transport, Promise<void>>();

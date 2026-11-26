@@ -1,8 +1,54 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type PromptMetadata } from "./types.ts";
+import {
+  getMcpDiscoverySummary,
+  getPiGlobalConfigPath,
+  type LoadMcpConfigOptions,
+} from "./config.ts";
+import { loadOnboardingState } from "./onboarding-state.ts";
+import {
+  isServerDisabled,
+  type McpConfig,
+  type PromptMetadata,
+  type ServerProvenance,
+} from "./types.ts";
 import { getFailureAgeSeconds, getFailureMessage } from "./init.ts";
 import { inspectionStatus, serverStage } from "./server-status.ts";
+
+export function buildSharedConfigNoticeLines(
+  configOverridePath: string | undefined,
+  cwd: string,
+  discoveryOptions?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
+): string[] {
+  const discovery = getMcpDiscoverySummary(configOverridePath, cwd, discoveryOptions);
+  const onboardingState = loadOnboardingState();
+  if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
+    return [];
+  }
+
+  const sharedSources = discovery.sources.filter(
+    (source) => source.kind === "shared" && source.serverCount > 0,
+  );
+  const sourceList = sharedSources.map((source) => source.path).join(", ");
+  return [
+    `Using standard MCP config from ${sourceList}.`,
+    "Pi only writes compatibility imports and adapter-specific overrides into Pi-owned files when needed.",
+  ];
+}
+
+export function withFallbackServerProvenance(
+  config: McpConfig,
+  provenance: Map<string, ServerProvenance>,
+  overridePath: string | undefined,
+): Map<string, ServerProvenance> {
+  const fallbackPath = getPiGlobalConfigPath(overridePath);
+  for (const serverName of Object.keys(config.mcpServers)) {
+    if (!provenance.has(serverName)) {
+      provenance.set(serverName, { path: fallbackPath, kind: "user" });
+    }
+  }
+  return provenance;
+}
 
 function statusLabel(state: McpExtensionState, name: string): ReturnType<typeof inspectionStatus> {
   const failedAgo = getFailureAgeSeconds(state, name);
