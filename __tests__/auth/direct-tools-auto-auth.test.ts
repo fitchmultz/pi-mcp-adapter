@@ -189,9 +189,12 @@ describe("direct tools auto auth", () => {
     expect(authCall.slice(0, 3)).toEqual(["demo", definition.url, definition]);
     const authSignal = authCall[3].signal;
     expect(authSignal).toBeInstanceOf(AbortSignal);
+    const onAuthorizationUrl = authCall[3].onAuthorizationUrl;
+    expect(onAuthorizationUrl).toBeTypeOf("function");
     expect(authCall[3]).toEqual({
       authStorageOptions: state.authStorageOptions,
       runtime: state.oauthRuntime,
+      onAuthorizationUrl,
       signal: authSignal,
     });
     expect(close).not.toHaveBeenCalled();
@@ -320,9 +323,12 @@ describe("direct tools auto auth", () => {
     expect(authCall.slice(0, 3)).toEqual(["demo", definition.url, definition]);
     const authSignal = authCall[3].signal;
     expect(authSignal).toBeInstanceOf(AbortSignal);
+    const onAuthorizationUrl = authCall[3].onAuthorizationUrl;
+    expect(onAuthorizationUrl).toBeTypeOf("function");
     expect(authCall[3]).toEqual({
       authStorageOptions: state.authStorageOptions,
       runtime: state.oauthRuntime,
+      onAuthorizationUrl,
       signal: authSignal,
     });
     controller.abort(reason);

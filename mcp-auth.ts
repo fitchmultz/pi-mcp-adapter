@@ -56,6 +56,63 @@ export type {
 
 const AUTH_SECRET_SERVICE = "fitch-mcp-adapter.oauth";
 const LEGACY_AUTH_SECRET_SERVICE = "pi-mcp-adapter.oauth";
+const storageRevisions = new Map<string, number>();
+
+export interface TokenSnapshot {
+  readonly accessToken: string;
+  readonly refreshToken?: string | undefined;
+}
+
+export interface UpdateTokensOptions {
+  /** Preserve stored refreshToken and scope when omitted by a same-issuer refresh response. */
+  preserveOnRefresh?: boolean;
+}
+
+function bumpAuthStorageRevision(identity: AuthIdentity): void {
+  const account = getAuthEntryAccount(identity);
+  storageRevisions.set(account, (storageRevisions.get(account) ?? 0) + 1);
+}
+
+/** Monotonic in-process revision for this credential identity; used to invalidate token caches. */
+export function getAuthStorageRevision(identity: AuthIdentity): number {
+  return storageRevisions.get(getAuthEntryAccount(identity)) ?? 0;
+}
+
+function issuersCompatible(existing: string | undefined, incoming: string | undefined): boolean {
+  if (existing === undefined || existing === "" || incoming === undefined || incoming === "") {
+    return true;
+  }
+  return (
+    existing === incoming ||
+    (existing.endsWith("/") && existing.slice(0, -1) === incoming) ||
+    (incoming.endsWith("/") && incoming.slice(0, -1) === existing)
+  );
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value !== undefined && value !== "" ? value : undefined;
+}
+
+function mergeRefreshedTokens(
+  existing: StoredTokens | undefined,
+  incoming: StoredTokens,
+): StoredTokens {
+  if (!existing || !issuersCompatible(existing.issuer, incoming.issuer)) {
+    return incoming;
+  }
+  const merged: StoredTokens = { ...incoming };
+  const refreshToken = nonEmpty(incoming.refreshToken) ?? nonEmpty(existing.refreshToken);
+  const scope = nonEmpty(incoming.scope) ?? nonEmpty(existing.scope);
+  if (refreshToken !== undefined) {
+    merged.refreshToken = refreshToken;
+  } else {
+    delete merged.refreshToken;
+  }
+  if (scope !== undefined) {
+    merged.scope = scope;
+  }
+  return merged;
+}
 
 function withCredentialLock<T>(
   identity: AuthIdentity,
@@ -313,9 +370,23 @@ export function getAuthEntry(
   identity: AuthIdentity,
   options?: AuthStorageOptions,
 ): AuthEntry | undefined {
-  const scoped = withCredentialLock(identity, "read", () => readSecureAuthEntry(identity));
-  if (scoped !== undefined) {
-    return matchesIdentity(scoped, identity) ? scoped : undefined;
+  const probe = withCredentialLock(identity, "read", () => {
+    const scoped = readSecureAuthEntry(identity);
+    if (scoped !== undefined) {
+      return {
+        entry: matchesIdentity(scoped, identity) ? scoped : undefined,
+        needsMigration: false,
+      };
+    }
+    const legacySecure = readSecureAuthEntry(identity, AUTH_SECRET_SERVICE, true);
+    if (matchesIdentity(legacySecure, identity)) {
+      return { entry: undefined, needsMigration: true };
+    }
+    const legacyPlaintext = readLegacyAuthEntry(identity.serverName, options);
+    return { entry: undefined, needsMigration: matchesIdentity(legacyPlaintext, identity) };
+  });
+  if (!probe.needsMigration) {
+    return probe.entry;
   }
   // Migration writes. Release the read lock, then recheck the destination under a write lock.
   return withCredentialLock(identity, "write", () => readAuthEntry(identity, options));
@@ -365,6 +436,7 @@ function writeAuthEntry(
 ): void {
   writeSecureAuthEntry(identity, entry);
   consumeMatchingLegacy(identity, options);
+  bumpAuthStorageRevision(identity);
 }
 
 /** Consume matching automatic-import sources so logout cannot restore them. */
@@ -372,6 +444,7 @@ export function removeAuthEntry(identity: AuthIdentity, options?: AuthStorageOpt
   withCredentialLock(identity, "remove", () => {
     removeSecureAuthEntry(identity);
     consumeMatchingLegacy(identity, options);
+    bumpAuthStorageRevision(identity);
   });
 }
 
@@ -379,11 +452,17 @@ export function updateTokens(
   identity: AuthIdentity,
   tokens: StoredTokens,
   options?: AuthStorageOptions,
-): void {
-  withCredentialLock(identity, "write", () => {
+  updateOptions?: UpdateTokensOptions,
+): StoredTokens {
+  return withCredentialLock(identity, "write", () => {
     const entry = readAuthEntry(identity, options) ?? {};
-    entry.tokens = tokens;
+    const nextTokens =
+      updateOptions?.preserveOnRefresh === true
+        ? mergeRefreshedTokens(entry.tokens, tokens)
+        : tokens;
+    entry.tokens = nextTokens;
     writeAuthEntry(identity, entry, options);
+    return nextTokens;
   });
 }
 
@@ -438,4 +517,30 @@ export function clearClientInfo(identity: AuthIdentity, options?: AuthStorageOpt
 
 export function clearTokens(identity: AuthIdentity, options?: AuthStorageOptions): void {
   clearField(identity, "tokens", options);
+}
+
+/**
+ * Conditionally clear stored tokens only if storage still holds the exact failing snapshot.
+ * Prevents a stale refresh failure from wiping newer tokens written by another request or session.
+ */
+export function clearTokensIfMatching(
+  identity: AuthIdentity,
+  expected: TokenSnapshot,
+  options?: AuthStorageOptions,
+): boolean {
+  return withCredentialLock(identity, "write", () => {
+    const entry = readAuthEntry(identity, options);
+    const current = entry?.tokens;
+    if (
+      !entry ||
+      !current ||
+      current.accessToken !== expected.accessToken ||
+      current.refreshToken !== expected.refreshToken
+    ) {
+      return false;
+    }
+    delete entry.tokens;
+    writeAuthEntry(identity, entry, options);
+    return true;
+  });
 }

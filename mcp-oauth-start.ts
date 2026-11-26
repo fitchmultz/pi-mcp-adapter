@@ -37,8 +37,10 @@ import {
 } from "./mcp-oauth-runtime.ts";
 import { getOAuthRequest, bindOAuthRequestIssuer } from "./mcp-oauth-request.ts";
 import {
+  applyConfiguredScope,
+  challengeDiscovery,
   extractOAuthConfig,
-  probeAuthDiscovery,
+  resolveStartDiscovery,
   parseOAuthRedirectUri,
 } from "./mcp-oauth-discovery.ts";
 import { matchesStoredRedirect } from "./mcp-oauth-registration.ts";
@@ -56,16 +58,6 @@ type StartContext = {
   generation: number;
   flowSignal: AbortSignal;
 };
-
-function applyConfiguredScope(discovery: AuthDiscovery, config: McpOAuthConfig): AuthDiscovery {
-  return {
-    ...discovery,
-    ...(config.scope !== undefined ? { scope: config.scope } : {}),
-    ...(config.skipIssuerMetadataValidation !== undefined
-      ? { skipIssuerMetadataValidation: config.skipIssuerMetadataValidation }
-      : {}),
-  };
-}
 
 function generateState(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(32)))
@@ -119,8 +111,14 @@ async function startNonInteractive(context: StartContext): Promise<{ authorizati
     runtimeSignal: signal,
   });
   try {
+    const request = getOAuthRequest(
+      serverName,
+      serverUrl,
+      getAuthBaseDir(authStorageOptions),
+      context.runtime,
+    );
     const discovery = applyConfiguredScope(
-      await probeAuthDiscovery(serverUrl, context.definition, signal),
+      await resolveStartDiscovery(serverUrl, context.definition, request, signal),
       config,
     );
     throwIfAborted(signal);
@@ -197,29 +195,6 @@ async function reserveCallback(
     }
     throw error;
   }
-}
-
-function challengeDiscovery(
-  discovery: AuthDiscovery,
-  request: OAuthRequest | undefined,
-  storedAuth: AuthEntry | undefined,
-): AuthDiscovery {
-  if (!request?.challenge) {
-    return discovery;
-  }
-  const scope = computeScopeUnion(
-    discovery.scope,
-    request.requestedScope,
-    storedAuth?.tokens?.scope,
-    request.challenge.requiredScope,
-  );
-  return {
-    ...discovery,
-    ...(scope !== undefined && scope !== "" ? { scope } : {}),
-    ...(request.challenge.resourceMetadataUrl
-      ? { resourceMetadataUrl: request.challenge.resourceMetadataUrl }
-      : {}),
-  };
 }
 
 function createInteractiveFlow(
@@ -320,6 +295,7 @@ async function authorizeInteractive(
   const result = await abortable(
     runSdkAuth(flow.authProvider, {
       serverUrl: context.serverUrl,
+      fetchFn: flow.authProvider.fetch,
       ...flow.discovery,
       ...(request?.challenge
         ? {
@@ -361,7 +337,7 @@ async function startInteractive(
     );
     const discovery = challengeDiscovery(
       applyConfiguredScope(
-        await probeAuthDiscovery(context.serverUrl, context.definition, context.signal),
+        await resolveStartDiscovery(context.serverUrl, context.definition, request, context.signal),
         context.config,
       ),
       request,
@@ -459,6 +435,18 @@ export async function startAuth(
   }
 }
 
+function pendingAuthSatisfiesChallenge(
+  existing: PendingAuth,
+  request: OAuthRequest | undefined,
+): boolean {
+  const requiredScope = request?.challenge?.requiredScope;
+  return (
+    requiredScope === undefined ||
+    requiredScope === "" ||
+    !isStrictScopeSuperset(requiredScope, existing.discovery.scope)
+  );
+}
+
 async function startAuthOnce(
   context: StartContext,
   previous: PendingAuthStart | undefined,
@@ -480,7 +468,10 @@ async function startAuthOnce(
   const existing = getRuntimeState(context.runtime).pendingAuths.get(
     getPendingAuthKey(context.serverName, context.authStorageOptions),
   );
-  if (existing?.serverUrl === context.serverUrl) {
+  if (
+    existing?.serverUrl === context.serverUrl &&
+    pendingAuthSatisfiesChallenge(existing, request)
+  ) {
     return { authorizationUrl: existing.authorizationUrl };
   }
   return startInteractive(context, request);

@@ -1,8 +1,10 @@
 import {
   Client,
   StreamableHTTPClientTransport,
+  computeScopeUnion,
   extractWWWAuthenticateParams,
 } from "@modelcontextprotocol/client";
+import type { AuthEntry } from "./mcp-auth.ts";
 import {
   validateOAuthClientMetadataUrl,
   validateOAuthPrivateKeyJwt,
@@ -23,7 +25,7 @@ import {
 } from "./utils.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
-import type { AuthDiscovery } from "./mcp-oauth-runtime.ts";
+import type { AuthDiscovery, OAuthRequest } from "./mcp-oauth-runtime.ts";
 
 function configuredString(value: unknown, field: string, trim = false): string | undefined {
   if (value === undefined) {
@@ -209,6 +211,72 @@ export async function probeAuthDiscovery(
     await (client.transport ? client.close() : transport.close());
   }
   return discovery;
+}
+
+function recordedResourceMetadataUrl(request: OAuthRequest): URL | undefined {
+  return request.challenge?.resourceMetadataUrl ?? request.discovered?.resourceMetadataUrl;
+}
+
+function recordedChallengeDiscovery(request: OAuthRequest | undefined): AuthDiscovery | undefined {
+  if (!request) {
+    return undefined;
+  }
+  const resourceMetadataUrl = recordedResourceMetadataUrl(request);
+  const hasScope = (request.challenge?.requiredScope ?? "") !== "";
+  if (!resourceMetadataUrl && !hasScope) {
+    return undefined;
+  }
+  const scope = request.discovered?.scope;
+  return {
+    ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
+    ...(scope !== undefined && scope !== "" ? { scope } : {}),
+  };
+}
+
+/** Reuse already-captured OAuth challenge metadata before sending a redundant discovery probe. */
+export async function resolveStartDiscovery(
+  serverUrl: string,
+  definition: ServerEntry | undefined,
+  request: OAuthRequest | undefined,
+  signal?: AbortSignal,
+): Promise<AuthDiscovery> {
+  return recordedChallengeDiscovery(request) ?? probeAuthDiscovery(serverUrl, definition, signal);
+}
+
+export function applyConfiguredScope(
+  discovery: AuthDiscovery,
+  config: McpOAuthConfig,
+): AuthDiscovery {
+  return {
+    ...discovery,
+    ...(config.scope !== undefined ? { scope: config.scope } : {}),
+    ...(config.skipIssuerMetadataValidation !== undefined
+      ? { skipIssuerMetadataValidation: config.skipIssuerMetadataValidation }
+      : {}),
+  };
+}
+
+export function challengeDiscovery(
+  discovery: AuthDiscovery,
+  request: OAuthRequest | undefined,
+  storedAuth: AuthEntry | undefined,
+): AuthDiscovery {
+  if (!request?.challenge) {
+    return discovery;
+  }
+  const scope = computeScopeUnion(
+    discovery.scope,
+    request.requestedScope,
+    storedAuth?.tokens?.scope,
+    request.challenge.requiredScope,
+  );
+  return {
+    ...discovery,
+    ...(scope !== undefined && scope !== "" ? { scope } : {}),
+    ...(request.challenge.resourceMetadataUrl
+      ? { resourceMetadataUrl: request.challenge.resourceMetadataUrl }
+      : {}),
+  };
 }
 
 function validateRedirectUrl(url: URL): void {

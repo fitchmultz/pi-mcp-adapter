@@ -1,4 +1,5 @@
 import type { McpExtensionState } from "./state.ts";
+import type { ServerConnection } from "./server-manager.ts";
 import { isServerDisabled } from "./types.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 import { formatMcpStatus, sanitizeTerminalText } from "./utils.ts";
@@ -138,6 +139,22 @@ export function getFailureMessage(state: McpExtensionState, serverName: string):
   return state.failureMessages.get(serverName) ?? null;
 }
 
+function canReconnectNeedsAuth(
+  state: McpExtensionState,
+  serverName: string,
+  connection: ServerConnection,
+): NonNullable<McpExtensionState["config"]["mcpServers"][string]> | undefined {
+  const definition = state.config.mcpServers[serverName];
+  if (
+    !definition ||
+    isServerDisabled(definition) ||
+    !state.manager.hasFreshOAuthCredentials(serverName, definition, connection)
+  ) {
+    return undefined;
+  }
+  return definition;
+}
+
 export async function lazyConnect(
   state: McpExtensionState,
   serverName: string,
@@ -147,7 +164,14 @@ export async function lazyConnect(
   throwIfAborted(ownedSignal);
   const connection = state.manager.getConnection(serverName);
   if (connection?.status === "needs-auth") {
-    return false;
+    const definition = canReconnectNeedsAuth(state, serverName, connection);
+    return definition
+      ? connectLazyServer(state, serverName, {
+          definition,
+          ownedSignal,
+          staleConnection: connection,
+        })
+      : false;
   }
   if (connection?.status === "connected") {
     updateServerMetadata(state, serverName);
@@ -174,9 +198,11 @@ async function connectLazyServer(
   {
     definition,
     ownedSignal,
+    staleConnection,
   }: {
     definition: NonNullable<McpExtensionState["config"]["mcpServers"][string]>;
     ownedSignal: AbortSignal | undefined;
+    staleConnection?: ServerConnection;
   },
 ): Promise<boolean> {
   try {
@@ -184,7 +210,9 @@ async function connectLazyServer(
       const status = formatMcpStatus(state.config, `connecting to ${serverName}...`);
       state.ui.setStatus("mcp", status);
     }
-    const newConnection = await state.manager.connect(serverName, definition, ownedSignal);
+    const newConnection = staleConnection
+      ? await state.manager.reconnect(serverName, definition, staleConnection, ownedSignal)
+      : await state.manager.connect(serverName, definition, ownedSignal);
     if (newConnection.status === "needs-auth") {
       return false;
     }

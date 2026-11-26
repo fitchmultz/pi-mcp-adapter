@@ -435,6 +435,69 @@ nodeDescribe("McpOAuthProvider", () => {
       const stored = await provider.tokens();
       assert.strictEqual(stored, undefined);
     });
+
+    nodeIt(
+      "should preserve stored refreshToken and scope when a same-issuer refresh omits them",
+      async () => {
+        clearAllCredentials({ serverName, serverUrl });
+        const provider = createProvider();
+
+        await provider.saveTokens(
+          {
+            access_token: "access-1",
+            token_type: "Bearer",
+            refresh_token: "refresh-1",
+            expires_in: 3600,
+            scope: "read write",
+          },
+          { issuer: "https://auth.example.com" },
+        );
+
+        await provider.saveTokens(
+          {
+            access_token: "access-2",
+            token_type: "Bearer",
+            expires_in: 3600,
+          },
+          { issuer: "https://auth.example.com" },
+        );
+
+        const stored = getAuthForUrl({ serverName, serverUrl })?.tokens;
+        assert.strictEqual(stored?.accessToken, "access-2");
+        assert.strictEqual(stored.refreshToken, "refresh-1");
+        assert.strictEqual(stored.scope, "read write");
+        assert.strictEqual(stored.issuer, "https://auth.example.com");
+      },
+    );
+
+    nodeIt("should not preserve refreshToken across a different issuer", async () => {
+      clearAllCredentials({ serverName, serverUrl });
+      const provider = createProvider();
+
+      await provider.saveTokens(
+        {
+          access_token: "access-1",
+          token_type: "Bearer",
+          refresh_token: "refresh-1",
+          scope: "read",
+        },
+        { issuer: "https://auth-a.example.com" },
+      );
+
+      await provider.saveTokens(
+        {
+          access_token: "access-2",
+          token_type: "Bearer",
+        },
+        { issuer: "https://auth-b.example.com" },
+      );
+
+      const stored = getAuthForUrl({ serverName, serverUrl })?.tokens;
+      assert.strictEqual(stored?.accessToken, "access-2");
+      assert.strictEqual(stored.refreshToken, undefined);
+      assert.strictEqual(stored.scope, undefined);
+      assert.strictEqual(stored.issuer, "https://auth-b.example.com");
+    });
   });
 
   nodeDescribe("redirectToAuthorization", () => {
@@ -699,5 +762,37 @@ nodeDescribe("McpOAuthProvider", () => {
       assert.strictEqual(tokens?.access_token, "token");
       assert.strictEqual(await provider.clientInformation(), undefined);
     });
+
+    nodeIt(
+      "should not wipe newer tokens when invalidateCredentials('tokens') runs after another session refreshed",
+      async () => {
+        clearAllCredentials({ serverName, serverUrl });
+        const staleProvider = createProvider();
+        const freshProvider = createProvider();
+
+        await staleProvider.saveTokens({
+          access_token: "stale-access",
+          token_type: "Bearer",
+          refresh_token: "stale-refresh",
+          expires_in: 3600,
+        });
+        assert.strictEqual((await staleProvider.tokens())?.access_token, "stale-access");
+
+        // Simulate another session rotating tokens in storage before staleProvider invalidates.
+        await freshProvider.saveTokens({
+          access_token: "fresh-access",
+          token_type: "Bearer",
+          refresh_token: "fresh-refresh",
+          expires_in: 3600,
+        });
+
+        await staleProvider.invalidateCredentials("tokens");
+
+        const stored = getAuthForUrl({ serverName, serverUrl })?.tokens;
+        assert.strictEqual(stored?.accessToken, "fresh-access");
+        assert.strictEqual(stored.refreshToken, "fresh-refresh");
+        assert.strictEqual((await staleProvider.tokens())?.access_token, "fresh-access");
+      },
+    );
   });
 });

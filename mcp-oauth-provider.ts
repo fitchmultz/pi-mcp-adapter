@@ -8,8 +8,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   UnauthorizedError,
-  OAuthError,
-  OAuthErrorCode,
   type FetchLike,
   type AddClientAuthentication,
   type OAuthClientProvider,
@@ -27,16 +25,19 @@ import {
   clearClientInfo,
   clearCodeVerifier,
   clearTokens,
+  clearTokensIfMatching,
   type AuthEntry,
   type AuthIdentity,
   type AuthStorageOptions,
   type StoredTokens,
   type StoredClientInfo,
+  type TokenSnapshot,
 } from "./mcp-auth.ts";
+import { ProviderTokenCache } from "./mcp-oauth-refresh.ts";
 import {
-  privateKeyAuthentication,
-  secretAuthentication,
-  requestCrossAppGrant,
+  applyTokenClientAuthentication,
+  clientCredentialsTokenParams,
+  prepareCrossAppTokenParams,
 } from "./mcp-oauth-client-auth.ts";
 import { resolveCommandSecret } from "./utils.ts";
 import { isNonInteractiveOAuth } from "./types.ts";
@@ -66,6 +67,7 @@ import {
   storedClientInformation,
   clientRegistration,
   storedTokenInformation,
+  toStoredTokens,
 } from "./mcp-oauth-registration.ts";
 
 /** Callbacks for OAuth flow interactions */
@@ -108,6 +110,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
   private flowDiscoveryState: OAuthDiscoveryState | undefined;
   private flowIssuerMismatch = false;
   private flowState: string | undefined;
+  private lastTokenGrantType: string | undefined;
+  private readonly tokenCache = new ProviderTokenCache();
 
   private readonly identity: AuthIdentity;
   private readonly config: McpOAuthConfig;
@@ -168,6 +172,27 @@ export class McpOAuthProvider implements OAuthClientProvider {
       combineAbortSignals(this.requestSignals.getStore(), signal),
       operation,
     );
+  }
+
+  runWithIsolatedSignal<T>(signal: AbortSignal | undefined, operation: () => T): T {
+    this.lifetimeSignal.throwIfAborted();
+    return this.requestSignals.run(signal, operation);
+  }
+
+  get lastObservedTokenSnapshot(): TokenSnapshot | undefined {
+    return this.tokenCache.lastObserved;
+  }
+
+  get currentCachedTokens(): StoredTokens | undefined {
+    return this.tokenCache.currentCachedTokens;
+  }
+
+  invalidateTokenCache(): void {
+    this.tokenCache.invalidate();
+  }
+
+  reloadTokensFromStorage(): StoredTokens | undefined {
+    return this.tokenCache.reload(this.identity, this.storageOptions);
   }
 
   deactivate(): void {
@@ -347,6 +372,15 @@ export class McpOAuthProvider implements OAuthClientProvider {
     updateClientInfo(this.identity, clientInfo, this.storageOptions);
   }
 
+  private readCachedTokens(
+    context: OAuthClientInformationContext | undefined,
+    issuer: string | undefined,
+  ): StoredTokens | undefined {
+    return context === undefined && issuer === undefined
+      ? this.tokenCache.getFresh(this.identity)
+      : undefined;
+  }
+
   /**
    * Get stored OAuth tokens.
    * Returns undefined if no tokens exist or if the server URL has changed.
@@ -355,20 +389,33 @@ export class McpOAuthProvider implements OAuthClientProvider {
     // Legacy cancellation notifications still need their stored bearer token
     // after the request signal aborts. Only provider shutdown ends this read.
     this.lifetimeSignal.throwIfAborted();
+    const issuer = context?.issuer ?? this.discoveredIssuer;
+    const cached = this.readCachedTokens(context, issuer);
+    if (cached) {
+      await Promise.resolve();
+      this.lifetimeSignal.throwIfAborted();
+      return storedTokenInformation(cached);
+    }
     // Use getAuthForUrl to validate tokens are for the current server URL.
     const entry = await Promise.resolve(getAuthForUrl(this.identity, this.storageOptions));
     this.lifetimeSignal.throwIfAborted();
     if (!entry?.tokens) {
+      this.tokenCache.clearAll();
       return undefined;
     }
-    const issuer = context?.issuer ?? this.discoveredIssuer;
     this.assertStoredIssuerBindings(entry, issuer);
     if (issuer !== undefined && issuer !== "" && entry.tokens.issuer === undefined) {
       entry.tokens.issuer = issuer;
       updateTokens(this.identity, entry.tokens, this.storageOptions);
     }
-
+    this.tokenCache.record(this.identity, entry.tokens);
     return storedTokenInformation(entry.tokens);
+  }
+
+  private clearDiscoveryState(): void {
+    this.flowDiscoveryState = undefined;
+    this.flowAuthorizationServerUrl = undefined;
+    this.flowResourceUrl = undefined;
   }
 
   /**
@@ -378,28 +425,23 @@ export class McpOAuthProvider implements OAuthClientProvider {
     tokens: StoredOAuthTokens,
     context?: OAuthClientInformationContext,
   ): Promise<void> {
+    const grantType = this.lastTokenGrantType;
+    this.lastTokenGrantType = undefined;
     const issuer = context?.issuer ?? this.discoveredIssuer ?? tokens.issuer;
-    const storedTokens: StoredTokens = {
-      accessToken: tokens.access_token,
-      ...(tokens.refresh_token !== undefined ? { refreshToken: tokens.refresh_token } : {}),
-      // Preserve expiry even when expires_in is 0 (e.g. the SDK re-saving an
-      // already-expired token) so expired tokens stay expired instead of
-      // being persisted as never-expiring.
-      ...(tokens.expires_in !== undefined
-        ? { expiresAt: Date.now() / 1000 + tokens.expires_in }
-        : {}),
-      ...(tokens.scope !== undefined ? { scope: tokens.scope } : {}),
-      ...(issuer !== undefined ? { issuer } : {}),
-    };
+    const storedTokens = toStoredTokens(tokens, issuer);
+    const preserveOnRefresh =
+      grantType === "refresh_token" ||
+      (grantType === undefined && !this.isNonInteractive && this.flowState === undefined);
     this.throwIfInactive();
-    updateTokens(this.identity, storedTokens, this.storageOptions);
+    const saved = updateTokens(this.identity, storedTokens, this.storageOptions, {
+      preserveOnRefresh,
+    });
+    this.tokenCache.record(this.identity, saved);
     // Discovery must survive the browser redirect so the callback can verify
     // the authorization server that minted the code. Once token issuance
     // succeeds, clear it so a later 401 re-reads PRM and can observe an
     // authorization-server migration.
-    this.flowDiscoveryState = undefined;
-    this.flowAuthorizationServerUrl = undefined;
-    this.flowResourceUrl = undefined;
+    this.clearDiscoveryState();
   }
 
   /**
@@ -520,27 +562,30 @@ export class McpOAuthProvider implements OAuthClientProvider {
       case "all":
         this.flowClientInfo = undefined;
         this.flowCodeVerifier = undefined;
-        this.flowDiscoveryState = undefined;
-        this.flowAuthorizationServerUrl = undefined;
-        this.flowResourceUrl = undefined;
+        this.clearDiscoveryState();
         this.flowIssuerMismatch = false;
         this.flowState = undefined;
+        this.tokenCache.clearAll();
         clearAllCredentials(this.identity, this.storageOptions);
         break;
       case "client":
         this.flowClientInfo = undefined;
         clearClientInfo(this.identity, this.storageOptions);
         break;
-      case "tokens":
-        clearTokens(this.identity, this.storageOptions);
+      case "tokens": {
+        const snapshot = this.tokenCache.takeSnapshot();
+        if (snapshot) {
+          clearTokensIfMatching(this.identity, snapshot, this.storageOptions);
+        } else {
+          clearTokens(this.identity, this.storageOptions);
+        }
         break;
+      }
       case "verifier":
         clearCodeVerifier(this.identity, this.storageOptions);
         break;
       case "discovery":
-        this.flowDiscoveryState = undefined;
-        this.flowAuthorizationServerUrl = undefined;
-        this.flowResourceUrl = undefined;
+        this.clearDiscoveryState();
         break;
     }
   }
@@ -550,8 +595,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
    */
   addClientAuthentication: AddClientAuthentication = async (headers, params, url, metadata) => {
     this.throwIfInactive();
+    this.lastTokenGrantType = params.get("grant_type") ?? undefined;
     addConfiguredScope(params, this.config);
-
     const clientInfo = await this.clientInformation(
       this.config.privateKeyJwt && metadata?.issuer !== undefined && metadata.issuer !== ""
         ? { issuer: metadata.issuer }
@@ -561,66 +606,26 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (!clientInfo) {
       return;
     }
-
-    const jwt = this.config.privateKeyJwt;
-    if (jwt) {
-      await privateKeyAuthentication(jwt, clientInfo)(headers, params, url, metadata);
-      this.throwIfInactive();
-      params.set("client_id", clientInfo.client_id);
-      return;
-    }
-    await secretAuthentication(clientInfo, metadata)(headers, params, url, metadata);
+    await applyTokenClientAuthentication(this.config.privateKeyJwt, clientInfo, () =>
+      this.throwIfInactive(),
+    )(headers, params, url, metadata);
   };
 
-  private async prepareCrossAppRequest(scope?: string): Promise<URLSearchParams> {
-    this.throwIfInactive();
-    const audience = this.flowAuthorizationServerUrl;
-    const resource = this.flowResourceUrl;
-    if (audience === undefined || audience === "" || resource === undefined || resource === "") {
-      throw new OAuthError(
-        OAuthErrorCode.InvalidRequest,
-        "OAuth crossAppAccess requires discovered MCP authorization server and protected resource metadata",
-      );
-    }
-    const config = this.config.crossAppAccess;
-    if (config === undefined) {
-      throw new Error("OAuth crossAppAccess is not configured");
-    }
-    try {
-      const result = await requestCrossAppGrant(config, { audience, resource, scope }, this.fetch);
-      this.throwIfInactive();
-      const params = new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: result.jwtAuthGrant,
-      });
-      if (scope !== undefined && scope !== "") {
-        params.set("scope", scope);
-      }
-      return params;
-    } catch {
-      this.throwIfInactive();
-      // IdP errors must not erase the MCP login or expose token-bearing responses/commands.
-      throw new OAuthError(
-        OAuthErrorCode.InvalidRequest,
-        "OAuth crossAppAccess could not obtain an IdP grant; check the IdP configuration and ID-token source",
-      );
-    }
-  }
-
   prepareTokenRequest(scope?: string): URLSearchParams | Promise<URLSearchParams> | undefined {
-    if (this.config.crossAppAccess) {
-      return this.prepareCrossAppRequest(scope ?? this.config.scope);
-    }
-    if (!this.isNonInteractive) {
-      return undefined;
-    }
-
-    const params = new URLSearchParams({ grant_type: "client_credentials" });
     const requestedScope = scope ?? this.config.scope;
-    if (requestedScope !== undefined && requestedScope !== "") {
-      params.set("scope", requestedScope);
+    if (this.config.crossAppAccess) {
+      return prepareCrossAppTokenParams(
+        this.config.crossAppAccess,
+        {
+          audience: this.flowAuthorizationServerUrl,
+          resource: this.flowResourceUrl,
+          scope: requestedScope,
+        },
+        this.fetch,
+        () => this.throwIfInactive(),
+      );
     }
-    return params;
+    return this.isNonInteractive ? clientCredentialsTokenParams(requestedScope) : undefined;
   }
 }
 

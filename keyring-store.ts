@@ -8,6 +8,7 @@ import { OAuthCredentialStoreError } from "./credential-store-errors.ts";
 
 const require = createRequire(import.meta.url);
 const TEST_AUTH_STORE_ENV = "PI_MCP_ADAPTER_TEST_AUTH_STORE";
+const AUTH_SECRET_LOCK_TIMEOUT_MS = 2500;
 
 type KeyringEntryConstructor = typeof keyring.Entry;
 type KeyringModule = Pick<typeof keyring, "Entry">;
@@ -21,6 +22,15 @@ export interface AuthSecretStore {
 let KeyringEntryClass: KeyringEntryConstructor | undefined;
 const memoryAuthEntries = new Map<string, string>();
 
+export function isProcessLocalAuthStore(): boolean {
+  const backend = process.env[TEST_AUTH_STORE_ENV];
+  return backend === "memory" || backend === "unavailable" || backend === "keyrevoked";
+}
+
+export function getAuthLockDir(): string {
+  return join(homedir(), ".fitch-mcp-adapter", "locks");
+}
+
 /** One name's legacy source and URL-scoped records share an OS-user lock. */
 export function withAuthSecretLock<T>(
   service: string,
@@ -28,13 +38,12 @@ export function withAuthSecretLock<T>(
   action: OAuthCredentialStoreError["operation"],
   operation: () => T,
 ): T {
-  const backend = process.env[TEST_AUTH_STORE_ENV];
-  if (backend === "memory" || backend === "unavailable" || backend === "keyrevoked") {
+  if (isProcessLocalAuthStore()) {
     // These stores are process-local; they share no keyring records with other processes.
     return operation();
   }
   const key = hash("sha256", JSON.stringify([service, legacyAccount]), "hex");
-  const lockPath = join(homedir(), ".fitch-mcp-adapter", "locks", `${key}.sqlite`);
+  const lockPath = join(getAuthLockDir(), `${key}.sqlite`);
   const acquisition = { entered: false };
   try {
     return withStorageLock(
@@ -43,7 +52,10 @@ export function withAuthSecretLock<T>(
         acquisition.entered = true;
         return operation();
       },
-      action === "read" ? "read" : "write",
+      {
+        mode: action === "read" ? "read" : "write",
+        timeoutMs: AUTH_SECRET_LOCK_TIMEOUT_MS,
+      },
     );
   } catch (error) {
     if (acquisition.entered) {

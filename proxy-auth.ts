@@ -149,11 +149,23 @@ async function authenticateConnection(
     signal: AbortSignal | undefined;
   },
 ): Promise<AutoAuthResult> {
+  const ui = state.ui;
   try {
     const { authenticate } = await import("./mcp-auth-flow.ts");
     await authenticate(serverName, serverUrl, definition, {
       authStorageOptions: state.authStorageOptions,
       runtime: state.oauthRuntime,
+      ...(ui
+        ? {
+            onAuthorizationUrl: (authorizationUrl: string) => {
+              ui.notify(
+                `Open this URL to authenticate ${serverName}:\n\n${authorizationUrl}\n\n` +
+                  "After approving, return to Pi; the local callback will complete automatically.",
+                "info",
+              );
+            },
+          }
+        : {}),
       ...(signal ? { signal } : {}),
     });
     return { status: "success" };

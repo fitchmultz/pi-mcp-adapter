@@ -952,7 +952,7 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     expect((await f.call()).details.error).toBeUndefined();
   });
 
-  it("keeps a pending URL and verifier immutable when a wider challenge arrives", async () => {
+  it("replaces a stale pending URL and verifier when a wider challenge arrives", async () => {
     const f = await fixture();
     f.definition.auth = "oauth";
     f.definition.oauth = { scope: "basic" };
@@ -960,29 +960,74 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
     await f.connect();
     await f.call();
     const first = await f.start();
+    expect(scopes(new URL(first.authorizationUrl).searchParams.get("scope"))).toEqual([
+      "basic",
+      "write",
+    ]);
     f.controls.requiredScope = "admin";
     await f.call();
-    expect(await f.start()).toEqual(first);
-    const callback = await f.authorize(first.authorizationUrl);
-    expect(await completeAuthFromInput(f.name, callback, { runtime: f.runtime })).toBe(
-      "authenticated",
-    );
-    expect(f.stored()?.tokens?.scope).toBe("basic write");
-    expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual(["basic", "write"]);
-    expect(scopes(f.request()?.challenge?.requiredScope)).toEqual(["admin", "write"]);
-    expect((await f.call()).details.error).toBeUndefined();
-    const next = await f.start();
-    expect(scopes(new URL(next.authorizationUrl).searchParams.get("scope"))).toEqual([
+    const replaced = await f.start();
+    expect(scopes(new URL(replaced.authorizationUrl).searchParams.get("scope"))).toEqual([
       "admin",
       "basic",
       "write",
     ]);
-    expect(new URL(next.authorizationUrl).searchParams.get("state")).not.toBe(
+    expect(new URL(replaced.authorizationUrl).searchParams.get("state")).not.toBe(
       new URL(first.authorizationUrl).searchParams.get("state"),
     );
-    expect(new URL(next.authorizationUrl).searchParams.get("code_challenge")).not.toBe(
+    expect(new URL(replaced.authorizationUrl).searchParams.get("code_challenge")).not.toBe(
       new URL(first.authorizationUrl).searchParams.get("code_challenge"),
     );
+    // The old callback state was released when replaced.
+    const staleCallback = await f.authorize(first.authorizationUrl);
+    expect((await fetch(staleCallback)).status).toBe(400);
+    // Completing the widened flow satisfies both write and admin in one consent.
+    const callback = await f.authorize(replaced.authorizationUrl);
+    expect(await completeAuthFromInput(f.name, callback, { runtime: f.runtime })).toBe(
+      "authenticated",
+    );
+    expect(scopes(f.stored()?.tokens?.scope)).toEqual(["admin", "basic", "write"]);
+    expect(scopes(requireValue(f.exchanges[0]).get("scope"))).toEqual(["admin", "basic", "write"]);
+    expect(f.request()?.challenge).toBeUndefined();
+    expect((await f.call()).details.error).toBeUndefined();
+  });
+
+  it("honors a second caller's abort on deduped authenticate without cancelling the first", async () => {
+    const f = await fixture();
+    const shown = Promise.withResolvers<string>();
+    const releaseBrowser = Promise.withResolvers<boolean>();
+    browser.open.mockImplementationOnce(async (url: string) => {
+      shown.resolve(url);
+      await releaseBrowser.promise;
+      expect((await fetch(await f.authorize(url))).status).toBe(200);
+    });
+    const first = authenticate(f.name, f.definition.url, f.definition, { runtime: f.runtime });
+    await shown.promise;
+    const secondController = new AbortController();
+    const second = settled(
+      authenticate(f.name, f.definition.url, f.definition, {
+        runtime: f.runtime,
+        signal: secondController.signal,
+      }),
+    );
+    secondController.abort(new Error("second caller cancelled"));
+    expect(await second).toHaveProperty("reason.message", "second caller cancelled");
+    releaseBrowser.resolve(true);
+    expect(await first).toBe("authenticated");
+    expect(f.exchanges).toHaveLength(1);
+  });
+
+  it("skips redundant probeAuthDiscovery when a challenge already captured resource metadata", async () => {
+    const f = await fixture("modern");
+    f.definition.auth = "oauth";
+    f.seed("basic");
+    await f.connect();
+    const discoverBefore = f.requests.filter((r) => r.method === "server/discover").length;
+    await f.call();
+    expect(f.request()?.challenge?.resourceMetadataUrl).toBeInstanceOf(URL);
+    await f.start();
+    const discoverAfter = f.requests.filter((r) => r.method === "server/discover").length;
+    expect(discoverAfter).toBe(discoverBefore);
   });
 
   it("shares one automatic flow and replacement between concurrent challenged callers", async () => {

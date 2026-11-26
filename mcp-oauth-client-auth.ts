@@ -141,3 +141,66 @@ export function secretAuthentication(
     }
   };
 }
+
+export async function prepareCrossAppTokenParams(
+  config: OAuthCrossAppAccessConfig,
+  binding: {
+    audience: string | undefined;
+    resource: string | undefined;
+    scope: string | undefined;
+  },
+  fetchFn: FetchLike,
+  throwIfInactive: () => void,
+): Promise<URLSearchParams> {
+  throwIfInactive();
+  const { audience, resource, scope } = binding;
+  if (audience === undefined || audience === "" || resource === undefined || resource === "") {
+    throw new OAuthError(
+      OAuthErrorCode.InvalidRequest,
+      "OAuth crossAppAccess requires discovered MCP authorization server and protected resource metadata",
+    );
+  }
+  try {
+    const result = await requestCrossAppGrant(config, { audience, resource, scope }, fetchFn);
+    throwIfInactive();
+    const params = new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: result.jwtAuthGrant,
+    });
+    if (scope !== undefined && scope !== "") {
+      params.set("scope", scope);
+    }
+    return params;
+  } catch {
+    throwIfInactive();
+    // IdP errors must not erase the MCP login or expose token-bearing responses/commands.
+    throw new OAuthError(
+      OAuthErrorCode.InvalidRequest,
+      "OAuth crossAppAccess could not obtain an IdP grant; check the IdP configuration and ID-token source",
+    );
+  }
+}
+
+export function clientCredentialsTokenParams(scope: string | undefined): URLSearchParams {
+  const params = new URLSearchParams({ grant_type: "client_credentials" });
+  if (scope !== undefined && scope !== "") {
+    params.set("scope", scope);
+  }
+  return params;
+}
+
+export function applyTokenClientAuthentication(
+  jwt: OAuthPrivateKeyJwtConfig | undefined,
+  clientInfo: StoredOAuthClientInformation,
+  throwIfInactive: () => void,
+): AddClientAuthentication {
+  return async (headers, params, url, metadata) => {
+    if (jwt) {
+      await privateKeyAuthentication(jwt, clientInfo)(headers, params, url, metadata);
+      throwIfInactive();
+      params.set("client_id", clientInfo.client_id);
+      return;
+    }
+    await secretAuthentication(clientInfo, metadata)(headers, params, url, metadata);
+  };
+}

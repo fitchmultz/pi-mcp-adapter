@@ -6,6 +6,7 @@ import { describe as nodeDescribe, it as nodeIt, beforeEach, afterEach } from "n
 import assert from "node:assert";
 import { validateAuthorizationResponseIssuer } from "@modelcontextprotocol/client";
 import { createServer } from "node:http";
+import { createConnection } from "node:net";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -447,6 +448,42 @@ nodeDescribe("mcp-callback-server", () => {
 
       assert.strictEqual(response.status, 404);
     });
+
+    nodeIt(
+      "should return 400 for missing or malformed Host headers without crashing the server",
+      async () => {
+        await ensureCallbackServer();
+        const port = getOAuthCallbackPort();
+
+        const sendRaw = async (rawRequest: string): Promise<string> =>
+          await new Promise<string>((resolve, reject) => {
+            const chunks: Buffer[] = [];
+            const socket = createConnection({ host: "localhost", port }, () => {
+              socket.end(rawRequest);
+            });
+            socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+            socket.on("error", reject);
+            socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+          });
+
+        const missingHost = await sendRaw("GET /callback?code=abc&state=s HTTP/1.0\r\n\r\n");
+        assert.match(missingHost, /^HTTP\/1\.1 400 Bad Request\r\n/);
+        assert.ok(missingHost.includes("Invalid callback request"));
+
+        const malformedHost = await sendRaw(
+          "GET /callback?code=abc&state=s HTTP/1.1\r\nHost: [bad-host\r\nConnection: close\r\n\r\n",
+        );
+        assert.match(malformedHost, /^HTTP\/1\.1 400 Bad Request\r\n/);
+
+        const state = "still-alive-state";
+        const callbackPromise = waitForCallback(state);
+        const healthy = await fetch(
+          `http://localhost:${port}/callback?code=still-alive&state=${state}`,
+        );
+        assert.strictEqual(healthy.status, 200);
+        assert.strictEqual((await callbackPromise).code, "still-alive");
+      },
+    );
   });
 
   nodeDescribe("cancelPendingCallback", () => {

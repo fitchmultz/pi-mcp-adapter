@@ -230,6 +230,10 @@ export class OAuthRecoveryHttp {
 
   #metadata(url: URL, response: ServerResponse): boolean {
     if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
+      if (this.controls.holdDiscovery) {
+        this.controls.discoveryHeld = true;
+        return true;
+      }
       json(response, {
         resource: `${this.origin}/mcp`,
         authorization_servers: [`${this.origin}${this.controls.issuerPath}`],

@@ -62,20 +62,29 @@ function releaseStorageLock(
   }
 }
 
+export interface StorageLockOptions {
+  mode?: "read" | "write";
+  timeoutMs?: number;
+}
+
 /**
  * Runs a synchronous operation under a shared read or exclusive write transaction.
- * Acquisition contention throws StorageLockBusyError; operation errors pass through.
+ * Acquisition contention throws StorageLockBusyError after any configured busy timeout;
+ * operation errors pass through.
  * All participants must use the same persistent
  * lock path; never unlink, replace, or open/close that database outside SQLite.
  */
 export function withStorageLock<T>(
   lockPath: string,
   operation: () => T,
-  mode: "read" | "write" = "write",
+  modeOrOptions: "read" | "write" | StorageLockOptions = "write",
 ): T {
+  const mode = typeof modeOrOptions === "string" ? modeOrOptions : (modeOrOptions.mode ?? "write");
+  const timeoutMs = typeof modeOrOptions === "string" ? 0 : (modeOrOptions.timeoutMs ?? 0);
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
   const { DatabaseSync } = process.getBuiltinModule("node:sqlite");
-  const database = new DatabaseSync(lockPath);
+  const database =
+    timeoutMs > 0 ? new DatabaseSync(lockPath, { timeout: timeoutMs }) : new DatabaseSync(lockPath);
   let acquired = false;
   let primary: { error: unknown } | undefined;
   try {

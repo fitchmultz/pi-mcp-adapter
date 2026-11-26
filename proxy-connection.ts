@@ -71,10 +71,15 @@ class ConnectionAuthRecovery {
   readonly recover: AuthRecovery = async (_name, recoverySignal = this.signal, challenge) => {
     const { state, serverName } = this;
     throwIfAborted(recoverySignal);
-    const current = state.manager.getConnection(serverName);
+    let current = state.manager.getConnection(serverName);
     if (current?.status === "connected" && current !== challenge?.connection) {
       return current;
     }
+    const pickedUp = await this.pickupStoredCredentials(current, recoverySignal);
+    if (pickedUp) {
+      return pickedUp;
+    }
+    current = state.manager.getConnection(serverName);
     if (!this.attempted) {
       const recovered = await this.authenticate(current, recoverySignal);
       if (recovered) {
@@ -83,6 +88,24 @@ class ConnectionAuthRecovery {
     }
     return challenge ? undefined : state.manager.getConnection(serverName);
   };
+  private async pickupStoredCredentials(
+    current: ServerConnection | undefined,
+    recoverySignal: AbortSignal | undefined,
+  ): Promise<ServerConnection | undefined> {
+    if (current?.status !== "needs-auth") {
+      return;
+    }
+    const definition = this.state.config.mcpServers[this.serverName];
+    if (
+      !definition ||
+      isServerDisabled(definition) ||
+      !this.state.manager.hasFreshOAuthCredentials(this.serverName, definition, current)
+    ) {
+      return;
+    }
+    const reconnected = await this.reconnect(current, recoverySignal);
+    return reconnected?.status === "connected" ? reconnected : undefined;
+  }
   private async authenticate(
     current: ServerConnection | undefined,
     recoverySignal: AbortSignal | undefined,

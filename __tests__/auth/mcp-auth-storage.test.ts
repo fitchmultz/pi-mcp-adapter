@@ -11,7 +11,9 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
+const execFileAsync = promisify(execFile);
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -114,180 +116,266 @@ describe("cross-process credential locking", () => {
     });
   }
 
+  async function runAsync(
+    action: string,
+    url = firstUrl,
+  ): Promise<{ status: number; stdout: string; stderr: string }> {
+    try {
+      const { stdout, stderr } = await execFileAsync(process.execPath, [worker, action, url], {
+        env: {
+          ...environment(),
+          PI_CODING_AGENT_DIR: join(home, "other-agent"),
+          FITCH_MCP_OAUTH_DIR: join(home, "other-oauth"),
+        },
+        encoding: "utf8",
+      });
+      return { status: 0, stdout, stderr };
+    } catch (error) {
+      const stdout = error instanceof Error && "stdout" in error ? String(error.stdout) : "";
+      const stderr = error instanceof Error && "stderr" in error ? String(error.stderr) : "";
+      const status =
+        error instanceof Error && "code" in error && typeof error.code === "number"
+          ? error.code
+          : 1;
+      return { status, stdout, stderr };
+    }
+  }
+
   function successful(action: string) {
     const result = run(action);
     expect(result.status, result.stderr).toBe(0);
     return z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout));
   }
 
-  it("serves OAuth HTTP handshakes and tool calls while another process reads the same credential", async () => {
-    const http = spawn(process.execPath, [worker, "http"], {
-      env: environment(),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let httpOutput = "";
-    let httpError = "";
-    http.stdout.setEncoding("utf8");
-    http.stderr.setEncoding("utf8");
-    http.stdout.on("data", (data: string) => {
-      httpOutput += data;
-    });
-    http.stderr.on("data", (data: string) => {
-      httpError += data;
-    });
-    const httpClosed = once(http, "close");
-    const announcement: unknown = await once(http.stdout, "data");
-    const [line] = z.tuple([z.string()]).parse(announcement);
-    const { url } = z.object({ url: z.string() }).parse(JSON.parse(line));
-    const reader = spawn(process.execPath, [worker, "read", url], {
-      env: { ...environment(), PI_MCP_ADAPTER_PAUSE_CHUNK_READ: "1" },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let readOutput = "";
-    reader.stdout.setEncoding("utf8");
-    reader.stdout.on("data", (data: string) => {
-      readOutput += data;
-    });
-    const readerClosed = once(reader, "close");
-    try {
-      const ready: unknown = await once(reader.stdout, "data");
-      expect(ready).toEqual(["reading-chunk\n"]);
-      http.stdin.end("x");
-      expect(await httpClosed, httpError).toEqual([0, null]);
-      const result: unknown = JSON.parse(httpOutput.slice(line.length));
-      expect(result).toMatchObject({
-        first: { content: [{ type: "text", text: "authorized" }] },
-        second: { content: [{ type: "text", text: "authorized" }] },
+  it(
+    "serves OAuth HTTP handshakes and tool calls while another process reads the same credential",
+    { timeout: 15_000 },
+    async () => {
+      const http = spawn(process.execPath, [worker, "http"], {
+        env: environment(),
+        stdio: ["pipe", "pipe", "pipe"],
       });
-      const { methods } = z.object({ methods: z.array(z.string()) }).parse(result);
-      expect(methods.filter((method) => method === "tools/call")).toHaveLength(2);
-      expect(run("clear", url).status).toBe(1);
-      reader.stdin.end("x");
-      expect(await readerClosed).toEqual([0, null]);
-      const readback: unknown = JSON.parse(readOutput.slice("reading-chunk\n".length));
-      expect(readback).toMatchObject({ entry: { tokens: { accessToken: "x".repeat(5000) } } });
-    } finally {
-      http.kill("SIGKILL");
-      reader.kill("SIGKILL");
-      await httpClosed;
-      await readerClosed;
-    }
-  });
+      let httpOutput = "";
+      let httpError = "";
+      http.stdout.setEncoding("utf8");
+      http.stderr.setEncoding("utf8");
+      http.stdout.on("data", (data: string) => {
+        httpOutput += data;
+      });
+      http.stderr.on("data", (data: string) => {
+        httpError += data;
+      });
+      const httpClosed = once(http, "close");
+      const announcement: unknown = await once(http.stdout, "data");
+      const [line] = z.tuple([z.string()]).parse(announcement);
+      const { url } = z.object({ url: z.string() }).parse(JSON.parse(line));
+      const reader = spawn(process.execPath, [worker, "read", url], {
+        env: { ...environment(), PI_MCP_ADAPTER_PAUSE_CHUNK_READ: "1" },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let readOutput = "";
+      reader.stdout.setEncoding("utf8");
+      reader.stdout.on("data", (data: string) => {
+        readOutput += data;
+      });
+      const readerClosed = once(reader, "close");
+      try {
+        const ready: unknown = await once(reader.stdout, "data");
+        expect(ready).toEqual(["reading-chunk\n"]);
+        http.stdin.end("x");
+        expect(await httpClosed, httpError).toEqual([0, null]);
+        const result: unknown = JSON.parse(httpOutput.slice(line.length));
+        expect(result).toMatchObject({
+          first: { content: [{ type: "text", text: "authorized" }] },
+          second: { content: [{ type: "text", text: "authorized" }] },
+        });
+        const { methods } = z.object({ methods: z.array(z.string()) }).parse(result);
+        expect(methods.filter((method) => method === "tools/call")).toHaveLength(2);
+        expect(run("clear", url).status).toBe(1);
+        reader.stdin.end("x");
+        expect(await readerClosed).toEqual([0, null]);
+        const readback: unknown = JSON.parse(readOutput.slice("reading-chunk\n".length));
+        expect(readback).toMatchObject({ entry: { tokens: { accessToken: "x".repeat(5000) } } });
+      } finally {
+        http.kill("SIGKILL");
+        reader.kill("SIGKILL");
+        await httpClosed;
+        await readerClosed;
+      }
+    },
+  );
 
-  it("rechecks and imports missing scoped credentials only after acquiring an exclusive lock", async () => {
-    successful("seed");
-    const { path } = z.object({ path: z.string() }).parse(successful("legacy-source"));
-    const locks = join(home, ".fitch-mcp-adapter", "locks");
-    const files = readdirSync(locks);
-    expect(files).toHaveLength(1);
-    const lockPath = join(locks, z.string().parse(files[0]));
-    const holder = spawn(
-      process.execPath,
-      [
-        fileURLToPath(new URL("../fixtures/storage-lock-worker.ts", import.meta.url)),
-        "lock",
-        lockPath,
-        "read",
-      ],
-      { env: environment(), stdio: ["pipe", "pipe", "pipe"] },
-    );
-    holder.stdout.setEncoding("utf8");
-    const closed = once(holder, "close");
-    try {
-      const ready: unknown = await once(holder.stdout, "data");
-      expect(ready).toEqual(["locked\n"]);
-      const before = readFileSync(store, "utf8");
-      const read = run("read");
-      expect(read.status, read.stderr).toBe(1);
-      const receipt: unknown = JSON.parse(read.stdout);
-      expect(receipt).toMatchObject({ error: { operation: "write", message: busy } });
-      expect(successful("inspect")).toEqual({
-        status: "present",
-        entry: { serverUrl: firstUrl, tokens: { accessToken: "legacy-token" } },
-      });
-      expect(readFileSync(store, "utf8")).toBe(before);
-      expect(existsSync(path)).toBe(true);
-      holder.stdin.end("x");
-      expect(await closed).toEqual([0, null]);
-      expect(successful("read")).toEqual({
-        entry: { serverUrl: firstUrl, tokens: { accessToken: "legacy-token" } },
-        other,
-      });
-      expect(existsSync(path)).toBe(false);
-    } finally {
-      holder.kill("SIGKILL");
-      await closed;
-    }
-  });
-
-  it("protects a chunked read from field updates, other-URL logout and migration, then permits updates after release", async () => {
-    expect(successful("seed")).toEqual({ entry: original, other });
-    const before = readFileSync(store, "utf8");
-    expect(Object.keys(readRecoveryStore(store)).some((key) => key.includes(".chunk."))).toBe(true);
-    const reader = spawn(process.execPath, [worker, "read"], {
-      env: { ...environment(), PI_MCP_ADAPTER_PAUSE_CHUNK_READ: "1" },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    reader.stdout.setEncoding("utf8");
-    reader.stderr.setEncoding("utf8");
-    reader.stdout.on("data", (data: string) => {
-      stdout += data;
-    });
-    reader.stderr.on("data", (data: string) => {
-      stderr += data;
-    });
-    const closed = once(reader, "close");
-    try {
-      const ready: unknown = await Promise.race([
-        once(reader.stdout, "data"),
-        closed.then(() => {
-          throw new Error(`Credential reader exited before pausing: ${stderr}`);
-        }),
-      ]);
-      expect(ready).toEqual(["reading-chunk\n"]);
-      const attempts = [
-        { action: "update", url: firstUrl, operation: "write" },
-        { action: "clear", url: firstUrl, operation: "write" },
-        { action: "client", url: secondUrl, operation: "write" },
-        { action: "logout", url: secondUrl, operation: "remove" },
-        { action: "migrate", url: firstUrl, operation: "write" },
-      ];
-      for (const attempt of attempts) {
-        const result = run(attempt.action, attempt.url);
-        expect(result.status, result.stderr).toBe(1);
-        const receipt: unknown = JSON.parse(result.stdout);
-        expect(receipt).toEqual({
-          error: {
-            code: "OAUTH_CREDENTIAL_STORE_UNAVAILABLE",
-            operation: attempt.operation,
-            message: busy,
-          },
+  it(
+    "rechecks and imports missing scoped credentials only after acquiring an exclusive lock",
+    { timeout: 15_000 },
+    async () => {
+      successful("seed");
+      const { path } = z.object({ path: z.string() }).parse(successful("legacy-source"));
+      const locks = join(home, ".fitch-mcp-adapter", "locks");
+      const files = readdirSync(locks);
+      expect(files).toHaveLength(1);
+      const lockPath = join(locks, z.string().parse(files[0]));
+      const holder = spawn(
+        process.execPath,
+        [
+          fileURLToPath(new URL("../fixtures/storage-lock-worker.ts", import.meta.url)),
+          "lock",
+          lockPath,
+          "read",
+        ],
+        { env: environment(), stdio: ["pipe", "pipe", "pipe"] },
+      );
+      holder.stdout.setEncoding("utf8");
+      const closed = once(holder, "close");
+      try {
+        const ready: unknown = await once(holder.stdout, "data");
+        expect(ready).toEqual(["locked\n"]);
+        const before = readFileSync(store, "utf8");
+        const read = run("read");
+        expect(read.status, read.stderr).toBe(1);
+        const receipt: unknown = JSON.parse(read.stdout);
+        expect(receipt).toMatchObject({ error: { operation: "write", message: busy } });
+        expect(successful("inspect")).toEqual({
+          status: "present",
+          entry: { serverUrl: firstUrl, tokens: { accessToken: "legacy-token" } },
         });
         expect(readFileSync(store, "utf8")).toBe(before);
+        expect(existsSync(path)).toBe(true);
+        holder.stdin.end("x");
+        expect(await closed).toEqual([0, null]);
+        expect(successful("read")).toEqual({
+          entry: { serverUrl: firstUrl, tokens: { accessToken: "legacy-token" } },
+          other,
+        });
+        expect(existsSync(path)).toBe(false);
+      } finally {
+        holder.kill("SIGKILL");
+        await closed;
       }
-      expect(successful("inspect")).toEqual({ status: "present", entry: original });
-      expect(successful("read")).toEqual({ entry: original, other });
-      reader.stdin.end("x");
-      expect(await closed, stderr).toEqual([0, null]);
-      const readback: unknown = JSON.parse(stdout.slice("reading-chunk\n".length));
-      expect(readback).toEqual({ entry: original, other });
-      expect(readFileSync(store, "utf8")).toBe(before);
-    } finally {
-      reader.kill("SIGKILL");
-      await closed;
-    }
-    const { codeVerifier: _removed, ...cleared } = original;
-    expect(successful("clear")).toEqual({ entry: cleared, other });
-    expect(successful("update")).toEqual({
-      entry: { ...cleared, tokens: { accessToken: "updated-token" } },
-      other,
-    });
-    expect(Object.keys(readRecoveryStore(store)).some((key) => key.includes(".chunk."))).toBe(
-      false,
-    );
-  });
+    },
+  );
+
+  it(
+    "protects a chunked read from field updates, other-URL logout and migration, then permits updates after release",
+    { timeout: 15_000 },
+    async () => {
+      expect(successful("seed")).toEqual({ entry: original, other });
+      const before = readFileSync(store, "utf8");
+      expect(Object.keys(readRecoveryStore(store)).some((key) => key.includes(".chunk."))).toBe(
+        true,
+      );
+      const reader = spawn(process.execPath, [worker, "read"], {
+        env: { ...environment(), PI_MCP_ADAPTER_PAUSE_CHUNK_READ: "1" },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      reader.stdout.setEncoding("utf8");
+      reader.stderr.setEncoding("utf8");
+      reader.stdout.on("data", (data: string) => {
+        stdout += data;
+      });
+      reader.stderr.on("data", (data: string) => {
+        stderr += data;
+      });
+      const closed = once(reader, "close");
+      try {
+        const ready: unknown = await Promise.race([
+          once(reader.stdout, "data"),
+          closed.then(() => {
+            throw new Error(`Credential reader exited before pausing: ${stderr}`);
+          }),
+        ]);
+        expect(ready).toEqual(["reading-chunk\n"]);
+        const attempts = [
+          { action: "update", url: firstUrl, operation: "write" },
+          { action: "clear", url: firstUrl, operation: "write" },
+          { action: "client", url: secondUrl, operation: "write" },
+          { action: "logout", url: secondUrl, operation: "remove" },
+          { action: "migrate", url: firstUrl, operation: "write" },
+        ];
+        const results = await Promise.all(
+          attempts.map(async (attempt) => ({
+            attempt,
+            result: await runAsync(attempt.action, attempt.url),
+          })),
+        );
+        for (const { attempt, result } of results) {
+          expect(result.status, result.stderr).toBe(1);
+          const receipt: unknown = JSON.parse(result.stdout);
+          expect(receipt).toEqual({
+            error: {
+              code: "OAUTH_CREDENTIAL_STORE_UNAVAILABLE",
+              operation: attempt.operation,
+              message: busy,
+            },
+          });
+          expect(readFileSync(store, "utf8")).toBe(before);
+        }
+        expect(successful("inspect")).toEqual({ status: "present", entry: original });
+        expect(successful("read")).toEqual({ entry: original, other });
+        reader.stdin.end("x");
+        expect(await closed, stderr).toEqual([0, null]);
+        const readback: unknown = JSON.parse(stdout.slice("reading-chunk\n".length));
+        expect(readback).toEqual({ entry: original, other });
+        expect(readFileSync(store, "utf8")).toBe(before);
+      } finally {
+        reader.kill("SIGKILL");
+        await closed;
+      }
+      const { codeVerifier: _removed, ...cleared } = original;
+      expect(successful("clear")).toEqual({ entry: cleared, other });
+      expect(successful("update")).toEqual({
+        entry: { ...cleared, tokens: { accessToken: "updated-token" } },
+        other,
+      });
+      expect(Object.keys(readRecoveryStore(store)).some((key) => key.includes(".chunk."))).toBe(
+        false,
+      );
+    },
+  );
+
+  it(
+    "waits for a brief concurrent reader via SQLite busy_timeout and skips write locks on absent reads",
+    { timeout: 15_000 },
+    async () => {
+      successful("seed");
+      const locks = join(home, ".fitch-mcp-adapter", "locks");
+      const lockPath = join(locks, z.string().parse(readdirSync(locks)[0]));
+      const holder = spawn(
+        process.execPath,
+        [
+          fileURLToPath(new URL("../fixtures/storage-lock-worker.ts", import.meta.url)),
+          "lock",
+          lockPath,
+          "read",
+        ],
+        { env: environment(), stdio: ["pipe", "pipe", "pipe"] },
+      );
+      holder.stdout.setEncoding("utf8");
+      const closed = once(holder, "close");
+      try {
+        expect(await once(holder.stdout, "data")).toEqual(["locked\n"]);
+        // An absent URL read must NOT escalate to an exclusive write lock while a reader holds the lock.
+        const absentRead = await runAsync("read", "https://absent.invalid/mcp");
+        expect(absentRead.status, absentRead.stderr).toBe(0);
+        // A writer waits briefly (busy_timeout) and succeeds once the reader releases within 2.5s.
+        const pendingWrite = runAsync("update", firstUrl);
+        setTimeout(() => {
+          holder.stdin.end("x");
+        }, 200);
+        const writeResult = await pendingWrite;
+        expect(writeResult.status, writeResult.stderr).toBe(0);
+        expect(await closed).toEqual([0, null]);
+        expect(JSON.parse(writeResult.stdout)).toMatchObject({
+          entry: { tokens: { accessToken: "updated-token" } },
+        });
+      } finally {
+        holder.kill("SIGKILL");
+        await closed;
+      }
+    },
+  );
 });
 
 describe("OAuth credential-store diagnostics", () => {
