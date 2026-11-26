@@ -53,6 +53,7 @@ function repository(): string {
     "metadata-cache-validator.ts",
     "scripts/build-host-browser.mjs",
     "host-browser.bundle.js",
+    "ui-stream-constants.ts",
     "ui-stream-types.ts",
     "ui-session-timing.ts",
     "ui-link-url.ts",

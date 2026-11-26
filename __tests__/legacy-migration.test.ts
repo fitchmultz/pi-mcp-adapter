@@ -89,7 +89,14 @@ describe("explicit pre-v5 state migration", () => {
       }),
     );
     const { migrateLegacyState } = await import("../legacy-migration.ts");
-    await expect(migrateLegacyState({ cwd: project })).rejects.toThrow(
+    const result = await migrateLegacyState({ cwd: project });
+    expect(result.credentials.map(({ server, status }) => ({ server, status }))).toEqual([
+      {
+        server: "oauth",
+        status: "error",
+      },
+    ]);
+    expect(result.credentials[0]?.error).toMatch(
       /Missing environment variable.*FITCH_MISSING_MIGRATION_HOST/,
     );
   });
@@ -349,5 +356,64 @@ describe("explicit pre-v5 state migration", () => {
     });
     expect(output).toContain("user-global native MCP config");
     expect(output).toContain("remove or rename a retired pre-v5 <agentDir>/mcp.json");
+  });
+
+  it("isolates a broken legacy server entry without aborting valid siblings", async () => {
+    vi.stubEnv("VALID_HOST", "valid.example.com");
+    write(
+      join(agent, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          alpha: { url: "https://${VALID_HOST}/alpha" },
+          broken: { url: "https://${UNSET_LEGACY_VAR}/broken" },
+          beta: { url: "https://${VALID_HOST}/beta" },
+        },
+      }),
+    );
+    const alphaHash = `sha256-${createHash("sha256").update("alpha").digest("hex")}`;
+    const betaHash = `sha256-${createHash("sha256").update("beta").digest("hex")}`;
+    const brokenHash = `sha256-${createHash("sha256").update("broken").digest("hex")}`;
+    write(
+      join(agent, "mcp-oauth", alphaHash, "tokens.json"),
+      JSON.stringify({
+        serverUrl: "https://valid.example.com/alpha",
+        tokens: { accessToken: "alpha-token" },
+      }),
+    );
+    write(
+      join(agent, "mcp-oauth", brokenHash, "tokens.json"),
+      JSON.stringify({
+        serverUrl: "https://broken.example.com/broken",
+        tokens: { accessToken: "broken-token" },
+      }),
+    );
+    write(
+      join(agent, "mcp-oauth", betaHash, "tokens.json"),
+      JSON.stringify({
+        serverUrl: "https://valid.example.com/beta",
+        tokens: { accessToken: "beta-token" },
+      }),
+    );
+
+    const { migrateLegacyState } = await import("../legacy-migration.ts");
+    const { getAuthEntry } = await import("../mcp-auth.ts");
+    const result = await migrateLegacyState({ cwd: project });
+
+    expect(result.credentials.map(({ server, status }) => ({ server, status }))).toEqual([
+      { server: "alpha", status: "copied" },
+      { server: "broken", status: "error" },
+      { server: "beta", status: "copied" },
+    ]);
+    expect(result.credentials[1]?.error).toMatch(/UNSET_LEGACY_VAR/);
+    expect(
+      await getAuthEntry({ serverName: "alpha", serverUrl: "https://valid.example.com/alpha" }),
+    ).toMatchObject({
+      tokens: { accessToken: "alpha-token" },
+    });
+    expect(
+      await getAuthEntry({ serverName: "beta", serverUrl: "https://valid.example.com/beta" }),
+    ).toMatchObject({
+      tokens: { accessToken: "beta-token" },
+    });
   });
 });

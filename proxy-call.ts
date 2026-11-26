@@ -112,6 +112,7 @@ function approvalFailure(
 ): ProxyToolResult {
   const denied = reason === "denied";
   return {
+    isError: true,
     content: [
       {
         type: "text",

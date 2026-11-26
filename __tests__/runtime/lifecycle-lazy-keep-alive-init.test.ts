@@ -65,6 +65,7 @@ vi.mock("../../metadata-cache.ts", () => ({
   serializeResourceTemplates: vi.fn<typeof Metadata.serializeResourceTemplates>(() => []),
   serializeTools: vi.fn<typeof Metadata.serializeTools>(() => []),
   serializePrompts: vi.fn<typeof Metadata.serializePrompts>(() => []),
+  serializeSkills: vi.fn<typeof Metadata.serializeSkills>(() => []),
 }));
 
 vi.mock("../../tool-metadata.ts", () => ({

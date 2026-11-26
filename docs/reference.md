@@ -7,7 +7,7 @@ For installation and a first task, start with the [README](../README.md). This g
 - [SDK configuration](#sdk-configuration), [call capture](#execution-checkpoints-and-call-capture), and [runtime status](#runtime-status-snapshots)
 - [Transport behavior and retry safety](#transport-compatibility)
 - [Approvals](#tool-approval), [output/readback](#output-guard), and [multi-call work](#multi-call-work)
-- [Typed discovery and pins](#typed-discovery-and-pinned-tools), [resources](#mcp-resources), [prompts](#mcp-prompts), and [Apps](#mcp-ui-integration)
+- [Typed discovery and pins](#typed-discovery-and-pinned-tools), [skills](#mcp-skills), [resources](#mcp-resources), [prompts](#mcp-prompts), [elicitation](#mcp-elicitation), and [Apps](#mcp-ui-integration)
 - [Gateway actions](#usage), [slash commands](#commands), and [limits](#limitations)
 
 ## Requirements
@@ -163,6 +163,9 @@ import {
   completeAuthFromInput,
   createOAuthRuntime,
   getAuthStorageOptions,
+  getMcpDiscoverySummary,
+  getServerProvenance,
+  loadMcpConfig,
   McpServerManager,
   removeAuth,
   shutdownOAuth,
@@ -249,7 +252,7 @@ pi.events.on(MCP_STATUS_EVENT, (snapshot) => {
 });
 ```
 
-`MCP_STATUS_EVENT` is `fitch-mcp-adapter/status/v1`. The snapshot is read-only machine-readable data with copied per-server entries. It includes `totalTools`, `totalResources`, `connectedCount`, and `disabledCount`; each server includes `name`, `status`, `toolCount`, and `disabled`, with `resourceCount` when known, `catalogKnown` indicating whether discovery has completed, and `failedAgoSeconds` only for an active failure. An unknown catalog is not a confirmed zero-tool server. Reading status never connects a lazy server, starts authentication, or exposes SDK clients, transports, credentials, or server definitions. An initial snapshot is emitted after initialization, updates are emitted for status and metadata changes, and an empty snapshot is emitted when the session shuts down.
+`MCP_STATUS_EVENT` is `fitch-mcp-adapter/status/v1`. Importing `@fitchmultz/pi-mcp-adapter/types` exports this constant, `isToolAllowed`, UI stream method constants, and TypeScript contracts without eagerly loading `zod`. The snapshot is read-only machine-readable data with copied per-server entries. It includes `totalTools`, `totalResources`, `connectedCount`, and `disabledCount` (plus `totalSkills` when verified skills are present); each server includes `name`, `status`, `toolCount`, and `disabled`, with `resourceCount` when known, `skillCount` when positive, `catalogKnown` indicating whether discovery has completed, and `failedAgoSeconds` only for an active failure. An unknown catalog is not a confirmed zero-tool server. Reading status never connects a lazy server, starts authentication, or exposes SDK clients, transports, credentials, or server definitions. An initial snapshot is emitted after initialization, updates are emitted for status and metadata changes, and an empty snapshot is emitted when the session shuts down.
 
 In the configuration examples below, `30000` is illustrative only. If `requestTimeoutMs` is omitted or set to `<= 0`, the MCP SDK default timeout (60 seconds) is used. Tool calls and resource reads enable SDK `resetTimeoutOnProgress`, so servers sending `notifications/progress` keep long-running requests alive across the timeout window and stream sanitized single-line progress updates to Pi's tool UI (alongside `Connecting to <server>…` and `Authenticating with <server>…` phase updates). Pre-dispatch session recovery, automatic OAuth flows, and modern multi-round-trip `input_required` fulfillment (elicitation and sampling) are not capped by `requestTimeoutMs`; they obey caller cancellation and their own auth or per-leg timeouts. On legacy servers that hold a single `tools/call` open during server-to-client elicitation or sampling without sending `notifications/progress`, the SDK's per-request timer still applies unless `requestTimeoutMs` is raised.
 
@@ -325,6 +328,7 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 | `idleTimeout`                        | Minutes before idle disconnect (overrides global)                                                                                                                                                                                                                      |
 | `requestTimeoutMs`                   | Per-request wire inactivity timeout in milliseconds for live MCP calls (overrides global; if omitted or `<= 0`, the MCP SDK 60s default is used; reset on `notifications/progress`; does not cap pre-dispatch recovery, auto-auth, or modern `input_required` dialogs) |
 | `exposeResources`                    | Make MCP resources available through resource listing/reading (default: true)                                                                                                                                                                                          |
+| `exposeSkills`                       | Auto-discover and register verified SEP-2640 MCP skills from this server into Pi `resources_discover` (default: `true`; overrides global `settings.exposeSkills`)                                                                                                      |
 | `directTools`                        | `true`, `string[]`, or `false` — pin real tools into the initial active tool set                                                                                                                                                                                       |
 | `toolPrefix`                         | Override global `settings.toolPrefix` for this server (`"server"`, `"short"`, `"none"`, or `"mcp"`)                                                                                                                                                                    |
 | `includeTools`                       | `string[]` of tool names or glob patterns to expose (matches original names like `get_screenshot` and prefixed names like `figma_get_screenshot`; filters tools only, never resources)                                                                                 |
@@ -491,9 +495,10 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
 | `freezeDirectTools`                           | Keep direct-tool registration stable after the initial sync so automatic reconnects and list-change notifications do not rebuild the system prompt. Use `mcp({ action: "connect", server: "server" })` or `/mcp reconnect <server>` to refresh deliberately. Default: false.                                                                                                                                                                                                                                    |
 | `disableProxyTool`                            | Hide `mcp` once configured pinned tools are available. Legacy resource pins keep it available for resource access.                                                                                                                                                                                                                                                                                                                                                                                              |
 | `autoAuth`                                    | Auto-run OAuth on `connect`/tool calls when a server needs auth, then retry once (default: false).                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `sampling`                                    | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` before current/default fallback (default: true when UI approval is available).                                                                                                                                                                                                                                                                                                                                                 |
+| `sampling`                                    | Allow MCP servers to sample through Pi models, honoring `modelPreferences.hints` and `costPriority` / `speedPriority` / `intelligencePriority` before current/default fallback (default: true when UI approval is available).                                                                                                                                                                                                                                                                                   |
 | `samplingAutoApprove`                         | Skip sampling confirmation prompts. Required for sampling in non-UI sessions (default: false).                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `elicitation`                                 | Allow MCP servers to request user input through Pi dialogs (default: true when Pi UI is available).                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `exposeSkills`                                | Auto-discover and register verified SEP-2640 MCP skills from connected servers into Pi `resources_discover` (default: `true`; untrusted project servers are never exposed). Per-server `exposeSkills` overrides this.                                                                                                                                                                                                                                                                                           |
 | `outputGuard`                                 | Guard oversized MCP output: `true` (default), `false`, or `{ maxBytes, maxLines, detailsMaxBytes }`. See [Output Guard](#output-guard).                                                                                                                                                                                                                                                                                                                                                                         |
 | `trace`                                       | Opt-in metadata-only protocol tracing. Set `{ enabled: true }` globally or `trace: true` on a server. The per-session JSONL file defaults to `.pi/fitch-mcp-adapter/traces/`; `file`, `maxBytes` (default 262144), and `maxEvents` (default 10000) can be set. Raw MCP payloads, prompts, tool arguments/results, auth data, and URLs are never persisted.                                                                                                                                                      |
 
@@ -515,7 +520,7 @@ Use `approveTools` when a tool should stay visible but not run without confirmat
 }
 ```
 
-When a matching tool is called from the proxy tool, a direct MCP tool, a resource call, or an MCP UI iframe, Pi asks: **Allow once**, **Allow for session**, or **Deny**. The dialog dismisses itself when its tool call or the session is cancelled. Session approvals are kept in memory only. In headless sessions, matching calls fail closed with an `approval_required` result instead of running. `excludeTools` still removes tools entirely; `approveTools` only gates visible tools at call time.
+When a matching tool is called from the proxy tool, a direct MCP tool, a resource call, or an MCP UI iframe, Pi asks: **Allow once**, **Allow for session**, or **Deny**. Concurrent confirmation prompts for the same server and tool serialize cleanly so choosing **Allow for session** satisfies waiting callers without duplicate dialogs. The dialog dismisses itself when its tool call or the session is cancelled. Session approvals are kept in memory only. Denied calls and blocked headless calls (`approval_denied` / `approval_required`) fail closed and return `isError: true`. `excludeTools` still removes tools entirely; `approveTools` only gates visible tools at call time.
 
 ### Output Guard
 
@@ -645,11 +650,19 @@ The adapter also registers cached prompt definitions as Pi slash commands under 
 
 Prompt messages preserve `[user]` and `[assistant]` role markers for multi-message results and forward vision-safe embedded images as native Pi `ImageContent` instead of collapsing them to placeholders. Servers without the `prompts` capability are not probed.
 
+### MCP Skills
+
+Verified SEP-2640 MCP skills are automatically exposed into Pi's `resources_discover` (`skillPaths`) by default (`exposeSkills: true`).
+
+- **Trust and origin gates:** Skills from project-local configs are never exposed unless Pi has marked the project trusted (`ctx.isProjectTrusted()`). Servers that do not advertise the skills capability are skipped without probing.
+- **Verification and isolation:** Each skill's `SKILL.md` and listed bundle resources are verified through `@modelcontextprotocol/client/ext/skills` before being materialized into a private per-runtime directory under `<Pi agent dir>/mcp-skills/` (`0700` directories, `0600` files) and validated with Pi's skill loader. Unverified, dynamic, or traversal-risk skills are rejected individually without breaking valid sibling skills or the server connection.
+- **Refresh and cleanup:** Cached skill-bearing servers verify at startup; late skill arrivals or removals notify the user and reload when appropriate, and materialized skill directories are removed on server disconnect, disable/`exposeSkills: false`, working-directory changes, reload, and `session_shutdown`.
+
 ### MCP Elicitation
 
-When Pi exposes dialog-capable UI, the adapter advertises form elicitation support. Forms use Pi's stock `select()` and `input()` dialogs, validate the response, and provide a review/edit step before submission. Explicit refusal maps to MCP `decline`; dismissing a dialog maps to `cancel`, and a dialog that is still open when the Pi session stops is dismissed automatically.
+When Pi exposes dialog-capable UI, the adapter advertises form elicitation support. Forms use Pi's stock `select()` and `input()` dialogs, validate the response, go straight to `input()` for single-action primitive fields (without a redundant `"Enter value"` choice prompt), and provide a review/edit step before submission. Explicit refusal maps to MCP `decline`; dismissing a dialog maps to `cancel`, and a dialog that is still open when the Pi session stops is dismissed automatically.
 
-URL mode is advertised only in TUI mode. The adapter displays the requesting server, target host, and full URL, and always requires consent before opening the browser. It also handles URL-required tool errors (`-32042`) and completion notifications; after completing the browser interaction, retry the original tool call.
+URL mode is advertised in both TUI and RPC UI hosts. The adapter displays the requesting server, target host, and full URL, always requires consent before opening the browser, and launches URLs through Pi's host browser opener (`BROWSER` / `openBrowser` when provided). It also handles URL-required tool errors (`-32042`) and completion notifications; after completing the browser interaction, retry the original tool call.
 
 ### Typed Discovery and Pinned Tools
 
@@ -833,7 +846,7 @@ Shared MCP files are loaded automatically. Use `imports` only for host-specific 
 
 Supported compatibility imports: `cursor`, `claude-code`, `claude-desktop`, `opencode`, `vscode`, `windsurf`, `codex`
 
-`fitch-mcp-adapter init` detects these host-specific configs and adds missing imports to the adapter-owned global config for you. The `opencode` import reads OpenCode V1 `mcp` entries from both `~/.config/opencode/opencode.json` and the project `opencode.json`, with project fields taking precedence. It is explicit-import only; OpenCode V2, inline content, managed configs, and remote discovery are not supported.
+`fitch-mcp-adapter init` detects shared, native Pi (`.pi/mcp.json` and `<Pi agent dir>/mcp.json`), and host-specific configs and adds missing imports to the adapter-owned global config for you. The `opencode` import reads OpenCode V1 `mcp` entries from `~/.config/opencode/opencode.json` and walks up to the Git root for project `opencode.json`, with project fields taking precedence. It is explicit-import only; OpenCode V2, inline content, managed configs, and remote discovery are not supported.
 
 ### Project Config
 

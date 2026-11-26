@@ -10,6 +10,7 @@ import {
   ResourceTemplateSchema,
   ToolSchema,
 } from "@modelcontextprotocol/core";
+import { SkillFrontmatterSchema, SkillSchema } from "@modelcontextprotocol/core/ext/skills";
 import { z } from "zod";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -45,6 +46,15 @@ const cacheEntrySchema = z.object({
   resourceTemplates: z.array(ResourceTemplateSchema).optional(),
   prompts: z
     .array(PromptSchema.pick({ name: true, title: true, description: true, arguments: true }))
+    .optional(),
+  skills: z
+    .array(
+      z.object({
+        name: SkillFrontmatterSchema.shape.name,
+        description: SkillFrontmatterSchema.shape.description,
+        uri: SkillSchema.shape.uri,
+      }),
+    )
     .optional(),
 });
 

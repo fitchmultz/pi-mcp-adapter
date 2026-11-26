@@ -104,6 +104,8 @@ function coerceValue(name: string, schema: FormProperty, value: ProvidedValue): 
   }
 }
 
+const sharedSchemaValidator = new AjvJsonSchemaValidator();
+
 export function coerceAndValidateFormValues(
   params: ElicitRequestFormParams,
   values: Record<string, ElicitationValue>,
@@ -131,7 +133,7 @@ export function coerceAndValidateFormValues(
     ),
     ...(requiredFields !== undefined ? { required: requiredFields } : {}),
   };
-  const validation = new AjvJsonSchemaValidator().getValidator(schema)(output);
+  const validation = sharedSchemaValidator.getValidator(schema)(output);
   if (!validation.valid) {
     throw new Error(`Invalid elicitation response: ${validation.errorMessage}`);
   }

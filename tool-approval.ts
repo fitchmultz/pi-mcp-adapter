@@ -17,6 +17,47 @@ interface ToolApprovalState {
   ui?: Pick<ExtensionContext["ui"], "select">;
 }
 
+const pendingApprovalChains = new WeakMap<Map<string, true>, Map<string, Promise<void>>>();
+
+function getApprovalChains(state: ToolApprovalState): Map<string, Promise<void>> {
+  let chains = pendingApprovalChains.get(state.approvedToolCalls);
+  if (!chains) {
+    chains = new Map();
+    pendingApprovalChains.set(state.approvedToolCalls, chains);
+  }
+  return chains;
+}
+
+async function runSerializedApproval(
+  state: ToolApprovalState,
+  cacheKey: string,
+  ownedSignal: AbortSignal | undefined,
+  task: () => Promise<ToolCallApprovalResult>,
+): Promise<ToolCallApprovalResult> {
+  const chains = getApprovalChains(state);
+  const previous = chains.get(cacheKey);
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const nextChain = (previous ?? Promise.resolve()).then(
+    () => gate,
+    () => gate,
+  );
+  chains.set(cacheKey, nextChain);
+  try {
+    if (previous) {
+      await abortable(previous, ownedSignal);
+    }
+    return await task();
+  } finally {
+    release?.();
+    if (chains.get(cacheKey) === nextChain) {
+      chains.delete(cacheKey);
+    }
+  }
+}
+
 export type ToolCallApprovalResult =
   | { ok: true }
   | { ok: false; reason: "denied" | "approval_required_headless" };
@@ -90,11 +131,31 @@ export async function ensureToolCallApproved(
     return { ok: false, reason: "approval_required_headless" };
   }
 
+  const ownedSignal = combineAbortSignals(state.owner.signal, signal);
+  return await runSerializedApproval(state, cacheKey, ownedSignal, async () => {
+    if (state.approvedToolCalls.has(cacheKey)) {
+      return { ok: true };
+    }
+    return await promptToolApproval({ state, serverName, toolMeta, args, cacheKey, ownedSignal });
+  });
+}
+
+async function promptToolApproval(input: {
+  state: ToolApprovalState;
+  serverName: string;
+  toolMeta: ToolMetadata;
+  args: Record<string, unknown> | undefined;
+  cacheKey: string;
+  ownedSignal: AbortSignal | undefined;
+}): Promise<ToolCallApprovalResult> {
+  const { state, serverName, toolMeta, args, cacheKey, ownedSignal } = input;
+  if (!state.ui) {
+    return { ok: false, reason: "approval_required_headless" };
+  }
   const json = JSON.stringify(approvalPreviewArgs(toolMeta, args), null, 2);
   const sanitized = sanitizeTerminalText(json);
   const preview = sanitized.length > 500 ? `${sanitized.slice(0, 500)}...` : sanitized;
   const title = `MCP: ${sanitizeTerminalText(serverName)} wants to run ${sanitizeTerminalText(toolMeta.originalName)}`;
-  const ownedSignal = combineAbortSignals(state.owner.signal, signal);
   const decision = await abortable(
     state.ui.select(
       `${title}\n\nArguments:\n${preview}`,

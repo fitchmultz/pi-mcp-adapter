@@ -146,18 +146,39 @@ function statusLabel(state: McpExtensionState, name: string): ReturnType<typeof 
   return inspectionStatus(stage, failedAgo, getFailureMessage(state, name));
 }
 
+function formatStatusToolSuffix(input: {
+  hasMetadata: boolean;
+  toolCount: number;
+  resourceCount: number;
+  skillCount: number;
+  status: string;
+}): string {
+  const { hasMetadata, toolCount, resourceCount, skillCount, status } = input;
+  if (!hasMetadata) {
+    return " (undiscovered)";
+  }
+  const toolLabel = `${toolCount} tool${toolCount === 1 ? "" : "s"}`;
+  const resourceLabel = `${resourceCount} resource${resourceCount === 1 ? "" : "s"}`;
+  const skillPart = skillCount > 0 ? `, ${skillCount} skill${skillCount === 1 ? "" : "s"}` : "";
+  const cachedPart = status === "cached" ? ", cached" : "";
+  return ` (${toolLabel}, ${resourceLabel}${skillPart}${cachedPart})`;
+}
+
 function serverStatusLine(state: McpExtensionState, name: string): string {
   const metadata = state.toolMetadata.get(name);
   const toolCount = metadata?.filter((tool) => tool.resourceUri === undefined).length ?? 0;
   const resourceCount = metadata?.filter((tool) => tool.resourceUri !== undefined).length ?? 0;
+  const skillCount = state.skillMetadata?.get(name)?.length ?? 0;
   const { status, statusIcon, failed } = statusLabel(state, name);
-  let toolSuffix = "";
-  if (!failed) {
-    toolSuffix =
-      metadata === undefined
-        ? " (undiscovered)"
-        : ` (${toolCount} tool${toolCount === 1 ? "" : "s"}, ${resourceCount} resource${resourceCount === 1 ? "" : "s"}${status === "cached" ? ", cached" : ""})`;
-  }
+  const toolSuffix = failed
+    ? ""
+    : formatStatusToolSuffix({
+        hasMetadata: metadata !== undefined,
+        toolCount,
+        resourceCount,
+        skillCount,
+        status,
+      });
   return `${statusIcon} ${name}: ${status}${toolSuffix}`;
 }
 

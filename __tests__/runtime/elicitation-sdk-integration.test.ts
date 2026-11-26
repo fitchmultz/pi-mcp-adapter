@@ -29,7 +29,7 @@ async function createConnectedManager(
 ) {
   const ui = createElicitationUi(answers, ["stock-pi-user"]);
   const manager = new McpServerManager();
-  manager.setElicitationConfig({ ui, allowUrl: mode === "tui" });
+  manager.setElicitationConfig({ ui, allowUrl: mode === "tui" || mode === "rpc" });
   managers.push(manager);
   await manager.connect("real", definition);
   return { manager, ui };
@@ -70,11 +70,11 @@ describe("elicitation with the real MCP SDK", () => {
 
   it.each([
     ["tui", { form: {}, url: {} }],
-    ["rpc", { form: {} }],
+    ["rpc", { form: {}, url: {} }],
   ] as const)(
     "advertises stock Pi %s capabilities and completes form elicitation",
     async (mode, capabilities) => {
-      const { manager } = await createConnectedManager(mode, ["Continue", "Enter value", "Submit"]);
+      const { manager } = await createConnectedManager(mode, ["Continue", "Submit"]);
       const connection = requireValue(manager.getConnection("real"));
       const capabilityResult = await connection.client.callTool({
         name: "capabilities",
@@ -90,8 +90,18 @@ describe("elicitation with the real MCP SDK", () => {
     },
   );
 
-  it("rejects URL elicitation over real SDK dispatch in stock Pi RPC mode", async () => {
-    const { manager } = await createConnectedManager("rpc");
+  it("dispatches URL elicitation over real SDK in stock Pi RPC mode", async () => {
+    const { manager, ui } = await createConnectedManager("rpc", ["Open"]);
+    const connection = requireValue(manager.getConnection("real"));
+    const result = await connection.client.callTool({ name: "url", arguments: {} });
+
+    expect(resultValue(result)).toEqual({ action: "accept" });
+    expect(mocks.open).toHaveBeenCalledWith("https://example.com/authorize");
+    expect(ui.notify).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects URL elicitation over real SDK dispatch when URL mode is disabled", async () => {
+    const { manager } = await createConnectedManager("print");
     const connection = requireValue(manager.getConnection("real"));
 
     await expect(connection.client.callTool({ name: "url", arguments: {} })).rejects.toThrow(

@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { McpExtensionState } from "./state.ts";
-import type { McpAdapterOptions, McpConfig } from "./types.ts";
+import type { McpExtensionState, McpInitializationOptions } from "./state.ts";
+export type { McpInitializationOptions } from "./state.ts";
+import type { McpConfig } from "./types.ts";
 import { nativePiConfigOptions } from "./host-contract.ts";
 import { cloneMcpConfig, isPathInsideProject, loadMcpConfig } from "./config.ts";
 import { ConsentManager } from "./consent-manager.ts";
@@ -24,18 +25,11 @@ import {
 } from "./init-metadata.ts";
 import { McpStateCleanup } from "./host-state-cleanup.ts";
 import { updateStatusBar } from "./init-status.ts";
-
-export type McpInitializationOptions = McpAdapterOptions & {
-  /**
-   * OAuth runtime to attach instead of creating one owned by the extension
-   * state. An injected runtime's lifetime stays with its caller: the state's
-   * cleanup shuts down only runtimes it created itself, so the caller must
-   * stop an injected runtime with shutdownOAuth().
-   */
-  oauthRuntime?: McpOAuthRuntime;
-  statusEvents?: McpExtensionState["statusEvents"];
-  resolvedConfig?: McpConfig;
-};
+import {
+  cleanupRuntimeSkills,
+  cleanupServerSkills,
+  createSkillsRuntimeId,
+} from "./mcp-skills-store.ts";
 
 function resolveConfig(
   pi: ExtensionAPI,
@@ -77,17 +71,23 @@ export function configureRequests(
   } else if (clearWhenDisabled) {
     manager.setSamplingConfig(undefined);
   }
+  manager.setExposeSkills(config.settings?.exposeSkills !== false);
   configureElicitation(manager, ctx, state, clearWhenDisabled);
 }
 
 function configureElicitation(
   manager: McpServerManager,
   ctx: ExtensionContext,
-  { config, owner, ui }: McpExtensionState,
+  { config, owner, ui, openBrowser }: McpExtensionState,
   clearWhenDisabled: boolean,
 ): void {
   if (config.settings?.elicitation !== false && ctx.hasUI && ui) {
-    manager.setElicitationConfig({ ui, allowUrl: ctx.mode === "tui", signal: owner.signal });
+    manager.setElicitationConfig({
+      ui,
+      allowUrl: ctx.mode === "tui" || ctx.mode === "rpc",
+      openBrowser,
+      signal: owner.signal,
+    });
   } else if (clearWhenDisabled) {
     manager.setElicitationConfig(undefined);
   }
@@ -107,11 +107,20 @@ function bindRuntime(state: McpExtensionState, ownsOAuthRuntime: boolean): void 
     notifyToolMetadataUpdated(state, serverName, reason);
     updateStatusBar(state);
   });
+  manager.setServerClosedListener((serverName) => {
+    if (serverName === undefined) {
+      cleanupRuntimeSkills(state);
+    } else {
+      cleanupServerSkills(state, serverName);
+    }
+  });
+  owner.addCleanup(() => cleanupRuntimeSkills(state));
   owner.addCleanup(() => lifecycle.gracefulShutdown());
   const cleanup = new McpStateCleanup(state);
   owner.addCleanup(() => cleanup.closeUiServer("runtime_owner_stopped"));
 }
 
+<<<<<<< HEAD
 function createConfiguredManager(input: {
   cwd: string;
   owner: McpRuntimeOwner;
@@ -163,6 +172,38 @@ function copyConfigErrors(config: McpConfig): McpExtensionState["configErrors"] 
   return [...config.configErrors];
 }
 
+function initialSkillStateFields(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  options: McpInitializationOptions,
+): Pick<
+  McpExtensionState,
+  | "skillMetadata"
+  | "skillPaths"
+  | "skillsRuntimeId"
+  | "projectTrusted"
+  | "configPath"
+  | "cwd"
+  | "includeNativePi"
+> {
+  const mcpConfigFlag =
+    options.config === undefined &&
+    options.resolvedConfig === undefined &&
+    options.configPath === undefined
+      ? pi.getFlag("mcp-config")
+      : undefined;
+  return {
+    skillMetadata: new Map(),
+    skillPaths: new Map(),
+    skillsRuntimeId: createSkillsRuntimeId(),
+    projectTrusted: ctx.isProjectTrusted(),
+    configPath:
+      options.configPath ?? (typeof mcpConfigFlag === "string" ? mcpConfigFlag : undefined),
+    cwd: ctx.cwd,
+    includeNativePi: nativePiConfigOptions(pi)?.includeNativePi !== false,
+  };
+}
+
 export function createInitialState(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -184,7 +225,6 @@ export function createInitialState(
     manager,
     lifecycle,
     config,
-    ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
     ...(configErrors !== undefined ? { configErrors } : {}),
     recentStderr: new Map(),
     toolMetadata: new Map(),
@@ -192,6 +232,7 @@ export function createInitialState(
     resourceTemplates: new Map(),
     promptMetadata: new Map(),
     promptMetadataLive: new Set(),
+    ...initialSkillStateFields(pi, ctx, options),
     serverInstructions: new Map(),
     failureTracker: new Map(),
     failureMessages: new Map(),

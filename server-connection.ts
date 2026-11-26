@@ -7,8 +7,10 @@ import type {
   McpPrompt,
   ServerDefinition,
   ServerStreamResultPatchNotification,
+  SkillMetadata,
   Transport,
 } from "./types.ts";
+import type { VerifiedSkillBundle } from "./mcp-skills.ts";
 
 export interface ServerConnection {
   client: Client;
@@ -26,6 +28,10 @@ export interface ServerConnection {
   prompts: McpPrompt[];
   /** True when prompts were advertised but prompts/list failed. */
   promptDiscoveryFailed?: boolean;
+  /** Verified MCP skill metadata discovered from SEP-2640 skills extension. */
+  skills?: SkillMetadata[];
+  /** Verified in-memory skill file bundles ready for adapter-managed materialization. */
+  verifiedSkillBundles?: readonly VerifiedSkillBundle[];
   instructions?: string;
   /** Cached SDK 2.4.0 protocol-era verdict for HTTP StreamableHTTP reconnects. */
   priorDiscovery?: CachedPriorDiscovery;
@@ -42,3 +48,4 @@ export type UiStreamListener = (
   notification: ServerStreamResultPatchNotification["params"],
 ) => void;
 export type MetadataListChangedListener = (serverName: string, reason: string) => void;
+export type ServerClosedListener = (serverName?: string) => void;

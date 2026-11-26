@@ -1,7 +1,12 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { McpExtensionState } from "./state.ts";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
+import { logger } from "./logger.ts";
+import type { MetadataCache } from "./metadata-cache.ts";
+import type { McpExtensionState, McpInitializationOptions } from "./state.ts";
+import type { McpAdapterOptions, McpConfig } from "./types.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
+import { cleanupRuntimeSkills } from "./mcp-skills-store.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import { formatTerminalError } from "./utils.ts";
 
@@ -44,6 +49,11 @@ export class McpStateCleanup {
       failures.push(error);
     }
     try {
+      cleanupRuntimeSkills(this.state);
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
       await this.state.owner.stop(reason);
     } catch (error) {
       failures.push(error);
@@ -77,6 +87,135 @@ export async function stopRuntimeSession(input: {
   return results.flatMap((result): unknown[] =>
     result.status === "rejected" ? [result.reason] : [],
   );
+}
+
+export function logSessionRestartFailures(failures: readonly unknown[]): void {
+  for (const error of failures) {
+    console.error(`MCP: failed to shut down previous session state: ${formatTerminalError(error)}`);
+  }
+}
+
+export function shouldAwaitDirectToolBootstrap(input: {
+  readonly envRaw: string | undefined;
+  readonly envDirectToolOverride: string[] | undefined;
+  readonly config: McpConfig;
+  readonly cache: MetadataCache | null;
+}): boolean {
+  return (
+    input.envRaw !== undefined &&
+    input.envRaw !== "__none__" &&
+    getMissingConfiguredDirectToolServers(input.config, input.cache, input.envDirectToolOverride)
+      .length > 0
+  );
+}
+
+export function buildHostInitOptions(input: {
+  readonly programmaticConfig: boolean;
+  readonly runtimeConfig: McpConfig;
+  readonly configPath: string | undefined;
+  readonly options: McpAdapterOptions;
+  readonly oauthRuntime: McpOAuthRuntime;
+  readonly statusEvents: ExtensionAPI["events"];
+}): McpInitializationOptions {
+  const { programmaticConfig, runtimeConfig, configPath, options, oauthRuntime, statusEvents } =
+    input;
+  return {
+    ...(programmaticConfig ? { config: runtimeConfig } : { resolvedConfig: runtimeConfig }),
+    ...(configPath !== undefined ? { configPath } : {}),
+    ...(options.outputDirectory !== undefined ? { outputDirectory: options.outputDirectory } : {}),
+    oauthRuntime,
+    statusEvents,
+    ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
+  };
+}
+
+export async function handleHostInitRejection(input: {
+  readonly ownsSession: boolean;
+  readonly currentState: McpExtensionState | null;
+  readonly ready: (state: McpExtensionState) => void;
+  readonly fail: (message: string) => void;
+  readonly owner: McpRuntimeOwner;
+  readonly oauthRuntime: McpOAuthRuntime;
+  readonly error: unknown;
+}): Promise<void> {
+  if (!input.ownsSession) {
+    return;
+  }
+  const message = formatTerminalError(input.error);
+  console.error(`MCP initialization failed: ${message}`);
+  if (input.currentState) {
+    input.ready(input.currentState);
+    return;
+  }
+  input.fail(message);
+  await stopRejectedInitialization(input.owner, input.oauthRuntime);
+}
+
+export async function finalizeHostShutdown(input: {
+  readonly events: ExtensionAPI["events"];
+  readonly state: McpExtensionState | null;
+  readonly owner: McpRuntimeOwner | null;
+  readonly oauthRuntime: McpOAuthRuntime | null;
+  readonly flush: ((state: McpExtensionState) => void) | undefined;
+}): Promise<void> {
+  const failures = await stopRuntimeSession({
+    ...input,
+    stateReason: "session_shutdown",
+    ownerReason: "MCP extension session shutdown",
+  });
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "MCP session shutdown persistence/cleanup failed");
+  }
+}
+
+export function finalizeDirectToolFreeze(
+  state: McpExtensionState,
+  directToolsFrozen: boolean,
+  updateStatusBar: (state: McpExtensionState) => void,
+): boolean {
+  updateStatusBar(state);
+  if (!directToolsFrozen && state.config.settings?.freezeDirectTools === true) {
+    logger.debug(
+      'MCP: direct tools frozen after initial sync — reconnects won\'t rebuild the system prompt; use mcp({ action: "connect", server: "server" }) to rediscover',
+    );
+    return true;
+  }
+  return directToolsFrozen;
+}
+
+export async function runLiveHostReconcile(input: {
+  readonly state: McpExtensionState;
+  readonly ctx: ExtensionContext;
+  readonly staged: {
+    readonly previousConfig: McpConfig;
+    readonly nextConfig: McpConfig;
+    readonly cwd: string;
+    readonly cacheEnabled: boolean;
+  };
+  readonly cwdChanged: boolean;
+  readonly envRaw: string | undefined;
+  readonly envDirectToolOverride: string[] | undefined;
+  readonly owner: McpRuntimeOwner;
+  readonly hooks: ReconcileRetryHooks;
+  readonly isLive: () => boolean;
+}): Promise<void> {
+  const { reconcileSessionState } = await import("./host-reconcile.ts");
+  if (!input.isLive()) {
+    return;
+  }
+  await reconcileSessionState({
+    state: input.state,
+    ctx: input.ctx,
+    previousConfig: input.staged.previousConfig,
+    nextConfig: input.staged.nextConfig,
+    cwd: input.staged.cwd,
+    cacheEnabled: input.staged.cacheEnabled,
+    cwdChanged: input.cwdChanged,
+    envRaw: input.envRaw,
+    envDirectToolOverride: input.envDirectToolOverride,
+    owner: input.owner,
+    ...input.hooks,
+  });
 }
 
 /** Hooks passed into `reconcileSessionState` without creating a static import cycle. */

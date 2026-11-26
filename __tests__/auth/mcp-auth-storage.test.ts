@@ -492,6 +492,7 @@ describe("OAuth credential-store diagnostics", () => {
         "config-validation-hints.ts",
         "config-writes.ts",
         "types.ts",
+        "ui-stream-constants.ts",
         "ui-stream-types.ts",
         "abort.ts",
         "utils.ts",

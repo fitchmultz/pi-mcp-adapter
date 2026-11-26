@@ -12,9 +12,11 @@ import {
   serializeResources,
   serializeResourceTemplates,
   serializePrompts,
+  serializeSkills,
   type MetadataCache,
   type ServerCacheEntry,
 } from "./metadata-cache.ts";
+import { cleanupServerSkills, syncConnectedServerSkills } from "./mcp-skills-store.ts";
 import { logger } from "./logger.ts";
 import { getFailureBackoffMap } from "./server-status.ts";
 
@@ -56,6 +58,7 @@ export function updateServerMetadata(state: McpExtensionState, serverName: strin
     state.promptMetadata.delete(serverName);
     state.promptMetadataLive.delete(serverName);
     state.serverInstructions.delete(serverName);
+    cleanupServerSkills(state, serverName);
     return;
   }
 
@@ -134,6 +137,7 @@ export function applyServerMetadata(
   if (input.updateInstructions !== false) {
     syncServerInstructions(state, serverName, connection);
   }
+  syncConnectedServerSkills(state, serverName, connection);
   return failedTools.length;
 }
 
@@ -222,8 +226,29 @@ export function collectMetadataCacheUpdate(
 
   updates.entries.set(
     serverName,
-    cacheEntry({ connection, definition, configHash, existingEntry }, options),
+    cacheEntry(
+      {
+        connection,
+        definition,
+        configHash,
+        existingEntry,
+        exposeSkillsGlobal: state.config.settings?.exposeSkills !== false,
+      },
+      options,
+    ),
   );
+}
+
+function cacheSkills(
+  exposeSkillsGlobal: boolean,
+  definition: ServerDefinition,
+  connection: ServerConnection,
+): ServerCacheEntry["skills"] | undefined {
+  if (!exposeSkillsGlobal || definition.exposeSkills === false) {
+    return undefined;
+  }
+  const skills = serializeSkills(connection.skills ?? []);
+  return skills.length > 0 ? skills : undefined;
 }
 
 function cacheEntry(
@@ -232,11 +257,13 @@ function cacheEntry(
     definition,
     configHash,
     existingEntry,
+    exposeSkillsGlobal,
   }: {
     connection: ServerConnection;
     definition: ServerDefinition;
     configHash: string;
     existingEntry: ServerCacheEntry | undefined;
+    exposeSkillsGlobal: boolean;
   },
   options: { preserveEmptyResources?: boolean },
 ): ServerCacheEntry {
@@ -258,6 +285,7 @@ function cacheEntry(
     connection.promptDiscoveryFailed === true
       ? matchingEntry?.prompts
       : serializePrompts(connection.prompts);
+  const skills = cacheSkills(exposeSkillsGlobal, definition, connection);
 
   const entry: ServerCacheEntry = {
     configHash,
@@ -265,6 +293,7 @@ function cacheEntry(
     resources,
     resourceTemplates,
     ...(prompts !== undefined ? { prompts } : {}),
+    ...(skills !== undefined ? { skills } : {}),
     ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
     ...(connection.priorDiscovery !== undefined
       ? { priorDiscovery: connection.priorDiscovery }

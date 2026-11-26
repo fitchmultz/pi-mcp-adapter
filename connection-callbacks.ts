@@ -20,6 +20,7 @@ import { logger } from "./logger.ts";
 import { McpServerLog, getDefaultMcpLogPath } from "./mcp-log.ts";
 import type { ConnectionCatalogs } from "./connection-catalogs.ts";
 import { ConnectionSubscriptions } from "./connection-subscriptions.ts";
+import { discoverServerSkills } from "./mcp-skills.ts";
 
 // Coalesce burst list_changed notifications into one catalog refresh without noticeable UI/agent lag.
 const LIST_CHANGED_DEBOUNCE_MS = 250;
@@ -36,6 +37,7 @@ export class ConnectionCallbacks {
   samplingConfig: ServerSamplingConfig | undefined;
   elicitationConfig: ServerElicitationConfig | undefined;
   metadataListChangedListener: MetadataListChangedListener | undefined;
+  exposeSkills = true;
   private readonly acceptedUrlElicitations = new Map<string, Set<string>>();
   private readonly uiStreamListeners = new Map<string, UiStreamListener>();
   private readonly catalogs = new WeakMap<Client, ConnectionCatalogs>();
@@ -366,7 +368,33 @@ export class ConnectionCallbacks {
     connection.pendingResources = undefined;
     connection.resourceTemplates = refreshed;
     connection.resourceTemplatesStale = false;
+    const skillResult = await discoverServerSkills({
+      serverName,
+      client,
+      exposeSkills: this.exposeSkills && connection.definition.exposeSkills !== false,
+      signal: this.lifecycle.runtimeSignal,
+    });
+    if (!this.isActiveConnection(serverName, client, connection)) {
+      return;
+    }
+    if (skillResult.supported) {
+      connection.skills = skillResult.skills.map((bundle) => bundle.metadata);
+      connection.verifiedSkillBundles = skillResult.skills;
+    }
     this.metadataListChangedListener?.(serverName, "resources-list-changed");
+  }
+
+  private isActiveConnection(
+    serverName: string,
+    client: Client,
+    connection: ServerConnection,
+  ): boolean {
+    return (
+      this.lifecycle.runtimeSignal?.aborted !== true &&
+      this.lifecycle.getConnection(serverName) === connection &&
+      connection.client === client &&
+      connection.status === "connected"
+    );
   }
 
   async handleUrlElicitationRequired(

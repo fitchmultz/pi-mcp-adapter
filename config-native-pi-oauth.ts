@@ -223,6 +223,7 @@ const ADAPTER_ONLY_SERVER_KEY_MAP: Record<AdapterOnlyServerKey, true> = {
   idleTimeout: true,
   requestTimeoutMs: true,
   exposeResources: true,
+  exposeSkills: true,
   directTools: true,
   toolPrefix: true,
   includeTools: true,

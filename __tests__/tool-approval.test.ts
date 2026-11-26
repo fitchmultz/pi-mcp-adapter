@@ -7,6 +7,8 @@ import { firstText, parsedRecord } from "./fixtures/proxy-runtime.ts";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall, executeDescribe, executeSearch } from "../proxy-modes.ts";
 import { ensureToolCallApproved, isToolCallApprovalRequired } from "../tool-approval.ts";
+import { toolErrorOverride } from "../error-signal.ts";
+import { nativeMcpResult } from "../mcp-script-output.ts";
 import type { McpConfig, ToolMetadata } from "../types.ts";
 
 const tool: ToolMetadata = {
@@ -87,21 +89,24 @@ describe("tool approval", () => {
 
     const result = await executeCall(state, { toolName: tool.name, args: { query: "private" } });
 
+    expect(result.isError).toBe(true);
     expect(result.details).toEqual({
       mode: "call",
       error: "approval_required",
       server: "demo",
       tool: "search-records",
     });
+    expect(toolErrorOverride(result.details)).toEqual({ isError: true });
     expect(firstText(result)).toContain("approval-gated");
     expect(callTool).not.toHaveBeenCalled();
   });
 
-  it("returns approval_denied without throwing or invoking proxy or direct tools", async () => {
+  it("returns approval_denied with isError: true without throwing or invoking proxy or direct tools", async () => {
     const proxy = await createState({ approveTools: true, decision: "Deny" });
     await expect(
       executeCall(proxy.state, { toolName: tool.name, args: {} }),
     ).resolves.toMatchObject({
+      isError: true,
       details: { error: "approval_denied", server: "demo", tool: "search-records" },
     });
     expect(proxy.callTool).not.toHaveBeenCalled();
@@ -117,17 +122,18 @@ describe("tool approval", () => {
         description: "Search records",
       },
     );
-    await expect(
-      execute(
-        "call-1",
-        {},
-        undefined,
-        undefined,
-        host.runner.createToolContext("call-1", direct.state.owner.signal),
-      ),
-    ).resolves.toMatchObject({
+    const directResult = await execute(
+      "call-1",
+      {},
+      undefined,
+      undefined,
+      host.runner.createToolContext("call-1", direct.state.owner.signal),
+    );
+    expect(directResult).toMatchObject({
+      isError: true,
       details: { error: "approval_denied", server: "demo", tool: "search-records" },
     });
+    expect(nativeMcpResult(directResult, false).isError).toBe(true);
     expect(direct.callTool).not.toHaveBeenCalled();
   });
 
@@ -219,5 +225,89 @@ describe("tool approval", () => {
     expect(firstText(executeSearch(state, { query: "search", includeSchemas: false }))).toContain(
       "(requires approval)",
     );
+  });
+
+  it("serializes concurrent prompts per server/tool so Allow for session answers waiting calls", async () => {
+    const { state, select } = await createState({ approveTools: true });
+    let resolveFirst: ((choice: string | undefined) => void) | undefined;
+    let openDialogs = 0;
+    let maxConcurrent = 0;
+    select.mockImplementation(
+      () =>
+        new Promise<string | undefined>((resolve) => {
+          openDialogs += 1;
+          maxConcurrent = Math.max(maxConcurrent, openDialogs);
+          resolveFirst = (choice) => {
+            openDialogs -= 1;
+            resolve(choice);
+          };
+        }),
+    );
+
+    const p1 = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: { a: 1 },
+    });
+    const p2 = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: { a: 2 },
+    });
+    const p3 = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: { a: 3 },
+    });
+
+    await expect.poll(() => select.mock.calls.length).toBe(1);
+    assert(resolveFirst !== undefined);
+    resolveFirst("Allow for session");
+
+    await expect(Promise.all([p1, p2, p3])).resolves.toEqual([
+      { ok: true },
+      { ok: true },
+      { ok: true },
+    ]);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(maxConcurrent).toBe(1);
+  });
+
+  it("serializes Allow once dialogs cleanly without overlapping", async () => {
+    const { state, select } = await createState({ approveTools: true });
+    const waiters: Array<() => void> = [];
+    let openDialogs = 0;
+    let maxConcurrent = 0;
+    select.mockImplementation(
+      () =>
+        new Promise<string | undefined>((resolve) => {
+          openDialogs += 1;
+          maxConcurrent = Math.max(maxConcurrent, openDialogs);
+          waiters.push(() => {
+            openDialogs -= 1;
+            resolve("Allow once");
+          });
+        }),
+    );
+
+    const p1 = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: { n: 1 },
+    });
+    const p2 = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: { n: 2 },
+    });
+    await expect.poll(() => waiters.length).toBe(1);
+    expect(maxConcurrent).toBe(1);
+    waiters.shift()?.();
+    await expect.poll(() => waiters.length).toBe(1);
+    waiters.shift()?.();
+
+    await expect(Promise.all([p1, p2])).resolves.toEqual([{ ok: true }, { ok: true }]);
+    expect(select).toHaveBeenCalledTimes(2);
+    expect(maxConcurrent).toBe(1);
   });
 });

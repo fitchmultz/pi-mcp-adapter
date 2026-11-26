@@ -105,6 +105,8 @@ export interface ServerEntry {
   requestTimeoutMs?: number; // milliseconds, overrides global request timeout when > 0
   // Resource handling
   exposeResources?: boolean;
+  /** Expose verified MCP skills into Pi resources_discover (default: true). */
+  exposeSkills?: boolean;
   // Direct tool registration
   directTools?: boolean | string[];
   // Override settings.toolPrefix for this server.
@@ -183,6 +185,8 @@ export interface McpSettings {
   sampling?: boolean;
   samplingAutoApprove?: boolean;
   elicitation?: boolean;
+  /** Expose verified MCP skills from trusted servers into Pi resources_discover (default: true). */
+  exposeSkills?: boolean;
   /**
    * Guard oversized MCP tool/resource output before it is returned to the model.
    * Defaults to true (50 KiB / 2,000 lines inline text, 16 KiB details.mcpResult).

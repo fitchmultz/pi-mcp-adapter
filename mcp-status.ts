@@ -19,7 +19,12 @@ function getCatalogCounts(
   state: McpExtensionState,
   name: string,
   connection: ReturnType<McpExtensionState["manager"]["getConnection"]>,
-): { toolCount: number; resourceCount: number | undefined; catalogKnown: boolean } {
+): {
+  toolCount: number;
+  resourceCount: number | undefined;
+  skillCount: number | undefined;
+  catalogKnown: boolean;
+} {
   const metadata = state.toolMetadata.get(name);
   const connected = connection?.status === "connected";
   const toolCount =
@@ -27,8 +32,14 @@ function getCatalogCounts(
     (connected ? connection.tools.length : 0);
   const resourceCount =
     state.resourceCounts.get(name) ?? (connected ? connection.resources.length : undefined);
+  const skillCount = state.skillMetadata?.get(name)?.length;
 
-  return { toolCount, resourceCount, catalogKnown: metadata !== undefined || connected };
+  return {
+    toolCount,
+    resourceCount,
+    skillCount,
+    catalogKnown: metadata !== undefined || connected,
+  };
 }
 
 function getServerSnapshot(state: McpExtensionState, name: string): McpServerStatusSnapshot {
@@ -37,7 +48,11 @@ function getServerSnapshot(state: McpExtensionState, name: string): McpServerSta
     return { name, status: "disabled", toolCount: 0, catalogKnown: false, disabled: true };
   }
   const connection = state.manager.getConnection(name);
-  const { toolCount, resourceCount, catalogKnown } = getCatalogCounts(state, name, connection);
+  const { toolCount, resourceCount, skillCount, catalogKnown } = getCatalogCounts(
+    state,
+    name,
+    connection,
+  );
   const failedAgoSeconds = failureAgeSeconds(
     state.failureTracker.get(name),
     Date.now(),
@@ -57,6 +72,7 @@ function getServerSnapshot(state: McpExtensionState, name: string): McpServerSta
     toolCount,
     catalogKnown,
     ...(resourceCount !== undefined ? { resourceCount } : {}),
+    ...(skillCount !== undefined && skillCount > 0 ? { skillCount } : {}),
     ...(status === "failed" && failedAgoSeconds !== null ? { failedAgoSeconds } : {}),
     disabled: false,
   };
@@ -67,11 +83,13 @@ export function createMcpStatusSnapshot(state: McpExtensionState): McpStatusSnap
   const servers = Object.keys(state.config.mcpServers).map((name) =>
     getServerSnapshot(state, name),
   );
+  const totalSkills = servers.reduce((sum, server) => sum + (server.skillCount ?? 0), 0);
   return {
     version: MCP_STATUS_SNAPSHOT_VERSION,
     servers,
     totalTools: servers.reduce((sum, server) => sum + server.toolCount, 0),
     totalResources: servers.reduce((sum, server) => sum + (server.resourceCount ?? 0), 0),
+    ...(totalSkills > 0 ? { totalSkills } : {}),
     connectedCount: servers.filter((server) => server.status === "connected").length,
     disabledCount: servers.filter((server) => server.disabled).length,
   };

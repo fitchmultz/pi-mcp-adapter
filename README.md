@@ -58,11 +58,11 @@ By default, servers connect when Pi discovers an uncached catalog or calls a too
 
 Use [`directTools`](docs/reference.md#typed-discovery-and-pinned-tools) to pin tools at startup. Other tools stay deferred until `tool_search` loads them. Like Pi's own MCP extension, the adapter activates a registered `tool_search` when it registers deferred tools, once per session start or tree navigation; a branch that recorded removing `tool_search` keeps it off. Gateway search covers known catalogs; `mcp({ action: "connect", server })` discovers an unknown catalog.
 
-Use [`approveTools`](docs/reference.md#tool-approval) to require confirmation before sensitive calls. Matching calls fail in headless sessions without approval.
+Use [`approveTools`](docs/reference.md#tool-approval) to require confirmation before sensitive calls. Matching calls fail with `isError: true` in headless sessions or when denied, and concurrent prompts for the same tool serialize cleanly.
 
 ## More server features
 
-The adapter supports [resources and URI templates](docs/reference.md#mcp-resources) (`resources` / `read-resource`) and [prompt templates](docs/reference.md#mcp-prompts) (slash commands under `/mcp__<server>__<prompt>` with MCP argument completions, plus `prompts` / `get-prompt` gateway actions).
+The adapter supports [MCP Skills](docs/reference.md#mcp-skills) (verified SEP-2640 skills auto-discovered for trusted projects into Pi's `resources_discover`, on by default via `exposeSkills`), [resources and URI templates](docs/reference.md#mcp-resources) (`resources` / `read-resource`), and [prompt templates](docs/reference.md#mcp-prompts) (slash commands under `/mcp__<server>__<prompt>` with MCP argument completions, plus `prompts` / `get-prompt` gateway actions).
 
 [MCP Apps](docs/reference.md#mcp-ui-integration) open interactive UIs in a browser or through [Glimpse](https://github.com/hazat/glimpse) on macOS. Apps can send messages to Pi. Try the [interactive visualizer](examples/interactive-visualizer/README.md).
 

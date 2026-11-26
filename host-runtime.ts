@@ -11,9 +11,6 @@ import { cloneMcpConfig, isPathInsideProject } from "./config.ts";
 import { getMetadataCachePath, loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 import { createMcpRuntimeOwner, type McpRuntimeOwner } from "./runtime-owner.ts";
 import { createOAuthRuntime, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
-import { formatTerminalError } from "./utils.ts";
-import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
-import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
 import { logger } from "./logger.ts";
 import { McpHostCommands } from "./host-commands.ts";
 import {
@@ -31,11 +28,17 @@ import {
 } from "./host-live-toggle.ts";
 import { canPreserveFrozenTools, HostSession } from "./host-session.ts";
 import {
+  buildHostInitOptions,
+  finalizeHostShutdown,
   HostReconcileCoordinator,
+  logSessionRestartFailures,
+  shouldAwaitDirectToolBootstrap,
   stopRuntimeSession,
   stopStaleInitState,
 } from "./host-state-cleanup.ts";
+import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
 import { McpHostTools } from "./host-tools.ts";
+import { HostSkillsTracker } from "./mcp-skills-store.ts";
 import {
   registerWorkingSessionSaveHandler,
   WorkingSessionCoordinator,
@@ -64,6 +67,8 @@ export class McpHostRuntime implements McpAdapterHost {
   private readonly prompts: HostPromptRegistry;
   private readonly workingSession = new WorkingSessionCoordinator();
   private readonly reconcile = new HostReconcileCoordinator();
+  private readonly skillsTracker = new HostSkillsTracker();
+  private startSessionPromise: Promise<void> | null = null;
   private readonly envRaw = process.env.MCP_DIRECT_TOOLS;
   private readonly envDirectToolOverride = this.envRaw
     ?.split(",")
@@ -126,9 +131,17 @@ export class McpHostRuntime implements McpAdapterHost {
     this.pi.on("session_start", (_event, ctx) => {
       this.sessionManager = ctx.sessionManager;
       this.toolSearchSettled = false;
+      this.skillsTracker.reset();
       this.settlePinsOrDefer();
-      return this.startSession(ctx);
+      const started = this.startSession(ctx);
+      this.startSessionPromise = started;
+      return started;
     });
+    this.skillsTracker.register(this.pi, () => ({
+      initPromise: this.initPromise,
+      startPromise: this.startSessionPromise,
+      state: this.state,
+    }));
     // Pi restores the target branch's recorded loadout before session_tree.
     this.pi.on("session_tree", (_event, ctx) => {
       this.sessionManager = ctx.sessionManager;
@@ -253,20 +266,17 @@ export class McpHostRuntime implements McpAdapterHost {
     this.runtimeCacheEnabled = undefined;
     this.directToolsFrozen = false;
     this.reconcile.reset();
+    this.skillsTracker.reset();
+    this.startSessionPromise = null;
     this.prompts.clear();
     this.workingSession.reset();
-    const failures = await stopRuntimeSession({
+    await finalizeHostShutdown({
       events: this.pi.events,
       state,
       owner,
       oauthRuntime,
-      stateReason: "session_shutdown",
-      ownerReason: "MCP extension session shutdown",
       flush: this.initModule?.flushMetadataCache,
     });
-    if (failures.length > 0) {
-      throw new AggregateError(failures, "MCP session shutdown persistence/cleanup failed");
-    }
   }
 
   private resolveConfig(ctx: ExtensionContext): McpConfig {
@@ -303,6 +313,14 @@ export class McpHostRuntime implements McpAdapterHost {
       return Promise.resolve();
     }
     return this.reconcile.enqueue(() => this.reconcileLiveSession(ctx, false));
+  }
+
+  private snapshotConfigState() {
+    return {
+      config: this.config,
+      configPath: this.configPath,
+      cacheEnabled: this.runtimeCacheEnabled,
+    };
   }
 
   private async reconcileLiveSession(ctx: ExtensionContext, cwdChanged: boolean): Promise<void> {
@@ -355,13 +373,15 @@ export class McpHostRuntime implements McpAdapterHost {
         envRaw: this.envRaw,
         envDirectToolOverride: this.envDirectToolOverride,
         initModule: this.initModule,
-        applySurface: (nextConfig) => {
+        applySurface: (nextConfig, state) => {
           this.config = nextConfig;
           this.syncPromptCommands();
+          this.skillsTracker.handleStateUpdate(state);
           this.syncToolSurface();
         },
         refreshSurface: () => {
           this.syncPromptCommands();
+          this.skillsTracker.handleStateUpdate(this.state);
           this.syncToolSurface();
         },
       });
@@ -371,6 +391,7 @@ export class McpHostRuntime implements McpAdapterHost {
 
   private onReconciledSurface(): void {
     this.syncPromptCommands();
+    this.skillsTracker.handleStateUpdate(this.state);
     if (!this.directToolsFrozen) {
       this.syncToolSurface();
       if (this.config.settings?.freezeDirectTools === true) {
@@ -388,11 +409,7 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private async startSession(ctx: ExtensionContext, wasFrozen = false): Promise<void> {
-    const previous = {
-      config: this.config,
-      configPath: this.configPath,
-      cacheEnabled: this.runtimeCacheEnabled,
-    };
+    const previous = this.snapshotConfigState();
     this.runtimeCwd = ctx.cwd;
     this.directToolsFrozen = wasFrozen;
     const prev = { state: this.state, owner: this.owner, oauthRuntime: this.oauthRuntime };
@@ -400,18 +417,15 @@ export class McpHostRuntime implements McpAdapterHost {
     const oauthRuntime = createOAuthRuntime(owner.signal);
     const generation = this.session.begin(owner);
     this.oauthRuntime = oauthRuntime;
-    const stopFailures = await stopRuntimeSession({
-      events: this.pi.events,
-      ...prev,
-      stateReason: "session_restart",
-      ownerReason: "MCP extension session restarted",
-      flush: this.initModule?.flushMetadataCache,
-    });
-    for (const error of stopFailures) {
-      console.error(
-        `MCP: failed to shut down previous session state: ${formatTerminalError(error)}`,
-      );
-    }
+    logSessionRestartFailures(
+      await stopRuntimeSession({
+        events: this.pi.events,
+        ...prev,
+        stateReason: "session_restart",
+        ownerReason: "MCP extension session restarted",
+        flush: this.initModule?.flushMetadataCache,
+      }),
+    );
     if (!this.session.owns(owner, generation)) {
       return;
     }
@@ -443,31 +457,40 @@ export class McpHostRuntime implements McpAdapterHost {
       runtimeConfig,
       generation,
     });
-    if (this.shouldAwaitInitialization(runtimeConfig, cache)) {
+    if (
+      shouldAwaitDirectToolBootstrap({
+        envRaw: this.envRaw,
+        envDirectToolOverride: this.envDirectToolOverride,
+        config: runtimeConfig,
+        cache,
+      })
+    ) {
       await initialization;
     }
   }
 
-  private shouldAwaitInitialization(config: McpConfig, cache: MetadataCache | null): boolean {
-    return (
-      this.envRaw !== undefined &&
-      this.envRaw !== "__none__" &&
-      getMissingConfiguredDirectToolServers(config, cache, this.envDirectToolOverride).length > 0
-    );
-  }
-
-  private startInitialization(input: Initialization): Promise<void> {
+  private startInitialization(input: {
+    init: typeof Init;
+    ctx: ExtensionContext;
+    owner: McpRuntimeOwner;
+    oauthRuntime: McpOAuthRuntime;
+    runtimeConfig: McpConfig;
+    generation: number;
+  }): Promise<void> {
     const { init, ctx, owner, oauthRuntime, runtimeConfig, generation } = input;
-    const promise = init.initializeMcp(this.pi, ctx, owner, {
-      ...(this.programmaticConfig ? { config: runtimeConfig } : { resolvedConfig: runtimeConfig }),
-      ...(this.configPath !== undefined ? { configPath: this.configPath } : {}),
-      ...(this.options.outputDirectory !== undefined
-        ? { outputDirectory: this.options.outputDirectory }
-        : {}),
-      oauthRuntime,
-      statusEvents: this.pi.events,
-      ...(this.options.onToolCall ? { onToolCall: this.options.onToolCall } : {}),
-    });
+    const promise = init.initializeMcp(
+      this.pi,
+      ctx,
+      owner,
+      buildHostInitOptions({
+        programmaticConfig: this.programmaticConfig,
+        runtimeConfig,
+        configPath: this.configPath,
+        options: this.options,
+        oauthRuntime,
+        statusEvents: this.pi.events,
+      }),
+    );
     this.session.initialize(generation, promise);
     return promise
       .then(async (state) => {
@@ -477,10 +500,10 @@ export class McpHostRuntime implements McpAdapterHost {
         }
         this.session.ready(state);
         this.bindMetadataUpdates(owner);
-        await this.completeInitialization(input);
+        await this.completeInitialization(init, owner);
         return;
       })
-      .catch((error: unknown) => this.rejectInitialization(input, error));
+      .catch((error: unknown) => this.rejectInitialization({ owner, generation, oauthRuntime }, error));
   }
 
   private bindMetadataUpdates(owner: McpRuntimeOwner): void {
@@ -488,12 +511,13 @@ export class McpHostRuntime implements McpAdapterHost {
       session: this.session,
       owner,
       syncPrompts: () => this.syncPromptCommands(),
+      syncSkills: (state) => this.skillsTracker.handleStateUpdate(state),
       syncTools: () => this.syncToolSurface(),
       isFrozen: () => this.directToolsFrozen,
     });
   }
 
-  private completeInitialization({ init, owner }: Initialization): Promise<void> {
+  private completeInitialization(init: typeof Init, owner: McpRuntimeOwner): Promise<void> {
     return completeHostInitialization({
       init,
       owner,
@@ -503,11 +527,19 @@ export class McpHostRuntime implements McpAdapterHost {
         this.directToolsFrozen = true;
       },
       syncPrompts: () => this.syncPromptCommands(),
+      syncSkills: (state) => this.skillsTracker.handleStateUpdate(state),
       syncTools: () => this.syncToolSurface(),
     });
   }
 
-  private rejectInitialization(input: Initialization, error: unknown): Promise<void> {
+  private rejectInitialization(
+    input: {
+      owner: McpRuntimeOwner;
+      generation: number;
+      oauthRuntime: McpOAuthRuntime;
+    },
+    error: unknown,
+  ): Promise<void> {
     return rejectHostInitialization({
       session: this.session,
       owner: input.owner,
@@ -524,16 +556,11 @@ export class McpHostRuntime implements McpAdapterHost {
     return this.session.ensureCommandState(owner, ctx);
   }
 
+  consumePendingSkillReload(): boolean {
+    return this.skillsTracker.consumePendingReload();
+  }
+
   getToolState(signal?: AbortSignal): ReturnType<McpAdapterHost["getToolState"]> {
     return this.session.getToolState(signal);
   }
 }
-
-type Initialization = {
-  init: typeof Init;
-  ctx: ExtensionContext;
-  owner: McpRuntimeOwner;
-  oauthRuntime: McpOAuthRuntime;
-  runtimeConfig: McpConfig;
-  generation: number;
-};

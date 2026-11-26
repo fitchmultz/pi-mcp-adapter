@@ -187,6 +187,10 @@ export class McpHostCommands {
         if (this.host.directToolsFrozen) {
           this.host.syncToolSurface();
         }
+        if (this.host.consumePendingSkillReload?.() === true) {
+          owner?.throwIfInactive();
+          await original.reload();
+        }
         break;
       case "tools":
         await commands.showTools(state, ctx, command.target);
@@ -244,7 +248,7 @@ export class McpHostCommands {
       configOverridePath: this.host.configPath,
       mode: "setup",
     });
-    if (result.configChanged) {
+    if (result.configChanged || this.host.consumePendingSkillReload?.() === true) {
       owner?.throwIfInactive();
       await original.reload();
     }
@@ -406,7 +410,7 @@ export class McpHostCommands {
         this.host.syncToolSurface();
       },
     });
-    if (result.configChanged) {
+    if (result.configChanged || this.host.consumePendingSkillReload?.() === true) {
       owner?.throwIfInactive();
       await original.reload();
     }

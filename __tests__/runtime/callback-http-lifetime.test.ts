@@ -103,6 +103,13 @@ async function host() {
   const complete = vi
     .spyOn(nativeContext.modelRegistry, "complete")
     .mockResolvedValue(samplingResponse());
+  vi.spyOn(native.api, "exec").mockResolvedValue({
+    stdout: "",
+    stderr: "",
+    code: 0,
+    killed: false,
+    truncated: false,
+  });
   const ctx: ExtensionContext = {
     ...nativeContext,
     cwd: directory,

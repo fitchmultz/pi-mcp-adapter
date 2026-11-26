@@ -188,6 +188,7 @@ export function bindHostMetadataUpdates(input: {
   session: HostSession;
   owner: McpRuntimeOwner;
   syncPrompts: () => void;
+  syncSkills: (state: McpExtensionState) => void;
   syncTools: () => void;
   isFrozen: () => boolean;
 }): void {
@@ -200,6 +201,7 @@ export function bindHostMetadataUpdates(input: {
       return;
     }
     input.syncPrompts();
+    input.syncSkills(state);
     if (input.isFrozen()) {
       logger.debug(`MCP: metadata update for ${server} (${reason}) skipped — directTools frozen`);
       return;
@@ -215,6 +217,7 @@ export async function completeHostInitialization(input: {
   isFrozen: () => boolean;
   markFrozen: () => void;
   syncPrompts: () => void;
+  syncSkills: (state: McpExtensionState) => void;
   syncTools: () => void;
 }): Promise<void> {
   const state = input.session.currentState;
@@ -223,6 +226,7 @@ export async function completeHostInitialization(input: {
   }
   input.owner.throwIfInactive();
   input.syncPrompts();
+  input.syncSkills(state);
   if (!input.isFrozen()) {
     input.syncTools();
   }
