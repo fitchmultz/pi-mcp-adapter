@@ -76,8 +76,6 @@ function formatServerStatus({
 }: ServerStatusEntry): string {
   const reason = failureMessage !== undefined && failureMessage.length > 0 ? failureMessage : null;
   switch (stage) {
-    case "blocked":
-      return `⊘ ${name} (blocked${reason !== null ? ` — ${reason}` : ""})\n`;
     case "disabled":
       return `⊘ ${name} (disabled)\n`;
     case "connected":

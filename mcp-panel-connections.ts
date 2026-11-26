@@ -30,8 +30,7 @@ export class PanelConnections {
     }
     if (
       server.data.connectionStatus === "connecting" ||
-      server.data.connectionStatus === "disabled" ||
-      server.data.connectionStatus === "blocked"
+      server.data.connectionStatus === "disabled"
     ) {
       return;
     }
@@ -78,8 +77,7 @@ export class PanelConnections {
   reconnect(server: PanelServer, options: { afterAuth?: boolean } = {}): void {
     if (
       server.data.connectionStatus === "connecting" ||
-      server.data.connectionStatus === "disabled" ||
-      server.data.connectionStatus === "blocked"
+      server.data.connectionStatus === "disabled"
     ) {
       return;
     }

@@ -93,7 +93,7 @@ describe("MCP-214 panel polish and single-pass open", () => {
     const config: McpConfig = {
       mcpServers: {
         docs: { url: "https://docs.example.test/mcp" },
-        blockedSrv: { url: "https://blocked.example.test/mcp" },
+        brokenSrv: { url: "https://broken.example.test/mcp" },
       },
     };
     const panel = createMcpPanel({
@@ -101,7 +101,7 @@ describe("MCP-214 panel polish and single-pass open", () => {
       cache: createSampleCache(config),
       provenance: new Map(),
       callbacks: createPanelCallbacks({
-        getConnectionStatus: (name) => (name === "blockedSrv" ? "blocked" : "connected"),
+        getConnectionStatus: (name) => (name === "brokenSrv" ? "failed" : "connected"),
       }),
       tui: { requestRender: noop },
       done: noop,
@@ -113,15 +113,14 @@ describe("MCP-214 panel polish and single-pass open", () => {
 
     expect(fgCalls).toContain("accent");
     expect(fgCalls).toContain("error");
-    expect(rendered).toContain("<e>blocked</e>");
+    expect(rendered).toContain("<e>failed</e>");
     expect(rendered).not.toMatch(/\x1b\[[0-9;]*m/);
   });
 
-  it("blocks Space and Enter on disabled and blocked servers", () => {
+  it("blocks Space and Enter on disabled servers", () => {
     const config: McpConfig = {
       mcpServers: {
         locked: { command: "node", disabled: true },
-        untrusted: { url: "https://untrusted.example.test/mcp" },
       },
     };
     const done = vi.fn<(result: McpPanelResult) => void>();
@@ -132,7 +131,7 @@ describe("MCP-214 panel polish and single-pass open", () => {
       provenance: new Map(),
       callbacks: createPanelCallbacks({
         reconnect,
-        getConnectionStatus: (name) => (name === "locked" ? "disabled" : "blocked"),
+        getConnectionStatus: () => "disabled",
       }),
       tui: { requestRender: noop },
       done,
@@ -140,19 +139,57 @@ describe("MCP-214 panel polish and single-pass open", () => {
 
     panel.handleInput(" ");
     panel.handleInput("\r");
-    panel.handleInput("\x1b[B");
-    panel.handleInput(" ");
-    panel.handleInput("\r");
 
     const output = stripAnsi(panel.render(100).join("\n"));
     expect(output).toContain("disabled");
-    expect(output).toContain("blocked");
     expect(output).not.toContain("(unsaved)");
 
     panel.handleInput("\x13");
     expect(done).toHaveBeenCalledWith({ cancelled: false, changes: new Map() });
     expect(reconnect).not.toHaveBeenCalled();
     panel.dispose();
+  });
+
+  it("maps real callback statuses for disabled, needs-auth, failed, and idle servers without inventing blocked", async () => {
+    const prevAuthStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    try {
+      const home = makeTempDir("pi-mcp-panel-cb-home-");
+      process.env.HOME = home;
+      process.env.PI_CODING_AGENT_DIR = join(home, ".pi", "agent");
+
+      const { buildMcpPanelCallbacks } = await import("../../mcp-panel-callbacks.ts");
+      const { createTestExtensionContext } = await import("../test-extension-context.ts");
+      const { createTestState } = await import("../test-state.ts");
+
+      const host = await createTestExtensionContext();
+      const state = createTestState({
+        config: {
+          mcpServers: {
+            locked: { command: "node", disabled: true },
+            oauthSrv: { url: "https://oauth.example.test/mcp", auth: "oauth" },
+            brokenSrv: { url: "https://broken.example.test/mcp" },
+            idleSrv: { url: "https://idle.example.test/mcp" },
+          },
+        },
+        failureTracker: new Map([["brokenSrv", Date.now()]]),
+        failureMessages: new Map([["brokenSrv", "Dial timeout"]]),
+      });
+      const callbacks = await buildMcpPanelCallbacks(state, state.config, host.context);
+      expect(callbacks.getConnectionStatus("locked")).toBe("disabled");
+      expect(callbacks.getConnectionStatus("oauthSrv")).toBe("needs-auth");
+      expect(callbacks.getConnectionStatus("brokenSrv")).toBe("failed");
+      expect(callbacks.getConnectionStatus("idleSrv")).toBe("idle");
+      expect(callbacks.getFailureMessage?.("brokenSrv")).toBe("Dial timeout");
+      await state.owner.stop();
+      await host.dispose();
+    } finally {
+      if (prevAuthStore === undefined) {
+        delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+      } else {
+        process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = prevAuthStore;
+      }
+    }
   });
 
   it("pauses 60s inactivity auto-cancel while busy or dirty and resumes when idle and clean", async () => {

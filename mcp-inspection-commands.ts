@@ -18,6 +18,7 @@ import {
 import { estimateToolTokens, formatTokenCount } from "./tool-metadata.ts";
 import { getFailureAgeSeconds, getFailureMessage } from "./init.ts";
 import { inspectionStatus, serverStage } from "./server-status.ts";
+import { sanitizeTerminalText } from "./utils.ts";
 
 export interface PanelNoticeInput {
   readonly discoverySummary?: McpDiscoverySummary;
@@ -51,7 +52,7 @@ function formatConfigErrorNotices(errors: readonly McpConfigValidationError[]): 
   const lines = errors.slice(0, 3).map((err) => {
     const scope = [err.serverName, err.field].filter(Boolean).join(".");
     const loc = scope.length > 0 ? `${err.filePath} (${scope})` : err.filePath;
-    return `Config ${err.severity}: ${loc} — ${err.message}`;
+    return `Config ${err.severity}: ${sanitizeTerminalText(loc)} — ${sanitizeTerminalText(err.message)}`;
   });
   if (errors.length > 3) {
     lines.push(`… +${errors.length - 3} more config issues (run /mcp doctor)`);
@@ -103,7 +104,7 @@ export function buildPanelNotices(
   const noticeLines = [...sharedLines, ...formatConfigErrorNotices(errors)];
   if (blocked.length > 0) {
     noticeLines.push(
-      `Blocked (untrusted project): ${blocked.map((entry) => entry.name).join(", ")}`,
+      `Blocked (untrusted project): ${blocked.map((entry) => sanitizeTerminalText(entry.name)).join(", ")}`,
     );
   }
   return { noticeLines, sharedConfigHintShown: sharedLines.length > 0 };
@@ -186,7 +187,9 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     (entry) => !(entry.name in state.config.mcpServers),
   );
   for (const entry of blocked) {
-    lines.push(`⊘ ${entry.name}: blocked (${entry.reason})`);
+    lines.push(
+      `⊘ ${sanitizeTerminalText(entry.name)}: blocked (${sanitizeTerminalText(entry.reason)})`,
+    );
   }
 
   if (Object.keys(state.config.mcpServers).length === 0 && blocked.length === 0) {

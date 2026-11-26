@@ -290,6 +290,32 @@ function mapCodexEntry(entry: Record<string, unknown>): Record<string, unknown> 
   return mapped;
 }
 
+function collectExtractedServer(input: {
+  mapped: Record<string, ServerEntry>;
+  name: string;
+  raw: unknown;
+  kind: ImportKind;
+  filePath: string | undefined;
+  errors: McpConfigValidationError[] | undefined;
+}): void {
+  const { mapped, name, raw, kind, filePath, errors } = input;
+  if (kind === "opencode" && isConfigObject(raw) && raw.enabled === false) {
+    return;
+  }
+  const entry = kind === "opencode" ? mapOpenCodeEntry(raw) : mapImportedEntry(raw, kind);
+  if (entry !== undefined) {
+    mapped[name] = entry;
+    return;
+  }
+  errors?.push({
+    severity: "warning",
+    kind: "invalid_server",
+    filePath: filePath ?? kind,
+    serverName: name,
+    message: `Skipped invalid ${kind} server entry "${name}"`,
+  });
+}
+
 export function extractServers(
   config: unknown,
   kind: ImportKind,
@@ -305,18 +331,7 @@ export function extractServers(
   }
   const mapped: Record<string, ServerEntry> = {};
   for (const [name, raw] of Object.entries(servers)) {
-    const entry = kind === "opencode" ? mapOpenCodeEntry(raw) : mapImportedEntry(raw, kind);
-    if (entry !== undefined) {
-      mapped[name] = entry;
-    } else if (errors !== undefined) {
-      errors.push({
-        severity: "warning",
-        kind: "invalid_server",
-        filePath: filePath ?? kind,
-        serverName: name,
-        message: `Skipped invalid ${kind} server entry "${name}"`,
-      });
-    }
+    collectExtractedServer({ mapped, name, raw, kind, filePath, errors });
   }
   return mapped;
 }

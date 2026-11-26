@@ -7,6 +7,7 @@ import { getAuthBaseDir, inspectAuthForUrl } from "./mcp-auth.ts";
 import { authEligibility } from "./mcp-auth-commands.ts";
 import { isProcessLocalAuthStore } from "./keyring-store.ts";
 import { getFailureAgeSeconds, getFailureMessage } from "./init.ts";
+import { isTokenExpired } from "./auth-record-types.ts";
 import {
   failureAgeSeconds,
   inspectionStatus,
@@ -61,17 +62,17 @@ async function formatStoredCredentialStatus(
     { serverName: name, serverUrl: url },
     state.authStorageOptions,
   );
+  const displayName = sanitizeTerminalText(name);
   if (status.status === "unavailable") {
-    return `  • ${name}: keyring error — ${sanitizeTerminalText(status.message)}`;
+    return `  • ${displayName}: keyring error — ${sanitizeTerminalText(status.message)}`;
   }
   if (status.status === "absent" || !status.entry.tokens) {
-    return `  • ${name}: unauthenticated (run /mcp-auth ${name})`;
+    return `  • ${displayName}: unauthenticated (run /mcp-auth ${displayName})`;
   }
-  const expiresAt = status.entry.tokens.expiresAt;
-  if (typeof expiresAt === "number" && expiresAt <= Date.now()) {
-    return `  • ${name}: stored OAuth token expired (refresh/re-auth may be required)`;
+  if (isTokenExpired(status.entry.tokens)) {
+    return `  • ${displayName}: stored OAuth token expired (refresh/re-auth may be required)`;
   }
-  return `  • ${name}: authenticated`;
+  return `  • ${displayName}: authenticated`;
 }
 
 async function formatCredentialHealthLine(
@@ -120,11 +121,15 @@ function appendConfigSourcesSection(
     return;
   }
   for (const source of activeSources) {
-    const detail =
-      source.status === "blocked"
-        ? `blocked (${source.blockedReason ?? "untrusted project"})`
-        : `${source.status}, ${source.serverCount} server(s)`;
-    lines.push(`  • [${source.scope}] ${source.path} — ${detail}`);
+    let detail = `${source.status}, ${source.serverCount} server(s)`;
+    if (source.status === "blocked") {
+      detail = `blocked (${sanitizeTerminalText(source.blockedReason ?? "untrusted project")})`;
+    } else if (source.status === "excluded") {
+      detail = `excluded (${sanitizeTerminalText(source.excludedReason ?? "disabled by host")})`;
+    }
+    lines.push(
+      `  • [${sanitizeTerminalText(source.scope)}] ${sanitizeTerminalText(source.path)} — ${detail}`,
+    );
   }
 }
 
@@ -252,7 +257,9 @@ function appendServerAndStderrSections(
     }
   }
   for (const entry of blocked) {
-    lines.push(`  ⊘ ${entry.name}: blocked — ${entry.reason} (${entry.sourcePath})`);
+    lines.push(
+      `  ⊘ ${sanitizeTerminalText(entry.name)}: blocked — ${sanitizeTerminalText(entry.reason)} (${sanitizeTerminalText(entry.sourcePath)})`,
+    );
   }
 
   const logPath = getDefaultMcpLogPath();

@@ -285,8 +285,7 @@ class McpPanel implements Component {
     this.closeCancelled();
   }
   private isServerLocked(server: PanelServer): boolean {
-    const status = server.data.connectionStatus;
-    return status === "disabled" || status === "blocked";
+    return server.data.connectionStatus === "disabled";
   }
 
   private confirmSelection(): void {
@@ -385,11 +384,7 @@ class McpPanel implements Component {
       return;
     }
     const server = this.servers[item.serverIndex];
-    if (
-      !server ||
-      server.data.connectionStatus === "disabled" ||
-      server.data.connectionStatus === "blocked"
-    ) {
+    if (!server || server.data.connectionStatus === "disabled") {
       return;
     }
     if (item.type === "server") {

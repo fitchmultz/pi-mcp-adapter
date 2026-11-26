@@ -25,7 +25,6 @@ export type McpServerRuntimeStatus =
   | "cached"
   | "failed"
   | "needs-auth"
-  | "blocked"
   | "not-connected"
   | "disabled";
 
@@ -242,13 +241,7 @@ export interface MetadataCache {
 }
 
 /** What the `/mcp` panel reports; the panel adds its local reconnect as "connecting". */
-export type McpPanelConnectionStatus =
-  | "connected"
-  | "idle"
-  | "failed"
-  | "needs-auth"
-  | "blocked"
-  | "disabled";
+export type McpPanelConnectionStatus = "connected" | "idle" | "failed" | "needs-auth" | "disabled";
 
 export interface McpPanelCallbacks {
   reconnect: (serverName: string, afterAuth?: boolean) => Promise<boolean>;

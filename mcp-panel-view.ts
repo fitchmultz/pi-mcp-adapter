@@ -175,7 +175,7 @@ export class PanelView {
     }
     if (
       selected &&
-      (server.connectionStatus === "failed" || server.connectionStatus === "blocked") &&
+      server.connectionStatus === "failed" &&
       (server.failureMessage ?? "").length > 0
     ) {
       for (const line of this.wrapText(
@@ -277,7 +277,7 @@ export class PanelView {
     server: ServerState,
     labels: { nameStr: string; importLabel: string; statusLabel: string },
   ): string {
-    const locked = server.connectionStatus === "disabled" || server.connectionStatus === "blocked";
+    const locked = server.connectionStatus === "disabled";
     const suffix = locked ? "" : `  ${this.s.description("(undiscovered)")}`;
     return `${prefix}   ${labels.nameStr}${labels.importLabel}${labels.statusLabel}${suffix}`;
   }
@@ -311,7 +311,7 @@ export class PanelView {
   }
 
   private serverToggleIcon(server: ServerState, total: number, direct: number): string {
-    if (server.connectionStatus === "disabled" || server.connectionStatus === "blocked") {
+    if (server.connectionStatus === "disabled") {
       return this.s.description("⊘");
     }
     if (direct === total && total > 0) {
@@ -364,9 +364,6 @@ export class PanelView {
   private renderConnectionStatus(server: ServerState): string {
     if (this.state.authInFlight === server.name) {
       return `  ${this.s.needsAuth("authenticating")}`;
-    }
-    if (server.connectionStatus === "blocked") {
-      return `  ${this.s.cancel("blocked")}`;
     }
     if (server.connectionStatus === "disabled") {
       return `  ${this.s.description("disabled")}`;

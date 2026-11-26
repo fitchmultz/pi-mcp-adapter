@@ -186,8 +186,7 @@ function serverMatchesSearchWithoutTools(server: ServerState, query: PanelQuery)
   const keepsWithoutMatchingTools =
     !server.hasCachedData ||
     server.connectionStatus === "failed" ||
-    server.connectionStatus === "needs-auth" ||
-    server.connectionStatus === "blocked";
+    server.connectionStatus === "needs-auth";
   if (!keepsWithoutMatchingTools) {
     return false;
   }

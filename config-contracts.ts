@@ -110,10 +110,11 @@ export interface ConfigSourceReport {
   path: string;
   kind: "override" | "project" | "user" | "import" | "host";
   scope: "global" | "project" | "override";
-  status: "loaded" | "missing" | "blocked" | "error";
+  status: "loaded" | "missing" | "blocked" | "excluded" | "error";
   serverCount: number;
   importKind?: ImportKind;
   blockedReason?: string;
+  excludedReason?: string;
 }
 
 export interface BlockedServerInfo {

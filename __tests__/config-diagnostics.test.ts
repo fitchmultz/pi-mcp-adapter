@@ -281,4 +281,57 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
       ]),
     );
   });
+
+  it("marks existing native Pi configs as excluded when disabled by host and skips OpenCode enabled: false without warnings", async () => {
+    const home = makeTempDir("pi-mcp-excl-home-");
+    const project = makeTempDir("pi-mcp-excl-proj-");
+    const agentDir = join(home, ".pi", "agent");
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    const nativeUserPath = join(agentDir, "mcp.json");
+    writeJsonFile(nativeUserPath, {
+      mcpServers: { nativeSrv: { command: "echo" } },
+    });
+    const cursorPath = join(home, ".cursor", "mcp.json");
+    writeJsonFile(cursorPath, {
+      mcpServers: { cursorSrv: { command: "echo" } },
+    });
+    const openCodePath = join(project, "opencode.json");
+    writeJsonFile(openCodePath, {
+      mcp: {
+        disabledSrv: { type: "local", command: ["echo"], enabled: false },
+        activeSrv: { type: "local", command: ["echo"], enabled: true },
+      },
+    });
+    writeJsonFile(join(project, ".mcp.json"), {
+      imports: ["opencode"],
+      mcpServers: {},
+    });
+
+    vi.resetModules();
+    const { inspectMcpConfigSnapshot } = await import("../config.ts");
+    const snapshot = inspectMcpConfigSnapshot(undefined, project, { includeNativePi: false });
+
+    expect(snapshot.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: nativeUserPath,
+          status: "excluded",
+          excludedReason: "Native Pi user config disabled",
+        }),
+        expect.objectContaining({
+          path: cursorPath,
+          kind: "import",
+          importKind: "cursor",
+          status: "excluded",
+          excludedReason: "Host config discovery is off",
+        }),
+      ]),
+    );
+    expect(snapshot.errors.filter((error) => error.serverName === "disabledSrv")).toEqual([]);
+    expect(snapshot.config.mcpServers.activeSrv).toBeDefined();
+    expect(snapshot.config.mcpServers.disabledSrv).toBeUndefined();
+    expect(snapshot.config.mcpServers.cursorSrv).toBeUndefined();
+  });
 });

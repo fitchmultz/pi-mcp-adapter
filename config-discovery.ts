@@ -85,26 +85,34 @@ export function inspectBlockedProjectSources(
   return { blockedServers, blockedPaths };
 }
 
-function resolveConfigSourceStatus(
-  match: LoadedConfigSource | undefined,
-  errorPaths: ReadonlySet<string>,
-  exists: boolean,
-): "loaded" | "error" | "missing" {
+function resolveConfigSourceStatus(input: {
+  source: ConfigSourceSpec;
+  match: LoadedConfigSource | undefined;
+  errorPaths: ReadonlySet<string>;
+  exists: boolean;
+  excludedReason: string | undefined;
+}): "loaded" | "excluded" | "error" | "missing" {
+  const { source, match, errorPaths, exists, excludedReason } = input;
   if (match?.loaded !== null && match?.loaded !== undefined) {
     return "loaded";
   }
-  if (errorPaths.has(match?.source.readPath ?? "") || exists) {
+  if (errorPaths.has(match?.source.readPath ?? source.readPath)) {
     return "error";
   }
-  return "missing";
+  if (!exists) {
+    return "missing";
+  }
+  return excludedReason === undefined ? "error" : "excluded";
 }
 
-function buildSingleSourceReport(
-  source: ConfigSourceSpec,
-  loadedByPath: ReadonlyMap<string, LoadedConfigSource>,
-  errorPaths: ReadonlySet<string>,
-  blockedPaths: ReadonlyMap<string, string[]>,
-): ConfigSourceReport {
+function buildSingleSourceReport(input: {
+  source: ConfigSourceSpec;
+  loadedByPath: ReadonlyMap<string, LoadedConfigSource>;
+  errorPaths: ReadonlySet<string>;
+  blockedPaths: ReadonlyMap<string, string[]>;
+  excludedReasons: ReadonlyMap<string, string> | undefined;
+}): ConfigSourceReport {
+  const { source, loadedByPath, errorPaths, blockedPaths, excludedReasons } = input;
   const blockedNames = blockedPaths.get(source.readPath);
   if (blockedNames !== undefined) {
     return {
@@ -120,14 +128,57 @@ function buildSingleSourceReport(
   }
   const match = loadedByPath.get(source.readPath);
   const exists = existsSync(source.readPath);
+  const matchedExclusion = excludedReasons?.get(source.readPath);
+  const status = resolveConfigSourceStatus({
+    source,
+    match,
+    errorPaths,
+    exists,
+    excludedReason: matchedExclusion,
+  });
+  const excludedReason = status === "excluded" ? matchedExclusion : undefined;
   return {
     id: source.id,
     label: source.label,
     path: source.readPath,
     kind: source.kind,
     scope: source.scope,
-    status: resolveConfigSourceStatus(match, errorPaths, exists),
+    status,
     serverCount: match?.loaded ? Object.keys(match.loaded.config.mcpServers).length : 0,
+    ...(excludedReason !== undefined ? { excludedReason } : {}),
+  };
+}
+
+function buildImportSourceReport(input: {
+  imp: ImportConfigSummary;
+  errorPaths: ReadonlySet<string>;
+  hostConfigDiscovery: HostConfigDiscovery | undefined;
+  activeImportKinds: ReadonlySet<ImportKind> | undefined;
+}): ConfigSourceReport {
+  const { imp, errorPaths, hostConfigDiscovery, activeImportKinds } = input;
+  if (errorPaths.has(imp.path)) {
+    return {
+      id: `import-${imp.kind}`,
+      label: imp.kind,
+      path: imp.path,
+      kind: "import",
+      scope: "global",
+      status: "error",
+      serverCount: imp.serverCount,
+      importKind: imp.kind,
+    };
+  }
+  const active = hostConfigDiscovery === "on" || activeImportKinds?.has(imp.kind) === true;
+  return {
+    id: `import-${imp.kind}`,
+    label: imp.kind,
+    path: imp.path,
+    kind: "import",
+    scope: "global",
+    status: active ? "loaded" : "excluded",
+    serverCount: imp.serverCount,
+    importKind: imp.kind,
+    ...(active ? {} : { excludedReason: "Host config discovery is off" }),
   };
 }
 
@@ -137,25 +188,32 @@ export function buildSourceReports(input: {
   errors: readonly McpConfigValidationError[];
   blockedPaths: ReadonlyMap<string, string[]>;
   imports: readonly ImportConfigSummary[];
+  excludedReasons?: ReadonlyMap<string, string>;
+  hostConfigDiscovery?: HostConfigDiscovery;
+  activeImportKinds?: ReadonlySet<ImportKind>;
 }): ConfigSourceReport[] {
   const loadedByPath = new Map(input.loadedSources.map((entry) => [entry.source.readPath, entry]));
   const errorPaths = new Set(
     input.errors.filter((error) => error.severity === "error").map((error) => error.filePath),
   );
   const reports = input.allSources.map((source) =>
-    buildSingleSourceReport(source, loadedByPath, errorPaths, input.blockedPaths),
+    buildSingleSourceReport({
+      source,
+      loadedByPath,
+      errorPaths,
+      blockedPaths: input.blockedPaths,
+      excludedReasons: input.excludedReasons,
+    }),
   );
   for (const imp of input.imports) {
-    reports.push({
-      id: `import-${imp.kind}`,
-      label: imp.kind,
-      path: imp.path,
-      kind: "import",
-      scope: "global",
-      status: errorPaths.has(imp.path) ? "error" : "loaded",
-      serverCount: imp.serverCount,
-      importKind: imp.kind,
-    });
+    reports.push(
+      buildImportSourceReport({
+        imp,
+        errorPaths,
+        hostConfigDiscovery: input.hostConfigDiscovery,
+        activeImportKinds: input.activeImportKinds,
+      }),
+    );
   }
   return reports;
 }

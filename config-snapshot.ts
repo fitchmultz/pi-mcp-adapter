@@ -311,6 +311,7 @@ export interface MergeConfigLayersResult {
   readonly config: McpConfig;
   readonly allSources: readonly ConfigSourceSpec[];
   readonly loadedSources: LoadedConfigSource[];
+  readonly excludedReasons: ReadonlyMap<string, string>;
   readonly provenance: Map<string, ServerProvenance>;
   readonly errors: McpConfigValidationError[];
   readonly hostConfigDiscovery: HostConfigDiscovery;
@@ -365,12 +366,63 @@ function applyDiscoveredHostLayerIfEnabled(
   return mergeLayerWithBase(acc.config, discovered, undefined, acc.remainingBaseServers);
 }
 
+function classifyExcludedSource(
+  source: ConfigSourceSpec,
+  options: {
+    cwd: string;
+    includeProject: boolean;
+    includeNativePi: boolean;
+    includeNativePiProject: boolean;
+    sourceFilter: ((source: ConfigSourceSpec) => boolean) | undefined;
+  },
+): string | undefined {
+  if (!options.includeProject && isProjectConfigSource(source, options.cwd)) {
+    return "Project is not trusted";
+  }
+  if (!options.includeNativePi && source.id === "native-pi-global") {
+    return "Native Pi user config disabled";
+  }
+  if (!options.includeNativePiProject && source.id === "native-pi-project") {
+    return "Native Pi project config disabled";
+  }
+  return options.sourceFilter && !options.sourceFilter(source)
+    ? "Excluded by host source filter"
+    : undefined;
+}
+
+function classifyExcludedSources(input: {
+  allSources: readonly ConfigSourceSpec[];
+  cwd: string;
+  loadOptions: LoadMcpConfigOptions;
+  sourceFilter: ((source: ConfigSourceSpec) => boolean) | undefined;
+}): Map<string, string> {
+  const { allSources, cwd, loadOptions, sourceFilter } = input;
+  const includeProject = loadOptions.includeProject !== false;
+  const includeNativePi = loadOptions.includeNativePi !== false;
+  const includeNativePiProject = includeNativePi && loadOptions.includeNativePiProject !== false;
+  const excludedReasons = new Map<string, string>();
+  for (const source of allSources) {
+    const reason = classifyExcludedSource(source, {
+      cwd,
+      includeProject,
+      includeNativePi,
+      includeNativePiProject,
+      sourceFilter,
+    });
+    if (reason !== undefined) {
+      excludedReasons.set(source.readPath, reason);
+    }
+  }
+  return excludedReasons;
+}
+
 export function mergeConfigLayers(options: MergeConfigLayersOptions = {}): MergeConfigLayersResult {
   const cwd = options.cwd ?? process.cwd();
   const loadOptions = options.loadOptions ?? {};
   const includeProject = loadOptions.includeProject !== false;
   const allSources = getConfigSources(options.overridePath, cwd);
   const sourceFilter = options.sourceFilter;
+  const excludedReasons = classifyExcludedSources({ allSources, cwd, loadOptions, sourceFilter });
   const filteredSources = getFilteredConfigSources(options.overridePath, cwd, loadOptions).filter(
     (source) => (sourceFilter ? sourceFilter(source) : true),
   );
@@ -395,6 +447,7 @@ export function mergeConfigLayers(options: MergeConfigLayersOptions = {}): Merge
     config: acc.config,
     allSources,
     loadedSources: acc.loadedSources,
+    excludedReasons,
     provenance: acc.provenance,
     errors,
     hostConfigDiscovery,
@@ -430,6 +483,9 @@ export function inspectMcpConfigSnapshot(
     includeProject,
     new Set(Object.keys(merged.config.mcpServers)),
   );
+  const activeImportKinds = new Set<ImportKind>(
+    merged.loadedSources.flatMap((entry) => entry.loaded?.config.imports ?? []),
+  );
   return {
     config: merged.config,
     provenance: merged.provenance,
@@ -441,6 +497,9 @@ export function inspectMcpConfigSnapshot(
       errors: merged.errors,
       blockedPaths,
       imports,
+      excludedReasons: merged.excludedReasons,
+      hostConfigDiscovery: merged.hostConfigDiscovery,
+      activeImportKinds,
     }),
     blockedServers,
   };

@@ -355,4 +355,106 @@ describe("MCP-214 commands routing, live enable/disable, and doctor observabilit
     });
     expect(ui.notify.mock.calls.at(-1)?.[0]).toContain("blocked (Project is not trusted)");
   });
+
+  it("checks doctor OAuth Unix-second expiry, excludes native Pi configs when disabled, and sanitizes untrusted blocked names", async () => {
+    const prevAuthStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+    process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "memory";
+    try {
+      const { home, project, host, ui } = await bootWorkspaceHost("pi-mcp-214-doctor-sec-");
+      const { saveAuthEntry } = await import("../../mcp-auth.ts");
+      const { showDoctor } = await import("../../mcp-doctor.ts");
+      const { createTestExtensionContext } = await import("../test-extension-context.ts");
+      const { createTestState } = await import("../test-state.ts");
+
+      const agentDir = join(home, ".pi", "agent");
+      writeJson(join(agentDir, "mcp.json"), {
+        mcpServers: { nativeSrv: { command: "echo" } },
+      });
+      writeJson(join(agentDir, "fitch-mcp-adapter", "mcp.json"), {
+        mcpServers: {
+          valid_sec: { url: "https://valid.example.test/mcp", auth: "oauth" },
+          zero_sentinel: { url: "https://zero.example.test/mcp", auth: "oauth" },
+          expired_sec: { url: "https://exp.example.test/mcp", auth: "oauth" },
+        },
+      });
+      writeJson(join(project, ".mcp.json"), {
+        mcpServers: {
+          "bad\x1b]52;c;ZGF0YQ==\x07evil\nforged": { url: "https://evil.example.test/mcp" },
+        },
+      });
+
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      await saveAuthEntry(
+        { serverName: "valid_sec", serverUrl: "https://valid.example.test/mcp" },
+        { tokens: { accessToken: "valid-tok", expiresAt: nowSeconds + 3600 } },
+      );
+      await saveAuthEntry(
+        { serverName: "zero_sentinel", serverUrl: "https://zero.example.test/mcp" },
+        { tokens: { accessToken: "zero-tok", expiresAt: 0 } },
+      );
+      await saveAuthEntry(
+        { serverName: "expired_sec", serverUrl: "https://exp.example.test/mcp" },
+        { tokens: { accessToken: "exp-tok", expiresAt: nowSeconds - 60 } },
+      );
+
+      const untrustedCtx = {
+        cwd: project,
+        hasUI: true,
+        mode: "tui" as const,
+        isProjectTrusted: () => false,
+        ui: { notify: ui.notify, custom: ui.custom, setStatus: ui.setStatus },
+      };
+
+      await host.handlers.get("session_start")({}, untrustedCtx);
+
+      const mcpCmd = host.command("mcp");
+      await mcpCmd.handler("doctor", untrustedCtx);
+      const doctorOut = ui.notify.mock.calls.at(-1)?.[0] ?? "";
+      expect(doctorOut).toContain("valid_sec: authenticated");
+      expect(doctorOut).toContain("zero_sentinel: authenticated");
+      expect(doctorOut).toContain(
+        "expired_sec: stored OAuth token expired (refresh/re-auth may be required)",
+      );
+      expect(doctorOut).not.toContain("\x1b");
+      expect(doctorOut).not.toContain("\x07");
+      expect(doctorOut).not.toContain("\nforged");
+
+      await mcpCmd.handler("status", untrustedCtx);
+      const statusOut = ui.notify.mock.calls.at(-1)?.[0] ?? "";
+      expect(statusOut).toContain("blocked (Project is not trusted)");
+      expect(statusOut).not.toContain("\x1b");
+      expect(statusOut).not.toContain("\x07");
+      expect(statusOut).not.toContain("\nforged");
+
+      const doctorNotify = vi.fn<ExtensionUIContext["notify"]>();
+      const state = createTestState({ config: { mcpServers: {} } });
+      const doctorHostCtx = await createTestExtensionContext();
+      try {
+        await showDoctor(
+          state,
+          {
+            ...doctorHostCtx.context,
+            cwd: project,
+            hasUI: true,
+            mode: "tui",
+            isProjectTrusted: () => false,
+            ui: { ...doctorHostCtx.context.ui, notify: doctorNotify },
+          },
+          { discoveryOptions: { includeNativePi: false } },
+        );
+      } finally {
+        await state.owner.stop();
+        await doctorHostCtx.dispose();
+      }
+      const excludedDoctorOut = doctorNotify.mock.calls.at(-1)?.[0] ?? "";
+      expect(excludedDoctorOut).toContain("excluded (Native Pi user config disabled)");
+      expect(excludedDoctorOut).not.toContain("mcp.json — error");
+    } finally {
+      if (prevAuthStore === undefined) {
+        delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
+      } else {
+        process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = prevAuthStore;
+      }
+    }
+  });
 });
