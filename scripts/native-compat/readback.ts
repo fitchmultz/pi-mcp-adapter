@@ -22,6 +22,7 @@ const codedSchema = z.object({
   defaultPage: z.string(),
   denied: z
     .object({
+      isError: z.literal(true),
       mcpAdapter: z
         .object({
           omitted: z.literal(true),
@@ -87,7 +88,7 @@ export async function verifyMcpReadback(
     args: { value: "must-not-run" },
   };
   const deniedNative = await native.run("mcp", { ...blocked, format: "structured" });
-  assert.equal(deniedNative.isError, false);
+  assert.equal(deniedNative.isError, true);
   assert.match(textOf(deniedNative).join("\n"), /approval-gated.*interactive session/);
   const coded = await native.run("codemode", {
     code: `
@@ -129,7 +130,9 @@ export async function verifyMcpReadback(
       catch (error) { rejected = error.message; }
       const blocked = ${JSON.stringify(blocked)};
       const denied = await tools.mcp({ ...blocked, format: "structured" });
-      const defaultDenial = await tools.mcp(blocked);
+      let defaultDenial;
+      try { await tools.mcp(blocked); }
+      catch (error) { defaultDenial = error.message; }
       const providerError = await tools.mcp({ ...blocked, tool: "echo", args: { value: "fail" }, format: "structured" });
       return { inline, large, selected, defaultPage, largeSelection, largeReadAll, rejected, denied, defaultDenial, providerError };`,
   });

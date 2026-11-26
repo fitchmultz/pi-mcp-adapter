@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   loadSkillsFromDir,
   type ExtensionAPI,
@@ -57,29 +58,6 @@ function ensurePrivateDir(dirPath: string): void {
   chmodSync(dirPath, DIR_MODE);
 }
 
-function ensurePrivateHierarchy(rootDir: string, targetDir: string): void {
-  ensurePrivateDir(rootDir);
-  const resolvedRoot = resolve(rootDir);
-  const resolvedTarget = resolve(targetDir);
-  if (resolvedTarget === resolvedRoot) {
-    return;
-  }
-  if (!resolvedTarget.startsWith(`${resolvedRoot}${sep}`)) {
-    throw new Error(`Unsafe directory path outside root: ${targetDir}`);
-  }
-  const relative = resolvedTarget.slice(resolvedRoot.length + 1);
-  let current = resolvedRoot;
-  for (const segment of relative.split(sep)) {
-    current = join(current, segment);
-    ensurePrivateDir(current);
-  }
-}
-
-function writePrivateFile(filePath: string, content: Uint8Array): void {
-  writeFileSync(filePath, content, { mode: FILE_MODE, flag: "wx" });
-  chmodSync(filePath, FILE_MODE);
-}
-
 function assertWithinParent(parentDir: string, childPath: string): string {
   const resolvedParent = resolve(parentDir);
   const resolvedChild = resolve(childPath);
@@ -121,8 +99,8 @@ function materializeSingleSkill(
   ensurePrivateDir(skillDir);
   for (const file of bundle.files) {
     const filePath = assertWithinParent(skillDir, join(skillDir, ...file.relativeSegments));
-    ensurePrivateHierarchy(skillDir, dirname(filePath));
-    writePrivateFile(filePath, file.content);
+    mkdirSync(dirname(filePath), { recursive: true, mode: DIR_MODE });
+    writeFileSync(filePath, file.content, { mode: FILE_MODE, flag: "wx" });
   }
   const loaded = loadSkillsFromDir({ dir: skillDir, source: "mcp" });
   if (loaded.skills.length !== 1 || loaded.skills[0]?.name !== bundle.dirName) {
@@ -354,23 +332,25 @@ async function awaitPromiseWithGrace(promise: Promise<unknown> | null): Promise<
   if (!promise) {
     return;
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      promise.then(
-        () => null,
-        () => null,
-      ),
-      new Promise<void>((done) => {
-        timer = setTimeout(done, STARTUP_SKILLS_DISCOVERY_WAIT_MS);
-        timer.unref();
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
+  await Promise.race([
+    promise.then(
+      () => null,
+      () => null,
+    ),
+    delay(STARTUP_SKILLS_DISCOVERY_WAIT_MS, undefined, { ref: false }),
+  ]);
+}
+
+function canAnyStartupServerExposeSkills(state: McpExtensionState | null): boolean {
+  if (!state) {
+    return true;
   }
+  if (state.config.settings?.exposeSkills === false) {
+    return false;
+  }
+  return Object.values(state.config.mcpServers).some(
+    (definition) => !isServerDisabled(definition) && definition.exposeSkills !== false,
+  );
 }
 
 export class HostSkillsTracker {
@@ -397,7 +377,9 @@ export class HostSkillsTracker {
     ctx: ExtensionContext;
   }): Promise<ResourcesDiscoverResult | undefined> {
     await awaitPromiseWithGrace(input.readHostState().startPromise);
-    await awaitPromiseWithGrace(input.readHostState().initPromise);
+    if (canAnyStartupServerExposeSkills(input.readHostState().state)) {
+      await awaitPromiseWithGrace(input.readHostState().initPromise);
+    }
     const state = input.readHostState().state;
     if (!state) {
       return undefined;
