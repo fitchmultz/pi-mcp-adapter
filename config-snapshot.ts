@@ -94,20 +94,70 @@ export class ConfigReadCache implements ImportReader {
   }
 }
 
+function classifyExcludedSource(
+  source: ConfigSourceSpec,
+  options: {
+    cwd: string;
+    includeProject: boolean;
+    includeNativePi: boolean;
+    includeNativePiProject: boolean;
+    sourceFilter: ((source: ConfigSourceSpec) => boolean) | undefined;
+  },
+): string | undefined {
+  if (!options.includeProject && isProjectConfigSource(source, options.cwd)) {
+    return "Project is not trusted";
+  }
+  if (!options.includeNativePi && source.id === "native-pi-global") {
+    return "Native Pi user config disabled";
+  }
+  if (!options.includeNativePiProject && source.id === "native-pi-project") {
+    return "Native Pi project config disabled";
+  }
+  return options.sourceFilter && !options.sourceFilter(source)
+    ? "Excluded by host source filter"
+    : undefined;
+}
+
+function partitionConfigSources(input: {
+  overridePath: string | undefined;
+  cwd: string;
+  loadOptions?: LoadMcpConfigOptions;
+  sourceFilter?: ((source: ConfigSourceSpec) => boolean) | undefined;
+}): {
+  allSources: ConfigSourceSpec[];
+  filteredSources: ConfigSourceSpec[];
+  excludedReasons: Map<string, string>;
+} {
+  const loadOptions = input.loadOptions ?? {};
+  const includeProject = loadOptions.includeProject !== false;
+  const includeNativePi = loadOptions.includeNativePi !== false;
+  const includeNativePiProject = includeNativePi && loadOptions.includeNativePiProject !== false;
+  const allSources = getConfigSources(input.overridePath, input.cwd);
+  const filteredSources: ConfigSourceSpec[] = [];
+  const excludedReasons = new Map<string, string>();
+  for (const source of allSources) {
+    const reason = classifyExcludedSource(source, {
+      cwd: input.cwd,
+      includeProject,
+      includeNativePi,
+      includeNativePiProject,
+      sourceFilter: input.sourceFilter,
+    });
+    if (reason === undefined) {
+      filteredSources.push(source);
+    } else {
+      excludedReasons.set(source.readPath, reason);
+    }
+  }
+  return { allSources, filteredSources, excludedReasons };
+}
+
 export function getFilteredConfigSources(
   overridePath: string | undefined,
   cwd: string,
   options: LoadMcpConfigOptions = {},
 ): ConfigSourceSpec[] {
-  const includeProject = options.includeProject !== false;
-  const includeNativePi = options.includeNativePi !== false;
-  const includeNativePiProject = includeNativePi && options.includeNativePiProject !== false;
-  return getConfigSources(overridePath, cwd).filter(
-    (source) =>
-      (includeProject || !isProjectConfigSource(source, cwd)) &&
-      (includeNativePi || source.id !== "native-pi-global") &&
-      (includeNativePiProject || source.id !== "native-pi-project"),
-  );
+  return partitionConfigSources({ overridePath, cwd, loadOptions: options }).filteredSources;
 }
 
 function deduplicateConfigErrors(
@@ -366,66 +416,16 @@ function applyDiscoveredHostLayerIfEnabled(
   return mergeLayerWithBase(acc.config, discovered, undefined, acc.remainingBaseServers);
 }
 
-function classifyExcludedSource(
-  source: ConfigSourceSpec,
-  options: {
-    cwd: string;
-    includeProject: boolean;
-    includeNativePi: boolean;
-    includeNativePiProject: boolean;
-    sourceFilter: ((source: ConfigSourceSpec) => boolean) | undefined;
-  },
-): string | undefined {
-  if (!options.includeProject && isProjectConfigSource(source, options.cwd)) {
-    return "Project is not trusted";
-  }
-  if (!options.includeNativePi && source.id === "native-pi-global") {
-    return "Native Pi user config disabled";
-  }
-  if (!options.includeNativePiProject && source.id === "native-pi-project") {
-    return "Native Pi project config disabled";
-  }
-  return options.sourceFilter && !options.sourceFilter(source)
-    ? "Excluded by host source filter"
-    : undefined;
-}
-
-function classifyExcludedSources(input: {
-  allSources: readonly ConfigSourceSpec[];
-  cwd: string;
-  loadOptions: LoadMcpConfigOptions;
-  sourceFilter: ((source: ConfigSourceSpec) => boolean) | undefined;
-}): Map<string, string> {
-  const { allSources, cwd, loadOptions, sourceFilter } = input;
-  const includeProject = loadOptions.includeProject !== false;
-  const includeNativePi = loadOptions.includeNativePi !== false;
-  const includeNativePiProject = includeNativePi && loadOptions.includeNativePiProject !== false;
-  const excludedReasons = new Map<string, string>();
-  for (const source of allSources) {
-    const reason = classifyExcludedSource(source, {
-      cwd,
-      includeProject,
-      includeNativePi,
-      includeNativePiProject,
-      sourceFilter,
-    });
-    if (reason !== undefined) {
-      excludedReasons.set(source.readPath, reason);
-    }
-  }
-  return excludedReasons;
-}
-
 export function mergeConfigLayers(options: MergeConfigLayersOptions = {}): MergeConfigLayersResult {
   const cwd = options.cwd ?? process.cwd();
   const loadOptions = options.loadOptions ?? {};
   const includeProject = loadOptions.includeProject !== false;
-  const allSources = getConfigSources(options.overridePath, cwd);
-  const sourceFilter = options.sourceFilter;
-  const excludedReasons = classifyExcludedSources({ allSources, cwd, loadOptions, sourceFilter });
-  const filteredSources = getFilteredConfigSources(options.overridePath, cwd, loadOptions).filter(
-    (source) => (sourceFilter ? sourceFilter(source) : true),
-  );
+  const { allSources, filteredSources, excludedReasons } = partitionConfigSources({
+    overridePath: options.overridePath,
+    cwd,
+    loadOptions,
+    sourceFilter: options.sourceFilter,
+  });
   const cache = new ConfigReadCache(cwd, includeProject);
   const hostConfigDiscovery =
     options.includeHostDiscovery === false
