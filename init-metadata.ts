@@ -232,6 +232,9 @@ function cacheEntry(
     resourceTemplates,
     ...(prompts !== undefined ? { prompts } : {}),
     ...(connection.instructions !== undefined ? { instructions: connection.instructions } : {}),
+    ...(connection.priorDiscovery !== undefined
+      ? { priorDiscovery: connection.priorDiscovery }
+      : {}),
     cachedAt: Date.now(),
   };
 

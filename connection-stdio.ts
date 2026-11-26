@@ -217,7 +217,7 @@ export function appendStderrToError(
   return new Error(`${base}\n\nRecent server stderr:\n${stderrTail}`, { cause: error });
 }
 
-export function createStdioConnection(
+export async function createStdioConnection(
   runtime: typeof ConnectionRuntime,
   definition: ServerDefinition,
   diagnostics: StdioDiagnostics,
@@ -228,13 +228,13 @@ export function createStdioConnection(
     command: string;
     args: string[];
   },
-): ConnectionRuntime.StdioClientTransport {
+): Promise<ConnectionRuntime.StdioClientTransport> {
   throwIfAborted(options.signal);
   const cwd = resolveConfigPath(definition.cwd) ?? options.defaultCwd;
   const transport = new runtime.StdioClientTransport({
     command: options.command,
     args: options.args,
-    env: resolveEnv(definition.env, options.name),
+    env: await resolveEnv(definition.env, options.name, options.signal),
     ...(cwd !== undefined ? { cwd } : {}),
     stderr: definition.debug === true ? "inherit" : "pipe",
   });
@@ -273,19 +273,22 @@ export async function resolveStdioCommand(
   };
 }
 
-function resolveEnv(
+async function resolveEnv(
   env: Record<string, string> | undefined,
   serverName: string,
-): Record<string, string> {
+  signal?: AbortSignal,
+): Promise<Record<string, string>> {
   const resolved: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) {
       resolved[key] = value;
     }
   }
-  const overrides = resolveCommandSecretsRecord(
+  const overrides = await resolveCommandSecretsRecord(
     env,
     (key) => `MCP server "${serverName}" stdio env "${key}"`,
+    signal,
   );
+  throwIfAborted(signal);
   return overrides ? { ...resolved, ...overrides } : resolved;
 }

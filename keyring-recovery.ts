@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { causeChainContains } from "./credential-store-errors.ts";
 import type { AuthSecretStore } from "./keyring-store.ts";
@@ -8,6 +8,7 @@ const KEYRING_RECOVERY_KEYCTL_ENV = "PI_MCP_ADAPTER_KEYRING_RECOVERY_KEYCTL";
 const KEYRING_RECOVERY_NODE_ENV = "PI_MCP_ADAPTER_KEYRING_RECOVERY_NODE";
 const KEYRING_RECOVERY_HELPER_ENV = "PI_MCP_ADAPTER_KEYRING_RECOVERY_HELPER";
 const TEST_LINUX_KEYRING_RECOVERY_ENV = "PI_MCP_ADAPTER_TEST_LINUX_KEYRING_RECOVERY";
+// Match the prior synchronous 10s cap on `keyctl session` recovery subprocesses.
 const KEYRING_RECOVERY_TIMEOUT_MS = 10_000;
 
 type KeyringRecoveryOperation = "read" | "write" | "remove";
@@ -26,12 +27,59 @@ function configuredCommand(name: string, fallback: string): string {
   return value !== undefined && value !== "" ? value : fallback;
 }
 
-function runLinuxKeyringRecoveryOperation(
+function formatExecRecoveryError(error: Error & { code?: unknown; killed?: boolean }): Error {
+  if (typeof error.code === "number") {
+    return new Error(`Linux keyring recovery helper failed with exit code ${error.code}`, {
+      cause: error,
+    });
+  }
+  if (error.killed === true) {
+    return new Error(`Linux keyring recovery helper timed out: ${error.message}`, { cause: error });
+  }
+  return new Error(`Linux keyring recovery helper could not start: ${error.message}`, {
+    cause: error,
+  });
+}
+
+function execRecoveryHelper(command: string, args: string[], input: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    try {
+      const child = execFile(
+        command,
+        args,
+        {
+          encoding: "utf8",
+          maxBuffer: 1024 * 1024,
+          timeout: KEYRING_RECOVERY_TIMEOUT_MS,
+          windowsHide: true,
+        },
+        (error, stdout) => {
+          if (error) {
+            reject(formatExecRecoveryError(error));
+            return;
+          }
+          resolve(stdout);
+        },
+      );
+      child.stdin?.on("error", () => {
+        // Ignore EPIPE when the helper exits before consuming stdin.
+      });
+      child.stdin?.end(input);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reject(
+        new Error(`Linux keyring recovery helper could not start: ${message}`, { cause: error }),
+      );
+    }
+  });
+}
+
+async function runLinuxKeyringRecoveryOperation(
   operation: KeyringRecoveryOperation,
   account: string,
   payload: string | undefined,
   service: string,
-): string | undefined {
+): Promise<string | undefined> {
   const keyctl = configuredCommand(KEYRING_RECOVERY_KEYCTL_ENV, "keyctl");
   const node = configuredCommand(KEYRING_RECOVERY_NODE_ENV, "node");
   const helperOverride = process.env[KEYRING_RECOVERY_HELPER_ENV]?.trim();
@@ -40,24 +88,8 @@ function runLinuxKeyringRecoveryOperation(
       ? helperOverride
       : fileURLToPath(new URL("./mcp-keyring-helper.cjs", import.meta.url));
   const request = JSON.stringify({ operation, service, account, payload });
-  const result = spawnSync(keyctl, ["session", "-", node, helper], {
-    input: `${request}\n`,
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-    timeout: KEYRING_RECOVERY_TIMEOUT_MS,
-    windowsHide: true,
-  });
-  if (result.error) {
-    throw new Error(`Linux keyring recovery helper could not start: ${result.error.message}`, {
-      cause: result.error,
-    });
-  }
-  if (result.status !== 0) {
-    throw new Error(
-      `Linux keyring recovery helper failed with exit code ${result.status ?? "unknown"}`,
-    );
-  }
-  return readRecoveryResponse(operation, result.stdout);
+  const stdout = await execRecoveryHelper(keyctl, ["session", "-", node, helper], `${request}\n`);
+  return readRecoveryResponse(operation, stdout);
 }
 
 function readRecoveryResponse(
@@ -98,14 +130,14 @@ function readRecoveredPassword(response: object): string | undefined {
 
 export function linuxKeyringRecoveryAuthSecretStore(service: string): AuthSecretStore {
   return {
-    read(account) {
-      return runLinuxKeyringRecoveryOperation("read", account, undefined, service);
+    async read(account) {
+      return await runLinuxKeyringRecoveryOperation("read", account, undefined, service);
     },
-    write(account, payload) {
-      runLinuxKeyringRecoveryOperation("write", account, payload, service);
+    async write(account, payload) {
+      await runLinuxKeyringRecoveryOperation("write", account, payload, service);
     },
-    remove(account) {
-      runLinuxKeyringRecoveryOperation("remove", account, undefined, service);
+    async remove(account) {
+      await runLinuxKeyringRecoveryOperation("remove", account, undefined, service);
     },
   };
 }

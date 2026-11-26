@@ -93,17 +93,17 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
     return value;
   }
 
-  it("keeps legacy credentials intact across reads, writes and logout for the same server name", () => {
+  it("keeps legacy credentials intact across reads, writes and logout for the same server name", async () => {
     expect(
-      getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
+      await getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
     ).toBeUndefined();
 
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: server, serverUrl: legacyEntry.serverUrl },
       { tokens: { accessToken: "fitch-token" } },
     );
     expect(
-      getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" })?.tokens
+      (await getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }))?.tokens
         ?.accessToken,
     ).toBe("fitch-token");
     expect(storedEntry(legacyKey)).toEqual(legacyEntry);
@@ -112,16 +112,16 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
       tokens: { accessToken: "fitch-token" },
     });
 
-    clearAllCredentials({ serverName: server, serverUrl: "https://example.com/mcp" });
+    await clearAllCredentials({ serverName: server, serverUrl: "https://example.com/mcp" });
     expect(
-      getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
+      await getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
     ).toBeUndefined();
     expect(storedEntries()).toEqual({ [legacyKey]: JSON.stringify(legacyEntry) });
   });
 
   it.each(["secure", "plaintext"])(
     "promotes a live current %s grant before the historical grant",
-    (source) => {
+    async (source) => {
       const current = {
         ...legacyEntry,
         tokens: { accessToken: "CURRENT-GRANT", refreshToken: "CURRENT-REFRESH" },
@@ -142,13 +142,13 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
         writeFileSync(path, JSON.stringify(current));
       }
 
-      expect(migrateLegacyAuthEntry(identity)).toBe("existing");
-      expect(getAuthEntry(identity)).toEqual(current);
+      expect(await migrateLegacyAuthEntry(identity)).toBe("existing");
+      expect(await getAuthEntry(identity)).toEqual(current);
       expect(storedEntry(ownedKey)).toEqual(current);
       expect(storedEntries()[nameOnlyKey]).toBeUndefined();
       expect(existsSync(getAuthEntryFilePath(server))).toBe(false);
-      updateTokens(identity, { accessToken: "CURRENT-UPDATED" });
-      expect(getAuthEntry(identity)).toEqual({
+      await updateTokens(identity, { accessToken: "CURRENT-UPDATED" });
+      expect(await getAuthEntry(identity)).toEqual({
         ...current,
         tokens: { accessToken: "CURRENT-UPDATED" },
       });
@@ -156,7 +156,7 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
     },
   );
 
-  it("ignores another URL's current grant when explicitly copying a matching historical grant", () => {
+  it("ignores another URL's current grant when explicitly copying a matching historical grant", async () => {
     const other = {
       ...legacyEntry,
       serverUrl: identity.serverUrl + "/",
@@ -169,14 +169,14 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
         [legacyKey]: JSON.stringify(legacyEntry),
       }),
     );
-    expect(migrateLegacyAuthEntry(identity)).toBe("copied");
-    expect(getAuthEntry(identity)).toEqual(legacyEntry);
-    updateTokens(identity, { accessToken: "UPDATED" });
+    expect(await migrateLegacyAuthEntry(identity)).toBe("copied");
+    expect(await getAuthEntry(identity)).toEqual(legacyEntry);
+    await updateTokens(identity, { accessToken: "UPDATED" });
     expect(storedEntry(nameOnlyKey)).toEqual(other);
     expect(storedEntry(legacyKey)).toEqual(legacyEntry);
   });
 
-  it("keeps a mismatched historical grant untouched when promoting a live current grant", () => {
+  it("keeps a mismatched historical grant untouched when promoting a live current grant", async () => {
     const other = { ...legacyEntry, serverUrl: identity.serverUrl + "/" };
     const current = { ...legacyEntry, tokens: { accessToken: "CURRENT-GRANT" } };
     writeFileSync(
@@ -186,46 +186,46 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
         [legacyKey]: JSON.stringify(other),
       }),
     );
-    expect(migrateLegacyAuthEntry(identity)).toBe("existing");
-    expect(getAuthEntry(identity)).toEqual(current);
-    updateTokens(identity, { accessToken: "UPDATED" });
+    expect(await migrateLegacyAuthEntry(identity)).toBe("existing");
+    expect(await getAuthEntry(identity)).toEqual(current);
+    await updateTokens(identity, { accessToken: "UPDATED" });
     expect(storedEntry(legacyKey)).toEqual(other);
   });
 
-  it("explicitly copies native credentials and bindings once, without modifying the source", () => {
+  it("explicitly copies native credentials and bindings once, without modifying the source", async () => {
     expect(
-      migrateLegacyAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
+      await migrateLegacyAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
     ).toBe("copied");
-    expect(getAuthForUrl({ serverName: server, serverUrl: legacyEntry.serverUrl })).toEqual(
+    expect(await getAuthForUrl({ serverName: server, serverUrl: legacyEntry.serverUrl })).toEqual(
       legacyEntry,
     );
     expect(
-      getAuthForUrl({ serverName: server, serverUrl: "https://different.example/mcp" }),
+      await getAuthForUrl({ serverName: server, serverUrl: "https://different.example/mcp" }),
     ).toBeUndefined();
     expect(storedEntries()).toEqual({
       [legacyKey]: JSON.stringify(legacyEntry),
       [ownedKey]: JSON.stringify(legacyEntry),
     });
 
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: server, serverUrl: legacyEntry.serverUrl },
       { tokens: { accessToken: "renewed-fitch-token" } },
     );
     expect(
-      migrateLegacyAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
+      await migrateLegacyAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
     ).toBe("existing");
     expect(
-      getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" })?.tokens
+      (await getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }))?.tokens
         ?.accessToken,
     ).toBe("renewed-fitch-token");
-    clearAllCredentials({ serverName: server, serverUrl: "https://example.com/mcp" });
+    await clearAllCredentials({ serverName: server, serverUrl: "https://example.com/mcp" });
     expect(
-      getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
+      await getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
     ).toBeUndefined();
     expect(storedEntries()).toEqual({ [legacyKey]: JSON.stringify(legacyEntry) });
   });
 
-  it("copies the pre-v5 chunked keyring format without removing its manifest or chunks", () => {
+  it("copies the pre-v5 chunked keyring format without removing its manifest or chunks", async () => {
     const entry = { ...legacyEntry, tokens: { accessToken: "x".repeat(3000) } };
     const payload = JSON.stringify(entry);
     const digest = createHash("sha256").update(payload).digest("hex").slice(0, 16);
@@ -241,41 +241,41 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
     writeFileSync(storePath, JSON.stringify(source));
 
     expect(
-      migrateLegacyAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
+      await migrateLegacyAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
     ).toBe("copied");
-    expect(getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" })).toEqual(
-      entry,
-    );
-    clearAllCredentials({ serverName: server, serverUrl: "https://example.com/mcp" });
+    expect(
+      await getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
+    ).toEqual(entry);
+    await clearAllCredentials({ serverName: server, serverUrl: "https://example.com/mcp" });
     expect(storedEntries()).toEqual(source);
   });
 
-  it("preserves the source when the destination credential store cannot write", () => {
+  it("preserves the source when the destination credential store cannot write", async () => {
     vi.stubEnv("FITCH_TEST_FAIL_WRITE", "1");
-    expect(() =>
+    await expect(
       migrateLegacyAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
-    ).toThrow(/Failed to write OAuth credentials/);
+    ).rejects.toThrow(/Failed to write OAuth credentials/);
     expect(storedEntries()).toEqual({ [legacyKey]: JSON.stringify(legacyEntry) });
   });
 
-  it("does not import or delete the legacy plaintext directory during normal use", () => {
+  it("does not import or delete the legacy plaintext directory during normal use", async () => {
     const legacyFile = join(root, "mcp-oauth", account, "tokens.json");
     mkdirSync(dirname(legacyFile), { recursive: true });
     writeFileSync(legacyFile, JSON.stringify(legacyEntry));
     vi.stubEnv("MCP_OAUTH_DIR", join(root, "mcp-oauth"));
 
     expect(
-      getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
+      await getAuthEntry({ serverName: server, serverUrl: "https://example.com/mcp" }),
     ).toBeUndefined();
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: server, serverUrl: "https://example.com/mcp" },
       { tokens: { accessToken: "new-token" } },
     );
-    clearAllCredentials({ serverName: server, serverUrl: "https://example.com/mcp" });
+    await clearAllCredentials({ serverName: server, serverUrl: "https://example.com/mcp" });
     expect(existsSync(legacyFile)).toBe(true);
     expect(JSON.parse(readFileSync(legacyFile, "utf8"))).toEqual(legacyEntry);
   });
-  it("isolates writes, field clears, status and logout by the exact URL", () => {
+  it("isolates writes, field clears, status and logout by the exact URL", async () => {
     const other = { ...identity, serverUrl: identity.serverUrl + "/" };
     const otherEntry = {
       serverUrl: other.serverUrl,
@@ -284,35 +284,35 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
       codeVerifier: "other-verifier",
       oauthState: "other-state",
     };
-    saveAuthEntry(identity, { ...otherEntry, tokens: { accessToken: "first-token" } });
-    saveAuthEntry(other, otherEntry);
+    await saveAuthEntry(identity, { ...otherEntry, tokens: { accessToken: "first-token" } });
+    await saveAuthEntry(other, otherEntry);
     const otherBytes = storedEntries();
-    expect(getAuthEntry(identity)?.serverUrl).toBe(identity.serverUrl);
-    expect(getAuthEntry(identity)?.tokens?.accessToken).toBe("first-token");
-    updateTokens(identity, { accessToken: "updated-token" });
-    updateClientInfo(identity, { clientId: "updated-client" });
-    clearCodeVerifier(identity);
-    clearOAuthState(identity);
-    clearTokens(identity);
-    clearClientInfo(identity);
-    expect(getAuthEntry(identity)).toEqual({ serverUrl: identity.serverUrl });
-    expect(getOAuthState(other)).toBe("other-state");
-    expect(inspectAuthForUrl(other)).toEqual({ status: "present", entry: otherEntry });
-    clearAllCredentials(identity);
-    expect(getAuthEntry(identity)).toBeUndefined();
-    expect(getAuthEntry(other)).toEqual(otherEntry);
+    expect((await getAuthEntry(identity))?.serverUrl).toBe(identity.serverUrl);
+    expect((await getAuthEntry(identity))?.tokens?.accessToken).toBe("first-token");
+    await updateTokens(identity, { accessToken: "updated-token" });
+    await updateClientInfo(identity, { clientId: "updated-client" });
+    await clearCodeVerifier(identity);
+    await clearOAuthState(identity);
+    await clearTokens(identity);
+    await clearClientInfo(identity);
+    expect(await getAuthEntry(identity)).toEqual({ serverUrl: identity.serverUrl });
+    expect(await getOAuthState(other)).toBe("other-state");
+    expect(await inspectAuthForUrl(other)).toEqual({ status: "present", entry: otherEntry });
+    await clearAllCredentials(identity);
+    expect(await getAuthEntry(identity)).toBeUndefined();
+    expect(await getAuthEntry(other)).toEqual(otherEntry);
     for (const [key, bytes] of Object.entries(otherBytes).filter(
       ([accountKey]) => accountKey !== ownedKey,
     )) {
       expect(storedEntries()[key]).toBe(bytes);
     }
-    clearAllCredentials(other);
+    await clearAllCredentials(other);
     expect(storedEntries()).toEqual({ [legacyKey]: JSON.stringify(legacyEntry) });
   });
 
   it.each([undefined, "https://different.example/mcp"])(
     "leaves name-only secure and plaintext records with URL %s untouched",
-    (serverUrl) => {
+    async (serverUrl) => {
       const entry = {
         tokens: { accessToken: "unmatched" },
         ...(serverUrl === undefined ? {} : { serverUrl }),
@@ -323,55 +323,55 @@ describe.skipIf(process.platform === "win32")("independent OAuth storage", () =>
       writeFileSync(source, payload);
       writeFileSync(storePath, JSON.stringify({ [nameOnlyKey]: payload, [legacyKey]: payload }));
       const before = readFileSync(storePath, "utf8");
-      expect(getAuthEntry(identity)).toBeUndefined();
-      expect(migrateLegacyAuthEntry(identity, dirname(dirname(source)))).toBe("absent");
-      clearCodeVerifier(identity);
-      clearOAuthState(identity);
-      clearClientInfo(identity);
-      clearTokens(identity);
-      clearAllCredentials(identity);
+      expect(await getAuthEntry(identity)).toBeUndefined();
+      expect(await migrateLegacyAuthEntry(identity, dirname(dirname(source)))).toBe("absent");
+      await clearCodeVerifier(identity);
+      await clearOAuthState(identity);
+      await clearClientInfo(identity);
+      await clearTokens(identity);
+      await clearAllCredentials(identity);
       expect(readFileSync(storePath, "utf8")).toBe(before);
       expect(readFileSync(source, "utf8")).toBe(payload);
     },
   );
 
-  it("consumes matching automatic import sources and cannot resurrect logout", () => {
+  it("consumes matching automatic import sources and cannot resurrect logout", async () => {
     const source = getAuthEntryFilePath(server);
     mkdirSync(dirname(source), { recursive: true });
     writeFileSync(source, JSON.stringify(legacyEntry));
     writeFileSync(storePath, JSON.stringify({ [nameOnlyKey]: JSON.stringify(legacyEntry) }));
-    expect(inspectAuthForUrl(identity)).toEqual({ status: "present", entry: legacyEntry });
+    expect(await inspectAuthForUrl(identity)).toEqual({ status: "present", entry: legacyEntry });
     expect(existsSync(source)).toBe(true);
     expect(storedEntries()[nameOnlyKey]).toBeDefined();
-    expect(getAuthEntry(identity)).toEqual(legacyEntry);
+    expect(await getAuthEntry(identity)).toEqual(legacyEntry);
     expect(storedEntries()[nameOnlyKey]).toBeUndefined();
     expect(existsSync(source)).toBe(false);
-    clearAllCredentials(identity);
-    expect(getAuthEntry(identity)).toBeUndefined();
+    await clearAllCredentials(identity);
+    expect(await getAuthEntry(identity)).toBeUndefined();
     expect(storedEntries()).toEqual({});
   });
 
-  it("keeps a scoped record over matching legacy sources, including on logout before a read", () => {
-    saveAuthEntry(identity, { tokens: { accessToken: "scoped-wins" } });
+  it("keeps a scoped record over matching legacy sources, including on logout before a read", async () => {
+    await saveAuthEntry(identity, { tokens: { accessToken: "scoped-wins" } });
     writeFileSync(
       storePath,
       JSON.stringify({ ...storedEntries(), [nameOnlyKey]: JSON.stringify(legacyEntry) }),
     );
-    expect(getAuthEntry(identity)?.tokens?.accessToken).toBe("scoped-wins");
+    expect((await getAuthEntry(identity))?.tokens?.accessToken).toBe("scoped-wins");
     expect(storedEntries()[nameOnlyKey]).toBe(JSON.stringify(legacyEntry));
     writeFileSync(
       storePath,
       JSON.stringify({ ...storedEntries(), [nameOnlyKey]: JSON.stringify(legacyEntry) }),
     );
-    clearAllCredentials(identity);
-    expect(getAuthEntry(identity)).toBeUndefined();
+    await clearAllCredentials(identity);
+    expect(await getAuthEntry(identity)).toBeUndefined();
     expect(storedEntries()).toEqual({ [legacyKey]: JSON.stringify(legacyEntry) });
   });
 
-  it("does not consume automatic import sources when the scoped write fails", () => {
+  it("does not consume automatic import sources when the scoped write fails", async () => {
     writeFileSync(storePath, JSON.stringify({ [nameOnlyKey]: JSON.stringify(legacyEntry) }));
     vi.stubEnv("FITCH_TEST_FAIL_WRITE", "1");
-    expect(() => getAuthEntry(identity)).toThrow(/Failed to write OAuth credentials/);
+    await expect(getAuthEntry(identity)).rejects.toThrow(/Failed to write OAuth credentials/);
     expect(storedEntries()).toEqual({ [nameOnlyKey]: JSON.stringify(legacyEntry) });
   });
 });

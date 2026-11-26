@@ -80,18 +80,19 @@ function asError(error) {
 /**
  * @param {unknown} [nativeFailure]
  */
-function checkFailures(nativeFailure) {
-  const errors = operations.map(([operation, run]) => {
+async function checkFailures(nativeFailure) {
+  const errors = [];
+  for (const [operation, run] of operations) {
     /** @type {unknown} */
     let error;
     try {
-      run();
+      await run();
     } catch (caught) {
       error = caught;
     }
-    return { operation, error };
-  });
-  const status = auth.inspectAuthForUrl({ serverName: server, serverUrl: url });
+    errors.push({ operation, error });
+  }
+  const status = await auth.inspectAuthForUrl({ serverName: server, serverUrl: url });
   const messages = errors.map(({ operation, error }) => ({
     operation,
     message: error instanceof Error ? error.message : undefined,
@@ -139,15 +140,15 @@ function checkFailures(nativeFailure) {
 }
 
 if (mode === "working") {
-  assert.equal(auth.getAuthEntry({ serverName: server, serverUrl: url }), undefined);
-  auth.saveAuthEntry({ serverName: server, serverUrl: url }, entry);
-  assert.deepEqual(auth.getAuthForUrl({ serverName: server, serverUrl: url }), entry);
-  assert.deepEqual(auth.inspectAuthForUrl({ serverName: server, serverUrl: url }), {
+  assert.equal(await auth.getAuthEntry({ serverName: server, serverUrl: url }), undefined);
+  await auth.saveAuthEntry({ serverName: server, serverUrl: url }, entry);
+  assert.deepEqual(await auth.getAuthForUrl({ serverName: server, serverUrl: url }), entry);
+  assert.deepEqual(await auth.inspectAuthForUrl({ serverName: server, serverUrl: url }), {
     status: "present",
     entry,
   });
-  auth.removeAuthEntry({ serverName: server, serverUrl: url });
-  assert.deepEqual(auth.inspectAuthForUrl({ serverName: server, serverUrl: url }), {
+  await auth.removeAuthEntry({ serverName: server, serverUrl: url });
+  assert.deepEqual(await auth.inspectAuthForUrl({ serverName: server, serverUrl: url }), {
     status: "absent",
   });
   assert.equal(fs.existsSync(dirname(legacy)), false);
@@ -156,11 +157,11 @@ if (mode === "working") {
   const binding = require("@napi-rs/keyring-android-arm64");
   assert(typeof binding === "object" && binding !== null && "failure" in binding);
   binding.failure = new Error("Synthetic credential store locked");
-  receipt.androidRuntimeFailure = checkFailures(binding.failure);
+  receipt.androidRuntimeFailure = await checkFailures(binding.failure);
   Object.defineProperty(process, "platform", { value: "darwin" });
-  receipt.nonAndroidRuntimeFailure = checkFailures(binding.failure);
+  receipt.nonAndroidRuntimeFailure = await checkFailures(binding.failure);
 } else {
-  receipt.emptyStore = checkFailures();
+  receipt.emptyStore = await checkFailures();
   assert.equal(fs.existsSync(dirname(legacy)), false);
   // A sentinel proves unavailable storage neither imports nor deletes legacy data.
   fs.mkdirSync(dirname(legacy), { recursive: true });
@@ -178,7 +179,7 @@ if (mode === "working") {
     },
   });
   syncBuiltinESMExports();
-  receipt.unavailable = checkFailures();
+  receipt.unavailable = await checkFailures();
   assert.equal(read(legacy, "utf8"), sentinel);
   assert.deepEqual(fs.readdirSync(dirname(legacy)), ["tokens.json"]);
   assert.deepEqual(fs.readdirSync(auth.getAuthBaseDir()), [legacy.split("/").at(-2)]);

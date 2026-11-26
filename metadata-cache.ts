@@ -26,7 +26,12 @@ import {
   type ToolPrefix,
 } from "./types.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
-import { isCacheEntry, projectMetadataCache, readCacheEnvelope } from "./metadata-cache-format.ts";
+import {
+  CACHE_MAX_AGE_MS,
+  isCacheEntry,
+  projectMetadataCache,
+  readCacheEnvelope,
+} from "./metadata-cache-format.ts";
 import { asObjectRecord } from "./mcp-output-values.ts";
 import {
   interpolateEnvRecord,
@@ -37,7 +42,6 @@ import {
 
 // Version 2 stores raw descriptors; version 1 readers cannot enforce raw UI visibility.
 const CACHE_VERSION = 2;
-const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 let snapshot: { path: string; revision: string; cache: MetadataCache | null } | undefined;
 const toolProjections = new WeakMap<ServerCacheEntry, { key: string; metadata: ToolMetadata[] }>();
 

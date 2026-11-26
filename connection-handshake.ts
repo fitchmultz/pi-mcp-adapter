@@ -1,4 +1,4 @@
-import type { RequestOptions, Transport } from "@modelcontextprotocol/client";
+import type { ConnectOptions, Transport } from "@modelcontextprotocol/client";
 import type { ManagedClient } from "./connection-runtime.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 
@@ -6,18 +6,18 @@ export class ConnectionHandshake {
   private static readonly cleanups = new WeakMap<Transport, Promise<void>>();
   private readonly client: ManagedClient;
   private readonly transport: Transport;
-  private readonly requestOptions: RequestOptions | undefined;
+  private readonly connectOptions: ConnectOptions | undefined;
   private readonly signal: AbortSignal | undefined;
 
   constructor(
     client: ManagedClient,
     transport: Transport,
-    requestOptions: RequestOptions | undefined,
+    connectOptions: ConnectOptions | undefined,
     signal: AbortSignal | undefined,
   ) {
     this.client = client;
     this.transport = transport;
-    this.requestOptions = requestOptions;
+    this.connectOptions = connectOptions;
     this.signal = signal;
   }
 
@@ -26,7 +26,7 @@ export class ConnectionHandshake {
   }
 
   async run(): Promise<void> {
-    const { signal, client, requestOptions } = this;
+    const { signal, client, connectOptions } = this;
     throwIfAborted(signal);
     const send = this.transport.send.bind(this.transport);
     // Last layer of transport-callback patching (http → tool-transport → mcp-trace → here);
@@ -39,7 +39,7 @@ export class ConnectionHandshake {
     };
     signal?.addEventListener("abort", closeTransport, { once: true });
     try {
-      await abortable(client.connect(this.transport, requestOptions), signal);
+      await abortable(client.connect(this.transport, connectOptions), signal);
       await abortCleanup;
     } catch (error) {
       if (abortCleanup) {

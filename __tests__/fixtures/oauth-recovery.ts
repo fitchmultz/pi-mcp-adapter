@@ -176,7 +176,7 @@ function bindRecoveryFixture(
       wire.controls.releaseEffect();
       await manager.closeAll();
       await shutdownOAuth(runtime);
-      clearAllCredentials({ serverName: name, serverUrl: definition.url });
+      await clearAllCredentials({ serverName: name, serverUrl: definition.url });
       await native.dispose();
       await wire.close();
     },

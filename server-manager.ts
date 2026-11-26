@@ -6,7 +6,12 @@ import type {
   RequestOptions,
   UrlElicitationRequiredError,
 } from "@modelcontextprotocol/client";
-import { isServerDisabled, type ServerDefinition, type McpTraceSettings } from "./types.ts";
+import {
+  isServerDisabled,
+  type CachedPriorDiscovery,
+  type ServerDefinition,
+  type McpTraceSettings,
+} from "./types.ts";
 import type { ServerSamplingConfig } from "./sampling-handler.ts";
 import type { ServerElicitationConfig } from "./elicitation-handler.ts";
 import type { McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
@@ -37,6 +42,7 @@ export class McpServerManager {
         publish: (connection) => this.callbacks.publish(connection),
         close: (name) => this.callbacks.clearServer(name),
         closeAll: () => this.callbacks.clear(),
+        invalidatePrior: (name) => this.factory.priorDiscovery.invalidate(name),
       },
     );
     this.callbacks = new ConnectionCallbacks(this.lifecycle);
@@ -77,6 +83,18 @@ export class McpServerManager {
     this.factory.oauthRuntime = runtime;
   }
 
+  seedPriorDiscovery(
+    name: string,
+    definition: ServerDefinition,
+    entry: CachedPriorDiscovery,
+  ): void {
+    this.factory.priorDiscovery.seed(name, definition, entry);
+  }
+
+  invalidatePriorDiscovery(name: string): void {
+    this.factory.priorDiscovery.invalidate(name);
+  }
+
   getRequestOptions(name: string, signal?: AbortSignal): RequestOptions | undefined {
     return this.factory.requestOptions(this.lifecycle.getConnection(name)?.definition, signal);
   }
@@ -102,12 +120,12 @@ export class McpServerManager {
     this.lifecycle.retire(name, connection);
   }
 
-  hasFreshOAuthCredentials(
+  async hasFreshOAuthCredentials(
     name: string,
     definition: ServerDefinition,
     stale: ServerConnection,
-  ): boolean {
-    return this.factory.hasFreshOAuthCredentials(name, definition, stale);
+  ): Promise<boolean> {
+    return await this.factory.hasFreshOAuthCredentials(name, definition, stale);
   }
 
   async handleUrlElicitationRequired(

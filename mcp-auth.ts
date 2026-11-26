@@ -29,7 +29,7 @@ export {
   formatOAuthCredentialStoreUnavailable,
 } from "./credential-store-errors.ts";
 import {
-  isAuthEntry,
+  validateAuthEntry,
   type AuthEntry,
   type AuthIdentity,
   type AuthStorageOptions,
@@ -117,8 +117,8 @@ function mergeRefreshedTokens(
 function withCredentialLock<T>(
   identity: AuthIdentity,
   action: OAuthCredentialStoreError["operation"],
-  operation: () => T,
-): T {
+  operation: () => Promise<T>,
+): Promise<T> {
   return withAuthSecretLock(
     AUTH_SECRET_SERVICE,
     getLegacyAuthEntryAccount(identity.serverName),
@@ -164,9 +164,13 @@ class InvalidOAuthCredentialRecordError extends Error {
   override readonly name = "InvalidOAuthCredentialRecordError";
 }
 
-function parseAuthEntryPayload(serverName: string, payload: string, source: string): AuthEntry {
-  const entry = parseJsonPayload(serverName, payload, source);
-  if (!isAuthEntry(entry)) {
+async function parseAuthEntryPayload(
+  serverName: string,
+  payload: string,
+  source: string,
+): Promise<AuthEntry> {
+  const entry = await validateAuthEntry(parseJsonPayload(serverName, payload, source));
+  if (!entry) {
     throw new InvalidOAuthCredentialRecordError(
       `Invalid OAuth credential record for ${serverName} at ${source}`,
     );
@@ -174,16 +178,16 @@ function parseAuthEntryPayload(serverName: string, payload: string, source: stri
   return entry;
 }
 
-function readLegacyAuthEntry(
+async function readLegacyAuthEntry(
   serverName: string,
   options?: AuthStorageOptions,
-): AuthEntry | undefined {
+): Promise<AuthEntry | undefined> {
   const filePath = getAuthEntryFilePath(serverName, options);
   if (!existsSync(filePath)) {
     return undefined;
   }
   const data = readFileSync(filePath, "utf-8");
-  return parseAuthEntryPayload(serverName, data, filePath);
+  return await parseAuthEntryPayload(serverName, data, filePath);
 }
 
 function removeLegacyAuthEntry(serverName: string, options?: AuthStorageOptions): void {
@@ -208,110 +212,98 @@ function removeLegacyAuthEntry(serverName: string, options?: AuthStorageOptions)
   }
 }
 
-function writeSecureAuthEntry(identity: AuthIdentity, entry: AuthEntry): void {
-  const storedEntry = { ...entry, serverUrl: identity.serverUrl };
-  const account = getAuthEntryAccount(identity);
+async function withLinuxRecovery<T>(
+  service: string,
+  operation: (store: AuthSecretStore) => Promise<T>,
+): Promise<T> {
   try {
-    writeSecureAuthEntryToStore(
-      getAuthSecretStore(AUTH_SECRET_SERVICE),
-      identity.serverName,
-      account,
-      storedEntry,
-    );
+    return await operation(getAuthSecretStore(service));
   } catch (error) {
     if (!shouldAttemptLinuxKeyringRecovery(error)) {
       throw error;
     }
-    writeSecureAuthEntryToStore(
-      linuxKeyringRecoveryAuthSecretStore(AUTH_SECRET_SERVICE),
-      identity.serverName,
-      account,
-      storedEntry,
-    );
+    return await operation(linuxKeyringRecoveryAuthSecretStore(service));
   }
 }
 
-function readSecureAuthEntry(
+async function writeSecureAuthEntry(identity: AuthIdentity, entry: AuthEntry): Promise<void> {
+  const storedEntry = { ...entry, serverUrl: identity.serverUrl };
+  const account = getAuthEntryAccount(identity);
+  await withLinuxRecovery(AUTH_SECRET_SERVICE, (store) =>
+    writeSecureAuthEntryToStore(store, identity.serverName, account, storedEntry),
+  );
+}
+
+async function readSecureAuthEntry(
   identity: AuthIdentity,
   service = AUTH_SECRET_SERVICE,
   legacy = false,
-): AuthEntry | undefined {
+): Promise<AuthEntry | undefined> {
   const account = legacy
     ? getLegacyAuthEntryAccount(identity.serverName)
     : getAuthEntryAccount(identity);
-  function read(store: AuthSecretStore): AuthEntry | undefined {
-    const stored = readSecureAuthPayloadFromStore(store, identity.serverName, account);
+  return await withLinuxRecovery(service, async (store) => {
+    const stored = await readSecureAuthPayloadFromStore(store, identity.serverName, account);
     return stored === undefined
       ? undefined
-      : parseAuthEntryPayload(identity.serverName, stored.payload, stored.source);
-  }
-  try {
-    return read(getAuthSecretStore(service));
-  } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) {
-      throw error;
-    }
-    return read(linuxKeyringRecoveryAuthSecretStore(service));
-  }
+      : await parseAuthEntryPayload(identity.serverName, stored.payload, stored.source);
+  });
 }
 
-function removeSecureAuthEntry(identity: AuthIdentity, legacy = false): void {
+async function removeSecureAuthEntry(identity: AuthIdentity, legacy = false): Promise<void> {
   const account = legacy
     ? getLegacyAuthEntryAccount(identity.serverName)
     : getAuthEntryAccount(identity);
-  try {
-    removeAuthEntryFromStore(getAuthSecretStore(AUTH_SECRET_SERVICE), identity.serverName, account);
-  } catch (error) {
-    if (!shouldAttemptLinuxKeyringRecovery(error)) {
-      throw error;
-    }
-    removeAuthEntryFromStore(
-      linuxKeyringRecoveryAuthSecretStore(AUTH_SECRET_SERVICE),
-      identity.serverName,
-      account,
-    );
-  }
+  await withLinuxRecovery(AUTH_SECRET_SERVICE, (store) =>
+    removeAuthEntryFromStore(store, identity.serverName, account),
+  );
 }
 
-function consumeMatchingLegacy(identity: AuthIdentity, options?: AuthStorageOptions): void {
-  if (matchesIdentity(readSecureAuthEntry(identity, AUTH_SECRET_SERVICE, true), identity)) {
-    removeSecureAuthEntry(identity, true);
+async function consumeMatchingLegacy(
+  identity: AuthIdentity,
+  options?: AuthStorageOptions,
+): Promise<void> {
+  if (matchesIdentity(await readSecureAuthEntry(identity, AUTH_SECRET_SERVICE, true), identity)) {
+    await removeSecureAuthEntry(identity, true);
   }
-  removeMatchingLegacyPlaintext(identity, options);
+  await removeMatchingLegacyPlaintext(identity, options);
 }
 
 function matchesIdentity(entry: AuthEntry | undefined, identity: AuthIdentity): entry is AuthEntry {
   return entry !== undefined && entry.serverUrl !== "" && entry.serverUrl === identity.serverUrl;
 }
 
-function removeMatchingLegacyPlaintext(identity: AuthIdentity, options?: AuthStorageOptions): void {
-  if (matchesIdentity(readLegacyAuthEntry(identity.serverName, options), identity)) {
+async function removeMatchingLegacyPlaintext(
+  identity: AuthIdentity,
+  options?: AuthStorageOptions,
+): Promise<void> {
+  if (matchesIdentity(await readLegacyAuthEntry(identity.serverName, options), identity)) {
     removeLegacyAuthEntry(identity.serverName, options);
   }
 }
 
-function readAuthEntry(
+async function readAuthEntry(
   identity: AuthIdentity,
   options?: AuthStorageOptions,
   behavior: { migrateLegacy?: boolean } = {},
-): AuthEntry | undefined {
-  const scoped = readSecureAuthEntry(identity);
+): Promise<AuthEntry | undefined> {
+  const scoped = await readSecureAuthEntry(identity);
   if (scoped !== undefined) {
     return matchesIdentity(scoped, identity) ? scoped : undefined;
   }
-  const secure = readSecureAuthEntry(identity, AUTH_SECRET_SERVICE, true);
+  const secure = await readSecureAuthEntry(identity, AUTH_SECRET_SERVICE, true);
   const legacy = matchesIdentity(secure, identity)
     ? secure
-    : readLegacyAuthEntry(identity.serverName, options);
+    : await readLegacyAuthEntry(identity.serverName, options);
   if (!matchesIdentity(legacy, identity)) {
     return undefined;
   }
   if (behavior.migrateLegacy !== false) {
-    writeSecureAuthEntry(identity, legacy);
-    if (JSON.stringify(readSecureAuthEntry(identity)) !== JSON.stringify(legacy)) {
+    await writeSecureAuthEntry(identity, legacy);
+    if (JSON.stringify(await readSecureAuthEntry(identity)) !== JSON.stringify(legacy)) {
       throw new Error(`Failed to verify migrated OAuth credentials for ${identity.serverName}`);
     }
-    consumeMatchingLegacy(identity, options);
+    await consumeMatchingLegacy(identity, options);
   }
   return legacy;
 }
@@ -322,28 +314,28 @@ function getLegacyAuthBaseDir(): string {
 }
 
 /** Promote current credentials first; historical sources are copied only when absent. */
-export function migrateLegacyAuthEntry(
+export async function migrateLegacyAuthEntry(
   identity: AuthIdentity,
   legacyDirectory = getLegacyAuthBaseDir(),
   options?: AuthStorageOptions,
-): "copied" | "existing" | "absent" {
-  return withCredentialLock(identity, "write", () =>
+): Promise<"copied" | "existing" | "absent"> {
+  return await withCredentialLock(identity, "write", () =>
     copyLegacyAuthEntry(identity, legacyDirectory, options),
   );
 }
 
-function copyLegacyAuthEntry(
+async function copyLegacyAuthEntry(
   identity: AuthIdentity,
   legacyDirectory: string,
   options?: AuthStorageOptions,
-): "copied" | "existing" | "absent" {
+): Promise<"copied" | "existing" | "absent"> {
   if (
-    readSecureAuthEntry(identity) !== undefined ||
-    readAuthEntry(identity, options) !== undefined
+    (await readSecureAuthEntry(identity)) !== undefined ||
+    (await readAuthEntry(identity, options)) !== undefined
   ) {
     return "existing";
   }
-  let entry = readSecureAuthEntry(identity, LEGACY_AUTH_SECRET_SERVICE, true);
+  let entry = await readSecureAuthEntry(identity, LEGACY_AUTH_SECRET_SERVICE, true);
   if (!matchesIdentity(entry, identity)) {
     const path = join(
       legacyDirectory,
@@ -353,59 +345,59 @@ function copyLegacyAuthEntry(
     if (!existsSync(path)) {
       return "absent";
     }
-    entry = parseAuthEntryPayload(identity.serverName, readFileSync(path, "utf8"), path);
+    entry = await parseAuthEntryPayload(identity.serverName, readFileSync(path, "utf8"), path);
   }
   if (!matchesIdentity(entry, identity)) {
     return "absent";
   }
-  writeSecureAuthEntry(identity, entry);
-  if (JSON.stringify(readSecureAuthEntry(identity)) !== JSON.stringify(entry)) {
+  await writeSecureAuthEntry(identity, entry);
+  if (JSON.stringify(await readSecureAuthEntry(identity)) !== JSON.stringify(entry)) {
     throw new Error(`Failed to verify migrated OAuth credentials for ${identity.serverName}`);
   }
   return "copied";
 }
 
 /** Read or import credentials for exactly this configured name and URL. */
-export function getAuthEntry(
+export async function getAuthEntry(
   identity: AuthIdentity,
   options?: AuthStorageOptions,
-): AuthEntry | undefined {
-  const probe = withCredentialLock(identity, "read", () => {
-    const scoped = readSecureAuthEntry(identity);
+): Promise<AuthEntry | undefined> {
+  const probe = await withCredentialLock(identity, "read", async () => {
+    const scoped = await readSecureAuthEntry(identity);
     if (scoped !== undefined) {
       return {
         entry: matchesIdentity(scoped, identity) ? scoped : undefined,
         needsMigration: false,
       };
     }
-    const legacySecure = readSecureAuthEntry(identity, AUTH_SECRET_SERVICE, true);
+    const legacySecure = await readSecureAuthEntry(identity, AUTH_SECRET_SERVICE, true);
     if (matchesIdentity(legacySecure, identity)) {
       return { entry: undefined, needsMigration: true };
     }
-    const legacyPlaintext = readLegacyAuthEntry(identity.serverName, options);
+    const legacyPlaintext = await readLegacyAuthEntry(identity.serverName, options);
     return { entry: undefined, needsMigration: matchesIdentity(legacyPlaintext, identity) };
   });
   if (!probe.needsMigration) {
     return probe.entry;
   }
   // Migration writes. Release the read lock, then recheck the destination under a write lock.
-  return withCredentialLock(identity, "write", () => readAuthEntry(identity, options));
+  return await withCredentialLock(identity, "write", () => readAuthEntry(identity, options));
 }
 
-export function getAuthForUrl(
+export async function getAuthForUrl(
   identity: AuthIdentity,
   options?: AuthStorageOptions,
-): AuthEntry | undefined {
-  return getAuthEntry(identity, options);
+): Promise<AuthEntry | undefined> {
+  return await getAuthEntry(identity, options);
 }
 
 /** Inspect without migration; unavailable storage is not reported as missing. */
-export function inspectAuthForUrl(
+export async function inspectAuthForUrl(
   identity: AuthIdentity,
   options?: AuthStorageOptions,
-): OAuthCredentialStatus {
+): Promise<OAuthCredentialStatus> {
   try {
-    const entry = withCredentialLock(identity, "read", () =>
+    const entry = await withCredentialLock(identity, "read", () =>
       readAuthEntry(identity, options, { migrateLegacy: false }),
     );
     return entry === undefined ? { status: "absent" } : { status: "present", entry };
@@ -421,115 +413,133 @@ export function inspectAuthForUrl(
 }
 
 /** Save a copy whose stored URL always comes from the credential identity. */
-export function saveAuthEntry(
+export async function saveAuthEntry(
   identity: AuthIdentity,
   entry: Readonly<AuthEntry>,
   options?: AuthStorageOptions,
-): void {
-  withCredentialLock(identity, "write", () => writeAuthEntry(identity, entry, options));
+): Promise<void> {
+  await withCredentialLock(identity, "write", () => writeAuthEntry(identity, entry, options));
 }
 
-function writeAuthEntry(
+async function writeAuthEntry(
   identity: AuthIdentity,
   entry: Readonly<AuthEntry>,
   options?: AuthStorageOptions,
-): void {
-  writeSecureAuthEntry(identity, entry);
-  consumeMatchingLegacy(identity, options);
+): Promise<void> {
+  await writeSecureAuthEntry(identity, entry);
+  await consumeMatchingLegacy(identity, options);
   bumpAuthStorageRevision(identity);
 }
 
 /** Consume matching automatic-import sources so logout cannot restore them. */
-export function removeAuthEntry(identity: AuthIdentity, options?: AuthStorageOptions): void {
-  withCredentialLock(identity, "remove", () => {
-    removeSecureAuthEntry(identity);
-    consumeMatchingLegacy(identity, options);
+export async function removeAuthEntry(
+  identity: AuthIdentity,
+  options?: AuthStorageOptions,
+): Promise<void> {
+  await withCredentialLock(identity, "remove", async () => {
+    await removeSecureAuthEntry(identity);
+    await consumeMatchingLegacy(identity, options);
     bumpAuthStorageRevision(identity);
   });
 }
 
-export function updateTokens(
+export async function updateTokens(
   identity: AuthIdentity,
   tokens: StoredTokens,
   options?: AuthStorageOptions,
   updateOptions?: UpdateTokensOptions,
-): StoredTokens {
-  return withCredentialLock(identity, "write", () => {
-    const entry = readAuthEntry(identity, options) ?? {};
+): Promise<StoredTokens> {
+  return await withCredentialLock(identity, "write", async () => {
+    const entry = (await readAuthEntry(identity, options)) ?? {};
     const nextTokens =
       updateOptions?.preserveOnRefresh === true
         ? mergeRefreshedTokens(entry.tokens, tokens)
         : tokens;
     entry.tokens = nextTokens;
-    writeAuthEntry(identity, entry, options);
+    await writeAuthEntry(identity, entry, options);
     return nextTokens;
   });
 }
 
-export function updateClientInfo(
+export async function updateClientInfo(
   identity: AuthIdentity,
   clientInfo: StoredClientInfo,
   options?: AuthStorageOptions,
-): void {
-  withCredentialLock(identity, "write", () => {
-    const entry = readAuthEntry(identity, options) ?? {};
+): Promise<void> {
+  await withCredentialLock(identity, "write", async () => {
+    const entry = (await readAuthEntry(identity, options)) ?? {};
     entry.clientInfo = clientInfo;
-    writeAuthEntry(identity, entry, options);
+    await writeAuthEntry(identity, entry, options);
   });
 }
 
-export function getOAuthState(
+export async function getOAuthState(
   identity: AuthIdentity,
   options?: AuthStorageOptions,
-): string | undefined {
-  return getAuthEntry(identity, options)?.oauthState;
+): Promise<string | undefined> {
+  return (await getAuthEntry(identity, options))?.oauthState;
 }
 
-export function clearAllCredentials(identity: AuthIdentity, options?: AuthStorageOptions): void {
-  removeAuthEntry(identity, options);
+export async function clearAllCredentials(
+  identity: AuthIdentity,
+  options?: AuthStorageOptions,
+): Promise<void> {
+  await removeAuthEntry(identity, options);
 }
 
-function clearField(
+async function clearField(
   identity: AuthIdentity,
   field: "codeVerifier" | "oauthState" | "clientInfo" | "tokens",
   options?: AuthStorageOptions,
-): void {
-  withCredentialLock(identity, "write", () => {
-    const entry = readAuthEntry(identity, options);
+): Promise<void> {
+  await withCredentialLock(identity, "write", async () => {
+    const entry = await readAuthEntry(identity, options);
     if (entry) {
       delete entry[field];
-      writeAuthEntry(identity, entry, options);
+      await writeAuthEntry(identity, entry, options);
     }
   });
 }
 
-export function clearCodeVerifier(identity: AuthIdentity, options?: AuthStorageOptions): void {
-  clearField(identity, "codeVerifier", options);
+export async function clearCodeVerifier(
+  identity: AuthIdentity,
+  options?: AuthStorageOptions,
+): Promise<void> {
+  await clearField(identity, "codeVerifier", options);
 }
 
-export function clearOAuthState(identity: AuthIdentity, options?: AuthStorageOptions): void {
-  clearField(identity, "oauthState", options);
+export async function clearOAuthState(
+  identity: AuthIdentity,
+  options?: AuthStorageOptions,
+): Promise<void> {
+  await clearField(identity, "oauthState", options);
 }
 
-export function clearClientInfo(identity: AuthIdentity, options?: AuthStorageOptions): void {
-  clearField(identity, "clientInfo", options);
+export async function clearClientInfo(
+  identity: AuthIdentity,
+  options?: AuthStorageOptions,
+): Promise<void> {
+  await clearField(identity, "clientInfo", options);
 }
 
-export function clearTokens(identity: AuthIdentity, options?: AuthStorageOptions): void {
-  clearField(identity, "tokens", options);
+export async function clearTokens(
+  identity: AuthIdentity,
+  options?: AuthStorageOptions,
+): Promise<void> {
+  await clearField(identity, "tokens", options);
 }
 
 /**
  * Conditionally clear stored tokens only if storage still holds the exact failing snapshot.
  * Prevents a stale refresh failure from wiping newer tokens written by another request or session.
  */
-export function clearTokensIfMatching(
+export async function clearTokensIfMatching(
   identity: AuthIdentity,
   expected: TokenSnapshot,
   options?: AuthStorageOptions,
-): boolean {
-  return withCredentialLock(identity, "write", () => {
-    const entry = readAuthEntry(identity, options);
+): Promise<boolean> {
+  return await withCredentialLock(identity, "write", async () => {
+    const entry = await readAuthEntry(identity, options);
     const current = entry?.tokens;
     if (
       !entry ||
@@ -540,7 +550,7 @@ export function clearTokensIfMatching(
       return false;
     }
     delete entry.tokens;
-    writeAuthEntry(identity, entry, options);
+    await writeAuthEntry(identity, entry, options);
     return true;
   });
 }

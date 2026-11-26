@@ -79,6 +79,7 @@ export class ConnectionLifecycle {
     publish: (connection: ServerConnection) => void;
     close: (name: string) => void;
     closeAll: () => void;
+    invalidatePrior: (name: string) => void;
   };
 
   constructor(
@@ -249,6 +250,7 @@ export class ConnectionLifecycle {
       return current;
     }
 
+    this.callbacks.invalidatePrior(name);
     this.retire(name, staleConnection);
     return this.connect(name, definition, signal);
   }

@@ -13,22 +13,21 @@ import type { OAuthPrivateKeyJwtConfig, OAuthCrossAppAccessConfig } from "./type
 
 export async function requestCrossAppGrant(
   config: OAuthCrossAppAccessConfig,
-  binding: { audience: string; resource: string; scope: string | undefined },
+  binding: { audience: string; resource: string; scope: string | undefined; signal?: AbortSignal },
   fetchFn: FetchLike,
 ): ReturnType<typeof discoverAndRequestJwtAuthGrant> {
-  const { audience, resource, scope } = binding;
+  const { audience, resource, scope, signal } = binding;
+  const [idpUrl, clientId, idToken, clientSecret] = await Promise.all([
+    resolveCommandSecret(config.idpUrl, "OAuth crossAppAccess.idpUrl", signal),
+    resolveCommandSecret(config.clientId, "OAuth crossAppAccess.clientId", signal),
+    resolveCommandSecret(config.idToken, "OAuth crossAppAccess.idToken", signal),
+    resolveCommandSecret(config.clientSecret, "OAuth crossAppAccess.clientSecret", signal),
+  ]);
   return await discoverAndRequestJwtAuthGrant({
-    idpUrl: resolveCommandSecret(config.idpUrl, "OAuth crossAppAccess.idpUrl"),
-    clientId: resolveCommandSecret(config.clientId, "OAuth crossAppAccess.clientId"),
-    idToken: resolveCommandSecret(config.idToken, "OAuth crossAppAccess.idToken"),
-    ...(config.clientSecret !== undefined
-      ? {
-          clientSecret: resolveCommandSecret(
-            config.clientSecret,
-            "OAuth crossAppAccess.clientSecret",
-          ),
-        }
-      : {}),
+    idpUrl,
+    clientId,
+    idToken,
+    ...(clientSecret !== undefined ? { clientSecret } : {}),
     audience,
     resource,
     ...(scope !== undefined && scope !== "" ? { scope } : {}),
@@ -36,12 +35,15 @@ export async function requestCrossAppGrant(
   });
 }
 
-function resolvePrivateKey(jwt: OAuthPrivateKeyJwtConfig): OAuthPrivateKeyJwtConfig["privateKey"] {
+async function resolvePrivateKey(
+  jwt: OAuthPrivateKeyJwtConfig,
+  signal?: AbortSignal,
+): Promise<OAuthPrivateKeyJwtConfig["privateKey"]> {
   if (typeof jwt.privateKey !== "string") {
     return jwt.privateKey;
   }
   try {
-    return resolveCommandSecret(jwt.privateKey, "OAuth privateKeyJwt.privateKey");
+    return await resolveCommandSecret(jwt.privateKey, "OAuth privateKeyJwt.privateKey", signal);
   } catch (error) {
     // This resolver reports outcomes without command text or output.
     throw new OAuthError(
@@ -67,6 +69,7 @@ function parsePrivateKey(
 export function privateKeyAuthentication(
   jwt: OAuthPrivateKeyJwtConfig,
   client: StoredOAuthClientInformation,
+  signal?: AbortSignal,
 ): AddClientAuthentication {
   return async (headers, params, url, metadata) => {
     if (client.client_secret !== undefined) {
@@ -75,7 +78,7 @@ export function privateKeyAuthentication(
         "OAuth privateKeyJwt cannot use a shared-secret client",
       );
     }
-    const key = resolvePrivateKey(jwt);
+    const key = await resolvePrivateKey(jwt, signal);
     try {
       const { algorithm, ...options } = jwt;
       await createPrivateKeyJwtAuth({
@@ -148,12 +151,13 @@ export async function prepareCrossAppTokenParams(
     audience: string | undefined;
     resource: string | undefined;
     scope: string | undefined;
+    signal?: AbortSignal | undefined;
   },
   fetchFn: FetchLike,
   throwIfInactive: () => void,
 ): Promise<URLSearchParams> {
   throwIfInactive();
-  const { audience, resource, scope } = binding;
+  const { audience, resource, scope, signal } = binding;
   if (audience === undefined || audience === "" || resource === undefined || resource === "") {
     throw new OAuthError(
       OAuthErrorCode.InvalidRequest,
@@ -161,7 +165,11 @@ export async function prepareCrossAppTokenParams(
     );
   }
   try {
-    const result = await requestCrossAppGrant(config, { audience, resource, scope }, fetchFn);
+    const result = await requestCrossAppGrant(
+      config,
+      { audience, resource, scope, ...(signal ? { signal } : {}) },
+      fetchFn,
+    );
     throwIfInactive();
     const params = new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
@@ -193,10 +201,11 @@ export function applyTokenClientAuthentication(
   jwt: OAuthPrivateKeyJwtConfig | undefined,
   clientInfo: StoredOAuthClientInformation,
   throwIfInactive: () => void,
+  signal?: AbortSignal,
 ): AddClientAuthentication {
   return async (headers, params, url, metadata) => {
     if (jwt) {
-      await privateKeyAuthentication(jwt, clientInfo)(headers, params, url, metadata);
+      await privateKeyAuthentication(jwt, clientInfo, signal)(headers, params, url, metadata);
       throwIfInactive();
       params.set("client_id", clientInfo.client_id);
       return;

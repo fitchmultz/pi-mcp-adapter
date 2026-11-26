@@ -77,26 +77,23 @@ async function resetIncompleteRegistration(
   ) {
     return;
   }
-  clearClientInfo(
+  await clearClientInfo(
     { serverName: context.serverName, serverUrl: context.serverUrl },
     context.authStorageOptions,
   );
-  clearCodeVerifier(
+  await clearCodeVerifier(
     { serverName: context.serverName, serverUrl: context.serverUrl },
     context.authStorageOptions,
   );
-  clearOAuthState(
+  await clearOAuthState(
     { serverName: context.serverName, serverUrl: context.serverUrl },
     context.authStorageOptions,
   );
-  await Promise.resolve();
 }
 
 async function startNonInteractive(context: StartContext): Promise<{ authorizationUrl: string }> {
   const { serverName, serverUrl, config, authStorageOptions, signal } = context;
-  const storedAuth = await Promise.resolve(
-    getAuthForUrl({ serverName, serverUrl }, authStorageOptions),
-  );
+  const storedAuth = await getAuthForUrl({ serverName, serverUrl }, authStorageOptions);
   await resetIncompleteRegistration(context, storedAuth);
   const authProvider = new McpOAuthProvider({
     serverName,
@@ -186,8 +183,7 @@ async function reserveCallback(
   } catch (error) {
     releaseCallbackServer(oauthState);
     try {
-      clearOAuthState({ serverName, serverUrl }, authStorageOptions);
-      await Promise.resolve();
+      await clearOAuthState({ serverName, serverUrl }, authStorageOptions);
     } catch (cleanupError) {
       throw new AggregateError([error, cleanupError], "OAuth startup cleanup failed", {
         cause: cleanupError,
@@ -267,23 +263,22 @@ async function recoverRedirectRegistration(
   if (matchesStoredRedirect(storedAuth.clientInfo, redirectUrl ?? "")) {
     return;
   }
-  clearClientInfo(
+  await clearClientInfo(
     { serverName: context.serverName, serverUrl: context.serverUrl },
     context.authStorageOptions,
   );
-  clearTokens(
+  await clearTokens(
     { serverName: context.serverName, serverUrl: context.serverUrl },
     context.authStorageOptions,
   );
-  clearCodeVerifier(
+  await clearCodeVerifier(
     { serverName: context.serverName, serverUrl: context.serverUrl },
     context.authStorageOptions,
   );
-  clearOAuthState(
+  await clearOAuthState(
     { serverName: context.serverName, serverUrl: context.serverUrl },
     context.authStorageOptions,
   );
-  await Promise.resolve();
 }
 
 async function authorizeInteractive(
@@ -329,11 +324,9 @@ async function startInteractive(
   await reserveCallback(context, oauthState, binding, redirectCallback);
   let authProvider: McpOAuthProvider | undefined;
   try {
-    const storedAuth = await Promise.resolve(
-      getAuthForUrl(
-        { serverName: context.serverName, serverUrl: context.serverUrl },
-        context.authStorageOptions,
-      ),
+    const storedAuth = await getAuthForUrl(
+      { serverName: context.serverName, serverUrl: context.serverUrl },
+      context.authStorageOptions,
     );
     const discovery = challengeDiscovery(
       applyConfiguredScope(
@@ -351,11 +344,10 @@ async function startInteractive(
     if (await authorizeInteractive(context, flow, request, storedAuth)) {
       authProvider.deactivate();
       releaseCallbackServer(oauthState);
-      clearOAuthState(
+      await clearOAuthState(
         { serverName: context.serverName, serverUrl: context.serverUrl },
         context.authStorageOptions,
       );
-      await Promise.resolve();
       return { authorizationUrl: "" };
     }
     if (!flow.capturedUrl) {

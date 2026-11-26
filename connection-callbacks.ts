@@ -1,4 +1,8 @@
-import type { Client, UrlElicitationRequiredError } from "@modelcontextprotocol/client";
+import type {
+  Client,
+  RequestOptions,
+  UrlElicitationRequiredError,
+} from "@modelcontextprotocol/client";
 import type * as ConnectionRuntime from "./connection-runtime.ts";
 import type { ManagedClient } from "./connection-runtime.ts";
 import type { ServerSamplingConfig } from "./sampling-handler.ts";
@@ -14,6 +18,10 @@ import { supportsOAuth } from "./mcp-oauth-runtime.ts";
 import { ADAPTER_VERSION, hasServerUrl } from "./utils.ts";
 import { logger } from "./logger.ts";
 import type { ConnectionCatalogs } from "./connection-catalogs.ts";
+import { ConnectionSubscriptions } from "./connection-subscriptions.ts";
+
+// Coalesce burst list_changed notifications into one catalog refresh without noticeable UI/agent lag.
+const LIST_CHANGED_DEBOUNCE_MS = 250;
 
 export class ConnectionCallbacks {
   samplingConfig: ServerSamplingConfig | undefined;
@@ -22,11 +30,13 @@ export class ConnectionCallbacks {
   private readonly acceptedUrlElicitations = new Map<string, Set<string>>();
   private readonly uiStreamListeners = new Map<string, UiStreamListener>();
   private readonly catalogs = new WeakMap<Client, ConnectionCatalogs>();
+  private readonly subscriptions: ConnectionSubscriptions;
 
   private readonly lifecycle: ConnectionLifecycle;
 
   constructor(lifecycle: ConnectionLifecycle) {
     this.lifecycle = lifecycle;
+    this.subscriptions = new ConnectionSubscriptions(lifecycle);
   }
 
   /** Adopt native accepted catalogs before the connection becomes visible. */
@@ -48,13 +58,23 @@ export class ConnectionCallbacks {
     // close(name) forgets the server's pending browser prompts: a completion notification
     // arriving after close must not claim a live connection.
     this.acceptedUrlElicitations.delete(name);
+    this.subscriptions.stop(name);
   }
 
   clear(): void {
+    this.subscriptions.clear();
     this.uiStreamListeners.clear();
     this.acceptedUrlElicitations.clear();
     this.samplingConfig = undefined;
     this.elicitationConfig = undefined;
+  }
+
+  async attachSubscription(
+    serverName: string,
+    connection: ServerConnection,
+    options: { priorModern: boolean; requestOptions?: RequestOptions; signal?: AbortSignal },
+  ): Promise<void> {
+    await this.subscriptions.attach(serverName, connection, options);
   }
 
   private buildClientCapabilities(definition: ServerDefinition) {
@@ -100,11 +120,13 @@ export class ConnectionCallbacks {
         ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
         listChanged: {
           tools: {
+            debounceMs: LIST_CHANGED_DEBOUNCE_MS,
             onChanged: (error: Error | null) => {
               this.handleToolsListChanged(serverName, client, error);
             },
           },
           resources: {
+            debounceMs: LIST_CHANGED_DEBOUNCE_MS,
             onChanged: (error: Error | null) => {
               this.handleResourcesListChanged(
                 serverName,
@@ -115,6 +137,7 @@ export class ConnectionCallbacks {
             },
           },
           prompts: {
+            debounceMs: LIST_CHANGED_DEBOUNCE_MS,
             onChanged: (error: Error | null) => {
               this.handlePromptsListChanged(serverName, client, error);
             },
@@ -133,35 +156,50 @@ export class ConnectionCallbacks {
       );
     }
     if (this.elicitationConfig) {
-      registerElicitationHandler(
+      this.attachElicitation(
         client,
-        {
-          ...this.elicitationConfig,
-          serverName,
-          onUrlAccepted: (elicitationId) => this.rememberUrlElicitation(serverName, elicitationId),
-        },
-        (run) => client.ownCallback("elicitation callback", run),
+        serverName,
+        this.elicitationConfig,
+        registerElicitationHandler,
       );
-      if (this.elicitationConfig.allowUrl) {
-        client.setNotificationHandler("notifications/elicitation/complete", (notification) => {
-          if (this.lifecycle.runtimeSignal?.aborted === true) {
-            return;
-          }
-          const accepted = this.acceptedUrlElicitations.get(serverName);
-          if (accepted?.delete(notification.params.elicitationId) !== true) {
-            return;
-          }
-          if (accepted.size === 0) {
-            this.acceptedUrlElicitations.delete(serverName);
-          }
-          this.elicitationConfig?.ui.notify(
-            `MCP browser interaction for ${serverName} completed. You can retry the tool now.`,
-            "info",
-          );
-        });
-      }
     }
     return client;
+  }
+
+  private attachElicitation(
+    client: ManagedClient,
+    serverName: string,
+    config: ServerElicitationConfig,
+    registerElicitationHandler: (typeof ConnectionRuntime)["registerElicitationHandler"],
+  ): void {
+    registerElicitationHandler(
+      client,
+      {
+        ...config,
+        serverName,
+        onUrlAccepted: (elicitationId) => this.rememberUrlElicitation(serverName, elicitationId),
+      },
+      (run) => client.ownCallback("elicitation callback", run),
+    );
+    if (!config.allowUrl) {
+      return;
+    }
+    client.setNotificationHandler("notifications/elicitation/complete", (notification) => {
+      if (this.lifecycle.runtimeSignal?.aborted === true) {
+        return;
+      }
+      const accepted = this.acceptedUrlElicitations.get(serverName);
+      if (accepted?.delete(notification.params.elicitationId) !== true) {
+        return;
+      }
+      if (accepted.size === 0) {
+        this.acceptedUrlElicitations.delete(serverName);
+      }
+      this.elicitationConfig?.ui.notify(
+        `MCP browser interaction for ${serverName} completed. You can retry the tool now.`,
+        "info",
+      );
+    });
   }
 
   private handleToolsListChanged(serverName: string, client: Client, error: Error | null): void {

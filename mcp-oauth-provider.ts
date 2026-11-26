@@ -47,7 +47,6 @@ import {
   validateOAuthClientMetadataUrl,
   validateOAuthPrivateKeyJwt,
   validateOAuthCrossAppAccess,
-  issuersMatch,
   selectClientMetadataUrl,
   configuredClientMetadata,
   addAuthorizationParams,
@@ -64,6 +63,7 @@ export {
 } from "./mcp-oauth-config.ts";
 import {
   canUseStoredClient,
+  hasStoredIssuerMismatch,
   storedClientInformation,
   clientRegistration,
   storedTokenInformation,
@@ -191,8 +191,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.tokenCache.invalidate();
   }
 
-  reloadTokensFromStorage(): StoredTokens | undefined {
-    return this.tokenCache.reload(this.identity, this.storageOptions);
+  async reloadTokensFromStorage(): Promise<StoredTokens | undefined> {
+    return await this.tokenCache.reload(this.identity, this.storageOptions);
   }
 
   deactivate(): void {
@@ -204,19 +204,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     entry: AuthEntry | undefined,
     issuer: string | undefined,
   ): void {
-    if (this.flowIssuerMismatch) {
-      throw new Error(
-        `OAuth authorization server issuer changed for ${this.identity.serverName}; clear credentials before authenticating again`,
-      );
-    }
-    if (!entry || issuer === undefined || issuer === "") {
-      return;
-    }
-
-    const storedIssuers = [entry.clientInfo?.issuer, entry.tokens?.issuer].filter(
-      (storedIssuer): storedIssuer is string => storedIssuer !== undefined,
-    );
-    if (storedIssuers.some((storedIssuer) => !issuersMatch(storedIssuer, issuer))) {
+    if (this.flowIssuerMismatch || hasStoredIssuerMismatch(entry, issuer)) {
       this.flowIssuerMismatch = true;
       throw new Error(
         `OAuth authorization server issuer changed for ${this.identity.serverName}; clear credentials before authenticating again`,
@@ -253,7 +241,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   ): Promise<StoredOAuthClientInformation | undefined> {
     this.throwIfInactive();
     const issuer = context?.issuer ?? this.discoveredIssuer;
-    const stored = await Promise.resolve(getAuthForUrl(this.identity, this.storageOptions));
+    const stored = await getAuthForUrl(this.identity, this.storageOptions);
     this.throwIfInactive();
     this.assertStoredIssuerBindings(stored, issuer);
     // Rejected discovery must not become the runtime's issuer binding.
@@ -264,16 +252,16 @@ export class McpOAuthProvider implements OAuthClientProvider {
     // Check config first (pre-registered client). Store only its issuer binding.
     // The configured secret stays in config and never enters the credential store.
     if (this.config.clientId !== undefined && this.config.clientId !== "") {
-      return this.configuredClientInformation(this.config.clientId, issuer, stored);
+      return await this.configuredClientInformation(this.config.clientId, issuer, stored);
     }
 
-    return this.savedClientInformation(stored, issuer);
+    return await this.savedClientInformation(stored, issuer);
   }
 
-  private savedClientInformation(
+  private async savedClientInformation(
     stored: AuthEntry | undefined,
     issuer: string | undefined,
-  ): StoredOAuthClientInformation | undefined {
+  ): Promise<StoredOAuthClientInformation | undefined> {
     // Keep client registration associated with this in-flight flow even if
     // another runtime writes the shared persistent entry for the same name.
     const clientInfo = this.flowClientInfo ?? stored?.clientInfo;
@@ -284,7 +272,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       if (issuer !== undefined && issuer !== "" && clientInfo.issuer === undefined) {
         clientInfo.issuer = issuer;
         this.flowClientInfo = clientInfo;
-        updateClientInfo(this.identity, clientInfo, this.storageOptions);
+        await updateClientInfo(this.identity, clientInfo, this.storageOptions);
       }
       // Return all registration metadata and the local issuer extension.
       // Keep the SDK's view and the stored issuer binding consistent.
@@ -295,19 +283,21 @@ export class McpOAuthProvider implements OAuthClientProvider {
     return undefined;
   }
 
-  private configuredClientInformation(
+  private async configuredClientInformation(
     clientId: string,
     issuer: string | undefined,
     stored: AuthEntry | undefined,
-  ): StoredOAuthClientInformation {
-    this.bindConfiguredClient(clientId, issuer, stored);
+  ): Promise<StoredOAuthClientInformation> {
+    await this.bindConfiguredClient(clientId, issuer, stored);
     const clientSecret =
       this.config.clientSecret?.startsWith("!") === true
-        ? resolveCommandSecret(
+        ? await resolveCommandSecret(
             this.config.clientSecret,
             `MCP server "${this.identity.serverName}" OAuth clientSecret`,
+            this.signal,
           )
         : this.config.clientSecret;
+    this.throwIfInactive();
     return {
       client_id: clientId,
       client_secret: clientSecret,
@@ -315,18 +305,18 @@ export class McpOAuthProvider implements OAuthClientProvider {
     };
   }
 
-  private bindConfiguredClient(
+  private async bindConfiguredClient(
     clientId: string,
     issuer: string | undefined,
     stored: AuthEntry | undefined,
-  ): void {
+  ): Promise<void> {
     const storedClient = stored?.clientInfo?.clientId === clientId ? stored.clientInfo : undefined;
     if (
       issuer !== undefined &&
       issuer !== "" &&
       (storedClient?.issuer !== issuer || storedClient.configPreRegistered !== true)
     ) {
-      updateClientInfo(
+      await updateClientInfo(
         this.identity,
         { clientId: clientId, issuer, configPreRegistered: true },
         this.storageOptions,
@@ -348,7 +338,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       this.config.clientId !== "" &&
       info.client_id === this.config.clientId
     ) {
-      updateClientInfo(
+      await updateClientInfo(
         this.identity,
         {
           clientId: info.client_id,
@@ -369,7 +359,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
           ?.client_id_metadata_document_supported === true,
     });
     this.flowClientInfo = clientInfo;
-    updateClientInfo(this.identity, clientInfo, this.storageOptions);
+    await updateClientInfo(this.identity, clientInfo, this.storageOptions);
   }
 
   private readCachedTokens(
@@ -397,7 +387,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       return storedTokenInformation(cached);
     }
     // Use getAuthForUrl to validate tokens are for the current server URL.
-    const entry = await Promise.resolve(getAuthForUrl(this.identity, this.storageOptions));
+    const entry = await getAuthForUrl(this.identity, this.storageOptions);
     this.lifetimeSignal.throwIfAborted();
     if (!entry?.tokens) {
       this.tokenCache.clearAll();
@@ -406,7 +396,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.assertStoredIssuerBindings(entry, issuer);
     if (issuer !== undefined && issuer !== "" && entry.tokens.issuer === undefined) {
       entry.tokens.issuer = issuer;
-      updateTokens(this.identity, entry.tokens, this.storageOptions);
+      await updateTokens(this.identity, entry.tokens, this.storageOptions);
     }
     this.tokenCache.record(this.identity, entry.tokens, { pin: context !== undefined });
     return storedTokenInformation(entry.tokens);
@@ -433,7 +423,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       grantType === "refresh_token" ||
       (grantType === undefined && !this.isNonInteractive && this.flowState === undefined);
     this.throwIfInactive();
-    const saved = updateTokens(this.identity, storedTokens, this.storageOptions, {
+    const saved = await updateTokens(this.identity, storedTokens, this.storageOptions, {
       preserveOnRefresh,
     });
     this.tokenCache.record(this.identity, saved, { clearPin: grantType !== undefined });
@@ -566,23 +556,23 @@ export class McpOAuthProvider implements OAuthClientProvider {
         this.flowIssuerMismatch = false;
         this.flowState = undefined;
         this.tokenCache.clearAll();
-        clearAllCredentials(this.identity, this.storageOptions);
+        await clearAllCredentials(this.identity, this.storageOptions);
         break;
       case "client":
         this.flowClientInfo = undefined;
-        clearClientInfo(this.identity, this.storageOptions);
+        await clearClientInfo(this.identity, this.storageOptions);
         break;
       case "tokens": {
         const target = this.tokenCache.takeInvalidationTarget();
         if (target) {
-          clearTokensIfMatching(this.identity, target, this.storageOptions);
+          await clearTokensIfMatching(this.identity, target, this.storageOptions);
         } else {
-          clearTokens(this.identity, this.storageOptions);
+          await clearTokens(this.identity, this.storageOptions);
         }
         break;
       }
       case "verifier":
-        clearCodeVerifier(this.identity, this.storageOptions);
+        await clearCodeVerifier(this.identity, this.storageOptions);
         break;
       case "discovery":
         this.clearDiscoveryState();
@@ -606,8 +596,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
     if (!clientInfo) {
       return;
     }
-    await applyTokenClientAuthentication(this.config.privateKeyJwt, clientInfo, () =>
-      this.throwIfInactive(),
+    await applyTokenClientAuthentication(
+      this.config.privateKeyJwt,
+      clientInfo,
+      () => this.throwIfInactive(),
+      this.signal,
     )(headers, params, url, metadata);
   };
 
@@ -620,6 +613,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
           audience: this.flowAuthorizationServerUrl,
           resource: this.flowResourceUrl,
           scope: requestedScope,
+          signal: this.signal,
         },
         this.fetch,
         () => this.throwIfInactive(),

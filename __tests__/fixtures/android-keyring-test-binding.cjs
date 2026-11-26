@@ -27,6 +27,9 @@ function persist() {
   }
 }
 
+/** @type {{ failure: Error | undefined }} */
+const state = { failure: undefined };
+
 class Entry {
   /** @param {string} service @param {string} account */
   constructor(service, account) {
@@ -34,8 +37,8 @@ class Entry {
   }
 
   getPassword() {
-    if (binding.failure !== undefined) {
-      throw binding.failure;
+    if (state.failure !== undefined) {
+      throw state.failure;
     }
     const value = readEntries().get(this.account) ?? null;
     if (
@@ -52,16 +55,16 @@ class Entry {
 
   /** @param {string} value */
   setPassword(value) {
-    if (binding.failure !== undefined) {
-      throw binding.failure;
+    if (state.failure !== undefined) {
+      throw state.failure;
     }
     readEntries().set(this.account, value);
     persist();
   }
 
   deleteCredential() {
-    if (binding.failure !== undefined) {
-      throw binding.failure;
+    if (state.failure !== undefined) {
+      throw state.failure;
     }
     const removed = readEntries().delete(this.account);
     persist();
@@ -69,6 +72,35 @@ class Entry {
   }
 }
 
-/** @type {{ failure: Error | undefined; Entry: typeof Entry }} */
-const binding = { failure: undefined, Entry };
-module.exports = binding;
+class AsyncEntry {
+  /** @param {string} service @param {string} account */
+  constructor(service, account) {
+    this.entry = new Entry(service, account);
+  }
+
+  async getPassword() {
+    return this.entry.getPassword();
+  }
+
+  /** @param {string} value */
+  async setPassword(value) {
+    this.entry.setPassword(value);
+  }
+
+  async deleteCredential() {
+    return this.entry.deleteCredential();
+  }
+}
+
+exports.Entry = Entry;
+exports.AsyncEntry = AsyncEntry;
+Object.defineProperty(exports, "failure", {
+  enumerable: true,
+  get() {
+    return state.failure;
+  },
+  /** @param {Error | undefined} value */
+  set(value) {
+    state.failure = value;
+  },
+});

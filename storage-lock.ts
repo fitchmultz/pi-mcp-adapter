@@ -73,6 +73,8 @@ export interface AsyncStorageLockOptions {
   timeoutMs: number;
   initialPollMs: number;
   maxPollMs: number;
+  /** Keep the event loop alive while polling (default: true for CLI/standalone credential callers; pass false for background waits). */
+  ref?: boolean | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -94,10 +96,15 @@ async function waitForStorageLock(
         throw error;
       }
     }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new StorageLockBusyError(lockPath, new Error("Storage lock wait timeout elapsed"));
+    }
     // Small random jitter spreads wakeups when several processes contend on the same lock.
     const jitter = Math.floor(Math.random() * 15);
-    await delay(pollMs + jitter, undefined, {
-      ref: false,
+    const waitMs = Math.min(remainingMs, pollMs + jitter);
+    await delay(waitMs, undefined, {
+      ...(options.ref !== undefined ? { ref: options.ref } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     });
     pollMs = Math.min(options.maxPollMs, Math.ceil(pollMs * 1.5));

@@ -56,7 +56,7 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("keyring native binding fallback", () => {
-    nodeIt("preserves loader failures and tries the Linux musl binding after gnu", () => {
+    nodeIt("preserves loader failures and tries the Linux musl binding after gnu", async () => {
       const originalStore = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
       const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
       const archDescriptor = Object.getOwnPropertyDescriptor(process, "arch");
@@ -91,8 +91,8 @@ nodeDescribe("mcp-auth", () => {
       });
       try {
         delete process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
-        assert.throws(
-          () =>
+        await assert.rejects(
+          async () =>
             getAuthEntry({ serverName: "fallback-failure", serverUrl: "https://api.example.com" }),
           (error) => {
             assert(error instanceof Error);
@@ -111,9 +111,26 @@ nodeDescribe("mcp-auth", () => {
         Object.defineProperty(process, "platform", { ...platformDescriptor, value: "linux" });
         Object.defineProperty(process, "arch", { ...archDescriptor, value: "x64" });
         linuxFallback = true;
-        assert.strictEqual(
-          getAuthEntry({ serverName: "fallback-success", serverUrl: "https://api.example.com" }),
-          undefined,
+        let eventLoopTicks = 0;
+        let settled = false;
+        const tick = setInterval(() => {
+          if (!settled) {
+            eventLoopTicks += 1;
+          }
+        }, 2);
+        try {
+          const entry = await getAuthEntry({
+            serverName: "fallback-success",
+            serverUrl: "https://api.example.com",
+          });
+          settled = true;
+          assert.strictEqual(entry, undefined);
+        } finally {
+          clearInterval(tick);
+        }
+        assert.ok(
+          eventLoopTicks > 0,
+          `expected other event-loop work to progress during AsyncEntry read, got ${eventLoopTicks} ticks`,
         );
         assert.deepStrictEqual(resolved, [
           "@napi-rs/keyring-linux-x64-gnu/package.json",
@@ -133,15 +150,15 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("getAuthEntry", () => {
-    nodeIt("should return undefined for non-existent entry", () => {
-      const entry = getAuthEntry({
+    nodeIt("should return undefined for non-existent entry", async () => {
+      const entry = await getAuthEntry({
         serverName: "non-existent",
         serverUrl: "https://api.example.com",
       });
       assert.strictEqual(entry, undefined);
     });
 
-    nodeIt("should import legacy plaintext entries and remove the file", () => {
+    nodeIt("should import legacy plaintext entries and remove the file", async () => {
       const filePath = getAuthEntryFilePath("legacy-import");
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(
@@ -153,25 +170,25 @@ nodeDescribe("mcp-auth", () => {
         "utf-8",
       );
 
-      const entry = getAuthEntry({
+      const entry = await getAuthEntry({
         serverName: "legacy-import",
         serverUrl: "https://api.example.com",
       });
       assert.strictEqual(entry?.tokens?.accessToken, "legacy-token");
       assert.strictEqual(existsSync(filePath), false);
       assert.strictEqual(
-        getAuthEntry({ serverName: "legacy-import", serverUrl: "https://api.example.com" })?.tokens
-          ?.accessToken,
+        (await getAuthEntry({ serverName: "legacy-import", serverUrl: "https://api.example.com" }))
+          ?.tokens?.accessToken,
         "legacy-token",
       );
     });
 
-    nodeIt("should fail closed when the secure credential store is unavailable", () => {
+    nodeIt("should fail closed when the secure credential store is unavailable", async () => {
       const previous = process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE;
       process.env.PI_MCP_ADAPTER_TEST_AUTH_STORE = "unavailable";
       try {
-        assert.throws(
-          () =>
+        await assert.rejects(
+          async () =>
             getAuthEntry({
               serverName: "secure-store-unavailable",
               serverUrl: "https://api.example.com",
@@ -189,7 +206,7 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("saveAuthEntry / getAuthEntry", () => {
-    nodeIt("saves the URL without mutating the supplied auth entry", () => {
+    nodeIt("saves the URL without mutating the supplied auth entry", async () => {
       const entry: AuthEntry = Object.freeze({
         tokens: {
           accessToken: "test-token",
@@ -199,9 +216,12 @@ nodeDescribe("mcp-auth", () => {
         },
       });
 
-      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
+      await saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        entry,
+      );
       assert.strictEqual(entry.serverUrl, undefined);
-      const retrieved = getAuthEntry({
+      const retrieved = await getAuthEntry({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });
@@ -209,7 +229,7 @@ nodeDescribe("mcp-auth", () => {
       assert.deepStrictEqual(retrieved, { ...entry, serverUrl: "https://api.example.com" });
     });
 
-    nodeIt("should update existing entries", () => {
+    nodeIt("should update existing entries", async () => {
       const entry1: AuthEntry = {
         tokens: { accessToken: "token1" },
         serverUrl: "https://api.example.com",
@@ -219,9 +239,15 @@ nodeDescribe("mcp-auth", () => {
         serverUrl: "https://api.example.com",
       };
 
-      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry1);
-      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry2);
-      const retrieved = getAuthEntry({
+      await saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        entry1,
+      );
+      await saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        entry2,
+      );
+      const retrieved = await getAuthEntry({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });
@@ -231,14 +257,17 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("getAuthForUrl", () => {
-    nodeIt("should return entry when URL matches", () => {
+    nodeIt("should return entry when URL matches", async () => {
       const entry: AuthEntry = {
         tokens: { accessToken: "test-token" },
         serverUrl: "https://api.example.com",
       };
 
-      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
-      const retrieved = getAuthForUrl({
+      await saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        entry,
+      );
+      const retrieved = await getAuthForUrl({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });
@@ -246,14 +275,17 @@ nodeDescribe("mcp-auth", () => {
       assert.deepStrictEqual(retrieved, entry);
     });
 
-    nodeIt("should return undefined when URL doesn't match", () => {
+    nodeIt("should return undefined when URL doesn't match", async () => {
       const entry: AuthEntry = {
         tokens: { accessToken: "test-token" },
         serverUrl: "https://api.example.com",
       };
 
-      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
-      const retrieved = getAuthForUrl({
+      await saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        entry,
+      );
+      const retrieved = await getAuthForUrl({
         serverName: "test-server",
         serverUrl: "https://different.com",
       });
@@ -261,13 +293,16 @@ nodeDescribe("mcp-auth", () => {
       assert.strictEqual(retrieved, undefined);
     });
 
-    nodeIt("stores the URL from identity even when the supplied record omits it", () => {
+    nodeIt("stores the URL from identity even when the supplied record omits it", async () => {
       const entry: AuthEntry = {
         tokens: { accessToken: "test-token" },
       };
 
-      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
-      const retrieved = getAuthForUrl({
+      await saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        entry,
+      );
+      const retrieved = await getAuthForUrl({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });
@@ -277,14 +312,17 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("removeAuthEntry", () => {
-    nodeIt("should remove an entry", () => {
+    nodeIt("should remove an entry", async () => {
       const entry: AuthEntry = {
         tokens: { accessToken: "test-token" },
       };
 
-      saveAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }, entry);
-      removeAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" });
-      const retrieved = getAuthEntry({
+      await saveAuthEntry(
+        { serverName: "test-server", serverUrl: "https://api.example.com" },
+        entry,
+      );
+      await removeAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" });
+      const retrieved = await getAuthEntry({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });
@@ -294,8 +332,8 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("updateTokens", () => {
-    nodeIt("should update tokens for a server", () => {
-      updateTokens(
+    nodeIt("should update tokens for a server", async () => {
+      await updateTokens(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         {
           accessToken: "new-token",
@@ -305,24 +343,24 @@ nodeDescribe("mcp-auth", () => {
         },
       );
 
-      const entry = getAuthEntry({
+      const entry = await getAuthEntry({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });
       assert.strictEqual(entry?.tokens?.accessToken, "new-token");
     });
 
-    nodeIt("should preserve existing client info", () => {
-      updateClientInfo(
+    nodeIt("should preserve existing client info", async () => {
+      await updateClientInfo(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         { clientId: "client-123" },
       );
-      updateTokens(
+      await updateTokens(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         { accessToken: "token" },
       );
 
-      const entry = getAuthEntry({
+      const entry = await getAuthEntry({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });
@@ -330,8 +368,8 @@ nodeDescribe("mcp-auth", () => {
       assert.strictEqual(entry.tokens?.accessToken, "token");
     });
 
-    nodeIt("keeps old URL credentials separate when saving tokens for a new URL", () => {
-      saveAuthEntry(
+    nodeIt("keeps old URL credentials separate when saving tokens for a new URL", async () => {
+      await saveAuthEntry(
         { serverName: "token-url-change", serverUrl: "https://old.example.com/mcp" },
         {
           tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
@@ -342,17 +380,21 @@ nodeDescribe("mcp-auth", () => {
         },
       );
 
-      updateTokens(
+      await updateTokens(
         { serverName: "token-url-change", serverUrl: "https://new.example.com/mcp" },
         { accessToken: "new-token" },
       );
 
       assert.strictEqual(
-        getAuthForUrl({ serverName: "token-url-change", serverUrl: "https://old.example.com/mcp" })
-          ?.tokens?.accessToken,
+        (
+          await getAuthForUrl({
+            serverName: "token-url-change",
+            serverUrl: "https://old.example.com/mcp",
+          })
+        )?.tokens?.accessToken,
         "old-token",
       );
-      const newEntry = getAuthForUrl({
+      const newEntry = await getAuthForUrl({
         serverName: "token-url-change",
         serverUrl: "https://new.example.com/mcp",
       });
@@ -362,36 +404,39 @@ nodeDescribe("mcp-auth", () => {
       assert.strictEqual(newEntry.oauthState, undefined);
     });
 
-    nodeIt("should clear legacy URL-bound auth state when saving tokens with a server URL", () => {
-      saveAuthEntry(
-        { serverName: "token-legacy-url-change", serverUrl: "https://api.example.com" },
-        {
-          tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
-          clientInfo: { clientId: "old-client" },
-          codeVerifier: "old-verifier",
-          oauthState: "old-state",
-        },
-      );
+    nodeIt(
+      "should clear legacy URL-bound auth state when saving tokens with a server URL",
+      async () => {
+        await saveAuthEntry(
+          { serverName: "token-legacy-url-change", serverUrl: "https://api.example.com" },
+          {
+            tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
+            clientInfo: { clientId: "old-client" },
+            codeVerifier: "old-verifier",
+            oauthState: "old-state",
+          },
+        );
 
-      updateTokens(
-        { serverName: "token-legacy-url-change", serverUrl: "https://new.example.com/mcp" },
-        { accessToken: "new-token" },
-      );
+        await updateTokens(
+          { serverName: "token-legacy-url-change", serverUrl: "https://new.example.com/mcp" },
+          { accessToken: "new-token" },
+        );
 
-      const newEntry = getAuthForUrl({
-        serverName: "token-legacy-url-change",
-        serverUrl: "https://new.example.com/mcp",
-      });
-      assert.strictEqual(newEntry?.tokens?.accessToken, "new-token");
-      assert.strictEqual(newEntry.clientInfo, undefined);
-      assert.strictEqual(newEntry.codeVerifier, undefined);
-      assert.strictEqual(newEntry.oauthState, undefined);
-    });
+        const newEntry = await getAuthForUrl({
+          serverName: "token-legacy-url-change",
+          serverUrl: "https://new.example.com/mcp",
+        });
+        assert.strictEqual(newEntry?.tokens?.accessToken, "new-token");
+        assert.strictEqual(newEntry.clientInfo, undefined);
+        assert.strictEqual(newEntry.codeVerifier, undefined);
+        assert.strictEqual(newEntry.oauthState, undefined);
+      },
+    );
   });
 
   nodeDescribe("updateClientInfo", () => {
-    nodeIt("should update client info for a server", () => {
-      updateClientInfo(
+    nodeIt("should update client info for a server", async () => {
+      await updateClientInfo(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         {
           clientId: "client-123",
@@ -401,7 +446,7 @@ nodeDescribe("mcp-auth", () => {
         },
       );
 
-      const entry = getAuthEntry({
+      const entry = await getAuthEntry({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });
@@ -409,8 +454,8 @@ nodeDescribe("mcp-auth", () => {
       assert.strictEqual(entry.clientInfo.clientSecret, "secret");
     });
 
-    nodeIt("keeps old URL credentials separate when saving client info for a new URL", () => {
-      saveAuthEntry(
+    nodeIt("keeps old URL credentials separate when saving client info for a new URL", async () => {
+      await saveAuthEntry(
         { serverName: "url-change", serverUrl: "https://old.example.com/mcp" },
         {
           tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
@@ -421,17 +466,21 @@ nodeDescribe("mcp-auth", () => {
         },
       );
 
-      updateClientInfo(
+      await updateClientInfo(
         { serverName: "url-change", serverUrl: "https://new.example.com/mcp" },
         { clientId: "new-client" },
       );
 
       assert.strictEqual(
-        getAuthForUrl({ serverName: "url-change", serverUrl: "https://old.example.com/mcp" })
-          ?.tokens?.accessToken,
+        (
+          await getAuthForUrl({
+            serverName: "url-change",
+            serverUrl: "https://old.example.com/mcp",
+          })
+        )?.tokens?.accessToken,
         "old-token",
       );
-      const newEntry = getAuthForUrl({
+      const newEntry = await getAuthForUrl({
         serverName: "url-change",
         serverUrl: "https://new.example.com/mcp",
       });
@@ -443,8 +492,8 @@ nodeDescribe("mcp-auth", () => {
 
     nodeIt(
       "should clear stale verifier and state when legacy client info gains a server URL",
-      () => {
-        saveAuthEntry(
+      async () => {
+        await saveAuthEntry(
           { serverName: "legacy-url-change", serverUrl: "https://api.example.com" },
           {
             tokens: { accessToken: "old-token", refreshToken: "old-refresh" },
@@ -454,12 +503,12 @@ nodeDescribe("mcp-auth", () => {
           },
         );
 
-        updateClientInfo(
+        await updateClientInfo(
           { serverName: "legacy-url-change", serverUrl: "https://new.example.com/mcp" },
           { clientId: "new-client" },
         );
 
-        const newEntry = getAuthForUrl({
+        const newEntry = await getAuthForUrl({
           serverName: "legacy-url-change",
           serverUrl: "https://new.example.com/mcp",
         });
@@ -472,39 +521,39 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("legacy flow state cleanup", () => {
-    nodeIt("clears a code verifier", () => {
-      saveAuthEntry(
+    nodeIt("clears a code verifier", async () => {
+      await saveAuthEntry(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         { codeVerifier: "verifier-123" },
       );
-      clearCodeVerifier({ serverName: "test-server", serverUrl: "https://api.example.com" });
+      await clearCodeVerifier({ serverName: "test-server", serverUrl: "https://api.example.com" });
       assert.strictEqual(
-        getAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" })
+        (await getAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }))
           ?.codeVerifier,
         undefined,
       );
     });
 
-    nodeIt("clears OAuth state", () => {
-      saveAuthEntry(
+    nodeIt("clears OAuth state", async () => {
+      await saveAuthEntry(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         { oauthState: "state-abc-123" },
       );
       assert.strictEqual(
-        getOAuthState({ serverName: "test-server", serverUrl: "https://api.example.com" }),
+        await getOAuthState({ serverName: "test-server", serverUrl: "https://api.example.com" }),
         "state-abc-123",
       );
-      clearOAuthState({ serverName: "test-server", serverUrl: "https://api.example.com" });
+      await clearOAuthState({ serverName: "test-server", serverUrl: "https://api.example.com" });
       assert.strictEqual(
-        getOAuthState({ serverName: "test-server", serverUrl: "https://api.example.com" }),
+        await getOAuthState({ serverName: "test-server", serverUrl: "https://api.example.com" }),
         undefined,
       );
     });
   });
 
   nodeDescribe("clearAllCredentials", () => {
-    nodeIt("should remove all credentials", () => {
-      saveAuthEntry(
+    nodeIt("should remove all credentials", async () => {
+      await saveAuthEntry(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         {
           tokens: { accessToken: "token" },
@@ -513,29 +562,32 @@ nodeDescribe("mcp-auth", () => {
         },
       );
 
-      clearAllCredentials({ serverName: "test-server", serverUrl: "https://api.example.com" });
+      await clearAllCredentials({
+        serverName: "test-server",
+        serverUrl: "https://api.example.com",
+      });
 
       assert.strictEqual(
-        getAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }),
+        await getAuthEntry({ serverName: "test-server", serverUrl: "https://api.example.com" }),
         undefined,
       );
     });
   });
 
   nodeDescribe("clearClientInfo", () => {
-    nodeIt("should only remove client info", () => {
-      updateTokens(
+    nodeIt("should only remove client info", async () => {
+      await updateTokens(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         { accessToken: "token" },
       );
-      updateClientInfo(
+      await updateClientInfo(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         { clientId: "client" },
       );
 
-      clearClientInfo({ serverName: "test-server", serverUrl: "https://api.example.com" });
+      await clearClientInfo({ serverName: "test-server", serverUrl: "https://api.example.com" });
 
-      const entry = getAuthEntry({
+      const entry = await getAuthEntry({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });
@@ -545,19 +597,19 @@ nodeDescribe("mcp-auth", () => {
   });
 
   nodeDescribe("clearTokens", () => {
-    nodeIt("should only remove tokens", () => {
-      updateTokens(
+    nodeIt("should only remove tokens", async () => {
+      await updateTokens(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         { accessToken: "token" },
       );
-      updateClientInfo(
+      await updateClientInfo(
         { serverName: "test-server", serverUrl: "https://api.example.com" },
         { clientId: "client" },
       );
 
-      clearTokens({ serverName: "test-server", serverUrl: "https://api.example.com" });
+      await clearTokens({ serverName: "test-server", serverUrl: "https://api.example.com" });
 
-      const entry = getAuthEntry({
+      const entry = await getAuthEntry({
         serverName: "test-server",
         serverUrl: "https://api.example.com",
       });

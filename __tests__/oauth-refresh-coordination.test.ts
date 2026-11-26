@@ -294,7 +294,7 @@ async function seedFakeKeyring(
       },
     });
     const auth = await import(${JSON.stringify(new URL("../mcp-auth.ts", import.meta.url).href)});
-    auth.saveAuthEntry(${JSON.stringify(identity)}, ${JSON.stringify(entry)});
+    await auth.saveAuthEntry(${JSON.stringify(identity)}, ${JSON.stringify(entry)});
   `;
   const child = spawn(process.execPath, ["--input-type=module", "-e", inline], {
     env,
@@ -337,7 +337,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
       await server.close();
     }
     for (const identity of seededIdentities.splice(0)) {
-      clearAllCredentials(identity);
+      await clearAllCredentials(identity);
     }
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
@@ -360,7 +360,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     return { server, url };
   }
 
-  function seedInMemory(
+  async function seedInMemory(
     serverName: string,
     serverUrl: string,
     origin: string,
@@ -370,10 +370,10 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
       expiresAt?: number;
       scope?: string;
     },
-  ): void {
+  ): Promise<void> {
     const identity = { serverName, serverUrl };
     seededIdentities.push(identity);
-    saveAuthEntry(identity, {
+    await saveAuthEntry(identity, {
       tokens: { ...tokens, issuer: origin },
       clientInfo: {
         clientId: "test-client",
@@ -387,7 +387,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     const { server, url } = await startServer({ tokenDelayMs: 100 });
     const manager = trackManager();
     const now = Math.floor(Date.now() / 1000);
-    seedInMemory("parallel-refresh", url, server.origin, {
+    await seedInMemory("parallel-refresh", url, server.origin, {
       accessToken: "access-1",
       refreshToken: "refresh-1",
       expiresAt: now + 3600,
@@ -406,7 +406,8 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     expect(results).toHaveLength(3);
     expect(server.tokenRequests).toHaveLength(1);
     expect(server.invalidGrantCount).toBe(0);
-    const stored = getAuthForUrl({ serverName: "parallel-refresh", serverUrl: url })?.tokens;
+    const stored = (await getAuthForUrl({ serverName: "parallel-refresh", serverUrl: url }))
+      ?.tokens;
     expect(stored?.accessToken).toBe("access-2");
     expect(stored?.refreshToken).toBe("refresh-2");
   });
@@ -418,7 +419,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     } = {};
     const { server, url } = await startServer({
       onTokenRequest: async (): Promise<"invalid_grant"> => {
-        saveAuthEntry(
+        await saveAuthEntry(
           { serverName: "cas-race", serverUrl: url },
           {
             tokens: {
@@ -446,7 +447,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     });
     const manager = trackManager();
     const now = Math.floor(Date.now() / 1000);
-    seedInMemory("cas-race", url, server.origin, {
+    await seedInMemory("cas-race", url, server.origin, {
       accessToken: "access-1",
       refreshToken: "refresh-1",
       expiresAt: now + 3600,
@@ -462,7 +463,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     );
 
     expect(JSON.stringify(race.concurrentResult)).toContain("concurrent");
-    const stored = getAuthForUrl({ serverName: "cas-race", serverUrl: url })?.tokens;
+    const stored = (await getAuthForUrl({ serverName: "cas-race", serverUrl: url }))?.tokens;
     expect(stored?.accessToken).toBe("access-newer");
     expect(stored?.refreshToken).toBe("refresh-newer");
   });
@@ -593,7 +594,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     });
     const manager = trackManager();
     const now = Math.floor(Date.now() / 1000);
-    seedInMemory("preserve-refresh", url, server.origin, {
+    await seedInMemory("preserve-refresh", url, server.origin, {
       accessToken: "access-1",
       refreshToken: "refresh-1",
       expiresAt: now + 3600,
@@ -604,7 +605,8 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     server.config.validAccessTokens.delete("access-1");
     await connection.client.callTool({ name: "echo", arguments: { step: 1 } });
 
-    const afterFirst = getAuthForUrl({ serverName: "preserve-refresh", serverUrl: url })?.tokens;
+    const afterFirst = (await getAuthForUrl({ serverName: "preserve-refresh", serverUrl: url }))
+      ?.tokens;
     expect(afterFirst?.accessToken).toBe("access-2");
     expect(afterFirst?.refreshToken).toBe("refresh-1");
     expect(afterFirst?.scope).toBe("read write");
@@ -612,7 +614,8 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     server.config.validAccessTokens.delete("access-2");
     await connection.client.callTool({ name: "echo", arguments: { step: 2 } });
 
-    const afterSecond = getAuthForUrl({ serverName: "preserve-refresh", serverUrl: url })?.tokens;
+    const afterSecond = (await getAuthForUrl({ serverName: "preserve-refresh", serverUrl: url }))
+      ?.tokens;
     expect(afterSecond?.accessToken).toBe("access-3");
     expect(afterSecond?.refreshToken).toBe("refresh-1");
     expect(afterSecond?.scope).toBe("read write");
@@ -624,7 +627,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     const { server, url } = await startServer();
     const manager = trackManager();
     const now = Math.floor(Date.now() / 1000);
-    seedInMemory("proactive-refresh", url, server.origin, {
+    await seedInMemory("proactive-refresh", url, server.origin, {
       accessToken: "access-1",
       refreshToken: "refresh-1",
       expiresAt: now + 30,
@@ -637,7 +640,8 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     expect(server.tokenRequests).toHaveLength(1);
     expect(server.unauthorizedCount).toBe(0);
     expect(server.callAuthorizations).toEqual(["access-2"]);
-    const stored = getAuthForUrl({ serverName: "proactive-refresh", serverUrl: url })?.tokens;
+    const stored = (await getAuthForUrl({ serverName: "proactive-refresh", serverUrl: url }))
+      ?.tokens;
     expect(stored?.accessToken).toBe("access-2");
     expect(stored?.refreshToken).toBe("refresh-2");
   });
@@ -651,7 +655,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     const managerA = trackManager();
     const managerB = trackManager();
     const now = Math.floor(Date.now() / 1000);
-    seedInMemory("proactive-short", url, server.origin, {
+    await seedInMemory("proactive-short", url, server.origin, {
       accessToken: "access-1",
       refreshToken: "refresh-1",
       expiresAt: now + 30,
@@ -750,7 +754,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     });
 
     // Simulate another Pi session completing OAuth and saving fresh tokens.
-    seedInMemory("remote", url, server.origin, {
+    await seedInMemory("remote", url, server.origin, {
       accessToken: "session-b-token",
       expiresAt: Math.floor(Date.now() / 1000) + 3600,
     });
@@ -769,11 +773,11 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     const secondManager = trackManager();
     const secondRuntime = createOAuthRuntime();
     secondManager.setOAuthRuntime(secondRuntime);
-    clearAllCredentials({ serverName: "remote", serverUrl: url });
+    await clearAllCredentials({ serverName: "remote", serverUrl: url });
     const stale = await secondManager.connect("remote", definition);
     expect(stale.status).toBe("needs-auth");
 
-    seedInMemory("remote", url, server.origin, {
+    await seedInMemory("remote", url, server.origin, {
       accessToken: "session-b-token",
       expiresAt: Math.floor(Date.now() / 1000) + 3600,
     });
@@ -928,7 +932,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
 
     // Peer stores a read-only token that misses the 401 discovered scope: stay needs-auth without reconnecting.
     const requestsBeforePartial = mcpRequests;
-    seedInMemory("scoped-remote", url, origin, {
+    await seedInMemory("scoped-remote", url, origin, {
       accessToken: "read-only-token",
       expiresAt: Math.floor(Date.now() / 1000) + 3600,
       scope: "read",
@@ -939,7 +943,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     expect(mcpRequests).toBe(requestsBeforePartial);
 
     // Peer stores a token covering the 401 discovered scope: pick it up and reconnect cleanly.
-    seedInMemory("scoped-remote", url, origin, {
+    await seedInMemory("scoped-remote", url, origin, {
       accessToken: "write-token",
       expiresAt: Math.floor(Date.now() / 1000) + 3600,
       scope: "read write",

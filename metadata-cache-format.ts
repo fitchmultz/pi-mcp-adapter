@@ -2,6 +2,8 @@ import type { MetadataCache, ServerCacheEntry } from "./types.ts";
 import { asObjectRecord } from "./mcp-output-values.ts";
 import { cacheEntryValidator } from "./metadata-cache-validator.ts";
 
+export const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return asObjectRecord(value) !== undefined && !Array.isArray(value);
 }

@@ -221,13 +221,13 @@ export class CimdFixture {
           callbackPort: getOAuthCallbackPort(),
           registrations: this.registrations,
           requests: this.requests,
-          stored: this.stored(),
+          stored: await this.stored(),
         })}\n`,
       );
     }
     await this.manager.closeAll();
     await shutdownOAuth(this.#runtime);
-    clearAllCredentials({ serverName: this.name, serverUrl: this.definition.url });
+    await clearAllCredentials({ serverName: this.name, serverUrl: this.definition.url });
     await this.#http.close();
   }
 

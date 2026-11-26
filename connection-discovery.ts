@@ -44,10 +44,13 @@ export async function fetchAllResources(
   try {
     return (await client.listResources(undefined, { ...requestOptions, cacheMode: "refresh" }))
       .resources;
-  } catch {
+  } catch (error) {
     if (requestOptions?.signal?.aborted === true) {
       throwIfAborted(requestOptions.signal);
     }
+    logger.debug(
+      `MCP: resources/list failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return [];
   }
 }

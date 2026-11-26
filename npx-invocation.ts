@@ -10,6 +10,29 @@ export interface ParsedPackageSpec {
 const EXACT_PACKAGE_VERSION_RE =
   /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
+const NPX_EXECUTABLES = new Set(["npx", "npx.cmd", "npx.exe"]);
+const NPM_EXECUTABLES = new Set(["npm", "npm.cmd", "npm.exe"]);
+
+function isAbsoluteCommandPath(command: string): boolean {
+  return command.startsWith("/") || /^[A-Za-z]:[\\/]/.test(command) || command.startsWith("\\\\");
+}
+
+/** Classify bare or absolute npx/npm executables; leave bunx, pnpx, and relative scripts untouched. */
+export function classifyNpxCommand(command: string): "npx" | "npm" | null {
+  if (/[\\/]/.test(command) && !isAbsoluteCommandPath(command)) {
+    return null;
+  }
+  const base = (command.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+  if (NPX_EXECUTABLES.has(base)) {
+    return "npx";
+  }
+  return NPM_EXECUTABLES.has(base) ? "npm" : null;
+}
+
+export function isResolvableNpxCommand(command: string): boolean {
+  return classifyNpxCommand(command) !== null;
+}
+
 type Option =
   | { kind: "yes" }
   | { kind: "package"; value: string; consumed: number }
@@ -110,10 +133,11 @@ function parseNpmExecArgs(args: string[]): ParsedInvocation | null {
 }
 
 export function parseInvocation(command: string, args: string[]): ParsedInvocation | null {
-  if (command === "npx") {
+  const kind = classifyNpxCommand(command);
+  if (kind === "npx") {
     return parseNpxArgs(args);
   }
-  return command === "npm" ? parseNpmExecArgs(args) : null;
+  return kind === "npm" ? parseNpmExecArgs(args) : null;
 }
 
 function splitPackageVersion(

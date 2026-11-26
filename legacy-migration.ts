@@ -12,13 +12,16 @@ interface FileMigration {
 }
 
 /** Preserve historical sources and existing destinations; consume current OAuth sources only after verified promotion. */
-export function migrateLegacyState({
+export async function migrateLegacyState({
   cwd = process.cwd(),
   dryRun = false,
-}: { cwd?: string; dryRun?: boolean } = {}): {
+}: { cwd?: string; dryRun?: boolean } = {}): Promise<{
   files: FileMigration[];
-  credentials: Array<{ server: string; status: ReturnType<typeof migrateLegacyAuthEntry> }>;
-} {
+  credentials: Array<{
+    server: string;
+    status: Awaited<ReturnType<typeof migrateLegacyAuthEntry>>;
+  }>;
+}> {
   const paths = ["mcp.json", "mcp-cache.json", "mcp-onboarding.json", "mcp-npx-cache.json"].map(
     (name) => ({ source: getAgentPath(name), destination: getAdapterPath(name) }),
   );
@@ -54,15 +57,17 @@ export function migrateLegacyState({
     return { source, destination, status: "copied" };
   });
 
-  const credentials = dryRun ? [] : migrateLegacyCredentials(cwd);
+  const credentials = dryRun ? [] : await migrateLegacyCredentials(cwd);
   return { files, credentials };
 }
 
-function migrateLegacyCredentials(
+async function migrateLegacyCredentials(
   cwd: string,
-): Array<{ server: string; status: ReturnType<typeof migrateLegacyAuthEntry> }> {
-  const credentials: Array<{ server: string; status: ReturnType<typeof migrateLegacyAuthEntry> }> =
-    [];
+): Promise<Array<{ server: string; status: Awaited<ReturnType<typeof migrateLegacyAuthEntry>> }>> {
+  const credentials: Array<{
+    server: string;
+    status: Awaited<ReturnType<typeof migrateLegacyAuthEntry>>;
+  }> = [];
   const config = loadMcpConfig(undefined, cwd);
   const envLegacyDirectory = process.env.MCP_OAUTH_DIR?.trim();
   const legacyDirectory =
@@ -77,7 +82,7 @@ function migrateLegacyCredentials(
     }
     credentials.push({
       server,
-      status: migrateLegacyAuthEntry(
+      status: await migrateLegacyAuthEntry(
         { serverName: server, serverUrl },
         legacyDirectory,
         authStorageOptions,

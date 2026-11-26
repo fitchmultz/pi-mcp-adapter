@@ -363,7 +363,7 @@ async function fixture(config: SigningFixtureConfig = {}, pair = key()) {
     }
     await manager.closeAll();
     await shutdownOAuth(runtime);
-    clearAllCredentials({ serverName: name, serverUrl: definition.url });
+    await clearAllCredentials({ serverName: name, serverUrl: definition.url });
     await server.close();
   });
   if (oauth.grantType === "authorization_code" && oauth.redirectUri === undefined) {
@@ -502,9 +502,10 @@ it.each(["ES256", "RS256", "PS256", "EdDSA", "Ed25519"])(
     expect(params.get("scope")).toBe("tools");
     expect(f.registrations).toHaveLength(0);
     expect(f.authorizations).toHaveLength(0);
-    expect(JSON.stringify(f.stored())).not.toContain(pair.pem);
-    expect(JSON.stringify(f.stored())).not.toContain(pair.jwk.d);
-    expect(JSON.stringify(f.stored())).not.toContain(params.get("client_assertion"));
+    const stored = await f.stored();
+    expect(JSON.stringify(stored)).not.toContain(pair.pem);
+    expect(JSON.stringify(stored)).not.toContain(pair.jwk.d);
+    expect(JSON.stringify(stored)).not.toContain(params.get("client_assertion"));
   },
 );
 
@@ -608,7 +609,7 @@ it("round-trips private-key custom CIMD client_credentials without the shared do
   expect(await f.start()).toEqual({ authorizationUrl: "" });
   f.oauth.clientMetadataUrl = "https://jwt.example/changed.json";
   expect(await f.start()).toEqual({ authorizationUrl: "" });
-  expect(f.stored()?.clientInfo).toMatchObject({
+  expect((await f.stored())?.clientInfo).toMatchObject({
     clientId: f.id,
     registrationType: "cimd",
     redirectUris: [],
@@ -633,7 +634,7 @@ it.each([
   async (source, messages) => {
     const f = await fixture({ grantType: "authorization_code" });
     await f.login();
-    const before = f.stored();
+    const before = await f.stored();
     assert(f.oauth.privateKeyJwt !== undefined);
     f.oauth.privateKeyJwt.privateKey = source;
     const error = await f.start().catch((cause: unknown) => cause);
@@ -647,7 +648,7 @@ it.each([
     expect(error.cause).toBeUndefined();
     expect(f.exchanges).toHaveLength(1);
     expect(f.authorizations).toHaveLength(1);
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
     expect(browser.open).not.toHaveBeenCalled();
   },
 );
@@ -661,7 +662,7 @@ it.each(["client", "tokens"])(
       privateKeyJwt: { privateKey: `!touch '${marker}'; printf sentinel`, algorithm: "ES256" },
       skipIssuerMetadataValidation: true,
     });
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: f.name, serverUrl: f.definition.url },
       {
         clientInfo: {
@@ -676,11 +677,11 @@ it.each(["client", "tokens"])(
         },
       },
     );
-    const before = f.stored();
+    const before = await f.stored();
     await expect(f.start()).rejects.toThrow("issuer changed");
     expect(existsSync(marker)).toBe(false);
     expect(f.exchanges).toHaveLength(0);
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
   },
 );
 
@@ -720,7 +721,7 @@ it.each(["abort", "deactivate"])(
         (error: unknown) => error,
       );
       await started;
-      const before = f.stored();
+      const before = await f.stored();
       if (stop === "abort") {
         controller.abort();
       } else {
@@ -731,7 +732,7 @@ it.each(["abort", "deactivate"])(
       assert(error instanceof Error);
       expect(error).toBeInstanceOf(Error);
       expect(f.exchanges).toHaveLength(0);
-      expect(f.stored()).toEqual(before);
+      expect(await f.stored()).toEqual(before);
       expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(0);
     } finally {
       release();
@@ -826,14 +827,14 @@ it("stops failed signing during ordinary browser refresh without consent or cred
   const f = await fixture({ grantType: "authorization_code" });
   await f.login();
   const connection = await f.connect();
-  const before = f.stored();
+  const before = await f.stored();
   f.expire();
   assert(f.oauth.privateKeyJwt !== undefined);
   f.oauth.privateKeyJwt.privateKey = key("RS256").pem; // Real incompatible key, not a mocked signer.
   await expect(connection.client.callTool({ name: "echo" })).rejects.toThrow(/privateKeyJwt/);
   expect(f.exchanges).toHaveLength(1);
   expect(f.authorizations).toHaveLength(1);
-  expect(f.stored()).toEqual(before);
+  expect(await f.stored()).toEqual(before);
   expect(browser.open).not.toHaveBeenCalled();
 });
 
@@ -853,14 +854,14 @@ it.each([
     const sibling = await f.manager.connect(other.name, other.definition);
     const controller = new AbortController();
     const signing = holdNativeSigning();
-    let before: ReturnType<typeof f.stored>;
+    let before: Awaited<ReturnType<typeof f.stored>>;
     try {
       const pending = f.manager
         .connect(f.name, f.definition, mode === "signal" ? controller.signal : undefined)
         .then((c) => c.client.callTool({ name: "echo" }))
         .catch((cause: unknown) => cause);
       await signing.started;
-      before = structuredClone(f.stored());
+      before = structuredClone(await f.stored());
       if (mode === "close") {
         await f.manager.close(f.name);
       } else if (mode === "signal") {
@@ -882,7 +883,7 @@ it.each([
       expect(signing.pending()).toBe(0);
       expect(signing.events.at(-1)).toBe("native-send-settled");
       expect(f.exchanges).toHaveLength(0);
-      expect(f.stored()).toEqual(before);
+      expect(await f.stored()).toEqual(before);
       expect(f.requests.filter((r) => r.method === "tools/call")).toHaveLength(0);
       expect(f.manager.getConnection(f.name)).toBeUndefined();
       expect(f.runtime.signal.aborted).toBe(mode === "shutdown");
@@ -913,7 +914,7 @@ it.each([
             nativeEvents: signing.events,
             pendingNativeSends: signing.pending(),
             tokenPosts: f.exchanges.length,
-            storageChanged: JSON.stringify(before) !== JSON.stringify(f.stored()),
+            storageChanged: JSON.stringify(before) !== JSON.stringify(await f.stored()),
             runtimeAborted: f.runtime.signal.aborted,
           })}\n`,
         );
@@ -930,7 +931,7 @@ it("stops detached refresh after closing an established connection without repla
   try {
     const pending = connection.client.callTool({ name: "echo" }).catch((cause: unknown) => cause);
     await signing.started;
-    const before = structuredClone(f.stored());
+    const before = structuredClone(await f.stored());
     const requests = f.requests.length;
     await f.manager.close(f.name);
     expect(await pending).toBeInstanceOf(Error);
@@ -946,7 +947,7 @@ it("stops detached refresh after closing an established connection without repla
     await signing.finish();
     await stopping;
     expect(f.exchanges).toHaveLength(1);
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
     expect(f.requests).toHaveLength(requests);
     expect(f.runtime.signal.aborted).toBe(false);
   } finally {
@@ -1044,7 +1045,7 @@ it("does not migrate a real saved shared browser login into private-key auth aft
     privateKeyJwt: undefined,
   });
   await f.login();
-  const before = f.stored();
+  const before = await f.stored();
   expect(before?.clientInfo).toMatchObject({
     clientId: sharedDocument.client_id,
     registrationType: "cimd",
@@ -1060,7 +1061,7 @@ it("does not migrate a real saved shared browser login into private-key auth aft
   expect(existsSync(marker)).toBe(false);
   expect(f.exchanges).toHaveLength(1);
   expect(f.authorizations).toHaveLength(1);
-  expect(f.stored()).toEqual(before);
+  expect(await f.stored()).toEqual(before);
 });
 
 it("refuses keyless machine authentication with a real saved shared browser registration", async () => {
@@ -1070,7 +1071,7 @@ it("refuses keyless machine authentication with a real saved shared browser regi
     privateKeyJwt: undefined,
   });
   await f.login();
-  const before = f.stored();
+  const before = await f.stored();
   f.oauth.grantType = "client_credentials";
   const error = await f.start().catch((cause: unknown) => cause);
   assert(error instanceof OAuthError);
@@ -1079,7 +1080,7 @@ it("refuses keyless machine authentication with a real saved shared browser regi
   expect(error.message).toContain("shared browser registration");
   expect(f.exchanges).toHaveLength(1);
   expect(f.authorizations).toHaveLength(1);
-  expect(f.stored()).toEqual(before);
+  expect(await f.stored()).toEqual(before);
 });
 
 it.each(["configured", "opaque-dcr"])(
@@ -1091,7 +1092,7 @@ it.each(["configured", "opaque-dcr"])(
     });
     if (kind === "opaque-dcr") {
       delete f.oauth.clientId;
-      saveAuthEntry(
+      await saveAuthEntry(
         { serverName: f.name, serverUrl: f.definition.url },
         {
           clientInfo: { clientId: f.id, issuer: f.origin, redirectUris: [] },
@@ -1101,7 +1102,7 @@ it.each(["configured", "opaque-dcr"])(
     }
     expect(await f.start()).toEqual({ authorizationUrl: "" });
     expect(f.exchanges[0]?.claims).toMatchObject({ iss: f.id, sub: f.id });
-    expect(f.stored()?.clientInfo?.registrationType).toBeUndefined();
+    expect((await f.stored())?.clientInfo?.registrationType).toBeUndefined();
   },
 );
 
@@ -1114,7 +1115,7 @@ it.each(["shared", "secret"])(
       clientMetadataUrl: "https://jwt.example/client.json",
       privateKeyJwt: { privateKey: `!touch '${marker}'; printf sentinel`, algorithm: "ES256" },
     });
-    saveAuthEntry(
+    await saveAuthEntry(
       { serverName: f.name, serverUrl: f.definition.url },
       {
         clientInfo: {
@@ -1128,10 +1129,10 @@ it.each(["shared", "secret"])(
         tokens: { accessToken: "old", issuer: f.origin },
       },
     );
-    const before = f.stored();
+    const before = await f.stored();
     await expect(f.start()).rejects.toThrow(/privateKeyJwt/);
     expect(existsSync(marker)).toBe(false);
     expect(f.exchanges).toHaveLength(0);
-    expect(f.stored()).toEqual(before);
+    expect(await f.stored()).toEqual(before);
   },
 );

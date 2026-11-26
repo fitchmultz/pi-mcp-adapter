@@ -519,24 +519,9 @@ describe("standalone native keyring declaration exception", () => {
 
 const keyringCases = [
   {
-    name: "lazy native keyring module",
-    source:
-      'import type * as keyring from "@napi-rs/keyring";\nimport { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\ntype KeyringModule = Pick<typeof keyring, "Entry">;\nexport function loadKeyringEntryClass(): typeof keyring.Entry {\n// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-018: load the native Entry declaration.\nreturn (require("@napi-rs/keyring") as KeyringModule).Entry;\n}\n',
-    id: "QX-018",
-    rule: "typescript/no-unsafe-type-assertion",
-    scopeName: "loadKeyringEntryClass",
-    path: ["body", "body", 0],
-    nodeType: "ReturnStatement",
-    operation: 'return (require("@napi-rs/keyring") as KeyringModule).Entry;',
-    replacement: 'return (require("node:fs") as KeyringModule).Entry;',
-    neighborSuffix:
-      "export function untrusted(value: unknown): KeyringModule {\nreturn value as KeyringModule;\n}\n",
-    diagnostic: ["forward.ts:10:", "[Error/typescript(no-unsafe-type-assertion)]"],
-  },
-  {
     name: "resolved native keyring binding",
     source:
-      'import type * as keyring from "@napi-rs/keyring";\nimport { createRequire } from "node:module";\nimport { dirname, join } from "node:path";\nconst require = createRequire(import.meta.url);\ntype KeyringModule = Pick<typeof keyring, "Entry">;\nexport function loadKeyringNativeBindingFallback(): KeyringModule {\nconst target = { packageName: "@napi-rs/keyring-darwin-arm64", bindingFile: "keyring.darwin-arm64.node" };\nconst packageJsonPath = require.resolve(`${target.packageName}/package.json`);\n// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-018: load the native Entry declaration.\nreturn require(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;\n}\n',
+      'import type * as keyring from "@napi-rs/keyring";\nimport { createRequire } from "node:module";\nimport { dirname, join } from "node:path";\nconst require = createRequire(import.meta.url);\ntype KeyringModule = Pick<typeof keyring, "AsyncEntry">;\nexport function loadKeyringNativeBindingFallback(): KeyringModule {\nconst target = { packageName: "@napi-rs/keyring-darwin-arm64", bindingFile: "keyring.darwin-arm64.node" };\nconst packageJsonPath = require.resolve(`${target.packageName}/package.json`);\n// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-018: load the native AsyncEntry declaration.\nreturn require(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;\n}\n',
     id: "QX-018",
     rule: "typescript/no-unsafe-type-assertion",
     scopeName: "loadKeyringNativeBindingFallback",
@@ -597,8 +582,6 @@ const keyringCases = [
   }),
 );
 
-const zodModuleSource =
-  'import type * as Zod from "zod";\nimport { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\nexport function createAuthRecordSchemas(): Zod.ZodString {\n// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-021: keep Zod outside cached startup.\nconst { z } = require("zod") as typeof Zod;\nreturn z.string();\n}\n';
 const urlValidationSource =
   'export function resolveServerUrl(resolved: string): string {\ntry {\n// oxlint-disable-next-line eslint/no-new -- QX-026: preserve native URL errors without canonicalizing the returned bytes.\nnew URL(resolved);\n} catch (error) {\nthrow new Error("Invalid URL", { cause: error });\n}\nreturn resolved;\n}\n';
 
@@ -727,23 +710,6 @@ const functionCases = [
       path: ["body", "body", 0],
       nodeType: "VariableDeclaration",
       operation: 'const echoText = String(request.params.arguments?.value ?? "");',
-    },
-  },
-  {
-    name: "lazy declared Zod API",
-    source: zodModuleSource,
-    operation: 'const { z } = require("zod") as typeof Zod;',
-    replacement: 'const { z } = require("node:fs") as typeof Zod;',
-    neighbor: `${zodModuleSource}export function untrusted(value: unknown): typeof Zod {\nreturn value as typeof Zod;\n}\n`,
-    diagnostic: ["forward.ts:10:", "[Error/typescript(no-unsafe-type-assertion)]"],
-    authorized: {
-      ...site,
-      id: "QX-021",
-      rule: "typescript/no-unsafe-type-assertion",
-      scope: { type: "FunctionDeclaration", name: "createAuthRecordSchemas" },
-      path: ["body", "body", 0],
-      nodeType: "VariableDeclaration",
-      operation: 'const { z } = require("zod") as typeof Zod;',
     },
   },
 ];

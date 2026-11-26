@@ -1,6 +1,7 @@
 // types.ts - Core type definitions
 import type {
   Transport as McpTransport,
+  DiscoverResult,
   ListPromptsResult,
   ListResourcesResult,
   ListResourceTemplatesResult,
@@ -212,6 +213,17 @@ export interface CachedPrompt {
   arguments?: { name: string; description?: string; required?: boolean }[];
 }
 
+export type CachedPriorDiscovery =
+  | {
+      kind: "modern";
+      discover: DiscoverResult;
+      cachedAt: number;
+    }
+  | {
+      kind: "legacy";
+      cachedAt: number;
+    };
+
 export interface ServerCacheEntry {
   configHash: string;
   tools: CachedTool[];
@@ -219,6 +231,7 @@ export interface ServerCacheEntry {
   resourceTemplates?: CachedResourceTemplate[];
   prompts?: CachedPrompt[];
   instructions?: string;
+  priorDiscovery?: CachedPriorDiscovery;
   cachedAt: number;
 }
 

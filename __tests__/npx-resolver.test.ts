@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ChildProcess } from "node:child_process";
+import { PassThrough } from "node:stream";
 
 describe("npx-resolver", () => {
   const originalHome = process.env.HOME;
@@ -57,7 +58,7 @@ describe("npx-resolver", () => {
     );
   });
 
-  it("uses cross-spawn to read npm's cache directory", async () => {
+  it("uses async cross-spawn to read npm's cache directory without sync blocking", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
     const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
     const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
@@ -67,19 +68,19 @@ describe("npx-resolver", () => {
     delete process.env.NPM_CONFIG_CACHE;
 
     const binPath = writeCachedPackage(npmCache, "demo-pkg");
-    const crossSpawn = vi.fn<() => void>();
-    const sync = vi.fn<() => { status: number; stdout: string }>(() => ({
-      status: 0,
-      stdout: `${npmCache}\n`,
-    }));
+    const crossSpawn = vi.fn<() => ChildProcess>(() => fakeStdoutChild(`${npmCache}\n`));
+    const sync = vi.fn<() => void>();
     Object.assign(crossSpawn, { sync });
     vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
     const result = await resolveNpxBinary("npx", ["-y", "demo-pkg"]);
 
-    expect(sync).toHaveBeenCalledWith("npm", ["config", "get", "cache"], { encoding: "utf-8" });
-    expect(crossSpawn).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
+    expect(crossSpawn).toHaveBeenCalledWith("npm", ["config", "get", "cache"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
     expect(result?.binPath).toBe(binPath);
   });
 
@@ -92,22 +93,23 @@ describe("npx-resolver", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     delete process.env.NPM_CONFIG_CACHE;
 
-    const proc = new ChildProcess();
-    const crossSpawn = vi.fn<() => ChildProcess>(() => {
+    const crossSpawn = vi.fn<(cmd: string, args: string[]) => ChildProcess>((_cmd, args) => {
+      if (args[0] === "config") {
+        return fakeStdoutChild(`${npmCache}\n`);
+      }
+      const proc = new ChildProcess();
       writeCachedPackage(npmCache, "demo-pkg");
       queueMicrotask(() => proc.emit("close", 0, null));
       return proc;
     });
-    const sync = vi.fn<() => { status: number; stdout: string }>(() => ({
-      status: 0,
-      stdout: `${npmCache}\n`,
-    }));
+    const sync = vi.fn<() => void>();
     Object.assign(crossSpawn, { sync });
     vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
 
     const { resolveNpxBinary } = await import("../npx-resolver.ts");
     const result = await resolveNpxBinary("npx", ["-y", "demo-pkg"]);
 
+    expect(sync).not.toHaveBeenCalled();
     expect(crossSpawn).toHaveBeenCalledWith(
       "npm",
       ["exec", "--yes", "--package", "demo-pkg", "--", "node", "-e", "1"],
@@ -311,7 +313,143 @@ describe("npx-resolver", () => {
       entries: { [JSON.stringify(["npx", "-y", "plainpkg@2.0.0"])]: { packageVersion: "2.0.0" } },
     });
   });
+
+  it("deduplicates concurrent npm config get cache lookups without calling crossSpawn.sync", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
+    const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
+
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    delete process.env.NPM_CONFIG_CACHE;
+
+    const binA = writeCachedPackage(npmCache, "pkg-alpha", "1.0.0", "alpha");
+    const binB = writeCachedPackage(npmCache, "pkg-beta", "1.0.0", "beta");
+    let releaseConfig!: () => void;
+    const configGate = new Promise<void>((resolve) => {
+      releaseConfig = resolve;
+    });
+    const crossSpawn = vi.fn<() => ChildProcess>(() => {
+      const proc = new ChildProcess();
+      const stdout = new PassThrough();
+      proc.stdout = stdout;
+      configGate
+        .then(() => {
+          stdout.end(`${npmCache}\n`);
+          proc.emit("close", 0, null);
+        })
+        .catch(() => {
+          // Test gate never rejects.
+        });
+      return proc;
+    });
+    const sync = vi.fn<() => void>();
+    Object.assign(crossSpawn, { sync });
+    vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
+
+    const { resolveNpxBinary } = await import("../npx-resolver.ts");
+    const first = resolveNpxBinary("npx", ["-y", "pkg-alpha"]);
+    const second = resolveNpxBinary("npx", ["-y", "pkg-beta"]);
+    releaseConfig();
+    const [resultA, resultB] = await Promise.all([first, second]);
+
+    expect(sync).not.toHaveBeenCalled();
+    expect(crossSpawn).toHaveBeenCalledTimes(1);
+    expect(resultA?.binPath).toBe(binA);
+    expect(resultB?.binPath).toBe(binB);
+  });
+
+  it.each(["/usr/local/bin/npx", "/opt/homebrew/bin/npx"])(
+    "resolves absolute npx executable path %s",
+    async (npxPath) => {
+      const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
+      const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
+      const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
+
+      process.env.HOME = home;
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env.NPM_CONFIG_CACHE = npmCache;
+
+      const binPath = writeCachedPackage(npmCache, "abs-pkg");
+      const { resolveNpxBinary } = await import("../npx-resolver.ts");
+      const result = await resolveNpxBinary(npxPath, ["-y", "abs-pkg"]);
+
+      expect(result?.binPath).toBe(binPath);
+    },
+  );
+
+  it.each(["bunx", "/opt/homebrew/bin/bunx", "pnpx", "/usr/local/bin/pnpx"])(
+    "leaves %s untouched without spawning npm",
+    async (command) => {
+      const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
+      const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
+      const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
+
+      process.env.HOME = home;
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env.NPM_CONFIG_CACHE = npmCache;
+
+      writeCachedPackage(npmCache, "demo-pkg");
+      const crossSpawn = vi.fn<() => void>();
+      const sync = vi.fn<() => void>();
+      Object.assign(crossSpawn, { sync });
+      vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
+
+      const { resolveNpxBinary } = await import("../npx-resolver.ts");
+      expect(await resolveNpxBinary(command, ["-y", "demo-pkg"])).toBeNull();
+      expect(crossSpawn).not.toHaveBeenCalled();
+      expect(sync).not.toHaveBeenCalled();
+    },
+  );
+
+  it("escalates hung forceNpxCache child processes from SIGTERM to SIGKILL", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-npx-home-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-mcp-npx-agent-"));
+    const npmCache = mkdtempSync(join(tmpdir(), "pi-mcp-npx-cache-"));
+
+    process.env.HOME = home;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.NPM_CONFIG_CACHE = npmCache;
+
+    const proc = new ChildProcess();
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    vi.spyOn(proc, "kill").mockImplementation((sig) => {
+      signals.push(sig);
+      return true;
+    });
+    const crossSpawn = vi.fn<() => ChildProcess>(() => proc);
+    vi.doMock("cross-spawn", () => ({ default: crossSpawn }));
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { resolveNpxBinary } = await import("../npx-resolver.ts");
+      const controller = new AbortController();
+      const pending = resolveNpxBinary("npx", ["-y", "missing-pkg"], controller.signal);
+      const settled = pending.catch((error: unknown) => error);
+      await expect.poll(() => crossSpawn.mock.calls.length).toBe(1);
+
+      controller.abort(new Error("cancel npx"));
+      expect(await settled).toMatchObject({ message: "cancel npx" });
+      expect(signals).toEqual(["SIGTERM"]);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
+
+function fakeStdoutChild(output: string): ChildProcess {
+  const proc = new ChildProcess();
+  const stdout = new PassThrough();
+  proc.stdout = stdout;
+  queueMicrotask(() => {
+    stdout.end(output);
+    proc.emit("close", 0, null);
+  });
+  return proc;
+}
 
 function writeCachedPackage(
   npmCache: string,

@@ -206,6 +206,7 @@ export async function logoutServer(
   }
 
   state.owner.throwIfInactive();
+  state.manager.invalidatePriorDiscovery(serverName);
   try {
     await state.manager.close(serverName);
   } catch (error) {

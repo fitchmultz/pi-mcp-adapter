@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DiscoverResultSchema,
   PromptSchema,
   ResourceSchema,
   ResourceTemplateSchema,
@@ -14,12 +15,25 @@ import { z } from "zod";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const outputPath = join(root, "metadata-cache-validator.ts");
 
+const cachedPriorDiscoverySchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("modern"),
+    discover: DiscoverResultSchema,
+    cachedAt: z.number().positive(),
+  }),
+  z.object({
+    kind: z.literal("legacy"),
+    cachedAt: z.number().positive(),
+  }),
+]);
+
 // Version-1 tools may lack inputSchema and carry flattened UI metadata. Prompts
 // persist only the fields serializePrompts writes. All native fields come from SDK schemas.
 const cacheEntrySchema = z.object({
   configHash: z.string(),
   cachedAt: z.number().positive(),
   instructions: z.string().optional(),
+  priorDiscovery: cachedPriorDiscoverySchema.optional(),
   tools: z.array(
     ToolSchema.partial({ inputSchema: true }).extend({
       uiResourceUri: z.string().optional(),

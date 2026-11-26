@@ -3,22 +3,24 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { hash } from "node:crypto";
-import { withStorageLock } from "./storage-lock.ts";
+import { withAsyncStorageLock } from "./storage-lock.ts";
 import { OAuthCredentialStoreError } from "./credential-store-errors.ts";
 
 const require = createRequire(import.meta.url);
 const TEST_AUTH_STORE_ENV = "PI_MCP_ADAPTER_TEST_AUTH_STORE";
-// Bounds SQLite busy wait for short local Keychain/libsecret IPC reads and writes (~5-200ms each)
-// across ~8-10 concurrent Pi sessions without hanging the event loop past interactive thresholds.
+// Bounds async SQLite lock waits for short local Keychain/libsecret IPC reads and writes (~5-200ms each)
+// across ~8-10 concurrent Pi sessions without blocking the event loop or hanging past interactive thresholds.
 const AUTH_SECRET_LOCK_TIMEOUT_MS = 2500;
+const AUTH_SECRET_LOCK_INITIAL_POLL_MS = 10;
+const AUTH_SECRET_LOCK_MAX_POLL_MS = 50;
 
-type KeyringEntryConstructor = typeof keyring.Entry;
-type KeyringModule = Pick<typeof keyring, "Entry">;
+type KeyringEntryConstructor = typeof keyring.AsyncEntry;
+type KeyringModule = Pick<typeof keyring, "AsyncEntry">;
 
 export interface AuthSecretStore {
-  read: (account: string) => string | undefined;
-  write: (account: string, payload: string) => void;
-  remove: (account: string) => void;
+  read: (account: string) => Promise<string | undefined>;
+  write: (account: string, payload: string) => Promise<void>;
+  remove: (account: string) => Promise<void>;
 }
 
 let KeyringEntryClass: KeyringEntryConstructor | undefined;
@@ -34,29 +36,31 @@ export function getAuthLockDir(): string {
 }
 
 /** One name's legacy source and URL-scoped records share an OS-user lock. */
-export function withAuthSecretLock<T>(
+export async function withAuthSecretLock<T>(
   service: string,
   legacyAccount: string,
   action: OAuthCredentialStoreError["operation"],
-  operation: () => T,
-): T {
+  operation: () => Promise<T>,
+): Promise<T> {
   if (isProcessLocalAuthStore()) {
     // These stores are process-local; they share no keyring records with other processes.
-    return operation();
+    return await operation();
   }
   const key = hash("sha256", JSON.stringify([service, legacyAccount]), "hex");
   const lockPath = join(getAuthLockDir(), `${key}.sqlite`);
   const acquisition = { entered: false };
   try {
-    return withStorageLock(
+    return await withAsyncStorageLock(
       lockPath,
-      () => {
+      async () => {
         acquisition.entered = true;
-        return operation();
+        return await operation();
       },
       {
         mode: action === "read" ? "read" : "write",
         timeoutMs: AUTH_SECRET_LOCK_TIMEOUT_MS,
+        initialPollMs: AUTH_SECRET_LOCK_INITIAL_POLL_MS,
+        maxPollMs: AUTH_SECRET_LOCK_MAX_POLL_MS,
       },
     );
   } catch (error) {
@@ -73,13 +77,13 @@ export function withAuthSecretLock<T>(
 
 function memoryAuthSecretStore(service: string): AuthSecretStore {
   return {
-    read(account) {
+    async read(account) {
       return memoryAuthEntries.get(`${service}\0${account}`);
     },
-    write(account, payload) {
+    async write(account, payload) {
       memoryAuthEntries.set(`${service}\0${account}`, payload);
     },
-    remove(account) {
+    async remove(account) {
       memoryAuthEntries.delete(`${service}\0${account}`);
     },
   };
@@ -87,26 +91,29 @@ function memoryAuthSecretStore(service: string): AuthSecretStore {
 
 function keyringAuthSecretStore(service: string): AuthSecretStore {
   return {
-    read(account) {
-      return getKeyringEntry(account, service).getPassword() ?? undefined;
+    async read(account) {
+      const entry = await getKeyringEntry(account, service);
+      return (await entry.getPassword()) ?? undefined;
     },
-    write(account, payload) {
-      getKeyringEntry(account, service).setPassword(payload);
+    async write(account, payload) {
+      const entry = await getKeyringEntry(account, service);
+      await entry.setPassword(payload);
     },
-    remove(account) {
-      getKeyringEntry(account, service).deleteCredential();
+    async remove(account) {
+      const entry = await getKeyringEntry(account, service);
+      await entry.deleteCredential();
     },
   };
 }
 
 const unavailableAuthSecretStore: AuthSecretStore = {
-  read() {
+  async read() {
     throw new Error("simulated secure credential store unavailable");
   },
-  write() {
+  async write() {
     throw new Error("simulated secure credential store unavailable");
   },
-  remove() {
+  async remove() {
     throw new Error("simulated secure credential store unavailable");
   },
 };
@@ -118,13 +125,13 @@ function createKeyRevokedTestError(): Error {
 }
 
 const keyRevokedAuthSecretStore: AuthSecretStore = {
-  read() {
+  async read() {
     throw createKeyRevokedTestError();
   },
-  write() {
+  async write() {
     throw createKeyRevokedTestError();
   },
-  remove() {
+  async remove() {
     throw createKeyRevokedTestError();
   },
 };
@@ -142,9 +149,9 @@ export function getAuthSecretStore(service: string): AuthSecretStore {
   return keyringAuthSecretStore(service);
 }
 
-function getKeyringEntry(account: string, service: string): keyring.Entry {
+async function getKeyringEntry(account: string, service: string): Promise<keyring.AsyncEntry> {
   try {
-    KeyringEntryClass ??= loadKeyringEntryClass();
+    KeyringEntryClass ??= await loadKeyringEntryClass();
     return new KeyringEntryClass(service, account);
   } catch (error) {
     throw new Error(
@@ -154,13 +161,13 @@ function getKeyringEntry(account: string, service: string): keyring.Entry {
   }
 }
 
-function loadKeyringEntryClass(): KeyringEntryConstructor {
+async function loadKeyringEntryClass(): Promise<KeyringEntryConstructor> {
   try {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-018: the lazy published module owns this native Entry declaration.
-    return (require("@napi-rs/keyring") as KeyringModule).Entry;
+    const mod = await import("@napi-rs/keyring");
+    return mod.AsyncEntry;
   } catch (loaderError) {
     try {
-      return loadKeyringNativeBindingFallback(process.platform, process.arch).Entry;
+      return loadKeyringNativeBindingFallback(process.platform, process.arch).AsyncEntry;
     } catch (fallbackError) {
       // oxlint-disable-next-line eslint/preserve-caught-error -- QX-013: retain the primary loader cause and include fallback detail in the message.
       throw new Error(
@@ -186,7 +193,7 @@ function loadKeyringNativeBindingFallback(
   for (const target of targets) {
     try {
       const packageJsonPath = require.resolve(`${target.packageName}/package.json`);
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-018: this resolved platform binding exports the published native Entry class.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- QX-018: this resolved platform binding exports the published native AsyncEntry class.
       return require(join(dirname(packageJsonPath), target.bindingFile)) as KeyringModule;
     } catch (error) {
       lastError = error;

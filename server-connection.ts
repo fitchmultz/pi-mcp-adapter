@@ -1,5 +1,6 @@
 import type { Client } from "@modelcontextprotocol/client";
 import type {
+  CachedPriorDiscovery,
   McpTool,
   McpResource,
   McpResourceTemplate,
@@ -26,6 +27,8 @@ export interface ServerConnection {
   /** True when prompts were advertised but prompts/list failed. */
   promptDiscoveryFailed?: boolean;
   instructions?: string;
+  /** Cached SDK 2.4.0 protocol-era verdict for HTTP StreamableHTTP reconnects. */
+  priorDiscovery?: CachedPriorDiscovery;
   lastUsedAt: number;
   status: "connected" | "closed" | "needs-auth";
   /** Whether this connection was constructed with the native OAuth provider. */
