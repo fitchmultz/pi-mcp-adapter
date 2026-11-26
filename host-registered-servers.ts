@@ -94,9 +94,15 @@ export function resolveHostConfig(input: {
       config = loadMcpConfig(configPath, ctx.cwd, loadOptions);
     } else {
       const registered = readRegisteredMcpServers(pi);
-      const baseConfig =
-        registered.length > 0 ? translateRegisteredMcpServers(registered, ctx.cwd) : undefined;
-      config = loadMcpConfigWithBase(configPath, ctx.cwd, loadOptions, baseConfig);
+      config =
+        registered.length > 0
+          ? loadMcpConfigWithBase(
+              configPath,
+              ctx.cwd,
+              loadOptions,
+              translateRegisteredMcpServers(registered, ctx.cwd),
+            )
+          : loadMcpConfig(configPath, ctx.cwd, loadOptions);
     }
   }
   return {
