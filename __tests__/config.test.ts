@@ -311,7 +311,7 @@ describe("config discovery", () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-extensions-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-extensions-project-"));
     process.env.HOME = home;
-    const file = join(project, ".mcp.json");
+    const file = join(project, ".pi", "fitch-mcp-adapter", "mcp.json");
     const original = {
       extension: { retained: [false, null, 4] },
       settings: { toolPrefix: "none", extension: { retained: true } },
@@ -1462,7 +1462,7 @@ describe("config discovery", () => {
       importKind: undefined,
     });
     expect(provenance.get("projectServer")).toEqual({
-      path: resolve(realProject, ".mcp.json"),
+      path: resolve(realProject, ".pi", "fitch-mcp-adapter", "mcp.json"),
       kind: "project",
       importKind: undefined,
     });
@@ -1547,9 +1547,12 @@ describe("config discovery", () => {
     const userConfig = readJsonServers(getPiGlobalConfigPath());
     expect(userConfig.genericServer).toEqual({ directTools: true });
 
-    const projectConfig = readJsonServers(join(project, ".mcp.json"));
-    expect(projectConfig.projectServer).toMatchObject({
+    const sharedProjectConfig = readJsonServers(join(project, ".mcp.json"));
+    expect(sharedProjectConfig.projectServer).toEqual({
       command: "project",
+    });
+    const projectPiConfig = readJsonServers(join(project, ".pi", "fitch-mcp-adapter", "mcp.json"));
+    expect(projectPiConfig.projectServer).toEqual({
       directTools: ["search"],
     });
   });

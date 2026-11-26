@@ -53,6 +53,9 @@ function clientConfiguration(oauth: OAuthConfig): McpOAuthConfig {
   if (oauth.grantType !== undefined) {
     config.grantType = oauth.grantType;
   }
+  if (oauth.clientRegistration !== undefined) {
+    config.clientRegistration = oauth.clientRegistration;
+  }
   const id = configuredString(oauth.clientId, "clientId");
   if (id !== undefined) {
     config.clientId = id;

@@ -1,18 +1,23 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { getAdapterPath } from "./agent-dir.ts";
+import { getAdapterPath, getAgentPath } from "./agent-dir.ts";
 import type { ImportKind } from "./config-types.ts";
 import type { ConfigSourceSpec } from "./config-contracts.ts";
 
 export const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
-const AGENTS_GLOBAL_CONFIG_PATHS = [
+const AGENTS_GLOBAL_CONFIG_PATHS: readonly string[] = [
   join(homedir(), ".agents", "mcp.json"),
   join(homedir(), ".agents", "mcp", "mcp.json"),
-] as const;
+];
 const PROJECT_CONFIG_NAME = ".mcp.json";
 const PROJECT_NATIVE_PI_CONFIG_NAME = ".pi/mcp.json";
 const PROJECT_PI_CONFIG_NAME = ".pi/fitch-mcp-adapter/mcp.json";
+const PROJECT_CONFIG_MARKERS = [
+  PROJECT_CONFIG_NAME,
+  PROJECT_NATIVE_PI_CONFIG_NAME,
+  PROJECT_PI_CONFIG_NAME,
+] as const;
 export const REPOPROMPT_BINARY_CANDIDATES = [
   join(homedir(), "RepoPrompt", "repoprompt_cli"),
   "/Applications/Repo Prompt.app/Contents/MacOS/repoprompt-mcp",
@@ -40,16 +45,61 @@ export function getPiGlobalConfigPath(overridePath?: string): string {
     : getAdapterPath("mcp.json");
 }
 
+export function getGlobalNativePiConfigPath(): string {
+  return getAgentPath("mcp.json");
+}
+
+function walkProjectConfigDirs(cwd: string): string[] {
+  const start = resolve(cwd);
+  if (isHomePath(start)) {
+    return [start];
+  }
+  const dirs: string[] = [];
+  let current = start;
+  while (true) {
+    if (isHomePath(current)) {
+      break;
+    }
+    dirs.push(current);
+    if (existsSync(join(current, ".git"))) {
+      return dirs;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  // Outside a Git repository, stay inside cwd rather than walking up to shared ancestors like /tmp.
+  return [start];
+}
+
+function resolveProjectConfigPath(cwd: string, relativePath: string): string {
+  const dirs = walkProjectConfigDirs(cwd);
+  for (const dir of dirs) {
+    const candidate = join(dir, relativePath);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  const fallbackDir =
+    dirs.find((dir) => PROJECT_CONFIG_MARKERS.some((marker) => existsSync(join(dir, marker)))) ??
+    dirs.find((dir) => existsSync(join(dir, ".git"))) ??
+    dirs[0] ??
+    resolve(cwd);
+  return join(fallbackDir, relativePath);
+}
+
 export function getProjectConfigPath(cwd = process.cwd()): string {
-  return resolve(cwd, PROJECT_CONFIG_NAME);
+  return resolveProjectConfigPath(cwd, PROJECT_CONFIG_NAME);
 }
 
 export function getProjectNativePiConfigPath(cwd = process.cwd()): string {
-  return resolve(cwd, PROJECT_NATIVE_PI_CONFIG_NAME);
+  return resolveProjectConfigPath(cwd, PROJECT_NATIVE_PI_CONFIG_NAME);
 }
 
 export function getProjectPiConfigPath(cwd = process.cwd()): string {
-  return resolve(cwd, PROJECT_PI_CONFIG_NAME);
+  return resolveProjectConfigPath(cwd, PROJECT_PI_CONFIG_NAME);
 }
 
 function canonicalPath(path: string): string {
@@ -94,13 +144,8 @@ export function isProjectConfigSource(source: ConfigSourceSpec, cwd: string): bo
   return source.scope === "project" || isPathInsideProject(source.readPath, cwd);
 }
 
-export function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
-  const userPath = getPiGlobalConfigPath(overridePath);
-  const projectPath = getProjectConfigPath(cwd);
-  const projectNativePiPath = getProjectNativePiConfigPath(cwd);
-  const projectPiPath = getProjectPiConfigPath(cwd);
+function getGlobalConfigSources(userPath: string, globalNativePiPath: string): ConfigSourceSpec[] {
   const sources: ConfigSourceSpec[] = [];
-
   if (GENERIC_GLOBAL_CONFIG_PATH !== userPath) {
     sources.push({
       id: "shared-global",
@@ -113,9 +158,22 @@ export function getConfigSources(overridePath?: string, cwd = process.cwd()): Co
       scope: "global",
     });
   }
-
   sources.push(...getAgentsGlobalSources(userPath));
-
+  if (
+    globalNativePiPath !== userPath &&
+    globalNativePiPath !== GENERIC_GLOBAL_CONFIG_PATH &&
+    !AGENTS_GLOBAL_CONFIG_PATHS.includes(globalNativePiPath)
+  ) {
+    sources.push({
+      id: "native-pi-global",
+      label: "user-global native Pi MCP",
+      readPath: globalNativePiPath,
+      writePath: userPath,
+      kind: "user",
+      shared: true,
+      scope: "global",
+    });
+  }
   sources.push({
     id: "pi-global",
     label: "Pi global override",
@@ -125,21 +183,32 @@ export function getConfigSources(overridePath?: string, cwd = process.cwd()): Co
     shared: false,
     scope: "global",
   });
+  return sources;
+}
 
+function getProjectConfigSources(paths: {
+  readonly userPath: string;
+  readonly globalNativePiPath: string;
+  readonly projectPath: string;
+  readonly projectNativePiPath: string;
+  readonly projectPiPath: string;
+}): ConfigSourceSpec[] {
+  const { userPath, globalNativePiPath, projectPath, projectNativePiPath, projectPiPath } = paths;
+  const sources: ConfigSourceSpec[] = [];
   if (projectPath !== userPath) {
     sources.push({
       id: "shared-project",
       label: "project standard MCP",
       readPath: projectPath,
-      writePath: projectPath,
+      writePath: projectPiPath,
       kind: "project",
       shared: true,
       scope: "project",
     });
   }
-
   if (
     projectNativePiPath !== userPath &&
+    projectNativePiPath !== globalNativePiPath &&
     projectNativePiPath !== projectPath &&
     projectNativePiPath !== projectPiPath
   ) {
@@ -153,7 +222,6 @@ export function getConfigSources(overridePath?: string, cwd = process.cwd()): Co
       scope: "project",
     });
   }
-
   if (projectPiPath !== userPath && projectPiPath !== projectPath) {
     sources.push({
       id: "pi-project",
@@ -165,8 +233,22 @@ export function getConfigSources(overridePath?: string, cwd = process.cwd()): Co
       scope: "project",
     });
   }
-
   return sources;
+}
+
+export function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
+  const userPath = getPiGlobalConfigPath(overridePath);
+  const globalNativePiPath = getGlobalNativePiConfigPath();
+  return [
+    ...getGlobalConfigSources(userPath, globalNativePiPath),
+    ...getProjectConfigSources({
+      userPath,
+      globalNativePiPath,
+      projectPath: getProjectConfigPath(cwd),
+      projectNativePiPath: getProjectNativePiConfigPath(cwd),
+      projectPiPath: getProjectPiConfigPath(cwd),
+    }),
+  ];
 }
 
 function getAgentsGlobalSources(userPath: string): ConfigSourceSpec[] {

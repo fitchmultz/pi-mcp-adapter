@@ -16,7 +16,7 @@ import {
 } from "./ui-tool-visibility.ts";
 import {
   isServerDisabled,
-  isToolAllowed,
+  isServerToolAllowed,
   resolveToolPrefix,
   type ToolMetadata,
   type McpTool,
@@ -85,12 +85,11 @@ export class UiToolProxy {
     const tool = connection.tools.find((entry) => entry.name === name);
     if (
       !tool ||
-      !isToolAllowed(
+      !isServerToolAllowed(
         name,
         options.serverName,
         resolveToolPrefix(definition, options.config?.settings?.toolPrefix),
-        definition.includeTools,
-        definition.excludeTools,
+        definition,
       )
     ) {
       return undefined;

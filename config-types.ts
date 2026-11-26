@@ -60,10 +60,16 @@ export interface OAuthConfig {
   clientUri?: string;
   /** Client metadata document URL. Eligible browser clients default to Pi MCP Adapter's shared identity; false opts out for new registrations. Stored clients keep priority. */
   clientMetadataUrl?: string | false;
+  /** Client registration policy: auto (default), dcr (disable CIMD), or cimd (require CIMD without DCR fallback). */
+  clientRegistration?: "auto" | "dcr" | "cimd";
 }
+
+export type NativeToolExposure = "codemode" | "deferred" | "direct" | "hidden";
 
 // Server configuration
 export interface ServerEntry {
+  /** Optional human-readable server summary (e.g. from native Pi mcp.json or extension registration). */
+  description?: string;
   /** Null is a legacy inactive transport, including in higher-precedence overrides. */
   command?: string | null;
   args?: string[];
@@ -106,6 +112,8 @@ export interface ServerEntry {
   // Include/exclude specific MCP tools/resources by original or prefixed name
   includeTools?: string[];
   excludeTools?: string[];
+  /** Native Pi per-tool exposure rules preserved when hidden wildcards overlap visible rules. */
+  toolExposure?: Record<string, NativeToolExposure>;
   // Require interactive approval before calling matching MCP tools/resources.
   approveTools?: boolean | string[];
   /** Override settings.uiViewer for MCP App UI from this server ("none" disables MCP App UI completely). */

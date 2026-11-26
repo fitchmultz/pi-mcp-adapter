@@ -28,20 +28,41 @@ function readProjectOverride(filePath: string): Record<string, unknown> {
 
 type DisabledOverrideTarget =
   | string
-  | { readonly path?: string | undefined; readonly includeNativePiProject?: boolean }
+  | {
+      readonly path?: string | undefined;
+      readonly includeNativePi?: boolean;
+      readonly includeNativePiProject?: boolean;
+    }
   | undefined;
 
 function resolveDisabledOverrideTarget(target: DisabledOverrideTarget): {
   overridePath: string | undefined;
+  includeNativePi: boolean;
   includeNativePiProject: boolean;
 } {
   if (typeof target === "object") {
+    const includeNativePi = target.includeNativePi !== false;
     return {
       overridePath: target.path,
-      includeNativePiProject: target.includeNativePiProject !== false,
+      includeNativePi,
+      includeNativePiProject: includeNativePi && target.includeNativePiProject !== false,
     };
   }
-  return { overridePath: target, includeNativePiProject: true };
+  return { overridePath: target, includeNativePi: true, includeNativePiProject: true };
+}
+
+function shouldIncludeLowerSource(
+  source: ReturnType<typeof getConfigSources>[number],
+  filePath: string,
+  options: { readonly includeNativePi: boolean; readonly includeNativePiProject: boolean },
+): boolean {
+  if (source.readPath === filePath) {
+    return false;
+  }
+  if (!options.includeNativePi && source.id === "native-pi-global") {
+    return false;
+  }
+  return options.includeNativePiProject || source.id !== "native-pi-project";
 }
 
 function lowerPrecedenceConfig(
@@ -49,14 +70,11 @@ function lowerPrecedenceConfig(
   cwd: string,
   raw: Record<string, unknown>,
 ): McpConfig {
-  const { overridePath, includeNativePiProject } = resolveDisabledOverrideTarget(target);
+  const resolved = resolveDisabledOverrideTarget(target);
   const filePath = getProjectPiConfigPath(cwd);
   let lower: McpConfig = { mcpServers: {} };
-  for (const source of getConfigSources(overridePath, cwd)) {
-    if (source.readPath === filePath) {
-      continue;
-    }
-    if (!includeNativePiProject && source.id === "native-pi-project") {
+  for (const source of getConfigSources(resolved.overridePath, cwd)) {
+    if (!shouldIncludeLowerSource(source, filePath, resolved)) {
       continue;
     }
     const loaded = readConfigSource(source, cwd, lower.mcpServers);

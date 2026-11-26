@@ -32,6 +32,10 @@ export class ConsentManager {
     this.log.debug(`Consent ${approved ? "granted" : "denied"}`, { server: serverName });
   }
 
+  clear(serverName: string): void {
+    this.decisions.delete(serverName);
+  }
+
   ensureApproved(serverName: string, policy: McpUiToolConsent = "once-per-server"): void {
     if (policy === "always") {
       return;

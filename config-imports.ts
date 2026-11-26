@@ -3,7 +3,11 @@ import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import type { ConfigSourceSpec } from "./config-contracts.ts";
-import { readNativePiProjectConfig } from "./config-native-pi.ts";
+import {
+  readNativePiGlobalConfig,
+  readNativePiProjectConfig,
+  resolveNativeCwd,
+} from "./config-native-pi.ts";
 import { isPathInsideProject, IMPORT_PATHS } from "./config-paths.ts";
 import { validateUnknownServerProtocolConfig } from "./config-protocol.ts";
 import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
@@ -132,16 +136,54 @@ export interface LoadedSourceConfig {
   readonly replacedServers?: ReadonlySet<string>;
 }
 
+function projectConfigRoot(source: ConfigSourceSpec): string | undefined {
+  if (source.id === "shared-project") {
+    return dirname(source.readPath);
+  }
+  if (source.id === "pi-project") {
+    return dirname(dirname(dirname(source.readPath)));
+  }
+  return undefined;
+}
+
+function resolveProjectConfigCwds(config: McpConfig, projectRoot: string): McpConfig {
+  let changed = false;
+  const mcpServers: Record<string, ServerEntry> = {};
+  for (const [name, entry] of Object.entries(config.mcpServers)) {
+    if (typeof entry.cwd === "string" && entry.cwd !== "") {
+      const resolved = resolveNativeCwd(entry.cwd, projectRoot);
+      if (resolved !== entry.cwd) {
+        mcpServers[name] = { ...entry, cwd: resolved };
+        changed = true;
+        continue;
+      }
+    }
+    mcpServers[name] = entry;
+  }
+  return changed ? { ...config, mcpServers } : config;
+}
+
 export function readConfigSource(
   source: ConfigSourceSpec,
   cwd: string,
   existingServers?: Readonly<Record<string, ServerEntry>>,
 ): LoadedSourceConfig | null {
+  if (source.id === "native-pi-global") {
+    return readNativePiGlobalConfig(source.readPath, cwd);
+  }
   if (source.id === "native-pi-project") {
-    return readNativePiProjectConfig(source.readPath, cwd, existingServers);
+    // Resolve relative stdio `cwd` against the project root owning `.pi/mcp.json`.
+    const projectRoot = dirname(dirname(source.readPath));
+    return readNativePiProjectConfig(source.readPath, projectRoot, existingServers);
   }
   const config = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-  return config ? { config } : null;
+  if (!config) {
+    return null;
+  }
+  const projectRoot = projectConfigRoot(source);
+  return {
+    config: projectRoot !== undefined ? resolveProjectConfigCwds(config, projectRoot) : config,
+  };
 }
 
 function validateServerMap(raw: Record<string, unknown>): Record<string, ServerEntry> {

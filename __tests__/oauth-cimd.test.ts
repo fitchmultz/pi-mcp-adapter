@@ -475,3 +475,34 @@ it("round-trips custom noninteractive CIMD as a real client_id, not a legacy con
   expect(f.registrations).toHaveLength(0);
   expect(f.authorizations).toHaveLength(0);
 });
+
+it('enforces clientRegistration: "cimd" without falling back to DCR when the AS lacks CIMD support', async () => {
+  const f = await fixture({ clientRegistration: "cimd" });
+  f.metadata.client_id_metadata_document_supported = false;
+  await expect(f.login()).rejects.toThrow(/does not support Client ID Metadata Documents/i);
+  expect(f.registrations).toHaveLength(0);
+  expect(f.authorizations).toHaveLength(0);
+});
+
+it('succeeds with clientRegistration: "cimd" when CIMD is supported and ignores stale stored DCR clients', async () => {
+  const f = await fixture({ clientRegistration: "cimd" });
+  saveAuthEntry(
+    { serverName: f.name, serverUrl: `${f.origin}/mcp` },
+    {
+      serverUrl: `${f.origin}/mcp`,
+      clientInfo: {
+        clientId: "stale-dcr-client",
+        issuer: f.origin,
+        redirectUris: [callbackUri()],
+      },
+    },
+  );
+  expect(await f.login()).toBe("authenticated");
+  expect(f.authorizations[0]?.searchParams.get("client_id")).toBe(metadataDocument.client_id);
+  expect(f.stored()?.clientInfo).toMatchObject({
+    clientId: metadataDocument.client_id,
+    registrationType: "cimd",
+    issuer: f.origin,
+  });
+  expect(f.registrations).toHaveLength(0);
+});

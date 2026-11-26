@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
 import type { ServerProvenance } from "./types.ts";
 import type { ConfigWritePreview } from "./config-contracts.ts";
@@ -106,6 +106,13 @@ function updateSharedServerEntry(filePath: string, serverName: string, entry: Se
   return filePath;
 }
 
+function resolveDirectToolsWritePath(path: string): string {
+  // Never mutate a shared `.mcp.json` with adapter-only `directTools` pins.
+  return basename(path) === ".mcp.json"
+    ? join(dirname(path), ".pi", "fitch-mcp-adapter", "mcp.json")
+    : path;
+}
+
 export function writeDirectToolsConfig(
   changes: Map<string, true | string[] | false>,
   provenance: Map<string, ServerProvenance>,
@@ -120,7 +127,7 @@ export function writeDirectToolsConfig(
       continue;
     }
 
-    const targetPath = prov.path;
+    const targetPath = resolveDirectToolsWritePath(prov.path);
 
     const entries = byPath.get(targetPath) ?? [];
     entries.push({ name: serverName, value });

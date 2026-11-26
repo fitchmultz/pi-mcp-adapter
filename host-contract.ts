@@ -18,6 +18,7 @@ export interface McpAdapterHost {
   readonly directToolsFrozen: boolean;
   syncToolSurface: () => void;
   applyDirectToolConfigChanges: (changes: Map<string, true | string[] | false>) => void;
+  syncWorkingDirectory: (ctx: ExtensionContext) => Promise<void>;
   ensureCommandState: (
     owner: McpRuntimeOwner | null,
     ctx: ExtensionContext,
@@ -67,6 +68,6 @@ export function isBuiltinMcpActive(pi: Pick<ExtensionAPI, "getCommands"> | undef
 
 export function nativePiConfigOptions(
   pi: Pick<ExtensionAPI, "getCommands"> | undefined,
-): { readonly includeNativePiProject: false } | undefined {
-  return isBuiltinMcpActive(pi) ? { includeNativePiProject: false } : undefined;
+): { readonly includeNativePi: false } | undefined {
+  return isBuiltinMcpActive(pi) ? { includeNativePi: false } : undefined;
 }

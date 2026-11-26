@@ -1,6 +1,7 @@
 import {
   OAuthError,
   OAuthErrorCode,
+  type OAuthDiscoveryState,
   type StoredOAuthTokens,
   type StoredOAuthClientInformation,
 } from "@modelcontextprotocol/client";
@@ -57,12 +58,41 @@ export function canUseStoredClient(
   if (isConfiguredClientStub(clientInfo)) {
     return false;
   }
+  if (config.clientRegistration === "cimd" && clientInfo.registrationType !== "cimd") {
+    return false;
+  }
   validateStoredRegistration(clientInfo, config);
   const expires = clientInfo.clientSecretExpiresAt;
   if (expires !== undefined && expires !== 0 && expires < Date.now() / 1000) {
     return false;
   }
   return compatibleIssuer(clientInfo.issuer, issuer);
+}
+
+export function assertCimdRegistrationAllowed(
+  config: McpOAuthConfig,
+  serverName: string,
+  clientMetadataUrl: string | undefined,
+  discoveryState: OAuthDiscoveryState | undefined,
+): void {
+  if (config.clientRegistration !== "cimd") {
+    return;
+  }
+  if (clientMetadataUrl === undefined) {
+    throw new OAuthError(
+      OAuthErrorCode.InvalidClientMetadata,
+      `OAuth clientRegistration "cimd" is configured for ${serverName}, but no eligible Client ID Metadata Document URL is available`,
+    );
+  }
+  if (
+    discoveryState !== undefined &&
+    discoveryState.authorizationServerMetadata?.client_id_metadata_document_supported !== true
+  ) {
+    throw new OAuthError(
+      OAuthErrorCode.InvalidClientMetadata,
+      `OAuth server for ${serverName} does not support Client ID Metadata Documents; refusing dynamic client registration because clientRegistration is "cimd"`,
+    );
+  }
 }
 
 function compatibleIssuer(stored: string | undefined, current: string | undefined): boolean {

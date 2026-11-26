@@ -57,7 +57,8 @@ const mocks = vi.hoisted(() => ({
   truncateAtWord: vi.fn<typeof Utils.truncateAtWord>(),
 }));
 
-vi.mock("../init.ts", () => ({
+vi.mock("../init.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof Init>()),
   initializeMcp: mocks.initializeMcp,
   updateStatusBar: mocks.updateStatusBar,
   flushMetadataCache: mocks.flushMetadataCache,
@@ -70,7 +71,8 @@ vi.mock("../mcp-oauth-runtime.ts", async (importOriginal) => ({
   shutdownOAuth: mocks.shutdownOAuth,
 }));
 
-vi.mock("../config.ts", () => ({
+vi.mock("../config.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof Config>()),
   loadMcpConfig: mocks.loadMcpConfig,
   cloneMcpConfig: mocks.cloneMcpConfig,
   isPathInsideProject: mocks.isPathInsideProject,
@@ -1701,24 +1703,25 @@ describe("mcpAdapter session lifecycle", () => {
     }
   });
 
-  it("restarts the MCP session on cwd change while keeping frozen direct tools intact when effective config is unchanged", async () => {
+  it("reconciles in place on cwd change while keeping unaffected servers and frozen direct tools intact", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {
       // Suppress stdout in test output while asserting no stdout log was written.
     });
     try {
       const config: McpConfig = {
-        mcpServers: { demo: { command: "demo", directTools: true } },
+        mcpServers: {
+          remote: { url: "https://remote.example.test/mcp", directTools: true },
+        },
         settings: { freezeDirectTools: true },
       };
+      const state = createState();
+      state.config = structuredClone(config);
+      state.toolMetadata.set("remote", [
+        { name: "remote_search", originalName: "search", description: "Search" },
+      ]);
+      state.approvedToolCalls.set("remote\u0000search", true);
       mocks.loadMcpConfig.mockImplementation(() => structuredClone(config));
-      mocks.initializeMcp.mockImplementation(async () => {
-        const state = createState();
-        state.config = structuredClone(config);
-        state.toolMetadata.set("demo", [
-          { name: "demo_search", originalName: "search", description: "Search" },
-        ]);
-        return state;
-      });
+      mocks.initializeMcp.mockResolvedValue(state);
 
       const { default: adapter } = await import("../index.ts");
       const { api, spies, handlers, tool: registeredTool } = await createPi();
@@ -1729,57 +1732,59 @@ describe("mcpAdapter session lifecycle", () => {
       expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
       // Routine freeze activation must not log to stdout and corrupt the interactive TUI.
       expect(consoleLog).not.toHaveBeenCalled();
-      expect(api.getActiveTools()).toContain("demo_search");
+      expect(api.getActiveTools()).toContain("remote_search");
       const firstOwner = requireValue(mocks.initializeMcp.mock.calls[0]?.[2]);
       spies.registerTool.mockClear();
       spies.setActiveTools.mockClear();
       mocks.loadMetadataCache.mockClear();
 
-      // Same effective config in a sibling cwd: session restarts cleanly (resetting all cwd-bound state),
-      // while frozen tool declarations stay untouched so the model's prompt prefix cache stays warm.
-      mocks.initializeMcp.mockImplementationOnce(async () => {
-        const state = createState();
-        state.config = structuredClone(config);
-        state.toolMetadata.set("demo", [
-          { name: "demo_search", originalName: "search", description: "Search v2" },
-          { name: "demo_extra", originalName: "extra", description: "Extra" },
-        ]);
-        return state;
-      });
+      // Same effective config in a sibling cwd: session stays alive in place, preserving approvals
+      // and frozen tool declarations so the model's prompt prefix cache stays warm.
       await handlers.emitBeforeAgentStart({ cwd: "/workspace/b" });
       await nextTurn();
 
-      expect(mocks.initializeMcp).toHaveBeenCalledTimes(2);
-      expect(firstOwner.isActive()).toBe(false);
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+      expect(firstOwner.isActive()).toBe(true);
+      expect(state.approvedToolCalls.get("remote\u0000search")).toBe(true);
       expect(spies.registerTool).not.toHaveBeenCalled();
       expect(spies.setActiveTools).not.toHaveBeenCalled();
-      expect(registeredTool("demo_search").description).toMatch(/^Search\n/);
-      expect(api.getActiveTools()).not.toContain("demo_extra");
+      expect(registeredTool("remote_search").description).toMatch(/^Search\n/);
 
-      // Changed effective config in another cwd: unfreezes and resyncs tool declarations for the new project.
-      const nextConfig: McpConfig = {
+      // Changed effective config in another cwd while freezeDirectTools stays enabled: keeps
+      // the session alive and directToolsFrozen intact without busting the prompt cache.
+      const nextFrozenConfig: McpConfig = {
         mcpServers: {
-          demo: { command: "demo", directTools: true },
-          extra: { url: "https://extra.example.test/mcp", directTools: true },
+          remote: { url: "https://remote.example.test/mcp", directTools: true },
+          extra: { url: "https://extra.example.test/mcp" },
         },
         settings: { freezeDirectTools: true },
       };
-      mocks.loadMcpConfig.mockImplementation(() => structuredClone(nextConfig));
-      mocks.initializeMcp.mockImplementationOnce(async () => {
-        const state = createState();
-        state.config = structuredClone(nextConfig);
-        state.toolMetadata.set("demo", [
-          { name: "demo_search", originalName: "search", description: "Search" },
-        ]);
-        state.toolMetadata.set("extra", [
-          { name: "extra_ping", originalName: "ping", description: "Ping" },
-        ]);
-        return state;
-      });
+      mocks.loadMcpConfig.mockImplementation(() => structuredClone(nextFrozenConfig));
       await handlers.emitBeforeAgentStart({ cwd: "/workspace/c" });
       await nextTurn();
 
-      expect(mocks.initializeMcp).toHaveBeenCalledTimes(3);
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+      expect(firstOwner.isActive()).toBe(true);
+      expect(state.config.mcpServers.extra).toBeDefined();
+      expect(spies.registerTool).not.toHaveBeenCalled();
+
+      // Unfreezing in another cwd resyncs tool declarations in place without restarting the session.
+      const unfrozenConfig: McpConfig = {
+        mcpServers: {
+          remote: { url: "https://remote.example.test/mcp", directTools: true },
+          extra: { url: "https://extra.example.test/mcp", directTools: true },
+        },
+        settings: { freezeDirectTools: false },
+      };
+      mocks.loadMcpConfig.mockImplementation(() => structuredClone(unfrozenConfig));
+      state.toolMetadata.set("extra", [
+        { name: "extra_ping", originalName: "ping", description: "Ping" },
+      ]);
+      await handlers.emitBeforeAgentStart({ cwd: "/workspace/d" });
+      await nextTurn();
+
+      expect(mocks.initializeMcp).toHaveBeenCalledTimes(1);
+      expect(firstOwner.isActive()).toBe(true);
       expect(spies.registerTool).toHaveBeenCalled();
       expect(api.getActiveTools()).toContain("extra_ping");
     } finally {

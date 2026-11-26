@@ -60,17 +60,21 @@ Pi also reads Pi-owned override files for settings and host-specific compatibili
 
 Host-specific configs are detected and shown by `/mcp setup` and `fitch-mcp-adapter init`, but they are not loaded automatically. To explicitly opt in to host-config fallback discovery, set `settings.hostConfigDiscovery` to `"on"` or run `fitch-mcp-adapter init --discover-host-configs`. The default is `"off"`. Host configs are lower precedence than every shared and Pi-owned source, and `/mcp setup` continues to offer explicit import adoption. Discovery reports source paths, provenance, and same-name conflicts; it never writes to external host files or silently launches commands from them.
 
-The adapter also reads Pi's native project config (`.pi/mcp.json`) read-only once the project is trusted, translating native Pi fields (`enabled`, `exposure`, `toolExposure`, `timeout`, stdio `~/` / relative `cwd`, and supported OAuth fields) into adapter behavior while keeping adapter writes in `.pi/fitch-mcp-adapter/mcp.json`. In the Pi CLI, registering `/mcp` replaces Pi's built-in MCP extension automatically; in SDK hosts that explicitly load Pi's `createMcpExtension()` alongside the adapter, the adapter detects the coexisting MCP extension and skips `.pi/mcp.json` so servers are never started twice. Invalid entries in `.pi/mcp.json` warn and are skipped individually.
+The adapter also reads Pi's native global (`<Pi agent dir>/mcp.json`) and project (`.pi/mcp.json`, once the project is trusted) configs read-only, as well as servers registered by other Pi extensions via `pi.registerMcpServer()`. It translates native Pi fields (`description`, `enabled`, `exposure`, `toolExposure` including mixed hidden-wildcard and exact-visible rules, `timeout`, stdio `~/` / relative `cwd`, and OAuth fields including strict `clientRegistration: "cimd"` without DCR fallback) into adapter behavior while keeping adapter writes in Pi-owned override files (`<Pi agent dir>/fitch-mcp-adapter/mcp.json` and `.pi/fitch-mcp-adapter/mcp.json`). In the Pi CLI, registering `/mcp` replaces Pi's built-in MCP extension automatically; in SDK hosts that explicitly load Pi's `createMcpExtension()` alongside the adapter, the adapter detects the coexisting MCP extension and skips both native Pi config files and extension-registered servers so servers are never started twice. Invalid entries in native Pi configs warn and are skipped individually. On `mcp_servers_change`, newly registered or updated extension servers connect and unregistered servers disconnect without disrupting unrelated config servers.
 
-Precedence is:
+Project config files (`.mcp.json`, `.pi/mcp.json`, and `.pi/fitch-mcp-adapter/mcp.json`) are discovered inside a Git repository by walking upward from the session working directory to the nearest `.git` root (stopping before the home directory), with an explicit file in the current directory taking precedence over ancestors. Outside a Git repository, only the current working directory is checked so ancestor directories like `/tmp` are never read or modified.
 
+Precedence is (later entries win):
+
+0. Extension-registered servers from `pi.registerMcpServer()` (lowest precedence relative to file configs; override-only adapter entries still layer on top)
 1. `~/.config/mcp/mcp.json`
 2. `~/.agents/mcp.json`
 3. `~/.agents/mcp/mcp.json`
-4. `<Pi agent dir>/fitch-mcp-adapter/mcp.json`
-5. `.mcp.json`
-6. `.pi/mcp.json` (read-only native Pi project config)
-7. `.pi/fitch-mcp-adapter/mcp.json`
+4. `<Pi agent dir>/mcp.json` (read-only native Pi global config)
+5. `<Pi agent dir>/fitch-mcp-adapter/mcp.json`
+6. `.mcp.json`
+7. `.pi/mcp.json` (read-only native Pi project config)
+8. `.pi/fitch-mcp-adapter/mcp.json`
 
 If a higher-precedence config changes a stdio server's `command`, `args`, or `cwd`, it must explicitly supply any `env` values that the new process needs; the previous definition's `env` is not inherited. An OpenCode `environment` override also replaces the previous map rather than merging its keys.
 
@@ -108,16 +112,17 @@ Use the shared MCP files when you want one setup to work across hosts, and Pi-ow
 | `~/.config/mcp/mcp.json`                    | User-global shared MCP config                     |
 | `~/.agents/mcp.json`                        | User-global tool-agnostic MCP config              |
 | `~/.agents/mcp/mcp.json`                    | User-global tool-agnostic MCP config              |
+| `<Pi agent dir>/mcp.json`                   | User-global native Pi MCP config (read-only)      |
 | `.mcp.json`                                 | Project-local shared MCP config                   |
 | `.pi/mcp.json`                              | Project-local native Pi MCP config (read-only)    |
 | `<Pi agent dir>/fitch-mcp-adapter/mcp.json` | Adapter global override and compatibility imports |
-| `.pi/fitch-mcp-adapter/mcp.json`            | Adapter project override                          |
+| `.pi/fitch-mcp-adapter/mcp.json`            | Adapter project override and `directTools` pins   |
 
 The Pi agent dir defaults to `~/.pi/agent` and honors `PI_CODING_AGENT_DIR`. The owned `fitch-mcp-adapter/` root also contains `mcp-cache.json`, `mcp-onboarding.json`, `mcp-npx-cache.json`, and the `mcp-oauth/` legacy import directory.
 
 To switch a shared HTTP server to stdio in Pi, set `command` in the higher-priority file. The override drops the inherited URL and its credentials. A `url` of `null`, `""`, or only whitespace also clears an inherited URL. Do not set both a nonblank `url` and a `command` in the same entry.
 
-For imported or shared global servers, Pi saves only `directTools` selections in its own config, without copying connection details or credentials from the source file.
+For shared global, shared project (`.mcp.json`), native Pi, and imported servers, Pi saves `directTools` selections exclusively in its own override files (`<Pi agent dir>/fitch-mcp-adapter/mcp.json` for user-global/imported servers and `.pi/fitch-mcp-adapter/mcp.json` for project servers), never mutating shared `.mcp.json` or copying connection details or credentials from the source file.
 
 ### SDK configuration
 
@@ -220,9 +225,13 @@ Supplying `beforeExecute` marks the adapter's tools `executionMode: "sequential"
 
 The two callbacks serve different boundaries: `beforeExecute` saves completed workspace writes; `onToolCall` captures the resolved operation and its raw outcome. The host owns `pi.appendEntry()` and the awaited checkpoint of that same native JSONL. Exclude `signal`, serialize thrown errors explicitly, redact sensitive checkpoint bytes, and honor the signal and session/attempt fence. `pi.appendEntry()` alone only persists locally; `pi.events.emit()` is not an awaited barrier. Custom entries do not enter model context automatically: the host must provide truthful recovered results or readback instructions when resuming. The adapter stores no separate transcript or receipts, does not replay calls, and does not invent provider operation keys.
 
-### Runtime shutdown and replacement
+### Runtime shutdown, managed restarts, and working-directory changes
 
 Pi owns session replacement and emits `session_shutdown`. The adapter aborts outgoing activity before awaiting cleanup, closes owned connections, health watchers, OAuth callbacks and UI servers, and reports persistence/cleanup failures. Open approval, sampling and elicitation dialogs are bound to the runtime's session signal, so shutdown dismisses them instead of waiting for an answer; the cancelled dialog replies `cancel`. Actual sampling/elicitation and native send/auth tails remain owned through settlement, even when a public request has already been cancelled. Unfinished callbacks prevent idle connection closure; final shutdown joins transport work. Pending `beforeExecute`/`onToolCall` promises prevent a clean-shutdown success claim. No detached work is declared finished merely because the agent settled.
+
+For Pi's managed restarts (`/restart` and `restartWhenStale`), the adapter listens to `working_session_save`: while the save hold signal is active, tool-surface mutations (`registerTool` and `setActiveTools`) are deferred and flushed safely once the signal aborts, and active OAuth flows, in-flight MCP requests, and running scripts are reported as save blockers. The adapter also registers a fallback `pi.registerToolRenderer` so resumed sessions render persisted MCP tool cards cleanly before servers reconnect.
+
+When the session working directory changes (`before_agent_start` or `/mcp` / `/mcp-auth` slash commands observing a new `ctx.cwd`), the adapter reconciles configuration differentially per server rather than tearing down the session. Unaffected global servers keep their live connections, metadata, session approvals, and open UI sessions, and `settings.freezeDirectTools` stays frozen to preserve the prompt-cache prefix. Only servers whose resolved definition or effective stdio working directory changed (or that were added/removed) reconnect or disconnect, and stale project prompt slash commands stop resolving immediately.
 
 The retired fork `session_checkpoint`/`acquireCheckpoint` APIs are no longer used. Host-supplied `beforeExecute` and raw `onToolCall` capture remain supported; the host still owns durable effect receipts and coherent workspace/session capture. No callback/process-memory recovery or automatic operation replay is promised.
 
@@ -288,6 +297,7 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 
 | Field                                | Description                                                                                                                                                                                                                                                            |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `description`                        | Optional short human/model-readable summary of the server                                                                                                                                                                                                              |
 | `command`                            | Executable for stdio transport; mutually exclusive with `url` and `socket`                                                                                                                                                                                             |
 | `args`                               | Command arguments                                                                                                                                                                                                                                                      |
 | `socket`                             | Explicit `rmcp-mux` Unix-domain socket path; supports `${VAR}`, `$env:VAR`, and `~` expansion and is mutually exclusive with `command` and `url`                                                                                                                       |
@@ -308,6 +318,7 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 | `oauth.clientName`                   | Client display name advertised during dynamic registration                                                                                                                                                                                                             |
 | `oauth.clientUri`                    | Client homepage URI advertised during dynamic registration                                                                                                                                                                                                             |
 | `oauth.clientMetadataUrl`            | Custom HTTPS Client ID Metadata Document URL, or `false` to disable automatic CIMD for new registrations; supports environment interpolation                                                                                                                           |
+| `oauth.clientRegistration`           | Browser client registration policy: `"auto"` (default: prefer CIMD when advertised, else DCR), `"dcr"` (disable automatic CIMD and use DCR), or `"cimd"` (require Client ID Metadata Document support and fail without falling back to DCR)                            |
 | `oauth.skipIssuerMetadataValidation` | Skip only the authorization-server metadata issuer check for a known incompatible provider (default: `false`). Stored issuer and callback checks remain enforced.                                                                                                      |
 | `bearerToken` / `bearerTokenEnv`     | Token or env var name; `bearerToken` supports `${VAR}` and `$env:VAR` interpolation. A leading `!` in `bearerToken` runs a command when the HTTP server connects; use `!!` for a literal leading `!`.                                                                  |
 | `lifecycle`                          | `"lazy"` (default), `"eager"`, `"keep-alive"`, or `"lazy-keep-alive"`                                                                                                                                                                                                  |
@@ -318,6 +329,7 @@ This transport-failure option does not retry OAuth failures, JSON-RPC errors, to
 | `toolPrefix`                         | Override global `settings.toolPrefix` for this server (`"server"`, `"short"`, `"none"`, or `"mcp"`)                                                                                                                                                                    |
 | `includeTools`                       | `string[]` of tool names or glob patterns to expose (matches original names like `get_screenshot` and prefixed names like `figma_get_screenshot`; filters tools only, never resources)                                                                                 |
 | `excludeTools`                       | `string[]` of tool names or glob patterns to hide (applied after `includeTools`; filters tools only, never resources)                                                                                                                                                  |
+| `toolExposure`                       | Per-tool exposure map (`Record<string, "direct" \| "deferred" \| "codemode" \| "hidden">`, supporting `"*"` wildcards and exact visible overrides alongside hidden wildcards, matching native Pi `.pi/mcp.json`)                                                       |
 | `uiViewer`                           | Override global `settings.uiViewer` for MCP App UI from this server (`"auto"`, `"browser"`, `"glimpse"`, or `"none"` to disable MCP App UI completely)                                                                                                                 |
 | `uiToolConsent`                      | Override global `settings.uiToolConsent` for MCP App UI tool calls from this server (`"once-per-server"`, `"always"`, or `"never"`)                                                                                                                                    |
 | `debug`                              | Show server stderr (default: false)                                                                                                                                                                                                                                    |
@@ -330,7 +342,7 @@ Secret values in `headers`, `bearerToken`, `oauth.clientSecret`, `oauth.privateK
 
 ### OAuth client registration
 
-Eligible browser clients automatically use the [Fitch MCP Adapter client metadata document](https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json). The SDK keeps configured `clientId` and usable stored registrations first, then uses the document when the authorization server advertises `client_id_metadata_document_supported: true`. Otherwise it uses dynamic client registration (DCR), if available. An authorization server rejecting or failing to fetch a document does **not** guarantee a fallback to DCR.
+Eligible browser clients automatically use the [Fitch MCP Adapter client metadata document](https://fitchmultz.github.io/pi-mcp-adapter/client-metadata.json). The SDK keeps configured `clientId` and usable stored registrations first, then uses the document when the authorization server advertises `client_id_metadata_document_supported: true`. Under the default `oauth.clientRegistration: "auto"`, it falls back to dynamic client registration (DCR) if available. Set `oauth.clientRegistration: "cimd"` to require Client ID Metadata Document support and fail sign-in without falling back to DCR when the authorization server lacks CIMD support, or set `oauth.clientRegistration: "dcr"` (or `oauth.clientMetadataUrl: false`) to disable automatic CIMD for new registrations. An authorization server rejecting or failing to fetch a document does **not** guarantee a fallback to DCR.
 
 The shared public identity covers `/callback` on HTTP `localhost`, `127.0.0.1`, or `[::1]`, with a variable loopback port. Normal callbacks still use an OS-assigned port. A different `clientName`, `clientUri`, callback path or query keeps DCR; explicitly matching identity values remain eligible. Set `oauth.clientMetadataUrl` to your own document URL for a custom identity/callback, or `false` to opt out. Documents cannot use shared secrets; the shared browser identity is never used for `client_credentials`, cross-app or private-key authentication.
 

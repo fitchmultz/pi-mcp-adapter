@@ -23,10 +23,14 @@ interface ReadUiResourceOptions {
 export class UiResourceHandler {
   private readonly log = logger.child({ component: "UiResourceHandler" });
   private readonly manager: McpServerManager;
-  private readonly config: McpConfig | undefined;
+  private config: McpConfig | undefined;
 
   constructor(manager: McpServerManager, config?: McpConfig) {
     this.manager = manager;
+    this.config = config;
+  }
+
+  setConfig(config: McpConfig): void {
     this.config = config;
   }
 

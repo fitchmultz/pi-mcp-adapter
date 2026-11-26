@@ -82,6 +82,8 @@ export interface McpOAuthConfig {
   clientUri?: string;
   /** Custom client document URL; false disables automatic CIMD for new registrations. */
   clientMetadataUrl?: string | false;
+  /** Client registration policy: auto (default), dcr (disable CIMD), or cimd (require CIMD without DCR fallback). */
+  clientRegistration?: "auto" | "dcr" | "cimd";
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -183,7 +185,11 @@ export function selectClientMetadataUrl(
   config: McpOAuthConfig,
   redirectUrl?: string,
 ): string | undefined {
-  if (config.clientMetadataUrl === false || config.clientSecret !== undefined) {
+  if (
+    config.clientRegistration === "dcr" ||
+    config.clientMetadataUrl === false ||
+    config.clientSecret !== undefined
+  ) {
     return undefined;
   }
   if (

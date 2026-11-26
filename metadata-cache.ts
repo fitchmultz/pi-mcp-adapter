@@ -26,6 +26,7 @@ import {
   type ToolPrefix,
 } from "./types.ts";
 import { buildToolMetadata } from "./tool-metadata.ts";
+import { hasDirectToolExposure } from "./tool-names.ts";
 import {
   CACHE_MAX_AGE_MS,
   isCacheEntry,
@@ -155,6 +156,9 @@ export function computeServerHash(definition: ServerEntry): string {
     exposeResources: definition.exposeResources,
     includeTools: definition.includeTools,
     excludeTools: definition.excludeTools,
+    ...(definition.toolExposure !== undefined
+      ? { toolExposure: Object.entries(definition.toolExposure) }
+      : {}),
   };
   const normalized = stableStringify(identity);
   return hash("sha256", normalized, "hex");
@@ -238,6 +242,7 @@ export function getMissingConfiguredDirectToolServers(
       serverName,
       definition.directTools ?? globalDirect,
       envSelection,
+      definition.toolExposure,
     );
 
     if (!hasDirectTools) {
@@ -257,10 +262,11 @@ function selectedDirectTools(
   serverName: string,
   configured: ServerEntry["directTools"],
   selection: ReturnType<typeof parseDirectToolSelectors> | null,
+  toolExposure?: ServerEntry["toolExposure"],
 ): boolean {
   return selection
     ? selection.servers.has(serverName) || selection.tools.has(serverName)
-    : Boolean(configured);
+    : Boolean(configured) || hasDirectToolExposure(toolExposure);
 }
 
 export function reconstructToolMetadata(
@@ -269,7 +275,7 @@ export function reconstructToolMetadata(
   prefix: ToolPrefix,
   definition: Pick<
     ServerEntry,
-    "exposeResources" | "includeTools" | "excludeTools" | "toolPrefix" | "disabled"
+    "exposeResources" | "includeTools" | "excludeTools" | "toolExposure" | "toolPrefix" | "disabled"
   >,
 ): ToolMetadata[] {
   const key = JSON.stringify([
@@ -278,6 +284,7 @@ export function reconstructToolMetadata(
     definition.exposeResources,
     definition.includeTools,
     definition.excludeTools,
+    definition.toolExposure !== undefined ? Object.entries(definition.toolExposure) : undefined,
     definition.toolPrefix,
     definition.disabled,
   ]);

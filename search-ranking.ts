@@ -6,7 +6,7 @@ import {
   type ToolPrefix,
   getServerPrefix,
   isServerDisabled,
-  isToolAllowed,
+  isServerToolAllowed,
   resolveToolPrefix,
 } from "./types.ts";
 
@@ -146,13 +146,7 @@ function searchCatalog(
           return false;
         }
         const prefix = resolveToolPrefix(definition, state.config.settings?.toolPrefix);
-        return isToolAllowed(
-          match.tool.originalName,
-          match.server,
-          prefix,
-          definition.includeTools,
-          definition.excludeTools,
-        );
+        return isServerToolAllowed(match.tool.originalName, match.server, prefix, definition);
       },
     })
     .map((result) => {

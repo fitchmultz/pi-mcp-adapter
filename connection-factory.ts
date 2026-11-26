@@ -65,6 +65,15 @@ import {
 
 import { ConnectionHandshake } from "./connection-handshake.ts";
 
+let connectionRuntimePromise: Promise<typeof ConnectionRuntime> | undefined;
+
+function loadConnectionRuntime(): Promise<typeof ConnectionRuntime> {
+  connectionRuntimePromise ??= import("./connection-runtime.ts").catch((error: unknown) => {
+    connectionRuntimePromise = undefined;
+    throw error;
+  });
+  return connectionRuntimePromise;
+}
 export class ConnectionFactory {
   authStorageOptions: AuthStorageOptions = {};
   oauthRuntime: McpOAuthRuntime | undefined;
@@ -73,10 +82,11 @@ export class ConnectionFactory {
   readonly priorDiscovery = new PriorDiscoveryCache();
   private traceWriter: McpTraceWriter | undefined;
   private readonly needsAuthTokens = new WeakMap<ServerConnection, TokenSnapshot | undefined>();
+  private readonly retiredTraceWriters: McpTraceWriter[] = [];
 
   readonly lifecycle: ConnectionLifecycle;
   readonly callbacks: ConnectionCallbacks;
-  readonly defaultCwd: string | undefined;
+  defaultCwd: string | undefined;
 
   constructor(
     lifecycle: ConnectionLifecycle,
@@ -88,8 +98,19 @@ export class ConnectionFactory {
     this.defaultCwd = defaultCwd;
   }
 
-  flushTrace(): Promise<void> | undefined {
-    return this.traceWriter?.flush();
+  resetTraceWriter(): void {
+    if (this.traceWriter) {
+      this.retiredTraceWriters.push(this.traceWriter);
+      this.traceWriter = undefined;
+    }
+  }
+
+  async flushTrace(): Promise<void> {
+    const writers = [
+      ...this.retiredTraceWriters.splice(0),
+      ...(this.traceWriter ? [this.traceWriter] : []),
+    ];
+    await Promise.all(writers.map((writer) => writer.flush()));
   }
 
   recordNeedsAuth(connection: ServerConnection, snapshot: TokenSnapshot | undefined): void {
@@ -159,7 +180,7 @@ export class ConnectionFactory {
   ): Promise<ServerConnection> {
     throwIfAborted(signal);
     validateServerProtocolConfig(definition);
-    const runtime = await import("./connection-runtime.ts");
+    const runtime = await loadConnectionRuntime();
     throwIfAborted(signal);
     // createClient claims the client into disposal. From here until setup.connect takes over,
     // the factory owns that claim: any failure below must release it, or the never-connected

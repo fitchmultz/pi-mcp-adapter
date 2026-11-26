@@ -1,5 +1,5 @@
 import { isUnknownArray } from "./config-validation.ts";
-import type { ServerEntry, ToolPrefix } from "./config-types.ts";
+import type { NativeToolExposure, ServerEntry, ToolPrefix } from "./config-types.ts";
 
 /**
  * Get server prefix based on tool prefix mode.
@@ -136,5 +136,57 @@ export function isToolAllowed(
   return (
     isToolIncluded(toolName, serverName, prefix, includeTools) &&
     !isToolExcluded(toolName, serverName, prefix, excludeTools)
+  );
+}
+
+function matchesNativeExposurePattern(pattern: string, toolName: string): boolean {
+  const source = pattern
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${source}$`).test(toolName);
+}
+
+export function resolveToolExposure(
+  toolName: string,
+  toolExposure?: Readonly<Record<string, NativeToolExposure>>,
+): NativeToolExposure | undefined {
+  if (!toolExposure) {
+    return undefined;
+  }
+  const exact = toolExposure[toolName];
+  if (exact !== undefined) {
+    return exact;
+  }
+  for (const [pattern, exposure] of Object.entries(toolExposure)) {
+    if (pattern.includes("*") && matchesNativeExposurePattern(pattern, toolName)) {
+      return exposure;
+    }
+  }
+  return undefined;
+}
+
+export function hasDirectToolExposure(
+  toolExposure?: Readonly<Record<string, NativeToolExposure>>,
+): boolean {
+  return toolExposure !== undefined && Object.values(toolExposure).includes("direct");
+}
+
+export function isToolAllowedByExposure(
+  toolName: string,
+  toolExposure?: Readonly<Record<string, NativeToolExposure>>,
+): boolean {
+  return resolveToolExposure(toolName, toolExposure) !== "hidden";
+}
+
+export function isServerToolAllowed(
+  toolName: string,
+  serverName: string,
+  prefix: ToolPrefix,
+  definition: Pick<ServerEntry, "includeTools" | "excludeTools" | "toolExposure">,
+): boolean {
+  return (
+    isToolAllowed(toolName, serverName, prefix, definition.includeTools, definition.excludeTools) &&
+    isToolAllowedByExposure(toolName, definition.toolExposure)
   );
 }

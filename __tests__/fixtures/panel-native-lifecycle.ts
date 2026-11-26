@@ -132,10 +132,13 @@ try {
   }
   assert.equal(disposed, 3);
 
-  // Saving persists the pin and finishes live refresh, with its visible notice, before close.
+  // Saving persists the pin to `.pi/fitch-mcp-adapter/mcp.json` (never mutating shared `.mcp.json`)
+  // and finishes live refresh, with its visible notice, before close.
   const projectConfig = join(directory, ".mcp.json");
+  const projectPiConfig = join(directory, ".pi", "fitch-mcp-adapter", "mcp.json");
   const cachePath = getMetadataCachePath();
   await mkdir(dirname(cachePath), { recursive: true });
+  await mkdir(dirname(projectPiConfig), { recursive: true });
   const cachedServer = {
     configHash: computeServerHash(definition),
     cachedAt: Date.now(),
@@ -143,8 +146,10 @@ try {
     resources: [],
   };
   await writeFile(cachePath, JSON.stringify({ version: 2, servers: { demo: cachedServer } }));
+  const sharedProjectBytes = JSON.stringify({ mcpServers: { demo: definition } });
   for (const refreshFails of [false, true]) {
-    await writeFile(projectConfig, JSON.stringify({ mcpServers: { demo: definition } }));
+    await writeFile(projectConfig, sharedProjectBytes);
+    await writeFile(projectPiConfig, JSON.stringify({ mcpServers: {} }));
     events.length = 0;
     const refreshStarted = Promise.withResolvers<null>();
     const releaseRefresh = Promise.withResolvers<null>();
@@ -174,8 +179,9 @@ try {
     panel.handleInput("\x03");
     panel.handleInput("\x1b");
     assert(tui.hasOverlay());
-    assert.deepEqual(JSON.parse(await readFile(projectConfig, "utf8")), {
-      mcpServers: { demo: { ...definition, directTools: true } },
+    assert.equal(await readFile(projectConfig, "utf8"), sharedProjectBytes);
+    assert.deepEqual(JSON.parse(await readFile(projectPiConfig, "utf8")), {
+      mcpServers: { demo: { directTools: true } },
     });
     releaseRefresh.resolve(null);
     assert.deepEqual(await saving, { configChanged: refreshFails });
@@ -191,11 +197,12 @@ try {
   assert.equal(disposed, 5);
 
   // A real held config sidecar must not be reported as a persisted update.
-  const configLock = new DatabaseSync(`${projectConfig}.lock.sqlite`);
+  const configLock = new DatabaseSync(`${projectPiConfig}.lock.sqlite`);
   try {
     configLock.exec("BEGIN EXCLUSIVE");
-    await writeFile(projectConfig, JSON.stringify({ mcpServers: { demo: definition } }));
-    const before = await readFile(projectConfig, "utf8");
+    await writeFile(projectConfig, sharedProjectBytes);
+    await writeFile(projectPiConfig, JSON.stringify({ mcpServers: {} }));
+    const before = await readFile(projectPiConfig, "utf8");
     events.length = 0;
     shown = Promise.withResolvers();
     const blockedSave = openMcpPanel({
@@ -211,7 +218,8 @@ try {
     panel.handleInput(" ");
     panel.handleInput("\x13");
     assert.deepEqual(await blockedSave, { configChanged: false });
-    assert.equal(await readFile(projectConfig, "utf8"), before);
+    assert.equal(await readFile(projectPiConfig, "utf8"), before);
+    assert.equal(await readFile(projectConfig, "utf8"), sharedProjectBytes);
     assert.equal(tui?.hasOverlay(), false);
     assert.equal(events.length, 2);
     assert.match(events[0] ?? "", /^error: Failed to save direct tools: Storage lock is busy:/);
@@ -244,7 +252,8 @@ try {
     assert.deepEqual(JSON.parse(await readFile(globalConfig, "utf8")), {
       mcpServers: { first: { ...definition, directTools: true } },
     });
-    assert.equal(await readFile(projectConfig, "utf8"), before);
+    assert.equal(await readFile(projectPiConfig, "utf8"), before);
+    assert.equal(await readFile(projectConfig, "utf8"), sharedProjectBytes);
     assert.equal(events.length, 2);
     assert.match(
       events[0] ?? "",

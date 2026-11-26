@@ -57,7 +57,7 @@ export function registerServers(state: McpExtensionState, serverEntries: ServerE
     }
   }
 }
-function registerLifecycle(
+export function registerLifecycle(
   state: McpExtensionState,
   name: string,
   definition: ServerDefinition,
@@ -96,7 +96,7 @@ function restoreCachedResources(
     );
   }
 }
-function restoreCachedMetadata(
+export function restoreCachedMetadata(
   state: McpExtensionState,
   input: {
     name: string;

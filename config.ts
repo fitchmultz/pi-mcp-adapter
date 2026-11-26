@@ -28,9 +28,15 @@ import {
   readValidatedConfig,
   extractServers,
 } from "./config-imports.ts";
-import { mergeConfigs, expandImports } from "./config-merge.ts";
+import {
+  mergeConfigs,
+  expandImports,
+  hasConfiguredTransport,
+  pruneOrphanOverrideEntries,
+} from "./config-merge.ts";
 export type * from "./config-contracts.ts";
 export {
+  getGlobalNativePiConfigPath,
   getPiGlobalConfigPath,
   getProjectConfigPath,
   getProjectNativePiConfigPath,
@@ -77,10 +83,12 @@ function getFilteredConfigSources(
   options: LoadMcpConfigOptions = {},
 ): ConfigSourceSpec[] {
   const includeProject = options.includeProject !== false;
-  const includeNativePiProject = options.includeNativePiProject !== false;
+  const includeNativePi = options.includeNativePi !== false;
+  const includeNativePiProject = includeNativePi && options.includeNativePiProject !== false;
   return getConfigSources(overridePath, cwd).filter(
     (source) =>
       (includeProject || !isProjectConfigSource(source, cwd)) &&
+      (includeNativePi || source.id !== "native-pi-global") &&
       (includeNativePiProject || source.id !== "native-pi-project"),
   );
 }
@@ -88,7 +96,7 @@ function getFilteredConfigSources(
 export function getMcpDiscoverySummary(
   overridePath?: string,
   cwd = process.cwd(),
-  options?: Pick<LoadMcpConfigOptions, "includeNativePiProject">,
+  options?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
 ): McpDiscoverySummary {
   const sourceSpecs = getFilteredConfigSources(overridePath, cwd, options);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
@@ -186,30 +194,79 @@ export function loadMcpConfig(
   cwd = process.cwd(),
   options: LoadMcpConfigOptions = {},
 ): McpConfig {
+  return loadMcpConfigWithBase(overridePath, cwd, options);
+}
+
+function collectReplacedServers(
+  replacedServers: ReadonlySet<string> | undefined,
+  expanded: McpConfig,
+  remainingBaseServers: Set<string>,
+): ReadonlySet<string> | undefined {
+  if (remainingBaseServers.size === 0) {
+    return replacedServers;
+  }
+  const combined = new Set(replacedServers ?? []);
+  for (const [name, entry] of Object.entries(expanded.mcpServers)) {
+    if (hasConfiguredTransport(entry) && remainingBaseServers.has(name)) {
+      combined.add(name);
+      remainingBaseServers.delete(name);
+    }
+  }
+  return combined.size > 0 ? combined : undefined;
+}
+
+function mergeLayerWithBase(
+  config: McpConfig,
+  next: McpConfig,
+  replacedServers: ReadonlySet<string> | undefined,
+  remainingBaseServers: Set<string>,
+): McpConfig {
+  const replaceServers = collectReplacedServers(replacedServers, next, remainingBaseServers);
+  return mergeConfigs(config, next, replaceServers ? { replaceServers } : undefined);
+}
+
+/**
+ * Load and merge file config layers on top of an optional lower-precedence base (such as
+ * `pi.registerMcpServer()` entries), pruning orphan override-only stubs at each scope boundary
+ * so stale pins never survive server removal or bleed across unrelated projects.
+ */
+export function loadMcpConfigWithBase(
+  overridePath?: string,
+  cwd = process.cwd(),
+  options: LoadMcpConfigOptions = {},
+  baseConfig?: McpConfig,
+): McpConfig {
   const includeProject = options.includeProject !== false;
   const sourceSpecs = getFilteredConfigSources(overridePath, cwd, options);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd, includeProject);
-  // Host files are a lower-precedence fallback. This ordering means an opt-in
-  // discovery cannot override a shared or Pi-owned definition, and all normal
-  // URL-bound credential stripping remains in mergeServerMaps.
-  let config: McpConfig =
-    hostConfigDiscovery === "on"
-      ? loadDiscoveredHostConfigs(cwd, includeProject)
-      : { mcpServers: {} };
+  let config: McpConfig = baseConfig ? cloneMcpConfig(baseConfig) : { mcpServers: {} };
+  const remainingBaseServers = new Set(Object.keys(config.mcpServers));
+  if (hostConfigDiscovery === "on") {
+    config = mergeLayerWithBase(
+      config,
+      loadDiscoveredHostConfigs(cwd, includeProject),
+      undefined,
+      remainingBaseServers,
+    );
+  }
 
   for (const source of sourceSpecs) {
     const loaded = readConfigSource(source, cwd, config.mcpServers);
     if (!loaded) {
       continue;
     }
-    config = mergeConfigs(
+    config = mergeLayerWithBase(
       config,
       expandImports(loaded.config, cwd, includeProject),
-      loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
+      loaded.replacedServers,
+      remainingBaseServers,
     );
+    if (source.id === "pi-global" || source.id === "pi-project") {
+      config = pruneOrphanOverrideEntries(config);
+    }
   }
 
-  return config;
+  return pruneOrphanOverrideEntries(config);
 }
 
 function supportsHostDiscoverySetting(
@@ -218,7 +275,9 @@ function supportsHostDiscoverySetting(
   includeProject: boolean,
 ): boolean {
   return (
-    source.id !== "native-pi-project" && (includeProject || !isProjectConfigSource(source, cwd))
+    source.id !== "native-pi-global" &&
+    source.id !== "native-pi-project" &&
+    (includeProject || !isProjectConfigSource(source, cwd))
   );
 }
 
@@ -392,7 +451,7 @@ export {
 export function getServerProvenance(
   overridePath?: string,
   cwd = process.cwd(),
-  options?: Pick<LoadMcpConfigOptions, "includeNativePiProject">,
+  options?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
 ): Map<string, ServerProvenance> {
   const provenance = new Map<string, ServerProvenance>();
   const userPath = getPiGlobalConfigPath(overridePath);

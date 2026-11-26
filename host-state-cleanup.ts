@@ -1,5 +1,8 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
+import { shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
+import type { McpRuntimeOwner } from "./runtime-owner.ts";
 
 /** Owns the final UI handle release and persistence/transport teardown for a state. */
 export class McpStateCleanup {
@@ -48,4 +51,29 @@ export class McpStateCleanup {
       throw new AggregateError(failures, "MCP state persistence/cleanup failed");
     }
   }
+}
+
+export async function stopRuntimeSession(input: {
+  readonly events: ExtensionAPI["events"];
+  readonly state: McpExtensionState | null;
+  readonly owner: McpRuntimeOwner | null;
+  readonly oauthRuntime: McpOAuthRuntime | null;
+  readonly stateReason: string;
+  readonly ownerReason: string;
+  readonly flush: ((state: McpExtensionState) => void) | undefined;
+}): Promise<unknown[]> {
+  const stopState = input.state
+    ? new McpStateCleanup(input.state).stop(input.stateReason, input.flush)
+    : Promise.resolve().then(() => publishMcpStatusShutdown(input.events));
+  const tasks: Array<Promise<unknown>> = [stopState];
+  if (input.owner) {
+    tasks.push(input.owner.stop(input.ownerReason));
+  }
+  if (input.oauthRuntime) {
+    tasks.push(shutdownOAuth(input.oauthRuntime));
+  }
+  const results = await Promise.allSettled(tasks);
+  return results.flatMap((result): unknown[] =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
 }

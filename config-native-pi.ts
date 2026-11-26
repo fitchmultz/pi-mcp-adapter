@@ -1,4 +1,8 @@
-import type { McpExposure, McpServerConfig } from "@earendil-works/pi-coding-agent";
+import type {
+  McpExposure,
+  McpServerConfig,
+  RegisteredMcpServer,
+} from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -8,13 +12,12 @@ import { isConfigObject, isStringArray, isStringRecord } from "./config-validati
 import {
   findAdapterOnlyServerKeys,
   findAdapterOnlyTopLevelKeys,
-  hasUnrepresentableToolExposure,
   mapNativeOAuth,
   warnNativeEntry,
   warnNativeEntryFalse,
-  warnNativeField,
   type NativeEntryContext,
 } from "./config-native-pi-oauth.ts";
+import { mapNativeExposureFields } from "./config-native-pi-exposure.ts";
 
 export interface LoadedNativePiConfig {
   readonly config: McpConfig;
@@ -22,7 +25,7 @@ export interface LoadedNativePiConfig {
 }
 
 type NativeBaseFields = Readonly<
-  Pick<McpServerConfig, "enabled" | "timeout" | "exposure" | "toolExposure">
+  Pick<McpServerConfig, "description" | "enabled" | "timeout" | "exposure" | "toolExposure">
 >;
 
 const NATIVE_OVERRIDE_KEYS = new Set(["enabled", "exposure", "toolExposure"]);
@@ -37,7 +40,7 @@ function expandHomePath(value: string): string {
     : value;
 }
 
-function resolveNativeCwd(value: string, projectCwd: string): string {
+export function resolveNativeCwd(value: string, projectCwd: string): string {
   const expanded = expandHomePath(value);
   return isAbsolute(expanded) || ENV_REF_PREFIX.test(expanded)
     ? expanded
@@ -88,6 +91,16 @@ function validateScalarBaseFields(raw: Record<string, unknown>, ctx: NativeEntry
   return true;
 }
 
+function pickScalarBaseFields(
+  raw: Record<string, unknown>,
+): Pick<NativeBaseFields, "description" | "enabled" | "timeout"> {
+  return {
+    ...(typeof raw.description === "string" ? { description: raw.description } : {}),
+    ...(typeof raw.enabled === "boolean" ? { enabled: raw.enabled } : {}),
+    ...(typeof raw.timeout === "number" ? { timeout: raw.timeout } : {}),
+  };
+}
+
 function parseBaseFields(
   raw: Record<string, unknown>,
   ctx: NativeEntryContext,
@@ -104,8 +117,7 @@ function parseBaseFields(
     return warnNativeEntry(ctx, "toolExposure must map tool names to valid exposures");
   }
   return {
-    ...(typeof raw.enabled === "boolean" ? { enabled: raw.enabled } : {}),
-    ...(typeof raw.timeout === "number" ? { timeout: raw.timeout } : {}),
+    ...pickScalarBaseFields(raw),
     ...(exposure !== undefined ? { exposure } : {}),
     ...(toolExposure !== undefined ? { toolExposure } : {}),
   };
@@ -124,97 +136,6 @@ function isValidHttpUrl(value: string): boolean {
   }
   const { protocol } = new URL(trimmed);
   return protocol === "http:" || protocol === "https:";
-}
-
-function collectExactDirectNames(keys: readonly string[], ctx: NativeEntryContext): string[] {
-  const exact = keys.filter((key) => !key.includes("*"));
-  const globs = keys.filter((key) => key.includes("*"));
-  if (globs.length > 0) {
-    warnNativeField(
-      ctx,
-      `wildcard direct toolExposure (${globs.join(", ")}) cannot pin tools in Fitch MCP Adapter`,
-    );
-  }
-  return exact;
-}
-
-function hiddenExposureFields(
-  visibleKeys: readonly string[],
-  hiddenKeys: readonly string[],
-  directKeys: readonly string[],
-  ctx: NativeEntryContext,
-): Partial<ServerEntry> {
-  if (visibleKeys.length === 0) {
-    return { disabled: true };
-  }
-  const exact = collectExactDirectNames(directKeys, ctx);
-  return {
-    includeTools: [...visibleKeys],
-    ...(hiddenKeys.length > 0 ? { excludeTools: [...hiddenKeys] } : {}),
-    directTools: exact.length > 0 ? exact : false,
-  };
-}
-
-function directExposureFields(
-  entries: ReadonlyArray<[string, McpExposure]>,
-  hiddenKeys: readonly string[],
-  ctx: NativeEntryContext,
-): Partial<ServerEntry> {
-  const downgraded = entries
-    .filter(([, exp]) => exp === "codemode" || exp === "deferred")
-    .map(([key]) => key);
-  if (downgraded.length > 0) {
-    warnNativeField(
-      ctx,
-      `per-tool deferred overrides (${downgraded.join(", ")}) remain pinned under directTools: true`,
-    );
-  }
-  return {
-    directTools: true,
-    ...(hiddenKeys.length > 0 ? { excludeTools: [...hiddenKeys] } : {}),
-  };
-}
-
-function defaultExposureFields(
-  exposure: McpExposure | undefined,
-  directKeys: readonly string[],
-  hiddenKeys: readonly string[],
-  ctx: NativeEntryContext,
-): Partial<ServerEntry> {
-  const exact = collectExactDirectNames(directKeys, ctx);
-  const result: Partial<ServerEntry> = {};
-  if (hiddenKeys.length > 0) {
-    result.excludeTools = [...hiddenKeys];
-  }
-  if (exact.length > 0) {
-    result.directTools = exact;
-  } else if (exposure !== undefined) {
-    result.directTools = false;
-  }
-  return result;
-}
-
-function exposureFields(
-  base: NativeBaseFields,
-  ctx: NativeEntryContext,
-): Partial<ServerEntry> | null {
-  const entries = base.toolExposure ? Object.entries(base.toolExposure) : [];
-  if (hasUnrepresentableToolExposure(entries)) {
-    return warnNativeEntry(
-      ctx,
-      "toolExposure mixes hidden wildcards with conflicting visible rules that cannot be represented safely",
-    );
-  }
-  const directKeys = entries.filter(([, exp]) => exp === "direct").map(([key]) => key);
-  const hiddenKeys = entries.filter(([, exp]) => exp === "hidden").map(([key]) => key);
-  if (base.exposure === "hidden") {
-    const visibleKeys = entries.filter(([, exp]) => exp !== "hidden").map(([key]) => key);
-    return hiddenExposureFields(visibleKeys, hiddenKeys, directKeys, ctx);
-  }
-  if (base.exposure === "direct") {
-    return directExposureFields(entries, hiddenKeys, ctx);
-  }
-  return defaultExposureFields(base.exposure, directKeys, hiddenKeys, ctx);
 }
 
 function resolveDisabledOverride(
@@ -249,10 +170,7 @@ function mapOverrideEntry(
   if (!base) {
     return null;
   }
-  const mappedExposure = exposureFields(base, ctx);
-  if (!mappedExposure) {
-    return null;
-  }
+  const mappedExposure = mapNativeExposureFields(base, ctx);
   return {
     ...mappedExposure,
     ...resolveDisabledOverride(base.enabled, mappedExposure.disabled === true),
@@ -399,23 +317,27 @@ function mapDefinitionEntry(
   if (!transport) {
     return null;
   }
-  const mappedExposure = exposureFields(base, ctx);
-  if (!mappedExposure) {
-    return null;
-  }
+  const mappedExposure = mapNativeExposureFields(base, ctx);
   return {
     ...transport,
+    ...(base.description !== undefined ? { description: base.description } : {}),
     ...(base.timeout !== undefined ? { requestTimeoutMs: Math.round(base.timeout * 1000) } : {}),
     ...mappedExposure,
     ...resolveDisabledOverride(base.enabled, mappedExposure.disabled === true),
   };
 }
 
+interface MapEntryOptions {
+  readonly cwd: string;
+  readonly allowOverrides: boolean;
+  readonly adapterConfigHint: string;
+  readonly existingServers?: Readonly<Record<string, ServerEntry>> | undefined;
+}
+
 function mapNativeServerEntry(
   raw: unknown,
   ctx: NativeEntryContext,
-  cwd: string,
-  existingServers: Readonly<Record<string, ServerEntry>> | undefined,
+  options: MapEntryOptions,
 ): { readonly entry: ServerEntry; readonly replacesExisting: boolean } | null {
   if (!isConfigObject(raw)) {
     return warnNativeEntry(ctx, "server entry must be an object");
@@ -424,14 +346,17 @@ function mapNativeServerEntry(
   if (adapterKeys.length > 0) {
     return warnNativeEntry(
       ctx,
-      `uses adapter-only fields (${adapterKeys.join(", ")}); move adapter-format project configs to .pi/fitch-mcp-adapter/mcp.json`,
+      `uses adapter-only fields (${adapterKeys.join(", ")}); move adapter-format configs to ${options.adapterConfigHint}`,
     );
   }
   if (raw.command === undefined && raw.url === undefined && raw.type === undefined) {
-    const entry = mapOverrideEntry(raw, ctx, existingServers);
+    if (!options.allowOverrides) {
+      return warnNativeEntry(ctx, 'needs either "command" (stdio) or "url" (streamable HTTP)');
+    }
+    const entry = mapOverrideEntry(raw, ctx, options.existingServers);
     return entry === null ? null : { entry, replacesExisting: false };
   }
-  const entry = mapDefinitionEntry(raw, ctx, cwd);
+  const entry = mapDefinitionEntry(raw, ctx, options.cwd);
   return entry === null ? null : { entry, replacesExisting: true };
 }
 
@@ -452,14 +377,9 @@ function parseNativeConfigFile(filePath: string): Record<string, unknown> | null
   return raw;
 }
 
-/**
- * Read and translate a native Pi project `.pi/mcp.json` file into Fitch MCP Adapter config.
- * Invalid entries warn and are skipped individually so sibling servers remain usable.
- */
-export function readNativePiProjectConfig(
+function readNativePiConfigFile(
   filePath: string,
-  cwd: string,
-  existingServers?: Readonly<Record<string, ServerEntry>>,
+  options: MapEntryOptions,
 ): LoadedNativePiConfig | null {
   if (!existsSync(filePath)) {
     return null;
@@ -471,7 +391,7 @@ export function readNativePiProjectConfig(
   const adapterTopKeys = findAdapterOnlyTopLevelKeys(raw);
   if (adapterTopKeys.length > 0) {
     console.warn(
-      `Skipped ${filePath}: top-level adapter-only fields (${adapterTopKeys.join(", ")}) look like a legacy adapter config; move it to .pi/fitch-mcp-adapter/mcp.json`,
+      `Skipped ${filePath}: top-level adapter-only fields (${adapterTopKeys.join(", ")}) look like a legacy adapter config; move it to ${options.adapterConfigHint}`,
     );
     return null;
   }
@@ -487,7 +407,7 @@ export function readNativePiProjectConfig(
   const mcpServers: Record<string, ServerEntry> = {};
   const replacedServers = new Set<string>();
   for (const [serverName, value] of Object.entries(raw.mcpServers)) {
-    const mapped = mapNativeServerEntry(value, { filePath, serverName }, cwd, existingServers);
+    const mapped = mapNativeServerEntry(value, { filePath, serverName }, options);
     if (mapped !== null) {
       mcpServers[serverName] = mapped.entry;
       if (mapped.replacesExisting) {
@@ -496,4 +416,62 @@ export function readNativePiProjectConfig(
     }
   }
   return { config: { mcpServers }, replacedServers };
+}
+
+/**
+ * Read and translate a native Pi global `<agentDir>/mcp.json` file into Fitch MCP Adapter config.
+ * Invalid entries warn and are skipped individually so sibling servers remain usable.
+ */
+export function readNativePiGlobalConfig(
+  filePath: string,
+  cwd: string,
+): LoadedNativePiConfig | null {
+  return readNativePiConfigFile(filePath, {
+    cwd,
+    allowOverrides: false,
+    adapterConfigHint: "<agentDir>/fitch-mcp-adapter/mcp.json",
+  });
+}
+
+/**
+ * Read and translate a native Pi project `.pi/mcp.json` file into Fitch MCP Adapter config.
+ * Invalid entries warn and are skipped individually so sibling servers remain usable.
+ */
+export function readNativePiProjectConfig(
+  filePath: string,
+  cwd: string,
+  existingServers?: Readonly<Record<string, ServerEntry>>,
+): LoadedNativePiConfig | null {
+  return readNativePiConfigFile(filePath, {
+    cwd,
+    allowOverrides: true,
+    adapterConfigHint: ".pi/fitch-mcp-adapter/mcp.json",
+    existingServers,
+  });
+}
+
+/**
+ * Translate servers registered by extensions via `pi.registerMcpServer()`.
+ * Invalid entries warn and are skipped individually.
+ */
+export function translateRegisteredMcpServers(
+  registered: readonly RegisteredMcpServer[],
+  cwd: string,
+): McpConfig {
+  const mcpServers: Record<string, ServerEntry> = {};
+  for (const item of registered) {
+    const mapped = mapNativeServerEntry(
+      item.config,
+      { filePath: item.extensionPath, serverName: item.name },
+      {
+        cwd,
+        allowOverrides: false,
+        adapterConfigHint: ".pi/fitch-mcp-adapter/mcp.json",
+      },
+    );
+    if (mapped !== null) {
+      mcpServers[item.name] = { lifecycle: "eager", ...mapped.entry };
+    }
+  }
+  return { mcpServers };
 }

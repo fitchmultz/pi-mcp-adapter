@@ -9,12 +9,15 @@ import {
   type McpPanelConnectionStatus,
   type McpPanelResult,
   type ImportKind,
+  type ServerProvenance,
 } from "./types.ts";
 import {
   ensureCompatibilityImports,
   getMcpDiscoverySummary,
+  getPiGlobalConfigPath,
   getProjectConfigPath,
   type KnownServerPreset,
+  type LoadMcpConfigOptions,
   getServerProvenance,
   previewCompatibilityImports,
   previewSharedServerEntry,
@@ -51,7 +54,7 @@ export interface PanelFlowResult {
 function buildSharedConfigNoticeLines(
   configOverridePath: string | undefined,
   cwd: string,
-  discoveryOptions?: { readonly includeNativePiProject?: boolean },
+  discoveryOptions?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
 ): string[] {
   const discovery = getMcpDiscoverySummary(configOverridePath, cwd, discoveryOptions);
   const onboardingState = loadOnboardingState();
@@ -381,6 +384,20 @@ async function savePanelDirectTools(input: {
   return false;
 }
 
+function withFallbackServerProvenance(
+  config: McpConfig,
+  provenance: Map<string, ServerProvenance>,
+  overridePath: string | undefined,
+): Map<string, ServerProvenance> {
+  const fallbackPath = getPiGlobalConfigPath(overridePath);
+  for (const serverName of Object.keys(config.mcpServers)) {
+    if (!provenance.has(serverName)) {
+      provenance.set(serverName, { path: fallbackPath, kind: "user" });
+    }
+  }
+  return provenance;
+}
+
 export async function openMcpPanel(input: {
   state: McpExtensionState;
   pi: ExtensionAPI;
@@ -414,7 +431,11 @@ export async function openMcpPanel(input: {
   const cache = loadMetadataCache(state.metadataCacheEnabled);
   const configPath = configOverridePath;
   const discoveryOptions = nativePiConfigOptions(pi);
-  const provenanceMap = getServerProvenance(configPath, ctx.cwd, discoveryOptions);
+  const provenanceMap = withFallbackServerProvenance(
+    config,
+    getServerProvenance(configPath, ctx.cwd, discoveryOptions),
+    configPath,
+  );
   const noticeLines = buildSharedConfigNoticeLines(configPath, ctx.cwd, discoveryOptions);
 
   const callbacks = await buildMcpPanelCallbacks(state, config, ctx);
@@ -464,7 +485,7 @@ export async function openMcpAuthPanel(
   state: McpExtensionState,
   ctx: ExtensionContext,
   configOverridePath?: string,
-  discoveryOptions?: { readonly includeNativePiProject?: boolean },
+  discoveryOptions?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) {
     return { configChanged: false };
@@ -496,7 +517,11 @@ export async function openMcpAuthPanel(
 
   const cache = loadMetadataCache(state.metadataCacheEnabled);
   const configPath = configOverridePath;
-  const provenanceMap = getServerProvenance(configPath, ctx.cwd, discoveryOptions);
+  const provenanceMap = withFallbackServerProvenance(
+    config,
+    getServerProvenance(configPath, ctx.cwd, discoveryOptions),
+    configPath,
+  );
   const callbacks = await buildMcpPanelCallbacks(state, config, ctx);
 
   return ctx.ui.custom<PanelFlowResult>(

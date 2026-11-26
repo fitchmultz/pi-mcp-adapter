@@ -94,8 +94,12 @@ describe("explicit pre-v5 state migration", () => {
     );
   });
 
-  it("ignores pre-v5 global defaults while retaining shared and trusted native Pi project MCP discovery", async () => {
-    write(join(agent, "mcp.json"), globalConfig);
+  it("ignores pre-v5 adapter defaults while reading native Pi global/project and shared MCP configs read-only", async () => {
+    const legacyAdapterGlobalConfig = JSON.stringify({
+      settings: { toolPrefix: "short" },
+      mcpServers: { legacyGlobal: { command: "unused-legacy-global", directTools: true } },
+    });
+    write(join(agent, "mcp.json"), legacyAdapterGlobalConfig);
     write(join(project, ".pi", "mcp.json"), projectConfig);
     write(join(agent, "mcp-cache.json"), '{"version":1,"servers":{}}');
     write(
@@ -117,6 +121,16 @@ describe("explicit pre-v5 state migration", () => {
     expect(
       Object.keys(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers),
     ).toEqual([]);
+    // Valid native Pi global `<agentDir>/mcp.json` is loaded read-only when it does not use adapter-only keys.
+    write(join(agent, "mcp.json"), globalConfig);
+    expect(Object.keys(loadMcpConfig(undefined, project).mcpServers).sort()).toEqual([
+      "global",
+      "project",
+      "shared",
+    ]);
+    expect(
+      Object.keys(loadMcpConfig(undefined, project, { includeProject: false }).mcpServers),
+    ).toEqual(["global"]);
     expect(loadMetadataCache()).toBeNull();
     expect(loadOnboardingState().setupCompleted).toBe(false);
     expect(existsSync(join(agent, "fitch-mcp-adapter"))).toBe(false);

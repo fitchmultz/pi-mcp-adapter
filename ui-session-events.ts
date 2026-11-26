@@ -36,6 +36,24 @@ export function takeUiModelContextMessage(
   return retained ? formatUiModelContextMessage(retained) : undefined;
 }
 
+export function consumeStateUiModelContext(
+  state: McpExtensionState | null,
+): { message: UiModelContextMessage } | undefined {
+  const currentState = state;
+  if (!currentState) {
+    return undefined;
+  }
+  const message = takeUiModelContextMessage(
+    currentState.uiServer,
+    currentState.pendingUiModelContext,
+  );
+  if (!message) {
+    return undefined;
+  }
+  currentState.pendingUiModelContext = undefined;
+  return { message };
+}
+
 /** App chat requests and notifications; legacy intents only go to UI history. */
 export class UiSessionEvents {
   private readonly state: McpExtensionState;

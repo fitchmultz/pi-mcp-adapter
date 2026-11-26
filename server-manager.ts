@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   CompleteRequestParams,
   CompleteResult,
@@ -73,8 +74,18 @@ export class McpServerManager {
     this.factory.defaultRequestTimeoutMs = normalizeRequestTimeoutMs(timeoutMs);
   }
 
+  setDefaultCwd(cwd: string | undefined): void {
+    if (this.factory.defaultCwd !== cwd) {
+      this.factory.defaultCwd = cwd;
+      this.factory.resetTraceWriter();
+    }
+  }
+
   setTraceConfig(settings: McpTraceSettings | undefined): void {
-    this.factory.traceSettings = settings;
+    if (!isDeepStrictEqual(this.factory.traceSettings, settings)) {
+      this.factory.traceSettings = settings;
+      this.factory.resetTraceWriter();
+    }
   }
 
   setAuthStorageOptions(options: AuthStorageOptions): void {
