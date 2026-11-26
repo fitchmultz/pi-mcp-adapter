@@ -246,15 +246,45 @@ export async function withCrossProcessRefreshLock<T>(
   });
 }
 
-function hasAdoptedFreshToken(
+interface RefreshBaseline {
+  readonly accessToken?: string | undefined;
+  readonly expiresAt?: number | undefined;
+}
+
+function isProactiveTokenFresh(
+  tokens: StoredTokens,
+  identity: AuthIdentity,
+  baseline: RefreshBaseline,
+): boolean {
+  if (!needsProactiveRefresh(tokens) || isWithinProactiveCooldown(identity)) {
+    return true;
+  }
+  if (baseline.accessToken !== undefined && tokens.accessToken !== baseline.accessToken) {
+    return true;
+  }
+  return (
+    baseline.expiresAt !== undefined &&
+    tokens.expiresAt !== undefined &&
+    tokens.expiresAt > baseline.expiresAt
+  );
+}
+
+function adoptFreshToken(
   tokens: StoredTokens | undefined,
-  options: Pick<CoordinateOAuthRefreshOptions, "rejectedAccessToken" | "proactive">,
+  options: Pick<CoordinateOAuthRefreshOptions, "identity" | "rejectedAccessToken" | "proactive">,
+  baseline: RefreshBaseline,
 ): boolean {
   if (!tokens || tokens.accessToken === "" || isTokenExpired(tokens)) {
     return false;
   }
   if (options.proactive === true) {
-    return !needsProactiveRefresh(tokens);
+    if (!isProactiveTokenFresh(tokens, options.identity, baseline)) {
+      return false;
+    }
+    if (!isWithinProactiveCooldown(options.identity)) {
+      recordProactiveRefreshOutcome(options.identity, "refreshed", tokens);
+    }
+    return true;
   }
   if (options.rejectedAccessToken !== undefined) {
     return tokens.accessToken !== options.rejectedAccessToken;
@@ -265,9 +295,10 @@ function hasAdoptedFreshToken(
 async function runLockedRefresh(
   options: CoordinateOAuthRefreshOptions,
   refreshSignal: AbortSignal,
+  baseline: RefreshBaseline,
 ): Promise<"AUTHORIZED" | "REDIRECT"> {
   const afterLock = options.provider.reloadTokensFromStorage();
-  if (hasAdoptedFreshToken(afterLock, options)) {
+  if (adoptFreshToken(afterLock, options, baseline)) {
     return "AUTHORIZED";
   }
   try {
@@ -279,11 +310,11 @@ async function runLockedRefresh(
       return "AUTHORIZED";
     }
     const recovered = options.provider.reloadTokensFromStorage();
-    return hasAdoptedFreshToken(recovered, options) ? "AUTHORIZED" : outcome;
+    return adoptFreshToken(recovered, options, baseline) ? "AUTHORIZED" : outcome;
   } catch (error) {
     if (options.isUnauthorizedError(error)) {
       const recovered = options.provider.reloadTokensFromStorage();
-      if (hasAdoptedFreshToken(recovered, options)) {
+      if (adoptFreshToken(recovered, options, baseline)) {
         return "AUTHORIZED";
       }
     }
@@ -294,20 +325,32 @@ async function runLockedRefresh(
 async function executeSerializedRefresh(
   options: CoordinateOAuthRefreshOptions,
   refreshSignal: AbortSignal,
+  baseline: RefreshBaseline,
 ): Promise<"AUTHORIZED" | "REDIRECT"> {
   try {
     return await withCrossProcessRefreshLock(options.identity, refreshSignal, () =>
-      runLockedRefresh(options, refreshSignal),
+      runLockedRefresh(options, refreshSignal, baseline),
     );
   } catch (error) {
     if (error instanceof StorageLockBusyError) {
       const recovered = options.provider.reloadTokensFromStorage();
-      if (hasAdoptedFreshToken(recovered, options)) {
+      if (adoptFreshToken(recovered, options, baseline)) {
         return "AUTHORIZED";
       }
     }
     throw error;
   }
+}
+
+function initialRefreshBaseline(options: CoordinateOAuthRefreshOptions): RefreshBaseline {
+  if (options.proactive !== true) {
+    return { accessToken: options.rejectedAccessToken };
+  }
+  const cached = options.provider.currentCachedTokens;
+  return {
+    accessToken: options.rejectedAccessToken ?? cached?.accessToken,
+    expiresAt: cached?.expiresAt,
+  };
 }
 
 /**
@@ -318,21 +361,26 @@ export async function coordinateOAuthRefresh(
   options: CoordinateOAuthRefreshOptions,
 ): Promise<"AUTHORIZED" | "REDIRECT"> {
   throwIfAborted(options.signal);
+  const baseline = initialRefreshBaseline(options);
   const key = refreshKey(options.identity);
   const existing = inFlightRefreshes.get(key);
   if (existing) {
     const outcome = await existing.wait(options.signal);
     const reloaded = options.provider.reloadTokensFromStorage();
-    if (outcome !== "AUTHORIZED" || hasAdoptedFreshToken(reloaded, options)) {
+    if (outcome !== "AUTHORIZED" || adoptFreshToken(reloaded, options, baseline)) {
       return outcome;
     }
   }
   const beforeLock = options.provider.reloadTokensFromStorage();
-  if (hasAdoptedFreshToken(beforeLock, options)) {
+  if (adoptFreshToken(beforeLock, options, baseline)) {
     return "AUTHORIZED";
   }
+  const effectiveBaseline: RefreshBaseline = {
+    accessToken: baseline.accessToken ?? beforeLock?.accessToken,
+    expiresAt: baseline.expiresAt ?? beforeLock?.expiresAt,
+  };
   const entry = new InFlightRefresh((refreshSignal) =>
-    executeSerializedRefresh(options, refreshSignal).finally(() => {
+    executeSerializedRefresh(options, refreshSignal, effectiveBaseline).finally(() => {
       if (inFlightRefreshes.get(key) === entry) {
         inFlightRefreshes.delete(key);
       }

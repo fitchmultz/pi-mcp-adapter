@@ -30,6 +30,7 @@ interface RefreshServerConfig {
   omitRefreshToken: boolean;
   omitScope: boolean;
   tokenDelayMs: number;
+  tokenExpiresInSeconds: number;
   onTokenRequest?: (params: URLSearchParams) => "invalid_grant" | undefined;
 }
 
@@ -51,6 +52,7 @@ class RefreshTestServer {
       omitRefreshToken: false,
       omitScope: false,
       tokenDelayMs: 0,
+      tokenExpiresInSeconds: 3600,
       ...overrides,
     };
     this.#http = new MachineHttpServer((req, res) => this.#handle(req, res));
@@ -129,7 +131,7 @@ class RefreshTestServer {
     const payload: Record<string, unknown> = {
       access_token: nextAccess,
       token_type: "Bearer",
-      expires_in: 3600,
+      expires_in: this.config.tokenExpiresInSeconds,
     };
     if (!this.config.omitRefreshToken) {
       const nextRefresh = this.config.rotateRefreshToken
@@ -615,6 +617,35 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     const stored = getAuthForUrl({ serverName: "proactive-refresh", serverUrl: url })?.tokens;
     expect(stored?.accessToken).toBe("access-2");
     expect(stored?.refreshToken).toBe("refresh-2");
+  });
+
+  it("coalesces concurrent proactive refreshes when the AS issues short-lived tokens (<=60s)", async () => {
+    const { server, url } = await startServer({
+      tokenDelayMs: 100,
+      tokenExpiresInSeconds: 30,
+      rotateRefreshToken: true,
+    });
+    const manager = trackManager();
+    const now = Math.floor(Date.now() / 1000);
+    seedInMemory("proactive-short", url, server.origin, {
+      accessToken: "access-1",
+      refreshToken: "refresh-1",
+      expiresAt: now + 30,
+      scope: "read write",
+    });
+
+    const connection = await manager.connect("proactive-short", { url, auth: "oauth" });
+    const results = await Promise.all([
+      connection.client.callTool({ name: "echo", arguments: { n: 1 } }),
+      connection.client.callTool({ name: "echo", arguments: { n: 2 } }),
+      connection.client.callTool({ name: "echo", arguments: { n: 3 } }),
+    ]);
+
+    expect(results).toHaveLength(3);
+    expect(server.tokenRequests).toHaveLength(1);
+    expect(server.invalidGrantCount).toBe(0);
+    expect(server.unauthorizedCount).toBe(0);
+    expect(server.callAuthorizations).toEqual(["access-2", "access-2", "access-2"]);
   });
 
   it(

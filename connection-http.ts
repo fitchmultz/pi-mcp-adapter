@@ -275,6 +275,7 @@ class HttpConnection {
   private async refreshProactively(
     provider: McpOAuthProvider,
     owned: OAuthClientProvider,
+    currentAccessToken: string,
   ): Promise<void> {
     const { serverName, runtime } = this.options;
     const identity = { serverName, serverUrl: this.serverUrl };
@@ -283,6 +284,7 @@ class HttpConnection {
       await coordinateOAuthRefresh({
         identity,
         provider,
+        rejectedAccessToken: currentAccessToken,
         proactive: true,
         signal: provider.signal,
         isUnauthorizedError: (error) => error instanceof runtime.UnauthorizedError,
@@ -335,7 +337,7 @@ class HttpConnection {
             return;
           }
           if (shouldAttemptProactiveRefresh(identity, current)) {
-            await this.refreshProactively(provider, owned);
+            await this.refreshProactively(provider, owned, current.access_token);
             return (await owned.tokens())?.access_token;
           }
           return current.access_token;
