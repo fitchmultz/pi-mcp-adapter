@@ -76,14 +76,14 @@ describe("MCP output schema validation", () => {
           );
 
     expect(result.details).not.toMatchObject({ error: "call_failed" });
-    expect(result.content[0]).toEqual({ type: "text", text: name });
-    expect(result.content[1]).toEqual({
-      type: "text",
-      text: JSON.stringify({ values: ["ok", 1] }, null, 2),
-    });
+    expect(result.content).toEqual([{ type: "text", text: name }]);
     const ref = result.details.resultRef;
     assert.ok(typeof ref === "string");
-    expect(result.content).toHaveLength(2);
+    const structured = path === "direct" ? result.structuredContent : result.details.mcpResult;
+    expect(structured).toEqual({
+      content: [{ type: "text", text: name }],
+      structuredContent: { values: ["ok", 1] },
+    });
   });
 
   it.each([

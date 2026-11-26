@@ -243,7 +243,7 @@ function createFixtureStream(
   return stream;
 }
 
-async function createCodemodeSession() {
+async function createCodemodeSession(options?: { readonly enableCodemode?: boolean }) {
   const url = await startFixtureServer();
   const root = await mkdtemp(join(tmpdir(), "mcp-208-codemode-"));
   const agentDir = join(root, "agent");
@@ -345,7 +345,9 @@ async function createCodemodeSession() {
 
   const connected = await run("mcp", { action: "connect", server: "kb" });
   expect(connected.isError).toBe(false);
-  session.setActiveToolsByName([...session.getActiveToolNames(), "codemode"]);
+  if (options?.enableCodemode !== false) {
+    session.setActiveToolsByName([...session.getActiveToolNames(), "codemode"]);
+  }
   return { session, run };
 }
 
@@ -468,13 +470,15 @@ describe("Pi 1.6.1 codemode MCP CallToolResult parity", () => {
   }, 20_000);
 
   it("keeps model-facing direct calls bounded and deduplicated while preserving details limits", async () => {
-    const { run } = await createCodemodeSession();
+    // Keep codemode inactive so tool_search loads kb_typed_rows into active tools even on fork Pi
+    // where codemode + non-mid-convo-tool models stay inline to preserve prompt cache.
+    const { run } = await createCodemodeSession({ enableCodemode: false });
 
     const loaded = await run("tool_search", { query: "typed rows" });
-    expect(loaded.isError).toBe(false);
+    expect(loaded.isError, textBlocks(loaded).join("\n")).toBe(false);
 
     const directTyped = await run("kb_typed_rows", {});
-    expect(directTyped.isError).toBe(false);
+    expect(directTyped.isError, textBlocks(directTyped).join("\n")).toBe(false);
     expect(directTyped.content).toEqual([
       {
         type: "text",

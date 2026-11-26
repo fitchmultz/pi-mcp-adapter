@@ -1,6 +1,7 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { Type, type Static, type TUnsafe } from "typebox";
+import { z } from "zod";
 import { toolErrorOverride } from "./error-signal.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
 
@@ -140,69 +141,21 @@ export function attachRawMcpResult<T extends AgentToolResult<Record<string, unkn
   return result;
 }
 
-function toJsonArray(items: readonly unknown[], seen: Set<object>): JsonValue[] | undefined {
-  if (seen.has(items)) {
-    return undefined;
-  }
-  seen.add(items);
-  try {
-    const out: JsonValue[] = [];
-    for (const item of items) {
-      const converted = item === undefined ? null : toJsonValue(item, seen);
-      if (converted === undefined) {
-        return undefined;
-      }
-      out.push(converted);
-    }
-    return out;
-  } finally {
-    seen.delete(items);
-  }
-}
+/** Parse already-JSON MCP payloads into Pi's JsonValue without custom cycle/NaN traversal. */
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
+  ]),
+);
 
-function toJsonObject(
-  record: Record<string, unknown>,
-  seen: Set<object>,
-): Record<string, JsonValue> | undefined {
-  if (seen.has(record)) {
-    return undefined;
-  }
-  seen.add(record);
-  try {
-    const out: Record<string, JsonValue> = {};
-    for (const [key, value] of Object.entries(record)) {
-      if (value === undefined) {
-        continue;
-      }
-      const converted = toJsonValue(value, seen);
-      if (converted === undefined) {
-        return undefined;
-      }
-      Object.defineProperty(out, key, {
-        value: converted,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    }
-    return out;
-  } finally {
-    seen.delete(record);
-  }
-}
-
-function toJsonValue(value: unknown, seen = new Set<object>()): JsonValue | undefined {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return value;
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : undefined;
-  }
-  if (Array.isArray(value)) {
-    return toJsonArray(value, seen);
-  }
-  const record = asObjectRecord(value);
-  return record === undefined ? undefined : toJsonObject(record, seen);
+function asJsonValue(value: unknown): JsonValue | undefined {
+  const parsed = jsonValueSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function receiptFields(details: Record<string, unknown>) {
@@ -236,7 +189,7 @@ function toScriptCallToolResult(value: unknown): JsonValue | undefined {
   payload.content = isUnknownArray(payload.content)
     ? payload.content.map(withoutBlockMetadata)
     : [];
-  return toJsonValue(payload);
+  return asJsonValue(payload);
 }
 
 function inlinePayload(value: unknown): JsonValue | undefined {
@@ -259,7 +212,7 @@ function inlinePayload(value: unknown): JsonValue | undefined {
   if (isUnknownArray(payload.contents)) {
     payload.contents = payload.contents.map(withoutBlockMetadata);
   }
-  return toJsonValue(payload);
+  return asJsonValue(payload);
 }
 
 function buildAdapterReceipt(
