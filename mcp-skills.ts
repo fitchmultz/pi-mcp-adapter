@@ -21,6 +21,7 @@ export interface VerifiedSkillBundle {
 
 export interface SkillDiscoveryResult {
   readonly supported: boolean;
+  readonly failed?: boolean;
   readonly skills: readonly VerifiedSkillBundle[];
   readonly rejectedCount: number;
 }
@@ -346,6 +347,6 @@ export async function discoverServerSkills(input: {
     }
     const message = error instanceof Error ? error.message : String(error);
     logger.warn(`MCP: skills/list failed for ${serverName}: ${message}`);
-    return { supported: true, skills: [], rejectedCount: 1 };
+    return { supported: true, failed: true, skills: [], rejectedCount: 1 };
   }
 }

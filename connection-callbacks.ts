@@ -327,6 +327,18 @@ export class ConnectionCallbacks {
     }
   }
 
+  private isCurrentResourceGeneration(
+    serverName: string,
+    client: Client,
+    connection: ServerConnection,
+    generation: number,
+  ): boolean {
+    return (
+      (connection.resourceTemplatesGeneration ?? 0) === generation &&
+      this.isActiveConnection(serverName, client, connection)
+    );
+  }
+
   private isCurrentTemplateRefresh(
     serverName: string,
     client: Client,
@@ -334,12 +346,8 @@ export class ConnectionCallbacks {
     generation: number,
   ): boolean {
     return (
-      this.lifecycle.runtimeSignal?.aborted !== true &&
       connection.resourceTemplatesStale === true &&
-      (connection.resourceTemplatesGeneration ?? 0) === generation &&
-      this.lifecycle.getConnection(serverName) === connection &&
-      connection.client === client &&
-      connection.status === "connected"
+      this.isCurrentResourceGeneration(serverName, client, connection, generation)
     );
   }
 
@@ -374,10 +382,10 @@ export class ConnectionCallbacks {
       exposeSkills: this.exposeSkills && connection.definition.exposeSkills !== false,
       signal: this.lifecycle.runtimeSignal,
     });
-    if (!this.isActiveConnection(serverName, client, connection)) {
+    if (!this.isCurrentResourceGeneration(serverName, client, connection, generation)) {
       return;
     }
-    if (skillResult.supported) {
+    if (skillResult.supported && skillResult.failed !== true) {
       connection.skills = skillResult.skills.map((bundle) => bundle.metadata);
       connection.verifiedSkillBundles = skillResult.skills;
     }

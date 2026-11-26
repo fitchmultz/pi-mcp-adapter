@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import {
@@ -48,8 +49,90 @@ async function attachSkillsExtension(server: McpServer, selectedMode: string): P
     catalog.attach(server);
     return;
   }
+  if (selectedMode === "controlled") {
+    await attachControlledSkills(server);
+    return;
+  }
   const mixed = await buildMixedSkillsExtension();
   mixed.attach(server);
+}
+
+async function attachControlledSkills(server: McpServer): Promise<void> {
+  const entries = new Map<string, { skill: Skill; text: string }>();
+  for (const name of ["v1-skill", "v2-skill", "v3-skill"]) {
+    const text = `---\nname: ${name}\ndescription: ${name} desc.\n---\nBody for ${name}.\n`;
+    entries.set(name, { skill: await skillEntry(name, { "SKILL.md": text }), text });
+  }
+  let currentName = "v1-skill";
+  let failList = false;
+  let listDelayMs = 0;
+  let started = 0;
+  let completed = 0;
+
+  new SkillsExtension({
+    source: {
+      list: async () => {
+        started += 1;
+        const snapshotName = currentName;
+        const shouldFail = failList;
+        const waitMs = listDelayMs;
+        if (waitMs > 0) {
+          await delay(waitMs);
+        }
+        completed += 1;
+        if (shouldFail) {
+          throw new Error("transient skills/list outage");
+        }
+        const entry = entries.get(snapshotName);
+        return { skills: entry ? [entry.skill] : [] };
+      },
+      get: async (uri) => [...entries.values()].find((item) => item.skill.uri === uri)?.skill,
+      read: async (uri) => {
+        const hit = [...entries.values()].find((item) => item.skill.uri === uri);
+        return hit ? { text: hit.text, mimeType: "text/markdown" } : undefined;
+      },
+    },
+  }).attach(server);
+  server.server.registerCapabilities({ resources: { listChanged: true } });
+
+  server.registerTool(
+    "set_refresh_mode",
+    {
+      description: "Configure skills refresh test state",
+      inputSchema: z.object({
+        failList: z.boolean().optional(),
+        skillName: z.string().optional(),
+        delayMs: z.number().optional(),
+      }),
+    },
+    async (args) => {
+      if (args.failList !== undefined) {
+        failList = args.failList;
+      }
+      if (args.skillName !== undefined) {
+        currentName = args.skillName;
+      }
+      if (args.delayMs !== undefined) {
+        listDelayMs = args.delayMs;
+      }
+      return { content: [{ type: "text" as const, text: "ok" }] };
+    },
+  );
+  server.registerTool(
+    "emit_list_changed",
+    { description: "Emit resources/list_changed" },
+    async () => {
+      await server.server.sendResourceListChanged();
+      return { content: [{ type: "text" as const, text: "emitted" }] };
+    },
+  );
+  server.registerTool(
+    "get_refresh_stats",
+    { description: "Read list_changed stats" },
+    async () => ({
+      content: [{ type: "text" as const, text: JSON.stringify({ started, completed }) }],
+    }),
+  );
 }
 
 interface MixedSkillsData {

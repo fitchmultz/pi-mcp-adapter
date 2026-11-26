@@ -324,11 +324,13 @@ async function refreshServerSkillsForConnection(
   if (state.owner.signal.aborted || state.manager.getConnection(name) !== connection) {
     return;
   }
-  Object.assign(connection, {
-    skills: result.skills.map((bundle) => bundle.metadata),
-    verifiedSkillBundles: result.skills,
-  });
-  syncConnectedServerSkills(state, name, connection);
+  if (result.failed !== true && result.supported) {
+    Object.assign(connection, {
+      skills: result.skills.map((bundle) => bundle.metadata),
+      verifiedSkillBundles: result.skills,
+    });
+    syncConnectedServerSkills(state, name, connection);
+  }
 }
 
 export async function refreshLiveSkillsForEnabledServers(state: McpExtensionState): Promise<void> {

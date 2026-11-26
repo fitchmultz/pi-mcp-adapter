@@ -10,8 +10,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   initTheme,
   loadSkillsFromDir,
@@ -42,7 +44,7 @@ function isStatusSnapshotSummary(value: unknown): value is StatusSnapshotSummary
 }
 
 function skillsServer(
-  mode: "valid" | "mixed" | "no-skills" | "updated",
+  mode: "valid" | "mixed" | "no-skills" | "updated" | "controlled",
   extra: Record<string, unknown> = {},
 ) {
   return {
@@ -349,5 +351,93 @@ describe("MCP Skills (SEP-2640) integration", () => {
 
     await host.fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
     expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+  });
+
+  it("preserves verified skills on disk and cache when skills/list fails during resources/list_changed", async () => {
+    const ws = createWorkspace();
+    const host = await mountAdapter({
+      cwd: ws.project,
+      config: { mcpServers: { live: skillsServer("controlled", { lifecycle: "eager" }) } },
+    });
+    await host.start();
+    await host.discover();
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["v1-skill"]);
+    expect(loadMetadataCache(true)?.servers.live?.skills?.map((entry) => entry.name)).toEqual([
+      "v1-skill",
+    ]);
+
+    await host.callMcp({
+      action: "call",
+      server: "live",
+      tool: "set_refresh_mode",
+      args: { failList: true },
+    });
+    await host.callMcp({ action: "call", server: "live", tool: "emit_list_changed", args: {} });
+
+    const statsSchema = z.object({ started: z.number(), completed: z.number() });
+    await expect
+      .poll(async () => {
+        const res = await host.callMcp({
+          action: "call",
+          server: "live",
+          tool: "get_refresh_stats",
+          args: {},
+        });
+        const text = res.content[0]?.type === "text" ? res.content[0].text : "{}";
+        return statsSchema.parse(JSON.parse(text)).completed;
+      })
+      .toBeGreaterThanOrEqual(2);
+    await delay(80);
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["v1-skill"]);
+    expect(loadMetadataCache(true)?.servers.live?.skills?.map((entry) => entry.name)).toEqual([
+      "v1-skill",
+    ]);
+  });
+
+  it("drops stale overlapping resources/list_changed skills refreshes when a newer generation commits", async () => {
+    const ws = createWorkspace();
+    const host = await mountAdapter({
+      cwd: ws.project,
+      config: { mcpServers: { live: skillsServer("controlled", { lifecycle: "eager" }) } },
+    });
+    await host.start();
+    await host.discover();
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["v1-skill"]);
+
+    const statsSchema = z.object({ started: z.number(), completed: z.number() });
+    const readStats = async () => {
+      const res = await host.callMcp({
+        action: "call",
+        server: "live",
+        tool: "get_refresh_stats",
+        args: {},
+      });
+      const text = res.content[0]?.type === "text" ? res.content[0].text : "{}";
+      return statsSchema.parse(JSON.parse(text));
+    };
+
+    await host.callMcp({
+      action: "call",
+      server: "live",
+      tool: "set_refresh_mode",
+      args: { skillName: "v2-skill", delayMs: 650 },
+    });
+    await host.callMcp({ action: "call", server: "live", tool: "emit_list_changed", args: {} });
+    await expect.poll(async () => (await readStats()).started).toBeGreaterThanOrEqual(2);
+
+    await host.callMcp({
+      action: "call",
+      server: "live",
+      tool: "set_refresh_mode",
+      args: { skillName: "v3-skill", delayMs: 0 },
+    });
+    await host.callMcp({ action: "call", server: "live", tool: "emit_list_changed", args: {} });
+    await expect.poll(() => listSkillDirNames(ws.agentDir)).toEqual(["v3-skill"]);
+    await expect.poll(async () => (await readStats()).completed).toBeGreaterThanOrEqual(3);
+    await delay(80);
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["v3-skill"]);
+    expect(loadMetadataCache(true)?.servers.live?.skills?.map((entry) => entry.name)).toEqual([
+      "v3-skill",
+    ]);
   });
 });
