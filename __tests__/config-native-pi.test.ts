@@ -935,4 +935,67 @@ describe("native Pi project .pi/mcp.json support", () => {
       directTools: ["ping"],
     });
   });
+
+  it("preserves global hidden exposure across adapter pins when project .pi/mcp.json overrides toolExposure", async () => {
+    const { agentDir, project } = createWorkspace();
+    writeJson(join(agentDir, "mcp.json"), {
+      mcpServers: {
+        scoped: {
+          url: "https://scoped.example.com/mcp",
+          exposure: "hidden",
+          toolExposure: { search: "direct" },
+        },
+        pinnedDisabled: {
+          url: "https://disabled.example.com/mcp",
+          exposure: "hidden",
+          toolExposure: { search: "direct" },
+        },
+        reEnabled: {
+          url: "https://reenabled.example.com/mcp",
+          enabled: false,
+        },
+      },
+    });
+    writeJson(join(agentDir, "fitch-mcp-adapter", "mcp.json"), {
+      mcpServers: {
+        scoped: { directTools: true },
+        pinnedDisabled: { disabled: true },
+        reEnabled: { directTools: true },
+      },
+    });
+    writeJson(join(project, ".pi", "mcp.json"), {
+      mcpServers: {
+        scoped: { toolExposure: { ping: "direct" } },
+        pinnedDisabled: { toolExposure: { ping: "direct" } },
+        reEnabled: { enabled: true },
+      },
+    });
+
+    const { loadMcpConfig } = await import("../config.ts");
+    const { isServerToolAllowed } = await import("../tool-names.ts");
+    const config = loadMcpConfig(undefined, project);
+
+    const scoped = config.mcpServers.scoped;
+    expect(scoped).toEqual({
+      url: "https://scoped.example.com/mcp",
+      includeTools: ["ping"],
+      directTools: ["ping"],
+    });
+    if (!scoped) {
+      throw new Error("Expected scoped server entry");
+    }
+    expect(isServerToolAllowed("ping", "scoped", "server", scoped)).toBe(true);
+    expect(isServerToolAllowed("other", "scoped", "server", scoped)).toBe(false);
+    expect(config.mcpServers.pinnedDisabled).toEqual({
+      url: "https://disabled.example.com/mcp",
+      includeTools: ["ping"],
+      directTools: ["ping"],
+      disabled: true,
+    });
+    expect(config.mcpServers.reEnabled).toEqual({
+      url: "https://reenabled.example.com/mcp",
+      directTools: true,
+      disabled: false,
+    });
+  });
 });

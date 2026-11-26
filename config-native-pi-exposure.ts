@@ -50,16 +50,6 @@ function stripExposureOverrides(entry: ServerEntry, stripDisabled: boolean): Ser
   return next;
 }
 
-function hasExposureOverrideFields(entry: ServerEntry): boolean {
-  return (
-    entry.directTools !== undefined ||
-    entry.includeTools !== undefined ||
-    entry.excludeTools !== undefined ||
-    entry.toolExposure !== undefined ||
-    entry.disabled !== undefined
-  );
-}
-
 export function updateNativePolicyTracking(
   policies: Map<string, NativeServerPolicy>,
   sourceId: ConfigSourceSpec["id"],
@@ -76,10 +66,24 @@ export function updateNativePolicyTracking(
     return;
   }
   for (const [name, entry] of Object.entries(layer.servers)) {
-    if (layer.hasTransport(entry) || hasExposureOverrideFields(entry)) {
+    if (layer.hasTransport(entry)) {
       policies.delete(name);
+      continue;
+    }
+    const existing = policies.get(name);
+    if (existing !== undefined && entry.disabled !== undefined) {
+      policies.set(name, {
+        ...existing,
+        enabled: entry.disabled === false,
+      });
     }
   }
+}
+
+function stripDisabledField(entry: ServerEntry): ServerEntry {
+  const next = { ...entry };
+  delete next.disabled;
+  return next;
 }
 
 export function buildNativePolicyOverrideEntry(input: {
@@ -93,21 +97,31 @@ export function buildNativePolicyOverrideEntry(input: {
   ) => Partial<ServerEntry>;
 }): { readonly entry: ServerEntry; readonly replacesExisting: boolean } {
   const { base, existing, nativePolicy, ctx, resolveDisabled } = input;
+  const hasExplicitExposure = base.exposure !== undefined || base.toolExposure !== undefined;
   if (nativePolicy !== undefined && existing !== undefined) {
     const merged = mergeNativePolicy(nativePolicy, base);
     const mappedExposure = mapNativeExposureFields(merged, ctx);
+    const disabledOverride = resolveDisabled(merged.enabled, mappedExposure.disabled === true);
+    if (!hasExplicitExposure) {
+      return {
+        entry: {
+          ...stripDisabledField(existing),
+          ...disabledOverride,
+        },
+        replacesExisting: true,
+      };
+    }
     return {
       entry: {
         ...stripExposureOverrides(existing, true),
         ...mappedExposure,
-        ...resolveDisabled(merged.enabled, mappedExposure.disabled === true),
+        ...disabledOverride,
       },
       replacesExisting: true,
     };
   }
   const mappedExposure = mapNativeExposureFields(base, ctx);
   const disabledOverride = resolveDisabled(base.enabled, mappedExposure.disabled === true);
-  const hasExplicitExposure = base.exposure !== undefined || base.toolExposure !== undefined;
   if (hasExplicitExposure && existing !== undefined) {
     return {
       entry: {

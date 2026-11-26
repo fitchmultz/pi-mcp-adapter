@@ -1937,6 +1937,33 @@ describe("config discovery", () => {
       directTools: true,
     });
   });
+
+  it("redirects directTools pins to .pi/fitch-mcp-adapter/mcp.json when --mcp-config aliases project .mcp.json", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "pi-mcp-aliased-project-"));
+    const projectMcpPath = join(projectDir, ".mcp.json");
+    const projectAdapterPath = join(projectDir, ".pi", "fitch-mcp-adapter", "mcp.json");
+    writeJson(projectMcpPath, {
+      mcpServers: {
+        docs: { command: "docs-bin", args: [] },
+      },
+    });
+    const beforeBytes = readFileSync(projectMcpPath, "utf-8");
+
+    const { getServerProvenance, writeDirectToolsConfig, loadMcpConfig } =
+      await import("../config.ts");
+    const provenance = getServerProvenance(projectMcpPath, projectDir);
+    writeDirectToolsConfig(new Map([["docs", true]]), provenance);
+
+    expect(readFileSync(projectMcpPath, "utf-8")).toBe(beforeBytes);
+    expect(readJsonServers(projectAdapterPath)).toEqual({
+      docs: { directTools: true },
+    });
+    expect(loadMcpConfig(projectMcpPath, projectDir).mcpServers.docs).toEqual({
+      command: "docs-bin",
+      args: [],
+      directTools: true,
+    });
+  });
 });
 
 function readJsonServers(path: string): Record<string, unknown> {
