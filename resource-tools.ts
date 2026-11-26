@@ -15,6 +15,7 @@ import { throwIfAborted } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
 import { isUiResourceUri } from "./tool-metadata.ts";
 import { updateMetadataCache } from "./init-metadata.ts";
+import type { ServerConnection } from "./server-manager.ts";
 
 export async function executeResourceList(
   state: McpExtensionState,
@@ -76,6 +77,24 @@ function isMethodNotFoundError(error: unknown): boolean {
   return error instanceof ProtocolError && error.code === METHOD_NOT_FOUND_CODE;
 }
 
+function applyRefreshedResourceTemplates(
+  state: McpExtensionState,
+  server: string,
+  connection: ServerConnection,
+  templates: McpResourceTemplate[],
+): void {
+  const current = state.manager.getConnection(server);
+  if (current === connection && current.status === "connected") {
+    current.resourceTemplates = templates;
+    current.resourceTemplatesStale = false;
+    state.resourceTemplates.set(
+      server,
+      templates.filter((template) => !isUiResourceUri(template.uriTemplate)),
+    );
+    updateMetadataCache(state, server, { preserveEmptyResources: false });
+  }
+}
+
 async function refreshStaleResourceTemplates(
   state: McpExtensionState,
   server: string,
@@ -92,24 +111,15 @@ async function refreshStaleResourceTemplates(
       ...options,
       cacheMode: "refresh",
     });
-    const current = state.manager.getConnection(server);
-    if (current === connection && current.status === "connected") {
-      current.resourceTemplates = result.resourceTemplates;
-      current.resourceTemplatesStale = false;
-      state.resourceTemplates.set(
-        server,
-        result.resourceTemplates.filter((template) => !isUiResourceUri(template.uriTemplate)),
-      );
-      updateMetadataCache(state, server, { preserveEmptyResources: false });
-    }
+    applyRefreshedResourceTemplates(state, server, connection, result.resourceTemplates);
   } catch (error) {
     if (ownedSignal?.aborted === true) {
       throwIfAborted(ownedSignal);
     }
     // Keep resourceTemplatesStale=true on transient errors so the next list retries;
-    // only clear when the server explicitly reports MethodNotFound.
+    // on MethodNotFound clear any previously advertised templates and update the cache.
     if (isMethodNotFoundError(error)) {
-      connection.resourceTemplatesStale = false;
+      applyRefreshedResourceTemplates(state, server, connection, []);
     }
   }
 }

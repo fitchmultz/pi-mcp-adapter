@@ -178,6 +178,7 @@ function formatCompletedToken(value: string, isNamed: boolean): string {
   const needsQuotes =
     value === "" ||
     /\s/.test(value) ||
+    value.includes("\\") ||
     value.includes('"') ||
     value.includes("'") ||
     (!isNamed && value.includes("="));

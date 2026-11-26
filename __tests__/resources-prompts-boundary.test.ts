@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  InMemoryTransport,
+  ProtocolError,
+  ProtocolErrorCode,
+} from "@modelcontextprotocol/client";
 import { McpServer as Server } from "@modelcontextprotocol/server";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -16,9 +21,11 @@ import {
 } from "./fixtures/oauth-machine-wire.ts";
 import { executeResourceList, executeResourceRead } from "../resource-tools.ts";
 import { executeGetPrompt, executePromptList } from "../prompt-tools.ts";
+import { parsePromptArgs, resolvePromptArgs } from "../prompt-args.ts";
 import { createPromptCommand } from "../prompts.ts";
 import { executeCall } from "../proxy-modes.ts";
 import { executeGateway } from "../host-gateway.ts";
+import { reconnectServer } from "../mcp-connection-commands.ts";
 import { updateMetadataCache, updateServerMetadata } from "../init.ts";
 import { registerServers } from "../init-startup.ts";
 import { formatPromptCommandName, type PromptMetadata, type ServerDefinition } from "../types.ts";
@@ -287,6 +294,7 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
 
     // Server B serves dynamic templates and persists them in metadata cache.
     let templates = [{ name: "doc", uriTemplate: "docs://v1/{slug}" }];
+    let rejectTemplatesMethodNotFound = false;
     const templateServer = new Server({ name: "with-templates", version: "1.0.0" });
     templateServer.server.registerCapabilities({
       tools: {},
@@ -296,9 +304,17 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     templateServer.server.setRequestHandler("resources/list", () => ({
       resources: [{ name: "index", uri: "docs://index" }],
     }));
-    templateServer.server.setRequestHandler("resources/templates/list", () => ({
-      resourceTemplates: templates,
-    }));
+    templateServer.server.setRequestHandler("resources/templates/list", () => {
+      if (rejectTemplatesMethodNotFound) {
+        throw new ProtocolError(
+          ProtocolErrorCode.MethodNotFound,
+          "resources/templates/list not supported",
+        );
+      }
+      return {
+        resourceTemplates: templates,
+      };
+    });
     const def: ServerDefinition = { url: "https://templates.invalid/mcp", auth: false };
     const { state, connection } = await connectInMemory("docs", templateServer, def, {
       metadataCacheEnabled: true,
@@ -359,6 +375,35 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
     const cachedAfterClear = await executeResourceList(coldAfterClear, { server: "docs" });
     expect(coldClearSpy).not.toHaveBeenCalled();
     expect(cachedAfterClear.details).toMatchObject({ resourceTemplates: [] });
+
+    // Switching resources/templates/list to MethodNotFound (-32601) clears previously advertised
+    // templates both in memory and in the metadata cache.
+    templates = [{ name: "doc_v3", uriTemplate: "docs://v3/{slug}" }];
+    await templateServer.server.sendResourceListChanged();
+    await expect.poll(() => connection.resourceTemplatesStale).toBe(true);
+    expect((await executeResourceList(state, { server: "docs" })).details).toMatchObject({
+      resourceTemplates: [{ name: "doc_v3", uriTemplate: "docs://v3/{slug}" }],
+    });
+
+    rejectTemplatesMethodNotFound = true;
+    await templateServer.server.sendResourceListChanged();
+    await expect.poll(() => connection.resourceTemplatesStale).toBe(true);
+    expect((await executeResourceList(state, { server: "docs" })).details).toMatchObject({
+      resourceTemplates: [],
+    });
+    expect(connection.resourceTemplatesStale).toBe(false);
+    const coldAfterMethodNotFound = createTestState({
+      config: { settings: {}, mcpServers: { docs: def } },
+      metadataCacheEnabled: true,
+    });
+    onTestFinished(() => coldAfterMethodNotFound.owner.stop());
+    registerServers(coldAfterMethodNotFound, [["docs", def]]);
+    const coldMethodNotFoundSpy = vi.spyOn(coldAfterMethodNotFound.manager, "connect");
+    const cachedAfterMethodNotFound = await executeResourceList(coldAfterMethodNotFound, {
+      server: "docs",
+    });
+    expect(coldMethodNotFoundSpy).not.toHaveBeenCalled();
+    expect(cachedAfterMethodNotFound.details).toMatchObject({ resourceTemplates: [] });
   });
 
   it("exposes prompts and get-prompt gateway actions with native images and outputGuard", async () => {
@@ -764,6 +809,9 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
         return { completion: { values: ["stale"] } };
       }
       if (params.argument.name === "topic") {
+        if (params.argument.value === "bs") {
+          return { completion: { values: ["C:\\temp", "a\\"] } };
+        }
         return {
           completion: {
             values: ["alpha", "alpha team"].filter((item) =>
@@ -798,6 +846,30 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
       { value: "topic=alpha", label: "alpha" },
       { value: 'topic="alpha team"', label: "alpha team" },
     ]);
+
+    // 2b) Completion values containing backslashes (including trailing) round-trip cleanly.
+    const backslashPositional = await command.getArgumentCompletions("bs");
+    expect(backslashPositional).toEqual([
+      { value: '"C:\\\\temp"', label: "C:\\temp" },
+      { value: '"a\\\\"', label: "a\\" },
+    ]);
+    for (const item of backslashPositional ?? []) {
+      expect(resolvePromptArgs(promptMeta, parsePromptArgs(item.value))).toEqual({
+        ok: true,
+        args: { topic: item.label },
+      });
+    }
+    const backslashNamed = await command.getArgumentCompletions("topic=bs");
+    expect(backslashNamed).toEqual([
+      { value: 'topic="C:\\\\temp"', label: "C:\\temp" },
+      { value: 'topic="a\\\\"', label: "a\\" },
+    ]);
+    for (const item of backslashNamed ?? []) {
+      expect(resolvePromptArgs(promptMeta, parsePromptArgs(item.value))).toEqual({
+        ok: true,
+        args: { topic: item.label },
+      });
+    }
 
     // 3) Second argument forwards prior argument context and preserves prefix.
     const second = await command.getArgumentCompletions("alpha 2026");
@@ -966,6 +1038,62 @@ describe("MCP-210 resources, templates, prompts, and completions at real SDK bou
       complete: false,
       knownServers: [],
       unknownServers: ["offline"],
+    });
+  });
+
+  it("projects filtered resource counts and resource templates on /mcp reconnect and preserves them after disconnect", async () => {
+    const server = new Server({ name: "reconnect-resources", version: "1.0.0" });
+    server.server.registerCapabilities({ tools: {}, resources: {} });
+    server.server.setRequestHandler("tools/list", () => ({ tools: [] }));
+    server.server.setRequestHandler("resources/list", () => ({
+      resources: [
+        { name: "handbook", uri: "docs://handbook", mimeType: "text/plain" },
+        { name: "app_ui", uri: "ui://docs/panel.html", mimeType: "text/html;profile=mcp-app" },
+      ],
+    }));
+    server.server.setRequestHandler("resources/templates/list", () => ({
+      resourceTemplates: [
+        { name: "article", uriTemplate: "docs://articles/{id}", mimeType: "text/markdown" },
+        { name: "ui_template", uriTemplate: "ui://docs/view/{id}" },
+      ],
+    }));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const definition: ServerDefinition = { url: "https://unused.invalid/mcp", auth: false };
+    const state = createTestState({
+      config: { settings: {}, mcpServers: { reconn: definition } },
+    });
+    onTestFinished(async () => {
+      await state.owner.stop();
+      await state.manager.closeAll();
+      await server.close();
+    });
+    const connectSpy = vi.spyOn(Client.prototype, "connect").mockImplementation(function (
+      this: Client,
+      _transport,
+      options,
+    ) {
+      connectSpy.mockRestore();
+      return this.connect(clientTransport, options);
+    });
+
+    const ok = await reconnectServer(state, host.context, "reconn");
+    expect(ok).toBe(true);
+    expect(state.resourceCounts.get("reconn")).toBe(1);
+    expect(state.resourceTemplates.get("reconn")).toEqual([
+      { name: "article", uriTemplate: "docs://articles/{id}", mimeType: "text/markdown" },
+    ]);
+
+    await state.manager.close("reconn");
+    const managerConnectSpy = vi.spyOn(state.manager, "connect");
+    const afterDisconnect = await executeResourceList(state, { server: "reconn" });
+    expect(managerConnectSpy).not.toHaveBeenCalled();
+    expect(afterDisconnect.details).toMatchObject({
+      total: 1,
+      items: [{ name: "handbook", uri: "docs://handbook", mimeType: "text/plain" }],
+      resourceTemplates: [
+        { name: "article", uriTemplate: "docs://articles/{id}", mimeType: "text/markdown" },
+      ],
     });
   });
 });

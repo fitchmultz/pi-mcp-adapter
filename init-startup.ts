@@ -321,7 +321,7 @@ function updateServerMetadataFromConnection(
   if (!connection) {
     return 0;
   }
-  return applyServerMetadata(state, name, connection, definition);
+  return applyServerMetadata(state, { serverName: name, connection, definition });
 }
 
 function reportStartupFailure(
