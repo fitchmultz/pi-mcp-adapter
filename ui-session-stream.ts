@@ -73,7 +73,6 @@ export class UiSessionStream {
   private readonly request: UiSessionRequest;
   private readonly handle: UiServerHandle;
   private readonly reused: boolean;
-  private readonly getHostError: (() => string | undefined) | undefined;
   private active = true;
   private sequence = 0;
 
@@ -81,16 +80,12 @@ export class UiSessionStream {
     state: McpExtensionState,
     request: UiSessionRequest,
     handle: UiServerHandle,
-    identity: UiStreamIdentity & {
-      reused: boolean;
-      getHostError?: () => string | undefined;
-    },
+    identity: UiStreamIdentity & { reused: boolean },
   ) {
     this.state = state;
     this.request = request;
     this.handle = handle;
     this.reused = identity.reused;
-    this.getHostError = identity.getHostError;
     this.streamId = identity.streamId;
     this.streamToken = identity.streamToken;
   }
@@ -138,7 +133,7 @@ export class UiSessionStream {
       url: this.handle.url,
       viewer,
       isActive: () => this.isActive(),
-      ...(this.getHostError !== undefined ? { getHostError: this.getHostError } : {}),
+      getHostError: () => this.handle.getHostError?.(),
       sendToolResult: (result) => this.sendResult(result, false),
       sendResultPatch: (result) => this.sendResult(result, true),
       sendToolCancelled: (reason) => this.cancel(reason),

@@ -20,6 +20,7 @@ interface SessionChannel {
   close: UiServerHandle["close"];
   getMessages: UiServerHandle["getSessionMessages"];
   takeModelContext: UiServerHandle["takeModelContext"];
+  getHostError: NonNullable<UiServerHandle["getHostError"]>;
   getSummary: UiServerHandle["getStreamSummary"];
 }
 
@@ -73,6 +74,10 @@ export class UiServerSessionHandle implements UiServerHandle {
 
   takeModelContext = (): UiModelContextUpdate | undefined => {
     return this.#channel.takeModelContext();
+  };
+
+  getHostError = (): string | undefined => {
+    return this.#channel.getHostError();
   };
 
   getStreamSummary = (): UiStreamSummary | undefined => {

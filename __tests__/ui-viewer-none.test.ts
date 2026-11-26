@@ -764,15 +764,16 @@ describe("headless defaults, session-scoped Glimpse windows, and retained modelC
     expect(state.pendingUiModelContext).toBeUndefined();
   });
 
-  it("surfaces host errors reported via /proxy/ui/error in summarizeUiSessionResult", async () => {
+  it("surfaces host errors reported via /proxy/ui/error across both opening and reused UI sessions", async () => {
     process.env.MCP_UI_VIEWER = "browser";
     const { state } = await makeState();
-    const runtime = await maybeStartUiSession(state, {
+    const request = {
       serverName: "demo",
       toolName: "app",
       toolArgs: {},
       uiResourceUri: "ui://app",
-    });
+    };
+    const runtime = await maybeStartUiSession(state, request);
     assert.ok(runtime && state.uiServer);
 
     const response = await fetch(`http://127.0.0.1:${state.uiServer.port}/proxy/ui/error`, {
@@ -785,6 +786,14 @@ describe("headless defaults, session-scoped Glimpse windows, and retained modelC
     });
     expect(response.status).toBe(200);
     expect(summarizeUiSessionResult(runtime)).toMatchObject({
+      uiOpen: true,
+      message: "Interactive UI reported an error: Failed to initialize AppBridge: Error: broken",
+    });
+
+    const reused = await maybeStartUiSession(state, { ...request, toolArgs: { page: 2 } });
+    assert.ok(reused);
+    expect(reused.reused).toBe(true);
+    expect(summarizeUiSessionResult(reused)).toMatchObject({
       uiOpen: true,
       message: "Interactive UI reported an error: Failed to initialize AppBridge: Error: broken",
     });

@@ -97,7 +97,6 @@ class UiSession {
   private readonly log: ReturnType<typeof logger.child>;
   private handle: UiServerHandle | undefined;
   private stream: UiSessionStream | undefined;
-  private hostError: string | undefined;
 
   constructor(state: McpExtensionState, request: UiSessionRequest, signal: AbortSignal) {
     this.state = state;
@@ -164,9 +163,6 @@ class UiSession {
       ...(request.onNeedsAuth ? { onNeedsAuth: request.onNeedsAuth } : {}),
       ...(hostContext !== undefined ? { hostContext } : {}),
       onMessage: (params) => events.message(params, this.handle),
-      onError: (message) => {
-        this.hostError = message;
-      },
       onComplete: (reason) => this.complete(reason),
     });
     this.handle = handle;
@@ -178,11 +174,7 @@ class UiSession {
     // Listener startup yields: replace the slot's current owner only when we can publish ours.
     this.replaceExisting();
     this.state.pendingUiModelContext = undefined;
-    const stream = new UiSessionStream(state, request, handle, {
-      ...identity,
-      reused: false,
-      getHostError: () => this.hostError,
-    });
+    const stream = new UiSessionStream(state, request, handle, { ...identity, reused: false });
     this.stream = stream;
     stream.register();
     this.state.uiServer = handle;

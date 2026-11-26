@@ -30,6 +30,7 @@ export class UiProxyRoutes {
   private readonly log: ReturnType<typeof logger.child>;
   private currentDisplayMode: UiDisplayMode;
   private pendingModelContext: UiModelContextUpdate | undefined;
+  private latestHostError: string | undefined;
 
   constructor(
     options: UiServerOptions,
@@ -60,6 +61,10 @@ export class UiProxyRoutes {
     const update = this.pendingModelContext;
     this.pendingModelContext = undefined;
     return update;
+  }
+
+  getHostError(): string | undefined {
+    return this.latestHostError;
   }
 
   async handle(pathname: string, params: unknown, res: ServerResponse): Promise<boolean> {
@@ -199,6 +204,7 @@ export class UiProxyRoutes {
       sendJson(res, 400, { ok: false, error: "Invalid UI error params" });
       return;
     }
+    this.latestHostError = message;
     const warning = this.history.append("notifications", `UI host error: ${message}`);
     this.log.warn("UI host error reported", { message });
     this.options.state?.ui?.notify(

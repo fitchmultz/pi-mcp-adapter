@@ -161,6 +161,7 @@ class UiHttpServer {
         close: (reason) => this.close(reason ?? "closed"),
         getMessages: () => this.proxy.getMessages(),
         takeModelContext: () => this.proxy.takeModelContext(),
+        getHostError: () => this.proxy.getHostError(),
         getSummary: () => this.events.getSummary(),
       },
     );
