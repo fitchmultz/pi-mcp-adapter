@@ -10,16 +10,15 @@ import {
   resolveNativeCwd,
 } from "./config-native-pi.ts";
 import { isPathInsideProject, IMPORT_PATHS } from "./config-paths.ts";
-import { validateUnknownServerProtocolConfig } from "./config-protocol.ts";
-import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
+import { validateConfigWithDiagnostics } from "./config-diagnostics.ts";
+import type {
+  McpConfig,
+  McpConfigValidationError,
+  ServerEntry,
+  ImportKind,
+} from "./config-types.ts";
 import type { ServerProvenance } from "./types.ts";
-import {
-  isConfigObject,
-  isUnknownArray,
-  isServerEntry,
-  isMcpSettings,
-  isImportKind,
-} from "./config-validation.ts";
+import { isConfigObject, isServerEntry, isImportKind } from "./config-validation.ts";
 import { mergeOpenCodeConfigs, mapOpenCodeEntry } from "./config-opencode.ts";
 
 function openCodeProjectPath(cwd: string): string {
@@ -121,22 +120,48 @@ export function loadImportedConfig(
   return null;
 }
 
-export function readValidatedConfig(path: string, label: string): McpConfig | null {
+export function readValidatedConfigWithDiagnostics(
+  path: string,
+  label: string,
+): { config: McpConfig | null; errors: McpConfigValidationError[] } {
   if (!existsSync(path)) {
-    return null;
+    return { config: null, errors: [] };
   }
   try {
-    return validateConfig(parseJsonConfig(readFileSync(path, "utf-8")));
+    const parsed = parseJsonConfig(readFileSync(path, "utf-8"));
+    const { config, errors } = validateConfigWithDiagnostics(parsed, path);
+    if (errors.length > 0) {
+      const firstError = errors.find((entry) => entry.severity === "error") ?? errors[0];
+      console.warn(
+        `Config validation issues in ${label}: ${errors.map((entry) => entry.message).join("; ")}`,
+        new Error(firstError?.message ?? "Config validation warning"),
+      );
+    }
+    return { config, errors };
   } catch (error) {
     console.warn(`Failed to load ${label}:`, error);
-    return null;
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      config: null,
+      errors: [{ severity: "error", kind: "parse_error", filePath: path, message }],
+    };
   }
+}
+
+export function readValidatedConfig(path: string, label: string): McpConfig | null {
+  return readValidatedConfigWithDiagnostics(path, label).config;
 }
 
 export interface LoadedSourceConfig {
   readonly config: McpConfig;
   readonly replacedServers?: ReadonlySet<string>;
   readonly nativePolicies?: ReadonlyMap<string, NativeServerPolicy>;
+  readonly errors?: readonly McpConfigValidationError[];
+}
+
+export interface ReadConfigSourceResult {
+  readonly loaded: LoadedSourceConfig | null;
+  readonly errors: readonly McpConfigValidationError[];
 }
 
 function projectConfigRoot(source: ConfigSourceSpec): string | undefined {
@@ -166,66 +191,58 @@ function resolveProjectConfigCwds(config: McpConfig, projectRoot: string): McpCo
   return changed ? { ...config, mcpServers } : config;
 }
 
+export function applySourceConfigTransforms(
+  source: ConfigSourceSpec,
+  config: McpConfig,
+  errors: readonly McpConfigValidationError[],
+): LoadedSourceConfig {
+  const projectRoot = projectConfigRoot(source);
+  const resolved =
+    projectRoot !== undefined ? resolveProjectConfigCwds(config, projectRoot) : config;
+  return {
+    config: resolved,
+    ...(errors.length > 0 ? { errors } : {}),
+  };
+}
+
+export function readConfigSourceWithDiagnostics(
+  source: ConfigSourceSpec,
+  cwd: string,
+  existingServers?: Readonly<Record<string, ServerEntry>>,
+  nativePolicies?: ReadonlyMap<string, NativeServerPolicy>,
+): ReadConfigSourceResult {
+  if (source.id === "native-pi-global") {
+    const loaded = readNativePiGlobalConfig(source.readPath, cwd);
+    return { loaded, errors: loaded?.config.configErrors ?? [] };
+  }
+  if (source.id === "native-pi-project") {
+    // Resolve relative stdio `cwd` against the project root owning `.pi/mcp.json`.
+    const projectRoot = dirname(dirname(source.readPath));
+    const loaded = readNativePiProjectConfig(
+      source.readPath,
+      projectRoot,
+      existingServers,
+      nativePolicies,
+    );
+    return { loaded, errors: loaded?.config.configErrors ?? [] };
+  }
+  const { config, errors } = readValidatedConfigWithDiagnostics(
+    source.readPath,
+    `MCP config from ${source.readPath}`,
+  );
+  if (!config) {
+    return { loaded: null, errors };
+  }
+  return { loaded: applySourceConfigTransforms(source, config, errors), errors };
+}
+
 export function readConfigSource(
   source: ConfigSourceSpec,
   cwd: string,
   existingServers?: Readonly<Record<string, ServerEntry>>,
   nativePolicies?: ReadonlyMap<string, NativeServerPolicy>,
 ): LoadedSourceConfig | null {
-  if (source.id === "native-pi-global") {
-    return readNativePiGlobalConfig(source.readPath, cwd);
-  }
-  if (source.id === "native-pi-project") {
-    // Resolve relative stdio `cwd` against the project root owning `.pi/mcp.json`.
-    const projectRoot = dirname(dirname(source.readPath));
-    return readNativePiProjectConfig(source.readPath, projectRoot, existingServers, nativePolicies);
-  }
-  const config = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-  if (!config) {
-    return null;
-  }
-  const projectRoot = projectConfigRoot(source);
-  return {
-    config: projectRoot !== undefined ? resolveProjectConfigCwds(config, projectRoot) : config,
-  };
-}
-
-function validateServerMap(raw: Record<string, unknown>): Record<string, ServerEntry> {
-  const servers: Record<string, ServerEntry> = {};
-  for (const [name, entry] of Object.entries(raw)) {
-    validateUnknownServerProtocolConfig(entry);
-    if (!isServerEntry(entry)) {
-      throw new Error(`Invalid MCP server configuration: ${name}`);
-    }
-    servers[name] = entry;
-  }
-  return servers;
-}
-
-function normalizeLegacySettings(raw: unknown): unknown {
-  return isConfigObject(raw) && raw.hostConfigDiscovery === "prompt"
-    ? { ...raw, hostConfigDiscovery: "off" }
-    : raw;
-}
-
-function validateConfig(raw: unknown): McpConfig {
-  if (!isConfigObject(raw)) {
-    return { mcpServers: {} };
-  }
-  const servers = raw.mcpServers ?? raw["mcp-servers"] ?? {};
-  if (!isConfigObject(servers)) {
-    return { mcpServers: {} };
-  }
-  const rawSettings = raw.settings;
-  const settings = normalizeLegacySettings(rawSettings);
-  if (settings !== undefined && !isMcpSettings(settings)) {
-    throw new Error("Invalid MCP settings");
-  }
-  return {
-    mcpServers: validateServerMap(servers),
-    ...(isUnknownArray(raw.imports) ? { imports: raw.imports.filter(isImportKind) } : {}),
-    ...(isMcpSettings(settings) ? { settings } : {}),
-  };
+  return readConfigSourceWithDiagnostics(source, cwd, existingServers, nativePolicies).loaded;
 }
 
 function importedServers(config: Record<string, unknown>, kind: ImportKind): unknown {
@@ -273,7 +290,38 @@ function mapCodexEntry(entry: Record<string, unknown>): Record<string, unknown> 
   return mapped;
 }
 
-export function extractServers(config: unknown, kind: ImportKind): Record<string, ServerEntry> {
+function collectExtractedServer(input: {
+  mapped: Record<string, ServerEntry>;
+  name: string;
+  raw: unknown;
+  kind: ImportKind;
+  filePath: string | undefined;
+  errors: McpConfigValidationError[] | undefined;
+}): void {
+  const { mapped, name, raw, kind, filePath, errors } = input;
+  if (kind === "opencode" && isConfigObject(raw) && raw.enabled === false) {
+    return;
+  }
+  const entry = kind === "opencode" ? mapOpenCodeEntry(raw) : mapImportedEntry(raw, kind);
+  if (entry !== undefined) {
+    mapped[name] = entry;
+    return;
+  }
+  errors?.push({
+    severity: "warning",
+    kind: "invalid_server",
+    filePath: filePath ?? kind,
+    serverName: name,
+    message: `Skipped invalid ${kind} server entry "${name}"`,
+  });
+}
+
+export function extractServers(
+  config: unknown,
+  kind: ImportKind,
+  filePath?: string,
+  errors?: McpConfigValidationError[],
+): Record<string, ServerEntry> {
   if (!isConfigObject(config)) {
     return {};
   }
@@ -283,10 +331,7 @@ export function extractServers(config: unknown, kind: ImportKind): Record<string
   }
   const mapped: Record<string, ServerEntry> = {};
   for (const [name, raw] of Object.entries(servers)) {
-    const entry = kind === "opencode" ? mapOpenCodeEntry(raw) : mapImportedEntry(raw, kind);
-    if (entry !== undefined) {
-      mapped[name] = entry;
-    }
+    collectExtractedServer({ mapped, name, raw, kind, filePath, errors });
   }
   return mapped;
 }
@@ -328,13 +373,16 @@ export function addSourceServerProvenance(
 export function* importedServerSources(
   importKinds: ImportKind[],
   cwd: string,
+  readImport?: (importKind: ImportKind) => { path: string; value: unknown } | null,
 ): Generator<{ importKind: ImportKind; path: string; names: string[] }> {
   for (const importKind of importKinds) {
-    const imported = loadImportedConfig(
-      importKind,
-      cwd,
-      `Failed to inspect imported MCP config from ${importKind}:`,
-    );
+    const imported = readImport
+      ? readImport(importKind)
+      : loadImportedConfig(
+          importKind,
+          cwd,
+          `Failed to inspect imported MCP config from ${importKind}:`,
+        );
     if (imported) {
       yield {
         importKind,
@@ -348,10 +396,14 @@ export function* importedServerSources(
 export function addInheritedProvenance(
   provenance: Map<string, ServerProvenance>,
   importKinds: ImportKind[],
-  userPath: string,
-  cwd: string,
+  target: {
+    userPath: string;
+    cwd: string;
+    readImport?: (importKind: ImportKind) => { path: string; value: unknown } | null;
+  },
 ): void {
-  for (const imported of importedServerSources(importKinds, cwd)) {
+  const { userPath, cwd, readImport } = target;
+  for (const imported of importedServerSources(importKinds, cwd, readImport)) {
     for (const name of imported.names) {
       if (!provenance.has(name)) {
         provenance.set(name, { path: userPath, kind: "import", importKind: imported.importKind });

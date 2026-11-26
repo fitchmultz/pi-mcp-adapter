@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   showStatus: vi.fn<typeof Commands.showStatus>(),
   showTools: vi.fn<typeof Commands.showTools>(),
   showPrompts: vi.fn<typeof Commands.showPrompts>(),
+  showDoctor: vi.fn<typeof Commands.showDoctor>(),
   reconnectServer: vi.fn<typeof Commands.reconnectServer>(),
   reconnectServers: vi.fn<typeof Commands.reconnectServers>(),
   authenticateServer: vi.fn<typeof Commands.authenticateServer>(),
@@ -96,6 +97,7 @@ vi.mock("../commands.ts", () => ({
   showStatus: mocks.showStatus,
   showTools: mocks.showTools,
   showPrompts: mocks.showPrompts,
+  showDoctor: mocks.showDoctor,
   reconnectServer: mocks.reconnectServer,
   reconnectServers: mocks.reconnectServers,
   authenticateServer: mocks.authenticateServer,
@@ -823,12 +825,15 @@ describe("mcpAdapter session lifecycle", () => {
     expect(mocks.loadMcpConfig).toHaveBeenLastCalledWith("/host/mcp.json", "/project", {
       includeProject: true,
     });
+    await command.handler("", ctx);
     await command.handler("status", ctx);
+    await command.handler("unknown-cmd", ctx);
     await command.handler("setup", ctx);
     await command.handler("disable project", ctx);
     await auth.handler("", ctx);
     const object: unknown = expect.any(Object);
     const callback: unknown = expect.any(Function);
+    expect(mocks.openMcpPanel).toHaveBeenCalledTimes(1);
     expect(mocks.openMcpPanel).toHaveBeenCalledWith({
       state: object,
       pi: api,
@@ -836,6 +841,11 @@ describe("mcpAdapter session lifecycle", () => {
       configOverridePath: "/host/mcp.json",
       onDirectToolsConfigChanged: callback,
     });
+    expect(mocks.showStatus).toHaveBeenCalledTimes(1);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining('Unknown /mcp subcommand "unknown-cmd"'),
+      "warning",
+    );
     expect(mocks.openMcpSetup).toHaveBeenCalledWith({
       state: object,
       pi: api,
@@ -1222,7 +1232,18 @@ describe("mcpAdapter session lifecycle", () => {
 
     expect(
       requireValue(await commandDef.getArgumentCompletions("")).map(({ value }) => value),
-    ).toEqual(["reconnect", "tools", "prompts", "setup", "logout", "disable", "enable", "status"]);
+    ).toEqual([
+      "reconnect",
+      "tools",
+      "prompts",
+      "setup",
+      "logout",
+      "disable",
+      "enable",
+      "status",
+      "reload",
+      "doctor",
+    ]);
     expect(await commandDef.getArgumentCompletions("STTS")).toEqual([
       { value: "status", label: "status", description: "Show server status" },
     ]);
@@ -1249,7 +1270,12 @@ describe("mcpAdapter session lifecycle", () => {
     ]);
     expect(await commandDef.getArgumentCompletions("missing")).toBeNull();
     expect(await commandDef.getArgumentCompletions("reconnect missing")).toBeNull();
-    expect(await commandDef.getArgumentCompletions("tools anything")).toBeNull();
+    expect(await commandDef.getArgumentCompletions("tools ")).toEqual([
+      { value: "tools github", label: "github" },
+      { value: "tools gitlab", label: "gitlab" },
+      { value: "tools notion", label: "notion" },
+    ]);
+    expect(await commandDef.getArgumentCompletions("tools missing")).toBeNull();
     expect(spies.registerCommand.mock.calls.some((call) => call[0] === "mcp-reconnect")).toBe(
       false,
     );

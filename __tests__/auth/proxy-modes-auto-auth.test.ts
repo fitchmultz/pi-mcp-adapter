@@ -22,6 +22,7 @@ import {
 } from "vitest";
 import type * as authTypes from "../../mcp-auth-flow.ts";
 import type * as initTypes from "../../init.ts";
+import { applyServerMetadata } from "../../init-metadata.ts";
 import { McpServerManager, type ServerConnection } from "../../server-manager.ts";
 import type { McpExtensionState } from "../../state.ts";
 import type { McpTool, ServerDefinition } from "../../types.ts";
@@ -47,6 +48,17 @@ vi.mock("../../mcp-auth-flow.ts", async (importOriginal) => ({
 }));
 vi.mock("../../init.ts", () => ({
   lazyConnect: mocks.lazyConnect,
+  applyConnectionMetadata: (
+    state: McpExtensionState,
+    input: Parameters<typeof initTypes.applyConnectionMetadata>[1],
+  ) => {
+    const skippedCount = applyServerMetadata(state, input);
+    mocks.updateMetadataCache(state, input.serverName);
+    mocks.notifyToolMetadataUpdated(state, input.serverName, input.reason);
+    mocks.markKeepAliveAfterConnect(state, input.serverName);
+    mocks.clearFailure(state, input.serverName);
+    return skippedCount;
+  },
   updateServerMetadata: mocks.updateServerMetadata,
   updateMetadataCache: mocks.updateMetadataCache,
   notifyToolMetadataUpdated: mocks.notifyToolMetadataUpdated,

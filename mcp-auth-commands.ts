@@ -21,7 +21,7 @@ function authPreconditionFailure(
 ): McpAuthResult | undefined {
   const eligibility = authEligibility(definition);
   if (eligibility === "disabled") {
-    const message = `Server "${serverName}" is disabled. Run /mcp enable ${serverName}, then /reload.`;
+    const message = `Server "${serverName}" is disabled. Run /mcp enable ${serverName}.`;
     ui.notify(message, "warning");
     return { ok: false, message };
   }

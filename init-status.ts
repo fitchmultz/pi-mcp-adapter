@@ -11,16 +11,15 @@ import {
   failureAgeSeconds,
   failureBackoffMs,
   failureRemainingSeconds,
-  getFailureBackoffMap,
   serverFailureBackoffMs,
   type FailureBackoffEntry,
 } from "./server-status.ts";
 import {
-  updateServerMetadata,
-  updateMetadataCache,
-  notifyToolMetadataUpdated,
+  applyConnectionMetadata,
   markKeepAliveAfterConnect,
+  updateServerMetadata,
 } from "./init-metadata.ts";
+export { clearFailure } from "./init-metadata.ts";
 const MAX_FAILURE_MESSAGE_CHARS = 8 * 1024;
 
 function getFailureBackoffs(state: McpExtensionState): Map<string, FailureBackoffEntry> {
@@ -37,16 +36,12 @@ function getFailureBackoffs(state: McpExtensionState): Map<string, FailureBackof
   });
 }
 
-export function clearFailure(state: McpExtensionState, serverName: string): void {
-  state.failureTracker.delete(serverName);
-  state.failureMessages.delete(serverName);
-  state.lifecycle.resetReconnectBackoff(serverName);
-  const entries = getFailureBackoffMap(state);
-  const entry = entries?.get(serverName);
-  if (entry?.timer) {
-    clearTimeout(entry.timer);
+function readStderrTail(state: McpExtensionState, serverName: string): string {
+  try {
+    return state.manager.getStderrTail(serverName);
+  } catch {
+    return "";
   }
-  entries?.delete(serverName);
 }
 
 export function recordFailure(state: McpExtensionState, serverName: string, message: string): void {
@@ -60,6 +55,10 @@ export function recordFailure(state: McpExtensionState, serverName: string, mess
   const failedAt = Date.now();
   state.failureTracker.set(serverName, failedAt);
   state.failureMessages.set(serverName, message.slice(0, MAX_FAILURE_MESSAGE_CHARS));
+  const tail = readStderrTail(state, serverName);
+  if (tail.length > 0) {
+    state.recentStderr?.set(serverName, tail);
+  }
   const entry: FailureBackoffEntry = { consecutiveFailures, backoffMs, timer: undefined };
   const timer = setTimeout(() => {
     entry.timer = undefined;
@@ -217,11 +216,12 @@ async function connectLazyServer(
     if (newConnection.status === "needs-auth") {
       return false;
     }
-    clearFailure(state, serverName);
-    updateServerMetadata(state, serverName);
-    updateMetadataCache(state, serverName);
-    notifyToolMetadataUpdated(state, serverName, "lazy-connect");
-    markKeepAliveAfterConnect(state, serverName);
+    applyConnectionMetadata(state, {
+      serverName,
+      connection: newConnection,
+      definition,
+      reason: "lazy-connect",
+    });
     updateStatusBar(state);
     return true;
   } catch (error) {

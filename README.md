@@ -44,14 +44,17 @@ By default, servers connect when Pi discovers an uncached catalog or calls a too
 
 ## Controls and settings
 
-| Command                   | Purpose                                                   |
-| ------------------------- | --------------------------------------------------------- |
-| `/mcp`                    | Show servers and pin tools                                |
-| `/mcp status`             | Show connection state and tool/resource counts            |
-| `/mcp reconnect <server>` | Reconnect and refresh the catalog                         |
-| `/mcp-auth <server>`      | Start OAuth in an interactive session                     |
-| `/mcp disable <server>`   | Disable the server for this project; apply with `/reload` |
-| `/mcp enable <server>`    | Enable the server for this project; apply with `/reload`  |
+| Command                   | Purpose                                                               |
+| ------------------------- | --------------------------------------------------------------------- |
+| `/mcp`                    | Open the interactive server and pin panel                             |
+| `/mcp status`             | Show connection state, blocked/disabled servers, and validation notes |
+| `/mcp tools [server]`     | List discovered tools and estimated token cost (all or one server)    |
+| `/mcp reconnect [server]` | Reconnect and refresh the catalog (skips disabled servers)            |
+| `/mcp reload`             | Reload MCP configuration and runtime state                            |
+| `/mcp doctor [server]`    | Inspect config sources, validation errors, auth health, and stderr    |
+| `/mcp-auth <server>`      | Start OAuth in an interactive session                                 |
+| `/mcp disable <server>`   | Disable the server live in-session and in project overrides           |
+| `/mcp enable <server>`    | Enable the server live in-session and connect/register its tools      |
 
 Use [`directTools`](docs/reference.md#typed-discovery-and-pinned-tools) to pin tools at startup. Other tools stay deferred until `tool_search` loads them. Like Pi's own MCP extension, the adapter activates a registered `tool_search` when it registers deferred tools, once per session start or tree navigation; a branch that recorded removing `tool_search` keeps it off. Gateway search covers known catalogs; `mcp({ action: "connect", server })` discovers an unknown catalog.
 

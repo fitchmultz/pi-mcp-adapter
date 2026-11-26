@@ -244,6 +244,11 @@ export class McpServerManager {
     return this.lifecycle.getConnection(name);
   }
 
+  getStderrTail(name: string): string {
+    const live = this.lifecycle.getConnection(name)?.getStderrTail?.() ?? "";
+    return live.length > 0 ? live : this.callbacks.getLastStderrTail(name);
+  }
+
   getAllConnections(): Map<string, ServerConnection> {
     return this.lifecycle.getAllConnections();
   }

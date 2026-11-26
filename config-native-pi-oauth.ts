@@ -250,7 +250,7 @@ const ADAPTER_ONLY_OAUTH_KEY_MAP: Record<AdapterOnlyOAuthKey, true> = {
 };
 const ADAPTER_ONLY_OAUTH_KEYS = Object.keys(ADAPTER_ONLY_OAUTH_KEY_MAP);
 
-type AdapterOnlyTopLevelKey = Exclude<keyof McpConfig, "mcpServers">;
+type AdapterOnlyTopLevelKey = Exclude<keyof McpConfig, "mcpServers" | "configErrors">;
 const ADAPTER_ONLY_TOP_LEVEL_KEY_MAP: Record<AdapterOnlyTopLevelKey, true> = {
   imports: true,
   settings: true,

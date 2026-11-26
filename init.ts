@@ -26,12 +26,37 @@ export {
   lazyConnect,
 } from "./init-status.ts";
 export {
+  applyConnectionMetadata,
   markKeepAliveAfterConnect,
   updateServerMetadata,
   updateMetadataCache,
   notifyToolMetadataUpdated,
   flushMetadataCache,
 } from "./init-metadata.ts";
+
+function formatStartupConfigErrorLine(error: {
+  severity: string;
+  filePath: string;
+  serverName?: string;
+  field?: string;
+  message: string;
+}): string {
+  const scope = [error.serverName, error.field].filter(Boolean).join(".");
+  const location = scope.length > 0 ? `${error.filePath} (${scope})` : error.filePath;
+  return `  • [${error.severity}] ${location}: ${error.message}`;
+}
+
+function reportStartupConfigErrors(state: McpExtensionState): void {
+  const errors = state.configErrors;
+  if (!state.ui || !errors || errors.length === 0) {
+    return;
+  }
+  const preview = errors.slice(0, 5).map(formatStartupConfigErrorLine);
+  const overflow =
+    errors.length > 5 ? [`  … and ${errors.length - 5} more (run /mcp doctor for details)`] : [];
+  const header = `MCP configuration validation (${errors.length} ${errors.length === 1 ? "issue" : "issues"}):`;
+  state.ui.notify([header, ...preview, ...overflow].join("\n"), "warning");
+}
 
 async function connectInitialServers(
   state: McpExtensionState,
@@ -69,6 +94,9 @@ export async function initializeMcp(
   const hasUI = ctx.hasUI;
   const runtimeSignal = combineAbortSignals(owner.signal, initialSignal);
   const state = createInitialState(pi, ctx, owner, options);
+  if (hasUI) {
+    reportStartupConfigErrors(state);
+  }
   const allServerEntries = Object.entries(state.config.mcpServers);
   const serverEntries = allServerEntries.filter(([, definition]) => !isServerDisabled(definition));
   if (serverEntries.length === 0) {

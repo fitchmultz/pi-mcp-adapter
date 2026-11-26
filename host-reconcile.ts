@@ -4,10 +4,9 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAuthStorageOptions } from "./mcp-auth.ts";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
 import {
-  clearFailure,
+  applyConnectionMetadata,
   markKeepAliveAfterConnect,
   recordFailure,
-  updateMetadataCache,
   updateServerMetadata,
   updateStatusBar,
 } from "./init.ts";
@@ -426,10 +425,12 @@ class SessionReconciler {
             );
             return;
           }
-          updateServerMetadata(this.state, name);
-          updateMetadataCache(this.state, name);
-          markKeepAliveAfterConnect(this.state, name);
-          clearFailure(this.state, name);
+          applyConnectionMetadata(this.state, {
+            serverName: name,
+            connection,
+            definition,
+            reason: "config-reconcile",
+          });
         } catch (error) {
           if (isAbortError(error, signal)) {
             return;

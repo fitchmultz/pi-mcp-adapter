@@ -186,31 +186,43 @@ describe("config discovery", () => {
     { settings: { outputGuard: { maxBytes: "100" } } },
     { settings: { trace: { enabled: "true" } } },
     { settings: { trace: { file: 42 } } },
-  ])("warns and ignores a complete file with malformed known fields: %j", async (invalid) => {
-    const home = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-home-"));
-    const project = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-project-"));
-    process.env.HOME = home;
-    const file = join(project, ".mcp.json");
-    writeJson(file, {
-      ...invalid,
-      mcpServers: {
-        valid: { command: "node" },
-        ...("mcpServers" in invalid ? invalid.mcpServers : {}),
-      },
-    });
-    const before = readFileSync(file, "utf-8");
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => {
-      // Delivery and file identity are asserted below.
-    });
-    try {
-      const { loadMcpConfig } = await import("../config.ts");
-      expect(loadMcpConfig(undefined, project)).toEqual({ mcpServers: {} });
-      expect(warning).toHaveBeenCalledWith(expect.stringContaining(file), expect.any(Error));
-      expect(readFileSync(file, "utf-8")).toBe(before);
-    } finally {
-      warning.mockRestore();
-    }
-  });
+  ])(
+    "isolates malformed known fields per entry without dropping valid sibling servers: %j",
+    async (invalid) => {
+      const home = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-home-"));
+      const project = mkdtempSync(join(tmpdir(), "pi-mcp-invalid-field-project-"));
+      process.env.HOME = home;
+      const file = join(project, ".mcp.json");
+      writeJson(file, {
+        ...invalid,
+        mcpServers: {
+          valid: { command: "node" },
+          ...("mcpServers" in invalid ? invalid.mcpServers : {}),
+        },
+      });
+      const before = readFileSync(file, "utf-8");
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {
+        // Delivery and file identity are asserted below.
+      });
+      try {
+        const { loadMcpConfig } = await import("../config.ts");
+        const loaded = loadMcpConfig(undefined, project);
+        expect(loaded.mcpServers).toEqual({ valid: { command: "node" } });
+        expect(loaded.configErrors).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              severity: "error",
+              filePath: file,
+            }),
+          ]),
+        );
+        expect(warning).toHaveBeenCalledWith(expect.stringContaining(file), expect.any(Error));
+        expect(readFileSync(file, "utf-8")).toBe(before);
+      } finally {
+        warning.mockRestore();
+      }
+    },
+  );
 
   it("merges global and per-server uiViewer and uiToolConsent settings", async () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-ui-config-home-"));

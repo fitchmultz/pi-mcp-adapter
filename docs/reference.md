@@ -80,7 +80,7 @@ If a higher-precedence config changes a stdio server's `command`, `args`, or `cw
 
 Project layers and project-local host imports are read only after Pi marks the project trusted. Until then, the adapter uses global configuration only, does not start project-defined servers, and blocks project configuration panels and writes.
 
-`/mcp disable <server>` and `/mcp enable <server>` persist only the `disabled` field in the project-local `.pi/fitch-mcp-adapter/mcp.json`, which is the highest-precedence Pi layer. Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. Run `/reload` after changing the flag so registered tool surfaces are refreshed. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
+`/mcp disable <server>` and `/mcp enable <server>` apply live in the active session immediately—disconnecting and unloading tools on disable, or connecting and registering tools on enable—while persisting only the `disabled` field in the project-local `.pi/fitch-mcp-adapter/mcp.json` (the highest-precedence Pi layer). Enabling removes the project flag when lower layers are enabled, or writes `false` when needed to override a disabled lower source. This applies even when the effective server came from a shared global/project file, an imported host config, or `configPath`; the source file is never rewritten and credentials are never copied. The manual equivalent is to add `{ "disabled": true }` to a server in any normal MCP config and run `/mcp reload` or `/reload`. Supplied in-memory `createMcpAdapter({ config })` configurations are isolated and do not read or write this project override; the commands are unavailable in that mode.
 
 Servers are **lazy by default**. Cached tool descriptors register as deferred Pi tools without a live connection. Pi's native `tool_search` loads the tools relevant to a task:
 
@@ -747,7 +747,7 @@ Valid cached descriptors avoid startup connections. Missing or stale metadata fo
 
 MCP catalog notifications and reconnects refresh eligible metadata. Removed tools leave the active set. `settings.freezeDirectTools: true` keeps the automatic registered surface stable after initial sync; deliberate `mcp({ action: "connect", server: "name" })` or `/mcp reconnect <server>` refreshes remain available.
 
-Run `/mcp` to see known tools, pinned counts, resource counts, and connection state. Uncached servers say **undiscovered**. Expand a server to pin or unpin real tools; resources have no checkboxes and use the resource actions instead. Pin changes apply to the current session and persist through `directTools`. Discovered session selections are separate from these startup pins: unpinning leaves a tool active if discovery already selected it for the current branch. Press Enter on a server that needs auth or `ctrl+a` on an OAuth server to authenticate; `ctrl+r` reconnects. Broader setup changes still use Pi's normal reload flow.
+Run `/mcp` to see known tools, per-tool and per-server token estimates, pinned counts, resource counts, config validation notices, and connection state (including `disabled`, `failed`, and `needs auth`; untrusted project servers are blocked and reported by `/mcp status` instead of opening the panel). Uncached servers say **undiscovered**. Expand a server to pin or unpin real tools; resources have no checkboxes and use the resource actions instead. Pin changes apply to the current session and persist through `directTools`. Discovered session selections are separate from these startup pins: unpinning leaves a tool active if discovery already selected it for the current branch. Press Enter on a server that needs auth or `ctrl+a` on an OAuth server to authenticate; `ctrl+r` reconnects. Pressing `Space` on disabled servers is ignored cleanly, and the 60-second inactivity auto-close timer pauses while edits are unsaved or an auth/reconnect operation is running. Broader setup changes can use `/mcp reload` or `/reload`.
 
 **Guided first-run setup:** Run `/mcp setup` to inspect detected shared MCP files, adopt compatibility imports from other hosts, open discovered config paths, preview exact before/after file diffs for writes, scaffold a minimal project `.mcp.json`, add a curated known server (DeepWiki, Context7, Notion, GitHub, or Chrome DevTools), or quick-add RepoPrompt into a standard/shared MCP file.
 
@@ -876,20 +876,24 @@ Gateway and typed-tool cards render compactly in the terminal. A collapsed card 
 
 ## Commands
 
-| Command                   | What it does                                                                                                             |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `/mcp`                    | Interactive panel and first-run onboarding surface                                                                       |
-| `/mcp setup`              | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection |
-| `/mcp tools`              | List discovered real tools, excluding resource aliases                                                                   |
-| `/mcp status`             | Show connection state and separate tool/resource counts                                                                  |
-| `/mcp prompts`            | List all MCP prompts registered as slash commands                                                                        |
-| `/mcp reconnect`          | Reconnect all servers                                                                                                    |
-| `/mcp reconnect <server>` | Connect or reconnect a single server                                                                                     |
-| `/mcp disable <server>`   | Disable a server in the project-local `.pi/fitch-mcp-adapter/mcp.json` (requires `/reload` to apply)                     |
-| `/mcp enable <server>`    | Enable through the project-local override layer (requires `/reload` to apply)                                            |
-| `/mcp logout <server>`    | Clear stored OAuth credentials for a server and disconnect it                                                            |
-| `/mcp-auth`               | Open an OAuth server picker in interactive UI sessions                                                                   |
-| `/mcp-auth <server>`      | OAuth setup for a specific server                                                                                        |
+| Command                   | What it does                                                                                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `/mcp`                    | Interactive panel and first-run onboarding surface                                                                         |
+| `/mcp setup`              | Guided setup for imports, a minimal `.mcp.json`, curated known servers, RepoPrompt quick-add, and config-path inspection   |
+| `/mcp tools [server]`     | List discovered real tools with estimated token counts (optionally for one server), excluding resource aliases             |
+| `/mcp status`             | Show connection state, blocked/disabled servers, config issue counts, and separate tool/resource counts                    |
+| `/mcp prompts`            | List all MCP prompts registered as slash commands                                                                          |
+| `/mcp reconnect`          | Reconnect all active servers (skips disabled servers silently)                                                             |
+| `/mcp reconnect <server>` | Connect or reconnect a single server                                                                                       |
+| `/mcp disable <server>`   | Disable a server live in-session and persist to project-local `.pi/fitch-mcp-adapter/mcp.json`                             |
+| `/mcp enable <server>`    | Enable a server live in-session, connect/register its tools, and update project overrides                                  |
+| `/mcp reload`             | Reload the MCP config and runtime in interactive sessions                                                                  |
+| `/mcp doctor [server]`    | Inspect config sources, provenance, validation errors/warnings, OAuth/keyring health, server status, `mcp.log`, and stderr |
+| `/mcp logout <server>`    | Clear stored OAuth credentials for a server and disconnect it                                                              |
+| `/mcp-auth`               | Open an OAuth server picker in interactive UI sessions                                                                     |
+| `/mcp-auth <server>`      | OAuth setup for a specific server                                                                                          |
+
+Unknown `/mcp <subcommand>` inputs print usage help instead of opening the interactive panel. Servers also write `notifications/message` log records into `<Pi agent dir>/mcp.log` (automatically rotating to `mcp.log.1` above 5 MiB).
 
 If `settings.autoAuth` is `true`, `mcp({ action: "connect", server: "..." })`, gateway calls, and typed tool calls may run OAuth when needed, with at most one automatic auth attempt per invocation and one post-auth retry. Browser authorization requires an interactive host. Auth-only replacement preserves accepted work on the old client; ordinary `/mcp reconnect` and panel `ctrl+r` remain hard resets.
 

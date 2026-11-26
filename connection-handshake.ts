@@ -4,6 +4,17 @@ import type { ManagedClient } from "./connection-runtime.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { drainClientCallbacks } from "./client-operations.ts";
 import { cleanupFailures } from "./connection-disposal.ts";
+import type { ServerDefinition } from "./types.ts";
+import { hasServerUrl } from "./utils.ts";
+
+export function assertSingleServerTransport(name: string, definition: ServerDefinition): void {
+  const localTransports = [definition.command, definition.socket].filter(
+    (value) => typeof value === "string" && value.length > 0,
+  );
+  if (localTransports.length + Number(hasServerUrl(definition)) !== 1) {
+    throw new Error(`Server ${name} must configure exactly one of command, url, or socket`);
+  }
+}
 
 let connectionRuntimePromise: Promise<typeof ConnectionRuntime> | undefined;
 

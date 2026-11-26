@@ -112,6 +112,57 @@ function bindRuntime(state: McpExtensionState, ownsOAuthRuntime: boolean): void 
   owner.addCleanup(() => cleanup.closeUiServer("runtime_owner_stopped"));
 }
 
+function createConfiguredManager(input: {
+  cwd: string;
+  owner: McpRuntimeOwner;
+  oauthRuntime: McpOAuthRuntime;
+  authStorageOptions: ReturnType<typeof getAuthStorageOptions>;
+  config: McpConfig;
+}): McpServerManager {
+  const { cwd, owner, oauthRuntime, authStorageOptions, config } = input;
+  const manager = new McpServerManager(cwd);
+  manager.setRuntimeSignal(owner.signal);
+  manager.setOAuthRuntime(oauthRuntime);
+  manager.setDefaultRequestTimeoutMs(config.settings?.requestTimeoutMs);
+  manager.setTraceConfig(config.settings?.trace);
+  manager.setAuthStorageOptions(authStorageOptions);
+  return manager;
+}
+
+function createSendMessage(
+  pi: ExtensionAPI,
+  owner: McpRuntimeOwner,
+): NonNullable<McpExtensionState["sendMessage"]> {
+  return (message, deliveryOptions) => {
+    if (!owner.isActive()) {
+      return;
+    }
+    const { display, ...body } = message;
+    pi.sendMessage(
+      { ...body, display: display !== undefined && display.length > 0 },
+      deliveryOptions,
+    );
+  };
+}
+
+function createOpenBrowser(
+  pi: ExtensionAPI,
+  owner: McpRuntimeOwner,
+): McpExtensionState["openBrowser"] {
+  return async (url) => {
+    owner.throwIfInactive();
+    await openUrl(pi, url, process.env.BROWSER, owner.signal);
+    owner.throwIfInactive();
+  };
+}
+
+function copyConfigErrors(config: McpConfig): McpExtensionState["configErrors"] {
+  if (!config.configErrors || config.configErrors.length === 0) {
+    return undefined;
+  }
+  return [...config.configErrors];
+}
+
 export function createInitialState(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -123,20 +174,19 @@ export function createInitialState(
   const config = resolveConfig(pi, cwd, options);
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
   const oauthRuntime = options.oauthRuntime ?? createOAuthRuntime(owner.signal);
-  const manager = new McpServerManager(cwd);
-  manager.setRuntimeSignal(owner.signal);
-  manager.setOAuthRuntime(oauthRuntime);
-  manager.setDefaultRequestTimeoutMs(config.settings?.requestTimeoutMs);
-  manager.setTraceConfig(config.settings?.trace);
-  manager.setAuthStorageOptions(authStorageOptions);
+  const manager = createConfiguredManager({ cwd, owner, oauthRuntime, authStorageOptions, config });
   const lifecycle = new McpLifecycleManager(manager, (serverName) =>
     hasPendingAuth(serverName, oauthRuntime),
   );
+  const configErrors = copyConfigErrors(config);
   const state: McpExtensionState = {
     owner,
     manager,
     lifecycle,
     config,
+    ...(options.configPath !== undefined ? { configPath: options.configPath } : {}),
+    ...(configErrors !== undefined ? { configErrors } : {}),
+    recentStderr: new Map(),
     toolMetadata: new Map(),
     resourceCounts: new Map(),
     resourceTemplates: new Map(),
@@ -156,22 +206,9 @@ export function createInitialState(
     uiServer: null,
     completedUiSessions: [],
     activeScripts: 0,
-    openBrowser: async (url) => {
-      owner.throwIfInactive();
-      await openUrl(pi, url, process.env.BROWSER, owner.signal);
-      owner.throwIfInactive();
-    },
+    openBrowser: createOpenBrowser(pi, owner),
     ...(ui !== undefined ? { ui } : {}),
-    sendMessage: (message, deliveryOptions) => {
-      if (!owner.isActive()) {
-        return;
-      }
-      const { display, ...body } = message;
-      pi.sendMessage(
-        { ...body, display: display !== undefined && display.length > 0 },
-        deliveryOptions,
-      );
-    },
+    sendMessage: createSendMessage(pi, owner),
     ...(options.statusEvents !== undefined ? { statusEvents: options.statusEvents } : {}),
     ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
   };

@@ -63,6 +63,7 @@ import {
 } from "./connection-discovery.ts";
 
 import {
+  assertSingleServerTransport,
   closeFailedConnectionSetup,
   ConnectionHandshake,
   loadConnectionRuntime,
@@ -191,12 +192,7 @@ export class ConnectionFactory {
           getAuthBaseDir(this.authStorageOptions),
           this.oauthRuntime,
         ) !== undefined;
-      const localTransports = [definition.command, definition.socket].filter(
-        (value) => typeof value === "string" && value.length > 0,
-      );
-      if (localTransports.length + Number(hasServerUrl(definition)) !== 1) {
-        throw new Error(`Server ${name} must configure exactly one of command, url, or socket`);
-      }
+      assertSingleServerTransport(name, definition);
       const setup = new ConnectionSetup(
         { factory: this, runtime, name, definition, signal, requestSignal, trace },
         client,
@@ -481,6 +477,7 @@ class ConnectionSetup {
     // Track closure during discovery, for this client's connection only.
     // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: native Client exposes a callback, not EventTarget.
     this.client.onclose = () => {
+      factory.callbacks.recordStderrTail(name, this.stderr.getTail());
       connection.status = "closed";
     };
     const requestOptions = factory.requestOptions(definition, signal);
@@ -530,8 +527,9 @@ class ConnectionSetup {
   }
 
   private async failSetup(failure: unknown, transport: Transport): Promise<ServerConnection> {
-    const { factory, runtime, definition } = this.options;
+    const { factory, runtime, name, definition } = this.options;
     const failures = await closeFailedConnectionSetup(this.client, transport, failure, (client) => {
+      factory.callbacks.recordStderrTail(name, this.stderr.getTail());
       this.stderr.detach();
       factory.lifecycle.disposal.releaseWhenSettled(client);
     });

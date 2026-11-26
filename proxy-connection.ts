@@ -16,9 +16,8 @@ import { connectionStderrTail } from "./connection-stdio.ts";
 import { formatFailureSummary } from "./server-status.ts";
 import {
   lazyConnect,
+  applyConnectionMetadata,
   markKeepAliveAfterConnect,
-  notifyToolMetadataUpdated,
-  updateMetadataCache,
   getFailureAgeSeconds,
   getFailureRemainingSeconds,
   getFailureMessage,
@@ -151,11 +150,12 @@ function saveConnectedMetadata(
   connection: ServerConnection,
   definition: ServerDefinition,
 ): void {
-  applyServerMetadata(state, { serverName, connection, definition });
-  updateMetadataCache(state, serverName);
-  notifyToolMetadataUpdated(state, serverName, "proxy-connect");
-  markKeepAliveAfterConnect(state, serverName);
-  clearFailure(state, serverName);
+  applyConnectionMetadata(state, {
+    serverName,
+    connection,
+    definition,
+    reason: "proxy-connect",
+  });
   updateStatusBar(state);
 }
 function refreshCallMetadata(

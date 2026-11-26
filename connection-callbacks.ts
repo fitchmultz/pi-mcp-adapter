@@ -17,11 +17,20 @@ import { type ServerDefinition, isNonInteractiveOAuth } from "./types.ts";
 import { supportsOAuth } from "./mcp-oauth-runtime.ts";
 import { ADAPTER_VERSION, hasServerUrl } from "./utils.ts";
 import { logger } from "./logger.ts";
+import { McpServerLog, getDefaultMcpLogPath } from "./mcp-log.ts";
 import type { ConnectionCatalogs } from "./connection-catalogs.ts";
 import { ConnectionSubscriptions } from "./connection-subscriptions.ts";
 
 // Coalesce burst list_changed notifications into one catalog refresh without noticeable UI/agent lag.
 const LIST_CHANGED_DEBOUNCE_MS = 250;
+
+const LOGGING_MESSAGE_PARAMS_SCHEMA = {
+  "~standard": {
+    version: 1 as const,
+    vendor: "pi-mcp-adapter",
+    validate: (value: unknown) => ({ value }),
+  },
+};
 
 export class ConnectionCallbacks {
   samplingConfig: ServerSamplingConfig | undefined;
@@ -31,12 +40,24 @@ export class ConnectionCallbacks {
   private readonly uiStreamListeners = new Map<string, UiStreamListener>();
   private readonly catalogs = new WeakMap<Client, ConnectionCatalogs>();
   private readonly subscriptions: ConnectionSubscriptions;
+  private readonly lastStderrByServer = new Map<string, string>();
+  private serverLog: McpServerLog | undefined;
 
   private readonly lifecycle: ConnectionLifecycle;
 
   constructor(lifecycle: ConnectionLifecycle) {
     this.lifecycle = lifecycle;
     this.subscriptions = new ConnectionSubscriptions(lifecycle);
+  }
+
+  recordStderrTail(name: string, tail: string): void {
+    if (tail.length > 0) {
+      this.lastStderrByServer.set(name, tail);
+    }
+  }
+
+  getLastStderrTail(name: string): string {
+    return this.lastStderrByServer.get(name) ?? "";
   }
 
   /** Adopt native accepted catalogs before the connection becomes visible. */
@@ -397,6 +418,14 @@ export class ConnectionCallbacks {
     accepted.add(elicitationId);
   }
 
+  private getServerLog(): McpServerLog {
+    const expectedPath = getDefaultMcpLogPath();
+    if (!this.serverLog || this.serverLog.path !== expectedPath) {
+      this.serverLog = new McpServerLog(expectedPath);
+    }
+    return this.serverLog;
+  }
+
   attachAdapterNotificationHandlers(
     serverName: string,
     client: Client,
@@ -407,6 +436,13 @@ export class ConnectionCallbacks {
       { params: schema.shape.params },
       (params) => {
         this.uiStreamListeners.get(params.streamToken)?.(serverName, params);
+      },
+    );
+    client.setNotificationHandler(
+      "notifications/message",
+      { params: LOGGING_MESSAGE_PARAMS_SCHEMA },
+      (params) => {
+        this.getServerLog().write(serverName, params);
       },
     );
   }

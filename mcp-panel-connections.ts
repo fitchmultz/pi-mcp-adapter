@@ -8,15 +8,22 @@ interface PanelConnectionsInput {
   callbacks: McpPanelCallbacks;
   tui: Pick<TUI, "requestRender">;
   refreshTools: (server: PanelServer, entry: ServerCacheEntry) => void;
+  onBusyChange?: () => void;
 }
 
 export class PanelConnections {
   notice: string | null = null;
   inFlight: string | null = null;
+  private readonly reconnectInFlight = new Set<string>();
   private readonly input: PanelConnectionsInput;
   constructor(input: PanelConnectionsInput) {
     this.input = input;
   }
+
+  hasInFlight(): boolean {
+    return (this.inFlight ?? "").length > 0 || this.reconnectInFlight.size > 0;
+  }
+
   authenticate(server: PanelServer): void {
     if ((this.inFlight ?? "").length > 0) {
       return;
@@ -35,6 +42,7 @@ export class PanelConnections {
 
     this.inFlight = server.data.name;
     this.notice = `Authenticating ${serverName}...`;
+    this.input.onBusyChange?.();
     this.input.tui.requestRender();
 
     this.input.callbacks
@@ -44,6 +52,7 @@ export class PanelConnections {
         if (result.ok) {
           this.notice = `OAuth finished for ${serverName}. Reconnecting...`;
           this.inFlight = null;
+          this.input.onBusyChange?.();
           this.input.tui.requestRender();
           this.reconnect(server, { afterAuth: true });
           return;
@@ -52,6 +61,7 @@ export class PanelConnections {
         const message = sanitizeDisplayText(result.message);
         this.notice = `OAuth failed for ${serverName}${message.length > 0 ? `: ${message}` : ". Check the notification for details."}`;
         this.inFlight = null;
+        this.input.onBusyChange?.();
         this.input.tui.requestRender();
       })
       .catch((error: unknown) => {
@@ -59,6 +69,7 @@ export class PanelConnections {
         server.setConnectionStatus(this.input.callbacks.getConnectionStatus(server.data.name));
         this.notice = `OAuth failed for ${serverName}: ${message}`;
         this.inFlight = null;
+        this.input.onBusyChange?.();
         this.input.tui.requestRender();
       });
   }
@@ -71,12 +82,15 @@ export class PanelConnections {
       return;
     }
     const serverName = sanitizeDisplayText(server.data.name);
+    this.reconnectInFlight.add(server.data.name);
     server.setConnectionStatus("connecting");
+    this.input.onBusyChange?.();
     this.input.tui.requestRender();
 
     this.input.callbacks
       .reconnect(server.data.name, options.afterAuth)
       .then((connected) => {
+        this.reconnectInFlight.delete(server.data.name);
         server.refreshConnection(this.input.callbacks);
         if (server.data.connectionStatus === "connected") {
           const entry = this.input.callbacks.refreshCacheAfterReconnect(server.data.name);
@@ -90,12 +104,15 @@ export class PanelConnections {
               ? `OAuth finished for ${serverName}. Reconnected.`
               : `OAuth finished for ${serverName}, but reconnect did not complete. Press ctrl+r to retry.`;
         }
+        this.input.onBusyChange?.();
         this.input.tui.requestRender();
       })
       .catch((error: unknown) => {
+        this.reconnectInFlight.delete(server.data.name);
         server.setConnectionStatus("failed");
         const message = sanitizeDisplayText(error instanceof Error ? error.message : String(error));
         this.notice = `Reconnect failed for ${serverName}: ${message}`;
+        this.input.onBusyChange?.();
         this.input.tui.requestRender();
       });
   }

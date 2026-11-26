@@ -3,6 +3,7 @@ import type { ConsentManager } from "./consent-manager.ts";
 import type { McpLifecycleManager } from "./lifecycle.ts";
 import type { McpServerManager } from "./server-manager.ts";
 import type { AuthStorageOptions } from "./mcp-auth.ts";
+import type { McpConfigValidationError } from "./config-types.ts";
 import type {
   ToolMetadata,
   PromptMetadata,
@@ -58,6 +59,9 @@ export interface McpExtensionState {
   promptMetadataLive: Set<string>;
   serverInstructions: Map<string, string>;
   config: McpConfig;
+  configPath?: string | undefined;
+  configErrors?: McpConfigValidationError[] | undefined;
+  recentStderr?: Map<string, string> | undefined;
   programmaticConfig?: boolean;
   outputDirectory?: string;
   onToolCall?: McpAdapterOptions["onToolCall"];

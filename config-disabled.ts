@@ -3,9 +3,10 @@ import type { McpConfig } from "./config-types.ts";
 import type { ServerDisabledOverrideResult } from "./config-contracts.ts";
 import { isServerDisabled } from "./config-protocol.ts";
 import { isConfigObject, isUnknownArray, isImportKind } from "./config-validation.ts";
-import { getProjectPiConfigPath, getConfigSources } from "./config-paths.ts";
-import { parseJsonConfig, readConfigSource } from "./config-imports.ts";
+import { getProjectPiConfigPath, type getConfigSources } from "./config-paths.ts";
+import { parseJsonConfig } from "./config-imports.ts";
 import { mergeConfigs, expandImports } from "./config-merge.ts";
+import { mergeConfigLayers } from "./config-snapshot.ts";
 import { withConfigWrite, writeRawConfigObject, getServersKey } from "./config-file.ts";
 
 function readProjectOverride(filePath: string): Record<string, unknown> {
@@ -72,20 +73,13 @@ function lowerPrecedenceConfig(
 ): McpConfig {
   const resolved = resolveDisabledOverrideTarget(target);
   const filePath = getProjectPiConfigPath(cwd);
-  let lower: McpConfig = { mcpServers: {} };
-  for (const source of getConfigSources(resolved.overridePath, cwd)) {
-    if (!shouldIncludeLowerSource(source, filePath, resolved)) {
-      continue;
-    }
-    const loaded = readConfigSource(source, cwd, lower.mcpServers);
-    if (loaded) {
-      lower = mergeConfigs(
-        lower,
-        expandImports(loaded.config, cwd, true),
-        loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
-      );
-    }
-  }
+  const { config: lower } = mergeConfigLayers({
+    overridePath: resolved.overridePath,
+    cwd,
+    sourceFilter: (source) => shouldIncludeLowerSource(source, filePath, resolved),
+    includeHostDiscovery: false,
+    pruneOrphans: false,
+  });
   if (raw.imports === undefined) {
     return lower;
   }

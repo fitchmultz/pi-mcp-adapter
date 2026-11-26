@@ -9,6 +9,7 @@ import {
   buildVisibleItems,
   type VisibleItem,
 } from "./mcp-panel-model.ts";
+import type { PanelThemeInput } from "./mcp-panel-text.ts";
 import { PANEL_PAGE_SIZE, PanelView } from "./mcp-panel-view.ts";
 
 interface McpPanelInput {
@@ -18,7 +19,12 @@ interface McpPanelInput {
   callbacks: McpPanelCallbacks;
   tui: Pick<TUI, "requestRender">;
   done: (result: McpPanelResult) => void;
-  options?: { noticeLines?: string[]; authOnly?: boolean; keybindings?: PanelKeybindings };
+  options?: {
+    noticeLines?: string[];
+    authOnly?: boolean;
+    keybindings?: PanelKeybindings;
+    theme?: PanelThemeInput;
+  };
 }
 
 /**
@@ -43,6 +49,7 @@ class McpPanel implements Component {
   private visibleItems: VisibleItem[] = [];
   private readonly authOnly: boolean;
   private readonly keys: PanelKeys;
+  private readonly theme: PanelThemeInput | undefined;
 
   private static readonly INACTIVITY_MS = 60_000;
 
@@ -55,11 +62,13 @@ class McpPanel implements Component {
       callbacks,
       tui,
       refreshTools: (server, entry) => this.rebuildServerTools(server, entry),
+      onBusyChange: () => this.resetInactivityTimeout(),
     });
     this.done = done;
     this.noticeLines = options.noticeLines ?? [];
     this.authOnly = options.authOnly === true;
     this.keys = createPanelKeys(options.keybindings);
+    this.theme = options.theme;
 
     this.servers = buildPanelServers({
       config,
@@ -72,12 +81,22 @@ class McpPanel implements Component {
     this.resetInactivityTimeout();
   }
 
+  private shouldPauseInactivityTimeout(): boolean {
+    return this.dirty || this.connections.hasInFlight();
+  }
+
   private resetInactivityTimeout(): void {
     if (this.inactivityTimeout) {
       clearTimeout(this.inactivityTimeout);
+      this.inactivityTimeout = null;
+    }
+    if (this.phase !== "open" || this.shouldPauseInactivityTimeout()) {
+      return;
     }
     this.inactivityTimeout = setTimeout(() => {
-      this.closeCancelled();
+      if (this.phase === "open" && !this.shouldPauseInactivityTimeout()) {
+        this.closeCancelled();
+      }
     }, McpPanel.INACTIVITY_MS);
   }
 
@@ -100,6 +119,7 @@ class McpPanel implements Component {
 
   private updateDirty(): void {
     this.dirty = this.servers.some((s) => s.data.tools.some((t) => t.isDirect !== t.wasDirect));
+    this.resetInactivityTimeout();
   }
 
   private buildResult(): McpPanelResult {
@@ -264,30 +284,29 @@ class McpPanel implements Component {
     }
     this.closeCancelled();
   }
+  private isServerLocked(server: PanelServer): boolean {
+    return server.data.connectionStatus === "disabled";
+  }
+
   private confirmSelection(): void {
     const item = this.visibleItems[this.cursorIndex];
-    if (!item) {
-      return;
-    }
-    const server = this.servers[item.serverIndex];
-    if (!server) {
+    const server = item ? this.servers[item.serverIndex] : undefined;
+    if (!item || !server || this.isServerLocked(server)) {
       return;
     }
     if (item.type === "server") {
-      if (server.data.connectionStatus === "disabled") {
-        return;
-      }
       if (this.authOnly || server.data.connectionStatus === "needs-auth") {
         this.connections.authenticate(server);
         return;
       }
       server.data.expanded = !server.data.expanded;
       this.refreshSelection();
-    } else if (item.toolIndex !== undefined) {
+      return;
+    }
+    if (item.toolIndex !== undefined) {
       this.toggleTool(item.serverIndex, item.toolIndex);
       this.updateDirty();
     }
-    return;
   }
   private copySelectedError(): void {
     const item = this.visibleItems[this.cursorIndex];
@@ -365,7 +384,7 @@ class McpPanel implements Component {
       return;
     }
     const server = this.servers[item.serverIndex];
-    if (!server) {
+    if (!server || server.data.connectionStatus === "disabled") {
       return;
     }
     if (item.type === "server") {
@@ -450,6 +469,7 @@ class McpPanel implements Component {
       confirmingDiscard: this.mode.kind === "confirm-discard",
       discardSelected: this.mode.kind === "confirm-discard" ? this.mode.selected : 1,
       dirty: this.dirty,
+      ...(this.theme !== undefined ? { theme: this.theme } : {}),
     }).render(width);
   }
   invalidate(): void {

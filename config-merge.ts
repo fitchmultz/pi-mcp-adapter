@@ -1,7 +1,32 @@
 import { isDeepStrictEqual } from "node:util";
-import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
+import type {
+  ImportKind,
+  McpConfig,
+  McpConfigValidationError,
+  ServerEntry,
+} from "./config-types.ts";
 import { loadImportedConfig, extractServers } from "./config-imports.ts";
 import { hasServerUrl } from "./utils.ts";
+
+function mergeConfigErrors(
+  left: readonly McpConfigValidationError[] | undefined,
+  right: readonly McpConfigValidationError[] | undefined,
+): McpConfigValidationError[] | undefined {
+  const combined = [...(left ?? []), ...(right ?? [])];
+  if (combined.length === 0) {
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const merged: McpConfigValidationError[] = [];
+  for (const error of combined) {
+    const key = `${error.severity}\0${error.kind}\0${error.filePath}\0${error.serverName ?? ""}\0${error.field ?? ""}\0${error.message}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(error);
+    }
+  }
+  return merged;
+}
 
 export function hasConfiguredTransport(entry: ServerEntry): boolean {
   return (
@@ -43,10 +68,12 @@ export function mergeConfigs(
 ): McpConfig {
   const imports = mergeImports(base.imports, next.imports);
   const settings = next.settings ? { ...base.settings, ...next.settings } : base.settings;
+  const configErrors = mergeConfigErrors(base.configErrors, next.configErrors);
   return {
     mcpServers: mergeServerMaps(base.mcpServers, next.mcpServers, options?.replaceServers),
     ...(imports !== undefined ? { imports } : {}),
     ...(settings !== undefined ? { settings } : {}),
+    ...(configErrors !== undefined ? { configErrors } : {}),
   };
 }
 
@@ -152,24 +179,32 @@ function mergeImports(
   return [...new Set(merged)];
 }
 
-export function expandImports(config: McpConfig, cwd: string, includeProject: boolean): McpConfig {
+export function expandImports(
+  config: McpConfig,
+  cwd: string,
+  includeProject: boolean,
+  readImport?: (importKind: ImportKind) => { path: string; value: unknown } | null,
+): McpConfig {
   if (config.imports === undefined || config.imports.length === 0) {
     return config;
   }
 
   const importedServers: Record<string, ServerEntry> = {};
+  const importErrors: McpConfigValidationError[] = [];
   for (const importKind of config.imports) {
-    const imported = loadImportedConfig(
-      importKind,
-      cwd,
-      `Failed to import MCP config from ${importKind}:`,
-      includeProject,
-    );
+    const imported = readImport
+      ? readImport(importKind)
+      : loadImportedConfig(
+          importKind,
+          cwd,
+          `Failed to import MCP config from ${importKind}:`,
+          includeProject,
+        );
     if (!imported) {
       continue;
     }
 
-    const servers = extractServers(imported.value, importKind);
+    const servers = extractServers(imported.value, importKind, imported.path, importErrors);
     for (const [name, definition] of Object.entries(servers)) {
       if (!importedServers[name]) {
         importedServers[name] = definition;
@@ -177,9 +212,11 @@ export function expandImports(config: McpConfig, cwd: string, includeProject: bo
     }
   }
 
+  const configErrors = mergeConfigErrors(config.configErrors, importErrors);
   return {
     imports: config.imports,
     ...(config.settings !== undefined ? { settings: config.settings } : {}),
+    ...(configErrors !== undefined ? { configErrors } : {}),
     mcpServers: mergeServerMaps(importedServers, config.mcpServers),
   };
 }

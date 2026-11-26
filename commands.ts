@@ -1,19 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { nativePiConfigOptions } from "./host-contract.ts";
 import type { McpExtensionState } from "./state.ts";
-import {
-  isServerDisabled,
-  isNonInteractiveOAuth,
-  type McpConfig,
-  type McpPanelCallbacks,
-  type McpPanelConnectionStatus,
-  type McpPanelResult,
-  type ImportKind,
-} from "./types.ts";
+import type { McpConfig, McpPanelResult, ImportKind, ServerProvenance } from "./types.ts";
 import {
   ensureCompatibilityImports,
   getMcpDiscoverySummary,
   getProjectConfigPath,
+  inspectMcpConfigSnapshot,
   type KnownServerPreset,
   type LoadMcpConfigOptions,
   getServerProvenance,
@@ -24,28 +17,26 @@ import {
   writeSharedServerEntry,
   writeStarterProjectConfig,
 } from "./config.ts";
-import { getFailureAgeSeconds, getFailureMessage } from "./init.ts";
-import { panelStatus, serverStage } from "./server-status.ts";
-import { loadMetadataCache } from "./metadata-cache.ts";
-import { inspectAuthForUrl, type OAuthCredentialStatus } from "./mcp-auth.ts";
+import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 import {
   loadOnboardingState,
   markSetupCompleted as persistSetupCompleted,
   markSharedConfigHintShown,
 } from "./onboarding-state.ts";
-import { openPath, resolveServerUrl } from "./utils.ts";
+import { openPath } from "./utils.ts";
 import { createMcpPanel } from "./mcp-panel.ts";
 import { createMcpSetupPanel } from "./mcp-setup-panel.ts";
 import type { SetupPanelCallbacks } from "./mcp-setup-contract.ts";
 import {
-  buildSharedConfigNoticeLines,
+  buildPanelNotices,
   showStatus,
   withFallbackServerProvenance,
 } from "./mcp-inspection-commands.ts";
-import { reconnectServer } from "./mcp-connection-commands.ts";
-import { authenticateServer, authEligibility } from "./mcp-auth-commands.ts";
+import { authEligibility } from "./mcp-auth-commands.ts";
+import { buildMcpPanelCallbacks } from "./mcp-panel-callbacks.ts";
 import { logger } from "./logger.ts";
 export { showStatus, showPrompts, showTools } from "./mcp-inspection-commands.ts";
+export { showDoctor } from "./mcp-doctor.ts";
 export { reconnectServer, reconnectServers } from "./mcp-connection-commands.ts";
 export { authenticateServer, logoutServer } from "./mcp-auth-commands.ts";
 
@@ -183,157 +174,10 @@ export async function openMcpSetup(input: {
   );
 }
 
-interface PanelCredentialStatus {
-  status: McpPanelConnectionStatus;
-  failureMessage: string | null;
-}
-
-function eligiblePanelCredentialUrl(
-  definition: McpConfig["mcpServers"][string] | undefined,
-): string | null | undefined {
-  let serverUrl: string | undefined;
-  try {
-    serverUrl = definition ? resolveServerUrl(definition) : undefined;
-  } catch {
-    return null;
-  }
-  const interactiveOAuth =
-    definition?.auth === "oauth" &&
-    definition.oauth !== false &&
-    !isNonInteractiveOAuth(definition.oauth);
-  return interactiveOAuth && serverUrl !== undefined && serverUrl.length > 0
-    ? serverUrl
-    : undefined;
-}
-
-async function inspectPanelCredential(
-  state: McpExtensionState,
-  serverName: string,
-  definition: McpConfig["mcpServers"][string] | undefined,
-): Promise<OAuthCredentialStatus | undefined> {
-  const serverUrl = isServerDisabled(definition)
-    ? undefined
-    : eligiblePanelCredentialUrl(definition);
-  return typeof serverUrl === "string"
-    ? await inspectAuthForUrl({ serverName, serverUrl }, state.authStorageOptions)
-    : undefined;
-}
-
-async function inspectAllPanelCredentials(
-  state: McpExtensionState,
-  config: McpConfig,
-): Promise<Map<string, OAuthCredentialStatus>> {
-  const results = await Promise.all(
-    Object.entries(config.mcpServers).map(async ([serverName, definition]) => {
-      const status = await inspectPanelCredential(state, serverName, definition);
-      return status === undefined ? undefined : ([serverName, status] as const);
-    }),
-  );
-  return new Map(
-    results.filter((entry): entry is NonNullable<typeof entry> => entry !== undefined),
-  );
-}
-
-function panelCredentialStatus(
-  state: McpExtensionState,
-  serverName: string,
-  definition: McpConfig["mcpServers"][string] | undefined,
-  credentialStatuses: ReadonlyMap<string, OAuthCredentialStatus>,
-): PanelCredentialStatus | undefined {
-  const serverUrl = eligiblePanelCredentialUrl(definition);
-  if (serverUrl === null) {
-    return { status: "failed", failureMessage: getFailureMessage(state, serverName) };
-  }
-  const authStatus = serverUrl === undefined ? undefined : credentialStatuses.get(serverName);
-  if (!authStatus) {
-    return undefined;
-  }
-  if (authStatus.status === "unavailable") {
-    return { status: "failed", failureMessage: authStatus.message };
-  }
-  return authStatus.status === "absent" || !authStatus.entry.tokens
-    ? { status: "needs-auth", failureMessage: getFailureMessage(state, serverName) }
-    : undefined;
-}
-
-async function buildMcpPanelCallbacks(
-  state: McpExtensionState,
-  config: McpConfig,
-  ctx: ExtensionContext,
-): Promise<McpPanelCallbacks> {
-  const credentialStatuses = await inspectAllPanelCredentials(state, config);
-  const refreshCredential = async (serverName: string): Promise<void> => {
-    const status = await inspectPanelCredential(state, serverName, config.mcpServers[serverName]);
-    if (status === undefined) {
-      credentialStatuses.delete(serverName);
-    } else {
-      credentialStatuses.set(serverName, status);
-    }
-  };
-  return {
-    reconnect: async (serverName, afterAuth) => {
-      const ok = await reconnectServer(state, ctx, serverName, afterAuth);
-      await refreshCredential(serverName);
-      return ok;
-    },
-    canAuthenticate: (serverName: string) => {
-      const definition = config.mcpServers[serverName];
-      return definition !== undefined && authEligibility(definition) === "eligible";
-    },
-    authenticate: async (serverName: string) => {
-      const result = await authenticateServer({
-        serverName,
-        config,
-        ctx,
-        signal: state.owner.signal,
-        runtime: state.oauthRuntime,
-      });
-      await refreshCredential(serverName);
-      return result;
-    },
-    getConnectionStatus: (serverName: string) => {
-      const definition = config.mcpServers[serverName];
-      if (isServerDisabled(definition)) {
-        return "disabled";
-      }
-      const transport = state.manager.getConnection(serverName)?.status;
-      // Stored-credential diagnostics outrank the connection stage for OAuth servers.
-      const credentialStatus = panelCredentialStatus(
-        state,
-        serverName,
-        definition,
-        credentialStatuses,
-      );
-      if (credentialStatus !== undefined) {
-        return credentialStatus.status;
-      }
-      return panelStatus(
-        serverStage({
-          definition,
-          transport,
-          failedAgoSeconds: getFailureAgeSeconds(state, serverName),
-          catalogKnown: state.toolMetadata.has(serverName),
-        }),
-      );
-    },
-    getFailureMessage: (serverName: string) => {
-      const definition = config.mcpServers[serverName];
-      const credentials = isServerDisabled(definition)
-        ? undefined
-        : panelCredentialStatus(state, serverName, definition, credentialStatuses);
-      return credentials?.failureMessage ?? getFailureMessage(state, serverName);
-    },
-    refreshCacheAfterReconnect: (serverName: string) => {
-      const freshCache = loadMetadataCache(state.metadataCacheEnabled);
-      return freshCache?.servers[serverName] ?? null;
-    },
-  };
-}
-
 /** Returns whether saved changes need a reload instead of an in-session refresh. */
 async function savePanelDirectTools(input: {
   changes: McpPanelResult["changes"];
-  provenance: ReturnType<typeof getServerProvenance>;
+  provenance: Map<string, ServerProvenance>;
   ui: Pick<ExtensionContext["ui"], "notify">;
   refresh: ((changes: McpPanelResult["changes"]) => void | Promise<void>) | undefined;
 }): Promise<boolean> {
@@ -363,6 +207,53 @@ async function savePanelDirectTools(input: {
   }
   ui.notify("Direct tools updated for this session.", "info");
   return false;
+}
+
+async function launchMcpPanelOverlay(input: {
+  ctx: ExtensionContext;
+  config: McpConfig;
+  cache: MetadataCache | null;
+  provenance: Map<string, ServerProvenance>;
+  noticeLines: string[];
+  state: McpExtensionState;
+  onDirectToolsConfigChanged?:
+    | ((changes: Map<string, true | string[] | false>) => void | Promise<void>)
+    | undefined;
+}): Promise<boolean> {
+  const { ctx, config, cache, provenance, noticeLines, state, onDirectToolsConfigChanged } = input;
+  const callbacks = await buildMcpPanelCallbacks(state, config, ctx);
+  let configChanged = false;
+  await ctx.ui.custom<McpPanelResult>(
+    (tui, theme, keybindings, done) =>
+      createMcpPanel({
+        config,
+        cache,
+        provenance,
+        callbacks,
+        tui,
+        done: (result: McpPanelResult) => {
+          (async () => {
+            try {
+              if (!result.cancelled && result.changes.size > 0) {
+                configChanged = await savePanelDirectTools({
+                  changes: result.changes,
+                  provenance,
+                  ui: ctx.ui,
+                  refresh: onDirectToolsConfigChanged,
+                });
+              }
+            } finally {
+              done(result);
+            }
+          })().catch((error: unknown) => {
+            logger.error("MCP panel completion failed", undefined, { error });
+          });
+        },
+        options: { noticeLines, keybindings, theme },
+      }),
+    { overlay: true, overlayOptions: { anchor: "center", width: 82 } },
+  );
+  return configChanged;
 }
 
 export async function openMcpPanel(input: {
@@ -396,56 +287,39 @@ export async function openMcpPanel(input: {
 
   const config = state.config;
   const cache = loadMetadataCache(state.metadataCacheEnabled);
-  const configPath = configOverridePath;
   const discoveryOptions = nativePiConfigOptions(pi);
-  const provenanceMap = withFallbackServerProvenance(
+  const snapshot = inspectMcpConfigSnapshot(configOverridePath, ctx.cwd, {
+    ...discoveryOptions,
+    includeProject: ctx.isProjectTrusted(),
+  });
+  const provenance = withFallbackServerProvenance(
     config,
-    getServerProvenance(configPath, ctx.cwd, discoveryOptions),
-    configPath,
+    snapshot.provenance,
+    configOverridePath,
     ctx.cwd,
   );
-  const noticeLines = buildSharedConfigNoticeLines(configPath, ctx.cwd, discoveryOptions);
-
-  const callbacks = await buildMcpPanelCallbacks(state, config, ctx);
-
-  let configChanged = false;
-
-  await ctx.ui.custom<McpPanelResult>(
-    (tui, _theme, keybindings, done) => {
-      return createMcpPanel({
-        config,
-        cache,
-        provenance: provenanceMap,
-        callbacks,
-        tui,
-        done: (result: McpPanelResult) => {
-          (async () => {
-            try {
-              if (!result.cancelled && result.changes.size > 0) {
-                configChanged = await savePanelDirectTools({
-                  changes: result.changes,
-                  provenance: provenanceMap,
-                  ui: ctx.ui,
-                  refresh: onDirectToolsConfigChanged,
-                });
-              }
-            } finally {
-              done(result);
-            }
-          })().catch((error: unknown) => {
-            logger.error("MCP panel completion failed", undefined, { error });
-          });
-        },
-        options: { noticeLines, keybindings },
-      });
+  const { noticeLines, sharedConfigHintShown } = buildPanelNotices(
+    configOverridePath,
+    ctx.cwd,
+    discoveryOptions,
+    {
+      discoverySummary: snapshot.discoverySummary,
+      errors: state.configErrors ?? snapshot.errors,
+      blockedServers: snapshot.blockedServers,
     },
-    { overlay: true, overlayOptions: { anchor: "center", width: 82 } },
   );
-
-  if (noticeLines.length > 0) {
+  const configChanged = await launchMcpPanelOverlay({
+    ctx,
+    config,
+    cache,
+    provenance,
+    noticeLines,
+    state,
+    onDirectToolsConfigChanged,
+  });
+  if (sharedConfigHintShown) {
     markSharedConfigHintShown();
   }
-
   return { configChanged };
 }
 
@@ -494,7 +368,7 @@ export async function openMcpAuthPanel(
   const callbacks = await buildMcpPanelCallbacks(state, config, ctx);
 
   return ctx.ui.custom<PanelFlowResult>(
-    (tui, _theme, keybindings, done) =>
+    (tui, theme, keybindings, done) =>
       createMcpPanel({
         config,
         cache,
@@ -505,6 +379,7 @@ export async function openMcpAuthPanel(
         options: {
           authOnly: true,
           keybindings,
+          theme,
           noticeLines: ["Select an OAuth MCP server and press Enter or ctrl+a to authenticate."],
         },
       }),
