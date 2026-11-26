@@ -100,6 +100,14 @@ export class McpServerManager {
     this.lifecycle.retire(name, connection);
   }
 
+  hasFreshOAuthCredentials(
+    name: string,
+    definition: ServerDefinition,
+    stale: ServerConnection,
+  ): boolean {
+    return this.factory.hasFreshOAuthCredentials(name, definition, stale);
+  }
+
   async handleUrlElicitationRequired(
     serverName: string,
     error: UrlElicitationRequiredError,

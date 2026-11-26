@@ -2,8 +2,19 @@ import type { Client, RequestOptions, Transport } from "@modelcontextprotocol/cl
 import type * as ConnectionRuntime from "./connection-runtime.ts";
 import type { ManagedClient } from "./connection-runtime.ts";
 import type { ServerConnection } from "./server-connection.ts";
-import { supportsOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
-import { getAuthBaseDir, type AuthStorageOptions } from "./mcp-auth.ts";
+import {
+  getOAuthRequest,
+  hasUnsatisfiedScope,
+  supportsOAuth,
+  type McpOAuthRuntime,
+} from "./mcp-oauth-runtime.ts";
+import { hasUsableStoredTokens, matchesTokenSnapshot } from "./mcp-oauth-refresh.ts";
+import {
+  getAuthBaseDir,
+  inspectAuthForUrl,
+  type AuthStorageOptions,
+  type TokenSnapshot,
+} from "./mcp-auth.ts";
 import {
   type ServerDefinition,
   type McpTraceSettings,
@@ -43,12 +54,22 @@ import { cleanupFailures } from "./connection-disposal.ts";
 
 import { ConnectionHandshake } from "./connection-handshake.ts";
 
+function safeResolveServerUrl(definition: ServerDefinition): string | undefined {
+  try {
+    const resolved = resolveServerUrl(definition);
+    return resolved !== undefined && resolved.length > 0 ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class ConnectionFactory {
   authStorageOptions: AuthStorageOptions = {};
   oauthRuntime: McpOAuthRuntime | undefined;
   defaultRequestTimeoutMs: number | undefined;
   traceSettings: McpTraceSettings | undefined;
   private traceWriter: McpTraceWriter | undefined;
+  private readonly needsAuthTokens = new WeakMap<ServerConnection, TokenSnapshot | undefined>();
 
   readonly lifecycle: ConnectionLifecycle;
   readonly callbacks: ConnectionCallbacks;
@@ -66,6 +87,38 @@ export class ConnectionFactory {
 
   flushTrace(): Promise<void> | undefined {
     return this.traceWriter?.flush();
+  }
+
+  recordNeedsAuth(connection: ServerConnection, snapshot: TokenSnapshot | undefined): void {
+    this.needsAuthTokens.set(connection, snapshot);
+  }
+
+  private requiredOAuthScope(name: string, serverUrl: string): string | undefined {
+    const request = this.oauthRuntime
+      ? getOAuthRequest(name, serverUrl, getAuthBaseDir(this.authStorageOptions), this.oauthRuntime)
+      : undefined;
+    return request?.challenge?.requiredScope ?? request?.discovered?.scope;
+  }
+
+  hasFreshOAuthCredentials(
+    name: string,
+    definition: ServerDefinition,
+    stale: ServerConnection,
+  ): boolean {
+    const serverUrl = supportsOAuth(definition) ? safeResolveServerUrl(definition) : undefined;
+    if (serverUrl === undefined) {
+      return false;
+    }
+    const status = inspectAuthForUrl({ serverName: name, serverUrl }, this.authStorageOptions);
+    const tokens = status.status === "present" ? status.entry.tokens : undefined;
+    if (
+      !tokens ||
+      !hasUsableStoredTokens(tokens) ||
+      matchesTokenSnapshot(this.needsAuthTokens.get(stale), tokens)
+    ) {
+      return false;
+    }
+    return !hasUnsatisfiedScope(this.requiredOAuthScope(name, serverUrl), tokens.scope);
   }
 
   requestOptions(definition?: ServerDefinition, signal?: AbortSignal): RequestOptions | undefined {
@@ -425,6 +478,7 @@ class ConnectionSetup {
     const failures: unknown[] = cleanupFailures(results);
     if (runtime.isOAuthChallenge(failure) && supportsOAuth(definition) && failures.length === 0) {
       const connection = this.connection(transport, "needs-auth");
+      factory.recordNeedsAuth(connection, this.client.oauthProvider?.lastObservedTokenSnapshot);
       factory.lifecycle.disposal.markDisposed(connection);
       return connection;
     }

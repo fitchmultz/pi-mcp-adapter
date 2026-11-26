@@ -229,11 +229,24 @@ function receiveAuthorizationCode(
   sendHtml(res, 200, HTML_SUCCESS);
 }
 
+function parseCallbackUrl(req: IncomingMessage): URL | undefined {
+  const host = req.headers.host;
+  if (typeof host !== "string" || host.trim() === "") {
+    return undefined;
+  }
+  try {
+    return new URL(req.url === "" ? "/" : (req.url ?? "/"), `http://${host}`);
+  } catch {
+    return undefined;
+  }
+}
+
 function handleRequest(req: IncomingMessage, res: ServerResponse): void {
-  const url = new URL(
-    req.url === "" ? "/" : (req.url ?? "/"),
-    `http://${String(req.headers.host)}`,
-  );
+  const url = parseCallbackUrl(req);
+  if (!url) {
+    sendHtml(res, 400, HTML_ERROR("Invalid callback request"));
+    return;
+  }
   if (url.pathname !== getOAuthCallbackPath()) {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Not found");

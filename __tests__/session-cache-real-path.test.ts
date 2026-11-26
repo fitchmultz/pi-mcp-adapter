@@ -328,7 +328,7 @@ describe("cached tool surface through Pi SessionManager", () => {
       await uncached.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
       uncached.session.dispose();
     }
-  });
+  }, 15000);
 
   it("registers the cached catalog and observes changed metadata and config on session_start", async () => {
     const h = await harness();

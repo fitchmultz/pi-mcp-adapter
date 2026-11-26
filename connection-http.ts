@@ -7,8 +7,14 @@ import type {
 import type * as ConnectionRuntime from "./connection-runtime.ts";
 import type { ManagedClient } from "./connection-runtime.ts";
 import type { McpOAuthProvider } from "./mcp-oauth-provider.ts";
-import { supportsOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
+import { recordOAuthDiscovery, supportsOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import { getAuthBaseDir, type AuthStorageOptions } from "./mcp-auth.ts";
+import {
+  coordinateOAuthRefresh,
+  recordProactiveRefreshOutcome,
+  shouldAttemptProactiveRefresh,
+} from "./mcp-oauth-refresh.ts";
+import { isAbortError } from "./runtime-owner.ts";
 import { isServerDisabled, isNonInteractiveOAuth, type ServerDefinition } from "./types.ts";
 import {
   resolveServerUrl,
@@ -85,11 +91,29 @@ function resolveHttpAuthorization(
   return token !== undefined && token.length > 0 ? `Bearer ${token}` : undefined;
 }
 
+function extractBearerToken(
+  input: Parameters<FetchLike>[0],
+  init: RequestInit | undefined,
+): string | undefined {
+  const headers = init?.headers ?? (input instanceof Request ? input.headers : undefined);
+  if (headers === undefined) {
+    return undefined;
+  }
+  const authorization = new Headers(headers).get("authorization");
+  if (authorization === null || !/^Bearer\s+/i.test(authorization)) {
+    return undefined;
+  }
+  const token = authorization.replace(/^Bearer\s+/i, "").trim();
+  return token.length > 0 ? token : undefined;
+}
+
 class HttpConnection {
   private readonly generation: number;
   private readonly serverUrl: string;
   private readonly storageBase: string;
   private issuer: string | undefined;
+  private lastResourceMetadataUrl: URL | undefined;
+  private readonly responseTokens = new WeakMap<Response, string>();
   private transportClosed = false;
   private readonly transport: Transport;
   private readonly provider: McpOAuthProvider | undefined;
@@ -163,6 +187,13 @@ class HttpConnection {
         },
         onDiscoveryState: (state) => {
           this.issuer = state.authorizationServerMetadata?.issuer ?? state.authorizationServerUrl;
+          if (state.resourceMetadataUrl !== undefined && state.resourceMetadataUrl !== "") {
+            try {
+              this.lastResourceMetadataUrl = new URL(state.resourceMetadataUrl);
+            } catch {
+              // Ignore malformed cached metadata URLs.
+            }
+          }
           // Without an OAuth runtime this connection keeps no OAuth bookkeeping;
           // hosts that enable OAuth always attach one before connecting.
           if (this.active() && this.options.oauthRuntime !== undefined) {
@@ -190,6 +221,7 @@ class HttpConnection {
         if (this.transportClosed) {
           throw new Error("MCP transport is closed");
         }
+        const bearerToken = provider ? extractBearerToken(input, init) : undefined;
         const response = await runtime.trackToolTransportFailure(
           input,
           provider
@@ -201,6 +233,9 @@ class HttpConnection {
               }
             : init,
         );
+        if (bearerToken !== undefined) {
+          this.responseTokens.set(response, bearerToken);
+        }
         // Fetch resolves at headers. Keep actual auth/discovery body reads owned,
         // without treating the idle SSE stream as a perpetual request.
         for (const method of ["text", "json"] as const) {
@@ -211,17 +246,81 @@ class HttpConnection {
       });
   }
 
+  private runAuthRefresh(
+    provider: McpOAuthProvider,
+    owned: OAuthClientProvider,
+    params: {
+      serverUrl: URL;
+      fetchFn: FetchLike;
+      resourceMetadataUrl?: URL | undefined;
+      scope?: string | undefined;
+    },
+    refreshSignal: AbortSignal,
+  ): Promise<"AUTHORIZED" | "REDIRECT"> {
+    const { definition, runtime } = this.options;
+    return provider.runWithIsolatedSignal(refreshSignal, () =>
+      runtime.auth(owned, {
+        serverUrl: params.serverUrl,
+        fetchFn: params.fetchFn,
+        ...(params.resourceMetadataUrl !== undefined
+          ? { resourceMetadataUrl: params.resourceMetadataUrl }
+          : {}),
+        ...(params.scope !== undefined ? { scope: params.scope } : {}),
+        skipIssuerMetadataValidation:
+          definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
+      }),
+    );
+  }
+
+  private async refreshProactively(
+    provider: McpOAuthProvider,
+    owned: OAuthClientProvider,
+    currentAccessToken: string,
+  ): Promise<void> {
+    const { serverName, runtime } = this.options;
+    const identity = { serverName, serverUrl: this.serverUrl };
+    const fetchFn = this.createFetch(provider);
+    try {
+      await coordinateOAuthRefresh({
+        identity,
+        provider,
+        rejectedAccessToken: currentAccessToken,
+        proactive: true,
+        signal: provider.signal,
+        isUnauthorizedError: (error) => error instanceof runtime.UnauthorizedError,
+        runRefresh: (refreshSignal) =>
+          this.runAuthRefresh(
+            provider,
+            owned,
+            {
+              serverUrl: new URL(this.serverUrl),
+              fetchFn,
+              resourceMetadataUrl: this.lastResourceMetadataUrl,
+            },
+            refreshSignal,
+          ),
+      });
+    } catch (error) {
+      if (isAbortError(error, provider.signal)) {
+        throw error;
+      }
+      // Fall back to sending the current token so any server 401 supplies WWW-Authenticate metadata.
+      recordProactiveRefreshOutcome(identity, "failed");
+    }
+  }
+
   private transportAuth(
     provider: McpOAuthProvider | undefined,
   ): InteractiveAuthProvider | OAuthClientProvider | undefined {
     if (!provider) {
       return undefined;
     }
-    const { client, definition, legacySse, runtime } = this.options;
+    const { client, definition, runtime, serverName, oauthRuntime } = this.options;
     const owned = ownOAuthProvider(client, provider);
-    if (isNonInteractiveOAuth(definition.oauth) || legacySse) {
+    if (isNonInteractiveOAuth(definition.oauth)) {
       return owned;
     }
+    const identity = { serverName, serverUrl: this.serverUrl };
     // Own the entire native 401 auth promise, including PKCE between provider calls.
     // Noninteractive transports keep the native OAuthClientProvider 403 policy.
     return {
@@ -231,19 +330,60 @@ class HttpConnection {
       get clientMetadata() {
         return owned.clientMetadata;
       },
-      token: () => client.ownNative(async () => (await owned.tokens())?.access_token),
+      token: () =>
+        client.ownNative(async () => {
+          const current = await owned.tokens();
+          if (!current) {
+            return;
+          }
+          if (shouldAttemptProactiveRefresh(identity, current)) {
+            await this.refreshProactively(provider, owned, current.access_token);
+            return (await owned.tokens())?.access_token;
+          }
+          return current.access_token;
+        }),
       onUnauthorized: (context) =>
         client.ownNative(async () => {
           const { resourceMetadataUrl, scope } = runtime.extractWWWAuthenticateParams(
             context.response,
           );
-          const result = await runtime.auth(owned, {
-            serverUrl: context.serverUrl,
-            fetchFn: context.fetchFn,
-            ...(resourceMetadataUrl !== undefined ? { resourceMetadataUrl } : {}),
-            ...(scope !== undefined ? { scope } : {}),
-            skipIssuerMetadataValidation:
-              definition.oauth !== false && definition.oauth?.skipIssuerMetadataValidation === true,
+          if (resourceMetadataUrl) {
+            this.lastResourceMetadataUrl = resourceMetadataUrl;
+          }
+          if (this.active() && oauthRuntime !== undefined) {
+            recordOAuthDiscovery(
+              {
+                serverName,
+                serverUrl: this.serverUrl,
+                storageBase: this.storageBase,
+                runtime: oauthRuntime,
+              },
+              {
+                ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
+                ...(scope !== undefined && scope !== "" ? { scope } : {}),
+              },
+            );
+          }
+          const rejectedAccessToken = this.responseTokens.get(context.response);
+          provider.invalidateTokenCache();
+          const result = await coordinateOAuthRefresh({
+            identity,
+            provider,
+            rejectedAccessToken,
+            signal: provider.signal,
+            isUnauthorizedError: (error) => error instanceof runtime.UnauthorizedError,
+            runRefresh: (refreshSignal) =>
+              this.runAuthRefresh(
+                provider,
+                owned,
+                {
+                  serverUrl: context.serverUrl,
+                  fetchFn: context.fetchFn,
+                  resourceMetadataUrl,
+                  scope,
+                },
+                refreshSignal,
+              ),
           });
           if (result !== "AUTHORIZED") {
             throw new runtime.UnauthorizedError();
@@ -253,9 +393,8 @@ class HttpConnection {
   }
 
   private observeChallenge(): void {
-    const { definition, runtime, serverName, oauthRuntime, onAuthChallenge, legacySse } =
-      this.options;
-    if (legacySse || !supportsOAuth(definition)) {
+    const { definition, runtime, serverName, oauthRuntime, onAuthChallenge } = this.options;
+    if (!supportsOAuth(definition)) {
       return;
     }
     const previous = this.transport.onerror;

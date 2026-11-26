@@ -64,3 +64,10 @@ export type OAuthCredentialStatus =
   | { status: "present"; entry: AuthEntry }
   | { status: "absent" }
   | { status: "unavailable"; message: string };
+
+export function isTokenExpired(
+  tokens: { readonly expiresAt?: number | undefined },
+  nowSeconds = Date.now() / 1000,
+): boolean {
+  return tokens.expiresAt !== undefined && tokens.expiresAt !== 0 && tokens.expiresAt <= nowSeconds;
+}

@@ -5,7 +5,13 @@ import {
   computeScopeUnion,
 } from "@modelcontextprotocol/client";
 import { issuersMatch } from "./mcp-oauth-config.ts";
-import { getRuntimeState, type McpOAuthRuntime, type OAuthRequest } from "./mcp-oauth-runtime.ts";
+import {
+  getOAuthRequest,
+  getRuntimeState,
+  type McpOAuthRuntime,
+  type OAuthRequest,
+} from "./mcp-oauth-runtime.ts";
+export { getOAuthRequest } from "./mcp-oauth-runtime.ts";
 
 export function isOAuthChallenge(
   error: unknown,
@@ -15,19 +21,6 @@ export function isOAuthChallenge(
     error instanceof UnauthorizedError ||
     (error instanceof SdkHttpError && error.status === 401)
   );
-}
-
-export function getOAuthRequest(
-  serverName: string,
-  serverUrl: string,
-  storageBase: string,
-  runtime: McpOAuthRuntime,
-): OAuthRequest | undefined {
-  if (runtime.signal.aborted) {
-    return undefined;
-  }
-  const request = getRuntimeState(runtime).requests.get(JSON.stringify([serverName, storageBase]));
-  return request?.serverUrl === serverUrl ? request : undefined;
 }
 
 type OAuthRequestBinding = Pick<OAuthRequest, "serverName" | "serverUrl"> & {

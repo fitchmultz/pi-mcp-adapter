@@ -124,8 +124,81 @@ export type OAuthRequest = {
   serverUrl: string;
   requestedScope?: string;
   challenge?: { requiredScope?: string; resourceMetadataUrl?: URL };
+  discovered?: { resourceMetadataUrl?: URL; scope?: string };
   issuer?: string;
 };
+
+export function getOAuthRequest(
+  serverName: string,
+  serverUrl: string,
+  storageBase: string,
+  runtime: McpOAuthRuntime,
+): OAuthRequest | undefined {
+  if (runtime.signal.aborted) {
+    return undefined;
+  }
+  const request = getRuntimeState(runtime).requests.get(JSON.stringify([serverName, storageBase]));
+  return request?.serverUrl === serverUrl ? request : undefined;
+}
+
+export { isTokenExpired } from "./auth-record-types.ts";
+
+function mergeDiscovered(
+  previous: OAuthRequest["discovered"],
+  discovered: { resourceMetadataUrl?: URL; scope?: string },
+): NonNullable<OAuthRequest["discovered"]> {
+  const resourceMetadataUrl = discovered.resourceMetadataUrl ?? previous?.resourceMetadataUrl;
+  const scope =
+    discovered.scope !== undefined && discovered.scope !== "" ? discovered.scope : previous?.scope;
+  return {
+    ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
+    ...(scope !== undefined && scope !== "" ? { scope } : {}),
+  };
+}
+
+export function recordOAuthDiscovery(
+  binding: {
+    serverName: string;
+    serverUrl: string;
+    storageBase: string;
+    runtime: McpOAuthRuntime;
+  },
+  discovered: { resourceMetadataUrl?: URL; scope?: string },
+): void {
+  if (binding.runtime.signal.aborted) {
+    return;
+  }
+  const hasData =
+    discovered.resourceMetadataUrl !== undefined ||
+    (discovered.scope !== undefined && discovered.scope !== "");
+  if (!hasData) {
+    return;
+  }
+  const key = JSON.stringify([binding.serverName, binding.storageBase]);
+  const previous = getOAuthRequest(
+    binding.serverName,
+    binding.serverUrl,
+    binding.storageBase,
+    binding.runtime,
+  );
+  getRuntimeState(binding.runtime).requests.set(key, {
+    ...previous,
+    serverName: binding.serverName,
+    serverUrl: binding.serverUrl,
+    discovered: mergeDiscovered(previous?.discovered, discovered),
+  });
+}
+
+export function hasUnsatisfiedScope(
+  requiredScope: string | undefined,
+  grantedScope: string | undefined,
+): boolean {
+  if (requiredScope === undefined || requiredScope === "") {
+    return false;
+  }
+  const granted = new Set((grantedScope ?? "").split(/\s+/).filter(Boolean));
+  return requiredScope.split(/\s+/).some((token) => token.length > 0 && !granted.has(token));
+}
 
 export function hasPendingAuth(
   serverName: string,

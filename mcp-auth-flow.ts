@@ -309,7 +309,7 @@ export async function authenticate(
   const authKey = JSON.stringify([serverName, serverUrl, getAuthBaseDir(authStorageOptions)]);
   const inFlight = runtimeState.pendingAuthentications.get(authKey);
   if (inFlight) {
-    return inFlight;
+    return abortable(inFlight, signal);
   }
 
   const operation = authenticateOnce(serverName, serverUrl, definition, {

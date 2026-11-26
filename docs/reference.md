@@ -16,7 +16,7 @@ Use Pi 1.6.1 or later and Node.js `^24.22.3 || >=26.13.1`.
 
 Cache, config and onboarding writes and persistent OAuth credential operations use Node's built-in [`node:sqlite`](https://nodejs.org/docs/latest-v24.x/api/sqlite.html) module for cross-process locking. This module is experimental in Node 24 and may emit an experimental warning on first use. These operations require it to be enabled, without `--no-experimental-sqlite`.
 
-Credential readers share locks with other readers; writers exclude readers and other writers. Conflicting lock acquisition fails immediately. A busy cache logs a not-saved warning without aborting server startup or binary resolution. Pending metadata stays with the adapter state for the next normal save opportunity. Other cache I/O errors still propagate. Credential operations fail closed with a busy-storage message.
+Credential readers share locks with other readers; writers exclude readers and other writers. Contended credential locks wait up to 2.5 seconds via Node SQLite's `busy_timeout` before failing closed with a busy-storage message; cache, config, and onboarding locks fail immediately when busy. A busy cache logs a not-saved warning without aborting server startup or binary resolution. Pending metadata stays with the adapter state for the next normal save opportunity. Other cache I/O errors still propagate.
 
 Config and onboarding writers hold a lock across the fresh read, update and write. A busy writer fails before changing the file; retry after the other writer finishes. Their persistent sidecar is `<file-path>.lock.sqlite`, including for CLI and standalone example config writes. Scaffolding a project config never replaces an existing `.mcp.json`.
 

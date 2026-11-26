@@ -86,6 +86,26 @@ export function storedTokenInformation(tokens: StoredTokens): StoredOAuthTokens 
   };
 }
 
+export function toStoredTokens(
+  tokens: StoredOAuthTokens,
+  issuer: string | undefined,
+): StoredTokens {
+  return {
+    accessToken: tokens.access_token,
+    ...(tokens.refresh_token !== undefined && tokens.refresh_token !== ""
+      ? { refreshToken: tokens.refresh_token }
+      : {}),
+    // Preserve expiry even when expires_in is 0 (e.g. the SDK re-saving an
+    // already-expired token) so expired tokens stay expired instead of
+    // being persisted as never-expiring.
+    ...(tokens.expires_in !== undefined
+      ? { expiresAt: Date.now() / 1000 + tokens.expires_in }
+      : {}),
+    ...(tokens.scope !== undefined ? { scope: tokens.scope } : {}),
+    ...(issuer !== undefined ? { issuer } : {}),
+  };
+}
+
 export function clientRegistration(
   info: StoredOAuthClientInformation,
   details: {

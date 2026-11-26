@@ -103,9 +103,12 @@ function expectAuthentication(state: McpExtensionState): AbortSignal {
   expect(call.slice(0, 3)).toEqual(["demo", definition.url, definition]);
   const signal = call[3].signal;
   expect(signal).toBeInstanceOf(AbortSignal);
+  const onAuthorizationUrl = call[3].onAuthorizationUrl;
+  expect(onAuthorizationUrl).toBeTypeOf("function");
   expect(call[3]).toEqual({
     authStorageOptions: state.authStorageOptions,
     runtime: state.oauthRuntime,
+    onAuthorizationUrl,
     signal,
   });
   assert.ok(signal);
@@ -235,6 +238,7 @@ describe("proxy auto auth", () => {
         statuses.push(value);
       }
     });
+    const notify = vi.spyOn(host.context.ui, "notify");
     const state = createTestState({
       config: {
         settings: { autoAuth: true, toolPrefix: "mcp", showStatusIcon: false },
@@ -247,6 +251,13 @@ describe("proxy auto auth", () => {
 
     expect(statuses).toContain("MCP: connecting to demo...");
     expectAuthentication(state);
+    await mocks.authenticate.mock.calls[0]?.[3].onAuthorizationUrl?.(
+      "https://auth.example.com/authorize",
+    );
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringContaining("https://auth.example.com/authorize"),
+      "info",
+    );
     expect(close).not.toHaveBeenCalled();
     expect(connect).toHaveBeenCalledTimes(1);
     expect(reconnect).toHaveBeenCalledWith("demo", definition, needsAuth, expect.any(AbortSignal));
