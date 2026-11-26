@@ -136,7 +136,7 @@ export const serverFields = {
   lifecycle: (value: unknown): value is Exclude<ServerEntry["lifecycle"], undefined> =>
     value === "keep-alive" || value === "lazy" || value === "lazy-keep-alive" || value === "eager",
   idleTimeout: isNonNegativeNumber,
-  requestTimeoutMs: isPositiveNumber,
+  requestTimeoutMs: isFiniteNumber,
   exposeResources: isBoolean,
   directTools: isToolSelection,
   toolPrefix: isToolPrefix,
@@ -181,7 +181,7 @@ export const settingsFields = {
     value === "full" || value === "compact" || value === "off",
   hostConfigDiscovery: (value: unknown): value is "off" | "on" => value === "off" || value === "on",
   idleTimeout: isNonNegativeNumber,
-  requestTimeoutMs: isPositiveNumber,
+  requestTimeoutMs: isFiniteNumber,
   directTools: isBoolean,
   approveTools: isToolSelection,
   uiViewer: isUiViewer,

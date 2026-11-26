@@ -182,7 +182,9 @@ export async function showStatus(state: McpExtensionState, ctx: ExtensionContext
     );
   }
 
-  const blocked = blockedStatusEntries(state, ctx);
+  const blocked = blockedStatusEntries(state, ctx).filter(
+    (entry) => !(entry.name in state.config.mcpServers),
+  );
   for (const entry of blocked) {
     lines.push(`⊘ ${entry.name}: blocked (${entry.reason})`);
   }

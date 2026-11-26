@@ -57,6 +57,7 @@ export function inspectBlockedProjectSources(
   allSources: readonly ConfigSourceSpec[],
   cwd: string,
   includeProject: boolean,
+  activeServerNames: ReadonlySet<string> = new Set(),
 ): { blockedServers: BlockedServerInfo[]; blockedPaths: Map<string, string[]> } {
   const blockedServers: BlockedServerInfo[] = [];
   const blockedPaths = new Map<string, string[]>();
@@ -71,7 +72,7 @@ export function inspectBlockedProjectSources(
     const names = readStaticServerNames(source.readPath);
     blockedPaths.set(source.readPath, names);
     for (const name of names) {
-      if (!seenServers.has(name)) {
+      if (!activeServerNames.has(name) && !seenServers.has(name)) {
         seenServers.add(name);
         blockedServers.push({
           name,

@@ -66,6 +66,7 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
     expect(loaded.imports).toEqual(["cursor"]);
     expect(loaded.settings).toEqual({
       toolPrefix: "short",
+      requestTimeoutMs: 0,
       outputGuard: { maxLines: 500 },
     });
 
@@ -77,11 +78,6 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
           kind: "invalid_server",
           serverName: "broken",
           field: "command",
-        }),
-        expect.objectContaining({
-          severity: "error",
-          kind: "invalid_numeric_bound",
-          field: "requestTimeoutMs",
         }),
         expect.objectContaining({
           severity: "error",
@@ -100,9 +96,10 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
         }),
       ]),
     );
+    expect(errors.some((e) => e.field === "requestTimeoutMs")).toBe(false);
   });
 
-  it("rejects NaN, Infinity, non-positive timeouts, and negative limits while allowing 0 for non-negative limits", () => {
+  it("rejects NaN, Infinity, non-positive lifetimeSeconds/timeout, and negative limits while allowing <= 0 requestTimeoutMs and 0 non-negative limits", () => {
     const filePath = "/tmp/test-mcp.json";
     const bad = validateConfigWithDiagnostics(
       {
@@ -115,7 +112,7 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
         mcpServers: {
           s1: {
             url: "https://example.test/mcp",
-            requestTimeoutMs: -100,
+            requestTimeoutMs: 0,
           },
           s2: {
             url: "https://example.test/mcp2",
@@ -132,12 +129,20 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
             idleTimeout: 0,
             requestTimeoutMs: 5000,
           },
+          s4: {
+            url: "https://example.test/mcp4",
+            requestTimeoutMs: Number.POSITIVE_INFINITY,
+          },
         },
       },
       filePath,
     );
 
-    expect(Object.keys(bad.config.mcpServers)).toEqual(["s3"]);
+    expect(Object.keys(bad.config.mcpServers)).toEqual(["s1", "s3"]);
+    expect(bad.config.mcpServers.s1).toEqual({
+      url: "https://example.test/mcp",
+      requestTimeoutMs: 0,
+    });
     expect(bad.config.settings?.outputGuard).toEqual({ detailsMaxBytes: 0 });
     expect(bad.errors).toEqual(
       expect.arrayContaining([
@@ -149,7 +154,7 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
         expect.objectContaining({ kind: "invalid_numeric_bound", field: "trace.maxEvents" }),
         expect.objectContaining({
           kind: "invalid_numeric_bound",
-          serverName: "s1",
+          serverName: "s4",
           field: "requestTimeoutMs",
         }),
         expect.objectContaining({
@@ -159,6 +164,7 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
         }),
       ]),
     );
+    expect(bad.errors.some((e) => e.serverName === "s1")).toBe(false);
   });
 
   it("records unknown and typo key warnings with helpful placement hints", () => {
@@ -237,7 +243,7 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
       mcpServers: { projSrv: { command: "node", args: ["proj.js"] } },
     });
     writeJsonFile(projectPi, {
-      mcpServers: { projSrv: { directTools: true } },
+      mcpServers: { sharedSrv: { disabled: true }, projSrv: { directTools: true } },
     });
 
     vi.resetModules();
@@ -257,6 +263,7 @@ describe("MCP per-entry config validation and single-pass discovery", () => {
 
     const untrusted = inspectMcpConfigSnapshot(undefined, project, { includeProject: false });
     expect(Object.keys(untrusted.config.mcpServers)).toEqual(["sharedSrv"]);
+    // Globally defined sharedSrv must not appear as blocked when overridden only in an untrusted project.
     expect(untrusted.blockedServers).toEqual([
       expect.objectContaining({
         name: "projSrv",

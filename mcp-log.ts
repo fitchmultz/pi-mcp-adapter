@@ -8,6 +8,7 @@ import { dirname } from "node:path";
 import { inspect } from "node:util";
 import { getAgentPath } from "./agent-dir.ts";
 
+// Matches Pi's builtin:mcp MAX_LOG_BYTES (5 MiB) for <agentDir>/mcp.log.
 export const MAX_MCP_LOG_BYTES = 5 * 1024 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

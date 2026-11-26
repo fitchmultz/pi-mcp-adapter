@@ -1,10 +1,8 @@
 export type ValidationScope = "top" | "server" | "oauth" | "settings" | "outputGuard" | "trace";
 
-export const CONFIG_POSITIVE_NUMERIC_FIELDS = new Set([
-  "requestTimeoutMs",
-  "lifetimeSeconds",
-  "timeout",
-]);
+export const CONFIG_POSITIVE_NUMERIC_FIELDS = new Set(["lifetimeSeconds", "timeout"]);
+
+export const CONFIG_FINITE_NUMERIC_FIELDS = new Set(["requestTimeoutMs"]);
 
 export const CONFIG_NON_NEGATIVE_NUMERIC_FIELDS = new Set([
   "idleTimeout",

@@ -428,6 +428,7 @@ export function inspectMcpConfigSnapshot(
     merged.allSources,
     cwd,
     includeProject,
+    new Set(Object.keys(merged.config.mcpServers)),
   );
   return {
     config: merged.config,

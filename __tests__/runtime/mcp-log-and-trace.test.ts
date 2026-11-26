@@ -232,5 +232,32 @@ describe("MCP server logging (mcp.log) and trace telemetry (mcp-trace)", () => {
     const defaultNoTruncate = new McpTraceWriter({ filePath: explicitFile });
     await defaultNoTruncate.flush(true);
     expect((await readFile(explicitFile, "utf8")).trim().split("\n")).toHaveLength(2);
+
+    // Pre-existing over-budget explicit trace file rotates to .1 instead of going permanently dark.
+    const cappedFile = join(dir, "capped-trace.jsonl");
+    const priorContent = `${"x".repeat(400)}\n`;
+    await writeFile(cappedFile, priorContent, "utf8");
+    const rotatedWriter = createMcpTraceWriter(dir, {
+      enabled: true,
+      file: cappedFile,
+      maxBytes: 256,
+    });
+    rotatedWriter.write({
+      version: 1,
+      timestamp: new Date().toISOString(),
+      direction: "outbound",
+      server: "fresh",
+      transport: "stdio",
+      kind: "notification",
+      status: "sent",
+      method: "notifications/initialized",
+    });
+    await rotatedWriter.flush(true);
+    expect(rotatedWriter.isDisabled).toBe(false);
+    expect(rotatedWriter.stats.events).toBe(1);
+    expect(await readFile(`${cappedFile}.1`, "utf8")).toBe(priorContent);
+    const rotatedLines = (await readFile(cappedFile, "utf8")).trim().split("\n");
+    expect(rotatedLines).toHaveLength(1);
+    expect(JSON.parse(rotatedLines[0] ?? "{}")).toMatchObject({ server: "fresh" });
   });
 });

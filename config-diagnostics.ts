@@ -21,6 +21,7 @@ import {
   traceFields,
 } from "./config-validation.ts";
 import {
+  CONFIG_FINITE_NUMERIC_FIELDS,
   CONFIG_NON_NEGATIVE_NUMERIC_FIELDS,
   CONFIG_POSITIVE_NUMERIC_FIELDS,
   CONFIG_TYPO_HINTS,
@@ -40,6 +41,7 @@ const OAUTH_KEY_SET = new Set([...Object.keys(oauthFields), "extension"]);
 const SETTINGS_KEY_SET = new Set([...Object.keys(settingsFields), "extension"]);
 const OUTPUT_GUARD_KEY_SET = new Set(Object.keys(outputGuardFields));
 const TRACE_KEY_SET = new Set(Object.keys(traceFields));
+const FINITE_NUMERIC_FIELDS = CONFIG_FINITE_NUMERIC_FIELDS;
 const POSITIVE_NUMERIC_FIELDS = CONFIG_POSITIVE_NUMERIC_FIELDS;
 const NON_NEGATIVE_NUMERIC_FIELDS = CONFIG_NON_NEGATIVE_NUMERIC_FIELDS;
 const TYPO_HINTS = CONFIG_TYPO_HINTS;
@@ -61,6 +63,19 @@ function resolveFieldErrorKind(
   return scope === "server" ? "invalid_server" : "invalid_setting";
 }
 
+function numericFieldRequirement(leaf: string): string | undefined {
+  if (POSITIVE_NUMERIC_FIELDS.has(leaf)) {
+    return "a positive finite number";
+  }
+  if (FINITE_NUMERIC_FIELDS.has(leaf)) {
+    return "a finite number";
+  }
+  if (NON_NEGATIVE_NUMERIC_FIELDS.has(leaf)) {
+    return "a non-negative finite number";
+  }
+  return undefined;
+}
+
 function pushNumericOrFieldError(
   errors: McpConfigValidationError[],
   target: FieldDiagnosticTarget,
@@ -68,12 +83,8 @@ function pushNumericOrFieldError(
 ): void {
   const { filePath, scope, field, serverName } = target;
   const leaf = field.includes(".") ? (field.split(".").at(-1) ?? field) : field;
-  const isNumBound =
-    typeof value === "number" &&
-    (POSITIVE_NUMERIC_FIELDS.has(leaf) || NON_NEGATIVE_NUMERIC_FIELDS.has(leaf));
-  const requirement = POSITIVE_NUMERIC_FIELDS.has(leaf)
-    ? "a positive finite number"
-    : "a non-negative finite number";
+  const requirement = typeof value === "number" ? numericFieldRequirement(leaf) : undefined;
+  const isNumBound = requirement !== undefined;
   const prefix = serverName !== undefined ? `Server "${serverName}" ` : "";
   errors.push({
     severity: "error",

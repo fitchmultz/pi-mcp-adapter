@@ -236,8 +236,9 @@ function appendServerAndStderrSections(
   const configuredNames = Object.keys(state.config.mcpServers).filter((name) =>
     matchesTargetServer(name, targetServer),
   );
-  const blocked = (snapshot?.blockedServers ?? []).filter((entry) =>
-    matchesTargetServer(entry.name, targetServer),
+  const blocked = (snapshot?.blockedServers ?? []).filter(
+    (entry) =>
+      !(entry.name in state.config.mcpServers) && matchesTargetServer(entry.name, targetServer),
   );
 
   lines.push("Servers:");
