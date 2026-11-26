@@ -129,10 +129,11 @@ export class SetupPreview {
         "1. ~/.config/mcp/mcp.json",
         "2. ~/.agents/mcp.json",
         "3. ~/.agents/mcp/mcp.json",
-        "4. <Pi agent dir>/fitch-mcp-adapter/mcp.json",
-        "5. .mcp.json",
-        "6. .pi/mcp.json (read-only native Pi project config)",
-        "7. .pi/fitch-mcp-adapter/mcp.json",
+        "4. <Pi agent dir>/mcp.json (read-only native Pi global config)",
+        "5. <Pi agent dir>/fitch-mcp-adapter/mcp.json",
+        "6. .mcp.json",
+        "7. .pi/mcp.json (read-only native Pi project config)",
+        "8. .pi/fitch-mcp-adapter/mcp.json",
         `Host discovery: ${this.state.discovery.hostConfigDiscovery}. Conflicts reported: ${this.state.discovery.conflicts.length}.`,
         ...this.state.discovery.conflicts
           .slice(0, 8)

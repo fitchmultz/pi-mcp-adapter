@@ -14,17 +14,21 @@ import {
   type DirectToolSpec,
   type McpAdapterOptions,
   type McpConfig,
+  type ServerEntry,
   type ToolMetadata,
 } from "./types.ts";
+import { resolveToolExposure } from "./tool-names.ts";
 import { normalizeDirectToolInputSchema } from "./utils.ts";
 
 export type Selection = { server: string; tool: string };
+export type UnpinnedToolExposure = "deferred" | "codemode";
 export type CatalogTool = {
   spec: DirectToolSpec;
   source: ToolMetadata;
   selection: Selection;
   name: string;
   pinned: boolean;
+  unpinnedExposure: UnpinnedToolExposure;
 };
 export type LoaderDependencies = {
   getState: () => McpExtensionState | null;
@@ -57,6 +61,29 @@ function serverMetadata(
   );
 }
 
+function resolveCatalogToolExposure(
+  originalName: string,
+  selection: true | string[] | false,
+  definition: ServerEntry,
+  envActive: boolean,
+): { readonly pinned: boolean; readonly unpinnedExposure: UnpinnedToolExposure } {
+  const configured = envActive
+    ? undefined
+    : resolveToolExposure(originalName, definition.toolExposure);
+  if (configured === "direct") {
+    return { pinned: true, unpinnedExposure: "deferred" };
+  }
+  if (configured === "codemode") {
+    return { pinned: false, unpinnedExposure: "codemode" };
+  }
+  if (configured === "deferred") {
+    return { pinned: false, unpinnedExposure: "deferred" };
+  }
+  const pinned =
+    selection === true || (Array.isArray(selection) && selection.includes(originalName));
+  return { pinned, unpinnedExposure: "deferred" };
+}
+
 export function collectCatalog(
   config: McpConfig,
   cache: MetadataCache | null,
@@ -77,13 +104,18 @@ export function collectCatalog(
       if (tool.resourceUri !== undefined && tool.resourceUri !== "") {
         continue;
       }
+      const exposure = resolveCatalogToolExposure(
+        tool.originalName,
+        selection,
+        definition,
+        env !== undefined,
+      );
       specs.push({
         spec: { ...tool, prefixedName: name, serverName: server },
         source,
         selection: { server, tool: tool.originalName },
         name,
-        pinned:
-          selection === true || (Array.isArray(selection) && selection.includes(tool.originalName)),
+        ...exposure,
       });
     }
   }
@@ -130,12 +162,16 @@ export function catalogDefinition(
   spec: DirectToolSpec,
   instructions: string | undefined,
   dependencies: LoaderDependencies,
-  options: { pinned: boolean; gatewayAvailable: boolean },
+  options: {
+    pinned: boolean;
+    unpinnedExposure?: UnpinnedToolExposure;
+    gatewayAvailable: boolean;
+  },
 ): ToolDefinition<
   ReturnType<typeof Type.Unsafe<Record<string, unknown>>>,
   Record<string, unknown>
 > {
-  const { pinned, gatewayAvailable } = options;
+  const { pinned, unpinnedExposure = "deferred", gatewayAvailable } = options;
   return {
     name: spec.prefixedName,
     namespace: {
@@ -144,7 +180,7 @@ export function catalogDefinition(
     },
     ...(spec.outputSchema ? { outputSchema: nativeMcpOutputSchema(spec.outputSchema) } : {}),
     ...(spec.annotations ? { annotations: nativeAnnotations(spec.annotations) } : {}),
-    ...(pinned ? { defaultActive: false } : { exposure: "deferred" }),
+    ...(pinned ? { defaultActive: false } : { exposure: unpinnedExposure }),
     ...(dependencies.beforeExecute ? { executionMode: "sequential" } : {}),
     label: spec.title ?? `MCP: ${spec.originalName}`,
     description: catalogDescription(spec, gatewayAvailable),

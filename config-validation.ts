@@ -7,6 +7,7 @@ import type {
   McpTraceSettings,
   McpOutputGuardSettings,
   ImportKind,
+  NativeToolExposure,
   ToolPrefix,
   McpUiViewer,
   McpUiToolConsent,
@@ -39,6 +40,14 @@ const isUiViewer = (value: unknown): value is McpUiViewer =>
   value === "auto" || value === "browser" || value === "glimpse" || value === "none";
 const isUiToolConsent = (value: unknown): value is McpUiToolConsent =>
   value === "once-per-server" || value === "always" || value === "never";
+const isClientRegistration = (
+  value: unknown,
+): value is Exclude<OAuthConfig["clientRegistration"], undefined> =>
+  value === "auto" || value === "dcr" || value === "cimd";
+const isNativeToolExposure = (value: unknown): value is NativeToolExposure =>
+  value === "codemode" || value === "deferred" || value === "direct" || value === "hidden";
+const isToolExposureMap = (value: unknown): value is Record<string, NativeToolExposure> =>
+  isConfigObject(value) && Object.values(value).every(isNativeToolExposure);
 
 // Check each declared field without stripping extension properties or rebuilding the input.
 // The mapped type requires a validator for every optional property in the public contract.
@@ -93,6 +102,7 @@ const oauthFields = {
   clientName: isString,
   clientUri: isString,
   clientMetadataUrl: isFalseOrString,
+  clientRegistration: isClientRegistration,
 } satisfies OptionalFields<OAuthConfig>;
 function isOAuth(value: unknown): value is OAuthConfig | false | null {
   return (
@@ -102,6 +112,7 @@ function isOAuth(value: unknown): value is OAuthConfig | false | null {
   );
 }
 const serverFields = {
+  description: isString,
   command: isNullableString,
   args: isStringArray,
   socket: isNullableString,
@@ -126,6 +137,7 @@ const serverFields = {
   toolPrefix: isToolPrefix,
   includeTools: isStringArray,
   excludeTools: isStringArray,
+  toolExposure: isToolExposureMap,
   approveTools: isToolSelection,
   uiViewer: isUiViewer,
   uiToolConsent: isUiToolConsent,

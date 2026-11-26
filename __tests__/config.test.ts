@@ -4,6 +4,7 @@ import { isConfigObject } from "../config-validation.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -311,7 +312,7 @@ describe("config discovery", () => {
     const home = mkdtempSync(join(tmpdir(), "pi-mcp-extensions-home-"));
     const project = mkdtempSync(join(tmpdir(), "pi-mcp-extensions-project-"));
     process.env.HOME = home;
-    const file = join(project, ".mcp.json");
+    const file = join(project, ".pi", "fitch-mcp-adapter", "mcp.json");
     const original = {
       extension: { retained: [false, null, 4] },
       settings: { toolPrefix: "none", extension: { retained: true } },
@@ -1462,7 +1463,7 @@ describe("config discovery", () => {
       importKind: undefined,
     });
     expect(provenance.get("projectServer")).toEqual({
-      path: resolve(realProject, ".mcp.json"),
+      path: resolve(realProject, ".pi", "fitch-mcp-adapter", "mcp.json"),
       kind: "project",
       importKind: undefined,
     });
@@ -1547,9 +1548,12 @@ describe("config discovery", () => {
     const userConfig = readJsonServers(getPiGlobalConfigPath());
     expect(userConfig.genericServer).toEqual({ directTools: true });
 
-    const projectConfig = readJsonServers(join(project, ".mcp.json"));
-    expect(projectConfig.projectServer).toMatchObject({
+    const sharedProjectConfig = readJsonServers(join(project, ".mcp.json"));
+    expect(sharedProjectConfig.projectServer).toEqual({
       command: "project",
+    });
+    const projectPiConfig = readJsonServers(join(project, ".pi", "fitch-mcp-adapter", "mcp.json"));
+    expect(projectPiConfig.projectServer).toEqual({
       directTools: ["search"],
     });
   });
@@ -1903,6 +1907,145 @@ describe("config discovery", () => {
     ]);
     expect(warning).toHaveBeenCalled();
     warning.mockRestore();
+  });
+
+  it("writes directTools pins directly to an external explicit .mcp.json overridePath", async () => {
+    const extDir = mkdtempSync(join(tmpdir(), "pi-mcp-external-override-"));
+    const cwdDir = mkdtempSync(join(tmpdir(), "pi-mcp-external-cwd-"));
+    const overrideFile = join(extDir, ".mcp.json");
+    writeJson(overrideFile, {
+      mcpServers: {
+        docs: { command: "docs-bin", args: [], directTools: false },
+      },
+    });
+
+    const { getServerProvenance, writeDirectToolsConfig, loadMcpConfig } =
+      await import("../config.ts");
+    const provenance = getServerProvenance(overrideFile, cwdDir);
+    expect(provenance.get("docs")).toEqual({ path: overrideFile, kind: "user" });
+
+    writeDirectToolsConfig(new Map([["docs", true]]), provenance);
+    expect(existsSync(join(extDir, ".pi", "fitch-mcp-adapter", "mcp.json"))).toBe(false);
+    expect(readJsonServers(overrideFile).docs).toEqual({
+      command: "docs-bin",
+      args: [],
+      directTools: true,
+    });
+    expect(loadMcpConfig(overrideFile, cwdDir).mcpServers.docs).toEqual({
+      command: "docs-bin",
+      args: [],
+      directTools: true,
+    });
+  });
+
+  it("redirects directTools pins to .pi/fitch-mcp-adapter/mcp.json when --mcp-config aliases project .mcp.json", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "pi-mcp-aliased-project-"));
+    const projectMcpPath = join(projectDir, ".mcp.json");
+    const projectAdapterPath = join(projectDir, ".pi", "fitch-mcp-adapter", "mcp.json");
+    writeJson(projectMcpPath, {
+      mcpServers: {
+        docs: { command: "docs-bin", args: [] },
+      },
+    });
+    const beforeBytes = readFileSync(projectMcpPath, "utf-8");
+
+    const { getServerProvenance, writeDirectToolsConfig, loadMcpConfig } =
+      await import("../config.ts");
+    const provenance = getServerProvenance(projectMcpPath, projectDir);
+    writeDirectToolsConfig(new Map([["docs", true]]), provenance);
+
+    expect(readFileSync(projectMcpPath, "utf-8")).toBe(beforeBytes);
+    expect(readJsonServers(projectAdapterPath)).toEqual({
+      docs: { directTools: true },
+    });
+    expect(loadMcpConfig(projectMcpPath, projectDir).mcpServers.docs).toEqual({
+      command: "docs-bin",
+      args: [],
+      directTools: true,
+    });
+  });
+
+  it("redirects imported, host-discovered, and compatibility-import writes away from aliased project .mcp.json", async () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-mcp-aliased-imports-home-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "pi-mcp-aliased-imports-proj-"));
+    const projectMcpPath = join(projectDir, ".mcp.json");
+    const projectAdapterPath = join(projectDir, ".pi", "fitch-mcp-adapter", "mcp.json");
+    process.env.HOME = home;
+
+    writeJson(join(home, ".cursor", "mcp.json"), {
+      mcpServers: {
+        fromImport: { command: "cursor-bin", args: [] },
+      },
+    });
+    writeJson(join(home, ".windsurf", "mcp.json"), {
+      mcpServers: {
+        fromDiscovery: { command: "windsurf-bin", args: [] },
+      },
+    });
+    writeJson(join(projectDir, ".vscode", "mcp.json"), {
+      mcpServers: {
+        fromCompat: { command: "vscode-bin", args: [] },
+      },
+    });
+    writeJson(projectMcpPath, {
+      imports: ["cursor"],
+      settings: { hostConfigDiscovery: "on" },
+      mcpServers: {},
+    });
+    const beforeBytes = readFileSync(projectMcpPath, "utf-8");
+
+    vi.resetModules();
+    try {
+      const {
+        ensureCompatibilityImports,
+        getServerProvenance,
+        loadMcpConfig,
+        writeDirectToolsConfig,
+      } = await import("../config.ts");
+
+      const compatResult = ensureCompatibilityImports(["vscode"], projectMcpPath, projectDir);
+      expect(compatResult).toEqual({ path: projectAdapterPath, added: ["vscode"] });
+
+      const provenance = getServerProvenance(projectMcpPath, projectDir);
+      expect(provenance.get("fromImport")?.path).toBe(projectAdapterPath);
+      expect(provenance.get("fromDiscovery")?.path).toBe(projectAdapterPath);
+      expect(provenance.get("fromCompat")?.path).toBe(projectAdapterPath);
+
+      writeDirectToolsConfig(
+        new Map([
+          ["fromImport", true],
+          ["fromDiscovery", true],
+          ["fromCompat", true],
+        ]),
+        provenance,
+      );
+
+      expect(readFileSync(projectMcpPath, "utf-8")).toBe(beforeBytes);
+      expect(readJsonServers(projectAdapterPath)).toEqual({
+        fromImport: { directTools: true },
+        fromDiscovery: { directTools: true },
+        fromCompat: { directTools: true },
+      });
+
+      const merged = loadMcpConfig(projectMcpPath, projectDir);
+      expect(merged.mcpServers.fromImport).toEqual({
+        command: "cursor-bin",
+        args: [],
+        directTools: true,
+      });
+      expect(merged.mcpServers.fromDiscovery).toEqual({
+        command: "windsurf-bin",
+        args: [],
+        directTools: true,
+      });
+      expect(merged.mcpServers.fromCompat).toEqual({
+        command: "vscode-bin",
+        args: [],
+        directTools: true,
+      });
+    } finally {
+      vi.resetModules();
+    }
   });
 });
 

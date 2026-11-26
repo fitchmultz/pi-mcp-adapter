@@ -1,8 +1,8 @@
-import { resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
 import type { ServerProvenance } from "./types.ts";
 import type { ConfigWritePreview } from "./config-contracts.ts";
-import { getPiGlobalConfigPath, getProjectConfigPath } from "./config-paths.ts";
+import { getPiGlobalWriteTarget, getProjectConfigPath } from "./config-paths.ts";
 import {
   readRawConfigObject,
   writeRawConfigObject,
@@ -17,8 +17,9 @@ import { isConfigObject, isUnknownArray } from "./config-validation.ts";
 export function previewCompatibilityImports(
   importKinds: ImportKind[],
   overridePath?: string,
+  cwd = process.cwd(),
 ): ConfigWritePreview {
-  const targetPath = getPiGlobalConfigPath(overridePath);
+  const { writePath: targetPath } = getPiGlobalWriteTarget(overridePath, cwd);
   const raw = readRawConfigObject(targetPath);
   const currentImports = isUnknownArray(raw.imports)
     ? raw.imports.filter((value): value is string => typeof value === "string")
@@ -34,8 +35,9 @@ export function previewCompatibilityImports(
 export function ensureCompatibilityImports(
   importKinds: ImportKind[],
   overridePath?: string,
+  cwd = process.cwd(),
 ): { path: string; added: ImportKind[] } {
-  const targetPath = getPiGlobalConfigPath(overridePath);
+  const { writePath: targetPath } = getPiGlobalWriteTarget(overridePath, cwd);
   return withConfigWrite(targetPath, () => updateCompatibilityImports(targetPath, importKinds));
 }
 
@@ -106,6 +108,14 @@ function updateSharedServerEntry(filePath: string, serverName: string, entry: Se
   return filePath;
 }
 
+function resolveDirectToolsWritePath(provenance: ServerProvenance): string {
+  // Never mutate a shared project `.mcp.json` with adapter-only `directTools` pins,
+  // while keeping explicit user `--mcp-config` / `configPath` `.mcp.json` targets writable.
+  return provenance.kind === "project" && basename(provenance.path) === ".mcp.json"
+    ? join(dirname(provenance.path), ".pi", "fitch-mcp-adapter", "mcp.json")
+    : provenance.path;
+}
+
 export function writeDirectToolsConfig(
   changes: Map<string, true | string[] | false>,
   provenance: Map<string, ServerProvenance>,
@@ -120,7 +130,7 @@ export function writeDirectToolsConfig(
       continue;
     }
 
-    const targetPath = prov.path;
+    const targetPath = resolveDirectToolsWritePath(prov);
 
     const entries = byPath.get(targetPath) ?? [];
     entries.push({ name: serverName, value });

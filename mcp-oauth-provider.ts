@@ -62,6 +62,7 @@ export {
   type McpOAuthConfig,
 } from "./mcp-oauth-config.ts";
 import {
+  assertCimdRegistrationAllowed,
   canUseStoredClient,
   hasStoredIssuerMismatch,
   storedClientInformation,
@@ -265,21 +266,20 @@ export class McpOAuthProvider implements OAuthClientProvider {
     // Keep client registration associated with this in-flight flow even if
     // another runtime writes the shared persistent entry for the same name.
     const clientInfo = this.flowClientInfo ?? stored?.clientInfo;
-    if (clientInfo) {
-      if (!canUseStoredClient(clientInfo, this.config, issuer)) {
-        return undefined;
-      }
+    if (clientInfo && canUseStoredClient(clientInfo, this.config, issuer)) {
       if (issuer !== undefined && issuer !== "" && clientInfo.issuer === undefined) {
         clientInfo.issuer = issuer;
         this.flowClientInfo = clientInfo;
         await updateClientInfo(this.identity, clientInfo, this.storageOptions);
       }
-      // Return all registration metadata and the local issuer extension.
-      // Keep the SDK's view and the stored issuer binding consistent.
       return storedClientInformation(clientInfo);
     }
-
-    // No client info or URL changed - will trigger dynamic registration
+    assertCimdRegistrationAllowed(
+      this.config,
+      this.identity.serverName,
+      this.clientMetadataUrl,
+      this.flowDiscoveryState,
+    );
     return undefined;
   }
 
@@ -623,12 +623,4 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 }
 
-export {
-  DEFAULT_OAUTH_CALLBACK_PORT,
-  DEFAULT_OAUTH_CALLBACK_PATH,
-  getConfiguredOAuthCallbackPort,
-  getOAuthCallbackPath,
-  getOAuthCallbackPort,
-  setOAuthCallbackPath,
-  setOAuthCallbackPort,
-} from "./mcp-oauth-callback-config.ts";
+export * from "./mcp-oauth-callback-config.ts";

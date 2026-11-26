@@ -138,7 +138,9 @@ export class McpHostCommands {
   private async execute(args: string, original: ExtensionCommandContext): Promise<void> {
     const owner = this.host.owner;
     const ctx = snapshotContext(original, owner);
-    const state = await this.host.ensureCommandState(owner, ctx);
+    await this.host.syncWorkingDirectory(ctx);
+    const activeOwner = this.host.owner;
+    const state = await this.host.ensureCommandState(activeOwner, ctx);
     if (!state) {
       return;
     }
@@ -147,7 +149,7 @@ export class McpHostCommands {
       state,
       ctx,
       original,
-      owner,
+      owner: activeOwner,
       target: parts[1],
       rest: parts.slice(1).join(" "),
     };
@@ -228,10 +230,10 @@ export class McpHostCommands {
 
   private disabledOverrideTarget():
     | string
-    | { readonly path?: string | undefined; readonly includeNativePiProject?: boolean }
+    | { readonly path?: string | undefined; readonly includeNativePi?: boolean }
     | undefined {
     return isBuiltinMcpActive(this.pi)
-      ? { path: this.host.configPath, includeNativePiProject: false }
+      ? { path: this.host.configPath, includeNativePi: false }
       : this.host.configPath;
   }
 
@@ -311,7 +313,9 @@ export class McpHostCommands {
     if (serverName.length === 0 && !ctx.hasUI) {
       return;
     }
-    const state = await this.host.ensureCommandState(owner, ctx);
+    await this.host.syncWorkingDirectory(ctx);
+    const activeOwner = this.host.owner;
+    const state = await this.host.ensureCommandState(activeOwner, ctx);
     if (!state) {
       return;
     }
@@ -339,7 +343,7 @@ export class McpHostCommands {
       runtime: state.oauthRuntime,
     });
     if (result.ok) {
-      owner?.throwIfInactive();
+      activeOwner?.throwIfInactive();
       await commands.reconnectServer(state, ctx, serverName, true);
     }
   }

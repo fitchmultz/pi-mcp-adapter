@@ -56,11 +56,13 @@ function resolveConfig(
   );
 }
 
-function configureRequests(
+export function configureRequests(
   manager: McpServerManager,
   ctx: ExtensionContext,
   state: McpExtensionState,
+  options?: { readonly clearWhenDisabled?: boolean },
 ): void {
+  const clearWhenDisabled = options?.clearWhenDisabled === true;
   const { owner, config, ui } = state;
   const samplingAutoApprove = config.settings?.samplingAutoApprove === true;
   if (config.settings?.sampling !== false && (ctx.hasUI || samplingAutoApprove)) {
@@ -72,17 +74,22 @@ function configureRequests(
       getSignal: () =>
         owner.isActive() ? combineAbortSignals(owner.signal, ctx.signal) : owner.signal,
     });
+  } else if (clearWhenDisabled) {
+    manager.setSamplingConfig(undefined);
   }
-  configureElicitation(manager, ctx, state);
+  configureElicitation(manager, ctx, state, clearWhenDisabled);
 }
 
 function configureElicitation(
   manager: McpServerManager,
   ctx: ExtensionContext,
   { config, owner, ui }: McpExtensionState,
+  clearWhenDisabled: boolean,
 ): void {
   if (config.settings?.elicitation !== false && ctx.hasUI && ui) {
     manager.setElicitationConfig({ ui, allowUrl: ctx.mode === "tui", signal: owner.signal });
+  } else if (clearWhenDisabled) {
+    manager.setElicitationConfig(undefined);
   }
 }
 

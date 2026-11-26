@@ -1,6 +1,6 @@
 import { isImportKind } from "./config-validation.ts";
 import { existsSync } from "node:fs";
-import type { HostConfigDiscovery, McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
+import type { HostConfigDiscovery, McpConfig, ServerEntry } from "./config-types.ts";
 import type { ServerProvenance } from "./types.ts";
 import type {
   KnownServerPreset,
@@ -15,7 +15,7 @@ import type {
 import {
   getConfigSources,
   isProjectConfigSource,
-  getPiGlobalConfigPath,
+  getPiGlobalWriteTarget,
   getProjectConfigPath,
   findProjectRoot,
   GENERIC_GLOBAL_CONFIG_PATH,
@@ -23,15 +23,30 @@ import {
   IMPORT_PATHS,
 } from "./config-paths.ts";
 import {
+  addDiscoveredHostProvenance,
+  addInheritedProvenance,
+  addSourceServerProvenance,
+  importedServerSources,
   loadImportedConfig,
   readConfigSource,
   readValidatedConfig,
   extractServers,
 } from "./config-imports.ts";
-import { mergeConfigs, expandImports } from "./config-merge.ts";
+import {
+  mergeConfigs,
+  expandImports,
+  hasConfiguredTransport,
+  pruneOrphanOverrideEntries,
+} from "./config-merge.ts";
+import {
+  updateNativePolicyTracking,
+  type NativeServerPolicy,
+} from "./config-native-pi-exposure.ts";
 export type * from "./config-contracts.ts";
 export {
+  getGlobalNativePiConfigPath,
   getPiGlobalConfigPath,
+  getPiGlobalWriteTarget,
   getProjectConfigPath,
   getProjectNativePiConfigPath,
   getProjectPiConfigPath,
@@ -77,10 +92,12 @@ function getFilteredConfigSources(
   options: LoadMcpConfigOptions = {},
 ): ConfigSourceSpec[] {
   const includeProject = options.includeProject !== false;
-  const includeNativePiProject = options.includeNativePiProject !== false;
+  const includeNativePi = options.includeNativePi !== false;
+  const includeNativePiProject = includeNativePi && options.includeNativePiProject !== false;
   return getConfigSources(overridePath, cwd).filter(
     (source) =>
       (includeProject || !isProjectConfigSource(source, cwd)) &&
+      (includeNativePi || source.id !== "native-pi-global") &&
       (includeNativePiProject || source.id !== "native-pi-project"),
   );
 }
@@ -88,7 +105,7 @@ function getFilteredConfigSources(
 export function getMcpDiscoverySummary(
   overridePath?: string,
   cwd = process.cwd(),
-  options?: Pick<LoadMcpConfigOptions, "includeNativePiProject">,
+  options?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
 ): McpDiscoverySummary {
   const sourceSpecs = getFilteredConfigSources(overridePath, cwd, options);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
@@ -164,12 +181,19 @@ function loadDiscoverySources(
 ): LoadedConfigSource[] {
   let merged: McpConfig =
     hostConfigDiscovery === "on" ? loadDiscoveredHostConfigs(cwd, true) : { mcpServers: {} };
+  const nativePolicies = new Map<string, NativeServerPolicy>();
   return sourceSpecs.map((source) => {
-    const loaded = readConfigSource(source, cwd, merged.mcpServers);
+    const loaded = readConfigSource(source, cwd, merged.mcpServers, nativePolicies);
     if (loaded) {
+      const expanded = expandImports(loaded.config, cwd, true);
+      updateNativePolicyTracking(nativePolicies, source.id, {
+        ...(loaded.nativePolicies ? { loadedPolicies: loaded.nativePolicies } : {}),
+        servers: expanded.mcpServers,
+        hasTransport: hasConfiguredTransport,
+      });
       merged = mergeConfigs(
         merged,
-        expandImports(loaded.config, cwd, true),
+        expanded,
         loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
       );
     }
@@ -186,30 +210,81 @@ export function loadMcpConfig(
   cwd = process.cwd(),
   options: LoadMcpConfigOptions = {},
 ): McpConfig {
+  return loadMcpConfigWithBase(overridePath, cwd, options);
+}
+
+function collectReplacedServers(
+  replacedServers: ReadonlySet<string> | undefined,
+  expanded: McpConfig,
+  remainingBaseServers: Set<string>,
+): ReadonlySet<string> | undefined {
+  if (remainingBaseServers.size === 0) {
+    return replacedServers;
+  }
+  const combined = new Set(replacedServers ?? []);
+  for (const [name, entry] of Object.entries(expanded.mcpServers)) {
+    if (hasConfiguredTransport(entry) && remainingBaseServers.has(name)) {
+      combined.add(name);
+      remainingBaseServers.delete(name);
+    }
+  }
+  return combined.size > 0 ? combined : undefined;
+}
+
+function mergeLayerWithBase(
+  config: McpConfig,
+  next: McpConfig,
+  replacedServers: ReadonlySet<string> | undefined,
+  remainingBaseServers: Set<string>,
+): McpConfig {
+  const replaceServers = collectReplacedServers(replacedServers, next, remainingBaseServers);
+  return mergeConfigs(config, next, replaceServers ? { replaceServers } : undefined);
+}
+
+/**
+ * Load and merge file config layers on top of an optional lower-precedence base (such as
+ * `pi.registerMcpServer()` entries), pruning orphan override-only stubs at each scope boundary
+ * so stale pins never survive server removal or bleed across unrelated projects.
+ */
+export function loadMcpConfigWithBase(
+  overridePath?: string,
+  cwd = process.cwd(),
+  options: LoadMcpConfigOptions = {},
+  baseConfig?: McpConfig,
+): McpConfig {
   const includeProject = options.includeProject !== false;
   const sourceSpecs = getFilteredConfigSources(overridePath, cwd, options);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd, includeProject);
-  // Host files are a lower-precedence fallback. This ordering means an opt-in
-  // discovery cannot override a shared or Pi-owned definition, and all normal
-  // URL-bound credential stripping remains in mergeServerMaps.
-  let config: McpConfig =
-    hostConfigDiscovery === "on"
-      ? loadDiscoveredHostConfigs(cwd, includeProject)
-      : { mcpServers: {} };
-
-  for (const source of sourceSpecs) {
-    const loaded = readConfigSource(source, cwd, config.mcpServers);
-    if (!loaded) {
-      continue;
-    }
-    config = mergeConfigs(
+  let config: McpConfig = baseConfig ? cloneMcpConfig(baseConfig) : { mcpServers: {} };
+  const remainingBaseServers = new Set(Object.keys(config.mcpServers));
+  if (hostConfigDiscovery === "on") {
+    config = mergeLayerWithBase(
       config,
-      expandImports(loaded.config, cwd, includeProject),
-      loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
+      loadDiscoveredHostConfigs(cwd, includeProject),
+      undefined,
+      remainingBaseServers,
     );
   }
 
-  return config;
+  const nativePolicies = new Map<string, NativeServerPolicy>();
+  for (const source of sourceSpecs) {
+    const loaded = readConfigSource(source, cwd, config.mcpServers, nativePolicies);
+    if (!loaded) {
+      continue;
+    }
+    const expanded = expandImports(loaded.config, cwd, includeProject);
+    updateNativePolicyTracking(nativePolicies, source.id, {
+      ...(loaded.nativePolicies ? { loadedPolicies: loaded.nativePolicies } : {}),
+      servers: expanded.mcpServers,
+      hasTransport: hasConfiguredTransport,
+    });
+    config = mergeLayerWithBase(config, expanded, loaded.replacedServers, remainingBaseServers);
+    if (source.id === "pi-global" || source.id === "pi-project") {
+      config = pruneOrphanOverrideEntries(config);
+    }
+  }
+
+  return pruneOrphanOverrideEntries(config);
 }
 
 function supportsHostDiscoverySetting(
@@ -218,7 +293,9 @@ function supportsHostDiscoverySetting(
   includeProject: boolean,
 ): boolean {
   return (
-    source.id !== "native-pi-project" && (includeProject || !isProjectConfigSource(source, cwd))
+    source.id !== "native-pi-global" &&
+    source.id !== "native-pi-project" &&
+    (includeProject || !isProjectConfigSource(source, cwd))
   );
 }
 
@@ -392,95 +469,38 @@ export {
 export function getServerProvenance(
   overridePath?: string,
   cwd = process.cwd(),
-  options?: Pick<LoadMcpConfigOptions, "includeNativePiProject">,
+  options?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
 ): Map<string, ServerProvenance> {
   const provenance = new Map<string, ServerProvenance>();
-  const userPath = getPiGlobalConfigPath(overridePath);
+  const { writePath } = getPiGlobalWriteTarget(overridePath, cwd);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
   let merged: McpConfig =
     hostConfigDiscovery === "on" ? loadDiscoveredHostConfigs(cwd, true) : { mcpServers: {} };
 
   if (hostConfigDiscovery === "on") {
-    addDiscoveredHostProvenance(provenance, userPath, cwd);
+    addDiscoveredHostProvenance(provenance, writePath, cwd);
   }
 
+  const nativePolicies = new Map<string, NativeServerPolicy>();
   for (const source of getFilteredConfigSources(overridePath, cwd, options)) {
-    const loaded = readConfigSource(source, cwd, merged.mcpServers);
+    const loaded = readConfigSource(source, cwd, merged.mcpServers, nativePolicies);
     if (!loaded) {
       continue;
     }
+    const expanded = expandImports(loaded.config, cwd, true);
+    updateNativePolicyTracking(nativePolicies, source.id, {
+      ...(loaded.nativePolicies ? { loadedPolicies: loaded.nativePolicies } : {}),
+      servers: expanded.mcpServers,
+      hasTransport: hasConfiguredTransport,
+    });
     merged = mergeConfigs(
       merged,
-      expandImports(loaded.config, cwd, true),
+      expanded,
       loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
     );
-    addInheritedProvenance(provenance, loaded.config.imports ?? [], userPath, cwd);
+    addInheritedProvenance(provenance, loaded.config.imports ?? [], writePath, cwd);
     addSourceServerProvenance(provenance, source, Object.keys(loaded.config.mcpServers));
   }
 
   return provenance;
-}
-
-function addDiscoveredHostProvenance(
-  provenance: Map<string, ServerProvenance>,
-  userPath: string,
-  cwd: string,
-): void {
-  for (const imported of importedServerSources(
-    Object.keys(IMPORT_PATHS).filter(isImportKind),
-    cwd,
-  )) {
-    for (const name of imported.names) {
-      provenance.set(name, { path: userPath, kind: "import", importKind: imported.importKind });
-    }
-  }
-}
-
-function addSourceServerProvenance(
-  provenance: Map<string, ServerProvenance>,
-  source: ConfigSourceSpec,
-  serverNames: readonly string[],
-): void {
-  for (const name of serverNames) {
-    provenance.set(name, {
-      path: source.writePath,
-      kind: source.kind,
-      ...(source.importKind !== undefined ? { importKind: source.importKind } : {}),
-    });
-  }
-}
-
-function* importedServerSources(
-  importKinds: ImportKind[],
-  cwd: string,
-): Generator<{ importKind: ImportKind; path: string; names: string[] }> {
-  for (const importKind of importKinds) {
-    const imported = loadImportedConfig(
-      importKind,
-      cwd,
-      `Failed to inspect imported MCP config from ${importKind}:`,
-    );
-    if (imported) {
-      yield {
-        importKind,
-        path: imported.path,
-        names: Object.keys(extractServers(imported.value, importKind)),
-      };
-    }
-  }
-}
-
-function addInheritedProvenance(
-  provenance: Map<string, ServerProvenance>,
-  importKinds: ImportKind[],
-  userPath: string,
-  cwd: string,
-): void {
-  for (const imported of importedServerSources(importKinds, cwd)) {
-    for (const name of imported.names) {
-      if (!provenance.has(name)) {
-        provenance.set(name, { path: userPath, kind: "import", importKind: imported.importKind });
-      }
-    }
-  }
 }

@@ -11,6 +11,7 @@ import {
   type CatalogTool,
   type LoaderDependencies,
   type Selection,
+  type UnpinnedToolExposure,
 } from "./tool-loader-catalog.ts";
 
 const key = (value: Selection): string => JSON.stringify([value.server, value.tool]);
@@ -33,6 +34,7 @@ const reserved = new Set([
 type Exposure =
   | { kind: "pinned" }
   | { kind: "deferred" }
+  | { kind: "codemode" }
   | {
       kind: "withdrawn";
       pinned: boolean;
@@ -144,6 +146,7 @@ class Loader implements ToolLoader {
       server: string;
       instructions: string | undefined;
       pinned: boolean;
+      unpinnedExposure: UnpinnedToolExposure;
       gatewayAvailable: boolean;
       value: string;
     }
@@ -163,7 +166,7 @@ class Loader implements ToolLoader {
     cache: MetadataCache | null,
     gatewayAvailable: boolean,
   ): "lost" | "gained" | undefined {
-    const { spec, selection, name, pinned } = item;
+    const { spec, selection, name, pinned, unpinnedExposure } = item;
     const instructions =
       this.dependencies.getState()?.serverInstructions.get(spec.serverName) ??
       cache?.servers[spec.serverName]?.instructions;
@@ -175,6 +178,7 @@ class Loader implements ToolLoader {
     }
     const definition = catalogDefinition(spec, instructions, this.dependencies, {
       pinned,
+      unpinnedExposure,
       gatewayAvailable,
     });
     this.pi.registerTool(definition);
@@ -182,7 +186,7 @@ class Loader implements ToolLoader {
       name,
       fingerprint,
       definition,
-      exposure: pinned ? { kind: "pinned" } : { kind: "deferred" },
+      exposure: pinned ? { kind: "pinned" } : { kind: unpinnedExposure },
     });
     return pinChange(existing, pinned);
   }
@@ -248,20 +252,22 @@ class Loader implements ToolLoader {
     instructions: string | undefined,
     gatewayAvailable: boolean,
   ): string {
-    const { spec, source, name, pinned } = item;
+    const { spec, source, name, pinned, unpinnedExposure } = item;
     const previous = Object.isFrozen(source) ? this.fingerprints.get(source) : undefined;
     const fingerprint =
       previous?.server === spec.serverName &&
       previous.instructions === instructions &&
       previous.pinned === pinned &&
+      previous.unpinnedExposure === unpinnedExposure &&
       previous.gatewayAvailable === gatewayAvailable
         ? previous.value
-        : JSON.stringify({ spec, name, instructions, pinned, gatewayAvailable });
+        : JSON.stringify({ spec, name, instructions, pinned, unpinnedExposure, gatewayAvailable });
     if (Object.isFrozen(source)) {
       this.fingerprints.set(source, {
         server: spec.serverName,
         instructions,
         pinned,
+        unpinnedExposure,
         gatewayAvailable,
         value: fingerprint,
       });

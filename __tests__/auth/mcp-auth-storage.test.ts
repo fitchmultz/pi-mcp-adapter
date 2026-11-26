@@ -479,6 +479,7 @@ describe("OAuth credential-store diagnostics", () => {
         "config-imports.ts",
         "config-merge.ts",
         "config-native-pi.ts",
+        "config-native-pi-exposure.ts",
         "config-native-pi-oauth.ts",
         "config-opencode.ts",
         "config-paths.ts",

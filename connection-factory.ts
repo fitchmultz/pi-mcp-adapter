@@ -54,7 +54,6 @@ import {
   supportsPriorDiscovery,
   toSdkPriorDiscovery,
 } from "./prior-discovery.ts";
-import { drainClientCallbacks } from "./client-operations.ts";
 import { cleanupFailures } from "./connection-disposal.ts";
 import {
   fetchAllPrompts,
@@ -63,8 +62,11 @@ import {
   fetchAllTools,
 } from "./connection-discovery.ts";
 
-import { ConnectionHandshake } from "./connection-handshake.ts";
-
+import {
+  closeFailedConnectionSetup,
+  ConnectionHandshake,
+  loadConnectionRuntime,
+} from "./connection-handshake.ts";
 export class ConnectionFactory {
   authStorageOptions: AuthStorageOptions = {};
   oauthRuntime: McpOAuthRuntime | undefined;
@@ -73,10 +75,11 @@ export class ConnectionFactory {
   readonly priorDiscovery = new PriorDiscoveryCache();
   private traceWriter: McpTraceWriter | undefined;
   private readonly needsAuthTokens = new WeakMap<ServerConnection, TokenSnapshot | undefined>();
+  private readonly retiredTraceWriters: McpTraceWriter[] = [];
 
   readonly lifecycle: ConnectionLifecycle;
   readonly callbacks: ConnectionCallbacks;
-  readonly defaultCwd: string | undefined;
+  defaultCwd: string | undefined;
 
   constructor(
     lifecycle: ConnectionLifecycle,
@@ -88,8 +91,19 @@ export class ConnectionFactory {
     this.defaultCwd = defaultCwd;
   }
 
-  flushTrace(): Promise<void> | undefined {
-    return this.traceWriter?.flush();
+  resetTraceWriter(): void {
+    if (this.traceWriter) {
+      this.retiredTraceWriters.push(this.traceWriter);
+      this.traceWriter = undefined;
+    }
+  }
+
+  async flushTrace(): Promise<void> {
+    const writers = [
+      ...this.retiredTraceWriters.splice(0),
+      ...(this.traceWriter ? [this.traceWriter] : []),
+    ];
+    await Promise.all(writers.map((writer) => writer.flush()));
   }
 
   recordNeedsAuth(connection: ServerConnection, snapshot: TokenSnapshot | undefined): void {
@@ -159,7 +173,7 @@ export class ConnectionFactory {
   ): Promise<ServerConnection> {
     throwIfAborted(signal);
     validateServerProtocolConfig(definition);
-    const runtime = await import("./connection-runtime.ts");
+    const runtime = await loadConnectionRuntime();
     throwIfAborted(signal);
     // createClient claims the client into disposal. From here until setup.connect takes over,
     // the factory owns that claim: any failure below must release it, or the never-connected
@@ -517,19 +531,10 @@ class ConnectionSetup {
 
   private async failSetup(failure: unknown, transport: Transport): Promise<ServerConnection> {
     const { factory, runtime, definition } = this.options;
-    const abortCleanup = ConnectionHandshake.cleanup(transport);
-    const abortCleanupFailed =
-      failure instanceof AggregateError &&
-      failure.message === "MCP connection abort cleanup failed";
-    const results = abortCleanupFailed
-      ? []
-      : await Promise.allSettled([
-          abortCleanup ?? Promise.resolve().then(() => this.client.close()),
-        ]);
-    await drainClientCallbacks(this.client);
-    this.stderr.detach();
-    factory.lifecycle.disposal.releaseWhenSettled(this.client);
-    const failures: unknown[] = cleanupFailures(results);
+    const failures = await closeFailedConnectionSetup(this.client, transport, failure, (client) => {
+      this.stderr.detach();
+      factory.lifecycle.disposal.releaseWhenSettled(client);
+    });
     if (runtime.isOAuthChallenge(failure) && supportsOAuth(definition) && failures.length === 0) {
       const connection = this.connection(transport, "needs-auth");
       factory.recordNeedsAuth(connection, this.client.oauthProvider?.lastObservedTokenSnapshot);

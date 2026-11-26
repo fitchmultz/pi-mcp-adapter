@@ -55,10 +55,36 @@ export function resolveCachedPrompts(config: McpConfig, cacheEnabled = true): Pr
  * per prompt at extension load time from the metadata cache; the same
  * factory is reused by tests to invoke the handler without a running pi.
  */
+function resolveActivePromptTarget(
+  state: McpExtensionState,
+  metadata: PromptMetadata,
+  resolveActive: (() => PromptMetadata | undefined) | undefined,
+  ctx: ExtensionCommandContext,
+): PromptMetadata | undefined {
+  const active = resolveActive ? resolveActive() : metadata;
+  if (!active) {
+    notifyPromptError(
+      ctx,
+      `MCP prompt "/${metadata.commandName}" is no longer available in the current workspace.`,
+    );
+    return undefined;
+  }
+  const definition = state.config.mcpServers[active.serverName];
+  if (!definition || isServerDisabled(definition)) {
+    notifyPromptError(
+      ctx,
+      `MCP prompt "${active.originalName}" is no longer configured. Run /mcp reconnect to refresh.`,
+    );
+    return undefined;
+  }
+  return active;
+}
+
 export function createPromptCommand(
   pi: ExtensionAPI,
   getState: () => McpExtensionState | null,
   metadata: PromptMetadata,
+  resolveActive?: () => PromptMetadata | undefined,
 ): Pick<RegisteredCommand, "handler" | "getArgumentCompletions"> & { description: string } {
   return {
     description: buildCommandDescription(metadata),
@@ -69,12 +95,16 @@ export function createPromptCommand(
         notifyPromptError(ctx, "MCP not initialized");
         return;
       }
-      const prepared = await prepareMcpConnection(state, metadata.serverName, ctx.signal);
-      if (prepared.error) {
-        notifyConnectionFailure(state, metadata.serverName, prepared, ctx);
+      const active = resolveActivePromptTarget(state, metadata, resolveActive, ctx);
+      if (!active) {
         return;
       }
-      const resolved = preparePromptArguments(state, metadata, args, ctx);
+      const prepared = await prepareMcpConnection(state, active.serverName, ctx.signal);
+      if (prepared.error) {
+        notifyConnectionFailure(state, active.serverName, prepared, ctx);
+        return;
+      }
+      const resolved = preparePromptArguments(state, active, args, ctx);
       if (!resolved) {
         return;
       }
@@ -109,7 +139,6 @@ function deliverPromptResult(
   }
   pi.sendUserMessage(content);
 }
-
 function notifyPromptError(ctx: ExtensionCommandContext, message: string): void {
   if (ctx.hasUI) {
     ctx.ui.notify(message, "error");

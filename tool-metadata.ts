@@ -8,7 +8,7 @@ import {
   type ToolPrefix,
   formatToolName,
   isServerDisabled,
-  isToolAllowed,
+  isServerToolAllowed,
   resolveToolPrefix,
 } from "./types.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
@@ -83,13 +83,7 @@ function describeTool(
 }
 
 function allowsTool(context: MetadataContext, name: string): boolean {
-  return isToolAllowed(
-    name,
-    context.serverName,
-    context.prefix,
-    context.definition.includeTools,
-    context.definition.excludeTools,
-  );
+  return isServerToolAllowed(name, context.serverName, context.prefix, context.definition);
 }
 
 function readUiResourceUri(tool: McpTool, failedTools: string[]): string | undefined {

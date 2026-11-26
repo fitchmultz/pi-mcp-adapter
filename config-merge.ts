@@ -3,6 +3,39 @@ import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
 import { loadImportedConfig, extractServers } from "./config-imports.ts";
 import { hasServerUrl } from "./utils.ts";
 
+export function hasConfiguredTransport(entry: ServerEntry): boolean {
+  return (
+    (typeof entry.command === "string" && entry.command.trim() !== "") ||
+    hasServerUrl(entry) ||
+    (typeof entry.socket === "string" && entry.socket.trim() !== "")
+  );
+}
+
+/** True for adapter override stubs (such as `{ directTools: true }`) whose backing transport was removed. */
+export function isOrphanOverrideEntry(entry: ServerEntry): boolean {
+  if (hasConfiguredTransport(entry) || entry.disabled === true) {
+    return false;
+  }
+  const keys = Object.keys(entry);
+  return (
+    keys.length > 0 &&
+    keys.every((key) => key === "directTools" || key === "toolExposure" || key === "disabled")
+  );
+}
+
+export function pruneOrphanOverrideEntries(config: McpConfig): McpConfig {
+  let changed = false;
+  const mcpServers: Record<string, ServerEntry> = {};
+  for (const [name, entry] of Object.entries(config.mcpServers)) {
+    if (isOrphanOverrideEntry(entry)) {
+      changed = true;
+      continue;
+    }
+    mcpServers[name] = entry;
+  }
+  return changed ? { ...config, mcpServers } : config;
+}
+
 export function mergeConfigs(
   base: McpConfig,
   next: McpConfig,

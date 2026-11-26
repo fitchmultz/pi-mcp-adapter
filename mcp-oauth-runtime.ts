@@ -214,6 +214,15 @@ export function hasPendingAuth(
   );
 }
 
+export function hasAnyPendingAuth(runtime: McpOAuthRuntime): boolean {
+  const state = getRuntimeState(runtime);
+  return (
+    state.pendingAuths.size > 0 ||
+    state.pendingStarts.size > 0 ||
+    state.pendingAuthentications.size > 0
+  );
+}
+
 /** The callback state reserved by a server's pending flow, if it has one. */
 export function pendingAuthState(
   runtime: McpOAuthRuntime,

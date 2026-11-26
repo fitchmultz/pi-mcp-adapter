@@ -15,6 +15,7 @@ import {
   getMcpDiscoverySummary,
   getProjectConfigPath,
   type KnownServerPreset,
+  type LoadMcpConfigOptions,
   getServerProvenance,
   previewCompatibilityImports,
   previewSharedServerEntry,
@@ -36,7 +37,11 @@ import { openPath, resolveServerUrl } from "./utils.ts";
 import { createMcpPanel } from "./mcp-panel.ts";
 import { createMcpSetupPanel } from "./mcp-setup-panel.ts";
 import type { SetupPanelCallbacks } from "./mcp-setup-contract.ts";
-import { showStatus } from "./mcp-inspection-commands.ts";
+import {
+  buildSharedConfigNoticeLines,
+  showStatus,
+  withFallbackServerProvenance,
+} from "./mcp-inspection-commands.ts";
 import { reconnectServer } from "./mcp-connection-commands.ts";
 import { authenticateServer, authEligibility } from "./mcp-auth-commands.ts";
 import { logger } from "./logger.ts";
@@ -46,27 +51,6 @@ export { authenticateServer, logoutServer } from "./mcp-auth-commands.ts";
 
 export interface PanelFlowResult {
   configChanged: boolean;
-}
-
-function buildSharedConfigNoticeLines(
-  configOverridePath: string | undefined,
-  cwd: string,
-  discoveryOptions?: { readonly includeNativePiProject?: boolean },
-): string[] {
-  const discovery = getMcpDiscoverySummary(configOverridePath, cwd, discoveryOptions);
-  const onboardingState = loadOnboardingState();
-  if (!discovery.hasSharedServers || onboardingState.sharedConfigHintShown) {
-    return [];
-  }
-
-  const sharedSources = discovery.sources.filter(
-    (source) => source.kind === "shared" && source.serverCount > 0,
-  );
-  const sourceList = sharedSources.map((source) => source.path).join(", ");
-  return [
-    `Using standard MCP config from ${sourceList}.`,
-    "Pi only writes compatibility imports and adapter-specific overrides into Pi-owned files when needed.",
-  ];
 }
 
 function buildSetupCallbacks(input: {
@@ -81,7 +65,7 @@ function buildSetupCallbacks(input: {
     getMcpDiscoverySummary(configOverridePath, ctx.cwd, discoveryOptions).repoPrompt;
   return {
     previewImports: (imports: ImportKind[]) =>
-      previewCompatibilityImports(imports, configOverridePath),
+      previewCompatibilityImports(imports, configOverridePath, ctx.cwd),
     previewStarterProject: () => previewStarterProjectConfig(ctx.cwd),
     previewRepoPrompt: () => {
       const repoPrompt = getRepoPrompt();
@@ -103,7 +87,7 @@ function buildSetupCallbacks(input: {
     previewKnownServer: (preset: KnownServerPreset) =>
       previewSharedServerEntry(getProjectConfigPath(ctx.cwd), preset.id, preset.entry),
     adoptImports: async (imports: ImportKind[]) => {
-      const result = ensureCompatibilityImports(imports, configOverridePath);
+      const result = ensureCompatibilityImports(imports, configOverridePath, ctx.cwd);
       if (result.added.length > 0) {
         onConfigChanged();
       }
@@ -414,7 +398,12 @@ export async function openMcpPanel(input: {
   const cache = loadMetadataCache(state.metadataCacheEnabled);
   const configPath = configOverridePath;
   const discoveryOptions = nativePiConfigOptions(pi);
-  const provenanceMap = getServerProvenance(configPath, ctx.cwd, discoveryOptions);
+  const provenanceMap = withFallbackServerProvenance(
+    config,
+    getServerProvenance(configPath, ctx.cwd, discoveryOptions),
+    configPath,
+    ctx.cwd,
+  );
   const noticeLines = buildSharedConfigNoticeLines(configPath, ctx.cwd, discoveryOptions);
 
   const callbacks = await buildMcpPanelCallbacks(state, config, ctx);
@@ -464,7 +453,7 @@ export async function openMcpAuthPanel(
   state: McpExtensionState,
   ctx: ExtensionContext,
   configOverridePath?: string,
-  discoveryOptions?: { readonly includeNativePiProject?: boolean },
+  discoveryOptions?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
 ): Promise<PanelFlowResult> {
   if (!ctx.hasUI) {
     return { configChanged: false };
@@ -496,7 +485,12 @@ export async function openMcpAuthPanel(
 
   const cache = loadMetadataCache(state.metadataCacheEnabled);
   const configPath = configOverridePath;
-  const provenanceMap = getServerProvenance(configPath, ctx.cwd, discoveryOptions);
+  const provenanceMap = withFallbackServerProvenance(
+    config,
+    getServerProvenance(configPath, ctx.cwd, discoveryOptions),
+    configPath,
+    ctx.cwd,
+  );
   const callbacks = await buildMcpPanelCallbacks(state, config, ctx);
 
   return ctx.ui.custom<PanelFlowResult>(

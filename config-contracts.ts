@@ -12,6 +12,7 @@ export interface ConfigSourceSpec {
     | "shared-global"
     | "agents-global"
     | "agents-nested-global"
+    | "native-pi-global"
     | "pi-global"
     | "shared-project"
     | "native-pi-project"
@@ -85,6 +86,8 @@ export interface ConfigWritePreview {
 
 export interface LoadMcpConfigOptions {
   includeProject?: boolean;
+  /** Whether to read Pi's native `<agentDir>/mcp.json` and `<project>/.pi/mcp.json`. Defaults to true; set false when `builtin:mcp` is active. */
+  includeNativePi?: boolean;
   /** Whether to read Pi's native `<project>/.pi/mcp.json`. Defaults to true; set false when `builtin:mcp` is active. */
   includeNativePiProject?: boolean;
 }

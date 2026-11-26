@@ -267,10 +267,13 @@ describe("commands onboarding", () => {
         },
       });
       expect(readJson(projectPath)).toEqual({
-        mcpServers: { projectOwned: { command: "project-command", directTools: ["search"] } },
+        mcpServers: { projectOwned: { command: "project-command" } },
       });
       expect(readJson(projectPiPath)).toEqual({
-        mcpServers: { projectPiOwned: { command: "project-pi-command", directTools: true } },
+        mcpServers: {
+          projectOwned: { directTools: ["search"] },
+          projectPiOwned: { command: "project-pi-command", directTools: true },
+        },
       });
       expect(readFileSync(sourcePath, "utf-8")).toBe(sourceText);
       expect(refreshed).toHaveBeenCalledWith(changes);

@@ -3,10 +3,16 @@ import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import stripJsonComments from "strip-json-comments";
 import type { ConfigSourceSpec } from "./config-contracts.ts";
-import { readNativePiProjectConfig } from "./config-native-pi.ts";
+import type { NativeServerPolicy } from "./config-native-pi-exposure.ts";
+import {
+  readNativePiGlobalConfig,
+  readNativePiProjectConfig,
+  resolveNativeCwd,
+} from "./config-native-pi.ts";
 import { isPathInsideProject, IMPORT_PATHS } from "./config-paths.ts";
 import { validateUnknownServerProtocolConfig } from "./config-protocol.ts";
 import type { McpConfig, ServerEntry, ImportKind } from "./config-types.ts";
+import type { ServerProvenance } from "./types.ts";
 import {
   isConfigObject,
   isUnknownArray,
@@ -130,18 +136,58 @@ export function readValidatedConfig(path: string, label: string): McpConfig | nu
 export interface LoadedSourceConfig {
   readonly config: McpConfig;
   readonly replacedServers?: ReadonlySet<string>;
+  readonly nativePolicies?: ReadonlyMap<string, NativeServerPolicy>;
+}
+
+function projectConfigRoot(source: ConfigSourceSpec): string | undefined {
+  if (source.id === "shared-project") {
+    return dirname(source.readPath);
+  }
+  if (source.id === "pi-project") {
+    return dirname(dirname(dirname(source.readPath)));
+  }
+  return undefined;
+}
+
+function resolveProjectConfigCwds(config: McpConfig, projectRoot: string): McpConfig {
+  let changed = false;
+  const mcpServers: Record<string, ServerEntry> = {};
+  for (const [name, entry] of Object.entries(config.mcpServers)) {
+    if (typeof entry.cwd === "string" && entry.cwd !== "") {
+      const resolved = resolveNativeCwd(entry.cwd, projectRoot);
+      if (resolved !== entry.cwd) {
+        mcpServers[name] = { ...entry, cwd: resolved };
+        changed = true;
+        continue;
+      }
+    }
+    mcpServers[name] = entry;
+  }
+  return changed ? { ...config, mcpServers } : config;
 }
 
 export function readConfigSource(
   source: ConfigSourceSpec,
   cwd: string,
   existingServers?: Readonly<Record<string, ServerEntry>>,
+  nativePolicies?: ReadonlyMap<string, NativeServerPolicy>,
 ): LoadedSourceConfig | null {
+  if (source.id === "native-pi-global") {
+    return readNativePiGlobalConfig(source.readPath, cwd);
+  }
   if (source.id === "native-pi-project") {
-    return readNativePiProjectConfig(source.readPath, cwd, existingServers);
+    // Resolve relative stdio `cwd` against the project root owning `.pi/mcp.json`.
+    const projectRoot = dirname(dirname(source.readPath));
+    return readNativePiProjectConfig(source.readPath, projectRoot, existingServers, nativePolicies);
   }
   const config = readValidatedConfig(source.readPath, `MCP config from ${source.readPath}`);
-  return config ? { config } : null;
+  if (!config) {
+    return null;
+  }
+  const projectRoot = projectConfigRoot(source);
+  return {
+    config: projectRoot !== undefined ? resolveProjectConfigCwds(config, projectRoot) : config,
+  };
 }
 
 function validateServerMap(raw: Record<string, unknown>): Record<string, ServerEntry> {
@@ -248,4 +294,68 @@ export function extractServers(config: unknown, kind: ImportKind): Record<string
 function mapImportedEntry(raw: unknown, kind: ImportKind): ServerEntry | undefined {
   const entry = kind === "codex" && isConfigObject(raw) ? mapCodexEntry(raw) : raw;
   return isServerEntry(entry) ? entry : undefined;
+}
+
+export function addDiscoveredHostProvenance(
+  provenance: Map<string, ServerProvenance>,
+  userPath: string,
+  cwd: string,
+): void {
+  for (const imported of importedServerSources(
+    Object.keys(IMPORT_PATHS).filter(isImportKind),
+    cwd,
+  )) {
+    for (const name of imported.names) {
+      provenance.set(name, { path: userPath, kind: "import", importKind: imported.importKind });
+    }
+  }
+}
+
+export function addSourceServerProvenance(
+  provenance: Map<string, ServerProvenance>,
+  source: ConfigSourceSpec,
+  serverNames: readonly string[],
+): void {
+  for (const name of serverNames) {
+    provenance.set(name, {
+      path: source.writePath,
+      kind: source.kind,
+      ...(source.importKind !== undefined ? { importKind: source.importKind } : {}),
+    });
+  }
+}
+
+export function* importedServerSources(
+  importKinds: ImportKind[],
+  cwd: string,
+): Generator<{ importKind: ImportKind; path: string; names: string[] }> {
+  for (const importKind of importKinds) {
+    const imported = loadImportedConfig(
+      importKind,
+      cwd,
+      `Failed to inspect imported MCP config from ${importKind}:`,
+    );
+    if (imported) {
+      yield {
+        importKind,
+        path: imported.path,
+        names: Object.keys(extractServers(imported.value, importKind)),
+      };
+    }
+  }
+}
+
+export function addInheritedProvenance(
+  provenance: Map<string, ServerProvenance>,
+  importKinds: ImportKind[],
+  userPath: string,
+  cwd: string,
+): void {
+  for (const imported of importedServerSources(importKinds, cwd)) {
+    for (const name of imported.names) {
+      if (!provenance.has(name)) {
+        provenance.set(name, { path: userPath, kind: "import", importKind: imported.importKind });
+      }
+    }
+  }
 }

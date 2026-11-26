@@ -77,7 +77,15 @@ export class McpLifecycleManager {
     this.allServers.set(name, definition);
     if (settings?.idleTimeout !== undefined) {
       this.serverSettings.set(name, settings);
+    } else {
+      this.serverSettings.delete(name);
     }
+  }
+
+  unregisterServer(name: string): void {
+    this.allServers.delete(name);
+    this.keepAliveServers.delete(name);
+    this.serverSettings.delete(name);
   }
 
   setGlobalIdleTimeout(minutes: number): void {

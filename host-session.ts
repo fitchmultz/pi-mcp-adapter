@@ -1,7 +1,46 @@
 import { isDeepStrictEqual } from "node:util";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { abortable } from "./abort.ts";
+import type { McpAdapterHost } from "./host-contract.ts";
 import type { McpExtensionState } from "./state.ts";
-import type { McpRuntimeOwner } from "./runtime-owner.ts";
+import { isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpConfig } from "./types.ts";
+
+const INIT_WAIT_TIMEOUT_MS = 30_000;
+const INIT_WAIT_TIMED_OUT = Symbol("init-wait-timed-out");
+
+type ToolStateUnavailable = {
+  content: Array<{ type: "text"; text: string }>;
+  details: { error: string; message?: string; timeoutMs?: number };
+};
+
+async function awaitWithTimeout<T>(promise: Promise<T>): Promise<T | typeof INIT_WAIT_TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof INIT_WAIT_TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(INIT_WAIT_TIMED_OUT), INIT_WAIT_TIMEOUT_MS);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function unavailableStateMessage(session: HostSession): string {
+  const failure = session.failureMessage;
+  return failure === null ? "MCP not initialized" : `MCP initialization failed: ${failure}`;
+}
+
+function cancelled(
+  owner: McpRuntimeOwner | null,
+  signal: AbortSignal | undefined,
+  error: unknown,
+): boolean {
+  return signal?.aborted === true || (owner !== null && isAbortError(error, owner.signal));
+}
 
 export interface FrozenToolsSnapshot {
   readonly config: McpConfig;
@@ -117,5 +156,101 @@ export class HostSession {
     this.state = null;
     this.initPromise = null;
     this.failure = null;
+  }
+
+  isLiveOwner(owner: McpRuntimeOwner | null): owner is McpRuntimeOwner {
+    return owner !== null && owner === this.owner && owner.isActive();
+  }
+
+  async awaitReadyState(): Promise<{
+    readonly state: McpExtensionState;
+    readonly owner: McpRuntimeOwner;
+  } | null> {
+    const owner = this.owner;
+    if (!this.isLiveOwner(owner)) {
+      return null;
+    }
+    const pending = this.initPromise;
+    if (!this.state && pending) {
+      const initialized = await pending.catch(() => null);
+      if (!initialized || !this.isLiveOwner(owner)) {
+        return null;
+      }
+      this.adopt(initialized);
+    }
+    return this.state && this.isLiveOwner(owner) ? { state: this.state, owner } : null;
+  }
+
+  async ensureCommandState(
+    owner: McpRuntimeOwner | null,
+    ctx: ExtensionContext,
+  ): Promise<McpExtensionState | null> {
+    const pending = this.initPromise;
+    if (!this.state && pending) {
+      try {
+        const initialized = await pending;
+        owner?.throwIfInactive();
+        this.adopt(initialized);
+      } catch (error) {
+        if (ctx.hasUI) {
+          ctx.ui.notify(
+            `MCP initialization failed: ${error instanceof Error ? error.message : String(error)}`,
+            "error",
+          );
+        }
+        return null;
+      }
+    }
+    if (!this.state && ctx.hasUI) {
+      ctx.ui.notify(unavailableStateMessage(this), "error");
+    }
+    return this.state;
+  }
+
+  async getToolState(signal?: AbortSignal): ReturnType<McpAdapterHost["getToolState"]> {
+    const owner = this.owner;
+    const pending = this.initPromise;
+    if (!this.state && pending) {
+      try {
+        const initialized = await awaitWithTimeout(abortable(pending, signal));
+        if (initialized === INIT_WAIT_TIMED_OUT) {
+          return {
+            content: [
+              { type: "text", text: "MCP initialization is still in progress. Try again shortly." },
+            ],
+            details: { error: "init_timeout", timeoutMs: INIT_WAIT_TIMEOUT_MS },
+          };
+        }
+        owner?.throwIfInactive();
+        this.adopt(initialized);
+      } catch (error) {
+        if (cancelled(owner, signal, error)) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: `MCP initialization failed: ${message}` }],
+          details: { error: "init_failed", message },
+        };
+      }
+    }
+    owner?.throwIfInactive();
+    return this.toolStateReport();
+  }
+
+  private toolStateReport(): McpExtensionState | ToolStateUnavailable {
+    if (this.state) {
+      return this.state;
+    }
+    if (this.failure === null) {
+      return {
+        content: [{ type: "text", text: "MCP not initialized" }],
+        details: { error: "not_initialized" },
+      };
+    }
+    return {
+      content: [{ type: "text", text: `MCP initialization failed: ${this.failure}` }],
+      details: { error: "init_failed", message: this.failure },
+    };
   }
 }

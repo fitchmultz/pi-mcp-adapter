@@ -248,7 +248,7 @@ async function runMigration(argv, log) {
   log(
     dryRun
       ? "Dry run: no files changed and no credential store accessed."
-      : "Migration complete. Historical sources and existing destinations were preserved. Matching current OAuth sources are removed after verified promotion. Restart Pi to use the independent adapter.",
+      : "Migration complete. Historical sources and existing destinations were preserved. Matching current OAuth sources are removed after verified promotion. Note: <agentDir>/mcp.json is now Pi's user-global native MCP config, so remove or rename a retired pre-v5 <agentDir>/mcp.json if you do not want Pi to keep loading it. Restart Pi to use the independent adapter.",
   );
   return 0;
 }

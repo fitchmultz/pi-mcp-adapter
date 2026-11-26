@@ -145,13 +145,38 @@ function validateClientRegistration(
   if (registration !== "auto" && registration !== "dcr" && registration !== "cimd") {
     return warnNativeEntry(ctx, 'oauth.clientRegistration must be "auto", "dcr", or "cimd"');
   }
-  if (registration === "cimd" && (oauth.clientId !== undefined || oauth.clientName !== undefined)) {
+  if (
+    registration === "cimd" &&
+    (oauth.clientId !== undefined ||
+      oauth.clientName !== undefined ||
+      oauth.clientSecret !== undefined)
+  ) {
     return warnNativeEntry(
       ctx,
-      'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName',
+      'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId, oauth.clientName, or oauth.clientSecret',
     );
   }
   return registration;
+}
+
+function validateCimdCallback(
+  raw: Record<string, unknown>,
+  redirectUri: string | undefined,
+  ctx: NativeEntryContext,
+): boolean {
+  const candidate =
+    redirectUri ?? (typeof raw.callbackUrl === "string" ? raw.callbackUrl : undefined);
+  if (candidate === undefined) {
+    return true;
+  }
+  const parsed = parseLoopbackUrl(candidate);
+  if (!parsed || parsed.pathname !== "/callback") {
+    return warnNativeEntryFalse(
+      ctx,
+      'oauth.clientRegistration "cimd" requires a /callback redirect path',
+    );
+  }
+  return true;
 }
 
 function buildMappedOAuth(
@@ -177,6 +202,8 @@ function buildMappedOAuth(
   }
   if (registration === "dcr") {
     oauth.clientMetadataUrl = false;
+  } else if (registration === "cimd") {
+    oauth.clientRegistration = "cimd";
   }
   return oauth;
 }
@@ -295,6 +322,37 @@ export function hasUnrepresentableToolExposure(
   return false;
 }
 
+export interface NormalizedNativeToolExposure {
+  readonly exposure: McpExposure | undefined;
+  readonly entries: ReadonlyArray<[string, McpExposure]>;
+  readonly requiresOrderedExposure: boolean;
+}
+
+export function normalizeNativeToolExposure(
+  exposure: McpExposure | undefined,
+  toolExposure: Readonly<Record<string, McpExposure>> | undefined,
+): NormalizedNativeToolExposure {
+  const rawEntries = toolExposure ? Object.entries(toolExposure) : [];
+  const wildcardHideIndex = rawEntries.findIndex(([key, exp]) => key === "*" && exp === "hidden");
+  if (wildcardHideIndex === -1) {
+    return {
+      exposure,
+      entries: rawEntries,
+      requiresOrderedExposure: hasUnrepresentableToolExposure(rawEntries),
+    };
+  }
+  // A catch-all `"*": "hidden"` makes hidden the fallback default; exact entries always win in Pi,
+  // and wildcard entries after `"*"` are unreachable.
+  const entries = rawEntries.filter(
+    ([key], index) => key !== "*" && (!key.includes("*") || index < wildcardHideIndex),
+  );
+  return {
+    exposure: "hidden",
+    entries,
+    requiresOrderedExposure: hasUnrepresentableToolExposure(entries),
+  };
+}
+
 export function mapNativeOAuth(
   raw: unknown,
   ctx: NativeEntryContext,
@@ -311,6 +369,9 @@ export function mapNativeOAuth(
   }
   const redirectUri = resolveNativeRedirectUri(raw, ctx);
   if (redirectUri === null) {
+    return null;
+  }
+  if (registration === "cimd" && !validateCimdCallback(raw, redirectUri, ctx)) {
     return null;
   }
   return buildMappedOAuth(raw, registration, redirectUri);
