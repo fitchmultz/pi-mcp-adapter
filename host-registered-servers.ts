@@ -10,11 +10,6 @@ import {
   loadMcpConfig,
   loadMcpConfigWithBase,
 } from "./config.ts";
-import {
-  hasConfiguredTransport,
-  mergeConfigs,
-  pruneOrphanOverrideEntries,
-} from "./config-merge.ts";
 import { translateRegisteredMcpServers } from "./config-native-pi.ts";
 import { isBuiltinMcpActive } from "./host-contract.ts";
 import { canPreserveFrozenTools, type FrozenToolsSnapshot } from "./host-session.ts";
@@ -44,31 +39,6 @@ export function readRegisteredMcpServers(
   pi: Partial<Pick<ExtensionAPI, "getMcpServers">>,
 ): readonly RegisteredMcpServer[] {
   return typeof pi.getMcpServers === "function" ? pi.getMcpServers() : [];
-}
-
-/**
- * Merge extension-registered servers underneath file configs. Any file server defining a
- * transport wholesale-replaces an extension server of the same name; override-only entries
- * (for example `disabled` or `directTools`) layer cleanly on top.
- */
-export function mergeRegisteredWithFileConfig(
-  fileConfig: McpConfig,
-  registered: readonly RegisteredMcpServer[],
-  cwd: string,
-): McpConfig {
-  if (registered.length === 0) {
-    return pruneOrphanOverrideEntries(fileConfig);
-  }
-  const translated = translateRegisteredMcpServers(registered, cwd);
-  const fileTransportServers = new Set<string>();
-  for (const [name, entry] of Object.entries(fileConfig.mcpServers)) {
-    if (hasConfiguredTransport(entry)) {
-      fileTransportServers.add(name);
-    }
-  }
-  return pruneOrphanOverrideEntries(
-    mergeConfigs(translated, fileConfig, { replaceServers: fileTransportServers }),
-  );
 }
 
 export function resolveHostConfig(input: {

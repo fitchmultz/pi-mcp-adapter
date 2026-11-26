@@ -315,4 +315,39 @@ describe("explicit pre-v5 state migration", () => {
     ).toBeUndefined();
     expect(JSON.parse(readFileSync(source, "utf8"))).toEqual(entry);
   });
+
+  it("skips servers-only native <agentDir>/mcp.json adapter entries and warns during CLI migration", async () => {
+    write(
+      join(agent, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          legacyOnly: { command: "unused-legacy-entry", directTools: true },
+          nativeEntry: { command: "unused-native-entry" },
+        },
+      }),
+    );
+    const { loadMcpConfig } = await import("../config.ts");
+    const warnings: string[] = [];
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const loaded = loadMcpConfig(undefined, project);
+      expect(loaded.mcpServers.legacyOnly).toBeUndefined();
+      expect(loaded.mcpServers.nativeEntry).toBeDefined();
+      expect(
+        warnings.some((message) => message.includes('Ignoring native Pi MCP entry "legacyOnly"')),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    const { execFileSync } = await import("node:child_process");
+    const output = execFileSync(process.execPath, [join(process.cwd(), "cli.js"), "migrate"], {
+      env: { ...process.env, PI_CODING_AGENT_DIR: agent },
+      encoding: "utf8",
+    });
+    expect(output).toContain("user-global native MCP config");
+    expect(output).toContain("remove or rename a retired pre-v5 <agentDir>/mcp.json");
+  });
 });

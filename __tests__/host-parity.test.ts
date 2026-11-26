@@ -1114,6 +1114,98 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
     }
   }, 15_000);
 
+  it("unregisters removed or reconfigured keep-alive servers before async manager.close finishes", async () => {
+    const { root } = createWorkspace();
+    const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
+    const projectA = join(root, "ka-a");
+    const projectB = join(root, "ka-b");
+    mkdirSync(projectA, { recursive: true });
+    mkdirSync(projectB, { recursive: true });
+    writeJson(join(projectA, ".mcp.json"), {
+      mcpServers: {
+        "ka-drop": {
+          command: process.execPath,
+          args: [fixtureServer],
+          cwd: projectA,
+          lifecycle: "keep-alive",
+        },
+        "ka-keep": {
+          command: process.execPath,
+          args: [fixtureServer],
+          cwd: projectA,
+          lifecycle: "keep-alive",
+        },
+      },
+    });
+    writeJson(join(projectB, ".mcp.json"), {
+      mcpServers: {
+        "ka-keep": {
+          command: process.execPath,
+          args: [fixtureServer],
+          cwd: projectB,
+          lifecycle: "keep-alive",
+        },
+      },
+    });
+
+    const host = await createLifecycleHost();
+    const runtime = new McpHostRuntime(host.api, {});
+    runtime.install();
+    const healthController = new AbortController();
+    try {
+      await host.handlers.get("session_start")({}, { cwd: projectA });
+      await waitFor(() => {
+        const current = runtime.state;
+        return (
+          current?.manager.getConnection("ka-drop")?.status === "connected" &&
+          current.manager.getConnection("ka-keep")?.status === "connected"
+        );
+      });
+      const state = requireValue(runtime.state);
+      const origClose = state.manager.close.bind(state.manager);
+      const origConnect = state.manager.connect.bind(state.manager);
+      const connectsDuringClose: Array<{ name: string; cwd?: string | undefined }> = [];
+      let releaseCloses: (() => void) | undefined;
+      const closeGate = new Promise<void>((resolveGate) => {
+        releaseCloses = resolveGate;
+      });
+      let closing = false;
+
+      vi.spyOn(state.manager, "close").mockImplementation(async (name) => {
+        closing = true;
+        await closeGate;
+        await origClose(name);
+      });
+      vi.spyOn(state.manager, "connect").mockImplementation(async (name, definition, signal) => {
+        if (closing) {
+          connectsDuringClose.push({ name, cwd: definition.cwd });
+        }
+        return origConnect(name, definition, signal);
+      });
+
+      state.lifecycle.startHealthChecks(
+        AbortSignal.any([state.owner.signal, healthController.signal]),
+        10,
+      );
+      const reconcilePromise = host.handlers.emitBeforeAgentStart({ cwd: projectB });
+      await waitFor(() => closing);
+      await new Promise<void>((r) => {
+        setTimeout(r, 45);
+      });
+      expect(connectsDuringClose).toEqual([]);
+
+      closing = false;
+      releaseCloses?.();
+      await reconcilePromise;
+      await waitFor(() => state.manager.getConnection("ka-keep")?.status === "connected");
+      expect(state.manager.getConnection("ka-drop")).toBeUndefined();
+      expect(state.manager.getConnection("ka-keep")?.definition.cwd).toBe(projectB);
+    } finally {
+      healthController.abort();
+      await host.dispose();
+    }
+  }, 15_000);
+
   it("honors adapter-format toolExposure direct, deferred, codemode, and hidden values", async () => {
     initTheme();
     const { root, agentDir, project } = createWorkspace();

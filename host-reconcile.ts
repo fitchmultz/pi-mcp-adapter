@@ -147,10 +147,12 @@ class SessionReconciler {
     );
     const transitions = this.planTransitions(previousConfig, nextConfig, requestPolicyChanged);
 
-    // Tear down removed and reconnecting servers before mutating state.config or host cwd,
-    // so a close() failure never leaves half-applied config that blocks a retry on the next turn.
+    // Unregister and tear down removed/reconnecting servers before awaiting close or mutating config,
+    // so health ticks during a slow close cannot resurrect stale keep-alive definitions and a close()
+    // failure never leaves half-applied cwd/config that blocks a retry on the next turn.
     for (const transition of transitions) {
       if (transition.kind === "remove" || transition.kind === "reconnect") {
+        this.state.lifecycle.unregisterServer(transition.name);
         await this.state.manager.close(transition.name);
         this.input.owner.throwIfInactive();
       }
