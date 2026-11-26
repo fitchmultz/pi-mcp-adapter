@@ -408,7 +408,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
       entry.tokens.issuer = issuer;
       updateTokens(this.identity, entry.tokens, this.storageOptions);
     }
-    this.tokenCache.record(this.identity, entry.tokens);
+    this.tokenCache.record(this.identity, entry.tokens, { pin: context !== undefined });
     return storedTokenInformation(entry.tokens);
   }
 
@@ -436,7 +436,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     const saved = updateTokens(this.identity, storedTokens, this.storageOptions, {
       preserveOnRefresh,
     });
-    this.tokenCache.record(this.identity, saved);
+    this.tokenCache.record(this.identity, saved, { clearPin: grantType !== undefined });
     // Discovery must survive the browser redirect so the callback can verify
     // the authorization server that minted the code. Once token issuance
     // succeeds, clear it so a later 401 re-reads PRM and can observe an
@@ -573,9 +573,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
         clearClientInfo(this.identity, this.storageOptions);
         break;
       case "tokens": {
-        const snapshot = this.tokenCache.takeSnapshot();
-        if (snapshot) {
-          clearTokensIfMatching(this.identity, snapshot, this.storageOptions);
+        const target = this.tokenCache.takeInvalidationTarget();
+        if (target) {
+          clearTokensIfMatching(this.identity, target, this.storageOptions);
         } else {
           clearTokens(this.identity, this.storageOptions);
         }

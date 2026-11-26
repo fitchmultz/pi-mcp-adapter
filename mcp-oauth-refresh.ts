@@ -184,6 +184,8 @@ function isCacheEntryFresh(identity: AuthIdentity, entry: CachedTokenEntry): boo
 export class ProviderTokenCache {
   private cached: CachedTokenEntry | undefined;
   private snapshot: TokenSnapshot | undefined;
+  /** Token set pinned at the start of an SDK refresh attempt so concurrent reads cannot shift CAS. */
+  private pinnedInvalidationTarget: TokenSnapshot | undefined;
 
   get lastObserved(): TokenSnapshot | undefined {
     return this.snapshot;
@@ -204,16 +206,26 @@ export class ProviderTokenCache {
     return this.cached.tokens;
   }
 
-  record(identity: AuthIdentity, tokens: StoredTokens): void {
+  record(
+    identity: AuthIdentity,
+    tokens: StoredTokens,
+    options?: { readonly pin?: boolean; readonly clearPin?: boolean },
+  ): void {
     this.cached = {
       tokens,
       cachedAt: Date.now(),
       revision: getAuthStorageRevision(identity),
     };
-    this.snapshot = {
+    const nextSnapshot: TokenSnapshot = {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
     };
+    this.snapshot = nextSnapshot;
+    if (options?.pin === true) {
+      this.pinnedInvalidationTarget = nextSnapshot;
+    } else if (options?.clearPin === true) {
+      this.pinnedInvalidationTarget = undefined;
+    }
   }
 
   invalidate(): void {
@@ -223,13 +235,17 @@ export class ProviderTokenCache {
   clearAll(): void {
     this.cached = undefined;
     this.snapshot = undefined;
+    this.pinnedInvalidationTarget = undefined;
   }
 
-  takeSnapshot(): TokenSnapshot | undefined {
-    const current = this.snapshot;
+  takeInvalidationTarget(): TokenSnapshot | undefined {
+    const target = this.pinnedInvalidationTarget ?? this.snapshot;
     this.cached = undefined;
-    this.snapshot = undefined;
-    return current;
+    this.pinnedInvalidationTarget = undefined;
+    if (target === this.snapshot) {
+      this.snapshot = undefined;
+    }
+    return target;
   }
 
   reload(identity: AuthIdentity, storageOptions: AuthStorageOptions): StoredTokens | undefined {

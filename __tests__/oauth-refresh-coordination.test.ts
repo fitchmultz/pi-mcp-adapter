@@ -37,7 +37,9 @@ interface RefreshServerConfig {
   omitScope: boolean;
   tokenDelayMs: number;
   tokenExpiresInSeconds: number;
-  onTokenRequest?: (params: URLSearchParams) => "invalid_grant" | undefined;
+  onTokenRequest?: (
+    params: URLSearchParams,
+  ) => Promise<"invalid_grant" | undefined> | "invalid_grant" | undefined;
 }
 
 class RefreshTestServer {
@@ -120,7 +122,7 @@ class RefreshTestServer {
         }, this.config.tokenDelayMs);
       });
     }
-    const override = this.config.onTokenRequest?.(params);
+    const override = await this.config.onTokenRequest?.(params);
     const refreshToken = params.get("refresh_token");
     if (override === "invalid_grant" || refreshToken !== this.config.activeRefreshToken) {
       this.invalidGrantCount += 1;
@@ -410,8 +412,12 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
   });
 
   it("does not wipe newer tokens on invalid_grant when another session rotated them mid-refresh", async () => {
+    const race: {
+      connection?: Awaited<ReturnType<McpServerManager["connect"]>>;
+      concurrentResult?: unknown;
+    } = {};
     const { server, url } = await startServer({
-      onTokenRequest: () => {
+      onTokenRequest: async (): Promise<"invalid_grant"> => {
         saveAuthEntry(
           { serverName: "cas-race", serverUrl: url },
           {
@@ -428,6 +434,13 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
             },
           },
         );
+        // Trigger a concurrent request on the same connection while the failing refresh is in flight
+        // so provider.tokens() observes access-newer/refresh-newer from storage before invalid_grant.
+        assert(race.connection !== undefined);
+        race.concurrentResult = await race.connection.client.callTool({
+          name: "echo",
+          arguments: { concurrent: true },
+        });
         return "invalid_grant";
       },
     });
@@ -440,6 +453,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
     });
 
     const connection = await manager.connect("cas-race", { url, auth: "oauth" });
+    race.connection = connection;
     server.config.validAccessTokens.delete("access-1");
     server.config.validAccessTokens.add("access-newer");
 
@@ -447,6 +461,7 @@ describe("OAuth refresh coordination and MCP-204 recovery", () => {
       /Refresh token already used or revoked/,
     );
 
+    expect(JSON.stringify(race.concurrentResult)).toContain("concurrent");
     const stored = getAuthForUrl({ serverName: "cas-race", serverUrl: url })?.tokens;
     expect(stored?.accessToken).toBe("access-newer");
     expect(stored?.refreshToken).toBe("refresh-newer");
