@@ -509,10 +509,10 @@ When a matching tool is called from the proxy tool, a direct MCP tool, a resourc
 
 Oversized MCP tool/resource results are guarded by default so a single huge response can't blow up the model context window or the session file:
 
-- Inline text output is capped at **50 KiB / 2,000 lines** (matching Pi's built-in `bash` guard). Larger output is truncated to a head preview and the full text is saved to a temp file whose path is included in the result, so the agent can `read`/`grep` it.
+- Inline text output is capped at **50 KiB / 2,000 lines** (matching Pi's built-in `bash` guard). Larger MCP tool/resource outputs truncate to a head preview and reuse the single canonical `resultRef` artifact (`mcp-result-*.txt`) in one truncation notice pointing to `mcp({ action: "read-result", ref, ... })` (without writing a second `output-*.txt` file or setting `outputGuard.fullOutputPath`). Plain guarded outputs without a retained MCP envelope still save full text to `output-*.txt` (`outputGuard.fullOutputPath`) for `read`/`grep` or `read-result` paging.
 - **Image content blocks pass through unchanged** — only text output is guarded. Images are delivered to the provider as native image content.
 - In gateway and direct modes, `details.mcpResult` is kept raw when its JSON is **≤ 16 KiB**; larger results use a compact summary and retain the full raw JSON in a file.
-- Structured data, media, resources, extra protocol fields, and oversized results retain a saved raw result in `details.resultRef` (and `mcpAdapter.resultRef` for structured codemode calls). An inline model-visible **result reference** footer is appended only when output is truncated or the raw result contains extra unrendered top-level envelope fields. Tiny plain-text results remain inline without an artifact. `structuredContent` is shown even when the server also returns content blocks.
+- Structured data, media, resources, extra protocol fields, and oversized results retain a saved raw result in `details.resultRef` (and `mcpAdapter.resultRef` for structured codemode calls). When output is truncated, the truncation notice carries that `resultRef` directly; an additional inline `[MCP result saved: ...]` footer is appended only for untruncated results that carry extra unrendered top-level envelope fields (or a save error). Tiny plain-text results remain inline without an artifact. `structuredContent` is shown even when the server also returns content blocks.
 
 Tune the limits with the object form:
 
@@ -539,7 +539,7 @@ mcp({
 });
 ```
 
-`path` is an RFC 6901 JSON Pointer. Resolution checks the saved MCP envelope root first (such as `/structuredContent/rows` or `/content/0/text`). When that misses, `read-result` also resolves the pointer directly inside parseable JSON text blocks (`content[*].text` or `contents[*].text`) so pointers like `/rows` work without wrapping them in envelope paths. When a pointer still misses, the error names the nearest valid parent path, its available keys or array bounds, and the top-level keys of any embedded JSON payload.
+`path` is an RFC 6901 JSON Pointer. Resolution checks the saved MCP envelope root first (such as `/structuredContent/rows` or `/content/0/text`), automatically decoding UTF-8 text-typed resource blobs when addressed via `/contents/<i>/blob`, `/contents/<i>/text`, `/content/<i>/resource/blob`, or `/content/<i>/resource/text`. When a root-level pointer misses the outer envelope, `read-result` also resolves it directly inside parseable JSON text blocks (`content[*].text` or `contents[*].text`/UTF-8 text blobs) so pointers like `/rows` work without wrapping them in envelope paths. When a pointer still misses, the error names the nearest valid parent path, its available keys or array bounds, and the top-level keys of any embedded JSON payload.
 
 | Saved file                                | Pointer roots                                                                                             |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------- |
