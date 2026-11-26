@@ -233,17 +233,30 @@ describe("McpServerManager stderr capture", () => {
       ]),
     });
 
-    const result = await executeCall(state, {
-      toolName: "crashy_rpc-error",
+    const warnResult = await executeCall(state, {
+      toolName: "crashy_warn",
       args: {},
       serverOverride: "crashy",
+    });
+    expect(warnResult.isError).not.toBe(true);
+    await vi.waitFor(() => {
+      expect(connection.getStderrTail?.()).toContain("benign startup warning");
+    });
+
+    const result = await executeCall(state, {
+      toolName: "docs://rpc-error",
+      args: {},
+      serverOverride: "crashy",
+      options: { resourceUri: "docs://rpc-error" },
     });
 
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(result.isError).toBe(true);
+    expect(result.details.error).toBe("call_failed");
     expect(text).toContain("Database not connected");
     expect(text).not.toContain("benign startup warning");
     expect(result.details.stderr).toBeUndefined();
+    expect(connection.getStderrTail?.()).toContain("benign startup warning");
     expect(instance.getConnection("crashy")?.status).toBe("connected");
   });
 });

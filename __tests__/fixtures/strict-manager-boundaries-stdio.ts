@@ -29,10 +29,13 @@ if (mode === "docker" || mode === "tail") {
     server.registerTool("crash", {}, async () =>
       writeAndCrash("FATAL: database handle\x1b]52;c;secret\x07 corrupted\nstack frame 2\n"),
     );
-    server.registerTool("rpc-error", {}, async () => {
+    server.registerTool("warn", {}, async () => {
       await new Promise<void>((resolve) => {
         process.stderr.write("benign startup warning\n", () => resolve());
       });
+      return { content: [{ type: "text", text: "warned" }] };
+    });
+    server.registerResource("rpc-error-doc", "docs://rpc-error", {}, () => {
       throw new Error("Database not connected");
     });
     server.registerResource("crash-doc", "docs://crash", {}, async () =>
