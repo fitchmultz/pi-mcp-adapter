@@ -249,7 +249,7 @@
     "path": [],
     "nodeType": "FunctionExpression",
     "part": "signature",
-    "operation": "async function execute(toolCallId, params, signal, _onUpdate, ctx) ",
+    "operation": "async function execute(toolCallId, params, signal, onUpdate, ctx) ",
     "guards": []
   },
   {
@@ -386,7 +386,7 @@
     },
     "path": [],
     "nodeType": "FunctionExpression",
-    "operation": "async function executeMcpGateway(toolCallId, rawParams, signal, _onUpdate, ctx) {\n        return executeGateway(pi, host, options, [toolCallId, rawParams, signal, _onUpdate, ctx]);\n      }",
+    "operation": "async function executeMcpGateway(toolCallId, rawParams, signal, onUpdate, ctx) {\n        return executeGateway(pi, host, options, [toolCallId, rawParams, signal, onUpdate, ctx]);\n      }",
     "guards": []
   },
   {

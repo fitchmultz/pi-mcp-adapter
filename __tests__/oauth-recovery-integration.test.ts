@@ -1083,19 +1083,16 @@ describe("OAuth permission recovery through native HTTP and production hosts", (
         f.definition.requestTimeoutMs = 3000;
         await fetch(await f.authorize(url));
       });
-      if (cancellation === "deadline") {
-        f.definition.requestTimeoutMs = 300;
-      }
       const controller = new AbortController();
-      const first = f.call("write", controller.signal);
+      const callerSignal =
+        cancellation === "deadline" ? AbortSignal.timeout(300) : controller.signal;
+      const first = f.call("write", callerSignal);
       await expect.poll(() => f.controls.catalogHeld).toBe(true);
       const second = f.call("effect");
       if (cancellation === "abort") {
         controller.abort(new Error("caller cancelled"));
       }
-      expect((await first).details.error).toBe(
-        cancellation === "abort" ? "aborted" : "call_failed",
-      );
+      expect((await first).details.error).toBe("aborted");
       f.controls.holdCatalog = false;
       f.controls.releaseCatalog();
       expect((await second).details.error).toBeUndefined();

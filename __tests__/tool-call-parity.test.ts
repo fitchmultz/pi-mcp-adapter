@@ -94,21 +94,24 @@ async function expiredState() {
 
 describe("proxy and direct tool call parity", () => {
   it.each(["direct", "proxy"])(
-    "bounds post-expiry auth and prevents late reconnect through %s",
+    "cancels post-expiry auth on caller abort and prevents late reconnect through %s",
     async (entry) => {
       const { state, connect, reconnect, callTool } = await expiredState();
       const authentication = Promise.withResolvers<Awaited<ReturnType<typeof Auth.authenticate>>>();
+      const started = Promise.withResolvers<null>();
       onTestFinished(() => {
         authentication.resolve("authenticated");
       });
       let authSignal: AbortSignal | undefined;
       mocks.authenticate.mockImplementation((_name, _url, _definition, options) => {
         authSignal = options.signal;
+        started.resolve(null);
         return authentication.promise;
       });
-      const output =
+      const controller = new AbortController();
+      const pending =
         entry === "direct"
-          ? await createDirectToolExecutor(
+          ? createDirectToolExecutor(
               () => state,
               () => null,
               {
@@ -120,12 +123,15 @@ describe("proxy and direct tool call parity", () => {
             )(
               "call-id",
               {},
+              controller.signal,
               undefined,
-              undefined,
-              host.runner.createToolContext("call-id", state.owner.signal),
+              host.runner.createToolContext("call-id", controller.signal),
             )
-          : await executeCall(state, { toolName: "demo_echo", args: {} });
-      expect(output.details.error).toBe("call_failed");
+          : executeCall(state, { toolName: "demo_echo", args: {}, signal: controller.signal });
+      await started.promise;
+      controller.abort(new Error("user cancelled auth"));
+      const output = await pending;
+      expect(output.details.error).toBe("aborted");
       expect(firstText(output)).not.toContain("Expected parameters:");
       expect(authSignal?.aborted).toBe(true);
       authentication.resolve("authenticated");

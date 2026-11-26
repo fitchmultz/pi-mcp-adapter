@@ -505,15 +505,14 @@ describe("native session replacement lifetime", () => {
         return;
       });
       await f.manager.connect("local", f.definition);
-      if (cancellation === "deadline") {
-        f.definition.requestTimeoutMs = 300;
-      }
       const controller = new AbortController();
+      const callerSignal =
+        cancellation === "deadline" ? AbortSignal.timeout(300) : controller.signal;
       const first = executeCall(f.state, {
         toolName: "local_trigger",
         args: {},
         serverOverride: "local",
-        signal: controller.signal,
+        signal: callerSignal,
       });
       await expect.poll(() => discovery).toBeDefined();
       f.definition.requestTimeoutMs = 2000;
@@ -529,9 +528,7 @@ describe("native session replacement lifetime", () => {
       if (cancellation === "abort") {
         controller.abort(new Error("caller stopped waiting"));
       }
-      expect((await first).details.error).toBe(
-        cancellation === "abort" ? "aborted" : "call_failed",
-      );
+      expect((await first).details.error).toBe("aborted");
       result(requireValue(discovery), { tools });
       expect((await second).details.error).toBeUndefined();
       expect(f.calls("trigger")).toHaveLength(1);

@@ -776,9 +776,9 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(await Promise.race([arrived.then(() => true), pending.then(() => false)])).toBe(true);
     const output = await pending;
     expect(output.details.error).toBe("call_failed");
-    expect(output.details.message).toMatch(/timeout|timed out/i);
+    expect(output.details.message).toContain("fixture rejection");
     expect(lists).toBe(2);
-    expect(f.calls()).toHaveLength(1);
+    expect(f.calls()).toHaveLength(2);
   }, 15_000);
 
   it.each([
@@ -2303,9 +2303,9 @@ describe("published SDK v2 over real local HTTP", () => {
     await expect.poll(() => closed).toBe(true);
   });
 
-  it.each([2000, 150])(
-    "preserves native multi-round-trip state, IDs and the %ims service deadline",
-    async (requestTimeoutMs) => {
+  it.each([false, true])(
+    "preserves native multi-round-trip state across pacing without whole-flow timeout and enforces per-leg timeout (stallRetryLeg=%s)",
+    async (stallRetryLeg) => {
       const timeline: Array<{ phase: string; elapsedMs: number }> = [];
       let started = 0;
       const mark = (phase: string) => {
@@ -2317,7 +2317,7 @@ describe("published SDK v2 over real local HTTP", () => {
         }
         mark("tools/call");
         if (f.calls().length > 1) {
-          return;
+          return stallRetryLeg;
         }
         result(e, {
           resultType: "input_required",
@@ -2327,9 +2327,9 @@ describe("published SDK v2 over real local HTTP", () => {
         mark("input_required sent");
         return true;
       });
-      // The SDK paces requestState-only legs by 250ms. Test state/IDs with room
-      // for that native pause, and separately prove it cannot reset the deadline.
-      const { state } = await f.connect({ retryOnTransportFailure: true, requestTimeoutMs });
+      // The SDK paces requestState-only legs by 250ms. requestTimeoutMs governs each wire leg
+      // independently rather than aborting the multi-round-trip flow during client-side pacing.
+      const { state } = await f.connect({ retryOnTransportFailure: true, requestTimeoutMs: 150 });
       started = performance.now();
       mark("call started");
       const output = await call(state, "proxy");
@@ -2337,19 +2337,19 @@ describe("published SDK v2 over real local HTTP", () => {
       expect(
         output.ok,
         JSON.stringify({ output, timeline, calls: f.calls().map(({ body }) => body) }),
-      ).toBe(requestTimeoutMs === 2000);
+      ).toBe(!stallRetryLeg);
       const timeoutMessage: unknown = expect.stringMatching(/timeout|timed out/i);
       expect({ error: output.details.error, message: output.details.message }).toEqual(
-        requestTimeoutMs === 150
-          ? { error: "call_failed", message: timeoutMessage }
+        stallRetryLeg
+          ? { error: "ambiguous_outcome", message: timeoutMessage }
           : { error: undefined, message: undefined },
       );
-      const count = requestTimeoutMs === 150 ? 1 : 2;
-      expect(f.calls()).toHaveLength(count);
-      expect(new Set(f.calls().map((request) => request.body.id)).size).toBe(count);
-      expect(f.calls().map((request) => request.body.params.requestState)).toEqual(
-        requestTimeoutMs === 150 ? [undefined] : [undefined, "opaque-state"],
-      );
+      expect(f.calls()).toHaveLength(2);
+      expect(new Set(f.calls().map((request) => request.body.id)).size).toBe(2);
+      expect(f.calls().map((request) => request.body.params.requestState)).toEqual([
+        undefined,
+        "opaque-state",
+      ]);
     },
   );
 

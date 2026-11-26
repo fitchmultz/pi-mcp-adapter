@@ -141,9 +141,10 @@ describe("AbortSignal propagation", () => {
     const passedSignal = callTool.mock.calls[0]?.[1]?.signal;
     assert(passedSignal instanceof AbortSignal);
     expect(passedSignal.aborted).toBe(true);
+    const onprogress: unknown = expect.any(Function);
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },
-      { signal: passedSignal },
+      { signal: passedSignal, onprogress, resetTimeoutOnProgress: true },
     );
     expect(decrement).toHaveBeenCalledWith(connection);
     expect(manager.inFlightCount(connection)).toBe(0);
@@ -176,9 +177,10 @@ describe("AbortSignal propagation", () => {
     const passedSignal = callTool.mock.calls[0]?.[1]?.signal;
     assert(passedSignal instanceof AbortSignal);
     expect(passedSignal.aborted).toBe(true);
+    const onprogress: unknown = expect.any(Function);
     expect(callTool).toHaveBeenCalledWith(
       { name: "slow", arguments: {}, _meta: undefined },
-      { signal: passedSignal },
+      { signal: passedSignal, onprogress, resetTimeoutOnProgress: true },
     );
     expect(decrement).toHaveBeenCalledWith(connection);
     expect(manager.inFlightCount(connection)).toBe(0);

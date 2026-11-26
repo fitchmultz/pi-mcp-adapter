@@ -1,5 +1,10 @@
 import type { McpExtensionState } from "./state.ts";
-import { type ProxyToolResult, disabledResult } from "./proxy-result.ts";
+import {
+  type ProxyToolResult,
+  type ProxyToolUpdateCallback,
+  disabledResult,
+  emitProxyUpdate,
+} from "./proxy-result.ts";
 import type { SessionRecoveryAuthRequiredError, SessionRecoveryDeps } from "./session-recovery.ts";
 import { isDeepStrictEqual } from "node:util";
 import type { ServerConnection } from "./server-manager.ts";
@@ -44,19 +49,24 @@ export type PreparedMcpConnection =
 class ConnectionAuthRecovery {
   attempted = false;
   readonly AuthRequired: typeof SessionRecoveryAuthRequiredError;
+  readonly onUpdate: ProxyToolUpdateCallback | undefined;
   private readonly state: McpExtensionState;
   private readonly serverName: string;
   private readonly signal: AbortSignal | undefined;
   constructor(
     state: McpExtensionState,
     serverName: string,
-    signal: AbortSignal | undefined,
-    AuthRequired: typeof SessionRecoveryAuthRequiredError,
+    options: {
+      signal: AbortSignal | undefined;
+      AuthRequired: typeof SessionRecoveryAuthRequiredError;
+      onUpdate: ProxyToolUpdateCallback | undefined;
+    },
   ) {
-    this.AuthRequired = AuthRequired;
+    this.AuthRequired = options.AuthRequired;
+    this.onUpdate = options.onUpdate;
     this.state = state;
     this.serverName = serverName;
-    this.signal = signal;
+    this.signal = options.signal;
   }
   readonly recover: AuthRecovery = async (_name, recoverySignal = this.signal, challenge) => {
     const { state, serverName } = this;
@@ -79,7 +89,9 @@ class ConnectionAuthRecovery {
   ): Promise<ServerConnection | undefined> {
     const { state, serverName } = this;
     this.attempted = true;
-    const auth = await attemptAutoAuth(state, serverName, recoverySignal);
+    const auth = await attemptAutoAuth(state, serverName, recoverySignal, () => {
+      emitProxyUpdate(this.onUpdate, `Authenticating with ${serverName}…`, { server: serverName });
+    });
     throwIfAborted(recoverySignal);
     if (auth.status === "failed") {
       throw new this.AuthRequired(serverName, auth.message);
@@ -102,6 +114,7 @@ class ConnectionAuthRecovery {
     if (!definition) {
       return;
     }
+    emitProxyUpdate(this.onUpdate, `Connecting to ${serverName}…`, { server: serverName });
     state.ui?.setStatus("mcp", formatMcpStatus(state.config, `connecting to ${serverName}...`));
     await state.manager.reconnect(serverName, definition, current, recoverySignal);
     if (await lazyConnect(state, serverName, recoverySignal)) {
@@ -187,18 +200,22 @@ async function connectAuthentication(
     connection: initialConnection,
     definition,
     ownedSignal,
+    onUpdate,
   }: {
     serverName: string;
     connection: ServerConnection;
     definition: ServerDefinition;
     ownedSignal: AbortSignal | undefined;
+    onUpdate?: ProxyToolUpdateCallback | undefined;
   },
 ): Promise<
   { error: ProxyToolResult; connection?: never } | { error?: never; connection: ServerConnection }
 > {
   let connection = initialConnection;
   if (connection.status === "needs-auth") {
-    const autoAuth = await attemptAutoAuth(state, serverName, ownedSignal);
+    const autoAuth = await attemptAutoAuth(state, serverName, ownedSignal, () => {
+      emitProxyUpdate(onUpdate, `Authenticating with ${serverName}…`, { server: serverName });
+    });
     if (autoAuth.status === "failed") {
       return {
         error: {
@@ -214,6 +231,7 @@ async function connectAuthentication(
     }
     if (autoAuth.status === "success") {
       throwIfAborted(ownedSignal);
+      emitProxyUpdate(onUpdate, `Connecting to ${serverName}…`, { server: serverName });
       connection = await state.manager.reconnect(serverName, definition, connection, ownedSignal);
     }
     if (connection.status === "needs-auth") {
@@ -246,11 +264,13 @@ export async function executeConnect(
   {
     serverName,
     signal,
+    onUpdate,
     limit,
     offset,
   }: {
     serverName: string;
     signal?: AbortSignal | undefined;
+    onUpdate?: ProxyToolUpdateCallback | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
   },
@@ -274,6 +294,7 @@ export async function executeConnect(
   }
 
   try {
+    emitProxyUpdate(onUpdate, `Connecting to ${serverName}…`, { server: serverName });
     if (state.ui) {
       state.ui.setStatus("mcp", formatMcpStatus(state.config, `connecting to ${serverName}...`));
     }
@@ -283,6 +304,7 @@ export async function executeConnect(
       connection,
       definition,
       ownedSignal,
+      onUpdate,
     });
     if (authenticated.error) {
       return authenticated.error;
@@ -319,6 +341,9 @@ async function callConnection(
   // Connected metadata is read below, so it does not require another connection attempt.
   let connection = state.manager.getConnection(serverName);
   if (connection?.status !== "connected") {
+    if (connection?.status !== "needs-auth" && getFailureAgeSeconds(state, serverName) === null) {
+      emitProxyUpdate(auth.onUpdate, `Connecting to ${serverName}…`, { server: serverName });
+    }
     await lazyConnect(state, serverName, ownedSignal);
     connection = state.manager.getConnection(serverName);
   } else {
@@ -339,12 +364,17 @@ export async function prepareMcpConnection(
   state: McpExtensionState,
   serverName: string,
   signal?: AbortSignal,
+  onUpdate?: ProxyToolUpdateCallback,
 ): Promise<PreparedMcpConnection> {
   const { SessionRecoveryAuthRequiredError: AuthRequired } = await import("./session-recovery.ts");
   // Loading the recovery module yields, so cancellation is checked after it.
   const ownedSignal = combineAbortSignals(state.owner.signal, signal);
   throwIfAborted(ownedSignal);
-  const auth = new ConnectionAuthRecovery(state, serverName, ownedSignal, AuthRequired);
+  const auth = new ConnectionAuthRecovery(state, serverName, {
+    signal: ownedSignal,
+    AuthRequired,
+    onUpdate,
+  });
   const recoverAuthConnection = auth.recover;
   const failure = (error: string, message: string) => ({
     content: [{ type: "text" as const, text: message }],

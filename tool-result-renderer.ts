@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text } from "@earendil-works/pi-tui";
 import { asObjectRecord } from "./mcp-output-values.ts";
+import { sanitizeTerminalText } from "./utils.ts";
 
 type McpToolResultDetails = Record<string, unknown> & { error?: unknown };
 type McpToolContentBlock = AgentToolResult<McpToolResultDetails>["content"][number];
@@ -439,6 +440,18 @@ export function formatMcpToolResultLines(
   return { lines, truncated: false };
 }
 
+function partialResultText(result: Pick<AgentToolResult<unknown>, "content">): string {
+  const text = sanitizeTerminalText(
+    result.content
+      .filter(
+        (block): block is Extract<McpToolContentBlock, { type: "text" }> => block.type === "text",
+      )
+      .map((block) => block.text)
+      .join(" "),
+  );
+  return text === "" ? "Running MCP tool..." : text;
+}
+
 export function renderMcpToolResult(
   result: AgentToolResult<unknown>,
   options: ToolRenderResultOptions,
@@ -447,7 +460,7 @@ export function renderMcpToolResult(
 ): Component {
   const activeTheme = theme ?? plainTheme;
   if (options.isPartial) {
-    return new Text(activeTheme.fg("warning", "Running MCP tool..."), 0, 0);
+    return new Text(activeTheme.fg("warning", partialResultText(result)), 0, 0);
   }
 
   const details = asObjectRecord(result.details) ?? {};

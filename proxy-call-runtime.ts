@@ -1,7 +1,11 @@
-import type { Client, RequestOptions } from "@modelcontextprotocol/client";
+import type { Client, Progress, RequestOptions } from "@modelcontextprotocol/client";
 import type { McpExtensionState } from "./state.ts";
 import type { ServerConnection } from "./server-connection.ts";
-import type { ProxyToolResult } from "./proxy-result.ts";
+import {
+  type ProxyToolResult,
+  type ProxyToolUpdateCallback,
+  emitProxyUpdate,
+} from "./proxy-result.ts";
 import type {
   ToolMetadata,
   McpOperationContext,
@@ -13,6 +17,7 @@ import type { UiSessionRuntime } from "./ui-session.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { connectionStderrTail } from "./connection-stdio.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
+import { sanitizeTerminalText } from "./utils.ts";
 import {
   guardMcpOutput,
   guardedMcpDetails,
@@ -37,9 +42,27 @@ interface ToolCallOptions extends McpToolCallIdentity {
   ownedSignal: AbortSignal | undefined;
   /** Caller-supplied signal, passed to the UI session rather than the MCP call. */
   signal: AbortSignal | undefined;
+  onUpdate?: ProxyToolUpdateCallback | undefined;
   recoverAuthConnection: NonNullable<SessionRecoveryDeps["onNeedsAuth"]>;
   authRequiredMessage: () => string;
   autoAuthAttempted: () => boolean;
+}
+
+function formatProgressText(progress: Progress): string {
+  const message = progress.message === undefined ? "" : sanitizeTerminalText(progress.message);
+  if (message !== "") {
+    return message;
+  }
+  const total = progress.total === undefined ? "" : `/${progress.total}`;
+  return `Progress ${progress.progress}${total}`;
+}
+
+function formatTimeoutDuration(timeoutMs: number): string {
+  const rounded = Math.ceil(timeoutMs);
+  if (rounded >= 1000 && rounded % 1000 === 0) {
+    return `${rounded / 1000}s (${rounded}ms)`;
+  }
+  return `${rounded}ms`;
 }
 
 type RuntimeDependencies = Awaited<ReturnType<typeof loadCallDependencies>>;
@@ -69,7 +92,7 @@ class ToolCallRuntime {
   private captureFailure: McpToolCallEvent | undefined;
   private activeConnection: ServerConnection | undefined;
   private readonly configuredOptions: RequestOptions | undefined;
-  private readonly callerSignal: AbortSignal | undefined;
+  private readonly callerSignal: AbortSignal;
   private readonly outputGuardOptions: ReturnType<typeof resolveMcpOutputGuardOptions>;
   private readonly identity: McpToolCallIdentity & { server: string; tool: string };
   private readonly request: CallRequest;
@@ -80,7 +103,9 @@ class ToolCallRuntime {
 
     const { state, serverName, target, options } = request;
     this.configuredOptions = state.manager.getRequestOptions(serverName, options.ownedSignal);
-    this.callerSignal = combineAbortSignals(this.configuredOptions?.signal, options.ownedSignal);
+    this.callerSignal =
+      combineAbortSignals(this.configuredOptions?.signal, options.ownedSignal) ??
+      state.owner.signal;
     this.outputGuardOptions = resolveMcpOutputGuardOptions(
       state.config.settings,
       state.outputDirectory,
@@ -178,36 +203,48 @@ class ToolCallRuntime {
     await this.capture({ ...call, phase: "after", result });
     return result;
   }
-  private async dispatch(
-    operation: Omit<McpOperationContext, "annotationsTrusted">,
-  ): Promise<Record<string, unknown>> {
-    const { state, serverName, target, args, options } = this.request;
-    // Approval and UI preparation do not consume the service deadline.
-    const deadline = AbortSignal.timeout(
-      Math.ceil(this.configuredOptions?.timeout ?? this.deps.sdk.DEFAULT_REQUEST_TIMEOUT_MSEC),
-    );
-    const signal = combineAbortSignals(this.callerSignal, deadline) ?? deadline;
-    const requestOptions = { ...this.configuredOptions, signal };
-    const recovery = {
-      manager: state.manager,
-      config: state.config,
-      signal,
-      onNeedsAuth: options.recoverAuthConnection,
+  private effectiveTimeoutMs(): number {
+    return this.configuredOptions?.timeout ?? this.deps.sdk.DEFAULT_REQUEST_TIMEOUT_MSEC;
+  }
+  private progressHandler(): NonNullable<RequestOptions["onprogress"]> {
+    const { serverName, target, options } = this.request;
+    const details =
+      (target.resourceUri ?? "").length > 0
+        ? { server: serverName, tool: target.originalName, resourceUri: target.resourceUri }
+        : { server: serverName, tool: target.originalName };
+    return (progress) => {
+      emitProxyUpdate(options.onUpdate, formatProgressText(progress), details);
     };
-    const call = { ...operation, signal };
-    const resourceUri = target.resourceUri;
-    if (resourceUri !== undefined && resourceUri.length > 0) {
-      return this.captureDispatch(call, () =>
-        this.deps.recovery.withSessionRecovery(recovery, serverName, (connection) => {
-          this.activeConnection = connection;
-          return abortable(
-            connection.client.readResource({ uri: resourceUri }, requestOptions),
-            signal,
-          );
-        }),
-      );
-    }
-    const result = await this.captureDispatch(call, () =>
+  }
+  private requestOptionsFor(
+    onprogress: NonNullable<RequestOptions["onprogress"]>,
+    remainingTimeoutMs?: number,
+  ): RequestOptions {
+    return {
+      ...this.configuredOptions,
+      ...(remainingTimeoutMs !== undefined ? { timeout: remainingTimeoutMs } : {}),
+      signal: this.callerSignal,
+      onprogress,
+      resetTimeoutOnProgress: true,
+    };
+  }
+  private dispatchToolCall(
+    operation: Omit<McpOperationContext, "annotationsTrusted">,
+    recovery: SessionRecoveryDeps,
+    call: Omit<Extract<McpToolCallEvent, { phase: "before" }>, "phase">,
+    onprogress: NonNullable<RequestOptions["onprogress"]>,
+  ): Promise<Awaited<ReturnType<Client["callTool"]>>> {
+    const { serverName, target, args } = this.request;
+    const signal = this.callerSignal;
+    let lastConnection: ServerConnection | undefined;
+    let attemptStartedAt = Date.now();
+    let sawProgress = false;
+    const trackedProgress: NonNullable<RequestOptions["onprogress"]> = (progress) => {
+      sawProgress = true;
+      attemptStartedAt = Date.now();
+      onprogress(progress);
+    };
+    return this.captureDispatch(call, () =>
       this.deps.recovery.trackToolCallOutcome(
         () =>
           this.deps.recovery.withSessionRecovery<Awaited<ReturnType<Client["callTool"]>>>(
@@ -220,6 +257,15 @@ class ToolCallRuntime {
             serverName,
             (connection) => {
               this.activeConnection = connection;
+              const sameConnectionRetry = lastConnection === connection;
+              const remainingTimeoutMs = sameConnectionRetry
+                ? Math.max(1, this.effectiveTimeoutMs() - (Date.now() - attemptStartedAt))
+                : undefined;
+              if (!sameConnectionRetry || sawProgress) {
+                lastConnection = connection;
+                attemptStartedAt = Date.now();
+                sawProgress = false;
+              }
               return abortable(
                 connection.client.callTool(
                   {
@@ -227,7 +273,7 @@ class ToolCallRuntime {
                     arguments: args ?? {},
                     _meta: this.uiSession?.requestMeta,
                   },
-                  requestOptions,
+                  this.requestOptionsFor(trackedProgress, remainingTimeoutMs),
                 ),
                 signal,
               );
@@ -236,6 +282,34 @@ class ToolCallRuntime {
         signal,
       ),
     );
+  }
+  private async dispatch(
+    operation: Omit<McpOperationContext, "annotationsTrusted">,
+  ): Promise<Record<string, unknown>> {
+    const { state, serverName, target, options } = this.request;
+    const signal = this.callerSignal;
+    const onprogress = this.progressHandler();
+    const recovery: SessionRecoveryDeps = {
+      manager: state.manager,
+      config: state.config,
+      signal,
+      onNeedsAuth: options.recoverAuthConnection,
+    };
+    const call = { ...operation, signal };
+    const resourceUri = target.resourceUri;
+    if (resourceUri !== undefined && resourceUri.length > 0) {
+      const requestOptions = this.requestOptionsFor(onprogress);
+      return this.captureDispatch(call, () =>
+        this.deps.recovery.withSessionRecovery(recovery, serverName, (connection) => {
+          this.activeConnection = connection;
+          return abortable(
+            connection.client.readResource({ uri: resourceUri }, requestOptions),
+            signal,
+          );
+        }),
+      );
+    }
+    const result = await this.dispatchToolCall(operation, recovery, call, onprogress);
     this.uiSession?.sendToolResult(result);
     return result;
   }
@@ -330,6 +404,35 @@ class ToolCallRuntime {
       error,
     );
   }
+  private isRequestTimeout(error: unknown): boolean {
+    if (this.callerSignal.aborted) {
+      return false;
+    }
+    const { sdk } = this.deps;
+    if (error instanceof sdk.SdkError && error.code === sdk.SdkErrorCode.RequestTimeout) {
+      return true;
+    }
+    return (
+      error instanceof Error &&
+      (error.name === "TimeoutError" ||
+        (error.name === "AbortError" && /\b(?:timeout|timed out)\b/i.test(error.message)))
+    );
+  }
+  private interruptedTimeoutMessage(): string {
+    const { serverName, target } = this.request;
+    const duration = formatTimeoutDuration(this.effectiveTimeoutMs());
+    return `MCP tool "${target.originalName}" on "${serverName}" timed out after ${duration}. The outcome is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call. Raise requestTimeoutMs per server or globally in settings if this tool needs more time between progress updates.`;
+  }
+  private timeoutMessage(): string {
+    const { serverName, target } = this.request;
+    const duration = formatTimeoutDuration(this.effectiveTimeoutMs());
+    const resourceUri = target.resourceUri;
+    const subject =
+      resourceUri !== undefined && resourceUri.length > 0
+        ? `MCP resource "${resourceUri}"`
+        : `MCP tool "${target.originalName}"`;
+    return `${subject} on "${serverName}" timed out after ${duration}. Raise requestTimeoutMs per server or globally in settings if this request needs more time between progress updates.`;
+  }
   private async failure(error: unknown): Promise<ProxyToolResult> {
     const { serverName, target, options } = this.request;
     const { recovery, sdk } = this.deps;
@@ -338,7 +441,10 @@ class ToolCallRuntime {
     }
     if (recovery.isToolTransportFailure(error) || recovery.isInterruptedToolCall(error)) {
       const stderrTail = this.stderrTailForError(error);
-      const baseMessage = `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call.`;
+      const cause = error instanceof Error ? error.cause : undefined;
+      const baseMessage = this.isRequestTimeout(cause)
+        ? this.interruptedTimeoutMessage()
+        : `The outcome of MCP tool "${target.originalName}" on "${serverName}" is unknown after the call was interrupted. Read back the original operation using its saved arguments and provider identity before continuing. Do not blindly repeat the call.`;
       const message =
         stderrTail.length > 0
           ? `${baseMessage}\n\nRecent server stderr:\n${stderrTail}`
@@ -381,15 +487,17 @@ class ToolCallRuntime {
   }
   private async genericFailure(error: unknown): Promise<ProxyToolResult> {
     const { sdk } = this.deps;
+    const timedOut = this.isRequestTimeout(error);
     const rawMessage = error instanceof Error ? error.message : String(error);
+    const baseMessage = timedOut ? this.timeoutMessage() : rawMessage;
     const stderrTail = this.stderrTailForError(error);
     const message =
-      stderrTail.length > 0 && !rawMessage.includes(stderrTail)
-        ? `${rawMessage}\n\nRecent server stderr:\n${stderrTail}`
-        : rawMessage;
+      stderrTail.length > 0 && !baseMessage.includes(stderrTail)
+        ? `${baseMessage}\n\nRecent server stderr:\n${stderrTail}`
+        : baseMessage;
     const invalidParamsCode: number = sdk.ProtocolErrorCode.InvalidParams;
     const suffix =
-      error instanceof sdk.ProtocolError && error.code === invalidParamsCode
+      !timedOut && error instanceof sdk.ProtocolError && error.code === invalidParamsCode
         ? inputValidationHint(this.request.target.inputSchema, message)
         : "";
     this.uiSession?.sendToolCancelled(message);
@@ -403,7 +511,7 @@ class ToolCallRuntime {
       isError: true,
       details: {
         ...this.request.options.detailsBase,
-        error: isAbortError(error, this.callerSignal) ? "aborted" : "call_failed",
+        error: !timedOut && isAbortError(error, this.callerSignal) ? "aborted" : "call_failed",
         message: guarded.outputGuard ? "output truncated; see outputGuard.fullOutputPath" : message,
         ...(stderrTail.length > 0 ? { stderr: stderrTail } : {}),
         ...guardedMcpDetails(guarded),
