@@ -28,6 +28,7 @@ import { ConnectionLifecycle } from "./connection-lifecycle.ts";
 import { ConnectionFactory } from "./connection-factory.ts";
 import { ConnectionCallbacks } from "./connection-callbacks.ts";
 import { appendStderrToError } from "./connection-stdio.ts";
+import { logger } from "./logger.ts";
 export type { ServerConnection } from "./server-connection.ts";
 
 export class McpServerManager {
@@ -47,11 +48,11 @@ export class McpServerManager {
           this.callbacks.activateSubscription(name, connection),
         close: (name) => {
           this.callbacks.clearServer(name);
-          this.serverClosedListener?.(name);
+          this.notifyServerClosed(name);
         },
         closeAll: () => {
           this.callbacks.clear();
-          this.serverClosedListener?.();
+          this.notifyServerClosed();
         },
         invalidatePrior: (name) => this.factory.priorDiscovery.invalidate(name),
       },
@@ -70,6 +71,16 @@ export class McpServerManager {
 
   setServerClosedListener(listener: ServerClosedListener | undefined): void {
     this.serverClosedListener = listener;
+  }
+
+  private notifyServerClosed(name?: string): void {
+    try {
+      this.serverClosedListener?.(name);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const scope = name !== undefined && name !== "" ? ` for ${name}` : "";
+      logger.warn(`MCP: server close listener failed${scope}: ${message}`);
+    }
   }
 
   setExposeSkills(enabled: boolean): void {

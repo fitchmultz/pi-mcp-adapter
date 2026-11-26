@@ -1,35 +1,51 @@
-import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import {
-  loadSkillsFromDir,
-  type ExtensionAPI,
-  type ExtensionContext,
-  type ResourcesDiscoverResult,
+import { isDeepStrictEqual } from "node:util";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ResourcesDiscoverResult,
 } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "./agent-dir.ts";
 import { getServerProvenance, isPathInsideProject } from "./config.ts";
 import { logger } from "./logger.ts";
 import { discoverServerSkills, type VerifiedSkillBundle } from "./mcp-skills.ts";
+import {
+  createSkillsRuntimeId,
+  getRuntimeSkillsDir,
+  getServerSkillsDir,
+  getSkillsRootDir,
+  materializeVerifiedSkills,
+  pruneDeadRuntimeDirs,
+  safeRemovePath,
+} from "./mcp-skills-fs.ts";
 import type { ServerConnection } from "./server-connection.ts";
 import type { McpExtensionState } from "./state.ts";
 import { isServerDisabled, type ServerEntry, type SkillMetadata } from "./types.ts";
 
-const SKILLS_DIR_NAME = "mcp-skills";
-const DIR_MODE = 0o700;
-const FILE_MODE = 0o600;
+export { createSkillsRuntimeId };
+
 const STARTUP_SKILLS_DISCOVERY_WAIT_MS = 2_500;
 
 interface StateSkillMaps {
   readonly runtimeId: string;
   readonly metadata: Map<string, SkillMetadata[]>;
   readonly paths: Map<string, string[]>;
+  readonly syncedBundles: Map<string, readonly VerifiedSkillBundle[]>;
+  prunedStaleRuntimes: boolean;
 }
 
 const fallbackSkillMaps = new WeakMap<McpExtensionState, StateSkillMaps>();
+const syncedBundlesByState = new WeakMap<
+  McpExtensionState,
+  Map<string, readonly VerifiedSkillBundle[]>
+>();
+const prunedStates = new WeakSet<McpExtensionState>();
 
 function getSkillMaps(state: McpExtensionState): StateSkillMaps {
+  let syncedBundles = syncedBundlesByState.get(state);
+  if (!syncedBundles) {
+    syncedBundles = new Map();
+    syncedBundlesByState.set(state, syncedBundles);
+  }
   if (
     state.skillsRuntimeId !== undefined &&
     state.skillMetadata !== undefined &&
@@ -39,6 +55,8 @@ function getSkillMaps(state: McpExtensionState): StateSkillMaps {
       runtimeId: state.skillsRuntimeId,
       metadata: state.skillMetadata,
       paths: state.skillPaths,
+      syncedBundles,
+      prunedStaleRuntimes: prunedStates.has(state),
     };
   }
   let maps = fallbackSkillMaps.get(state);
@@ -47,118 +65,12 @@ function getSkillMaps(state: McpExtensionState): StateSkillMaps {
       runtimeId: state.skillsRuntimeId ?? createSkillsRuntimeId(),
       metadata: state.skillMetadata ?? new Map<string, SkillMetadata[]>(),
       paths: state.skillPaths ?? new Map<string, string[]>(),
+      syncedBundles,
+      prunedStaleRuntimes: prunedStates.has(state),
     };
     fallbackSkillMaps.set(state, maps);
   }
   return maps;
-}
-
-function ensurePrivateDir(dirPath: string): void {
-  mkdirSync(dirPath, { recursive: true, mode: DIR_MODE });
-  chmodSync(dirPath, DIR_MODE);
-}
-
-function assertWithinParent(parentDir: string, childPath: string): string {
-  const resolvedParent = resolve(parentDir);
-  const resolvedChild = resolve(childPath);
-  if (!resolvedChild.startsWith(`${resolvedParent}${sep}`)) {
-    throw new Error(`Path escapes adapter skills directory: ${childPath}`);
-  }
-  return resolvedChild;
-}
-
-function sanitizeServerDirName(serverName: string): string {
-  const cleaned = serverName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const safeBase =
-    cleaned === "" || cleaned === "." || cleaned === ".." ? "server" : cleaned.slice(0, 48);
-  const digest = createHash("sha256").update(serverName, "utf8").digest("hex").slice(0, 8);
-  return `${safeBase}-${digest}`;
-}
-
-export function createSkillsRuntimeId(): string {
-  return `${process.pid}-${randomUUID()}`;
-}
-
-function getSkillsRootDir(): string {
-  return join(getAgentDir(), SKILLS_DIR_NAME);
-}
-
-function getRuntimeSkillsDir(runtimeId: string): string {
-  if (!/^[a-zA-Z0-9_-]+$/.test(runtimeId)) {
-    throw new Error(`Unsafe skills runtime identifier: ${runtimeId}`);
-  }
-  return assertWithinParent(getSkillsRootDir(), join(getSkillsRootDir(), runtimeId));
-}
-
-function materializeSingleSkill(
-  serverStageDir: string,
-  bundle: VerifiedSkillBundle,
-  serverName: string,
-): { metadata: SkillMetadata; dir: string } | null {
-  const skillDir = assertWithinParent(serverStageDir, join(serverStageDir, bundle.dirName));
-  ensurePrivateDir(skillDir);
-  for (const file of bundle.files) {
-    const filePath = assertWithinParent(skillDir, join(skillDir, ...file.relativeSegments));
-    mkdirSync(dirname(filePath), { recursive: true, mode: DIR_MODE });
-    writeFileSync(filePath, file.content, { mode: FILE_MODE, flag: "wx" });
-  }
-  const loaded = loadSkillsFromDir({ dir: skillDir, source: "mcp" });
-  if (loaded.skills.length !== 1 || loaded.skills[0]?.name !== bundle.dirName) {
-    rmSync(skillDir, { recursive: true, force: true });
-    logger.warn(
-      `MCP: skipped skill "${bundle.dirName}" from ${serverName} — rejected by Pi skill loader`,
-    );
-    return null;
-  }
-  return { metadata: bundle.metadata, dir: skillDir };
-}
-
-function materializeVerifiedSkills(input: {
-  readonly runtimeId: string;
-  readonly serverName: string;
-  readonly bundles: readonly VerifiedSkillBundle[];
-}): { metadata: SkillMetadata[]; paths: string[] } {
-  const { runtimeId, serverName, bundles } = input;
-  const rootDir = getSkillsRootDir();
-  const runtimeDir = getRuntimeSkillsDir(runtimeId);
-  ensurePrivateDir(rootDir);
-  ensurePrivateDir(runtimeDir);
-
-  const serverSlug = sanitizeServerDirName(serverName);
-  const serverDir = assertWithinParent(runtimeDir, join(runtimeDir, serverSlug));
-  const stageDir = assertWithinParent(
-    runtimeDir,
-    join(runtimeDir, `.stage-${serverSlug}-${randomUUID()}`),
-  );
-  ensurePrivateDir(stageDir);
-
-  const accepted: SkillMetadata[] = [];
-  const relativeSkillDirs: string[] = [];
-  try {
-    for (const bundle of bundles) {
-      const result = materializeSingleSkill(stageDir, bundle, serverName);
-      if (result) {
-        accepted.push(result.metadata);
-        relativeSkillDirs.push(bundle.dirName);
-      }
-    }
-    rmSync(serverDir, { recursive: true, force: true });
-    if (accepted.length === 0) {
-      rmSync(stageDir, { recursive: true, force: true });
-      return { metadata: [], paths: [] };
-    }
-    renameSync(stageDir, serverDir);
-    ensurePrivateDir(serverDir);
-    return {
-      metadata: accepted,
-      paths: relativeSkillDirs.map((dirName) =>
-        assertWithinParent(serverDir, join(serverDir, dirName)),
-      ),
-    };
-  } catch (error) {
-    rmSync(stageDir, { recursive: true, force: true });
-    throw error;
-  }
 }
 
 function isTrustedSkillOrigin(
@@ -198,20 +110,59 @@ export function cleanupServerSkills(state: McpExtensionState, serverName: string
   const maps = getSkillMaps(state);
   maps.metadata.delete(serverName);
   maps.paths.delete(serverName);
-  const runtimeDir = getRuntimeSkillsDir(maps.runtimeId);
-  const serverDir = assertWithinParent(
-    runtimeDir,
-    join(runtimeDir, sanitizeServerDirName(serverName)),
-  );
-  rmSync(serverDir, { recursive: true, force: true });
+  maps.syncedBundles.delete(serverName);
+  try {
+    safeRemovePath(getServerSkillsDir(maps.runtimeId, serverName), serverName);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`MCP: failed to resolve skills directory for ${serverName}: ${message}`);
+  }
 }
 
 export function cleanupRuntimeSkills(state: McpExtensionState): void {
   const maps = getSkillMaps(state);
   maps.metadata.clear();
   maps.paths.clear();
-  const runtimeDir = getRuntimeSkillsDir(maps.runtimeId);
-  rmSync(runtimeDir, { recursive: true, force: true });
+  maps.syncedBundles.clear();
+  try {
+    safeRemovePath(getRuntimeSkillsDir(maps.runtimeId), maps.runtimeId);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`MCP: failed to resolve skills runtime directory: ${message}`);
+  }
+}
+
+function isSyncedBundlesUnchanged(
+  maps: StateSkillMaps,
+  serverName: string,
+  bundles: readonly VerifiedSkillBundle[],
+): boolean {
+  const previous = maps.syncedBundles.get(serverName);
+  return previous !== undefined && (previous === bundles || isDeepStrictEqual(previous, bundles));
+}
+
+function materializeAndStoreServerSkills(
+  state: McpExtensionState,
+  maps: StateSkillMaps,
+  serverName: string,
+  bundles: readonly VerifiedSkillBundle[],
+): void {
+  if (!maps.prunedStaleRuntimes) {
+    prunedStates.add(state);
+    pruneDeadRuntimeDirs(getSkillsRootDir(), maps.runtimeId);
+  }
+  const materialized = materializeVerifiedSkills({
+    runtimeId: maps.runtimeId,
+    serverName,
+    bundles,
+  });
+  if (materialized.metadata.length === 0) {
+    cleanupServerSkills(state, serverName);
+    return;
+  }
+  maps.metadata.set(serverName, materialized.metadata);
+  maps.paths.set(serverName, materialized.paths);
+  maps.syncedBundles.set(serverName, bundles);
 }
 
 export function syncConnectedServerSkills(
@@ -229,17 +180,16 @@ export function syncConnectedServerSkills(
     return;
   }
   const maps = getSkillMaps(state);
-  const materialized = materializeVerifiedSkills({
-    runtimeId: maps.runtimeId,
-    serverName,
-    bundles,
-  });
-  if (materialized.metadata.length === 0) {
-    cleanupServerSkills(state, serverName);
+  if (isSyncedBundlesUnchanged(maps, serverName, bundles)) {
     return;
   }
-  maps.metadata.set(serverName, materialized.metadata);
-  maps.paths.set(serverName, materialized.paths);
+  try {
+    materializeAndStoreServerSkills(state, maps, serverName, bundles);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`MCP: failed to materialize skills for ${serverName}: ${message}`);
+    cleanupServerSkills(state, serverName);
+  }
 }
 
 function syncSingleServerSkillState(

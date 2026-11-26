@@ -440,4 +440,85 @@ describe("MCP Skills (SEP-2640) integration", () => {
       "v3-skill",
     ]);
   });
+
+  it("prunes dead-PID skill directories, skips redundant re-materialization, and isolates storage errors from tool calls", async () => {
+    const ws = createWorkspace();
+    const deadDir = join(ws.agentDir, "mcp-skills", "999999-crashed-session");
+    const liveSiblingDir = join(ws.agentDir, "mcp-skills", `${process.pid}-sibling-session`);
+    mkdirSync(deadDir, { recursive: true });
+    mkdirSync(liveSiblingDir, { recursive: true });
+    writeFileSync(join(deadDir, "stale.txt"), "stale", "utf8");
+
+    const host = await mountAdapter({
+      cwd: ws.project,
+      config: {
+        settings: {},
+        mcpServers: {
+          live: skillsServer("controlled", { lifecycle: "eager" }),
+        },
+      },
+    });
+
+    await host.start();
+    const discovery = await host.discover();
+    expect(discovery.skillPaths).toHaveLength(1);
+    expect(existsSync(deadDir)).toBe(false);
+    expect(existsSync(liveSiblingDir)).toBe(true);
+
+    // Subsequent tool calls with unchanged skill bundles do not rewrite skill files on disk.
+    const skillDir = requireValue(discovery.skillPaths[0]).path;
+    const skillMdPath = join(skillDir, "SKILL.md");
+    const sentinel = join(dirname(skillDir), ".no-rewrite-sentinel");
+    writeFileSync(sentinel, "keep", "utf8");
+    const callRes = await host.callMcp({
+      action: "call",
+      server: "live",
+      tool: "get_refresh_stats",
+      args: {},
+    });
+    expect(callRes.isError).not.toBe(true);
+    expect(existsSync(skillMdPath)).toBe(true);
+    expect(existsSync(sentinel)).toBe(true);
+
+    // Storage errors (e.g. <agentDir>/mcp-skills blocked by a file) must not fail syncConnectedServerSkills.
+    const { syncConnectedServerSkills } = await import("../mcp-skills-store.ts");
+    const { createTestState } = await import("./test-state.ts");
+    const { Client, InMemoryTransport } = await import("@modelcontextprotocol/client");
+    const blockedState = createTestState({
+      config: { mcpServers: { live: { command: process.execPath, args: [] } } },
+    });
+    rmSync(join(ws.agentDir, "mcp-skills"), { recursive: true, force: true });
+    writeFileSync(join(ws.agentDir, "mcp-skills"), "not-a-directory", "utf8");
+    syncConnectedServerSkills(blockedState, "live", {
+      client: new Client({ name: "test", version: "1" }),
+      transport: InMemoryTransport.createLinkedPair()[0],
+      definition: { command: process.execPath, args: [] },
+      tools: [],
+      resources: [],
+      prompts: [],
+      lastUsedAt: Date.now(),
+      status: "connected",
+      verifiedSkillBundles: [
+        {
+          dirName: "blocked-skill",
+          metadata: {
+            name: "blocked-skill",
+            description: "Blocked",
+            uri: "skill://blocked-skill/SKILL.md",
+          },
+          files: [{ relativeSegments: ["SKILL.md"], content: Buffer.from("invalid") }],
+        },
+      ],
+    });
+    expect(blockedState.skillMetadata?.size ?? 0).toBe(0);
+
+    // Even if a throwing serverClosedListener is registered, manager close() and closeAll() settle cleanly.
+    const { McpServerManager } = await import("../server-manager.ts");
+    const manager = new McpServerManager();
+    manager.setServerClosedListener(() => {
+      throw new Error("simulated EPERM during cleanup");
+    });
+    await expect(manager.close("live")).resolves.toBeUndefined();
+    await expect(manager.closeAll()).resolves.toBeUndefined();
+  });
 });
