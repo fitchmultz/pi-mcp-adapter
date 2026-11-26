@@ -82,7 +82,7 @@ describe("MCP catalog registration", () => {
     const search = definition(h, "demo_search");
     expect(search.exposure).toBe("deferred");
     expect(search.parameters).toEqual(schema);
-    expect(search.namespace).toEqual({ name: "mcp_demo" });
+    expect(search.namespace).toEqual({ name: "mcp_demo", aliases: ["demo"] });
     expect(search).not.toHaveProperty("promptSnippet");
     expect(search).not.toHaveProperty("promptGuidelines");
     expect(definition(h, "other_search").exposure).toBe("deferred");
@@ -101,25 +101,41 @@ describe("MCP catalog registration", () => {
     expect(definition(guardedHost, "demo_search").executionMode).toBe("sequential");
   });
 
-  it("advertises the codemode text contract only for tools without an output schema", async () => {
+  it("attaches CallToolResult outputSchema without codemode description boilerplate and forwards server description", async () => {
     const h = await host();
     const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     const entries = cache();
     const other = requireEntry(entries, "other");
-    other.tools = [{ name: "raw-search", inputSchema: schema }];
-    loader.sync(config, entries);
+    other.tools = [{ name: "raw-search", description: "Raw search", inputSchema: schema }];
+    const withDescription: McpConfig = {
+      mcpServers: {
+        ...config.mcpServers,
+        other: { ...config.mcpServers.other, description: "Other knowledge base" },
+      },
+    };
+    loader.sync(withDescription, entries);
 
     expect(definition(h, "demo_search").description).toBe("search");
     const unstructured = definition(h, "other_raw-search");
-    expect(unstructured.outputSchema).toBeUndefined();
-    expect(unstructured.description).toMatch(/Codemode:.*display text.*50 KiB.*not raw JSON/);
-    expect(unstructured.description).toContain(
-      'tools.mcp({ action: "call", server: "other", tool: "raw-search", args, format: "structured" })',
-    );
-    expect(unstructured.description).toMatch(/read-result.*\.text/);
+    expect(unstructured.description).toBe("Raw search");
+    expect(unstructured.description).not.toContain("Codemode:");
+    expect(unstructured.outputSchema).toMatchObject({
+      type: "object",
+      required: ["content"],
+      properties: {
+        content: { type: "array" },
+        structuredContent: {},
+        isError: { type: "boolean" },
+      },
+    });
+    expect(unstructured.namespace).toEqual({
+      name: "mcp_other",
+      aliases: ["other"],
+      description: "Other knowledge base",
+    });
   });
 
-  it("re-registers a tool when its pin, schema or server instructions change", async () => {
+  it("re-registers a tool when its pin, schema, server description, or server instructions change", async () => {
     const h = await host();
     const loader = createToolLoader(h.api, { getState: () => null, getInitPromise: () => null });
     loader.sync(config, cache());
@@ -134,12 +150,23 @@ describe("MCP catalog registration", () => {
     assert.ok(first);
     first.outputSchema = { type: "object", properties: { changed: { type: "boolean" } } };
     updated.servers.demo = { ...requireEntry(updated, "demo"), instructions: "Demo guidance" };
-    loader.sync(config, updated);
+    const describedConfig: McpConfig = {
+      mcpServers: {
+        ...config.mcpServers,
+        demo: { ...config.mcpServers.demo, description: "Demo server" },
+      },
+    };
+    loader.sync(describedConfig, updated);
     expect(definition(h, "demo_pinned").outputSchema).toMatchObject({
-      anyOf: [{ properties: { changed: { type: "boolean" } } }, {}],
+      type: "object",
+      properties: {
+        structuredContent: { type: "object", properties: { changed: { type: "boolean" } } },
+      },
     });
     expect(definition(h, "demo_search").namespace).toEqual({
       name: "mcp_demo",
+      aliases: ["demo"],
+      description: "Demo server",
       instructions: "Demo guidance",
     });
   });

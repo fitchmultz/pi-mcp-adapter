@@ -87,11 +87,15 @@ export function transformMcpContent(content: McpContent[]): ContentBlock[] {
   return content.map(renderContent);
 }
 
-/** Human content and structured content are complementary protocol fields. */
+function hasVisibleContent(blocks: readonly ContentBlock[]): boolean {
+  return blocks.some((block) => block.type !== "text" || block.text.trim() !== "");
+}
+
+/** Fall back to structuredContent only when content has no visible blocks (matching Pi's builtin:mcp). */
 export function resolveMcpResultContent(result: Record<string, unknown>): ContentBlock[] {
   const blocks = isUnknownArray(result.content) ? result.content.map(renderContent) : [];
-  if (result.structuredContent !== undefined) {
-    blocks.push({ type: "text", text: stringifyStructuredContent(result.structuredContent) });
+  if (!hasVisibleContent(blocks) && result.structuredContent !== undefined) {
+    return [{ type: "text", text: stringifyStructuredContent(result.structuredContent) }];
   }
   return blocks;
 }

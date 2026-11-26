@@ -1,31 +1,88 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { JsonValue } from "@earendil-works/pi-ai";
-import { Type, type Static, type TUnion, type TUnsafe } from "typebox";
-import { Value } from "typebox/value";
+import { Type, type Static, type TUnsafe } from "typebox";
 import { toolErrorOverride } from "./error-signal.ts";
 import { asObjectRecord, isUnknownArray } from "./mcp-output-values.ts";
 
-function outputReceipt() {
-  return Type.Object(
-    {
-      mcpAdapter: Type.Object(
-        {
-          omitted: Type.Literal(true),
-          resultRef: Type.Optional(Type.String()),
-          error: Type.Optional(Type.String()),
-        },
-        { additionalProperties: false },
-      ),
-    },
-    { additionalProperties: false },
+/**
+ * MCP content blocks as one compact schema covering the fields codemode scripts inspect most,
+ * matching Pi's built-in MCP CallToolResult schema.
+ */
+const CONTENT_BLOCK_SCHEMA = {
+  type: "object",
+  properties: {
+    type: { enum: ["text", "image", "audio", "resource_link", "resource"] },
+    text: { type: "string" },
+    data: { type: "string" },
+    mimeType: { type: "string" },
+  },
+  required: ["type"],
+  additionalProperties: true,
+};
+
+/** JSON Schema keywords whose values are literal data rather than subschemas. */
+const SCHEMA_DATA_KEYWORDS = new Set(["const", "enum", "default", "examples"]);
+/** JSON Schema keywords whose entries map arbitrary names to subschemas. */
+const SCHEMA_MAP_KEYWORDS = new Set([
+  "properties",
+  "patternProperties",
+  "dependentSchemas",
+  "dependencies",
+  "$defs",
+  "definitions",
+]);
+
+function relocateEntry(key: string, value: unknown, pointer: string): unknown {
+  if (key === "$ref" && typeof value === "string" && (value === "#" || value.startsWith("#/"))) {
+    return `${pointer}${value.slice(1)}`;
+  }
+  if (SCHEMA_DATA_KEYWORDS.has(key)) {
+    return value;
+  }
+  if (SCHEMA_MAP_KEYWORDS.has(key)) {
+    const map = asObjectRecord(value);
+    if (map !== undefined && !Array.isArray(value)) {
+      return Object.fromEntries(
+        Object.entries(map).map(([name, subschema]) => [name, relocateSchema(subschema, pointer)]),
+      );
+    }
+  }
+  return relocateSchema(value, pointer);
+}
+
+/** Rewrite local JSON Pointer `$ref`s so an embedded server outputSchema stays valid. */
+function relocateSchema(schema: unknown, pointer: string): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map((item) => relocateSchema(item, pointer));
+  }
+  const record = asObjectRecord(schema);
+  if (record === undefined) {
+    return schema;
+  }
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key, relocateEntry(key, value, pointer)]),
   );
 }
 
-/** Keep the server's declared output and the existing fallback receipt for its consumers. */
+/**
+ * CallToolResult output schema for every direct and deferred MCP tool, matching Pi's built-in MCP
+ * contract. Relocates local `$ref`s when the server declares an outputSchema.
+ */
 export function nativeMcpOutputSchema(
-  schema: Record<string, unknown>,
-): TUnion<[TUnsafe, ReturnType<typeof outputReceipt>]> {
-  return Type.Union([Type.Unsafe(schema), outputReceipt()]);
+  structuredContentSchema?: Record<string, unknown>,
+): TUnsafe<Record<string, unknown>> {
+  return Type.Unsafe<Record<string, unknown>>({
+    type: "object",
+    properties: {
+      content: { type: "array", items: CONTENT_BLOCK_SCHEMA },
+      structuredContent: structuredContentSchema
+        ? relocateSchema(structuredContentSchema, "#/properties/structuredContent")
+        : {},
+      isError: { type: "boolean" },
+    },
+    required: ["content"],
+    additionalProperties: true,
+  });
 }
 
 const scriptContentBlock = Type.Object(
@@ -72,21 +129,80 @@ export const mcpReadPageSchema = Type.Object({
 });
 export type McpReadPage = Static<typeof mcpReadPageSchema>;
 
-const jsonValueSchema = Type.Cyclic(
-  {
-    Json: Type.Union([
-      Type.Null(),
-      Type.Boolean(),
-      Type.Refine(Type.Unknown(), (value) => typeof value === "number"),
-      Type.String(),
-      Type.Array(Type.Ref("Json")),
-      Type.Record(Type.String(), Type.Ref("Json")),
-    ]),
-  },
-  "Json",
-);
-function isJsonValue(value: unknown): value is JsonValue {
-  return Value.Check(jsonValueSchema, value);
+/** Untruncated raw MCP payloads held transiently in memory so `details` stays bounded for JSONL. */
+const rawMcpResults = new WeakMap<object, Record<string, unknown>>();
+
+export function attachRawMcpResult<T extends AgentToolResult<Record<string, unknown>>>(
+  result: T,
+  raw: Record<string, unknown>,
+): T {
+  rawMcpResults.set(result, raw);
+  return result;
+}
+
+function toJsonArray(items: readonly unknown[], seen: Set<object>): JsonValue[] | undefined {
+  if (seen.has(items)) {
+    return undefined;
+  }
+  seen.add(items);
+  try {
+    const out: JsonValue[] = [];
+    for (const item of items) {
+      const converted = item === undefined ? null : toJsonValue(item, seen);
+      if (converted === undefined) {
+        return undefined;
+      }
+      out.push(converted);
+    }
+    return out;
+  } finally {
+    seen.delete(items);
+  }
+}
+
+function toJsonObject(
+  record: Record<string, unknown>,
+  seen: Set<object>,
+): Record<string, JsonValue> | undefined {
+  if (seen.has(record)) {
+    return undefined;
+  }
+  seen.add(record);
+  try {
+    const out: Record<string, JsonValue> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (value === undefined) {
+        continue;
+      }
+      const converted = toJsonValue(value, seen);
+      if (converted === undefined) {
+        return undefined;
+      }
+      Object.defineProperty(out, key, {
+        value: converted,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    return out;
+  } finally {
+    seen.delete(record);
+  }
+}
+
+function toJsonValue(value: unknown, seen = new Set<object>()): JsonValue | undefined {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (Array.isArray(value)) {
+    return toJsonArray(value, seen);
+  }
+  const record = asObjectRecord(value);
+  return record === undefined ? undefined : toJsonObject(record, seen);
 }
 
 function receiptFields(details: Record<string, unknown>) {
@@ -94,21 +210,6 @@ function receiptFields(details: Record<string, unknown>) {
     ...(typeof details.resultRef === "string" ? { resultRef: details.resultRef } : {}),
     ...(typeof details.error === "string" ? { error: details.error } : {}),
   };
-}
-
-function declaredOutput(details: Record<string, unknown>): JsonValue {
-  const raw = asObjectRecord(details.mcpResult);
-  const guarded = Boolean(details.outputGuard);
-  const failed = Boolean(details.error);
-  if (
-    !guarded &&
-    (!failed || details.error === "tool_error") &&
-    raw?.structuredContent !== undefined &&
-    isJsonValue(raw.structuredContent)
-  ) {
-    return raw.structuredContent;
-  }
-  return { mcpAdapter: { omitted: true, ...receiptFields(details) } };
 }
 
 function withoutBlockMetadata(value: unknown): unknown {
@@ -125,10 +226,30 @@ function withoutBlockMetadata(value: unknown): unknown {
   return block;
 }
 
+function toScriptCallToolResult(value: unknown): JsonValue | undefined {
+  const raw = asObjectRecord(value);
+  // The guard's compact summary has neither content nor structuredContent.
+  if (raw === undefined || (!Array.isArray(raw.content) && raw.structuredContent === undefined)) {
+    return undefined;
+  }
+  const { _meta: _private, ...payload } = raw;
+  payload.content = isUnknownArray(payload.content)
+    ? payload.content.map(withoutBlockMetadata)
+    : [];
+  return toJsonValue(payload);
+}
+
 function inlinePayload(value: unknown): JsonValue | undefined {
   const raw = asObjectRecord(value);
   // The guard's compact summary has neither of the MCP tool/resource result block arrays.
-  if (raw === undefined || !(Array.isArray(raw.content) || Array.isArray(raw.contents))) {
+  if (
+    raw === undefined ||
+    !(
+      Array.isArray(raw.content) ||
+      Array.isArray(raw.contents) ||
+      raw.structuredContent !== undefined
+    )
+  ) {
     return undefined;
   }
   const { _meta: _private, ...payload } = raw;
@@ -138,43 +259,61 @@ function inlinePayload(value: unknown): JsonValue | undefined {
   if (isUnknownArray(payload.contents)) {
     payload.contents = payload.contents.map(withoutBlockMetadata);
   }
-  return isJsonValue(payload) ? payload : undefined;
+  return toJsonValue(payload);
+}
+
+function buildAdapterReceipt(
+  result: AgentToolResult<Record<string, unknown>>,
+  payload: JsonValue | undefined,
+): Record<string, JsonValue> {
+  const { details } = result;
+  const receipt = receiptFields(details);
+  const outputPath = asObjectRecord(details.outputGuard)?.fullOutputPath;
+  const diagnostic = result.content[0];
+  const message =
+    payload === undefined && receipt.error !== undefined && diagnostic?.type === "text"
+      ? diagnostic.text
+      : undefined;
+  return {
+    omitted: payload === undefined,
+    ...receipt,
+    ...(typeof outputPath === "string" ? { outputPath } : {}),
+    ...(message !== undefined ? { message } : {}),
+  };
 }
 
 export function withMcpScriptOutput(
   result: AgentToolResult<Record<string, unknown>>,
 ): AgentToolResult<Record<string, unknown>> {
-  const { details } = result;
-  const receipt = receiptFields(details);
-  const payload = inlinePayload(details.mcpResult);
-  const outputPath = asObjectRecord(details.outputGuard)?.fullOutputPath;
-  const diagnostic = result.content[0];
+  const payload = inlinePayload(rawMcpResults.get(result) ?? result.details.mcpResult);
+  const isError = result.isError === true || toolErrorOverride(result.details) !== undefined;
   return {
     ...result,
     structuredContent: {
       ...(payload !== undefined ? { mcpResult: payload } : {}),
-      mcpAdapter: {
-        omitted: payload === undefined,
-        ...receipt,
-        ...(typeof outputPath === "string" ? { outputPath } : {}),
-        ...(payload === undefined && receipt.error !== undefined && diagnostic?.type === "text"
-          ? { message: diagnostic.text }
-          : {}),
-      },
-      ...(result.isError === true || toolErrorOverride(details) !== undefined
-        ? { isError: true }
-        : {}),
+      mcpAdapter: buildAdapterReceipt(result, payload),
+      ...(isError ? { isError: true } : {}),
     },
   };
 }
 
 export function nativeMcpResult(
   result: AgentToolResult<Record<string, unknown>>,
-  hasDeclaredOutput = false,
+  detailsOverride?: Record<string, unknown>,
 ): AgentToolResult<Record<string, unknown>> {
+  const details = detailsOverride ?? result.details;
+  const payload = toScriptCallToolResult(rawMcpResults.get(result) ?? details.mcpResult);
+  if (payload !== undefined) {
+    return {
+      ...result,
+      details,
+      ...toolErrorOverride(details),
+      structuredContent: payload,
+    };
+  }
   return {
     ...result,
-    ...toolErrorOverride(result.details),
-    ...(hasDeclaredOutput ? { structuredContent: declaredOutput(result.details) } : {}),
+    details,
+    isError: true,
   };
 }

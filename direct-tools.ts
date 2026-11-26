@@ -66,23 +66,17 @@ export function createDirectToolExecutor(
         } catch (error) {
           throwIfAborted(signal);
           const message = error instanceof Error ? error.message : String(error);
-          return nativeMcpResult(
-            {
-              content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
-              details: { error: "init_failed", message },
-            },
-            Boolean(spec.outputSchema),
-          );
+          return nativeMcpResult({
+            content: [{ type: "text" as const, text: `MCP initialization failed: ${message}` }],
+            details: { error: "init_failed", message },
+          });
         }
       }
       if (!state) {
-        return nativeMcpResult(
-          {
-            content: [{ type: "text" as const, text: "MCP not initialized" }],
-            details: { error: "not_initialized" },
-          },
-          Boolean(spec.outputSchema),
-        );
+        return nativeMcpResult({
+          content: [{ type: "text" as const, text: "MCP not initialized" }],
+          details: { error: "not_initialized" },
+        });
       }
 
       const { executeCall } = await import("./proxy-modes.ts");
@@ -103,7 +97,7 @@ export function createDirectToolExecutor(
         },
       });
       const { mode: _mode, ...details } = result.details;
-      return nativeMcpResult({ ...result, details }, Boolean(spec.outputSchema));
+      return nativeMcpResult(result, details);
     }
   );
 }

@@ -144,10 +144,10 @@ class Loader implements ToolLoader {
     ToolMetadata,
     {
       server: string;
+      description: string | undefined;
       instructions: string | undefined;
       pinned: boolean;
       unpinnedExposure: UnpinnedToolExposure;
-      gatewayAvailable: boolean;
       value: string;
     }
   >();
@@ -161,16 +161,12 @@ class Loader implements ToolLoader {
    * Reports a pin the tool lost, which Pi keeps active across re-registration, or one it gained or
    * regained active after withdrawal, which activates like a new pin within the session.
    */
-  private register(
-    item: CatalogTool,
-    cache: MetadataCache | null,
-    gatewayAvailable: boolean,
-  ): "lost" | "gained" | undefined {
-    const { spec, selection, name, pinned, unpinnedExposure } = item;
+  private register(item: CatalogTool, cache: MetadataCache | null): "lost" | "gained" | undefined {
+    const { spec, selection, name, pinned, unpinnedExposure, description } = item;
     const instructions =
       this.dependencies.getState()?.serverInstructions.get(spec.serverName) ??
       cache?.servers[spec.serverName]?.instructions;
-    const fingerprint = this.fingerprint(item, instructions, gatewayAvailable);
+    const fingerprint = this.fingerprint(item, instructions);
     const id = key(selection);
     const existing = this.registered.get(id);
     if (existing?.fingerprint === fingerprint && existing.exposure.kind !== "withdrawn") {
@@ -179,7 +175,7 @@ class Loader implements ToolLoader {
     const definition = catalogDefinition(spec, instructions, this.dependencies, {
       pinned,
       unpinnedExposure,
-      gatewayAvailable,
+      description,
     });
     this.pi.registerTool(definition);
     this.registered.set(id, {
@@ -247,28 +243,24 @@ class Loader implements ToolLoader {
     }
   }
 
-  private fingerprint(
-    item: CatalogTool,
-    instructions: string | undefined,
-    gatewayAvailable: boolean,
-  ): string {
-    const { spec, source, name, pinned, unpinnedExposure } = item;
+  private fingerprint(item: CatalogTool, instructions: string | undefined): string {
+    const { spec, source, name, pinned, unpinnedExposure, description } = item;
     const previous = Object.isFrozen(source) ? this.fingerprints.get(source) : undefined;
     const fingerprint =
       previous?.server === spec.serverName &&
+      previous.description === description &&
       previous.instructions === instructions &&
       previous.pinned === pinned &&
-      previous.unpinnedExposure === unpinnedExposure &&
-      previous.gatewayAvailable === gatewayAvailable
+      previous.unpinnedExposure === unpinnedExposure
         ? previous.value
-        : JSON.stringify({ spec, name, instructions, pinned, unpinnedExposure, gatewayAvailable });
+        : JSON.stringify({ spec, name, description, instructions, pinned, unpinnedExposure });
     if (Object.isFrozen(source)) {
       this.fingerprints.set(source, {
         server: spec.serverName,
+        description,
         instructions,
         pinned,
         unpinnedExposure,
-        gatewayAvailable,
         value: fingerprint,
       });
     }
@@ -295,11 +287,10 @@ class Loader implements ToolLoader {
     const specs = collectCatalog(config, cache, env, this.dependencies.getState);
     const eligible = this.eligible(specs);
     const available = new Set(eligible.map((item) => key(item.selection)));
-    const initialGatewayAvailable = config.settings?.disableProxyTool !== true;
     const lost = new Set<string>();
     const gained = new Set<string>();
     for (const item of eligible) {
-      const change = this.register(item, cache, initialGatewayAvailable);
+      const change = this.register(item, cache);
       if (change !== undefined) {
         (change === "lost" ? lost : gained).add(item.name);
       }
@@ -316,12 +307,7 @@ class Loader implements ToolLoader {
         (item) => item.pinned && available.has(key(item.selection)) && permitted.has(item.name),
       )
       .map((item) => item.spec);
-    const gatewayActive = registerGateways?.(pins) ?? initialGatewayAvailable;
-    if (gatewayActive !== initialGatewayAvailable) {
-      for (const item of eligible) {
-        this.register(item, cache, gatewayActive);
-      }
-    }
+    registerGateways?.(pins);
     return pins;
   };
 

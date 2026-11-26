@@ -278,7 +278,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(spies.registerTool).toHaveBeenCalledWith(
       expect.objectContaining({ name: "demo_search" }),
     );
-    expect(registeredTool("demo_search").description).toMatch(/^Search v2\n/);
+    expect(registeredTool("demo_search").description).toBe("Search v2");
     expect(registeredTool("demo_search").description).not.toContain("tools.mcp(");
     expect(registeredTool("demo_search")).not.toHaveProperty("exposure");
     expect(api.getActiveTools()).toContain("demo_search");
@@ -309,7 +309,7 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.resolve();
     expect(api.getActiveTools()).toContain("demo_search");
     expect(api.getActiveTools()).toContain("mcp");
-    expect(registeredTool("demo_search").description).toContain("tools.mcp(");
+    expect(registeredTool("demo_search").description).toBe("Search");
     expect(spies.registerTool).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: "demo_read_doc" }),
     );
@@ -367,7 +367,10 @@ describe("mcpAdapter session lifecycle", () => {
     await Promise.resolve();
     expect(api.getActiveTools()).not.toContain("demo_search");
     expect(registeredTool("demo_search").exposure).toBe("deferred");
-    expect(registeredTool("demo_search").namespace).toEqual({ name: "mcp_demo" });
+    expect(registeredTool("demo_search").namespace).toEqual({
+      name: "mcp_demo",
+      aliases: ["demo"],
+    });
     api.setActiveTools([...api.getActiveTools(), "demo_search"]);
     expect(api.getActiveTools()).toContain("demo_search");
   });
@@ -1774,7 +1777,7 @@ describe("mcpAdapter session lifecycle", () => {
       expect(state.approvedToolCalls.get("remote\u0000search")).toBe(true);
       expect(spies.registerTool).not.toHaveBeenCalled();
       expect(spies.setActiveTools).not.toHaveBeenCalled();
-      expect(registeredTool("remote_search").description).toMatch(/^Search\n/);
+      expect(registeredTool("remote_search").description).toBe("Search");
 
       // Changed effective config in another cwd while freezeDirectTools stays enabled: keeps
       // the session alive and directToolsFrozen intact without busting the prompt cache.
@@ -1851,7 +1854,7 @@ describe("mcpAdapter session lifecycle", () => {
     expect(spies.registerTool).not.toHaveBeenCalled();
     expect(spies.setActiveTools).not.toHaveBeenCalled();
     expect(mocks.loadMetadataCache).not.toHaveBeenCalled();
-    expect(registeredTool("demo_search").description).toMatch(/^Search\n/);
+    expect(registeredTool("demo_search").description).toBe("Search");
     expect(api.getActiveTools()).not.toContain("demo_extra");
   });
 

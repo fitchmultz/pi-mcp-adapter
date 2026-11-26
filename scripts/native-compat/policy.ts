@@ -5,6 +5,13 @@ function valueOf(input: unknown): unknown {
   return input !== null && typeof input === "object" && "value" in input ? input.value : undefined;
 }
 
+function structuredValueOf(input: unknown): unknown {
+  if (input !== null && typeof input === "object" && "structuredContent" in input) {
+    return valueOf(input.structuredContent);
+  }
+  return valueOf(input);
+}
+
 export function installPolicy(pi: ExtensionAPI): void {
   pi.on("tool_call", (event) =>
     event.toolName === "local_echo" && valueOf(event.input) === "blocked"
@@ -12,7 +19,7 @@ export function installPolicy(pi: ExtensionAPI): void {
       : undefined,
   );
   pi.on("tool_result", (event) =>
-    event.toolName === "local_echo" && valueOf(event.structuredContent) === "redact"
+    event.toolName === "local_echo" && structuredValueOf(event.structuredContent) === "redact"
       ? { content: [{ type: "text", text: "Redacted" }] }
       : undefined,
   );

@@ -29,6 +29,7 @@ export type CatalogTool = {
   name: string;
   pinned: boolean;
   unpinnedExposure: UnpinnedToolExposure;
+  description?: string | undefined;
 };
 export type LoaderDependencies = {
   getState: () => McpExtensionState | null;
@@ -84,6 +85,44 @@ function resolveCatalogToolExposure(
   return { pinned, unpinnedExposure: "deferred" };
 }
 
+function trimmedDescription(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed !== undefined && trimmed !== "" ? trimmed : undefined;
+}
+
+function collectServerCatalog(input: {
+  server: string;
+  definition: ServerEntry;
+  tools: readonly ToolMetadata[];
+  selection: ReturnType<typeof directToolSelection>;
+  envActive: boolean;
+  description: string | undefined;
+}): CatalogTool[] {
+  const { server, definition, tools, selection, envActive, description } = input;
+  const specs: CatalogTool[] = [];
+  for (const source of tools) {
+    const { name, ...tool } = source;
+    if (tool.resourceUri !== undefined && tool.resourceUri !== "") {
+      continue;
+    }
+    const exposure = resolveCatalogToolExposure(
+      tool.originalName,
+      selection,
+      definition,
+      envActive,
+    );
+    specs.push({
+      spec: { ...tool, prefixedName: name, serverName: server },
+      source,
+      selection: { server, tool: tool.originalName },
+      name,
+      ...exposure,
+      ...(description !== undefined ? { description } : {}),
+    });
+  }
+  return specs;
+}
+
 export function collectCatalog(
   config: McpConfig,
   cache: MetadataCache | null,
@@ -98,26 +137,16 @@ export function collectCatalog(
     if (isServerDisabled(definition)) {
       continue;
     }
-    const selection = directToolSelection(config, server, env);
-    for (const source of serverMetadata(server, config, cache, getState())) {
-      const { name, ...tool } = source;
-      if (tool.resourceUri !== undefined && tool.resourceUri !== "") {
-        continue;
-      }
-      const exposure = resolveCatalogToolExposure(
-        tool.originalName,
-        selection,
+    specs.push(
+      ...collectServerCatalog({
+        server,
         definition,
-        env !== undefined,
-      );
-      specs.push({
-        spec: { ...tool, prefixedName: name, serverName: server },
-        source,
-        selection: { server, tool: tool.originalName },
-        name,
-        ...exposure,
-      });
-    }
+        tools: serverMetadata(server, config, cache, getState()),
+        selection: directToolSelection(config, server, env),
+        envActive: env !== undefined,
+        description: trimmedDescription(definition.description),
+      }),
+    );
   }
   return specs;
 }
@@ -141,16 +170,22 @@ function nativeAnnotations(
   };
 }
 
-function catalogDescription(spec: DirectToolSpec, gatewayAvailable: boolean): string {
-  const description = spec.description === "" ? "(no description)" : spec.description;
-  if (spec.outputSchema) {
-    return description;
-  }
-  if (!gatewayAvailable) {
-    return `${description}\n\nCodemode: Returns display text (50 KiB by default), not raw JSON.`;
-  }
-  const call = `tools.mcp({ action: "call", server: ${JSON.stringify(spec.serverName)}, tool: ${JSON.stringify(spec.originalName)}, args, format: "structured" })`;
-  return `${description}\n\nCodemode: Returns display text (50 KiB by default), not raw JSON. For structured or large data, use \`${call}\`. For saved JSON, join structured \`read-result\` pages' \`.text\` before parsing.`;
+function catalogDescription(spec: DirectToolSpec): string {
+  return spec.description === "" ? "(no description)" : spec.description;
+}
+
+function catalogNamespace(
+  serverName: string,
+  description: string | undefined,
+  instructions: string | undefined,
+): NonNullable<ToolDefinition["namespace"]> {
+  const summary = trimmedDescription(description);
+  return {
+    name: `mcp_${serverName}`,
+    aliases: [serverName],
+    ...(summary !== undefined ? { description: summary } : {}),
+    ...(instructions !== undefined ? { instructions } : {}),
+  };
 }
 
 /**
@@ -165,25 +200,22 @@ export function catalogDefinition(
   options: {
     pinned: boolean;
     unpinnedExposure?: UnpinnedToolExposure;
-    gatewayAvailable: boolean;
+    description?: string | undefined;
   },
 ): ToolDefinition<
   ReturnType<typeof Type.Unsafe<Record<string, unknown>>>,
   Record<string, unknown>
 > {
-  const { pinned, unpinnedExposure = "deferred", gatewayAvailable } = options;
+  const { pinned, unpinnedExposure = "deferred", description } = options;
   return {
     name: spec.prefixedName,
-    namespace: {
-      name: `mcp_${spec.serverName}`,
-      ...(instructions !== undefined ? { instructions } : {}),
-    },
-    ...(spec.outputSchema ? { outputSchema: nativeMcpOutputSchema(spec.outputSchema) } : {}),
+    namespace: catalogNamespace(spec.serverName, description, instructions),
+    outputSchema: nativeMcpOutputSchema(spec.outputSchema),
     ...(spec.annotations ? { annotations: nativeAnnotations(spec.annotations) } : {}),
     ...(pinned ? { defaultActive: false } : { exposure: unpinnedExposure }),
     ...(dependencies.beforeExecute ? { executionMode: "sequential" } : {}),
     label: spec.title ?? `MCP: ${spec.originalName}`,
-    description: catalogDescription(spec, gatewayAvailable),
+    description: catalogDescription(spec),
     parameters: Type.Unsafe<Record<string, unknown>>(
       normalizeDirectToolInputSchema(spec.inputSchema),
     ),

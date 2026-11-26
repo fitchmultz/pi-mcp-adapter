@@ -126,6 +126,8 @@ export interface ServerEntry {
   debug?: boolean; // Show server stderr (default: false)
   /** Enable metadata-only JSONL protocol tracing for this server. */
   trace?: boolean;
+  /** Short server summary shown in tool namespace metadata. */
+  description?: string;
   /** Only literal true disables execution; legacy string values remain enabled. */
   disabled?: boolean | string;
 }

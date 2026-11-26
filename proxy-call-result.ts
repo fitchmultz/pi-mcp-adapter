@@ -6,6 +6,7 @@ import {
   guardedMcpDetails,
   retainMcpResult,
 } from "./mcp-output-guard.ts";
+import { attachRawMcpResult } from "./mcp-script-output.ts";
 import { renderMcpResultContent } from "./tool-registrar.ts";
 import type { UiSessionResultSummary } from "./ui-session.ts";
 import type { ProxyToolResult } from "./proxy-result.ts";
@@ -118,11 +119,14 @@ async function renderedCallResult(
       ...resultAffixes(record, request, uiSummary),
     },
   );
-  return {
-    content: guarded.content,
-    ...(isError ? { isError: true } : {}),
-    details: { ...details, ...guardedMcpDetails(guarded) },
-  };
+  return attachRawMcpResult(
+    {
+      content: guarded.content,
+      ...(isError ? { isError: true } : {}),
+      details: { ...details, ...guardedMcpDetails(guarded) },
+    },
+    record,
+  );
 }
 
 function resultAffixes(

@@ -134,42 +134,7 @@ export const gatewayParameters = Type.Object(
       }),
     ),
   },
-  {
-    additionalProperties: false,
-    allOf: [
-      ...Object.entries(requirements).map(([action, required]) =>
-        Type.Dependent(
-          Type.Unsafe({ properties: { action: { const: action } } }),
-          Type.Unsafe({ required }),
-          Type.Unknown(),
-        ),
-      ),
-      Type.Dependent(
-        Type.Unsafe({
-          properties: { action: { enum: ["search", "list", "connect", "resources", "prompts"] } },
-        }),
-        Type.Unsafe({ properties: { limit: { maximum: MAX_PAGE_SIZE } } }),
-        Type.Unknown(),
-      ),
-      Type.Dependent(
-        Type.Unsafe({ required: ["format"] }),
-        Type.Unsafe({ properties: { action: { enum: ["call", "read-result"] } } }),
-        Type.Unknown(),
-      ),
-      Type.Dependent(
-        Type.Unsafe({ properties: { readAll: { const: true } }, required: ["readAll"] }),
-        Type.Unsafe({
-          required: ["format"],
-          properties: {
-            action: { const: "read-result" },
-            format: { const: "structured" },
-          },
-          not: { anyOf: [{ required: ["offset"] }, { required: ["limit"] }] },
-        }),
-        Type.Unknown(),
-      ),
-    ],
-  },
+  { additionalProperties: false },
 );
 
 function legacyAction(value: Record<string, unknown>): GatewayArguments["action"] {
@@ -247,7 +212,7 @@ export function prepareGatewayArguments(input: unknown): Record<string, unknown>
   if (result.args !== undefined) {
     result.args = parseArgs(result.args);
   }
-  validateRequirements(result, action);
+  validateGatewayConstraints(result, action);
   return result;
 }
 
@@ -256,8 +221,16 @@ export function parseGatewayArguments(input: unknown): GatewayArguments {
   if (!Value.Check(gatewayParameters, input)) {
     throw new Error("Invalid MCP arguments");
   }
+  validateGatewayConstraints(input, input.action);
   return input;
 }
+
+const pagedActions = new Set<GatewayArguments["action"]>([
+  "search",
+  "list",
+  "connect",
+  "resources",
+]);
 
 function validateRequirements(
   result: Record<string, unknown>,
@@ -268,4 +241,55 @@ function validateRequirements(
       throw new Error(`${action} requires ${field}`);
     }
   }
+}
+
+function validatePageLimit(
+  result: Record<string, unknown>,
+  action: GatewayArguments["action"],
+): void {
+  if (
+    pagedActions.has(action) &&
+    typeof result.limit === "number" &&
+    result.limit > MAX_PAGE_SIZE
+  ) {
+    throw new Error(`${action} limit must be at most ${MAX_PAGE_SIZE}`);
+  }
+}
+
+function isPresent(value: unknown): boolean {
+  return value !== undefined && value !== null;
+}
+
+function validateFormat(result: Record<string, unknown>, action: GatewayArguments["action"]): void {
+  if (isPresent(result.format) && action !== "call" && action !== "read-result") {
+    throw new Error('format is only supported for "call" and "read-result" actions');
+  }
+}
+
+function validateReadAll(
+  result: Record<string, unknown>,
+  action: GatewayArguments["action"],
+): void {
+  if (result.readAll !== true) {
+    return;
+  }
+  if (action !== "read-result") {
+    throw new Error('readAll is only supported for the "read-result" action');
+  }
+  if (result.format !== "structured") {
+    throw new Error('readAll requires format: "structured"');
+  }
+  if (isPresent(result.offset) || isPresent(result.limit)) {
+    throw new Error("readAll cannot be combined with offset or limit");
+  }
+}
+
+function validateGatewayConstraints(
+  result: Record<string, unknown>,
+  action: GatewayArguments["action"],
+): void {
+  validateRequirements(result, action);
+  validatePageLimit(result, action);
+  validateFormat(result, action);
+  validateReadAll(result, action);
 }
