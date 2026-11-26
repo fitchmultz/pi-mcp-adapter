@@ -245,16 +245,28 @@ function getProjectConfigSources(paths: {
   return sources;
 }
 
+export function getPiGlobalWriteTarget(
+  overridePath?: string,
+  cwd = process.cwd(),
+): { readonly writePath: string; readonly aliasesSharedProject: boolean } {
+  const userPath = getPiGlobalConfigPath(overridePath);
+  const projectPath = getProjectConfigPath(cwd);
+  const projectNativePiPath = getProjectNativePiConfigPath(cwd);
+  const aliasesSharedProject =
+    samePath(userPath, projectPath) || samePath(userPath, projectNativePiPath);
+  return {
+    writePath: aliasesSharedProject ? getProjectPiConfigPath(cwd) : userPath,
+    aliasesSharedProject,
+  };
+}
+
 export function getConfigSources(overridePath?: string, cwd = process.cwd()): ConfigSourceSpec[] {
   const userPath = getPiGlobalConfigPath(overridePath);
   const globalNativePiPath = getGlobalNativePiConfigPath();
   const projectPath = getProjectConfigPath(cwd);
   const projectNativePiPath = getProjectNativePiConfigPath(cwd);
   const projectPiPath = getProjectPiConfigPath(cwd);
-  const userWritePath =
-    samePath(userPath, projectPath) || samePath(userPath, projectNativePiPath)
-      ? projectPiPath
-      : userPath;
+  const { writePath: userWritePath } = getPiGlobalWriteTarget(overridePath, cwd);
   return [
     ...getGlobalConfigSources(userPath, globalNativePiPath, userWritePath),
     ...getProjectConfigSources({

@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
 import {
   getMcpDiscoverySummary,
-  getPiGlobalConfigPath,
+  getPiGlobalWriteTarget,
   type LoadMcpConfigOptions,
 } from "./config.ts";
 import { loadOnboardingState } from "./onboarding-state.ts";
@@ -40,11 +40,13 @@ export function withFallbackServerProvenance(
   config: McpConfig,
   provenance: Map<string, ServerProvenance>,
   overridePath: string | undefined,
+  cwd = process.cwd(),
 ): Map<string, ServerProvenance> {
-  const fallbackPath = getPiGlobalConfigPath(overridePath);
+  const { writePath, aliasesSharedProject } = getPiGlobalWriteTarget(overridePath, cwd);
+  const kind = aliasesSharedProject ? "project" : "user";
   for (const serverName of Object.keys(config.mcpServers)) {
     if (!provenance.has(serverName)) {
-      provenance.set(serverName, { path: fallbackPath, kind: "user" });
+      provenance.set(serverName, { path: writePath, kind });
     }
   }
   return provenance;

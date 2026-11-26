@@ -15,7 +15,7 @@ import type {
 import {
   getConfigSources,
   isProjectConfigSource,
-  getPiGlobalConfigPath,
+  getPiGlobalWriteTarget,
   getProjectConfigPath,
   findProjectRoot,
   GENERIC_GLOBAL_CONFIG_PATH,
@@ -46,6 +46,7 @@ export type * from "./config-contracts.ts";
 export {
   getGlobalNativePiConfigPath,
   getPiGlobalConfigPath,
+  getPiGlobalWriteTarget,
   getProjectConfigPath,
   getProjectNativePiConfigPath,
   getProjectPiConfigPath,
@@ -471,13 +472,13 @@ export function getServerProvenance(
   options?: Pick<LoadMcpConfigOptions, "includeNativePi" | "includeNativePiProject">,
 ): Map<string, ServerProvenance> {
   const provenance = new Map<string, ServerProvenance>();
-  const userPath = getPiGlobalConfigPath(overridePath);
+  const { writePath } = getPiGlobalWriteTarget(overridePath, cwd);
   const hostConfigDiscovery = getConfiguredHostConfigDiscovery(overridePath, cwd);
   let merged: McpConfig =
     hostConfigDiscovery === "on" ? loadDiscoveredHostConfigs(cwd, true) : { mcpServers: {} };
 
   if (hostConfigDiscovery === "on") {
-    addDiscoveredHostProvenance(provenance, userPath, cwd);
+    addDiscoveredHostProvenance(provenance, writePath, cwd);
   }
 
   const nativePolicies = new Map<string, NativeServerPolicy>();
@@ -497,7 +498,7 @@ export function getServerProvenance(
       expanded,
       loaded.replacedServers ? { replaceServers: loaded.replacedServers } : undefined,
     );
-    addInheritedProvenance(provenance, loaded.config.imports ?? [], userPath, cwd);
+    addInheritedProvenance(provenance, loaded.config.imports ?? [], writePath, cwd);
     addSourceServerProvenance(provenance, source, Object.keys(loaded.config.mcpServers));
   }
 

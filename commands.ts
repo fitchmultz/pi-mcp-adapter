@@ -65,7 +65,7 @@ function buildSetupCallbacks(input: {
     getMcpDiscoverySummary(configOverridePath, ctx.cwd, discoveryOptions).repoPrompt;
   return {
     previewImports: (imports: ImportKind[]) =>
-      previewCompatibilityImports(imports, configOverridePath),
+      previewCompatibilityImports(imports, configOverridePath, ctx.cwd),
     previewStarterProject: () => previewStarterProjectConfig(ctx.cwd),
     previewRepoPrompt: () => {
       const repoPrompt = getRepoPrompt();
@@ -87,7 +87,7 @@ function buildSetupCallbacks(input: {
     previewKnownServer: (preset: KnownServerPreset) =>
       previewSharedServerEntry(getProjectConfigPath(ctx.cwd), preset.id, preset.entry),
     adoptImports: async (imports: ImportKind[]) => {
-      const result = ensureCompatibilityImports(imports, configOverridePath);
+      const result = ensureCompatibilityImports(imports, configOverridePath, ctx.cwd);
       if (result.added.length > 0) {
         onConfigChanged();
       }
@@ -402,6 +402,7 @@ export async function openMcpPanel(input: {
     config,
     getServerProvenance(configPath, ctx.cwd, discoveryOptions),
     configPath,
+    ctx.cwd,
   );
   const noticeLines = buildSharedConfigNoticeLines(configPath, ctx.cwd, discoveryOptions);
 
@@ -488,6 +489,7 @@ export async function openMcpAuthPanel(
     config,
     getServerProvenance(configPath, ctx.cwd, discoveryOptions),
     configPath,
+    ctx.cwd,
   );
   const callbacks = await buildMcpPanelCallbacks(state, config, ctx);
 

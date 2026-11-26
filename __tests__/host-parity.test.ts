@@ -1437,4 +1437,58 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       vi.resetModules();
     }
   });
+
+  it("redirects fallback provenance pins for registered servers when configPath aliases project .mcp.json", async () => {
+    const { project } = createWorkspace();
+    const projectMcpPath = join(project, ".mcp.json");
+    const projectAdapterPath = join(project, ".pi", "fitch-mcp-adapter", "mcp.json");
+    writeJson(projectMcpPath, { mcpServers: {} });
+    const beforeBytes = readFileSync(projectMcpPath, "utf-8");
+
+    const { getServerProvenance, loadMcpConfigWithBase } = await import("../config.ts");
+    const { translateRegisteredMcpServers } = await import("../config-native-pi.ts");
+    const { withFallbackServerProvenance } = await import("../mcp-inspection-commands.ts");
+
+    const baseConfig = translateRegisteredMcpServers(
+      [
+        {
+          name: "ext-registered",
+          config: {
+            command: "ext-bin",
+            args: ["--serve"],
+            exposure: "deferred",
+          },
+          extensionPath: "/ext/peer.ts",
+        },
+      ],
+      project,
+    );
+
+    const provenance = withFallbackServerProvenance(
+      baseConfig,
+      getServerProvenance(projectMcpPath, project),
+      projectMcpPath,
+      project,
+    );
+    expect(provenance.get("ext-registered")).toEqual({
+      path: projectAdapterPath,
+      kind: "project",
+    });
+
+    writeDirectToolsConfig(new Map([["ext-registered", true]]), provenance);
+    expect(readFileSync(projectMcpPath, "utf-8")).toBe(beforeBytes);
+    expect(JSON.parse(readFileSync(projectAdapterPath, "utf-8"))).toEqual({
+      mcpServers: {
+        "ext-registered": { directTools: true },
+      },
+    });
+
+    const merged = loadMcpConfigWithBase(projectMcpPath, project, undefined, baseConfig);
+    expect(merged.mcpServers["ext-registered"]).toEqual({
+      command: "ext-bin",
+      args: ["--serve"],
+      lifecycle: "eager",
+      directTools: true,
+    });
+  });
 });
