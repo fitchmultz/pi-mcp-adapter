@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.63 - 2026-11-26
+
+<!-- npm-release:unreleased:start -->
+
+- Serialize concurrent OAuth token refreshes inside a session and across Pi processes with compare-and-swap token invalidation so rotating refresh tokens are not wiped by parallel 401 races.
+- Preserve existing `refreshToken` and `scope` when a same-issuer refresh response omits them per RFC 6749 §6.
+- Cache valid OAuth tokens in memory, proactively refresh expiring tokens 60 seconds before expiry, and avoid escalating absent credential reads to exclusive write locks unless a matching legacy source needs migration.
+- Wait up to 2.5 seconds on contended OAuth credential storage locks via Node SQLite `busy_timeout` instead of failing immediately.
+- Automatically reconnect `needs-auth` HTTP servers when another Pi session stores fresh OAuth credentials for that server.
+- Harden OAuth callback URL parsing against missing or malformed `Host` headers, route auto-auth browser URLs through Pi UI notifications, honor caller abort on deduplicated `authenticate()` waits, replace stale pending auth flows on widened `insufficient_scope` challenges, skip redundant discovery probes when challenge metadata is already present, and observe OAuth challenges on legacy SSE servers.
+
+- Decouple `requestTimeoutMs` from pre-dispatch session recovery, automatic OAuth flows, `McpToolCallEvent.signal` (which now reflects caller/owner cancellation only), and modern multi-round-trip input fulfillment (elicitation/sampling), enable SDK `resetTimeoutOnProgress` so active progress notifications keep long-running MCP calls alive, stream single-line MCP progress and connect/auth phase updates to Pi tool UI via `onUpdate`, and improve timeout error messages with server, tool, effective timeout duration, and `requestTimeoutMs` guidance.
+
+- Stop `keep-alive` health checks from repeatedly hammering servers awaiting OAuth authentication (`needs-auth`) or firing false reconnect notifications, run keep-alive reconnects concurrently without stalling idle shutdowns, apply bounded exponential backoff to failing keep-alive reconnects, and route reconnect diagnostics through debug logging instead of raw `console.error`.
+- Retain a bounded, sanitized `stderr` tail on live stdio connections so mid-session crashes and transport errors surface the server's process output instead of bare `"Connection closed"` messages.
+- Decouple exponential lazy-connect backoff (2s → 10s → 30s → 60s) from failure-reason retention so the last error remains visible in `mcp({ action: "status" })` after backoff expires, and surface sanitized failure reasons, remaining backoff time, and `mcp({ action: "connect" })` bypass guidance in `server_backoff` responses.
+- Reject pending `UnixSocketClientTransport.start()` promises promptly when `close()` is called before connecting, and cancel the underlying `ConnectionLifecycle.reconnect()` attempt when its sole caller aborts.
+
+- Unblock dynamic and templated `read-resource` URIs (including URIs from `resourceTemplates` and `resource_link` blocks) without requiring static catalog pre-registration, while keeping `exposeResources`, disabled-server, approval, hook, OAuth, session-recovery, and media/output-guard boundaries intact; stop letting `includeTools` / `excludeTools` hide or block resources (use `exposeResources: false` to disable a server's resources).
+- Discover and cache MCP resource templates (`resources/templates/list`), expose `resourceTemplates` alongside static resources in `mcp({ action: "resources" })` with live reflection on connected servers, and exclude `ui://` MCP App bundles from model-facing resource listings without affecting MCP App UI loading.
+- Expose MCP prompts to agents via `mcp({ action: "prompts", server? })` and `mcp({ action: "get-prompt", server, prompt, args? })` with native Pi content blocks (including vision-safe `ImageContent`) and output-guard protection.
+- Fix double `mcp__mcp__` prompt command naming under `toolPrefix: "mcp"`, preserve vision-safe embedded images as native `ImageContent` in prompt slash commands, wrap `getPrompt` in session and OAuth auto-auth recovery, and wire MCP `completion/complete` into slash-command `getArgumentCompletions` with request cancellation.
+
+- Consumed extension-registered MCP servers from `pi.getMcpServers()` and reacted to `mcp_servers_change` events to add, update, and remove registered servers dynamically without tearing down unrelated config servers.
+- Loaded global native Pi `<agentDir>/mcp.json` read-only alongside project `.pi/mcp.json` (skipping both when `builtin:mcp` or an inline `createMcpExtension()` coexists), preserved `description` on server definitions, enforced `oauth.clientRegistration: "cimd"` without silent DCR fallback, supported mixed hidden-wildcard + exact-visible `toolExposure` rules, and registered a fallback `pi.registerToolRenderer` for MCP tools in resumed sessions before servers connect.
+- Coordinated with Pi's `working_session_save` event for managed restarts (`/restart`, `restartWhenStale`) by deferring tool-surface mutations while a save hold is active and reporting in-flight requests, active scripts, and pending OAuth flows as blockers.
+- Walked up from `cwd` to the nearest project or Git root when discovering project MCP configs, reconciled working-directory changes (`change_dir`) differentially per server without tearing down unaffected global connections, approvals, UI sessions, or frozen direct tools, synced `cwd` in `/mcp` and `/mcp-auth` slash commands, cleaned up stale project prompt commands, and wrote `directTools` pins exclusively to `.pi/fitch-mcp-adapter/mcp.json` (or `<agentDir>/fitch-mcp-adapter/mcp.json`) so shared `.mcp.json` is never mutated.
+
+- Eliminated event-loop-blocking synchronous subprocess calls during startup, `!command` secret resolution, `npx` cache lookup, and Linux `keyctl` keyring recovery.
+- Persisted and reused MCP SDK 2.4.0 `PriorDiscovery` verdicts across HTTP reconnects and sessions (with automatic stale-prior fallback and freshness limits) to avoid redundant `server/discover` round trips.
+- Enabled 250 ms `listChanged` notification debouncing on tools, resources, and prompts, and added clean `autoOpenedSubscription.closed` handling with bounded recovery on unexpected remote stream drops.
+- Ran uncached `directTools` bootstrap concurrently with eager and keep-alive startup servers, hardened `npx` resolution for absolute paths (`bunx`/`pnpx` left untouched) and `SIGTERM`→`SIGKILL` cleanup escalation, and logged non-abort `resources/list` failures at debug level.
+
+<!-- npm-release:unreleased:end -->
+
+- fix(lifecycle): stop needs-auth reconnect storms, retain stdio stderr, and surface failure diagnostics (MCP-206) (#292) ([dfc3af8](https://github.com/fitchmultz/pi-mcp-adapter/commit/dfc3af83149af32fe49c6377c5f12dd96e55f736))
+
+### What's Changed
+
+- fix(lifecycle): stop needs-auth reconnect storms, retain stdio stderr, and surface failure diagnostics (MCP-206) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/292
+- fix(runtime): decouple timeouts from auth/recovery and stream MCP progress updates (MCP-205) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/294
+- fix(oauth): eliminate avoidable OAuth reauthentication and lock contention (MCP-204) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/295
+- feat(resources,prompts): dynamic read-resource, resource templates, gateway prompts, multimodal prompts, and autocomplete (MCP-210) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/298
+- perf: eliminate cold-start stalls with async secrets/npx, PriorDiscovery, and list_changed debounce (MCP-213) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/301
+- feat(host): achieve Pi 1.6.1+ host parity (MCP-212) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/296
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.62...v8.0.63
+
 ## 8.0.62 - 2026-11-26
 
 <!-- npm-release:unreleased:start -->
