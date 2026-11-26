@@ -126,9 +126,9 @@ describe("McpServerManager connections", () => {
     observeNativeConnections(gate.promise);
     try {
       const first = manager.reconnect("remote", def, stale, controller.signal);
+      const second = manager.reconnect("remote", def, stale);
       controller.abort(reason);
       await expect(first).rejects.toBe(reason);
-      const second = manager.reconnect("remote", def, stale);
       gate.resolve(null);
       const fresh = await second;
       expect(fresh).not.toBe(stale);
@@ -136,6 +136,37 @@ describe("McpServerManager connections", () => {
       expect(fixture.initializes()).toBe(2);
     } finally {
       gate.resolve(null);
+    }
+  });
+
+  it("cancels an underlying reconnect when its sole caller aborts and lets a later caller reconnect", async () => {
+    const observed = observeNativeConnections();
+    const { fixture, manager, def } = await setup();
+    const stale = await manager.connect("remote", def);
+    const secondInit = fixture.holdNextInitialize();
+    const controller = new AbortController();
+    const reason = new Error("caller aborted reconnect");
+    try {
+      const first = manager.reconnect("remote", def, stale, controller.signal);
+      await secondInit;
+      controller.abort(reason);
+      await expect(first).rejects.toBe(reason);
+      fixture.release();
+      // Give any leaked background attempt a chance to settle; it must stay cancelled.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 25);
+      });
+      expect(manager.getConnection("remote")).toBe(stale);
+      expect(stale.status).toBe("closed");
+
+      const fresh = await manager.reconnect("remote", def, stale);
+      expect(fresh).not.toBe(stale);
+      expect(fresh.status).toBe("connected");
+      expect(manager.getConnection("remote")).toBe(fresh);
+      expect(observed.records).toHaveLength(3);
+      expect(fixture.initializes()).toBe(3);
+    } finally {
+      fixture.release();
     }
   });
 

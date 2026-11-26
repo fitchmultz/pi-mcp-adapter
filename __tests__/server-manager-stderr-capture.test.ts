@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { McpServerManager } from "../server-manager.ts";
+import { executeCall } from "../proxy-modes.ts";
+import { buildToolMetadata } from "../tool-metadata.ts";
+import { createTestState } from "./test-state.ts";
 import { requireValue } from "./fixtures/extension-lifecycle.ts";
 import { observeNativeConnections } from "./fixtures/strict-manager-boundaries-sdk.ts";
 
@@ -109,5 +112,103 @@ describe("McpServerManager stderr capture", () => {
     expect(error.cause).toBeInstanceOf(Error);
     assert(error.cause instanceof Error);
     expect(error.cause.message).toContain("Connection closed");
+  });
+
+  it("retains a bounded, sanitized stderr tail on live stdio connections and detaches on close", async () => {
+    const observed = observeNativeConnections();
+    const instance = manager();
+    const connection = await instance.connect("demo", stdio("serve"));
+    const transport = requireValue(observed.records[0]).transport;
+    assert(transport instanceof StdioClientTransport);
+    const stderrStream = requireValue(transport.stderr);
+    assert(connection.getStderrTail !== undefined);
+
+    const lines = Array.from({ length: 25 }, (_, i) => `stderr-line-${i + 1}`);
+    stderrStream.emit("data", `${lines.join("\n")}\n\x1b]52;c;secret\x07clean-final\n`);
+
+    const tail = connection.getStderrTail();
+    expect(tail).not.toContain("secret");
+    expect(tail).toContain("clean-final");
+    expect(tail.split("\n").length).toBeLessThanOrEqual(20);
+    expect(tail).not.toContain("stderr-line-1\n");
+    expect(Buffer.byteLength(tail, "utf8")).toBeLessThanOrEqual(2048);
+
+    await instance.close("demo");
+    expect(stderrStream.listenerCount("data")).toBe(0);
+  });
+
+  it("surfaces captured stderr tail when a live stdio server crashes mid-session during a tool call", async () => {
+    const instance = manager();
+    const definition = stdio("crash-mid-session");
+    const connection = await instance.connect("crashy", definition);
+    const state = createTestState({
+      manager: instance,
+      config: { mcpServers: { crashy: definition }, settings: {} },
+      toolMetadata: new Map([
+        [
+          "crashy",
+          buildToolMetadata({
+            tools: connection.tools,
+            resources: connection.resources,
+            definition,
+            serverName: "crashy",
+            prefix: "server",
+          }).metadata,
+        ],
+      ]),
+    });
+
+    const result = await executeCall(state, {
+      toolName: "crashy_crash",
+      args: {},
+      serverOverride: "crashy",
+    });
+
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(result.isError).toBe(true);
+    expect(result.details).toMatchObject({
+      error: "ambiguous_outcome",
+      stderr: "FATAL: database handle corrupted\nstack frame 2",
+    });
+    expect(text).toContain("FATAL: database handle corrupted");
+    expect(text).toContain("stack frame 2");
+    expect(text).not.toContain("secret");
+  });
+
+  it("surfaces captured stderr tail when a live stdio server crashes during a resource read", async () => {
+    const instance = manager();
+    const definition = stdio("crash-mid-session");
+    const connection = await instance.connect("crashy", definition);
+    const state = createTestState({
+      manager: instance,
+      config: { mcpServers: { crashy: definition }, settings: {} },
+      toolMetadata: new Map([
+        [
+          "crashy",
+          buildToolMetadata({
+            tools: connection.tools,
+            resources: connection.resources,
+            definition,
+            serverName: "crashy",
+            prefix: "server",
+          }).metadata,
+        ],
+      ]),
+    });
+
+    const result = await executeCall(state, {
+      toolName: "docs://crash",
+      args: {},
+      serverOverride: "crashy",
+      options: { resourceUri: "docs://crash" },
+    });
+
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(result.isError).toBe(true);
+    expect(result.details).toMatchObject({
+      error: "call_failed",
+      stderr: "FATAL: resource reader crashed",
+    });
+    expect(text).toContain("FATAL: resource reader crashed");
   });
 });

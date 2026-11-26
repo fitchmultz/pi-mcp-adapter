@@ -2,14 +2,16 @@ import assert from "node:assert/strict";
 import { createTestState } from "./test-state.ts";
 import { createTestExtensionContext } from "./test-extension-context.ts";
 import { firstText, parsedRecord, proxyRuntimeConnection } from "./fixtures/proxy-runtime.ts";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   executeCall,
+  executeConnect,
   executeDescribe,
   executeList,
   executeSearch,
   executeStatus,
 } from "../proxy-modes.ts";
+import { clearFailure, recordFailure } from "../init.ts";
 import type { McpExtensionState } from "../state.ts";
 
 function createState(): McpExtensionState {
@@ -44,6 +46,10 @@ function createState(): McpExtensionState {
 
 describe("proxy discovery", () => {
   const anyNumber: unknown = expect.any(Number);
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
   it("returns exact input/output schemas and guidance in describe and search content", () => {
     const state = createState();
     const tool = state.toolMetadata.get("demo")?.[0];
@@ -437,5 +443,87 @@ describe("proxy discovery", () => {
       '"read" is a native Pi tool. Call read directly instead of using mcp({ action: "call", tool: "read" }).',
     );
     expect(result.details).toMatchObject({ error: "native_tool", requestedTool: "read" });
+  });
+
+  it("surfaces sanitized failure reasons, retry countdown, and connect bypass guidance in server_backoff", async () => {
+    vi.useFakeTimers();
+    const state = createState();
+    recordFailure(state, "demo", "ECONNREFUSED \x1b]52;c;secret\x07port 8123");
+
+    const result = await executeCall(state, { toolName: "demo_search", args: {} });
+    const text = firstText(result);
+
+    expect(result.isError).toBe(true);
+    expect(result.details).toMatchObject({
+      error: "server_backoff",
+      dispatched: false,
+      server: "demo",
+      tool: "search",
+      failedAgoSeconds: 0,
+      retryAfterSeconds: 2,
+      failureMessage: "ECONNREFUSED port 8123",
+    });
+    expect(text).toContain("retry in 2s");
+    expect(text).toContain("ECONNREFUSED port 8123");
+    expect(text).toContain('mcp({ action: "connect", server: "demo" })');
+    expect(text).not.toContain("secret");
+
+    // Explicit connect bypasses backoff immediately.
+    const definition = state.config.mcpServers.demo;
+    assert.ok(definition);
+    const liveConnection = await proxyRuntimeConnection(definition);
+    vi.spyOn(state.manager, "connect").mockResolvedValueOnce(liveConnection);
+    const connected = await executeConnect(state, { serverName: "demo" });
+    expect(connected.details).not.toHaveProperty("error");
+    expect(state.failureMessages.has("demo")).toBe(false);
+  });
+
+  it("surfaces failure reasons in status both during backoff and after backoff expires until clearFailure", () => {
+    vi.useFakeTimers();
+    const state = createState();
+    recordFailure(state, "demo", "spawn ENOENT \x1b[31mmissing-binary\x1b[0m");
+
+    const duringBackoff = executeStatus(state);
+    expect(firstText(duringBackoff)).toContain(
+      "✗ demo (failed 0s ago — spawn ENOENT missing-binary)",
+    );
+    expect(duringBackoff.details).toMatchObject({
+      servers: [
+        expect.objectContaining({
+          name: "demo",
+          status: "failed",
+          failureMessage: "spawn ENOENT missing-binary",
+        }),
+      ],
+    });
+
+    // Advance past the 2s initial backoff: status transitions to cached, but last error survives.
+    vi.advanceTimersByTime(2_000);
+    const afterExpiry = executeStatus(state);
+    expect(firstText(afterExpiry)).toContain(
+      "○ demo (2 tools, cached; last error: spawn ENOENT missing-binary)",
+    );
+    expect(afterExpiry.details).toMatchObject({
+      servers: [
+        expect.objectContaining({
+          name: "demo",
+          status: "cached",
+          failedAgo: null,
+          failureMessage: "spawn ENOENT missing-binary",
+        }),
+      ],
+    });
+
+    // Once cleared, failure diagnostics disappear from status.
+    clearFailure(state, "demo");
+    const afterClear = executeStatus(state);
+    expect(firstText(afterClear)).toContain("○ demo (2 tools, cached)");
+    expect(firstText(afterClear)).not.toContain("last error");
+    expect(afterClear.details).toMatchObject({
+      servers: [expect.objectContaining({ name: "demo", status: "cached" })],
+    });
+    const servers = afterClear.details.servers;
+    assert.ok(Array.isArray(servers));
+    expect(servers[0]).not.toHaveProperty("failureMessage");
   });
 });

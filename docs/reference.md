@@ -435,8 +435,8 @@ Persistent OAuth is unsupported out of the box on Android/Termux because `@napi-
 
 - **`lazy`** (default) — Connect on selected discovery or first call, then disconnect after idle timeout. Cached metadata keeps search/list working without connections. Configured pins can intentionally discover their server at startup.
 - **`eager`** — Connect at startup but don't auto-reconnect if the connection drops. No idle timeout by default (set `idleTimeout` explicitly to enable).
-- **`keep-alive`** — Connect at startup. Auto-reconnect via health checks. No idle timeout. Use for servers you always need available.
-- **`lazy-keep-alive`** — Connect on selected discovery or first call (like `lazy`); configured pins can discover it at startup. Once spawned, never idle-shut down and auto-reconnect via health checks if the process dies (like `keep-alive`). Use for servers that are expensive to start but should stay resident after their first use.
+- **`keep-alive`** — Connect at startup. Auto-reconnect via health checks with bounded exponential backoff (30s → 60s → 120s → 240s → 300s max, reset on connect). Servers waiting for OAuth authentication are skipped until authenticated. No idle timeout. Use for servers you always need available.
+- **`lazy-keep-alive`** — Connect on selected discovery or first call (like `lazy`); configured pins can discover it at startup. Once spawned, never idle-shut down and auto-reconnect via health checks with bounded exponential backoff if the process dies (like `keep-alive`). Use for servers that are expensive to start but should stay resident after their first use.
 
 ### Settings
 
@@ -572,7 +572,7 @@ When the provider result fits, `result.mcpResult` holds its original blocks and 
 
 If the adapter returns a diagnostic instead of a provider result, `mcpAdapter.omitted` is `true` and `mcpAdapter.error` gives the code, such as `approval_required`. Read `mcpAdapter.message` for the explanation when present. The receipt includes `isError: true` only when Pi marks the call as a tool error. Argument validation and other failures that reject in Pi before the adapter returns a result still reject in codemode.
 
-`server_backoff` is an error: the adapter did not dispatch the call because the server recently failed to connect. `ambiguous_outcome` means a dispatched call may have run; read back its outcome before repeating it.
+`server_backoff` is an error: the adapter did not dispatch the call because the server recently failed to connect. Automatic lazy retries back off exponentially (2s → 10s → 30s → 60s max, resetting on a successful connect). Both `server_backoff` and `mcp({ action: "status" })` include the sanitized last failure reason (retained until the server connects or resets); `server_backoff` also reports remaining backoff seconds and notes that `mcp({ action: "connect", server })` bypasses backoff immediately. Live stdio connections retain a bounded recent `stderr` tail so mid-session crashes include the process output alongside transport errors. `ambiguous_outcome` means a dispatched call may have run; read back its outcome before repeating it.
 
 The adapter shows `Expected parameters:` when an error points to the tool's input arguments. It leaves that hint out of upstream query, API, authentication, and transport failures.
 

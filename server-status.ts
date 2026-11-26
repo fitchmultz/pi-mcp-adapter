@@ -7,8 +7,61 @@ import {
 } from "./types.ts";
 import { sanitizeTerminalText } from "./utils.ts";
 
-/** How long a recorded failure keeps a server out of retry. */
+/** Maximum backoff window for repeated lazy-connect failures. */
 export const FAILURE_BACKOFF_MS = 60 * 1000;
+
+/** Progressive backoff windows for repeated lazy-connect failures. */
+export const FAILURE_BACKOFF_STEPS_MS = [2_000, 10_000, 30_000, FAILURE_BACKOFF_MS] as const;
+
+const MAX_DIAGNOSTIC_SUMMARY_CHARS = 500;
+const trackerBackoffDurations = new WeakMap<ReadonlyMap<string, number>, Map<string, number>>();
+
+export function failureBackoffMs(consecutiveFailures: number): number {
+  const index = Math.min(Math.max(0, consecutiveFailures - 1), FAILURE_BACKOFF_STEPS_MS.length - 1);
+  return FAILURE_BACKOFF_STEPS_MS[index] ?? FAILURE_BACKOFF_MS;
+}
+
+export function setFailureBackoffMs(
+  tracker: ReadonlyMap<string, number>,
+  serverName: string,
+  backoffMs: number,
+): void {
+  let durations = trackerBackoffDurations.get(tracker);
+  if (!durations) {
+    durations = new Map();
+    trackerBackoffDurations.set(tracker, durations);
+  }
+  durations.set(serverName, backoffMs);
+}
+
+export function getFailureBackoffMs(
+  tracker: ReadonlyMap<string, number>,
+  serverName: string,
+): number {
+  return trackerBackoffDurations.get(tracker)?.get(serverName) ?? FAILURE_BACKOFF_MS;
+}
+
+export function clearFailureBackoffMs(
+  tracker: ReadonlyMap<string, number>,
+  serverName: string,
+): void {
+  trackerBackoffDurations.get(tracker)?.delete(serverName);
+}
+
+/** Sanitize and bound a failure message for status and backoff diagnostics. */
+export function formatFailureSummary(
+  message: string | null | undefined,
+  maxChars = MAX_DIAGNOSTIC_SUMMARY_CHARS,
+): string | null {
+  if (message === null || message === undefined) {
+    return null;
+  }
+  const clean = sanitizeTerminalText(message);
+  if (clean.length === 0) {
+    return null;
+  }
+  return clean.length > maxChars ? `${clean.slice(0, maxChars - 3)}...` : clean;
+}
 
 /**
  * The one stage every status surface derives from.
@@ -34,12 +87,29 @@ export interface ServerStageInput {
 }
 
 /** Age of an active failure record, or null once the retry window has passed. */
-export function failureAgeSeconds(failedAt: number | undefined, now: number): number | null {
+export function failureAgeSeconds(
+  failedAt: number | undefined,
+  now: number,
+  backoffMs = FAILURE_BACKOFF_MS,
+): number | null {
   if (failedAt === undefined || failedAt === 0 || Number.isNaN(failedAt)) {
     return null;
   }
   const ageMs = now - failedAt;
-  return ageMs > FAILURE_BACKOFF_MS ? null : Math.round(ageMs / 1000);
+  return ageMs >= backoffMs ? null : Math.max(0, Math.round(ageMs / 1000));
+}
+
+/** Remaining seconds in an active failure backoff window, or null once expired. */
+export function failureRemainingSeconds(
+  failedAt: number | undefined,
+  now: number,
+  backoffMs = FAILURE_BACKOFF_MS,
+): number | null {
+  if (failedAt === undefined || failedAt === 0 || Number.isNaN(failedAt)) {
+    return null;
+  }
+  const remainingMs = failedAt + backoffMs - now;
+  return remainingMs <= 0 ? null : Math.max(1, Math.ceil(remainingMs / 1000));
 }
 
 export function serverStage({

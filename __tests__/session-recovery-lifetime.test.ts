@@ -517,11 +517,15 @@ describe("native session replacement lifetime", () => {
       });
       await expect.poll(() => discovery).toBeDefined();
       f.definition.requestTimeoutMs = 2000;
+      const connect = vi.spyOn(f.manager, "connect");
       const second = executeCall(f.state, {
         toolName: "local_effect",
         args: {},
         serverOverride: "local",
       });
+      // Wait for the second call to finish lazy module loading and join the
+      // shared replacement before the first caller cancels or times out.
+      await expect.poll(() => connect.mock.calls.length).toBeGreaterThanOrEqual(1);
       if (cancellation === "abort") {
         controller.abort(new Error("caller stopped waiting"));
       }

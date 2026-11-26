@@ -1,12 +1,31 @@
+import type { Stream } from "node:stream";
 import type * as ConnectionRuntime from "./connection-runtime.ts";
+import type { ServerConnection } from "./server-connection.ts";
 import type { ServerDefinition } from "./types.ts";
 import { resolveNpxBinary } from "./npx-resolver.ts";
-import { resolveConfigPath, resolveCommandSecretsRecord } from "./utils.ts";
+import { resolveConfigPath, resolveCommandSecretsRecord, sanitizeTerminalText } from "./utils.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { logger } from "./logger.ts";
 
 const MAX_CAPTURED_STDERR_BYTES = 8 * 1024;
 const MAX_CAPTURED_STDERR_LINES = 3;
+const MAX_STDERR_TAIL_BYTES = 2 * 1024;
+const MAX_STDERR_TAIL_LINES = 20;
+
+const TRANSPORT_ERROR_CODES = new Set([
+  "CONNECTION_CLOSED",
+  "NOT_CONNECTED",
+  "SEND_FAILED",
+  "EPIPE",
+  "ECONNRESET",
+  "ERR_STREAM_DESTROYED",
+  "ERR_STREAM_WRITE_AFTER_END",
+]);
+
+const TRANSPORT_ERROR_PATTERN =
+  /\b(?:connection closed|transport closed|not connected|broken pipe|epipe)\b/i;
+
+const connectionDiagnostics = new WeakMap<ServerConnection, StdioDiagnostics>();
 
 function boundedStderrChunk(chunk: Buffer | string): Buffer {
   if (Buffer.isBuffer(chunk)) {
@@ -38,11 +57,89 @@ function appendStderrTail(tail: Buffer, chunk: Buffer | string): Buffer {
     : combined;
 }
 
+function utf8Tail(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.byteLength <= maxBytes) {
+    return text;
+  }
+  let start = bytes.byteLength - maxBytes;
+  while (start < bytes.byteLength) {
+    const byte = bytes[start];
+    if (byte === undefined || (byte & 0xc0) !== 0x80) {
+      break;
+    }
+    start++;
+  }
+  return bytes.subarray(start).toString("utf8");
+}
+
+function boundStderrLines(lines: readonly string[], maxBytes: number): string {
+  const kept: string[] = [];
+  let totalBytes = 0;
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index];
+    if (line === undefined) {
+      continue;
+    }
+    const separatorBytes = kept.length > 0 ? 1 : 0;
+    const lineBytes = Buffer.byteLength(line, "utf8");
+    if (kept.length > 0 && totalBytes + separatorBytes + lineBytes > maxBytes) {
+      break;
+    }
+    if (lineBytes > maxBytes) {
+      kept.push(utf8Tail(line, maxBytes));
+      break;
+    }
+    kept.push(line);
+    totalBytes += separatorBytes + lineBytes;
+  }
+  return kept.reverse().join("\n");
+}
+
 export class StdioDiagnostics {
   private tail: Buffer = Buffer.alloc(0);
+  private detachStream: (() => void) | undefined;
+
+  attach(stream: Stream | null | undefined): void {
+    this.detach();
+    if (!stream) {
+      return;
+    }
+    const onData = (chunk: Buffer | string) => this.append(chunk);
+    const onEnd = () => this.detach();
+    stream.on("data", onData);
+    stream.once("end", onEnd);
+    stream.once("close", onEnd);
+    this.detachStream = () => {
+      stream.off("data", onData);
+      stream.off("end", onEnd);
+      stream.off("close", onEnd);
+      this.detachStream = undefined;
+    };
+  }
+
+  detach(): void {
+    this.detachStream?.();
+  }
 
   append(chunk: Buffer | string): void {
     this.tail = appendStderrTail(this.tail, chunk);
+  }
+
+  getTail(): string {
+    if (this.tail.length === 0) {
+      return "";
+    }
+    const lines = this.tail
+      .toString("utf8")
+      .split(/\r?\n/)
+      .map((line) => sanitizeTerminalText(line))
+      .filter((line) => line.length > 0)
+      .slice(-MAX_STDERR_TAIL_LINES);
+    if (lines.length === 0) {
+      return "";
+    }
+    return boundStderrLines(lines, MAX_STDERR_TAIL_BYTES);
   }
 
   report(error: unknown): unknown {
@@ -60,6 +157,68 @@ export class StdioDiagnostics {
       cause: error,
     });
   }
+}
+
+export function attachStdioDiagnostics(
+  connection: ServerConnection,
+  diagnostics: StdioDiagnostics,
+): void {
+  connectionDiagnostics.set(connection, diagnostics);
+}
+
+export function detachStdioDiagnostics(connection: ServerConnection): void {
+  connectionDiagnostics.get(connection)?.detach();
+}
+
+export function isConnectionTransportError(error: unknown): boolean {
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!(current instanceof Error) || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    const code = "code" in current ? current.code : undefined;
+    if (
+      (typeof code === "string" && TRANSPORT_ERROR_CODES.has(code)) ||
+      TRANSPORT_ERROR_PATTERN.test(current.message)
+    ) {
+      return true;
+    }
+    if (current.cause !== undefined) {
+      pending.push(current.cause);
+    }
+  }
+  return false;
+}
+
+export function connectionStderrTail(
+  connection: Pick<ServerConnection, "status" | "getStderrTail"> | undefined,
+  error?: unknown,
+): string {
+  if (!connection?.getStderrTail) {
+    return "";
+  }
+  if (connection.status !== "closed" && !isConnectionTransportError(error)) {
+    return "";
+  }
+  return connection.getStderrTail();
+}
+
+export function appendStderrToError(
+  error: unknown,
+  connection: Pick<ServerConnection, "status" | "getStderrTail"> | undefined,
+): Error | undefined {
+  const stderrTail = connectionStderrTail(connection, error);
+  if (stderrTail.length === 0) {
+    return undefined;
+  }
+  const base = error instanceof Error ? error.message : String(error);
+  if (base.includes(stderrTail)) {
+    return undefined;
+  }
+  return new Error(`${base}\n\nRecent server stderr:\n${stderrTail}`, { cause: error });
 }
 
 export function createStdioConnection(
@@ -83,7 +242,7 @@ export function createStdioConnection(
     ...(cwd !== undefined ? { cwd } : {}),
     stderr: definition.debug === true ? "inherit" : "pipe",
   });
-  transport.stderr?.on("data", (chunk: Buffer | string) => diagnostics.append(chunk));
+  diagnostics.attach(transport.stderr);
   const closed = new AbortController();
   const onclose = transport.onclose;
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-010: native Transport exposes a callback, not EventTarget.

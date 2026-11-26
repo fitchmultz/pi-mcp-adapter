@@ -18,10 +18,11 @@ export async function createManagerBoundaryHttp(
   requests: readonly { method: string | undefined; url: string | undefined }[];
   initializes: () => number;
   initializeStarted: Promise<null>;
+  holdNextInitialize: () => Promise<null>;
   release: () => void;
   close: () => Promise<void>;
 }> {
-  const initializeStarted = Promise.withResolvers<null>();
+  let initializeStarted = Promise.withResolvers<null>();
   const pending: Array<() => void> = [];
   let initializes = 0;
   let hold = options.holdInitialize === true;
@@ -74,6 +75,11 @@ export async function createManagerBoundaryHttp(
     requests,
     initializes: () => initializes,
     initializeStarted: initializeStarted.promise,
+    holdNextInitialize: () => {
+      hold = true;
+      initializeStarted = Promise.withResolvers<null>();
+      return initializeStarted.promise;
+    },
     release: () => {
       hold = false;
       for (const finish of pending.splice(0)) {

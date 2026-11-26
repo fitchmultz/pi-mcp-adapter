@@ -8,7 +8,12 @@ import {
   type McpServerStatusSnapshot,
   type McpStatusSnapshot,
 } from "./types.ts";
-import { failureAgeSeconds, runtimeStatus, serverStage } from "./server-status.ts";
+import {
+  failureAgeSeconds,
+  getFailureBackoffMs,
+  runtimeStatus,
+  serverStage,
+} from "./server-status.ts";
 
 function getCatalogCounts(
   state: McpExtensionState,
@@ -33,7 +38,11 @@ function getServerSnapshot(state: McpExtensionState, name: string): McpServerSta
   }
   const connection = state.manager.getConnection(name);
   const { toolCount, resourceCount, catalogKnown } = getCatalogCounts(state, name, connection);
-  const failedAgoSeconds = failureAgeSeconds(state.failureTracker.get(name), Date.now());
+  const failedAgoSeconds = failureAgeSeconds(
+    state.failureTracker.get(name),
+    Date.now(),
+    getFailureBackoffMs(state.failureTracker, name),
+  );
   const status = runtimeStatus(
     serverStage({
       definition,

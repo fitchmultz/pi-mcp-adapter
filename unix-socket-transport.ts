@@ -29,34 +29,18 @@ export class UnixSocketClientTransport implements Transport {
     await new Promise<void>((resolve, reject) => {
       const socket = createConnection(this.socketPath);
       this.socket = socket;
-      let connected = false;
+      let settled = false;
 
       socket.once("connect", () => {
-        connected = true;
-        resolve();
-      });
-      socket.on("data", (chunk) => {
-        try {
-          this.readBuffer.append(chunk);
-          while (true) {
-            const message = this.readBuffer.readMessage();
-            if (message === null) {
-              break;
-            }
-            this.onmessage?.(message);
-          }
-        } catch (error) {
-          const cause = error instanceof Error ? error : new Error(String(error));
-          this.onerror?.(cause);
-          this.close().catch((closeError: unknown) => {
-            this.onerror?.(
-              closeError instanceof Error ? closeError : new Error(String(closeError)),
-            );
-          });
+        if (!settled) {
+          settled = true;
+          resolve();
         }
       });
+      socket.on("data", (chunk) => this.handleData(chunk));
       socket.on("error", (error) => {
-        if (!connected) {
+        if (!settled) {
+          settled = true;
           reject(error);
         }
         this.onerror?.(error);
@@ -66,9 +50,32 @@ export class UnixSocketClientTransport implements Transport {
           this.socket = undefined;
         }
         this.readBuffer.clear();
+        if (!settled) {
+          settled = true;
+          reject(new Error("UnixSocketClientTransport closed before connecting"));
+        }
         this.onclose?.();
       });
     });
+  }
+
+  private handleData(chunk: Buffer): void {
+    try {
+      this.readBuffer.append(chunk);
+      while (true) {
+        const message = this.readBuffer.readMessage();
+        if (message === null) {
+          break;
+        }
+        this.onmessage?.(message);
+      }
+    } catch (error) {
+      const cause = error instanceof Error ? error : new Error(String(error));
+      this.onerror?.(cause);
+      this.close().catch((closeError: unknown) => {
+        this.onerror?.(closeError instanceof Error ? closeError : new Error(String(closeError)));
+      });
+    }
   }
 
   async close(): Promise<void> {
@@ -76,6 +83,13 @@ export class UnixSocketClientTransport implements Transport {
     this.socket = undefined;
     this.readBuffer.clear();
     if (!socket || socket.destroyed) {
+      return;
+    }
+    if (socket.connecting) {
+      await new Promise<void>((resolve) => {
+        socket.once("close", () => resolve());
+        socket.destroy();
+      });
       return;
     }
 

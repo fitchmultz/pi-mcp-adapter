@@ -32,6 +32,7 @@ import type { ConnectionLifecycle } from "./connection-lifecycle.ts";
 import type { ConnectionCallbacks } from "./connection-callbacks.ts";
 import { createHttpConnection } from "./connection-http.ts";
 import {
+  attachStdioDiagnostics,
   createStdioConnection,
   resolveStdioCommand,
   StdioDiagnostics,
@@ -346,7 +347,10 @@ class ConnectionSetup {
   }
 
   private connection(transport: Transport, status: ServerConnection["status"]): ServerConnection {
-    return {
+    const isStdio =
+      typeof this.options.definition.command === "string" &&
+      this.options.definition.command.length > 0;
+    const connection: ServerConnection = {
       client: this.client,
       transport,
       definition: this.options.definition,
@@ -356,7 +360,12 @@ class ConnectionSetup {
       lastUsedAt: Date.now(),
       status,
       oauthProvider: this.oauthProvider,
+      ...(isStdio ? { getStderrTail: () => this.stderr.getTail() } : {}),
     };
+    if (isStdio) {
+      attachStdioDiagnostics(connection, this.stderr);
+    }
+    return connection;
   }
 
   private async discover(transport: Transport): Promise<ServerConnection> {
@@ -411,6 +420,7 @@ class ConnectionSetup {
           abortCleanup ?? Promise.resolve().then(() => this.client.close()),
         ]);
     await drainClientCallbacks(this.client);
+    this.stderr.detach();
     factory.lifecycle.disposal.releaseWhenSettled(this.client);
     const failures: unknown[] = cleanupFailures(results);
     if (runtime.isOAuthChallenge(failure) && supportsOAuth(definition) && failures.length === 0) {

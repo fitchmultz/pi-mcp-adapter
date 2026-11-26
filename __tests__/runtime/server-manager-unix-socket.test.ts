@@ -6,6 +6,7 @@ import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpServerManager } from "../../server-manager.ts";
 import { ConnectionDisposal } from "../../connection-disposal.ts";
+import { UnixSocketClientTransport } from "../../unix-socket-transport.ts";
 
 const managers: McpServerManager[] = [];
 const servers: Server[] = [];
@@ -107,5 +108,23 @@ describe("McpServerManager Unix socket transport", () => {
     expect(own).toHaveBeenCalledTimes(1);
     expect(release).toHaveBeenCalledTimes(1);
     expect(release.mock.calls[0]?.[0]).toBe(own.mock.calls[0]?.[0]);
+  });
+
+  it("rejects start() promptly when close() is called before connect completes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-mcp-socket-close-"));
+    temporaryDirectories.push(directory);
+    const socketPath = join(directory, "slow.sock");
+    const server = createServer();
+    servers.push(server);
+    await new Promise<void>((resolve, reject) => {
+      server.listen(socketPath, resolve).once("error", reject);
+    });
+
+    const transport = new UnixSocketClientTransport(socketPath);
+    const starting = transport.start();
+    const closing = transport.close();
+
+    await expect(starting).rejects.toThrow("UnixSocketClientTransport closed before connecting");
+    await expect(closing).resolves.toBeUndefined();
   });
 });

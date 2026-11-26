@@ -7,6 +7,7 @@ import {
   drainClientOperations,
 } from "./client-operations.ts";
 import { logger } from "./logger.ts";
+import { detachStdioDiagnostics } from "./connection-stdio.ts";
 
 export function cleanupFailures(results: readonly PromiseSettledResult<unknown>[]): unknown[] {
   const failures: unknown[] = [];
@@ -126,6 +127,7 @@ export class ConnectionDisposal {
       // Keep ordinary per-server cancellation prompt, but retain native send/auth tails for
       // readiness and final shutdown. Inbound handler promises still drain before disposal.
       await drainClientCallbacks(connection.client);
+      detachStdioDiagnostics(connection);
       if (failures.length > 0) {
         throw new AggregateError(failures, "MCP connection cleanup failed");
       }

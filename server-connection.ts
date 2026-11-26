@@ -22,6 +22,8 @@ export interface ServerConnection {
   status: "connected" | "closed" | "needs-auth";
   /** Whether this connection was constructed with the native OAuth provider. */
   oauthProvider?: boolean;
+  /** Recent sanitized stderr tail captured for live stdio connections. */
+  getStderrTail?: () => string;
 }
 
 export type UiStreamListener = (
