@@ -340,17 +340,17 @@ describe("tool approval", () => {
       args: { n: 2 },
       signal: controller2.signal,
     });
-    const p3 = ensureToolCallApproved(state, {
-      serverName: "demo",
-      toolMeta: tool,
-      args: { n: 3 },
-    });
 
     await expect.poll(() => waiters.length).toBe(1);
     controller2.abort();
     await expect(p2).rejects.toThrow(/abort/i);
 
-    // Waiter #3 must still remain queued behind p1's open prompt.
+    // Caller #3 starting AFTER p2 aborted must still stay queued behind p1's open prompt.
+    const p3 = ensureToolCallApproved(state, {
+      serverName: "demo",
+      toolMeta: tool,
+      args: { n: 3 },
+    });
     await Promise.resolve();
     await Promise.resolve();
     expect(select).toHaveBeenCalledTimes(1);
