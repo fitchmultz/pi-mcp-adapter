@@ -230,6 +230,7 @@ const pagedActions = new Set<GatewayArguments["action"]>([
   "list",
   "connect",
   "resources",
+  "prompts",
 ]);
 
 function validateRequirements(

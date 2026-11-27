@@ -133,7 +133,7 @@ describe("tool approval", () => {
       isError: true,
       details: { error: "approval_denied", server: "demo", tool: "search-records" },
     });
-    expect(nativeMcpResult(directResult, false).isError).toBe(true);
+    expect(nativeMcpResult(directResult).isError).toBe(true);
     expect(direct.callTool).not.toHaveBeenCalled();
   });
 

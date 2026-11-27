@@ -11,13 +11,10 @@ it("advertises a flat action schema without redundant allOf and enforces cross-f
   expect(gatewayParameters).not.toHaveProperty("allOf");
   expect(Value.Check(gatewayParameters, { action: "status" })).toBe(true);
   expect(Value.Check(gatewayParameters, { action: "call", tool: "demo", args: {} })).toBe(true);
-  expect(Value.Check(gatewayParameters, { action: "read-resource", server: "demo" })).toBe(false);
   expect(Value.Check(gatewayParameters, { action: "prompts" })).toBe(true);
   expect(Value.Check(gatewayParameters, { action: "prompts", server: "demo", limit: 10 })).toBe(
     true,
   );
-  expect(Value.Check(gatewayParameters, { action: "prompts", limit: 101 })).toBe(false);
-  expect(Value.Check(gatewayParameters, { action: "get-prompt", server: "demo" })).toBe(false);
   expect(
     Value.Check(gatewayParameters, {
       action: "get-prompt",
@@ -68,6 +65,7 @@ it("advertises a flat action schema without redundant allOf and enforces cross-f
     [{ action: "connect" }, "connect requires server"],
     [{ action: "instructions" }, "instructions requires server"],
     [{ action: "resources" }, "resources requires server"],
+    [{ action: "get-prompt", server: "demo" }, "get-prompt requires prompt"],
     [{ action: "read-result" }, "read-result requires ref"],
     [{ action: "auth-start" }, "auth-start requires server"],
     [{ action: "auth-complete" }, "auth-complete requires server"],
@@ -75,6 +73,7 @@ it("advertises a flat action schema without redundant allOf and enforces cross-f
     [{ action: "search", query: "q", limit: 101 }, "search limit must be at most 100"],
     [{ action: "connect", server: "demo", limit: 101 }, "connect limit must be at most 100"],
     [{ action: "resources", server: "demo", limit: 101 }, "resources limit must be at most 100"],
+    [{ action: "prompts", limit: 101 }, "prompts limit must be at most 100"],
     [
       { action: "status", format: "structured" },
       'format is only supported for "call" and "read-result" actions',

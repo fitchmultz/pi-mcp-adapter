@@ -149,7 +149,6 @@ export const serverFields = {
   uiToolConsent: isUiToolConsent,
   debug: isBoolean,
   trace: isBoolean,
-  description: isString,
   disabled: (value: unknown): value is boolean | string => isBoolean(value) || isString(value),
 } satisfies OptionalFields<ServerEntry>;
 export function isServerEntry(value: unknown): value is ServerEntry {
