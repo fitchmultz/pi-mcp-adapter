@@ -135,6 +135,7 @@ export class UiToolProxy {
       result: {
         content: [{ type: "text", text: message }],
         details: { error: denied ? "approval_denied" : "approval_required", server, tool: name },
+        isError: true,
       },
     });
   }

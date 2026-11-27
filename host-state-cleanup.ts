@@ -1,6 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
-import { logger } from "./logger.ts";
 import type { MetadataCache } from "./metadata-cache.ts";
 import type { McpExtensionState, McpInitializationOptions } from "./state.ts";
 import type { McpAdapterOptions, McpConfig } from "./types.ts";
@@ -129,28 +128,6 @@ export function buildHostInitOptions(input: {
   };
 }
 
-export async function handleHostInitRejection(input: {
-  readonly ownsSession: boolean;
-  readonly currentState: McpExtensionState | null;
-  readonly ready: (state: McpExtensionState) => void;
-  readonly fail: (message: string) => void;
-  readonly owner: McpRuntimeOwner;
-  readonly oauthRuntime: McpOAuthRuntime;
-  readonly error: unknown;
-}): Promise<void> {
-  if (!input.ownsSession) {
-    return;
-  }
-  const message = formatTerminalError(input.error);
-  console.error(`MCP initialization failed: ${message}`);
-  if (input.currentState) {
-    input.ready(input.currentState);
-    return;
-  }
-  input.fail(message);
-  await stopRejectedInitialization(input.owner, input.oauthRuntime);
-}
-
 export async function finalizeHostShutdown(input: {
   readonly events: ExtensionAPI["events"];
   readonly state: McpExtensionState | null;
@@ -166,56 +143,6 @@ export async function finalizeHostShutdown(input: {
   if (failures.length > 0) {
     throw new AggregateError(failures, "MCP session shutdown persistence/cleanup failed");
   }
-}
-
-export function finalizeDirectToolFreeze(
-  state: McpExtensionState,
-  directToolsFrozen: boolean,
-  updateStatusBar: (state: McpExtensionState) => void,
-): boolean {
-  updateStatusBar(state);
-  if (!directToolsFrozen && state.config.settings?.freezeDirectTools === true) {
-    logger.debug(
-      'MCP: direct tools frozen after initial sync — reconnects won\'t rebuild the system prompt; use mcp({ action: "connect", server: "server" }) to rediscover',
-    );
-    return true;
-  }
-  return directToolsFrozen;
-}
-
-export async function runLiveHostReconcile(input: {
-  readonly state: McpExtensionState;
-  readonly ctx: ExtensionContext;
-  readonly staged: {
-    readonly previousConfig: McpConfig;
-    readonly nextConfig: McpConfig;
-    readonly cwd: string;
-    readonly cacheEnabled: boolean;
-  };
-  readonly cwdChanged: boolean;
-  readonly envRaw: string | undefined;
-  readonly envDirectToolOverride: string[] | undefined;
-  readonly owner: McpRuntimeOwner;
-  readonly hooks: ReconcileRetryHooks;
-  readonly isLive: () => boolean;
-}): Promise<void> {
-  const { reconcileSessionState } = await import("./host-reconcile.ts");
-  if (!input.isLive()) {
-    return;
-  }
-  await reconcileSessionState({
-    state: input.state,
-    ctx: input.ctx,
-    previousConfig: input.staged.previousConfig,
-    nextConfig: input.staged.nextConfig,
-    cwd: input.staged.cwd,
-    cacheEnabled: input.staged.cacheEnabled,
-    cwdChanged: input.cwdChanged,
-    envRaw: input.envRaw,
-    envDirectToolOverride: input.envDirectToolOverride,
-    owner: input.owner,
-    ...input.hooks,
-  });
 }
 
 /** Hooks passed into `reconcileSessionState` without creating a static import cycle. */

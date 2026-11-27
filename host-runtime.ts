@@ -137,6 +137,7 @@ export class McpHostRuntime implements McpAdapterHost {
       initPromise: this.initPromise,
       startPromise: this.startSessionPromise,
       state: this.state,
+      config: this.config,
     }));
     // Pi restores the target branch's recorded loadout before session_tree.
     this.pi.on("session_tree", (_event, ctx) => {

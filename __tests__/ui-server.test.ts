@@ -697,6 +697,7 @@ describe("UiServer", () => {
       expect(res.body).toMatchObject({
         ok: true,
         result: {
+          isError: true,
           details: { error: "approval_denied", server: "test-server", tool: "some_tool" },
         },
       });
@@ -811,7 +812,51 @@ describe("UiServer", () => {
       expect(res.body).toMatchObject({
         ok: true,
         result: {
+          isError: true,
           details: { error: "approval_denied", server: "test-server", tool: "some_tool" },
+        },
+      });
+      expect(vi.spyOn(mockClient, "callTool")).not.toHaveBeenCalled();
+    });
+
+    it("returns a headless gated iframe call as an approval_required error result", async () => {
+      const mockClient = createClient({ callTool: vi.fn<Client["callTool"]>() });
+      const manager = createMockManager({
+        getConnection: vi.fn<McpServerManager["getConnection"]>().mockReturnValue(
+          createConnection({
+            status: "connected",
+            client: mockClient,
+            tools: [{ name: "some_tool", inputSchema: { type: "object" } }],
+          }),
+        ),
+      });
+      const config: McpConfig = {
+        mcpServers: {
+          "test-server": { command: "demo", uiToolConsent: "always", approveTools: true },
+        },
+      };
+      handle = await startUiServer(
+        createServerOptions({
+          manager,
+          config,
+          consentManager: new ConsentManager(),
+        }),
+      );
+
+      const res = await request(`http://localhost:${handle.port}/proxy/tools/call`, {
+        method: "POST",
+        body: {
+          token: handle.sessionToken,
+          params: { name: "some_tool", arguments: {} },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        ok: true,
+        result: {
+          isError: true,
+          details: { error: "approval_required", server: "test-server", tool: "some_tool" },
         },
       });
       expect(vi.spyOn(mockClient, "callTool")).not.toHaveBeenCalled();

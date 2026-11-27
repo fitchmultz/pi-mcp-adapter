@@ -6,7 +6,9 @@ import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
 import {
   applyConnectionMetadata,
   markKeepAliveAfterConnect,
+  notifyToolMetadataUpdated,
   recordFailure,
+  updateMetadataCache,
   updateServerMetadata,
   updateStatusBar,
 } from "./init.ts";
@@ -317,7 +319,8 @@ class SessionReconciler {
     next: ServerEntry,
     prefixChanged: boolean,
   ): void {
-    const connected = this.state.manager.getConnection(name)?.status === "connected";
+    const connection = this.state.manager.getConnection(name);
+    const connected = connection?.status === "connected";
     if (!isDeepStrictEqual(lifecycleFingerprint(prev), lifecycleFingerprint(next))) {
       this.state.lifecycle.unregisterServer(name);
       registerLifecycle(this.state, name, next);
@@ -326,6 +329,9 @@ class SessionReconciler {
       }
     }
     if (prefixChanged || !isDeepStrictEqual(metadataFingerprint(prev), metadataFingerprint(next))) {
+      if (connection) {
+        connection.definition = next;
+      }
       if (connected) {
         updateServerMetadata(this.state, name);
       } else {
@@ -478,6 +484,15 @@ class SessionReconciler {
 
 export async function reconcileSessionState(input: ReconcileSessionInput): Promise<void> {
   await new SessionReconciler(input).run();
-  await refreshLiveSkillsForEnabledServers(input.state);
+  const refreshedServers = await refreshLiveSkillsForEnabledServers(input.state);
   syncAllStateSkills(input.state);
+  if (refreshedServers.length === 0) {
+    return;
+  }
+  for (const name of refreshedServers) {
+    updateMetadataCache(input.state, name);
+    notifyToolMetadataUpdated(input.state, name, "skills-refresh");
+  }
+  publishMcpStatusSnapshot(input.state);
+  input.onSurfaceChanged();
 }

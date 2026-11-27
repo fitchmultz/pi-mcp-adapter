@@ -787,4 +787,160 @@ describe("MCP Skills (SEP-2640) integration", () => {
       await Promise.allSettled([lifecycle.closeAll(), server.close()]);
     }
   });
+
+  it("skips the startup skills grace wait when resolved config disables skills", async () => {
+    const ws = createWorkspace();
+    const { HostSkillsTracker } = await import("../mcp-skills-store.ts");
+    const hostCtx = await createTestExtensionContext();
+
+    try {
+      const pendingInit = Promise.withResolvers<never>();
+      const tracker = new HostSkillsTracker();
+
+      const globalStartMs = Date.now();
+      const globalDisabled = await tracker.discover({
+        readHostState: () => ({
+          initPromise: pendingInit.promise,
+          startPromise: null,
+          state: null,
+          config: {
+            settings: { exposeSkills: false },
+            mcpServers: { slow: { command: process.execPath, args: [] } },
+          },
+        }),
+        ctx: { ...hostCtx.context, cwd: ws.project, isProjectTrusted: () => true },
+      });
+      expect(globalDisabled).toBeUndefined();
+      expect(Date.now() - globalStartMs).toBeLessThan(500);
+
+      tracker.reset();
+      const perServerStartMs = Date.now();
+      const perServerDisabled = await tracker.discover({
+        readHostState: () => ({
+          initPromise: pendingInit.promise,
+          startPromise: null,
+          state: null,
+          config: {
+            mcpServers: { slow: { command: process.execPath, args: [], exposeSkills: false } },
+          },
+        }),
+        ctx: { ...hostCtx.context, cwd: ws.project, isProjectTrusted: () => true },
+      });
+      expect(perServerDisabled).toBeUndefined();
+      expect(Date.now() - perServerStartMs).toBeLessThan(500);
+    } finally {
+      await hostCtx.dispose();
+    }
+  });
+
+  it("announces live skills enabled in place via reconcile and preserves updated exposeSkills for list_changed", async () => {
+    const ws = createWorkspace();
+    const projectB = join(ws.root, "project-b");
+    mkdirSync(projectB, { recursive: true });
+    writeJson(join(ws.project, ".mcp.json"), {
+      mcpServers: {
+        ctrl: skillsServer("controlled", {
+          lifecycle: "eager",
+          cwd: ws.project,
+          exposeSkills: false,
+        }),
+      },
+    });
+    writeJson(join(projectB, ".mcp.json"), {
+      mcpServers: {
+        ctrl: skillsServer("controlled", {
+          lifecycle: "eager",
+          cwd: ws.project,
+          exposeSkills: true,
+        }),
+      },
+    });
+
+    const host = await mountAdapter({ cwd: ws.project, trusted: true });
+    await host.start();
+    const initial = await host.discover();
+    expect(initial.skillPaths).toEqual([]);
+    expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+
+    const statsSchema = z.object({ started: z.number(), completed: z.number() });
+    const readStats = async () => {
+      const res = await host.callMcp({
+        action: "call",
+        server: "ctrl",
+        tool: "get_refresh_stats",
+        args: {},
+      });
+      const text = res.content[0]?.type === "text" ? res.content[0].text : "{}";
+      return statsSchema.parse(JSON.parse(text));
+    };
+    expect((await readStats()).started).toBe(0);
+
+    host.setCwd(projectB);
+    await host.fixture.runner.emitBeforeAgentStart(
+      { messageType: "user", prompt: "enable skills in place" },
+      { cwd: projectB },
+    );
+
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["v1-skill"]);
+    expect((await readStats()).started).toBe(1);
+    expect(host.notifications).toContainEqual({
+      level: "info",
+      message: "MCP verified skills updated — run /reload to refresh Pi skills.",
+    });
+
+    await host.callMcp({
+      action: "call",
+      server: "ctrl",
+      tool: "set_refresh_mode",
+      args: { skillName: "v2-skill" },
+    });
+    await host.callMcp({ action: "call", server: "ctrl", tool: "emit_list_changed", args: {} });
+    await expect.poll(() => listSkillDirNames(ws.agentDir)).toEqual(["v2-skill"]);
+  });
+
+  it("memoizes untrusted-project skill provenance across repeated metadata syncs", async () => {
+    const ws = createWorkspace();
+    const globalConfigPath = join(ws.agentDir, "fitch-mcp-adapter", "mcp.json");
+    const globalDef = skillsServer("valid", { lifecycle: "eager" });
+    writeJson(globalConfigPath, { mcpServers: { globalSkills: globalDef } });
+    writeJson(join(ws.project, ".mcp.json"), { mcpServers: {} });
+
+    const { discoverServerSkills } = await import("../mcp-skills.ts");
+    const { syncConnectedServerSkills } = await import("../mcp-skills-store.ts");
+    const { createTestState } = await import("./test-state.ts");
+    const hostCtx = await createTestExtensionContext();
+    const state = createTestState({
+      config: { mcpServers: { globalSkills: globalDef } },
+      projectTrusted: false,
+      cwd: ws.project,
+      ui: hostCtx.context.ui,
+    });
+
+    try {
+      const connection = await state.manager.connect("globalSkills", globalDef);
+      const discovered = await discoverServerSkills({
+        serverName: "globalSkills",
+        client: connection.client,
+        exposeSkills: true,
+      });
+      connection.skills = discovered.skills.map((bundle) => bundle.metadata);
+      connection.verifiedSkillBundles = discovered.skills;
+
+      syncConnectedServerSkills(state, "globalSkills", connection);
+      expect(listSkillDirNames(ws.agentDir)).toEqual(["alpha-skill", "beta-skill"]);
+
+      // Remove global server from disk; repeated sync hits memoized provenance without disk reads.
+      writeJson(globalConfigPath, { mcpServers: {} });
+      syncConnectedServerSkills(state, "globalSkills", connection);
+      expect(listSkillDirNames(ws.agentDir)).toEqual(["alpha-skill", "beta-skill"]);
+
+      // Replacing state.config invalidates the memo and picks up the disk removal.
+      state.config = { mcpServers: { globalSkills: globalDef } };
+      syncConnectedServerSkills(state, "globalSkills", connection);
+      expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+    } finally {
+      await state.manager.closeAll();
+      await hostCtx.dispose();
+    }
+  });
 });

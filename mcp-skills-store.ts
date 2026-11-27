@@ -19,7 +19,13 @@ import {
 } from "./mcp-skills-fs.ts";
 import type { ServerConnection } from "./server-connection.ts";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type ServerEntry, type SkillMetadata } from "./types.ts";
+import {
+  isServerDisabled,
+  type McpConfig,
+  type ServerEntry,
+  type ServerProvenance,
+  type SkillMetadata,
+} from "./types.ts";
 
 export { createSkillsRuntimeId };
 
@@ -78,6 +84,42 @@ export interface SkillTrustContext {
   readonly cwd: string;
 }
 
+interface ProvenanceMemoEntry {
+  readonly config: McpConfig;
+  readonly configPath: string | undefined;
+  readonly includeNativePi: boolean | undefined;
+  readonly cwd: string;
+  readonly provenance: Map<string, ServerProvenance>;
+}
+
+const provenanceMemoByState = new WeakMap<McpExtensionState, ProvenanceMemoEntry>();
+
+function getCachedServerProvenance(
+  state: McpExtensionState,
+  cwd: string,
+): Map<string, ServerProvenance> {
+  const cached = provenanceMemoByState.get(state);
+  if (
+    cached &&
+    cached.config === state.config &&
+    cached.configPath === state.configPath &&
+    cached.includeNativePi === state.includeNativePi &&
+    cached.cwd === cwd
+  ) {
+    return cached.provenance;
+  }
+  const options = state.includeNativePi === false ? { includeNativePi: false } : undefined;
+  const provenance = getServerProvenance(state.configPath, cwd, options);
+  provenanceMemoByState.set(state, {
+    config: state.config,
+    configPath: state.configPath,
+    includeNativePi: state.includeNativePi,
+    cwd,
+    provenance,
+  });
+  return provenance;
+}
+
 function hasUntrustedProvenanceOrCwd(input: {
   state: McpExtensionState;
   serverName: string;
@@ -85,8 +127,7 @@ function hasUntrustedProvenanceOrCwd(input: {
   cwd: string;
 }): boolean {
   const { state, serverName, definition, cwd } = input;
-  const options = state.includeNativePi === false ? { includeNativePi: false } : undefined;
-  const provenance = getServerProvenance(state.configPath, cwd, options).get(serverName);
+  const provenance = getCachedServerProvenance(state, cwd).get(serverName);
   if (!provenance || provenance.kind === "project") {
     return true;
   }
@@ -187,21 +228,32 @@ function materializeAndStoreServerSkills(
   maps.syncedBundles.set(serverName, bundles);
 }
 
+function hasSyncedSkillState(maps: StateSkillMaps, serverName: string): boolean {
+  return (
+    maps.metadata.has(serverName) ||
+    maps.paths.has(serverName) ||
+    maps.syncedBundles.has(serverName)
+  );
+}
+
 export function syncConnectedServerSkills(
   state: McpExtensionState,
   serverName: string,
   connection: ServerConnection,
 ): void {
+  const bundles = connection.verifiedSkillBundles ?? [];
+  const maps = getSkillMaps(state);
+  if (bundles.length === 0 && !hasSyncedSkillState(maps, serverName)) {
+    return;
+  }
   if (!canExposeServerSkills(state, serverName)) {
     cleanupServerSkills(state, serverName);
     return;
   }
-  const bundles = connection.verifiedSkillBundles ?? [];
   if (bundles.length === 0) {
     cleanupServerSkills(state, serverName);
     return;
   }
-  const maps = getSkillMaps(state);
   if (isSyncedBundlesUnchanged(maps, serverName, bundles)) {
     return;
   }
@@ -269,7 +321,7 @@ async function refreshServerSkillsForConnection(
   state: McpExtensionState,
   name: string,
   connection: ServerConnection,
-): Promise<void> {
+): Promise<boolean> {
   const result = await discoverServerSkills({
     serverName: name,
     client: connection.client,
@@ -277,11 +329,11 @@ async function refreshServerSkillsForConnection(
     signal: state.owner.signal,
   });
   if (state.owner.signal.aborted || state.manager.getConnection(name) !== connection) {
-    return;
+    return false;
   }
   if (result.failed === true) {
     Object.assign(connection, { skillDiscoveryFailed: true });
-    return;
+    return false;
   }
   if (result.supported) {
     Object.assign(connection, {
@@ -290,13 +342,16 @@ async function refreshServerSkillsForConnection(
       verifiedSkillBundles: result.skills,
     });
     syncConnectedServerSkills(state, name, connection);
-    return;
+    return true;
   }
   Object.assign(connection, { skillDiscoveryFailed: false });
+  return false;
 }
 
-export async function refreshLiveSkillsForEnabledServers(state: McpExtensionState): Promise<void> {
-  const tasks: Promise<void>[] = [];
+export async function refreshLiveSkillsForEnabledServers(
+  state: McpExtensionState,
+): Promise<string[]> {
+  const tasks: Array<Promise<string | undefined>> = [];
   for (const [name, definition] of Object.entries(state.config.mcpServers)) {
     if (isServerDisabled(definition) || !canExposeServerSkills(state, name)) {
       continue;
@@ -305,11 +360,19 @@ export async function refreshLiveSkillsForEnabledServers(state: McpExtensionStat
     if (!connection || connection.status !== "connected" || connection.skills !== undefined) {
       continue;
     }
-    tasks.push(refreshServerSkillsForConnection(state, name, connection));
+    tasks.push(
+      refreshServerSkillsForConnection(state, name, connection).then((updated) =>
+        updated ? name : undefined,
+      ),
+    );
   }
-  if (tasks.length > 0) {
-    await Promise.allSettled(tasks);
+  if (tasks.length === 0) {
+    return [];
   }
+  const results = await Promise.allSettled(tasks);
+  return results.flatMap((entry) =>
+    entry.status === "fulfilled" && entry.value !== undefined ? [entry.value] : [],
+  );
 }
 
 async function awaitPromiseWithGrace(promise: Promise<unknown> | null): Promise<void> {
@@ -325,16 +388,27 @@ async function awaitPromiseWithGrace(promise: Promise<unknown> | null): Promise<
   ]);
 }
 
-function canAnyStartupServerExposeSkills(state: McpExtensionState | null): boolean {
-  if (!state) {
+function canAnyStartupServerExposeSkills(
+  state: McpExtensionState | null,
+  config?: McpConfig,
+): boolean {
+  const activeConfig = state?.config ?? config;
+  if (!activeConfig) {
     return true;
   }
-  if (state.config.settings?.exposeSkills === false) {
+  if (activeConfig.settings?.exposeSkills === false) {
     return false;
   }
-  return Object.values(state.config.mcpServers).some(
+  return Object.values(activeConfig.mcpServers).some(
     (definition) => !isServerDisabled(definition) && definition.exposeSkills !== false,
   );
+}
+
+export interface HostSkillsStateSnapshot {
+  readonly initPromise: Promise<McpExtensionState> | null;
+  readonly startPromise: Promise<void> | null;
+  readonly state: McpExtensionState | null;
+  readonly config?: McpConfig;
 }
 
 export class HostSkillsTracker {
@@ -353,16 +427,13 @@ export class HostSkillsTracker {
   }
 
   async discover(input: {
-    readHostState: () => {
-      initPromise: Promise<McpExtensionState> | null;
-      startPromise: Promise<void> | null;
-      state: McpExtensionState | null;
-    };
+    readHostState: () => HostSkillsStateSnapshot;
     ctx: ExtensionContext;
   }): Promise<ResourcesDiscoverResult | undefined> {
     await awaitPromiseWithGrace(input.readHostState().startPromise);
-    if (canAnyStartupServerExposeSkills(input.readHostState().state)) {
-      await awaitPromiseWithGrace(input.readHostState().initPromise);
+    const startup = input.readHostState();
+    if (canAnyStartupServerExposeSkills(startup.state, startup.config)) {
+      await awaitPromiseWithGrace(startup.initPromise);
     }
     this.activeContext = { projectTrusted: input.ctx.isProjectTrusted(), cwd: input.ctx.cwd };
     const state = input.readHostState().state;
@@ -412,14 +483,7 @@ export class HostSkillsTracker {
     return pending;
   }
 
-  register(
-    pi: ExtensionAPI,
-    readHostState: () => {
-      initPromise: Promise<McpExtensionState> | null;
-      startPromise: Promise<void> | null;
-      state: McpExtensionState | null;
-    },
-  ): void {
+  register(pi: ExtensionAPI, readHostState: () => HostSkillsStateSnapshot): void {
     pi.on("resources_discover", (_event, ctx) =>
       this.discover({
         readHostState,
