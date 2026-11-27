@@ -20,6 +20,7 @@ import type { UiServerHandle } from "./ui-server-contracts.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import type { McpStatusEventBus } from "./mcp-status-events.ts";
+import type { ReloadedServerSkills } from "./mcp-skills.ts";
 
 export interface CompletedUiSession {
   serverName: string;
@@ -50,6 +51,7 @@ export type McpInitializationOptions = McpAdapterOptions & {
   oauthRuntime?: McpOAuthRuntime;
   statusEvents?: McpExtensionState["statusEvents"];
   resolvedConfig?: McpConfig;
+  reloadedSkills?: ReloadedServerSkills;
 };
 
 export interface McpExtensionState {

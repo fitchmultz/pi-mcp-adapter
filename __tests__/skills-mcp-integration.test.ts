@@ -30,8 +30,13 @@ import { requireValue } from "./fixtures/extension-lifecycle.ts";
 const skillsFixture = fileURLToPath(new URL("./fixtures/skills-stdio-server.ts", import.meta.url));
 
 interface StatusSnapshotSummary {
+  readonly connectedCount?: number;
   readonly totalSkills?: number;
-  readonly servers: ReadonlyArray<{ readonly name: string; readonly skillCount?: number }>;
+  readonly servers: ReadonlyArray<{
+    readonly name: string;
+    readonly status?: string;
+    readonly skillCount?: number;
+  }>;
 }
 
 function isStatusSnapshotSummary(value: unknown): value is StatusSnapshotSummary {
@@ -99,9 +104,15 @@ describe("MCP Skills (SEP-2640) integration", () => {
     return { root, home, agentDir, project };
   }
 
-  async function mountAdapter(input: { cwd: string; config?: McpConfig; trusted?: boolean }) {
+  async function mountAdapter(input: {
+    cwd: string;
+    config?: McpConfig;
+    trusted?: boolean;
+    sessionId?: string;
+  }) {
     let currentCwd = input.cwd;
     let projectTrusted = input.trusted ?? true;
+    const sessionId = input.sessionId;
     const notifications: Array<{ message: string; level: string }> = [];
     const reloadSpy = vi.fn<() => Promise<void>>(async () => Promise.resolve());
     const statuses: StatusSnapshotSummary[] = [];
@@ -120,12 +131,18 @@ describe("MCP Skills (SEP-2640) integration", () => {
       notifications.push({ message, level });
     });
     fixture.runner.setUIContext({ ...fixture.runner.getUIContext(), notify: uiNotify }, "tui");
-    vi.spyOn(fixture.runner, "createContext").mockImplementation((): ExtensionContext => ({
-      ...baseCreate(),
-      cwd: currentCwd,
-      isProjectTrusted: () => projectTrusted,
-      ui: { ...fixture.runner.getUIContext(), notify: uiNotify },
-    }));
+    vi.spyOn(fixture.runner, "createContext").mockImplementation((): ExtensionContext => {
+      const base = baseCreate();
+      return {
+        ...base,
+        ...(sessionId !== undefined
+          ? { sessionManager: { ...base.sessionManager, getSessionId: () => sessionId } }
+          : {}),
+        cwd: currentCwd,
+        isProjectTrusted: () => projectTrusted,
+        ui: { ...fixture.runner.getUIContext(), notify: uiNotify },
+      };
+    });
 
     cleanups.push(async () => {
       await fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
@@ -295,10 +312,17 @@ describe("MCP Skills (SEP-2640) integration", () => {
     expect(ping.content[0]).toMatchObject({ type: "text", text: "pong:mixed" });
   });
 
-  it("waits on startup init during resources_discover, notifies on lazy discovery, and reloads cached skills", async () => {
+  it("keeps lazy servers disconnected despite cached skills, notifies on lazy discovery, and waits on eager startup during resources_discover", async () => {
     const ws = createWorkspace();
+    const otherProject = join(ws.root, "other-project");
+    const eagerProject = join(ws.root, "eager-project");
+    mkdirSync(otherProject, { recursive: true });
+    mkdirSync(eagerProject, { recursive: true });
     writeJson(join(ws.project, ".mcp.json"), {
       mcpServers: { lazySkills: skillsServer("valid") },
+    });
+    writeJson(join(eagerProject, ".mcp.json"), {
+      mcpServers: { eagerSkills: skillsServer("valid", { lifecycle: "eager" }) },
     });
 
     const firstHost = await mountAdapter({ cwd: ws.project, trusted: true });
@@ -317,13 +341,107 @@ describe("MCP Skills (SEP-2640) integration", () => {
       "beta-skill",
     ]);
     expect(existsSync(getMetadataCachePath())).toBe(true);
+    await firstHost.fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
 
-    // Next fresh session: start startup concurrently with resources_discover; cached skill server bootstraps!
+    // Next fresh session: lazy server with cached skills stays disconnected at startup.
     const secondHost = await mountAdapter({ cwd: ws.project, trusted: true });
-    const startPromise = secondHost.start();
-    const discovered = await secondHost.discover();
+    await secondHost.start();
+    expect((await secondHost.discover()).skillPaths).toEqual([]);
+    expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+    const freshStatus = requireValue(secondHost.statuses.at(-1));
+    expect(freshStatus.connectedCount).toBe(0);
+    expect(freshStatus.servers.find((s) => s.name === "lazySkills")?.status).toBe("cached");
+
+    // Reconciling into the project on cwd change also keeps the lazy cached-skills server disconnected.
+    const reconcileHost = await mountAdapter({ cwd: otherProject, trusted: true });
+    await reconcileHost.start();
+    await reconcileHost.discover();
+    reconcileHost.setCwd(ws.project);
+    await reconcileHost.fixture.runner.emitBeforeAgentStart(
+      { messageType: "user", prompt: "switch to project with cached skills" },
+      { cwd: ws.project },
+    );
+    const reconcileStatus = requireValue(reconcileHost.statuses.at(-1));
+    expect(reconcileStatus.connectedCount).toBe(0);
+    expect(reconcileStatus.servers.find((s) => s.name === "lazySkills")?.status).toBe("cached");
+    expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+    await reconcileHost.fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
+
+    // Connecting on demand still discovers and materializes verified skills.
+    await secondHost.callMcp({ action: "connect", server: "lazySkills" });
+    expect(secondHost.notifications.some((n) => n.message.includes("/reload"))).toBe(true);
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["alpha-skill", "beta-skill"]);
+    await secondHost.fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
+
+    // Eager servers still synchronize startup skill discovery with resources_discover.
+    const eagerHost = await mountAdapter({ cwd: eagerProject, trusted: true });
+    const startPromise = eagerHost.start();
+    const discovered = await eagerHost.discover();
     await startPromise;
     expect(discovered.skillPaths).toHaveLength(2);
+  });
+
+  it("preserves on-demand lazy skills across /reload without reconnecting and drops them on config change or /new", async () => {
+    const ws = createWorkspace();
+    const otherProject = join(ws.root, "other-project");
+    mkdirSync(otherProject, { recursive: true });
+    writeJson(join(ws.project, ".mcp.json"), {
+      mcpServers: { lazySkills: skillsServer("valid") },
+    });
+
+    const sessionId = "reload-e2e-session";
+    const firstHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    await firstHost.start();
+    expect((await firstHost.discover()).skillPaths).toEqual([]);
+
+    await firstHost.callMcp({ action: "connect", server: "lazySkills" });
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["alpha-skill", "beta-skill"]);
+    await firstHost.fixture.runner.emit({ type: "session_shutdown", reason: "reload" });
+    expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+
+    // Simulated Pi /reload with a fresh adapter instance: skills return without reconnecting lazySkills.
+    const reloadedHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    const startPromise = reloadedHost.start("reload");
+    const discovered = await reloadedHost.discover("reload");
+    await startPromise;
+    expect(discovered.skillPaths).toHaveLength(2);
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["alpha-skill", "beta-skill"]);
+    expect(reloadedHost.statuses.at(-1)?.connectedCount).toBe(0);
+    expect(reloadedHost.statuses.at(-1)?.servers.find((s) => s.name === "lazySkills")?.status).toBe(
+      "cached",
+    );
+
+    // Consecutive /reload preserves carried-over skills; switching cwd drops them.
+    await reloadedHost.fixture.runner.emit({ type: "session_shutdown", reason: "reload" });
+    const secondReloadHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    await secondReloadHost.start("reload");
+    expect((await secondReloadHost.discover("reload")).skillPaths).toHaveLength(2);
+    secondReloadHost.setCwd(otherProject);
+    await secondReloadHost.fixture.runner.emitBeforeAgentStart(
+      { messageType: "user", prompt: "leave project" },
+      { cwd: otherProject },
+    );
+    expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+
+    // Re-connect then reload with changed server config invalidates carry-over; /new also clears it.
+    secondReloadHost.setCwd(ws.project);
+    await secondReloadHost.fixture.runner.emitBeforeAgentStart(
+      { messageType: "user", prompt: "return" },
+      { cwd: ws.project },
+    );
+    await secondReloadHost.callMcp({ action: "connect", server: "lazySkills" });
+    await secondReloadHost.fixture.runner.emit({ type: "session_shutdown", reason: "reload" });
+    writeJson(join(ws.project, ".mcp.json"), {
+      mcpServers: { lazySkills: skillsServer("updated") },
+    });
+    const changedHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    await changedHost.start("reload");
+    expect((await changedHost.discover("reload")).skillPaths).toEqual([]);
+    await changedHost.callMcp({ action: "connect", server: "lazySkills" });
+    await changedHost.fixture.runner.emit({ type: "session_shutdown", reason: "new" });
+    const newSessionHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    await newSessionHost.start("new");
+    expect((await newSessionHost.discover()).skillPaths).toEqual([]);
   });
 
   it("cleans up materialized skill directories on cwd change and session shutdown", async () => {
@@ -572,27 +690,25 @@ describe("MCP Skills (SEP-2640) integration", () => {
     }
   });
 
-  it("preserves cached skills when startup skills/list fails transiently on a lazy server", async () => {
+  it("preserves cached skills when startup skills/list fails transiently", async () => {
     const ws = createWorkspace();
     writeJson(join(ws.project, ".mcp.json"), {
-      mcpServers: { lazyCtrl: skillsServer("controlled") },
+      mcpServers: { ctrl: skillsServer("controlled", { lifecycle: "eager" }) },
     });
 
     const firstHost = await mountAdapter({ cwd: ws.project, trusted: true });
     await firstHost.start();
     await firstHost.discover();
-    await firstHost.callMcp({ action: "connect", server: "lazyCtrl" });
-    await firstHost.runMcpCommand("reconnect lazyCtrl");
-    expect(loadMetadataCache(true)?.servers.lazyCtrl?.skills?.map((s) => s.name)).toEqual([
-      "v1-skill",
-    ]);
+    expect(loadMetadataCache(true)?.servers.ctrl?.skills?.map((s) => s.name)).toEqual(["v1-skill"]);
+    await firstHost.fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
 
     process.env.PI_MCP_TEST_FAIL_SKILLS_LIST = "1";
     try {
       const secondHost = await mountAdapter({ cwd: ws.project, trusted: true });
       await secondHost.start();
       await secondHost.discover();
-      expect(loadMetadataCache(true)?.servers.lazyCtrl?.skills?.map((s) => s.name)).toEqual([
+      expect(secondHost.statuses.at(-1)?.connectedCount).toBe(1);
+      expect(loadMetadataCache(true)?.servers.ctrl?.skills?.map((s) => s.name)).toEqual([
         "v1-skill",
       ]);
     } finally {
@@ -788,7 +904,7 @@ describe("MCP Skills (SEP-2640) integration", () => {
     }
   });
 
-  it("skips the startup skills grace wait when resolved config disables skills", async () => {
+  it("skips the startup skills grace wait when resolved config disables skills or has only lazy servers", async () => {
     const ws = createWorkspace();
     const { HostSkillsTracker } = await import("../mcp-skills-store.ts");
     const hostCtx = await createTestExtensionContext();
@@ -805,7 +921,7 @@ describe("MCP Skills (SEP-2640) integration", () => {
           state: null,
           config: {
             settings: { exposeSkills: false },
-            mcpServers: { slow: { command: process.execPath, args: [] } },
+            mcpServers: { slow: { command: process.execPath, args: [], lifecycle: "eager" } },
           },
         }),
         ctx: { ...hostCtx.context, cwd: ws.project, isProjectTrusted: () => true },
@@ -821,13 +937,61 @@ describe("MCP Skills (SEP-2640) integration", () => {
           startPromise: null,
           state: null,
           config: {
-            mcpServers: { slow: { command: process.execPath, args: [], exposeSkills: false } },
+            mcpServers: {
+              slow: {
+                command: process.execPath,
+                args: [],
+                lifecycle: "eager",
+                exposeSkills: false,
+              },
+            },
           },
         }),
         ctx: { ...hostCtx.context, cwd: ws.project, isProjectTrusted: () => true },
       });
       expect(perServerDisabled).toBeUndefined();
       expect(Date.now() - perServerStartMs).toBeLessThan(500);
+
+      tracker.reset();
+      const lazyOnlyStartMs = Date.now();
+      const lazyOnly = await tracker.discover({
+        readHostState: () => ({
+          initPromise: pendingInit.promise,
+          startPromise: null,
+          state: null,
+          config: {
+            mcpServers: {
+              slow: { command: process.execPath, args: [], lifecycle: "lazy", exposeSkills: true },
+            },
+          },
+        }),
+        ctx: { ...hostCtx.context, cwd: ws.project, isProjectTrusted: () => true },
+      });
+      expect(lazyOnly).toBeUndefined();
+      expect(Date.now() - lazyOnlyStartMs).toBeLessThan(500);
+
+      tracker.reset();
+      const lazyKeepAliveStartMs = Date.now();
+      const lazyKeepAliveOnly = await tracker.discover({
+        readHostState: () => ({
+          initPromise: pendingInit.promise,
+          startPromise: null,
+          state: null,
+          config: {
+            mcpServers: {
+              slow: {
+                command: process.execPath,
+                args: [],
+                lifecycle: "lazy-keep-alive",
+                exposeSkills: true,
+              },
+            },
+          },
+        }),
+        ctx: { ...hostCtx.context, cwd: ws.project, isProjectTrusted: () => true },
+      });
+      expect(lazyKeepAliveOnly).toBeUndefined();
+      expect(Date.now() - lazyKeepAliveStartMs).toBeLessThan(500);
     } finally {
       await hostCtx.dispose();
     }

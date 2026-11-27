@@ -1,4 +1,8 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  SessionShutdownEvent,
+} from "@earendil-works/pi-coding-agent";
 import type * as Init from "./init.ts";
 import type { McpExtensionState } from "./state.ts";
 import {
@@ -21,20 +25,23 @@ import {
 } from "./host-registered-servers.ts";
 import {
   applyLiveServerDisabledToggle,
-  launchHostInitialization,
+  launchAndMaybeAwaitHostInitialization,
   runLiveSessionReconcile,
 } from "./host-live-toggle.ts";
 import { canPreserveFrozenTools, HostSession, parseEnvDirectToolOverride } from "./host-session.ts";
 import {
   finalizeHostShutdown,
   HostReconcileCoordinator,
-  logSessionRestartFailures,
-  shouldAwaitDirectToolBootstrap,
-  stopRuntimeSession,
+  stopPreviousSessionForStart,
 } from "./host-state-cleanup.ts";
 import { activateToolSearch, createToolLoader, removedOnBranch } from "./tool-loader.ts";
 import { McpHostTools } from "./host-tools.ts";
 import { McpServersPromptState } from "./mcp-servers-prompt.ts";
+import type { ReloadedServerSkills } from "./mcp-skills.ts";
+import {
+  completeSessionShutdownReloadSkills,
+  takeSessionStartReloadSkills,
+} from "./mcp-skills-reload.ts";
 import { HostSkillsTracker } from "./mcp-skills-store.ts";
 import {
   registerWorkingSessionSaveHandler,
@@ -72,6 +79,7 @@ export class McpHostRuntime implements McpAdapterHost {
   private sessionManager: ExtensionContext["sessionManager"] | undefined;
   /** Whether tool_search activation was decided since the last session start or tree navigation. */
   private toolSearchSettled = false;
+  private hasReloadSkills = false;
   private readonly serversPrompt = new McpServersPromptState();
 
   get state(): McpExtensionState | null {
@@ -122,13 +130,15 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private registerEvents(): void {
-    this.pi.on("session_start", (_event, ctx) => {
+    this.pi.on("session_start", (event, ctx) => {
       this.sessionManager = ctx.sessionManager;
       this.toolSearchSettled = false;
       this.serversPrompt.clearSurfaced();
       this.skillsTracker.reset();
       this.settlePinsOrDefer();
-      const started = this.startSession(ctx);
+      const reloadedSkills = takeSessionStartReloadSkills(event, ctx, this.state);
+      this.hasReloadSkills = reloadedSkills !== undefined && reloadedSkills.size > 0;
+      const started = this.startSession(ctx, false, reloadedSkills);
       this.startSessionPromise = started;
       return started;
     });
@@ -137,6 +147,7 @@ export class McpHostRuntime implements McpAdapterHost {
       startPromise: this.startSessionPromise,
       state: this.state,
       config: this.config,
+      hasReloadSkills: this.hasReloadSkills,
     }));
     // Pi restores the target branch's recorded loadout before session_tree.
     this.pi.on("session_tree", (_event, ctx) => {
@@ -187,7 +198,7 @@ export class McpHostRuntime implements McpAdapterHost {
         state: this.state,
       }),
     );
-    this.pi.on("session_shutdown", () => this.shutdown());
+    this.pi.on("session_shutdown", (event, ctx) => this.shutdown(event, ctx));
   }
 
   applyDirectToolConfigChanges(changes: Map<string, true | string[] | false>): void {
@@ -273,10 +284,12 @@ export class McpHostRuntime implements McpAdapterHost {
     );
   }
 
-  private async shutdown(): Promise<void> {
+  private async shutdown(event?: SessionShutdownEvent, ctx?: ExtensionContext): Promise<void> {
     const state = this.state;
     const owner = this.owner;
     const oauthRuntime = this.oauthRuntime;
+    completeSessionShutdownReloadSkills(event, ctx, this.sessionManager, state);
+    this.hasReloadSkills = false;
     this.session.end();
     this.sessionManager = undefined;
     this.oauthRuntime = null;
@@ -424,7 +437,11 @@ export class McpHostRuntime implements McpAdapterHost {
     this.prompts.syncCached(config, cacheEnabled);
   }
 
-  private async startSession(ctx: ExtensionContext, wasFrozen = false): Promise<void> {
+  private async startSession(
+    ctx: ExtensionContext,
+    wasFrozen = false,
+    reloadedSkills?: ReloadedServerSkills,
+  ): Promise<void> {
     const previous = {
       config: this.config,
       configPath: this.configPath,
@@ -437,15 +454,11 @@ export class McpHostRuntime implements McpAdapterHost {
     const oauthRuntime = createOAuthRuntime(owner.signal);
     const generation = this.session.begin(owner);
     this.oauthRuntime = oauthRuntime;
-    logSessionRestartFailures(
-      await stopRuntimeSession({
-        events: this.pi.events,
-        ...prev,
-        stateReason: "session_restart",
-        ownerReason: "MCP extension session restarted",
-        flush: this.initModule?.flushMetadataCache,
-      }),
-    );
+    await stopPreviousSessionForStart({
+      events: this.pi.events,
+      ...prev,
+      flush: this.initModule?.flushMetadataCache,
+    });
     if (!this.session.owns(owner, generation)) {
       return;
     }
@@ -461,45 +474,26 @@ export class McpHostRuntime implements McpAdapterHost {
     });
     this.serversPrompt.resetFrozen(this.directToolsFrozen);
     this.syncCachedPromptCommands(runtimeConfig, cacheEnabled);
-    const cache = loadMetadataCache(cacheEnabled);
+    const loaded = loadMetadataCache(cacheEnabled);
     if (!this.directToolsFrozen) {
-      this.syncCatalog(runtimeConfig, cache);
+      this.syncCatalog(runtimeConfig, loaded);
     }
     const init = await import("./init.ts");
     this.initModule = init;
     if (!this.session.owns(owner, generation)) {
       return;
     }
-    const initialization = this.startInitialization({
+    await launchAndMaybeAwaitHostInitialization({
       init,
       ctx,
       owner,
       oauthRuntime,
       runtimeConfig,
       generation,
-    });
-    if (
-      shouldAwaitDirectToolBootstrap({
-        envRaw: this.envRaw,
-        envDirectToolOverride: this.envDirectToolOverride,
-        config: runtimeConfig,
-        cache,
-      })
-    ) {
-      await initialization;
-    }
-  }
-
-  private startInitialization(input: {
-    init: typeof Init;
-    ctx: ExtensionContext;
-    owner: McpRuntimeOwner;
-    oauthRuntime: McpOAuthRuntime;
-    runtimeConfig: McpConfig;
-    generation: number;
-  }): Promise<void> {
-    return launchHostInitialization({
-      ...input,
+      cache: loaded,
+      reloadedSkills,
+      envRaw: this.envRaw,
+      envDirectToolOverride: this.envDirectToolOverride,
       pi: this.pi,
       session: this.session,
       configPath: this.configPath,

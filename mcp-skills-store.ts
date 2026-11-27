@@ -5,7 +5,6 @@ import type {
   ExtensionContext,
   ResourcesDiscoverResult,
 } from "@earendil-works/pi-coding-agent";
-import { getServerProvenance, isPathInsideProject } from "./config.ts";
 import { logger } from "./logger.ts";
 import { discoverServerSkills, type VerifiedSkillBundle } from "./mcp-skills.ts";
 import {
@@ -17,17 +16,19 @@ import {
   pruneDeadRuntimeDirs,
   safeRemovePath,
 } from "./mcp-skills-fs.ts";
+import { canExposeServerSkills, type SkillTrustContext } from "./mcp-skills-trust.ts";
+import { computeServerHash } from "./metadata-cache.ts";
 import type { ServerConnection } from "./server-connection.ts";
 import type { McpExtensionState } from "./state.ts";
 import {
   isServerDisabled,
+  startsAtBoot,
   type McpConfig,
   type ServerEntry,
-  type ServerProvenance,
   type SkillMetadata,
 } from "./types.ts";
 
-export { createSkillsRuntimeId };
+export { createSkillsRuntimeId, canExposeServerSkills, type SkillTrustContext };
 
 const STARTUP_SKILLS_DISCOVERY_WAIT_MS = 2_500;
 
@@ -36,137 +37,41 @@ interface StateSkillMaps {
   readonly metadata: Map<string, SkillMetadata[]>;
   readonly paths: Map<string, string[]>;
   readonly syncedBundles: Map<string, readonly VerifiedSkillBundle[]>;
+  readonly reloadedHashes: Map<string, string>;
   prunedStaleRuntimes: boolean;
 }
 
-const fallbackSkillMaps = new WeakMap<McpExtensionState, StateSkillMaps>();
-const syncedBundlesByState = new WeakMap<
-  McpExtensionState,
-  Map<string, readonly VerifiedSkillBundle[]>
->();
+interface SessionSkillTrackers {
+  readonly syncedBundles: Map<string, readonly VerifiedSkillBundle[]>;
+  readonly reloadedHashes: Map<string, string>;
+  readonly fallbackMetadata: Map<string, SkillMetadata[]>;
+  readonly fallbackPaths: Map<string, string[]>;
+  readonly fallbackRuntimeId: string;
+}
+
+const sessionTrackers = new WeakMap<McpExtensionState, SessionSkillTrackers>();
 const prunedStates = new WeakSet<McpExtensionState>();
 
 function getSkillMaps(state: McpExtensionState): StateSkillMaps {
-  let syncedBundles = syncedBundlesByState.get(state);
-  if (!syncedBundles) {
-    syncedBundles = new Map();
-    syncedBundlesByState.set(state, syncedBundles);
-  }
-  if (
-    state.skillsRuntimeId !== undefined &&
-    state.skillMetadata !== undefined &&
-    state.skillPaths !== undefined
-  ) {
-    return {
-      runtimeId: state.skillsRuntimeId,
-      metadata: state.skillMetadata,
-      paths: state.skillPaths,
-      syncedBundles,
-      prunedStaleRuntimes: prunedStates.has(state),
+  let tracker = sessionTrackers.get(state);
+  if (!tracker) {
+    tracker = {
+      syncedBundles: new Map(),
+      reloadedHashes: new Map(),
+      fallbackMetadata: new Map(),
+      fallbackPaths: new Map(),
+      fallbackRuntimeId: state.skillsRuntimeId ?? createSkillsRuntimeId(),
     };
+    sessionTrackers.set(state, tracker);
   }
-  let maps = fallbackSkillMaps.get(state);
-  if (!maps) {
-    maps = {
-      runtimeId: state.skillsRuntimeId ?? createSkillsRuntimeId(),
-      metadata: state.skillMetadata ?? new Map<string, SkillMetadata[]>(),
-      paths: state.skillPaths ?? new Map<string, string[]>(),
-      syncedBundles,
-      prunedStaleRuntimes: prunedStates.has(state),
-    };
-    fallbackSkillMaps.set(state, maps);
-  }
-  return maps;
-}
-
-export interface SkillTrustContext {
-  readonly projectTrusted: boolean;
-  readonly cwd?: string | undefined;
-}
-
-interface ProvenanceMemoEntry {
-  readonly config: McpConfig;
-  readonly configPath: string | undefined;
-  readonly includeNativePi: boolean | undefined;
-  readonly cwd: string;
-  readonly provenance: Map<string, ServerProvenance>;
-}
-
-const provenanceMemoByState = new WeakMap<McpExtensionState, ProvenanceMemoEntry>();
-
-function getCachedServerProvenance(
-  state: McpExtensionState,
-  cwd: string,
-): Map<string, ServerProvenance> {
-  const cached = provenanceMemoByState.get(state);
-  if (
-    cached &&
-    cached.config === state.config &&
-    cached.configPath === state.configPath &&
-    cached.includeNativePi === state.includeNativePi &&
-    cached.cwd === cwd
-  ) {
-    return cached.provenance;
-  }
-  const options = state.includeNativePi === false ? { includeNativePi: false } : undefined;
-  const provenance = getServerProvenance(state.configPath, cwd, options);
-  provenanceMemoByState.set(state, {
-    config: state.config,
-    configPath: state.configPath,
-    includeNativePi: state.includeNativePi,
-    cwd,
-    provenance,
-  });
-  return provenance;
-}
-
-function hasUntrustedProvenanceOrCwd(input: {
-  state: McpExtensionState;
-  serverName: string;
-  definition: ServerEntry;
-  cwd: string;
-}): boolean {
-  const { state, serverName, definition, cwd } = input;
-  const provenance = getCachedServerProvenance(state, cwd).get(serverName);
-  if (!provenance || provenance.kind === "project") {
-    return true;
-  }
-  if (isPathInsideProject(provenance.path, cwd)) {
-    return true;
-  }
-  return definition.cwd !== undefined && isPathInsideProject(definition.cwd, cwd);
-}
-
-function isTrustedSkillOrigin(
-  state: McpExtensionState,
-  serverName: string,
-  definition: ServerEntry,
-  context?: SkillTrustContext,
-): boolean {
-  const projectTrusted = context?.projectTrusted ?? state.projectTrusted;
-  if (projectTrusted !== false) {
-    return true;
-  }
-  const cwd = context?.cwd ?? state.cwd;
-  if (state.programmaticConfig === true || cwd === undefined) {
-    return false;
-  }
-  return !hasUntrustedProvenanceOrCwd({ state, serverName, definition, cwd });
-}
-
-export function canExposeServerSkills(
-  state: McpExtensionState,
-  serverName: string,
-  context?: SkillTrustContext,
-): boolean {
-  if (state.config.settings?.exposeSkills === false) {
-    return false;
-  }
-  const definition = state.config.mcpServers[serverName];
-  if (!definition || isServerDisabled(definition) || definition.exposeSkills === false) {
-    return false;
-  }
-  return isTrustedSkillOrigin(state, serverName, definition, context);
+  return {
+    runtimeId: state.skillsRuntimeId ?? tracker.fallbackRuntimeId,
+    metadata: state.skillMetadata ?? tracker.fallbackMetadata,
+    paths: state.skillPaths ?? tracker.fallbackPaths,
+    syncedBundles: tracker.syncedBundles,
+    reloadedHashes: tracker.reloadedHashes,
+    prunedStaleRuntimes: prunedStates.has(state),
+  };
 }
 
 export function cleanupServerSkills(state: McpExtensionState, serverName: string): void {
@@ -174,6 +79,7 @@ export function cleanupServerSkills(state: McpExtensionState, serverName: string
   maps.metadata.delete(serverName);
   maps.paths.delete(serverName);
   maps.syncedBundles.delete(serverName);
+  maps.reloadedHashes.delete(serverName);
   try {
     safeRemovePath(getServerSkillsDir(maps.runtimeId, serverName), serverName);
   } catch (error: unknown) {
@@ -187,6 +93,7 @@ export function cleanupRuntimeSkills(state: McpExtensionState): void {
   maps.metadata.clear();
   maps.paths.clear();
   maps.syncedBundles.clear();
+  maps.reloadedHashes.clear();
   try {
     safeRemovePath(getRuntimeSkillsDir(maps.runtimeId), maps.runtimeId);
   } catch (error: unknown) {
@@ -236,6 +143,49 @@ function hasSyncedSkillState(maps: StateSkillMaps, serverName: string): boolean 
   );
 }
 
+function tryMaterializeServerSkills(
+  state: McpExtensionState,
+  maps: StateSkillMaps,
+  serverName: string,
+  bundles: readonly VerifiedSkillBundle[],
+): boolean {
+  try {
+    materializeAndStoreServerSkills(state, maps, serverName, bundles);
+    return maps.paths.has(serverName);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`MCP: failed to materialize skills for ${serverName}: ${message}`);
+    cleanupServerSkills(state, serverName);
+    return false;
+  }
+}
+
+export function getSyncedSkillBundles(
+  state: McpExtensionState,
+): ReadonlyMap<string, readonly VerifiedSkillBundle[]> {
+  return getSkillMaps(state).syncedBundles;
+}
+
+export function applyReloadedServerSkills(
+  state: McpExtensionState,
+  serverName: string,
+  configHash: string,
+  bundles: readonly VerifiedSkillBundle[],
+): void {
+  const maps = getSkillMaps(state);
+  if (tryMaterializeServerSkills(state, maps, serverName, bundles)) {
+    maps.reloadedHashes.set(serverName, configHash);
+  }
+}
+
+function matchesReloadedConfigHash(definition: ServerEntry, expectedHash: string): boolean {
+  try {
+    return computeServerHash(definition) === expectedHash;
+  } catch {
+    return false;
+  }
+}
+
 export function syncConnectedServerSkills(
   state: McpExtensionState,
   serverName: string,
@@ -243,6 +193,7 @@ export function syncConnectedServerSkills(
 ): void {
   const bundles = connection.verifiedSkillBundles ?? [];
   const maps = getSkillMaps(state);
+  maps.reloadedHashes.delete(serverName);
   if (bundles.length === 0 && !hasSyncedSkillState(maps, serverName)) {
     return;
   }
@@ -257,13 +208,16 @@ export function syncConnectedServerSkills(
   if (isSyncedBundlesUnchanged(maps, serverName, bundles)) {
     return;
   }
-  try {
-    materializeAndStoreServerSkills(state, maps, serverName, bundles);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.warn(`MCP: failed to materialize skills for ${serverName}: ${message}`);
-    cleanupServerSkills(state, serverName);
-  }
+  tryMaterializeServerSkills(state, maps, serverName, bundles);
+}
+
+function shouldKeepCarriedSkills(
+  maps: StateSkillMaps,
+  name: string,
+  definition: ServerEntry,
+): boolean {
+  const carriedHash = maps.reloadedHashes.get(name);
+  return carriedHash !== undefined && matchesReloadedConfigHash(definition, carriedHash);
 }
 
 function syncSingleServerSkillState(input: {
@@ -279,12 +233,14 @@ function syncSingleServerSkillState(input: {
     return;
   }
   const connection = state.manager.getConnection(name);
-  if (!connection || connection.status !== "connected") {
-    cleanupServerSkills(state, name);
+  if (connection?.status === "connected") {
+    if (!maps.metadata.has(name) && (connection.verifiedSkillBundles?.length ?? 0) > 0) {
+      syncConnectedServerSkills(state, name, connection);
+    }
     return;
   }
-  if (!maps.metadata.has(name) && (connection.verifiedSkillBundles?.length ?? 0) > 0) {
-    syncConnectedServerSkills(state, name, connection);
+  if (!shouldKeepCarriedSkills(maps, name, definition)) {
+    cleanupServerSkills(state, name);
   }
 }
 
@@ -391,7 +347,11 @@ async function awaitPromiseWithGrace(promise: Promise<unknown> | null): Promise<
 function canAnyStartupServerExposeSkills(
   state: McpExtensionState | null,
   config?: McpConfig,
+  hasReloadSkills?: boolean,
 ): boolean {
+  if (hasReloadSkills === true) {
+    return true;
+  }
   const activeConfig = state?.config ?? config;
   if (!activeConfig) {
     return true;
@@ -400,7 +360,10 @@ function canAnyStartupServerExposeSkills(
     return false;
   }
   return Object.values(activeConfig.mcpServers).some(
-    (definition) => !isServerDisabled(definition) && definition.exposeSkills !== false,
+    (definition) =>
+      !isServerDisabled(definition) &&
+      definition.exposeSkills !== false &&
+      startsAtBoot(definition),
   );
 }
 
@@ -409,6 +372,7 @@ export interface HostSkillsStateSnapshot {
   readonly startPromise: Promise<void> | null;
   readonly state: McpExtensionState | null;
   readonly config?: McpConfig;
+  readonly hasReloadSkills?: boolean;
 }
 
 function syncTrustContextFromState(
@@ -445,7 +409,7 @@ export class HostSkillsTracker {
   }): Promise<ResourcesDiscoverResult | undefined> {
     await awaitPromiseWithGrace(input.readHostState().startPromise);
     const startup = input.readHostState();
-    if (canAnyStartupServerExposeSkills(startup.state, startup.config)) {
+    if (canAnyStartupServerExposeSkills(startup.state, startup.config, startup.hasReloadSkills)) {
       await awaitPromiseWithGrace(startup.initPromise);
     }
     this.activeContext = { projectTrusted: input.ctx.isProjectTrusted(), cwd: input.ctx.cwd };

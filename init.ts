@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled } from "./types.ts";
+import { isServerDisabled, startsAtBoot } from "./types.ts";
 import {
   createMcpRuntimeOwner,
   combineAbortSignals,
@@ -13,8 +13,8 @@ import {
   bootstrapDirectTools,
   bindLifecycle,
 } from "./init-startup.ts";
+import { restoreReloadedServerSkills } from "./mcp-skills-reload.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
-import { isServerCacheValid, loadMetadataCache } from "./metadata-cache.ts";
 
 export { MAX_CONCURRENT_SERVER_CONNECTS } from "./utils.ts";
 export {
@@ -57,38 +57,6 @@ function reportStartupConfigErrors(state: McpExtensionState): void {
     errors.length > 5 ? [`  … and ${errors.length - 5} more (run /mcp doctor for details)`] : [];
   const header = `MCP configuration validation (${errors.length} ${errors.length === 1 ? "issue" : "issues"}):`;
   state.ui.notify([header, ...preview, ...overflow].join("\n"), "warning");
-}
-
-function hasValidCachedSkills(
-  cachedEntry: ReturnType<typeof loadMetadataCache> extends infer C
-    ? C extends { servers: Record<string, infer E> }
-      ? E | undefined
-      : never
-    : never,
-  definition: McpExtensionState["config"]["mcpServers"][string],
-): boolean {
-  return (
-    cachedEntry !== undefined &&
-    (cachedEntry.skills?.length ?? 0) > 0 &&
-    isServerCacheValid(cachedEntry, definition)
-  );
-}
-
-function isStartupServer(input: {
-  name: string;
-  definition: McpExtensionState["config"]["mcpServers"][string];
-  cache: ReturnType<typeof loadMetadataCache>;
-  exposeSkillsGlobal: boolean;
-}): boolean {
-  const { name, definition, cache, exposeSkillsGlobal } = input;
-  const mode = definition.lifecycle ?? "lazy";
-  if (mode === "keep-alive" || mode === "eager") {
-    return true;
-  }
-  if (!exposeSkillsGlobal || definition.exposeSkills === false) {
-    return false;
-  }
-  return hasValidCachedSkills(cache?.servers[name], definition);
 }
 
 async function connectInitialServers(
@@ -140,11 +108,10 @@ export async function initializeMcp(
     return state;
   }
   registerServers(state, serverEntries);
-  const cache = loadMetadataCache(state.metadataCacheEnabled);
-  const exposeSkillsGlobal = state.config.settings?.exposeSkills !== false;
-  const startupServers = serverEntries.filter(([name, definition]) =>
-    isStartupServer({ name, definition, cache, exposeSkillsGlobal }),
-  );
+  if (options.reloadedSkills && options.reloadedSkills.size > 0) {
+    restoreReloadedServerSkills(state, options.reloadedSkills);
+  }
+  const startupServers = serverEntries.filter(([, definition]) => startsAtBoot(definition));
   await connectInitialServers(state, startupServers, {
     initial: initialSignal,
     runtime: runtimeSignal,
