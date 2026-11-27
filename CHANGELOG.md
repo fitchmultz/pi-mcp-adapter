@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.65 - 2026-11-27
+
+<!-- npm-release:unreleased:start -->
+
+- Exposed verified MCP Skills (SEP-2640) automatically into Pi `resources_discover` (default on via `settings.exposeSkills` and per-server `exposeSkills`, gated on project trust, strict bundle/file verification, private temp storage, and cleanup across disconnect/reload/cwd changes), surfaced skill counts in status snapshots/metadata, and serialized concurrent `approveTools` confirmations while marking denied and headless-blocked approvals `isError: true`.
+- Improved MCP sampling (`modelPreferences` cost/speed/intelligence priority scoring, `model.compat?.supportsTemperature`, and `ProtocolError` codes without `sampling.tools`) and elicitation (memoized Ajv schema validator, direct input without single-option `"Enter value"` select prompts, host `openBrowser`/`BROWSER` routing, and RPC URL elicitation support).
+- Exported `loadMcpConfig`, `getMcpDiscoverySummary`, and `getServerProvenance` from `@fitchmultz/pi-mcp-adapter/runtime`, removed runtime `zod` schema re-exports from `@fitchmultz/pi-mcp-adapter/types`, aligned `cli.js` discovery with `.pi/mcp.json`, `~/.pi/agent/mcp.json`, and git-root `opencode.json`, and isolated per-server errors in legacy OAuth migration.
+
+<!-- npm-release:unreleased:end -->
+
+- feat(skills,sdk): add SEP-2640 verified MCP skills and polish sampling, elicitation, approvals, and SDK exports (MCP-215) (#302) ([472f24d](https://github.com/fitchmultz/pi-mcp-adapter/commit/472f24d98b66fd481e1ee15ecf31d67c6bbfdb8d))
+
+### What's Changed
+
+- feat(skills,sdk): add SEP-2640 verified MCP skills and polish sampling, elicitation, approvals, and SDK exports (MCP-215) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/302
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.64...v8.0.65
+
 ## 8.0.64 - 2026-11-26
 
 <!-- npm-release:unreleased:start -->
