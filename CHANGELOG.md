@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.66 - 2026-11-27
+
+<!-- npm-release:unreleased:start -->
+
+- **Breaking (v9):** Direct and deferred catalog MCP tools now declare a `$ref`-safe `CallToolResult` `outputSchema` (`{ content, structuredContent?, isError? }`) matching Pi's built-in MCP extension and return the full untruncated `CallToolResult` (with `_meta` stripped) in `AgentToolResult.structuredContent`. Codemode scripts receive the complete result in one call even above the 16 KiB `detailsMaxBytes` limit while session `details` and model-facing `content` remain bounded; non-provider direct-tool failures reject in codemode instead of returning an `mcpAdapter` omission receipt. Gateway `mcp({ action: "call", ..., format: "structured" })` also bypasses the 16 KiB details cliff while keeping `details.mcpResult` bounded and `resultRef` available for `read-result`.
+- Remove the per-tool `Codemode:` boilerplate from catalog tool descriptions (saving ~65 tokens per tool and eliminating BM25 noise in `tool_search`) and attach `namespace.aliases` (server name) and optional `namespace.description` (including translated `.pi/mcp.json` server descriptions) so `describeNamespace("<server>")` and `searchTools(..., { namespace: "<server>" })` work natively.
+- Deduplicate `content` vs `structuredContent` in `resolveMcpResultContent` so `structuredContent` is rendered as fallback text only when `content` has no visible blocks (matching Pi's built-in MCP extension), while keeping `structuredContent` intact in codemode `CallToolResult` payloads and retained `resultRef` artifacts.
+- Remove the redundant 14-branch `allOf` (`if`/`then`/`not`) from `gatewayParameters` (saving ~392 tokens per turn) while enforcing every action-level required field, page limit, `format`, and `readAll` constraint in `prepareGatewayArguments` and `parseGatewayArguments` with clear human-readable errors.
+
+- **Breaking (v9):** Default `toolPrefix` changes from `"server"` to `"mcp"`, emitting `mcp__<server>__<tool>` (fixing the previous single-underscore `mcp__<server>_<tool>` separator bug) to align with Pi's built-in MCP naming. Explicit `"server"`, `"short"`, and `"none"` prefix modes remain supported opt-outs; `getToolNameCandidates` and gateway `call`/`describe` keep backward-compatible resolution for legacy `<server>_<tool>`, `mcp__<server>_<tool>`, and unambiguous bare `<tool>` names. Every formatted tool name is sanitized to `[A-Za-z0-9_-]` and capped at 64 characters with a deterministic hash suffix; colliding tools receive deterministic hash suffixes instead of being dropped.
+- **Breaking (v9):** Gateway `mcp({ action: "search" })` now defaults `includeSchemas` to `false`, returning compact ~140-character summaries instead of full JSON Schema dumps (`includeSchemas: true` still returns full schemas).
+- Publish a cache-stable `<mcp_servers>` system prompt section in `before_agent_start` (sorted enabled servers with configured `description` or one-line `serverInstructions` summary, even when `disableProxyTool: true`) without volatile connection counts or timestamps, and surface `serverInstructions` once per server when `tool_search` loads tools (truncated to the section cap with an `instructions` pointer if larger) or in full trimmed form when `mcp({ action: "describe" })` inspects a tool.
+- Scope `tool_not_found` suggestions strictly to `server` when specified, add undiscovered-server hints to `call`/`describe` misses, and upgrade `search-ranking.ts` with plural/singular stemming, fuzzy search matching, `serverName` indexing, and `"OR"` suggestion fallback.
+- Validate and coerce gateway `call` arguments locally via Pi's native `validateToolArguments` before connecting, prompting, or dispatching; always append `Expected parameters:` on JSON-RPC `-32602` input errors and check all text blocks on `isError: true` responses; expand `formatSchema` for local `$ref`/`$defs`/`definitions`, `allOf`, root `anyOf`/`oneOf`, and `additionalProperties`; normalize direct-tool `inputSchema` objects to guarantee `{ type: "object", properties: {} }`.
+- Keep pinned/active tools frozen under `freezeDirectTools: true` while still refreshing non-active deferred catalog tools on reconnect/`tools/list_changed`, await cold-cache `directTools` configured in `mcp.json` at startup before turn 1, and include `oauth` settings in `computeServerHash` so OAuth changes invalidate stale cache entries.
+
+<!-- npm-release:unreleased:end -->
+
+- feat(codemode): first-class CallToolResult parity and token efficiency (MCP-208) (1/2) (#297) ([16c7049](https://github.com/fitchmultz/pi-mcp-adapter/commit/16c7049d659e84598dc9925de59cb673a3407496))
+
+### What's Changed
+
+- feat(codemode): first-class CallToolResult parity and token efficiency (MCP-208) (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/297
+- feat(discovery,naming): default mcp__ naming, <mcp_servers> prompt, search and validation upgrades (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/299
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.65...v8.0.66
+
 ## 8.0.65 - 2026-11-27
 
 <!-- npm-release:unreleased:start -->
