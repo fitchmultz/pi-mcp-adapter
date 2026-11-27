@@ -943,4 +943,46 @@ describe("MCP Skills (SEP-2640) integration", () => {
       await hostCtx.dispose();
     }
   });
+
+  it("keeps newly materialized project skills after untrusted startup when reconcile moves to a trusted project", async () => {
+    const ws = createWorkspace();
+    const projectB = join(ws.root, "trusted-project-b");
+    mkdirSync(projectB, { recursive: true });
+    writeJson(join(ws.project, ".mcp.json"), {
+      mcpServers: {
+        demo: skillsServer("controlled", {
+          lifecycle: "eager",
+          cwd: ws.project,
+          exposeSkills: false,
+        }),
+      },
+    });
+    writeJson(join(projectB, ".mcp.json"), {
+      mcpServers: {
+        demo: skillsServer("controlled", {
+          lifecycle: "eager",
+          cwd: ws.project,
+          exposeSkills: true,
+        }),
+      },
+    });
+
+    const host = await mountAdapter({ cwd: ws.project, trusted: false });
+    await host.start();
+    expect((await host.discover()).skillPaths).toEqual([]);
+    expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+
+    host.setTrusted(true);
+    host.setCwd(projectB);
+    await host.fixture.runner.emitBeforeAgentStart(
+      { messageType: "user", prompt: "switch to trusted project" },
+      { cwd: projectB },
+    );
+
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["v1-skill"]);
+    expect(host.notifications).toContainEqual({
+      level: "info",
+      message: "MCP verified skills updated — run /reload to refresh Pi skills.",
+    });
+  });
 });

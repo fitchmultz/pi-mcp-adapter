@@ -81,7 +81,7 @@ function getSkillMaps(state: McpExtensionState): StateSkillMaps {
 
 export interface SkillTrustContext {
   readonly projectTrusted: boolean;
-  readonly cwd: string;
+  readonly cwd?: string | undefined;
 }
 
 interface ProvenanceMemoEntry {
@@ -411,12 +411,25 @@ export interface HostSkillsStateSnapshot {
   readonly config?: McpConfig;
 }
 
+function syncTrustContextFromState(
+  state: McpExtensionState,
+  current: SkillTrustContext | undefined,
+): SkillTrustContext | undefined {
+  if (state.projectTrusted === undefined && state.cwd === undefined) {
+    return current;
+  }
+  return {
+    projectTrusted: state.projectTrusted ?? current?.projectTrusted ?? true,
+    cwd: state.cwd ?? current?.cwd,
+  };
+}
+
 export class HostSkillsTracker {
   private discovered = false;
   private delivered = new Set<string>();
   private pendingReload = false;
   private lastNotifiedKey = "";
-  private activeContext: { projectTrusted: boolean; cwd: string } | undefined;
+  private activeContext: SkillTrustContext | undefined;
 
   reset(): void {
     this.discovered = false;
@@ -457,6 +470,8 @@ export class HostSkillsTracker {
     if (!state) {
       return;
     }
+    // Live reconcile and trust transitions update state.projectTrusted/cwd directly; keep activeContext synced so startup stamps never override trusted sessions.
+    this.activeContext = syncTrustContextFromState(state, this.activeContext);
     syncAllStateSkills(state, this.activeContext);
     if (!this.discovered) {
       return;
