@@ -14,7 +14,6 @@ import {
   bindLifecycle,
 } from "./init-startup.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
-import { isServerCacheValid, loadMetadataCache } from "./metadata-cache.ts";
 
 export { MAX_CONCURRENT_SERVER_CONNECTS } from "./utils.ts";
 export {
@@ -59,36 +58,9 @@ function reportStartupConfigErrors(state: McpExtensionState): void {
   state.ui.notify([header, ...preview, ...overflow].join("\n"), "warning");
 }
 
-function hasValidCachedSkills(
-  cachedEntry: ReturnType<typeof loadMetadataCache> extends infer C
-    ? C extends { servers: Record<string, infer E> }
-      ? E | undefined
-      : never
-    : never,
-  definition: McpExtensionState["config"]["mcpServers"][string],
-): boolean {
-  return (
-    cachedEntry !== undefined &&
-    (cachedEntry.skills?.length ?? 0) > 0 &&
-    isServerCacheValid(cachedEntry, definition)
-  );
-}
-
-function isStartupServer(input: {
-  name: string;
-  definition: McpExtensionState["config"]["mcpServers"][string];
-  cache: ReturnType<typeof loadMetadataCache>;
-  exposeSkillsGlobal: boolean;
-}): boolean {
-  const { name, definition, cache, exposeSkillsGlobal } = input;
+function isStartupServer(definition: McpExtensionState["config"]["mcpServers"][string]): boolean {
   const mode = definition.lifecycle ?? "lazy";
-  if (mode === "keep-alive" || mode === "eager") {
-    return true;
-  }
-  if (!exposeSkillsGlobal || definition.exposeSkills === false) {
-    return false;
-  }
-  return hasValidCachedSkills(cache?.servers[name], definition);
+  return mode === "keep-alive" || mode === "eager";
 }
 
 async function connectInitialServers(
@@ -140,11 +112,7 @@ export async function initializeMcp(
     return state;
   }
   registerServers(state, serverEntries);
-  const cache = loadMetadataCache(state.metadataCacheEnabled);
-  const exposeSkillsGlobal = state.config.settings?.exposeSkills !== false;
-  const startupServers = serverEntries.filter(([name, definition]) =>
-    isStartupServer({ name, definition, cache, exposeSkillsGlobal }),
-  );
+  const startupServers = serverEntries.filter(([, definition]) => isStartupServer(definition));
   await connectInitialServers(state, startupServers, {
     initial: initialSignal,
     runtime: runtimeSignal,

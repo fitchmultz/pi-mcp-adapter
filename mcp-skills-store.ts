@@ -399,9 +399,13 @@ function canAnyStartupServerExposeSkills(
   if (activeConfig.settings?.exposeSkills === false) {
     return false;
   }
-  return Object.values(activeConfig.mcpServers).some(
-    (definition) => !isServerDisabled(definition) && definition.exposeSkills !== false,
-  );
+  return Object.values(activeConfig.mcpServers).some((definition) => {
+    if (isServerDisabled(definition) || definition.exposeSkills === false) {
+      return false;
+    }
+    const mode = definition.lifecycle ?? "lazy";
+    return mode === "keep-alive" || mode === "eager";
+  });
 }
 
 export interface HostSkillsStateSnapshot {

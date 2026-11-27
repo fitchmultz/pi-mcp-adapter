@@ -360,21 +360,9 @@ class SessionReconciler {
     return mode === "keep-alive" || mode === "eager";
   }
 
-  private hasCachedExposeSkills(name: string, definition: ServerEntry): boolean {
-    if (this.state.config.settings?.exposeSkills === false || definition.exposeSkills === false) {
-      return false;
-    }
-    return (this.cache?.servers[name]?.skills?.length ?? 0) > 0;
-  }
-
   private shouldAutoConnect(name: string, definition: ServerEntry): boolean {
     const mode = definition.lifecycle ?? "lazy";
-    return (
-      mode === "keep-alive" ||
-      mode === "eager" ||
-      this.missingDirectTools.has(name) ||
-      this.hasCachedExposeSkills(name, definition)
-    );
+    return mode === "keep-alive" || mode === "eager" || this.missingDirectTools.has(name);
   }
 
   private restoreCache(name: string, definition: ServerEntry): void {
