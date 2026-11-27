@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.68 - 2026-11-27
+
+<!-- npm-release:unreleased:start -->
+
 - Raise the Pi support floor to `1.7.0`.
+
+<!-- npm-release:unreleased:end -->
+
+- chore: raise Pi floor to 1.7.0 (PEA-240) (#305) ([4bd9d6c](https://github.com/fitchmultz/pi-mcp-adapter/commit/4bd9d6c1ba90543e3142e23e9b405f2555b5c961))
+
+### What's Changed
+
+- chore: raise Pi floor to 1.7.0 (PEA-240) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/305
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.67...v8.0.68
 
 ## 8.0.67 - 2026-11-27
 
