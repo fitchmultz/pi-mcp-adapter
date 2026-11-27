@@ -361,7 +361,7 @@ function textBlocks(result: ToolResultMessage): string[] {
   return result.content.flatMap((block) => (block.type === "text" ? [block.text] : []));
 }
 
-describe("Pi 1.6.1 codemode MCP CallToolResult parity", () => {
+describe("Pi codemode MCP CallToolResult parity", () => {
   it("delivers untruncated >50 KiB CallToolResult payloads, image blocks, $ref declarations, and namespace aliases", async () => {
     const { run } = await createCodemodeSession();
 

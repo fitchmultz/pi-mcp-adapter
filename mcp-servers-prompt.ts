@@ -11,7 +11,7 @@ export const MCP_SERVERS_SECTION = "mcp_servers";
 /** Character cap per server summary in `<mcp_servers>`, matching Pi and Codex deferred namespaces. */
 const MAX_SERVER_DESCRIPTION_CHARS = 250;
 
-/** Total character cap for `<mcp_servers>` (and per-server loaded instructions), matching Pi 1.6.1. */
+/** Total character cap for `<mcp_servers>` (and per-server loaded instructions), matching Pi's built-in MCP extension. */
 export const MAX_SERVERS_SECTION_CHARS = 4096;
 
 function firstLineSummary(text: string | undefined): string {

@@ -59,7 +59,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 8000): Promise<void
   }
 }
 
-describe("Pi 1.6.1+ host parity (MCP-212)", () => {
+describe("Pi host parity (MCP-212)", () => {
   const originalHome = process.env.HOME;
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
   const originalCwd = process.cwd();
