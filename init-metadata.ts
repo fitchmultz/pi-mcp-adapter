@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { McpExtensionState } from "./state.ts";
-import { DEFAULT_TOOL_PREFIX, isServerDisabled, type ServerDefinition } from "./types.ts";
+import { isServerDisabled, type ServerDefinition } from "./types.ts";
 import type { ServerConnection } from "./server-manager.ts";
 import { buildToolMetadata, isUiResourceUri, preserveResolvedToolNames } from "./tool-metadata.ts";
 import {
@@ -111,7 +111,7 @@ export function applyServerMetadata(
   },
 ): number {
   const { serverName, connection, definition } = input;
-  const prefix = state.config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX;
+  const prefix = state.config.settings?.toolPrefix;
 
   const { metadata, failedTools } = buildToolMetadata({
     tools: connection.tools,

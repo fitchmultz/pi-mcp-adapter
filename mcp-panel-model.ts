@@ -1,5 +1,5 @@
 import {
-  DEFAULT_TOOL_PREFIX,
+  resolveToolPrefix,
   type McpConfig,
   type McpPanelCallbacks,
   type McpPanelConnectionStatus,
@@ -101,7 +101,7 @@ function panelServerDefaults(
 ): { toolFilter: ServerState["toolFilter"]; prefix: ToolPrefix } {
   return {
     toolFilter: definition.directTools ?? config.settings?.directTools ?? false,
-    prefix: config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX,
+    prefix: resolveToolPrefix(definition, config.settings?.toolPrefix),
   };
 }
 

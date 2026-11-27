@@ -112,13 +112,11 @@ export function stageHostReconcile(input: {
   });
   const cacheEnabled =
     effectiveCtx.isProjectTrusted() || !isPathInsideProject(getMetadataCachePath(), cwd);
-  const directToolsFrozen = input.cwdChanged
-    ? canPreserveFrozenTools(input.directToolsFrozen, input.previous, {
-        config: resolved.config,
-        configPath: resolved.configPath,
-        cacheEnabled,
-      })
-    : input.directToolsFrozen;
+  const directToolsFrozen = canPreserveFrozenTools(input.directToolsFrozen, input.previous, {
+    config: resolved.config,
+    configPath: resolved.configPath,
+    cacheEnabled,
+  });
   return {
     previousConfig: input.previous.config,
     nextConfig: resolved.config,

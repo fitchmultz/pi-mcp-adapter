@@ -1,12 +1,7 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
 import type { McpAdapterHost, HostToolExecute } from "./host-contract.ts";
-import {
-  DEFAULT_TOOL_PREFIX,
-  type DirectToolSpec,
-  type McpAdapterOptions,
-  type McpConfig,
-} from "./types.ts";
+import type { DirectToolSpec, McpAdapterOptions, McpConfig } from "./types.ts";
 import {
   buildProxyDescription,
   directToolSelection,
@@ -155,12 +150,7 @@ export class McpHostTools {
     return (
       this.host.state?.toolMetadata.get(server) ??
       (entry && isServerCacheValid(entry, definition)
-        ? reconstructToolMetadata(
-            server,
-            entry,
-            config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX,
-            definition,
-          )
+        ? reconstructToolMetadata(server, entry, config.settings?.toolPrefix, definition)
         : [])
     );
   }

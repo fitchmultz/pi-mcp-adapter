@@ -1,7 +1,6 @@
 import MiniSearch, { type SearchOptions, type SearchResult } from "minisearch";
 import type { McpExtensionState } from "./state.ts";
 import {
-  DEFAULT_TOOL_PREFIX,
   type ServerEntry,
   type ToolMetadata,
   type ToolPrefix,
@@ -265,8 +264,7 @@ export function rankSuggestions(
     return [];
   }
 
-  const globalPrefix = state.config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX;
-  const context = buildSuggestionContext(state, name, server, globalPrefix);
+  const context = buildSuggestionContext(state, name, server, state.config.settings?.toolPrefix);
   if (context === null) {
     return [];
   }
@@ -291,7 +289,7 @@ function buildSuggestionContext(
   state: ToolCatalog,
   name: string,
   server: string | undefined,
-  globalPrefix: ToolPrefix,
+  globalPrefix: ToolPrefix | undefined,
 ): SuggestionContext | null {
   const explicitServer = nonEmpty(server);
   const inferred =
@@ -315,7 +313,7 @@ function resolveSuggestionPrefixHead(
   inferred: InferredServerPrefix | undefined,
   matchedServer: string | undefined,
   definition: Pick<ServerEntry, "toolPrefix"> | undefined,
-  globalPrefix: ToolPrefix,
+  globalPrefix: ToolPrefix | undefined,
 ): string {
   if (inferred !== undefined) {
     return inferred.prefixHead;
@@ -338,7 +336,7 @@ interface InferredServerPrefix {
 function candidatePrefixHeads(
   server: string,
   definition: Pick<ServerEntry, "toolPrefix">,
-  globalPrefix: ToolPrefix,
+  globalPrefix: ToolPrefix | undefined,
 ): string[] {
   const activeMode = resolveToolPrefix(definition, globalPrefix);
   const activeHead = getServerToolPrefix(server, activeMode);
@@ -357,7 +355,7 @@ function candidatePrefixHeads(
 function inferServerPrefix(
   state: ToolCatalog,
   name: string,
-  globalPrefix: ToolPrefix,
+  globalPrefix: ToolPrefix | undefined,
 ): InferredServerPrefix | undefined {
   return Object.entries(state.config.mcpServers)
     .flatMap(([candidateServer, definition]) =>

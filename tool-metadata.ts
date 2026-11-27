@@ -91,7 +91,7 @@ export function buildToolMetadata({
   resources: McpResource[];
   definition: ServerEntry;
   serverName: string;
-  prefix: ToolPrefix;
+  prefix?: ToolPrefix | undefined;
 }): { metadata: ToolMetadata[]; failedTools: string[] } {
   const callable: ToolMetadata[] = [];
   const failedTools: string[] = [];

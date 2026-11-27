@@ -1,6 +1,6 @@
 import type { McpExtensionState } from "./state.ts";
 import { type ProxyToolResult, disabledResult } from "./proxy-result.ts";
-import { DEFAULT_TOOL_PREFIX, isServerDisabled, resolveToolPrefix } from "./types.ts";
+import { isServerDisabled, resolveToolPrefix } from "./types.ts";
 import {
   catalogCoverage,
   findToolByName,
@@ -22,7 +22,7 @@ function matchesDisabledTool(
   }
   const prefix = resolveToolPrefix(
     state.config.mcpServers[server],
-    state.config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX,
+    state.config.settings?.toolPrefix,
   );
   return tools.some((tool) => matchesBackwardCompatibleToolName(tool, server, toolName, prefix));
 }
@@ -87,7 +87,7 @@ function describeMatches(
   if (hyphenMatches.length > 0) {
     return hyphenMatches;
   }
-  const globalPrefix = state.config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX;
+  const globalPrefix = state.config.settings?.toolPrefix;
   return catalog.filter(({ server, tool }) =>
     matchesBackwardCompatibleToolName(
       tool,

@@ -293,15 +293,16 @@ function selectedDirectTools(
 export function reconstructToolMetadata(
   serverName: string,
   entry: ServerCacheEntry,
-  prefix: ToolPrefix,
+  prefix: ToolPrefix | undefined,
   definition: Pick<
     ServerEntry,
     "exposeResources" | "includeTools" | "excludeTools" | "toolExposure" | "toolPrefix" | "disabled"
   >,
 ): ToolMetadata[] {
+  const effectivePrefix = resolveToolPrefix(definition, prefix);
   const key = JSON.stringify([
     serverName,
-    prefix,
+    effectivePrefix,
     definition.exposeResources,
     definition.includeTools,
     definition.excludeTools,
@@ -318,7 +319,7 @@ export function reconstructToolMetadata(
     resources: entry.resources,
     definition,
     serverName,
-    prefix,
+    prefix: effectivePrefix,
   }).metadata;
   if (Object.isFrozen(entry)) {
     toolProjections.set(entry, { key, metadata: freezeMetadata(metadata) });
@@ -405,7 +406,7 @@ function copyPromptArguments(args: McpPromptArgument[]): NonNullable<CachedPromp
 export function reconstructPromptMetadata(
   serverName: string,
   prompts: ReadonlyArray<McpPrompt | CachedPrompt>,
-  prefix: ToolPrefix,
+  prefix: ToolPrefix | undefined,
   definition?: Pick<ServerEntry, "toolPrefix">,
 ): PromptMetadata[] {
   const effectivePrefix = resolveToolPrefix(definition, prefix);

@@ -11,7 +11,6 @@ import { createMcpDirectToolCallRenderer, renderMcpToolResult } from "./tool-res
 import { nativeMcpOutputSchema } from "./mcp-script-output.ts";
 import { logger } from "./logger.ts";
 import {
-  DEFAULT_TOOL_PREFIX,
   disambiguateToolName,
   isServerDisabled,
   type DirectToolSpec,
@@ -57,12 +56,7 @@ function serverMetadata(
   if (!definition || !entry || !isServerCacheValid(entry, definition)) {
     return [];
   }
-  return reconstructToolMetadata(
-    server,
-    entry,
-    config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX,
-    definition,
-  );
+  return reconstructToolMetadata(server, entry, config.settings?.toolPrefix, definition);
 }
 
 function resolveCatalogToolExposure(

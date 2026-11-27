@@ -813,6 +813,21 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         beforeB.systemPromptOptions.sections.mcp_servers,
       );
       expect(runtime.directToolsFrozen).toBe(true);
+
+      // A live config change via mcp_servers_change while frozen must also refresh <mcp_servers> and re-freeze.
+      writeJson(join(projectB, ".pi", "fitch-mcp-adapter", "mcp.json"), {
+        settings: { freezeDirectTools: true },
+        mcpServers: {
+          "proj-b": { command: process.execPath, args: [fixtureServer], directTools: true },
+          "proj-c": { command: process.execPath, args: [fixtureServer], directTools: true },
+        },
+      });
+      await host.runner.emit({ type: "mcp_servers_change", servers: [] });
+      await waitFor(() => host.api.getActiveTools().includes("mcp__proj_c__noop"));
+      const beforeC = await host.handlers.emitBeforeAgentStart({ cwd: projectB });
+      expect(beforeC.systemPromptOptions.sections.mcp_servers).toContain("proj-b");
+      expect(beforeC.systemPromptOptions.sections.mcp_servers).toContain("proj-c");
+      expect(runtime.directToolsFrozen).toBe(true);
     } finally {
       await host.dispose();
     }

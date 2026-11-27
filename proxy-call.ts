@@ -8,7 +8,6 @@ import {
 } from "./proxy-result.ts";
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import {
-  DEFAULT_TOOL_PREFIX,
   type ToolMetadata,
   type ServerEntry,
   type McpOperationContext,
@@ -188,7 +187,7 @@ class CallLookup {
   ): ToolMetadata[] {
     const prefix = resolveToolPrefix(
       this.state.config.mcpServers[serverName],
-      this.state.config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX,
+      this.state.config.settings?.toolPrefix,
     );
     return metadata.filter((tool) =>
       matchesBackwardCompatibleToolName(tool, serverName, toolName, prefix),
@@ -241,7 +240,7 @@ class CallLookup {
   private inferPrefix(): string | ProxyToolResult | undefined {
     const { state } = this;
     const { toolName } = this.request;
-    const globalPrefix = state.config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX;
+    const globalPrefix = state.config.settings?.toolPrefix;
     const enabled = Object.entries(state.config.mcpServers).filter(
       ([, definition]) => !isServerDisabled(definition),
     );
