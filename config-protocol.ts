@@ -50,6 +50,12 @@ export function isServerDisabled(definition: ServerEntry | undefined): boolean {
   return definition?.disabled === true;
 }
 
+/** Whether a server connects automatically during session startup. */
+export function startsAtBoot(definition: Pick<ServerEntry, "lifecycle"> | undefined): boolean {
+  const mode = definition?.lifecycle ?? "lazy";
+  return mode === "keep-alive" || mode === "eager";
+}
+
 function validateProtocolVersion(value: unknown): void {
   if (value !== undefined && value !== "auto" && value !== "legacy") {
     throw new Error("protocolVersion must be auto or legacy");

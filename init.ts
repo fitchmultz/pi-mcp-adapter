@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled } from "./types.ts";
+import { isServerDisabled, startsAtBoot } from "./types.ts";
 import {
   createMcpRuntimeOwner,
   combineAbortSignals,
@@ -13,6 +13,7 @@ import {
   bootstrapDirectTools,
   bindLifecycle,
 } from "./init-startup.ts";
+import { restoreReloadedServerSkills } from "./mcp-skills-reload.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 
 export { MAX_CONCURRENT_SERVER_CONNECTS } from "./utils.ts";
@@ -56,11 +57,6 @@ function reportStartupConfigErrors(state: McpExtensionState): void {
     errors.length > 5 ? [`  … and ${errors.length - 5} more (run /mcp doctor for details)`] : [];
   const header = `MCP configuration validation (${errors.length} ${errors.length === 1 ? "issue" : "issues"}):`;
   state.ui.notify([header, ...preview, ...overflow].join("\n"), "warning");
-}
-
-function isStartupServer(definition: McpExtensionState["config"]["mcpServers"][string]): boolean {
-  const mode = definition.lifecycle ?? "lazy";
-  return mode === "keep-alive" || mode === "eager";
 }
 
 async function connectInitialServers(
@@ -112,7 +108,10 @@ export async function initializeMcp(
     return state;
   }
   registerServers(state, serverEntries);
-  const startupServers = serverEntries.filter(([, definition]) => isStartupServer(definition));
+  if (options.reloadedSkills && options.reloadedSkills.size > 0) {
+    restoreReloadedServerSkills(state, options.reloadedSkills);
+  }
+  const startupServers = serverEntries.filter(([, definition]) => startsAtBoot(definition));
   await connectInitialServers(state, startupServers, {
     initial: initialSignal,
     runtime: runtimeSignal,

@@ -5,6 +5,7 @@ import type { McpExtensionState, McpInitializationOptions } from "./state.ts";
 import type { McpAdapterOptions, McpConfig } from "./types.ts";
 import { publishMcpStatusShutdown } from "./mcp-status.ts";
 import { shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
+import type { ReloadedServerSkills } from "./mcp-skills.ts";
 import { cleanupRuntimeSkills } from "./mcp-skills-store.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import { formatTerminalError } from "./utils.ts";
@@ -94,6 +95,26 @@ export function logSessionRestartFailures(failures: readonly unknown[]): void {
   }
 }
 
+export async function stopPreviousSessionForStart(input: {
+  readonly events: ExtensionAPI["events"];
+  readonly state: McpExtensionState | null;
+  readonly owner: McpRuntimeOwner | null;
+  readonly oauthRuntime: McpOAuthRuntime | null;
+  readonly flush: ((state: McpExtensionState) => void) | undefined;
+}): Promise<void> {
+  logSessionRestartFailures(
+    await stopRuntimeSession({
+      events: input.events,
+      state: input.state,
+      owner: input.owner,
+      oauthRuntime: input.oauthRuntime,
+      stateReason: "session_restart",
+      ownerReason: "MCP extension session restarted",
+      flush: input.flush,
+    }),
+  );
+}
+
 export function shouldAwaitDirectToolBootstrap(input: {
   readonly envRaw: string | undefined;
   readonly envDirectToolOverride: string[] | undefined;
@@ -114,9 +135,17 @@ export function buildHostInitOptions(input: {
   readonly options: McpAdapterOptions;
   readonly oauthRuntime: McpOAuthRuntime;
   readonly statusEvents: ExtensionAPI["events"];
+  readonly reloadedSkills?: ReloadedServerSkills | undefined;
 }): McpInitializationOptions {
-  const { programmaticConfig, runtimeConfig, configPath, options, oauthRuntime, statusEvents } =
-    input;
+  const {
+    programmaticConfig,
+    runtimeConfig,
+    configPath,
+    options,
+    oauthRuntime,
+    statusEvents,
+    reloadedSkills,
+  } = input;
   return {
     ...(programmaticConfig ? { config: runtimeConfig } : { resolvedConfig: runtimeConfig }),
     ...(configPath !== undefined ? { configPath } : {}),
@@ -124,6 +153,7 @@ export function buildHostInitOptions(input: {
     oauthRuntime,
     statusEvents,
     ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
+    ...(reloadedSkills && reloadedSkills.size > 0 ? { reloadedSkills } : {}),
   };
 }
 

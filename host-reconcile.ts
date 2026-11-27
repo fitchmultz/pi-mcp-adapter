@@ -24,7 +24,13 @@ import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 import { isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, resolveToolPrefix, type McpConfig, type ServerEntry } from "./types.ts";
+import {
+  isServerDisabled,
+  resolveToolPrefix,
+  startsAtBoot,
+  type McpConfig,
+  type ServerEntry,
+} from "./types.ts";
 import {
   MAX_CONCURRENT_SERVER_CONNECTS,
   parallelLimit,
@@ -356,13 +362,11 @@ class SessionReconciler {
   }
 
   private hasAttemptedStartup(definition: ServerEntry): boolean {
-    const mode = definition.lifecycle ?? "lazy";
-    return mode === "keep-alive" || mode === "eager";
+    return startsAtBoot(definition);
   }
 
   private shouldAutoConnect(name: string, definition: ServerEntry): boolean {
-    const mode = definition.lifecycle ?? "lazy";
-    return mode === "keep-alive" || mode === "eager" || this.missingDirectTools.has(name);
+    return startsAtBoot(definition) || this.missingDirectTools.has(name);
   }
 
   private restoreCache(name: string, definition: ServerEntry): void {

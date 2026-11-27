@@ -104,9 +104,15 @@ describe("MCP Skills (SEP-2640) integration", () => {
     return { root, home, agentDir, project };
   }
 
-  async function mountAdapter(input: { cwd: string; config?: McpConfig; trusted?: boolean }) {
+  async function mountAdapter(input: {
+    cwd: string;
+    config?: McpConfig;
+    trusted?: boolean;
+    sessionId?: string;
+  }) {
     let currentCwd = input.cwd;
     let projectTrusted = input.trusted ?? true;
+    const sessionId = input.sessionId;
     const notifications: Array<{ message: string; level: string }> = [];
     const reloadSpy = vi.fn<() => Promise<void>>(async () => Promise.resolve());
     const statuses: StatusSnapshotSummary[] = [];
@@ -125,12 +131,18 @@ describe("MCP Skills (SEP-2640) integration", () => {
       notifications.push({ message, level });
     });
     fixture.runner.setUIContext({ ...fixture.runner.getUIContext(), notify: uiNotify }, "tui");
-    vi.spyOn(fixture.runner, "createContext").mockImplementation((): ExtensionContext => ({
-      ...baseCreate(),
-      cwd: currentCwd,
-      isProjectTrusted: () => projectTrusted,
-      ui: { ...fixture.runner.getUIContext(), notify: uiNotify },
-    }));
+    vi.spyOn(fixture.runner, "createContext").mockImplementation((): ExtensionContext => {
+      const base = baseCreate();
+      return {
+        ...base,
+        ...(sessionId !== undefined
+          ? { sessionManager: { ...base.sessionManager, getSessionId: () => sessionId } }
+          : {}),
+        cwd: currentCwd,
+        isProjectTrusted: () => projectTrusted,
+        ui: { ...fixture.runner.getUIContext(), notify: uiNotify },
+      };
+    });
 
     cleanups.push(async () => {
       await fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
@@ -367,6 +379,69 @@ describe("MCP Skills (SEP-2640) integration", () => {
     const discovered = await eagerHost.discover();
     await startPromise;
     expect(discovered.skillPaths).toHaveLength(2);
+  });
+
+  it("preserves on-demand lazy skills across /reload without reconnecting and drops them on config change or /new", async () => {
+    const ws = createWorkspace();
+    const otherProject = join(ws.root, "other-project");
+    mkdirSync(otherProject, { recursive: true });
+    writeJson(join(ws.project, ".mcp.json"), {
+      mcpServers: { lazySkills: skillsServer("valid") },
+    });
+
+    const sessionId = "reload-e2e-session";
+    const firstHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    await firstHost.start();
+    expect((await firstHost.discover()).skillPaths).toEqual([]);
+
+    await firstHost.callMcp({ action: "connect", server: "lazySkills" });
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["alpha-skill", "beta-skill"]);
+    await firstHost.fixture.runner.emit({ type: "session_shutdown", reason: "reload" });
+    expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+
+    // Simulated Pi /reload with a fresh adapter instance: skills return without reconnecting lazySkills.
+    const reloadedHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    const startPromise = reloadedHost.start("reload");
+    const discovered = await reloadedHost.discover("reload");
+    await startPromise;
+    expect(discovered.skillPaths).toHaveLength(2);
+    expect(listSkillDirNames(ws.agentDir)).toEqual(["alpha-skill", "beta-skill"]);
+    expect(reloadedHost.statuses.at(-1)?.connectedCount).toBe(0);
+    expect(reloadedHost.statuses.at(-1)?.servers.find((s) => s.name === "lazySkills")?.status).toBe(
+      "cached",
+    );
+
+    // Consecutive /reload preserves carried-over skills; switching cwd drops them.
+    await reloadedHost.fixture.runner.emit({ type: "session_shutdown", reason: "reload" });
+    const secondReloadHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    await secondReloadHost.start("reload");
+    expect((await secondReloadHost.discover("reload")).skillPaths).toHaveLength(2);
+    secondReloadHost.setCwd(otherProject);
+    await secondReloadHost.fixture.runner.emitBeforeAgentStart(
+      { messageType: "user", prompt: "leave project" },
+      { cwd: otherProject },
+    );
+    expect(listSkillDirNames(ws.agentDir)).toEqual([]);
+
+    // Re-connect then reload with changed server config invalidates carry-over; /new also clears it.
+    secondReloadHost.setCwd(ws.project);
+    await secondReloadHost.fixture.runner.emitBeforeAgentStart(
+      { messageType: "user", prompt: "return" },
+      { cwd: ws.project },
+    );
+    await secondReloadHost.callMcp({ action: "connect", server: "lazySkills" });
+    await secondReloadHost.fixture.runner.emit({ type: "session_shutdown", reason: "reload" });
+    writeJson(join(ws.project, ".mcp.json"), {
+      mcpServers: { lazySkills: skillsServer("updated") },
+    });
+    const changedHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    await changedHost.start("reload");
+    expect((await changedHost.discover("reload")).skillPaths).toEqual([]);
+    await changedHost.callMcp({ action: "connect", server: "lazySkills" });
+    await changedHost.fixture.runner.emit({ type: "session_shutdown", reason: "new" });
+    const newSessionHost = await mountAdapter({ cwd: ws.project, trusted: true, sessionId });
+    await newSessionHost.start("new");
+    expect((await newSessionHost.discover()).skillPaths).toEqual([]);
   });
 
   it("cleans up materialized skill directories on cwd change and session shutdown", async () => {

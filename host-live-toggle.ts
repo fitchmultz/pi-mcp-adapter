@@ -6,14 +6,17 @@ import { isServerDisabled, type McpAdapterOptions, type McpConfig } from "./type
 import { cloneMcpConfig } from "./config.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
 import type { HostSession } from "./host-session.ts";
+import type { MetadataCache } from "./metadata-cache.ts";
 import {
   buildHostInitOptions,
+  shouldAwaitDirectToolBootstrap,
   stopRejectedInitialization,
   stopStaleInitState,
   type HostReconcileCoordinator,
 } from "./host-state-cleanup.ts";
 import { stageHostReconcile } from "./host-registered-servers.ts";
 import type { McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
+import type { ReloadedServerSkills } from "./mcp-skills.ts";
 import { logger } from "./logger.ts";
 import { formatTerminalError } from "./utils.ts";
 
@@ -287,6 +290,7 @@ export function launchHostInitialization(input: {
   syncSkills: (state: McpExtensionState) => void;
   syncTools: () => void;
   syncDeferred?: () => void;
+  reloadedSkills?: ReloadedServerSkills | undefined;
 }): Promise<void> {
   const { init, ctx, owner, session, oauthRuntime, runtimeConfig, generation } = input;
   const promise = init.initializeMcp(
@@ -300,6 +304,7 @@ export function launchHostInitialization(input: {
       options: input.options,
       oauthRuntime,
       statusEvents: input.pi.events,
+      ...(input.reloadedSkills !== undefined ? { reloadedSkills: input.reloadedSkills } : {}),
     }),
   );
   session.initialize(generation, promise);
@@ -340,4 +345,40 @@ export function launchHostInitialization(input: {
         error,
       }),
     );
+}
+
+export async function launchAndMaybeAwaitHostInitialization(input: {
+  pi: ExtensionAPI;
+  init: typeof Init;
+  ctx: ExtensionContext;
+  owner: McpRuntimeOwner;
+  session: HostSession;
+  oauthRuntime: McpOAuthRuntime;
+  runtimeConfig: McpConfig;
+  configPath: string | undefined;
+  programmaticConfig: boolean;
+  options: McpAdapterOptions;
+  generation: number;
+  isFrozen: () => boolean;
+  markFrozen: () => void;
+  syncPrompts: () => void;
+  syncSkills: (state: McpExtensionState) => void;
+  syncTools: () => void;
+  syncDeferred?: () => void;
+  reloadedSkills?: ReloadedServerSkills | undefined;
+  envRaw: string | undefined;
+  envDirectToolOverride: string[] | undefined;
+  cache: MetadataCache | null;
+}): Promise<void> {
+  const initialization = launchHostInitialization(input);
+  if (
+    shouldAwaitDirectToolBootstrap({
+      envRaw: input.envRaw,
+      envDirectToolOverride: input.envDirectToolOverride,
+      config: input.runtimeConfig,
+      cache: input.cache,
+    })
+  ) {
+    await initialization;
+  }
 }

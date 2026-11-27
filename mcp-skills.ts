@@ -19,6 +19,13 @@ export interface VerifiedSkillBundle {
   readonly files: readonly VerifiedSkillFile[];
 }
 
+export interface ReloadedServerSkillEntry {
+  readonly configHash: string;
+  readonly bundles: readonly VerifiedSkillBundle[];
+}
+
+export type ReloadedServerSkills = ReadonlyMap<string, ReloadedServerSkillEntry>;
+
 export interface SkillDiscoveryResult {
   readonly supported: boolean;
   readonly failed?: boolean;

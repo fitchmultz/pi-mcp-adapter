@@ -107,6 +107,7 @@ export {
   isNonInteractiveOAuth,
   validateServerProtocolConfig,
   isServerDisabled,
+  startsAtBoot,
 } from "./config-protocol.ts";
 
 export interface McpToolCallIdentity {
