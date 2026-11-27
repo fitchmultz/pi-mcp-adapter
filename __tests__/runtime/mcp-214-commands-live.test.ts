@@ -236,7 +236,7 @@ describe("MCP-214 commands routing, live enable/disable, and doctor observabilit
     await mcpCmd.handler("tools", cmdContext);
     const allToolsOutput = ui.notify.mock.calls.at(-1)?.[0] ?? "";
     expect(allToolsOutput).toMatch(/alpha \(1 tool, ~\d+ tokens\)/);
-    expect(allToolsOutput).toMatch(/alpha_ping \(~\d+ tokens\)/);
+    expect(allToolsOutput).toMatch(/mcp__alpha__ping \(~\d+ tokens\)/);
 
     await mcpCmd.handler("tools disabledSrv", cmdContext);
     expect(ui.notify.mock.calls.at(-1)?.[0]).toContain("is disabled");
@@ -272,13 +272,13 @@ describe("MCP-214 commands routing, live enable/disable, and doctor observabilit
       .tool("mcp")
       .execute("res-1", { action: "resources", server: "alpha" });
     expect(resourcesBefore.details).toMatchObject({ server: "alpha", total: 1 });
-    expect(host.api.getActiveTools()).toContain("alpha_ping");
+    expect(host.api.getActiveTools()).toContain("mcp__alpha__ping");
     expect(host.runner.getCommand("mcp__alpha__brief")).toBeDefined();
 
     await mcpCmd.handler("disable alpha", cmdContext);
     expect(ui.notify.mock.calls.at(-1)?.[0]).toContain("disconnected and tools unloaded");
     expect(readFileSync(sharedPath, "utf8")).toBe(sharedBefore);
-    expect(host.api.getActiveTools()).not.toContain("alpha_ping");
+    expect(host.api.getActiveTools()).not.toContain("mcp__alpha__ping");
     await mcpCmd.handler("prompts", cmdContext);
     expect(ui.notify.mock.calls.at(-1)?.[0]).toContain("No MCP prompts available");
     await host.command("mcp__alpha__brief").handler("", cmdContext);
@@ -295,7 +295,7 @@ describe("MCP-214 commands routing, live enable/disable, and doctor observabilit
     expect(ui.notify.mock.calls.at(-1)?.[0]).toContain(
       'Enabled server "alpha" (1 tool registered)',
     );
-    expect(host.api.getActiveTools()).toContain("alpha_ping");
+    expect(host.api.getActiveTools()).toContain("mcp__alpha__ping");
     await mcpCmd.handler("prompts", cmdContext);
     expect(ui.notify.mock.calls.at(-1)?.[0]).toContain("/mcp__alpha__brief");
 

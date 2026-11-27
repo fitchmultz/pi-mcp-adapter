@@ -191,8 +191,8 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       });
       await waitFor(
         () =>
-          session.getActiveToolNames().includes("ext_init_noop") &&
-          session.getActiveToolNames().includes("overridden_noop") &&
+          session.getActiveToolNames().includes("mcp__ext_init__noop") &&
+          session.getActiveToolNames().includes("mcp__overridden__noop") &&
           readStartCount(keepStartLog) === 1,
       );
       expect(runnerErrors).toEqual([]);
@@ -210,10 +210,12 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         env: { MCP_START_LOG_FILE: extLateLog },
         exposure: "deferred",
       });
-      await waitFor(() => session.getAllTools().some((tool) => tool.name === "ext_late_noop"));
-      expect(session.getAllTools().find((tool) => tool.name === "ext_late_noop")?.exposure).toBe(
-        "deferred",
+      await waitFor(() =>
+        session.getAllTools().some((tool) => tool.name === "mcp__ext_late__noop"),
       );
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__ext_late__noop")?.exposure,
+      ).toBe("deferred");
       expect(readStartCount(extLateLog)).toBe(1);
       expect(readStartCount(keepStartLog)).toBe(1);
 
@@ -225,14 +227,14 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         env: { MCP_START_LOG_FILE: extLateLog },
         exposure: "direct",
       });
-      await waitFor(() => session.getActiveToolNames().includes("ext_late_noop"));
+      await waitFor(() => session.getActiveToolNames().includes("mcp__ext_late__noop"));
       expect(readStartCount(keepStartLog)).toBe(1);
 
       // Unregister the extension server and verify its tool is withdrawn while config servers stay up.
       api.unregisterMcpServer("ext-late");
       await waitFor(
         () =>
-          session.getAllTools().find((tool) => tool.name === "ext_late_noop")?.exposure ===
+          session.getAllTools().find((tool) => tool.name === "mcp__ext_late__noop")?.exposure ===
           "hidden",
       );
       expect(readStartCount(keepStartLog)).toBe(1);
@@ -297,7 +299,7 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
     const { root, agentDir, project } = createWorkspace();
     writeJson(join(project, ".mcp.json"), {
       mcpServers: {
-        linear: { url: "https://mcp.linear.example.test/mcp" },
+        linear: { url: "https://mcp.linear.example.test/mcp", toolPrefix: "server" },
       },
     });
     const settingsManager = SettingsManager.inMemory();
@@ -398,7 +400,7 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         { ...fixture.context, cwd: project },
       );
       await waitFor(
-        () => runtime.state !== null && fixture.api.getActiveTools().includes("demo_noop"),
+        () => runtime.state !== null && fixture.api.getActiveTools().includes("mcp__demo__noop"),
       );
       const state = requireValue(runtime.state);
       const connection = requireValue(state.manager.getConnection("demo"));
@@ -417,8 +419,8 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       registerCommandSpy.mockClear();
       setActiveToolsSpy.mockClear();
       state.toolMetadata.set("demo", [
-        { name: "demo_noop", originalName: "noop", description: "Noop" },
-        { name: "demo_added", originalName: "added", description: "Added during save" },
+        { name: "mcp__demo__noop", originalName: "noop", description: "Noop" },
+        { name: "mcp__demo__added", originalName: "added", description: "Added during save" },
       ]);
       state.promptMetadata.set("demo", [
         {
@@ -441,7 +443,7 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         ([commandName]) => commandName === "mcp__demo__added",
       );
       expect(addedPromptCall?.[1].description).toContain("Added prompt during save");
-      expect(fixture.api.getActiveTools()).toContain("demo_added");
+      expect(fixture.api.getActiveTools()).toContain("mcp__demo__added");
 
       // Active in-flight requests and scripts are reported as blockers.
       state.manager.incrementInFlight(connection);
@@ -794,12 +796,12 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
     try {
       await host.handlers.get("session_start")({}, { cwd: projectA });
       await waitFor(
-        () => host.api.getActiveTools().includes("proj_a_noop") && runtime.directToolsFrozen,
+        () => host.api.getActiveTools().includes("mcp__proj_a__noop") && runtime.directToolsFrozen,
       );
 
       await host.handlers.emitBeforeAgentStart({ cwd: projectB });
-      await waitFor(() => host.api.getActiveTools().includes("proj_b_noop"));
-      expect(host.api.getActiveTools()).not.toContain("proj_a_noop");
+      await waitFor(() => host.api.getActiveTools().includes("mcp__proj_b__noop"));
+      expect(host.api.getActiveTools()).not.toContain("mcp__proj_a__noop");
       expect(runtime.directToolsFrozen).toBe(true);
     } finally {
       await host.dispose();
@@ -892,8 +894,8 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         mode: "tui",
         uiContext: session.extensionRunner.getUIContext(),
       });
-      await waitFor(() => session.getAllTools().some((tool) => tool.name === "ext_pin_noop"));
-      expect(session.getActiveToolNames()).not.toContain("ext_pin_noop");
+      await waitFor(() => session.getAllTools().some((tool) => tool.name === "mcp__ext_pin__noop"));
+      expect(session.getActiveToolNames()).not.toContain("mcp__ext_pin__noop");
 
       const command = requireValue(session.extensionRunner.getCommand("mcp"));
       const baseContext = session.extensionRunner.createCommandContext();
@@ -925,7 +927,7 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       expect(JSON.parse(readFileSync(persistedPath, "utf-8"))).toEqual({
         mcpServers: { "ext-pin": { directTools: true } },
       });
-      await waitFor(() => session.getActiveToolNames().includes("ext_pin_noop"));
+      await waitFor(() => session.getActiveToolNames().includes("mcp__ext_pin__noop"));
 
       // Trigger a live mcp_servers_change reconcile and verify the persisted pin survives.
       requireValue(peerApi).registerMcpServer("ext-other", {
@@ -934,15 +936,18 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         cwd: root,
         exposure: "deferred",
       });
-      await waitFor(() => session.getAllTools().some((tool) => tool.name === "ext_other_noop"));
-      expect(session.getActiveToolNames()).toContain("ext_pin_noop");
+      await waitFor(() =>
+        session.getAllTools().some((tool) => tool.name === "mcp__ext_other__noop"),
+      );
+      expect(session.getActiveToolNames()).toContain("mcp__ext_pin__noop");
 
       // Unregistering the pinned extension server prunes its orphan directTools stub cleanly
       // and never bleeds onto a same-name server in another project.
       requireValue(peerApi).unregisterMcpServer("ext-pin");
       await waitFor(
         () =>
-          session.getAllTools().find((tool) => tool.name === "ext_pin_noop")?.exposure === "hidden",
+          session.getAllTools().find((tool) => tool.name === "mcp__ext_pin__noop")?.exposure ===
+          "hidden",
       );
       expect(loadMcpConfig(undefined, project).mcpServers["ext-pin"]).toBeUndefined();
 
@@ -1363,28 +1368,32 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       });
       await waitFor(
         () =>
-          session.getActiveToolNames().includes("alpha_probe") &&
-          session.getAllTools().some((tool) => tool.name === "beta_probe"),
+          session.getActiveToolNames().includes("mcp__alpha__probe") &&
+          session.getAllTools().some((tool) => tool.name === "mcp__beta__probe"),
       );
 
       // alpha: probe is direct (active), advance is codemode, hidden is excluded.
-      expect(session.getActiveToolNames()).toContain("alpha_probe");
-      expect(session.getActiveToolNames()).not.toContain("alpha_advance");
-      expect(session.getAllTools().find((tool) => tool.name === "alpha_advance")?.exposure).toBe(
-        "codemode",
-      );
-      expect(session.getAllTools().find((tool) => tool.name === "alpha_hidden")).toBeUndefined();
+      expect(session.getActiveToolNames()).toContain("mcp__alpha__probe");
+      expect(session.getActiveToolNames()).not.toContain("mcp__alpha__advance");
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__alpha__advance")?.exposure,
+      ).toBe("codemode");
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__alpha__hidden"),
+      ).toBeUndefined();
 
       // beta: toolExposure overrides directTools: true for deferred and codemode tools.
-      expect(session.getActiveToolNames()).not.toContain("beta_probe");
-      expect(session.getActiveToolNames()).not.toContain("beta_advance");
-      expect(session.getAllTools().find((tool) => tool.name === "beta_probe")?.exposure).toBe(
+      expect(session.getActiveToolNames()).not.toContain("mcp__beta__probe");
+      expect(session.getActiveToolNames()).not.toContain("mcp__beta__advance");
+      expect(session.getAllTools().find((tool) => tool.name === "mcp__beta__probe")?.exposure).toBe(
         "deferred",
       );
-      expect(session.getAllTools().find((tool) => tool.name === "beta_advance")?.exposure).toBe(
-        "codemode",
-      );
-      expect(session.getAllTools().find((tool) => tool.name === "beta_hidden")).toBeUndefined();
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__beta__advance")?.exposure,
+      ).toBe("codemode");
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__beta__hidden"),
+      ).toBeUndefined();
     } finally {
       session.dispose();
     }
