@@ -32,6 +32,7 @@ import {
   getProjectPiConfigPath,
   writeDirectToolsConfig,
 } from "../config.ts";
+import { computeServerHash, saveMetadataCache, serializeTools } from "../metadata-cache.ts";
 import type { UiServerHandle } from "../ui-server-contracts.ts";
 import { createLifecycleHost, requireValue } from "./fixtures/extension-lifecycle.ts";
 import { createTestExtensionContext } from "./test-extension-context.ts";
@@ -798,15 +799,89 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       await waitFor(
         () => host.api.getActiveTools().includes("mcp__proj_a__noop") && runtime.directToolsFrozen,
       );
+      const beforeA = await host.handlers.emitBeforeAgentStart({ cwd: projectA });
+      expect(beforeA.systemPromptOptions.sections.mcp_servers).toContain("proj-a");
+      expect(beforeA.systemPromptOptions.sections.mcp_servers).not.toContain("proj-b");
 
-      await host.handlers.emitBeforeAgentStart({ cwd: projectB });
+      const beforeB = await host.handlers.emitBeforeAgentStart({ cwd: projectB });
       await waitFor(() => host.api.getActiveTools().includes("mcp__proj_b__noop"));
       expect(host.api.getActiveTools()).not.toContain("mcp__proj_a__noop");
+      expect(beforeB.systemPromptOptions.sections.mcp_servers).toContain("proj-b");
+      expect(beforeB.systemPromptOptions.sections.mcp_servers).not.toContain("proj-a");
+      const beforeBAgain = await host.handlers.emitBeforeAgentStart({ cwd: projectB });
+      expect(beforeBAgain.systemPromptOptions.sections.mcp_servers).toBe(
+        beforeB.systemPromptOptions.sections.mcp_servers,
+      );
       expect(runtime.directToolsFrozen).toBe(true);
     } finally {
       await host.dispose();
     }
   }, 15_000);
+
+  it("restores warm-cached catalogs on change_dir with default mcp prefix and detects server opt-out changes", async () => {
+    const { root } = createWorkspace();
+    const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
+    const projectA = join(root, "cache-a");
+    const projectB = join(root, "cache-b");
+    mkdirSync(projectA, { recursive: true });
+    mkdirSync(projectB, { recursive: true });
+
+    const lazyServer = { command: process.execPath, args: [fixtureServer] };
+    expect(
+      saveMetadataCache({
+        version: 2,
+        servers: {
+          "cached-b": {
+            configHash: computeServerHash(lazyServer),
+            tools: serializeTools([
+              { name: "noop", description: "Noop tool", inputSchema: { type: "object" } },
+            ]),
+            resources: [],
+            prompts: [],
+            cachedAt: Date.now(),
+          },
+        },
+      }),
+    ).toBe("saved");
+
+    writeJson(join(projectA, ".pi", "fitch-mcp-adapter", "mcp.json"), { mcpServers: {} });
+    writeJson(join(projectB, ".pi", "fitch-mcp-adapter", "mcp.json"), {
+      mcpServers: { "cached-b": lazyServer },
+    });
+
+    const host = await createLifecycleHost();
+    const runtime = new McpHostRuntime(host.api, {});
+    runtime.install();
+    try {
+      await host.handlers.get("session_start")({}, { cwd: projectA });
+      await waitFor(() => runtime.state !== null);
+
+      await host.handlers.emitBeforeAgentStart({ cwd: projectB });
+      await waitFor(
+        () =>
+          runtime.state?.toolMetadata
+            .get("cached-b")
+            ?.some((tool) => tool.name === "mcp__cached_b__noop") ?? false,
+      );
+      expect(runtime.state?.toolMetadata.get("cached-b")?.map((tool) => tool.name)).not.toContain(
+        "cached_b_noop",
+      );
+
+      writeJson(join(projectB, ".pi", "fitch-mcp-adapter", "mcp.json"), {
+        settings: { toolPrefix: "server" },
+        mcpServers: { "cached-b": lazyServer },
+      });
+      await host.runner.emit({ type: "mcp_servers_change", servers: [] });
+      await waitFor(
+        () =>
+          runtime.state?.toolMetadata
+            .get("cached-b")
+            ?.some((tool) => tool.name === "cached_b_noop") ?? false,
+      );
+    } finally {
+      await host.dispose();
+    }
+  });
 
   it("rebinds the lazy MCP traceWriter to the new project cwd after change_dir reconcile", async () => {
     const { root } = createWorkspace();

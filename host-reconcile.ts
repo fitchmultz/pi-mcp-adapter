@@ -24,7 +24,12 @@ import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 import { isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type McpConfig, type ServerEntry } from "./types.ts";
+import {
+  DEFAULT_TOOL_PREFIX,
+  isServerDisabled,
+  type McpConfig,
+  type ServerEntry,
+} from "./types.ts";
 import {
   MAX_CONCURRENT_SERVER_CONNECTS,
   parallelLimit,
@@ -151,8 +156,8 @@ class SessionReconciler {
     this.state.manager.setExposeSkills(this.input.nextConfig.settings?.exposeSkills !== false);
     const { previousConfig, nextConfig } = this.input;
     const prefixChanged =
-      (previousConfig.settings?.toolPrefix ?? "server") !==
-      (nextConfig.settings?.toolPrefix ?? "server");
+      (previousConfig.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX) !==
+      (nextConfig.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX);
     const requestPolicyChanged = !isDeepStrictEqual(
       requestPolicyFingerprint(previousConfig),
       requestPolicyFingerprint(nextConfig),
@@ -378,7 +383,7 @@ class SessionReconciler {
   }
 
   private restoreCache(name: string, definition: ServerEntry): void {
-    const prefix = this.state.config.settings?.toolPrefix ?? "server";
+    const prefix = this.state.config.settings?.toolPrefix ?? DEFAULT_TOOL_PREFIX;
     restoreCachedMetadata(this.state, {
       name,
       definition,

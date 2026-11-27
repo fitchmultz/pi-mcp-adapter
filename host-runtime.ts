@@ -334,14 +334,6 @@ export class McpHostRuntime implements McpAdapterHost {
     return this.reconcile.enqueue(() => this.reconcileLiveSession(ctx, false));
   }
 
-  private snapshotConfigState() {
-    return {
-      config: this.config,
-      configPath: this.configPath,
-      cacheEnabled: this.runtimeCacheEnabled,
-    };
-  }
-
   private async reconcileLiveSession(ctx: ExtensionContext, cwdChanged: boolean): Promise<void> {
     await runLiveSessionReconcile({
       pi: this.pi,
@@ -394,23 +386,26 @@ export class McpHostRuntime implements McpAdapterHost {
         initModule: this.initModule,
         applySurface: (nextConfig, state) => {
           this.config = nextConfig;
-          this.syncPromptCommands();
-          this.skillsTracker.handleStateUpdate(state);
-          this.syncToolSurface();
+          this.serversPrompt.resetFrozen(false);
+          this.refreshToggleSurface(state);
         },
-        refreshSurface: () => {
-          this.syncPromptCommands();
-          this.skillsTracker.handleStateUpdate(this.state);
-          this.syncToolSurface();
-        },
+        refreshSurface: () => this.refreshToggleSurface(this.state),
       });
     });
     return result;
   }
 
+  private refreshToggleSurface(state: McpExtensionState | null): void {
+    this.syncPromptCommands();
+    this.skillsTracker.handleStateUpdate(state);
+    this.syncToolSurface();
+  }
+
   private onReconciledSurface(): void {
     this.syncPromptCommands();
     this.skillsTracker.handleStateUpdate(this.state);
+    // Reconcile resets directToolsFrozen before re-freezing; clear any captured section before that re-freeze.
+    this.serversPrompt.resetFrozen(this.directToolsFrozen);
     if (!this.directToolsFrozen) {
       this.syncToolSurface();
       if (this.config.settings?.freezeDirectTools === true) {
@@ -419,7 +414,6 @@ export class McpHostRuntime implements McpAdapterHost {
     } else {
       this.syncDeferredCatalog();
     }
-    this.serversPrompt.resetFrozen(this.directToolsFrozen);
   }
 
   private syncCachedPromptCommands(config: McpConfig, cacheEnabled: boolean): void {
@@ -431,7 +425,11 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private async startSession(ctx: ExtensionContext, wasFrozen = false): Promise<void> {
-    const previous = this.snapshotConfigState();
+    const previous = {
+      config: this.config,
+      configPath: this.configPath,
+      cacheEnabled: this.runtimeCacheEnabled,
+    };
     this.runtimeCwd = ctx.cwd;
     this.directToolsFrozen = wasFrozen;
     const prev = { state: this.state, owner: this.owner, oauthRuntime: this.oauthRuntime };
