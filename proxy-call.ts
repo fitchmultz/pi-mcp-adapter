@@ -29,6 +29,9 @@ import {
   approvalFailure,
   callPreparationError,
   invalidCallRequest,
+  nativeToolCallResult,
+  serverNotFoundResult,
+  suggestedServerCallResult,
   validateCallTargetArguments,
 } from "./proxy-call-validate.ts";
 import { asObjectRecord } from "./mcp-output-values.ts";
@@ -114,20 +117,7 @@ class CallLookup {
     definition: ServerEntry | undefined,
   ): ProxyToolResult | undefined {
     if (!definition) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.`,
-          },
-        ],
-        details: {
-          mode: "call",
-          error: "server_not_found",
-          server: serverName,
-          requestedTool: this.request.toolName,
-        },
-      };
+      return serverNotFoundResult(serverName, this.request.toolName);
     }
     if (isServerDisabled(definition)) {
       return disabledResult("call", serverName);
@@ -337,34 +327,17 @@ class CallLookup {
       (serverOverride ?? "").length === 0 &&
       getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp");
     if (nativeTool !== false && nativeTool !== undefined) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `"${toolName}" is a native Pi tool. Call ${toolName} directly instead of using mcp({ action: "call", tool: "${toolName}" }).`,
-          },
-        ],
-        details: { mode: "call", error: "native_tool", requestedTool: toolName },
-      };
+      return nativeToolCallResult(toolName);
     }
     const suggestedOwner = this.suggestedOwner();
     if (suggestedOwner) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Tool ${JSON.stringify(toolName)} is on server ${JSON.stringify(suggestedOwner[0])}, not ${JSON.stringify(serverOverride)}. Retry the same call with server: ${JSON.stringify(suggestedOwner[0])} or omit server.`,
-          },
-        ],
-        details: {
-          mode: "call",
-          error: "tool_not_found",
-          requestedTool: toolName,
-          hintServer: serverName,
-          suggestedServer: suggestedOwner[0],
-          suggestions: this.matches(suggestedOwner[1], suggestedOwner[0]).map((tool) => tool.name),
-        },
-      };
+      return suggestedServerCallResult({
+        toolName,
+        serverOverride,
+        hintServer: serverName,
+        suggestedServer: suggestedOwner[0],
+        suggestions: this.matches(suggestedOwner[1], suggestedOwner[0]).map((tool) => tool.name),
+      });
     }
     const suggestions = rankSuggestions(state, toolName, 5, serverName);
     const { unknownServers } = catalogCoverage(state, serverName);

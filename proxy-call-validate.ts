@@ -146,6 +146,56 @@ export function callPreparationError(
   return { ...error, details: { ...error.details, ...target } };
 }
 
+export function serverNotFoundResult(serverName: string, requestedTool: string): ProxyToolResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.`,
+      },
+    ],
+    details: { mode: "call", error: "server_not_found", server: serverName, requestedTool },
+  };
+}
+
+export function nativeToolCallResult(toolName: string): ProxyToolResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text: `"${toolName}" is a native Pi tool. Call ${toolName} directly instead of using mcp({ action: "call", tool: "${toolName}" }).`,
+      },
+    ],
+    details: { mode: "call", error: "native_tool", requestedTool: toolName },
+  };
+}
+
+export function suggestedServerCallResult(options: {
+  toolName: string;
+  serverOverride: string | undefined;
+  hintServer: string | undefined;
+  suggestedServer: string;
+  suggestions: string[];
+}): ProxyToolResult {
+  const { toolName, serverOverride, hintServer, suggestedServer, suggestions } = options;
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Tool ${JSON.stringify(toolName)} is on server ${JSON.stringify(suggestedServer)}, not ${JSON.stringify(serverOverride)}. Retry the same call with server: ${JSON.stringify(suggestedServer)} or omit server.`,
+      },
+    ],
+    details: {
+      mode: "call",
+      error: "tool_not_found",
+      requestedTool: toolName,
+      hintServer,
+      suggestedServer,
+      suggestions,
+    },
+  };
+}
+
 export function approvalFailure(
   reason: string,
   serverName: string,

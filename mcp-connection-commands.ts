@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { LiveServerToggleResult } from "./host-contract.ts";
 import type { McpExtensionState } from "./state.ts";
-import { DEFAULT_TOOL_PREFIX, isServerDisabled, type ServerEntry } from "./types.ts";
+import { isServerDisabled, type ServerEntry } from "./types.ts";
 import {
   MAX_CONCURRENT_SERVER_CONNECTS,
   applyConnectionMetadata,

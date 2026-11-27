@@ -69,6 +69,33 @@ export function inputValidationHint(
     : "";
 }
 
+export async function guardGenericCallFailure(options: {
+  message: string;
+  stderrTail: string;
+  aborted: boolean;
+  suffix: string;
+  detailsBase: Record<string, unknown>;
+  outputGuardOptions: McpOutputGuardOptions;
+}): Promise<ProxyToolResult> {
+  const { message, stderrTail, aborted, suffix, detailsBase, outputGuardOptions } = options;
+  const guarded = await guardMcpOutput([{ type: "text", text: message }], {
+    ...outputGuardOptions,
+    prefix: "Failed to call tool: ",
+    suffix,
+  });
+  return {
+    content: guarded.content,
+    isError: true,
+    details: {
+      ...detailsBase,
+      error: aborted ? "aborted" : "call_failed",
+      message: guarded.outputGuard ? "output truncated; see outputGuard.fullOutputPath" : message,
+      ...stderrDetails(stderrTail),
+      ...guardedMcpDetails(guarded),
+    },
+  };
+}
+
 interface CallResultRequest {
   target: Pick<ToolMetadata, "resourceUri" | "inputSchema">;
   uiSummary: UiSessionResultSummary | undefined;
