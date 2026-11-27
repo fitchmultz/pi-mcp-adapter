@@ -49,11 +49,14 @@ describe("initializeMcp elicitation config", () => {
       },
     });
 
-    expect(elicitation).toHaveBeenCalledWith({
-      ui: state.ui,
-      allowUrl: true,
-      signal: state.owner.signal,
-    });
+    expect(elicitation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ui: state.ui,
+        allowUrl: true,
+        signal: state.owner.signal,
+      }),
+    );
+    expect(typeof elicitation.mock.calls[0]?.[0]?.openBrowser).toBe("function");
     expect(wire.clientCapabilities()).toMatchObject({ elicitation: { form: {}, url: {} } });
     await expect.poll(wire.streamReady).toBe(true);
     expect(await wire.callback("elicitation/create", elicitationRequest).response).toMatchObject({
@@ -84,7 +87,7 @@ describe("initializeMcp elicitation config", () => {
     });
   });
 
-  it("keeps RPC elicitation form-only so the backend never opens a browser", async () => {
+  it("enables form and URL elicitation in RPC UI mode", async () => {
     host.runner.setUIContext(host.ui, "rpc");
     const elicitation = vi.spyOn(McpServerManager.prototype, "setElicitationConfig");
     const wire = await host.wire({ legacy: true, inbound: true });
@@ -92,13 +95,15 @@ describe("initializeMcp elicitation config", () => {
       config: { mcpServers: { demo: { ...wire.definition, lifecycle: "eager" } } },
     });
 
-    expect(elicitation).toHaveBeenCalledWith({
-      ui: state.ui,
-      allowUrl: false,
-      signal: state.owner.signal,
-    });
-    expect(wire.clientCapabilities()).toMatchObject({ elicitation: { form: {} } });
-    expect(wire.clientCapabilities()).not.toHaveProperty("elicitation.url");
+    expect(elicitation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ui: state.ui,
+        allowUrl: true,
+        signal: state.owner.signal,
+      }),
+    );
+    expect(typeof elicitation.mock.calls[0]?.[0]?.openBrowser).toBe("function");
+    expect(wire.clientCapabilities()).toMatchObject({ elicitation: { form: {}, url: {} } });
     await expect.poll(wire.streamReady).toBe(true);
     expect(await wire.callback("elicitation/create", elicitationRequest).response).toMatchObject({
       result: { action: "cancel" },
@@ -156,5 +161,34 @@ describe("initializeMcp elicitation config", () => {
     await host.initialize({ config: { ...config, settings: { elicitation: false } } });
     expect(elicitation).not.toHaveBeenCalled();
     expect(wire.clientCapabilities()).not.toHaveProperty("elicitation");
+  });
+
+  it("routes state.openBrowser launches through BROWSER during URL elicitation", async () => {
+    vi.stubEnv("BROWSER", "custom-test-browser");
+    const execSpy = vi.spyOn(host.api, "exec").mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      code: 0,
+      killed: false,
+      truncated: false,
+    });
+    try {
+      const state = await host.initialize({ config: { mcpServers: {} } });
+      await state.openBrowser("https://example.com/oauth-browser");
+      const targetUrl = "https://example.com/oauth-browser";
+      const expectedCall: [string, string[]] =
+        process.platform === "darwin"
+          ? ["open", ["-a", "custom-test-browser", targetUrl]]
+          : ["custom-test-browser", [targetUrl]];
+      const [expectedCommand, expectedArgs] =
+        process.platform === "win32"
+          ? ["cmd", ["/c", "start", "", "custom-test-browser", targetUrl]]
+          : expectedCall;
+      expect(execSpy).toHaveBeenCalledWith(expectedCommand, expectedArgs, {
+        signal: state.owner.signal,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

@@ -35,6 +35,7 @@ export interface McpServerStatusSnapshot {
   /** False means the server has not been discovered, rather than an empty inventory. */
   readonly catalogKnown?: boolean;
   readonly resourceCount?: number;
+  readonly skillCount?: number;
   readonly failedAgoSeconds?: number;
   readonly disabled: boolean;
 }
@@ -44,6 +45,7 @@ export interface McpStatusSnapshot {
   readonly servers: ReadonlyArray<McpServerStatusSnapshot>;
   readonly totalTools: number;
   readonly totalResources: number;
+  readonly totalSkills?: number;
   readonly connectedCount: number;
   readonly disabledCount: number;
 }
@@ -224,12 +226,25 @@ export type CachedPriorDiscovery =
       cachedAt: number;
     };
 
+export interface SkillMetadata {
+  readonly name: string;
+  readonly description: string;
+  readonly uri: string;
+}
+
+export interface CachedSkill {
+  name: string;
+  description: string;
+  uri: string;
+}
+
 export interface ServerCacheEntry {
   configHash: string;
   tools: CachedTool[];
   resources: CachedResource[];
   resourceTemplates?: CachedResourceTemplate[];
   prompts?: CachedPrompt[];
+  skills?: CachedSkill[];
   instructions?: string;
   priorDiscovery?: CachedPriorDiscovery;
   cachedAt: number;

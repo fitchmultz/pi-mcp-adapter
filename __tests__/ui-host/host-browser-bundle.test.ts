@@ -22,6 +22,7 @@ it("checks generated browser freshness without writing, detects source drift, an
     for (const file of readdirSync(root).filter((name) => /^host-browser-.*\.ts$/u.test(name))) {
       copyFileSync(join(root, file), join(dir, file));
     }
+    copyFileSync(join(root, "ui-stream-constants.ts"), join(dir, "ui-stream-constants.ts"));
     copyFileSync(join(root, "ui-stream-types.ts"), join(dir, "ui-stream-types.ts"));
     copyFileSync(join(root, "ui-session-timing.ts"), join(dir, "ui-session-timing.ts"));
     copyFileSync(join(root, "ui-link-url.ts"), join(dir, "ui-link-url.ts"));

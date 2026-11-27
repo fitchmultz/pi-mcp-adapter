@@ -27,6 +27,8 @@ export interface ElicitationHandlerOptions {
   serverName: string;
   ui: ElicitationUIContext;
   allowUrl: boolean;
+  /** Opens authorization or confirmation URLs using the host browser opener when provided. */
+  openBrowser?: (url: string) => Promise<void>;
   /** Dismisses every dialog this handler opens when the owning runtime stops. */
   signal?: AbortSignal;
   onUrlAccepted?: (elicitationId: string) => void;
@@ -158,6 +160,20 @@ function formatReview(
   return [`Review input for ${serverName}`, "", ...rows].join("\n");
 }
 
+async function openElicitationBrowser(
+  options: ElicitationHandlerOptions,
+  url: string,
+): Promise<boolean> {
+  try {
+    await (options.openBrowser ? options.openBrowser(url) : open(url));
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    options.ui.notify(`Could not open MCP elicitation URL: ${message}`, "error");
+    return false;
+  }
+}
+
 export async function handleUrlElicitation(
   options: ElicitationHandlerOptions,
   params: ElicitRequestURLParams,
@@ -203,13 +219,7 @@ export async function handleUrlElicitation(
     return { action: "decline" };
   }
 
-  try {
-    await open(params.url);
-  } catch (error) {
-    options.ui.notify(
-      `Could not open MCP elicitation URL: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
-    );
+  if (!(await openElicitationBrowser(options, params.url))) {
     return { action: "cancel" };
   }
   options.onUrlAccepted?.(params.elicitationId);

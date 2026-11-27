@@ -24,6 +24,7 @@ export interface McpAdapterHost {
   readonly programmaticConfig: boolean;
   readonly directToolsFrozen: boolean;
   syncToolSurface: () => void;
+  consumePendingSkillReload?: () => boolean;
   applyDirectToolConfigChanges: (changes: Map<string, true | string[] | false>) => void;
   setServerDisabled: (
     serverName: string,

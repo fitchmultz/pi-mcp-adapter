@@ -8,7 +8,6 @@ import adapter, {
 import {
   extractUiPromptText,
   SERVER_STREAM_RESULT_PATCH_METHOD,
-  serverStreamResultPatchNotificationSchema,
   type McpConfig,
   type McpToolCallEvent,
   type ServerStreamResultPatchNotification,
@@ -18,6 +17,9 @@ import {
   completeAuthFromInput,
   createOAuthRuntime,
   getAuthStorageOptions,
+  getMcpDiscoverySummary,
+  getServerProvenance,
+  loadMcpConfig,
   McpServerManager,
   removeAuth,
   shutdownOAuth,
@@ -65,11 +67,14 @@ const snapshot: McpStatusSnapshot = {
   disabledCount: 0,
 };
 const prompt: string | undefined = extractUiPromptText({ prompt: "hello" });
-const patch: ServerStreamResultPatchNotification | undefined =
-  serverStreamResultPatchNotificationSchema.safeParse({
-    method: SERVER_STREAM_RESULT_PATCH_METHOD,
-    params: { streamToken: "token", result: {} },
-  }).data;
+const patchMethod: string = SERVER_STREAM_RESULT_PATCH_METHOD;
+const patch: ServerStreamResultPatchNotification = {
+  method: SERVER_STREAM_RESULT_PATCH_METHOD,
+  params: { streamToken: "token", result: {} },
+};
+const loadedRuntimeConfig: McpConfig = loadMcpConfig();
+const discoverySummary = getMcpDiscoverySummary();
+const provenance = getServerProvenance(undefined, process.cwd());
 
 // @ts-expect-error Factory options must retain their declared value types.
 createMcpAdapter({ outputDirectory: 42 });
@@ -97,6 +102,10 @@ void [
   snapshot,
   prompt,
   patch,
+  patchMethod,
+  loadedRuntimeConfig,
+  discoverySummary,
+  provenance,
   invalidPrompt,
   oauthRuntime,
   authStorage,

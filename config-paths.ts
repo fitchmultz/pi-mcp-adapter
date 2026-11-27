@@ -6,10 +6,15 @@ import type { ImportKind } from "./config-types.ts";
 import type { ConfigSourceSpec } from "./config-contracts.ts";
 
 export const GENERIC_GLOBAL_CONFIG_PATH = join(homedir(), ".config", "mcp", "mcp.json");
-const AGENTS_GLOBAL_CONFIG_PATHS: readonly string[] = [
-  join(homedir(), ".agents", "mcp.json"),
-  join(homedir(), ".agents", "mcp", "mcp.json"),
-];
+
+export function getGenericGlobalConfigPath(): string {
+  return join(homedir(), ".config", "mcp", "mcp.json");
+}
+
+function getAgentsGlobalConfigPaths(): readonly string[] {
+  const home = homedir();
+  return [join(home, ".agents", "mcp.json"), join(home, ".agents", "mcp", "mcp.json")];
+}
 const PROJECT_CONFIG_NAME = ".mcp.json";
 const PROJECT_NATIVE_PI_CONFIG_NAME = ".pi/mcp.json";
 const PROJECT_PI_CONFIG_NAME = ".pi/fitch-mcp-adapter/mcp.json";
@@ -153,12 +158,14 @@ function getGlobalConfigSources(
   globalNativePiPath: string,
   userWritePath: string,
 ): ConfigSourceSpec[] {
+  const genericGlobalPath = getGenericGlobalConfigPath();
+  const agentsGlobalPaths = getAgentsGlobalConfigPaths();
   const sources: ConfigSourceSpec[] = [];
-  if (!samePath(GENERIC_GLOBAL_CONFIG_PATH, userPath)) {
+  if (!samePath(genericGlobalPath, userPath)) {
     sources.push({
       id: "shared-global",
       label: "user-global standard MCP",
-      readPath: GENERIC_GLOBAL_CONFIG_PATH,
+      readPath: genericGlobalPath,
       writePath: userWritePath,
       kind: "import",
       importKind: "global MCP config",
@@ -169,8 +176,8 @@ function getGlobalConfigSources(
   sources.push(...getAgentsGlobalSources(userPath, userWritePath));
   if (
     !samePath(globalNativePiPath, userPath) &&
-    !samePath(globalNativePiPath, GENERIC_GLOBAL_CONFIG_PATH) &&
-    !AGENTS_GLOBAL_CONFIG_PATHS.some((agentsPath) => samePath(agentsPath, globalNativePiPath))
+    !samePath(globalNativePiPath, genericGlobalPath) &&
+    !agentsGlobalPaths.some((agentsPath) => samePath(agentsPath, globalNativePiPath))
   ) {
     sources.push({
       id: "native-pi-global",
@@ -280,8 +287,9 @@ export function getConfigSources(overridePath?: string, cwd = process.cwd()): Co
 }
 
 function getAgentsGlobalSources(userPath: string, userWritePath: string): ConfigSourceSpec[] {
-  return AGENTS_GLOBAL_CONFIG_PATHS.flatMap((agentsPath, index) => {
-    if (samePath(agentsPath, userPath) || samePath(agentsPath, GENERIC_GLOBAL_CONFIG_PATH)) {
+  const genericGlobalPath = getGenericGlobalConfigPath();
+  return getAgentsGlobalConfigPaths().flatMap((agentsPath, index) => {
+    if (samePath(agentsPath, userPath) || samePath(agentsPath, genericGlobalPath)) {
       return [];
     }
     return [

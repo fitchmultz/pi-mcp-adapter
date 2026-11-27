@@ -22,17 +22,20 @@ import type {
   ServerConnection,
   UiStreamListener,
   MetadataListChangedListener,
+  ServerClosedListener,
 } from "./server-connection.ts";
 import { ConnectionLifecycle } from "./connection-lifecycle.ts";
 import { ConnectionFactory } from "./connection-factory.ts";
 import { ConnectionCallbacks } from "./connection-callbacks.ts";
 import { appendStderrToError } from "./connection-stdio.ts";
+import { logger } from "./logger.ts";
 export type { ServerConnection } from "./server-connection.ts";
 
 export class McpServerManager {
   private readonly lifecycle: ConnectionLifecycle;
   private readonly factory: ConnectionFactory;
   private readonly callbacks: ConnectionCallbacks;
+  private serverClosedListener: ServerClosedListener | undefined;
 
   constructor(defaultCwd?: string) {
     this.lifecycle = new ConnectionLifecycle(
@@ -43,8 +46,14 @@ export class McpServerManager {
         publish: (connection) => this.callbacks.publish(connection),
         activateSubscription: (name, connection) =>
           this.callbacks.activateSubscription(name, connection),
-        close: (name) => this.callbacks.clearServer(name),
-        closeAll: () => this.callbacks.clear(),
+        close: (name) => {
+          this.callbacks.clearServer(name);
+          this.notifyServerClosed(name);
+        },
+        closeAll: () => {
+          this.callbacks.clear();
+          this.notifyServerClosed();
+        },
         invalidatePrior: (name) => this.factory.priorDiscovery.invalidate(name),
       },
     );
@@ -58,6 +67,25 @@ export class McpServerManager {
 
   setMetadataListChangedListener(listener: MetadataListChangedListener | undefined): void {
     this.callbacks.metadataListChangedListener = listener;
+  }
+
+  setServerClosedListener(listener: ServerClosedListener | undefined): void {
+    this.serverClosedListener = listener;
+  }
+
+  private notifyServerClosed(name?: string): void {
+    try {
+      this.serverClosedListener?.(name);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const scope = name !== undefined && name !== "" ? ` for ${name}` : "";
+      logger.warn(`MCP: server close listener failed${scope}: ${message}`);
+    }
+  }
+
+  setExposeSkills(enabled: boolean): void {
+    this.factory.exposeSkills = enabled;
+    this.callbacks.exposeSkills = enabled;
   }
 
   setElicitationConfig(config: ServerElicitationConfig | undefined): void {

@@ -55,12 +55,7 @@ import {
   toSdkPriorDiscovery,
 } from "./prior-discovery.ts";
 import { cleanupFailures } from "./connection-disposal.ts";
-import {
-  fetchAllPrompts,
-  fetchAllResources,
-  fetchAllResourceTemplates,
-  fetchAllTools,
-} from "./connection-discovery.ts";
+import { populateConnectionCatalogs } from "./connection-discovery.ts";
 
 import {
   assertSingleServerTransport,
@@ -73,6 +68,7 @@ export class ConnectionFactory {
   oauthRuntime: McpOAuthRuntime | undefined;
   defaultRequestTimeoutMs: number | undefined;
   traceSettings: McpTraceSettings | undefined;
+  exposeSkills = true;
   readonly priorDiscovery = new PriorDiscoveryCache();
   private traceWriter: McpTraceWriter | undefined;
   private readonly needsAuthTokens = new WeakMap<ServerConnection, TokenSnapshot | undefined>();
@@ -481,27 +477,16 @@ class ConnectionSetup {
       connection.status = "closed";
     };
     const requestOptions = factory.requestOptions(definition, signal);
-    const catalogs = [
-      fetchAllTools(this.client, requestOptions),
-      fetchAllResources(this.client, requestOptions),
-      fetchAllResourceTemplates(this.client, requestOptions),
-      fetchAllPrompts(this.client, requestOptions),
-    ] as const;
-    const [toolResult] = await Promise.allSettled(catalogs);
-    throwIfAborted(signal);
-    if (toolResult.status === "rejected" && !runtime.isOAuthChallenge(toolResult.reason)) {
-      const reason: unknown = toolResult.reason;
-      return Promise.reject(reason);
-    }
-    if (this.authError) {
-      throw this.authError;
-    }
-    const [tools, resources, resourceTemplates, promptResult] = await Promise.all(catalogs);
-    connection.tools = tools;
-    connection.resources = resources;
-    connection.resourceTemplates = resourceTemplates;
-    connection.prompts = promptResult.prompts;
-    connection.promptDiscoveryFailed = promptResult.failed;
+    await populateConnectionCatalogs({
+      serverName: name,
+      client: this.client,
+      connection,
+      requestOptions,
+      exposeSkills: factory.exposeSkills && definition.exposeSkills !== false,
+      signal,
+      isOAuthChallenge: runtime.isOAuthChallenge,
+      getAuthError: () => this.authError,
+    });
     const priorDiscovery = this.recordPriorDiscovery();
     if (priorDiscovery !== undefined) {
       connection.priorDiscovery = priorDiscovery;

@@ -155,6 +155,17 @@ function fieldActions(schema: FormProperty, first: string[], required: boolean):
   return actions;
 }
 
+async function selectFieldAction(
+  ui: ElicitationUIContext,
+  title: string,
+  actions: string[],
+): Promise<string | undefined> {
+  if (actions.length === 1 && actions[0] === "Enter value") {
+    return "Enter value";
+  }
+  return ui.select(title, actions);
+}
+
 async function collectField(
   ui: ElicitationUIContext,
   params: ElicitRequestFormParams,
@@ -167,7 +178,7 @@ async function collectField(
     return collectEnum(ui, title, schema, required);
   }
   const actions = fieldActions(schema, primaryActions(schema), required);
-  const action = await ui.select(title, actions);
+  const action = await selectFieldAction(ui, title, actions);
   if (action === undefined) {
     return { cancelled: true };
   }

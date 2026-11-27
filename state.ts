@@ -7,6 +7,7 @@ import type { McpConfigValidationError } from "./config-types.ts";
 import type {
   ToolMetadata,
   PromptMetadata,
+  SkillMetadata,
   McpConfig,
   McpAdapterOptions,
   UiModelContextUpdate,
@@ -45,6 +46,12 @@ export type SendMessageFn = (
   options?: { triggerTurn?: boolean },
 ) => void;
 
+export type McpInitializationOptions = McpAdapterOptions & {
+  oauthRuntime?: McpOAuthRuntime;
+  statusEvents?: McpExtensionState["statusEvents"];
+  resolvedConfig?: McpConfig;
+};
+
 export interface McpExtensionState {
   owner: McpRuntimeOwner;
   manager: McpServerManager;
@@ -57,9 +64,20 @@ export interface McpExtensionState {
   promptMetadata: Map<string, PromptMetadata[]>;
   /** Servers whose prompt inventory came from successful live discovery. */
   promptMetadataLive: Set<string>;
+  /** Verified MCP skills indexed by server name. */
+  skillMetadata?: Map<string, SkillMetadata[]>;
+  /** Materialized private skill directory paths indexed by server name. */
+  skillPaths?: Map<string, string[]>;
+  /** Adapter-managed directory identifier for materialized skills in this runtime. */
+  skillsRuntimeId?: string;
+  /** Whether the active working directory was trusted when state was created/reconciled. */
+  projectTrusted?: boolean;
+  /** Explicit config path and working directory used for skill origin/trust checks. */
+  configPath?: string | undefined;
+  cwd?: string | undefined;
+  includeNativePi?: boolean;
   serverInstructions: Map<string, string>;
   config: McpConfig;
-  configPath?: string | undefined;
   configErrors?: McpConfigValidationError[] | undefined;
   recentStderr?: Map<string, string> | undefined;
   programmaticConfig?: boolean;

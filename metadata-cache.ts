@@ -8,6 +8,7 @@ import {
   type CachedPrompt,
   type CachedResource,
   type CachedResourceTemplate,
+  type CachedSkill,
   type CachedTool,
   type McpConfig,
   type McpTool,
@@ -18,6 +19,7 @@ import {
   type MetadataCache,
   type ServerCacheEntry,
   type ServerEntry,
+  type SkillMetadata,
   type ToolMetadata,
   type PromptMetadata,
   formatPromptCommandName,
@@ -154,6 +156,7 @@ export function computeServerHash(definition: ServerEntry): string {
     bearerToken: resolveBearerToken(definition),
     bearerTokenEnv: definition.bearerTokenEnv,
     exposeResources: definition.exposeResources,
+    exposeSkills: definition.exposeSkills,
     includeTools: definition.includeTools,
     excludeTools: definition.excludeTools,
     ...(definition.toolExposure !== undefined
@@ -355,6 +358,16 @@ export function serializePrompts(prompts: McpPrompt[]): CachedPrompt[] {
     });
   }
   return result;
+}
+
+export function serializeSkills(skills: readonly SkillMetadata[]): CachedSkill[] {
+  return skills
+    .filter((skill) => skill.name !== "" && skill.uri !== "")
+    .map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      uri: skill.uri,
+    }));
 }
 
 function copyPromptArguments(args: McpPromptArgument[]): NonNullable<CachedPrompt["arguments"]> {

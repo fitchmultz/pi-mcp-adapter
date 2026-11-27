@@ -16,6 +16,7 @@ interface ServerStatusEntry {
   stage: ServerStage;
   status: string;
   toolCount: number;
+  skillCount?: number;
   failedAgo: number | null;
   failureMessage?: string;
   disabled?: true;
@@ -49,6 +50,7 @@ function serverStatus(state: McpExtensionState, name: string): ServerStatusEntry
   const connection = state.manager.getConnection(name);
   const metadata = state.toolMetadata.get(name);
   const toolCount = metadata?.filter((tool) => (tool.resourceUri ?? "").length === 0).length ?? 0;
+  const skillCount = state.skillMetadata?.get(name)?.length ?? 0;
   const failedAgo = getFailureAgeSeconds(state, name);
   const stage = serverStage({
     definition,
@@ -62,28 +64,38 @@ function serverStatus(state: McpExtensionState, name: string): ServerStatusEntry
     stage,
     status: proxyStatusText(stage),
     toolCount,
+    ...(skillCount > 0 ? { skillCount } : {}),
     failedAgo,
     ...(failureMessage !== null ? { failureMessage } : {}),
   };
+}
+
+function formatSkillSuffix(skillCount: number | undefined): string {
+  if (skillCount === undefined || skillCount <= 0) {
+    return "";
+  }
+  return `, ${skillCount} skill${skillCount === 1 ? "" : "s"}`;
 }
 
 function formatServerStatus({
   name,
   stage,
   toolCount,
+  skillCount,
   failedAgo,
   failureMessage,
 }: ServerStatusEntry): string {
   const reason = failureMessage !== undefined && failureMessage.length > 0 ? failureMessage : null;
+  const skillSuffix = formatSkillSuffix(skillCount);
   switch (stage) {
     case "disabled":
       return `⊘ ${name} (disabled)\n`;
     case "connected":
-      return `✓ ${name} (${toolCount} tools)\n`;
+      return `✓ ${name} (${toolCount} tools${skillSuffix})\n`;
     case "needs-auth":
       return `⚠ ${name} (needs auth${reason !== null ? ` — ${reason}` : ""})\n`;
     case "cached":
-      return `○ ${name} (${toolCount} tools, cached${reason !== null ? `; last error: ${reason}` : ""})\n`;
+      return `○ ${name} (${toolCount} tools${skillSuffix}, cached${reason !== null ? `; last error: ${reason}` : ""})\n`;
     case "failed":
       return `✗ ${name} (failed ${failedAgo ?? 0}s ago${reason !== null ? ` — ${reason}` : ""})\n`;
     case "undiscovered":
@@ -98,10 +110,12 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
   const disabledCount = servers.filter((s) => s.disabled === true).length;
   const enabledServers = servers.filter((s) => s.disabled !== true);
   const totalTools = enabledServers.reduce((sum, s) => sum + s.toolCount, 0);
+  const totalSkills = enabledServers.reduce((sum, s) => sum + (s.skillCount ?? 0), 0);
   const connectedCount = enabledServers.filter((s) => s.status === "connected").length;
   const coverage = catalogCoverage(state);
 
-  let text = `MCP: ${connectedCount}/${enabledServers.length} connected, ${totalTools} tools available (calls connect lazily)`;
+  const skillSummary = totalSkills > 0 ? `, ${totalSkills} skills` : "";
+  let text = `MCP: ${connectedCount}/${enabledServers.length} connected, ${totalTools} tools${skillSummary} available (calls connect lazily)`;
   if (disabledCount > 0) {
     text += ` (${disabledCount} disabled)`;
   }
@@ -119,6 +133,14 @@ export function executeStatus(state: McpExtensionState): ProxyToolResult {
 
   return {
     content: [{ type: "text" as const, text: text.trim() }],
-    details: { mode: "status", servers, totalTools, connectedCount, disabledCount, coverage },
+    details: {
+      mode: "status",
+      servers,
+      totalTools,
+      ...(totalSkills > 0 ? { totalSkills } : {}),
+      connectedCount,
+      disabledCount,
+      coverage,
+    },
   };
 }

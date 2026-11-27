@@ -11,7 +11,7 @@ import type {
 } from "./config-contracts.ts";
 import { extractServers, parseJsonConfig, type LoadedSourceConfig } from "./config-imports.ts";
 import {
-  GENERIC_GLOBAL_CONFIG_PATH,
+  getGenericGlobalConfigPath,
   IMPORT_PATHS,
   REPOPROMPT_BINARY_CANDIDATES,
   findProjectRoot,
@@ -276,7 +276,7 @@ function detectRepoPrompt(
   }
   const projectRoot = findProjectRoot(cwd);
   const targetPath =
-    projectRoot !== null ? getProjectConfigPath(projectRoot) : GENERIC_GLOBAL_CONFIG_PATH;
+    projectRoot !== null ? getProjectConfigPath(projectRoot) : getGenericGlobalConfigPath();
   return {
     configured: false,
     executablePath,

@@ -12,15 +12,18 @@ interface FileMigration {
 }
 
 /** Preserve historical sources and existing destinations; consume current OAuth sources only after verified promotion. */
+export interface CredentialMigration {
+  server: string;
+  status: Awaited<ReturnType<typeof migrateLegacyAuthEntry>> | "error";
+  error?: string;
+}
+
 export async function migrateLegacyState({
   cwd = process.cwd(),
   dryRun = false,
 }: { cwd?: string; dryRun?: boolean } = {}): Promise<{
   files: FileMigration[];
-  credentials: Array<{
-    server: string;
-    status: Awaited<ReturnType<typeof migrateLegacyAuthEntry>>;
-  }>;
+  credentials: CredentialMigration[];
 }> {
   const paths = ["mcp.json", "mcp-cache.json", "mcp-onboarding.json", "mcp-npx-cache.json"].map(
     (name) => ({ source: getAgentPath(name), destination: getAdapterPath(name) }),
@@ -61,13 +64,35 @@ export async function migrateLegacyState({
   return { files, credentials };
 }
 
-async function migrateLegacyCredentials(
-  cwd: string,
-): Promise<Array<{ server: string; status: Awaited<ReturnType<typeof migrateLegacyAuthEntry>> }>> {
-  const credentials: Array<{
-    server: string;
-    status: Awaited<ReturnType<typeof migrateLegacyAuthEntry>>;
-  }> = [];
+async function migrateSingleServerCredential(input: {
+  server: string;
+  definition: ReturnType<typeof loadMcpConfig>["mcpServers"][string];
+  legacyDirectory: string;
+  authStorageOptions: ReturnType<typeof getAuthStorageOptions>;
+}): Promise<CredentialMigration | null> {
+  const { server, definition, legacyDirectory, authStorageOptions } = input;
+  try {
+    const serverUrl = resolveServerUrl(definition);
+    if (serverUrl === undefined) {
+      return null;
+    }
+    const status = await migrateLegacyAuthEntry(
+      { serverName: server, serverUrl },
+      legacyDirectory,
+      authStorageOptions,
+    );
+    return { server, status };
+  } catch (error) {
+    return {
+      server,
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function migrateLegacyCredentials(cwd: string): Promise<CredentialMigration[]> {
+  const credentials: CredentialMigration[] = [];
   const config = loadMcpConfig(undefined, cwd);
   const envLegacyDirectory = process.env.MCP_OAUTH_DIR?.trim();
   const legacyDirectory =
@@ -76,18 +101,15 @@ async function migrateLegacyCredentials(
       : (resolveConfiguredOAuthDir(config.settings?.oauthDir, cwd) ?? getAgentPath("mcp-oauth"));
   const authStorageOptions = getAuthStorageOptions(config.settings?.oauthDir, cwd);
   for (const [server, definition] of Object.entries(config.mcpServers)) {
-    const serverUrl = resolveServerUrl(definition);
-    if (serverUrl === undefined) {
-      continue;
-    }
-    credentials.push({
+    const migrated = await migrateSingleServerCredential({
       server,
-      status: await migrateLegacyAuthEntry(
-        { serverName: server, serverUrl },
-        legacyDirectory,
-        authStorageOptions,
-      ),
+      definition,
+      legacyDirectory,
+      authStorageOptions,
     });
+    if (migrated !== null) {
+      credentials.push(migrated);
+    }
   }
   return credentials;
 }

@@ -9,3 +9,5 @@ export {
   type McpOAuthRuntime,
 } from "./mcp-oauth-runtime.ts";
 export { authenticate, completeAuthFromInput, removeAuth, startAuth } from "./mcp-auth-flow.ts";
+export { getMcpDiscoverySummary, getServerProvenance, loadMcpConfig } from "./config.ts";
+export type * from "./config-contracts.ts";

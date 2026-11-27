@@ -21,9 +21,9 @@ describe("MCP elicitation", () => {
     mocks.open.mockResolvedValue(new ChildProcess());
   });
 
-  it("collects a form with stock Pi dialogs and lets the user review it before sending", async () => {
+  it("skips the single-option Enter value select prompt for required primitive fields", async () => {
     const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
-    const ui = createElicitationUi(["Continue", "Enter value", "Submit"], ["octocat"]);
+    const ui = createElicitationUi(["Continue", "Submit"], ["octocat"]);
 
     const result = await handleElicitationRequest(
       { serverName: "github", ui, allowUrl: true },
@@ -40,12 +40,13 @@ describe("MCP elicitation", () => {
       }),
     );
 
+    expect(ui.select).toHaveBeenCalledTimes(2);
     expect(ui.select.mock.calls[0]).toEqual([
       "MCP Input Request\nServer: github\n\nPlease provide your GitHub username",
       ["Continue", "Decline"],
     ]);
     expect(ui.input).toHaveBeenCalledWith("GitHub username (required)", undefined);
-    expect(ui.select.mock.calls[2]?.[0]).toContain("GitHub username: octocat");
+    expect(ui.select.mock.calls[1]?.[0]).toContain("GitHub username: octocat");
     expect(result).toEqual({ action: "accept", content: { username: "octocat" } });
   });
 
@@ -74,10 +75,7 @@ describe("MCP elicitation", () => {
 
   it("validates form values and lets the user correct invalid input", async () => {
     const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
-    const ui = createElicitationUi(
-      ["Continue", "Enter value", "Enter value", "Submit"],
-      ["not-an-email", "octocat@example.com"],
-    );
+    const ui = createElicitationUi(["Continue", "Submit"], ["not-an-email", "octocat@example.com"]);
 
     const result = await handleElicitationRequest(
       { serverName: "demo", ui, allowUrl: true },
@@ -94,6 +92,7 @@ describe("MCP elicitation", () => {
       }),
     );
 
+    expect(ui.select).toHaveBeenCalledTimes(2);
     expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("email"), "error");
     expect(result).toEqual({ action: "accept", content: { email: "octocat@example.com" } });
   });
@@ -106,7 +105,7 @@ describe("MCP elicitation", () => {
   ] as const)("rejects blank %s input and reprompts when required=%s", async (type, required) => {
     const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
     const ui = createElicitationUi(
-      ["Continue", "Enter value", "Enter value", "Submit"],
+      required ? ["Continue", "Submit"] : ["Continue", "Enter value", "Enter value", "Submit"],
       ["   ", "7"],
     );
 
@@ -336,7 +335,6 @@ describe("MCP elicitation", () => {
         "Use default",
         "Medium (medium)",
         "No",
-        "Enter value",
         "Choose values",
         "Red",
         "Done",
@@ -386,5 +384,63 @@ describe("MCP elicitation", () => {
         colors: ["Red"],
       },
     });
+  });
+
+  it("memoizes AjvJsonSchemaValidator across field and form validations", async () => {
+    const { AjvJsonSchemaValidator } = await import("@modelcontextprotocol/client/validators/ajv");
+    const { coerceAndValidateFormValues } = await import("../../elicitation-form-values.ts");
+    const getValidator = vi.spyOn(AjvJsonSchemaValidator.prototype, "getValidator");
+
+    try {
+      coerceAndValidateFormValues(
+        {
+          mode: "form",
+          message: "One",
+          requestedSchema: {
+            type: "object",
+            properties: { a: { type: "string" } },
+            required: ["a"],
+          },
+        },
+        { a: "first" },
+      );
+      coerceAndValidateFormValues(
+        {
+          mode: "form",
+          message: "Two",
+          requestedSchema: {
+            type: "object",
+            properties: { b: { type: "integer" } },
+            required: ["b"],
+          },
+        },
+        { b: "12" },
+      );
+
+      expect(getValidator).toHaveBeenCalledTimes(2);
+      expect(getValidator.mock.contexts[0]).toBe(getValidator.mock.contexts[1]);
+    } finally {
+      getValidator.mockRestore();
+    }
+  });
+
+  it("routes browser opens through custom openBrowser when supplied", async () => {
+    const { handleElicitationRequest } = await import("../../elicitation-handler.ts");
+    const openBrowser = vi.fn<(url: string) => Promise<void>>(async () => Promise.resolve());
+    const ui = createElicitationUi(["Open"]);
+
+    const result = await handleElicitationRequest(
+      { serverName: "demo", ui, allowUrl: true, openBrowser },
+      request({
+        mode: "url",
+        message: "Authorize",
+        elicitationId: "auth-custom-browser",
+        url: "https://example.com/custom",
+      }),
+    );
+
+    expect(result).toEqual({ action: "accept" });
+    expect(openBrowser).toHaveBeenCalledWith("https://example.com/custom");
+    expect(mocks.open).not.toHaveBeenCalled();
   });
 });

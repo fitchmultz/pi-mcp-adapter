@@ -6,13 +6,20 @@ import { getMissingConfiguredDirectToolServers } from "./direct-tools.ts";
 import {
   applyConnectionMetadata,
   markKeepAliveAfterConnect,
+  notifyToolMetadataUpdated,
   recordFailure,
+  updateMetadataCache,
   updateServerMetadata,
   updateStatusBar,
 } from "./init.ts";
 import { configureRequests } from "./init-state.ts";
 import { registerLifecycle, restoreCachedMetadata } from "./init-startup.ts";
 import { logger } from "./logger.ts";
+import {
+  cleanupServerSkills,
+  refreshLiveSkillsForEnabledServers,
+  syncAllStateSkills,
+} from "./mcp-skills-store.ts";
 import { publishMcpStatusSnapshot } from "./mcp-status.ts";
 import { loadMetadataCache, type MetadataCache } from "./metadata-cache.ts";
 import { isAbortError, type McpRuntimeOwner } from "./runtime-owner.ts";
@@ -60,6 +67,7 @@ function connectionFingerprint(definition: ServerEntry): Record<string, unknown>
 function metadataFingerprint(definition: ServerEntry): Record<string, unknown> {
   return {
     exposeResources: definition.exposeResources,
+    exposeSkills: definition.exposeSkills,
     includeTools: definition.includeTools,
     excludeTools: definition.excludeTools,
     toolExposure:
@@ -138,6 +146,9 @@ class SessionReconciler {
   }
 
   async run(): Promise<void> {
+    this.state.projectTrusted = this.input.ctx.isProjectTrusted();
+    this.state.cwd = this.input.cwd;
+    this.state.manager.setExposeSkills(this.input.nextConfig.settings?.exposeSkills !== false);
     const { previousConfig, nextConfig } = this.input;
     const prefixChanged =
       (previousConfig.settings?.toolPrefix ?? "server") !==
@@ -308,7 +319,8 @@ class SessionReconciler {
     next: ServerEntry,
     prefixChanged: boolean,
   ): void {
-    const connected = this.state.manager.getConnection(name)?.status === "connected";
+    const connection = this.state.manager.getConnection(name);
+    const connected = connection?.status === "connected";
     if (!isDeepStrictEqual(lifecycleFingerprint(prev), lifecycleFingerprint(next))) {
       this.state.lifecycle.unregisterServer(name);
       registerLifecycle(this.state, name, next);
@@ -317,6 +329,9 @@ class SessionReconciler {
       }
     }
     if (prefixChanged || !isDeepStrictEqual(metadataFingerprint(prev), metadataFingerprint(next))) {
+      if (connection) {
+        connection.definition = next;
+      }
       if (connected) {
         updateServerMetadata(this.state, name);
       } else {
@@ -345,9 +360,21 @@ class SessionReconciler {
     return mode === "keep-alive" || mode === "eager";
   }
 
+  private hasCachedExposeSkills(name: string, definition: ServerEntry): boolean {
+    if (this.state.config.settings?.exposeSkills === false || definition.exposeSkills === false) {
+      return false;
+    }
+    return (this.cache?.servers[name]?.skills?.length ?? 0) > 0;
+  }
+
   private shouldAutoConnect(name: string, definition: ServerEntry): boolean {
     const mode = definition.lifecycle ?? "lazy";
-    return mode === "keep-alive" || mode === "eager" || this.missingDirectTools.has(name);
+    return (
+      mode === "keep-alive" ||
+      mode === "eager" ||
+      this.missingDirectTools.has(name) ||
+      this.hasCachedExposeSkills(name, definition)
+    );
   }
 
   private restoreCache(name: string, definition: ServerEntry): void {
@@ -366,6 +393,7 @@ class SessionReconciler {
     this.state.promptMetadata.delete(name);
     this.state.promptMetadataLive.delete(name);
     this.state.serverInstructions.delete(name);
+    cleanupServerSkills(this.state, name);
   }
 
   private clearServerRecords(name: string): void {
@@ -456,4 +484,15 @@ class SessionReconciler {
 
 export async function reconcileSessionState(input: ReconcileSessionInput): Promise<void> {
   await new SessionReconciler(input).run();
+  const refreshedServers = await refreshLiveSkillsForEnabledServers(input.state);
+  syncAllStateSkills(input.state);
+  if (refreshedServers.length === 0) {
+    return;
+  }
+  for (const name of refreshedServers) {
+    updateMetadataCache(input.state, name);
+    notifyToolMetadataUpdated(input.state, name, "skills-refresh");
+  }
+  publishMcpStatusSnapshot(input.state);
+  input.onSurfaceChanged();
 }

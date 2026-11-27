@@ -27,27 +27,109 @@ const PI_CONFIG_PATH = path.join(AGENT_DIR, "fitch-mcp-adapter", "mcp.json");
 const GENERIC_GLOBAL_CONFIG_PATH = path.join(HOME, ".config", "mcp", "mcp.json");
 const AGENTS_GLOBAL_CONFIG_PATH = path.join(HOME, ".agents", "mcp.json");
 const AGENTS_NESTED_GLOBAL_CONFIG_PATH = path.join(HOME, ".agents", "mcp", "mcp.json");
-const PROJECT_CONFIG_PATH = path.resolve(process.cwd(), ".mcp.json");
-const PROJECT_PI_CONFIG_PATH = path.resolve(process.cwd(), ".pi", "fitch-mcp-adapter", "mcp.json");
 
-const IMPORT_PATHS = {
-  cursor: [path.join(HOME, ".cursor", "mcp.json")],
-  "claude-code": [
-    path.join(HOME, ".claude", "mcp.json"),
-    path.join(HOME, ".claude.json"),
-    path.join(HOME, ".claude", "claude_desktop_config.json"),
-  ],
-  "claude-desktop": [
-    path.join(HOME, "Library", "Application Support", "Claude", "claude_desktop_config.json"),
-  ],
-  codex: [path.join(HOME, ".codex", "config.toml"), path.join(HOME, ".codex", "config.json")],
-  opencode: [
+/** @param {string} cwd @returns {string | null} */
+function findGitRoot(cwd) {
+  let dir = path.resolve(cwd);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, ".git"))) {
+      return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      return null;
+    }
+    dir = parent;
+  }
+}
+
+const PROJECT_DISCOVERY_MARKERS = [".mcp.json", ".pi/mcp.json", ".pi/fitch-mcp-adapter/mcp.json"];
+
+/** @param {string} cwd @returns {string[]} */
+function walkProjectDirs(cwd) {
+  const start = path.resolve(cwd);
+  if (start === HOME) {
+    return [start];
+  }
+  const dirs = [];
+  let dir = start;
+  for (;;) {
+    if (dir === HOME) {
+      break;
+    }
+    dirs.push(dir);
+    if (fs.existsSync(path.join(dir, ".git"))) {
+      return dirs;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return [start];
+}
+
+/** @param {string} cwd @param {string} relativePath @returns {string} */
+function resolveProjectDiscoveryPath(cwd, relativePath) {
+  const dirs = walkProjectDirs(cwd);
+  const existing = dirs.find((dir) => fs.existsSync(path.join(dir, relativePath)));
+  if (existing !== undefined) {
+    return path.join(existing, relativePath);
+  }
+  const projectRoot =
+    dirs.find((dir) => PROJECT_DISCOVERY_MARKERS.some((m) => fs.existsSync(path.join(dir, m)))) ??
+    dirs.find((dir) => fs.existsSync(path.join(dir, ".git"))) ??
+    dirs[0] ??
+    path.resolve(cwd);
+  return path.join(projectRoot, relativePath);
+}
+
+/** @param {string} [cwd] */
+function getDiscoveryPaths(cwd = process.cwd()) {
+  const resolvedCwd = path.resolve(cwd);
+  const agentDirEnv = process.env.PI_CODING_AGENT_DIR?.trim() ?? "";
+  const agentDir = agentDirEnv !== "" ? expandHome(agentDirEnv) : path.join(HOME, ".pi", "agent");
+  return {
+    "User-global native Pi MCP": path.join(agentDir, "mcp.json"),
+    "User-global standard MCP": GENERIC_GLOBAL_CONFIG_PATH,
+    "User-global .agents MCP": AGENTS_GLOBAL_CONFIG_PATH,
+    "User-global .agents nested MCP": AGENTS_NESTED_GLOBAL_CONFIG_PATH,
+    "Pi global override": path.join(agentDir, "fitch-mcp-adapter", "mcp.json"),
+    "Project native Pi MCP": resolveProjectDiscoveryPath(resolvedCwd, ".pi/mcp.json"),
+    "Project standard MCP": resolveProjectDiscoveryPath(resolvedCwd, ".mcp.json"),
+    "Project Pi override": resolveProjectDiscoveryPath(
+      resolvedCwd,
+      ".pi/fitch-mcp-adapter/mcp.json",
+    ),
+  };
+}
+
+/** @param {string} [cwd] @returns {Record<string, string[]>} */
+function getImportPaths(cwd = process.cwd()) {
+  const resolvedCwd = path.resolve(cwd);
+  const gitRoot = findGitRoot(resolvedCwd);
+  const openCodeCandidates = [
     path.join(HOME, ".config", "opencode", "opencode.json"),
-    path.resolve(process.cwd(), "opencode.json"),
-  ],
-  windsurf: [path.join(HOME, ".windsurf", "mcp.json")],
-  vscode: [path.resolve(process.cwd(), ".vscode", "mcp.json")],
-};
+    path.resolve(resolvedCwd, "opencode.json"),
+    ...(gitRoot !== null && gitRoot !== resolvedCwd ? [path.join(gitRoot, "opencode.json")] : []),
+  ];
+  return {
+    cursor: [path.join(HOME, ".cursor", "mcp.json")],
+    "claude-code": [
+      path.join(HOME, ".claude", "mcp.json"),
+      path.join(HOME, ".claude.json"),
+      path.join(HOME, ".claude", "claude_desktop_config.json"),
+    ],
+    "claude-desktop": [
+      path.join(HOME, "Library", "Application Support", "Claude", "claude_desktop_config.json"),
+    ],
+    codex: [path.join(HOME, ".codex", "config.toml"), path.join(HOME, ".codex", "config.json")],
+    opencode: [...new Set(openCodeCandidates)],
+    windsurf: [path.join(HOME, ".windsurf", "mcp.json")],
+    vscode: [path.resolve(resolvedCwd, ".vscode", "mcp.json")],
+  };
+}
 
 function printHelp(log = console.log) {
   log("Fitch MCP Adapter helper\n");
@@ -121,10 +203,10 @@ function loadPiConfig() {
   };
 }
 
-function findAvailableImports() {
+function findAvailableImports(cwd = process.cwd()) {
   const found = [];
 
-  for (const [kind, candidates] of Object.entries(IMPORT_PATHS)) {
+  for (const [kind, candidates] of Object.entries(getImportPaths(cwd))) {
     const existing = candidates.find((candidate) => fs.existsSync(candidate));
     if (existing !== undefined) {
       found.push({ kind, path: existing });
@@ -138,14 +220,7 @@ function findAvailableImports() {
 function printDiscovery(log, imports) {
   log("Config discovery:\n");
 
-  const paths = {
-    "User-global standard MCP": GENERIC_GLOBAL_CONFIG_PATH,
-    "User-global .agents MCP": AGENTS_GLOBAL_CONFIG_PATH,
-    "User-global .agents nested MCP": AGENTS_NESTED_GLOBAL_CONFIG_PATH,
-    "Pi global override": PI_CONFIG_PATH,
-    "Project standard MCP": PROJECT_CONFIG_PATH,
-    "Project Pi override": PROJECT_PI_CONFIG_PATH,
-  };
+  const paths = getDiscoveryPaths();
 
   for (const [label, filePath] of Object.entries(paths)) {
     const prefix = fs.existsSync(filePath) ? "✓" : "-";
@@ -243,7 +318,11 @@ async function runMigration(argv, log) {
     log(`${file.status}: ${file.source} -> ${file.destination}`);
   }
   for (const credential of result.credentials) {
-    log(`OAuth ${credential.server}: ${credential.status}`);
+    log(
+      credential.error !== undefined && credential.error !== ""
+        ? `OAuth ${credential.server}: ${credential.status} (${credential.error})`
+        : `OAuth ${credential.server}: ${credential.status}`,
+    );
   }
   log(
     dryRun

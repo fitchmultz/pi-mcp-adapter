@@ -168,13 +168,44 @@ describe("sampling handler", () => {
 
   it.each(
     ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol"].flatMap((id) =>
-      (["openai-responses", "openai-codex-responses"] as const).map((api) => ({ id, api })),
+      (["openai-responses", "azure-openai-responses", "openai-codex-responses"] as const).map(
+        (api) => ({ id, api }),
+      ),
     ),
-  )("omits the temperature $id rejects in nested $api sampling", async ({ id, api }) => {
+  )(
+    "omits the temperature $id rejects in nested $api sampling when compat.supportsTemperature is unset",
+    async ({ id, api }) => {
+      const { handleSamplingRequest } = await import("../../sampling-handler.ts");
+      const current = {
+        ...model,
+        provider: "openai",
+        id,
+        api,
+        compat: { sessionAffinityFormat: "openai-nosession" as const },
+      };
+      await handleSamplingRequest(
+        createOptions({ getCurrentModel: () => current }),
+        createSamplingRequest({
+          messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+          maxTokens: 50,
+          temperature: 0.4,
+        }),
+      );
+      expect(requireValue(mocks.complete.mock.calls[0])[2]).not.toHaveProperty("temperature");
+      expect(requireValue(mocks.complete.mock.calls[0])[2]).toHaveProperty("maxTokens", 50);
+    },
+  );
+
+  it("honors explicit model.compat.supportsTemperature overrides when present", async () => {
     const { handleSamplingRequest } = await import("../../sampling-handler.ts");
-    const current = { ...model, provider: "openai", id, api };
+    const noTempModel = {
+      ...model,
+      provider: "anthropic",
+      id: "claude-opus-4-7",
+      compat: { supportsTemperature: false },
+    };
     await handleSamplingRequest(
-      createOptions({ getCurrentModel: () => current }),
+      createOptions({ getCurrentModel: () => noTempModel }),
       createSamplingRequest({
         messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
         maxTokens: 50,
@@ -183,6 +214,23 @@ describe("sampling handler", () => {
     );
     expect(requireValue(mocks.complete.mock.calls[0])[2]).not.toHaveProperty("temperature");
     expect(requireValue(mocks.complete.mock.calls[0])[2]).toHaveProperty("maxTokens", 50);
+
+    const tempModel = {
+      ...model,
+      provider: "openai",
+      id: "gpt-6-astra",
+      api: "openai-responses" as const,
+      compat: { supportsTemperature: true },
+    };
+    await handleSamplingRequest(
+      createOptions({ getCurrentModel: () => tempModel }),
+      createSamplingRequest({
+        messages: [{ role: "user", content: { type: "text", text: "Hello" } }],
+        maxTokens: 50,
+        temperature: 0.4,
+      }),
+    );
+    expect(requireValue(mocks.complete.mock.calls[1])[2]).toHaveProperty("temperature", 0.4);
   });
 
   it("requires UI approval unless auto-approve is enabled", async () => {

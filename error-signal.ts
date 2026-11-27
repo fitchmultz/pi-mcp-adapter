@@ -11,7 +11,12 @@
 export function toolErrorOverride(details: unknown): { isError: true } | undefined {
   if (details !== null && typeof details === "object" && "error" in details) {
     const code = details.error;
-    if (code === "tool_error" || code === "call_failed") {
+    if (
+      code === "tool_error" ||
+      code === "call_failed" ||
+      code === "approval_denied" ||
+      code === "approval_required"
+    ) {
       return { isError: true };
     }
   }
