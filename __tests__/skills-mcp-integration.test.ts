@@ -654,4 +654,137 @@ describe("MCP Skills (SEP-2640) integration", () => {
       await hostCtx.dispose();
     }
   });
+
+  it("publishes committed resources and templates before a newer failing refresh preempts in-flight skills discovery", async () => {
+    const { InMemoryTransport } = await import("@modelcontextprotocol/client");
+    const { McpServer } = await import("@modelcontextprotocol/server");
+    const { SkillsExtension, skillEntry } = await import("@modelcontextprotocol/server/ext/skills");
+    const ConnectionRuntime = await import("../connection-runtime.ts");
+    const { ConnectionCallbacks } = await import("../connection-callbacks.ts");
+    const { ConnectionLifecycle } = await import("../connection-lifecycle.ts");
+
+    const v1Main = "---\nname: v1-skill\ndescription: Version 1 skill.\n---\nBody.\n";
+    const v1Skill = await skillEntry("v1-skill", { "SKILL.md": v1Main });
+    const skillFiles = new Map<string, { text: string; mimeType: string }>([
+      [v1Skill.uri, { text: v1Main, mimeType: "text/markdown" }],
+    ]);
+    const skillsStarted = Promise.withResolvers<boolean>();
+    const skillsGate = Promise.withResolvers<boolean>();
+    const failedTemplateAttempt = Promise.withResolvers<boolean>();
+    let resources = [{ name: "r1", uri: "docs://v1" }];
+    let templates = [{ name: "t1", uriTemplate: "docs://v1/{id}" }];
+    let failTemplates = false;
+
+    const server = new McpServer({ name: "skills-list-changed-race", version: "1.0.0" });
+    new SkillsExtension({
+      source: {
+        list: async () => {
+          skillsStarted.resolve(true);
+          await skillsGate.promise;
+          return { skills: [v1Skill] };
+        },
+        get: async (uri) => (uri === v1Skill.uri ? v1Skill : undefined),
+        read: async (uri) => skillFiles.get(uri),
+      },
+    }).attach(server);
+    server.server.registerCapabilities({ tools: {}, resources: { listChanged: true } });
+    server.server.setRequestHandler("tools/list", () => ({ tools: [] }));
+    server.server.setRequestHandler("resources/list", () => ({ resources }));
+    server.server.setRequestHandler("resources/templates/list", () => {
+      if (failTemplates) {
+        failedTemplateAttempt.resolve(true);
+        throw new Error("simulated templates failure");
+      }
+      return { resourceTemplates: templates };
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const published: Array<{
+      readonly serverName: string;
+      readonly reason: string;
+      readonly resources: readonly string[];
+      readonly templates: readonly string[];
+      readonly skills: readonly string[];
+    }> = [];
+    const invalidatePrior = vi.fn<() => void>();
+    const callbackRef: { current?: InstanceType<typeof ConnectionCallbacks> } = {};
+    const lifecycle = new ConnectionLifecycle(
+      async (_name, def) => {
+        const currentCallbacks = requireValue(callbackRef.current);
+        const client = currentCallbacks.createClient("ctrl", def, ConnectionRuntime);
+        await client.connect(clientTransport);
+        return {
+          client,
+          transport: clientTransport,
+          definition: def,
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+          prompts: [],
+          lastUsedAt: Date.now(),
+          status: "connected",
+        };
+      },
+      () => Promise.resolve(),
+      {
+        publish: (conn) => callbackRef.current?.publish(conn),
+        activateSubscription: (name, conn) => callbackRef.current?.activateSubscription(name, conn),
+        close: (name) => callbackRef.current?.clearServer(name),
+        closeAll: () => callbackRef.current?.clear(),
+        invalidatePrior,
+      },
+    );
+    const callbacks = new ConnectionCallbacks(lifecycle);
+    callbackRef.current = callbacks;
+    await server.connect(serverTransport);
+
+    try {
+      const connection = await lifecycle.connect("ctrl", {
+        url: "https://skills-refresh.invalid/mcp",
+        auth: false,
+      });
+      callbacks.metadataListChangedListener = (serverName, reason) => {
+        published.push({
+          serverName,
+          reason,
+          resources: connection.resources.map((entry) => entry.uri),
+          templates: (connection.resourceTemplates ?? []).map((entry) => entry.uriTemplate),
+          skills: (connection.skills ?? []).map((entry) => entry.name),
+        });
+      };
+
+      await server.server.sendResourceListChanged();
+      await skillsStarted.promise;
+
+      expect(published).toEqual([
+        {
+          serverName: "ctrl",
+          reason: "resources-list-changed",
+          resources: ["docs://v1"],
+          templates: ["docs://v1/{id}"],
+          skills: [],
+        },
+      ]);
+
+      failTemplates = true;
+      resources = [{ name: "r2", uri: "docs://v2" }];
+      templates = [{ name: "t2", uriTemplate: "docs://v2/{id}" }];
+      await server.server.sendResourceListChanged();
+      await failedTemplateAttempt.promise;
+      await delay(25);
+
+      skillsGate.resolve(true);
+      await delay(25);
+
+      expect(published).toHaveLength(1);
+      expect(connection.skills).toBeUndefined();
+      expect(connection.resources.map((entry) => entry.uri)).toEqual(["docs://v1"]);
+      expect((connection.resourceTemplates ?? []).map((entry) => entry.uriTemplate)).toEqual([
+        "docs://v1/{id}",
+      ]);
+    } finally {
+      skillsGate.resolve(true);
+      await Promise.allSettled([lifecycle.closeAll(), server.close()]);
+    }
+  });
 });

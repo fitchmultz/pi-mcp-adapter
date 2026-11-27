@@ -376,6 +376,7 @@ export class ConnectionCallbacks {
     connection.pendingResources = undefined;
     connection.resourceTemplates = refreshed;
     connection.resourceTemplatesStale = false;
+    this.metadataListChangedListener?.(serverName, "resources-list-changed");
     const skillResult = await discoverServerSkills({
       serverName,
       client,
@@ -391,8 +392,8 @@ export class ConnectionCallbacks {
         connection.skills = skillResult.skills.map((bundle) => bundle.metadata);
         connection.verifiedSkillBundles = skillResult.skills;
       }
+      this.metadataListChangedListener?.(serverName, "resources-list-changed");
     }
-    this.metadataListChangedListener?.(serverName, "resources-list-changed");
   }
 
   private isActiveConnection(
