@@ -62,7 +62,7 @@ describe("direct tools in child Pi processes", () => {
     expect(toolsLine).toBeDefined();
     assert.ok(toolsLine !== undefined);
     expect(JSON.parse(toolsLine.slice("DIRECT_TOOLS_AT_AGENT_START=".length))).toContain(
-      "demo_reload_identity",
+      "mcp__demo__reload_identity",
     );
   }, 70_000);
 });

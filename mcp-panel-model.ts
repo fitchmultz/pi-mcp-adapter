@@ -1,10 +1,11 @@
-import type {
-  McpConfig,
-  McpPanelCallbacks,
-  McpPanelConnectionStatus,
-  ServerEntry,
-  ServerProvenance,
-  ToolPrefix,
+import {
+  resolveToolPrefix,
+  type McpConfig,
+  type McpPanelCallbacks,
+  type McpPanelConnectionStatus,
+  type ServerEntry,
+  type ServerProvenance,
+  type ToolPrefix,
 } from "./types.ts";
 import {
   reconstructToolMetadata,
@@ -100,7 +101,7 @@ function panelServerDefaults(
 ): { toolFilter: ServerState["toolFilter"]; prefix: ToolPrefix } {
   return {
     toolFilter: definition.directTools ?? config.settings?.directTools ?? false,
-    prefix: config.settings?.toolPrefix ?? "server",
+    prefix: resolveToolPrefix(definition, config.settings?.toolPrefix),
   };
 }
 

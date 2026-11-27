@@ -4,7 +4,7 @@ import {
   type ServerEntry,
   type ToolMetadata,
   type ToolPrefix,
-  getServerPrefix,
+  getServerToolPrefix,
   isServerDisabled,
   isServerToolAllowed,
   resolveToolPrefix,
@@ -14,6 +14,18 @@ type ToolCatalog = Readonly<Pick<McpExtensionState, "config" | "toolMetadata">>;
 
 export const MAX_PAGE_SIZE = 100;
 export const MAX_TOOL_NAME_LENGTH = 512;
+
+/** Minimum stemmed term length for edit-distance fuzziness so short tokens avoid noisy matches. */
+const MIN_FUZZY_TERM_LENGTH = 4;
+
+/** MiniSearch edit-distance factor (1 typo on 4-7 char terms, 2 typos on >=8 char terms). */
+const SEARCH_FUZZY_FACTOR = 0.2;
+
+/** Minimum length for stripping trailing "ies"/"es" plural forms without mangling short roots. */
+const MIN_ES_STEM_LENGTH = 5;
+
+/** Minimum length for stripping a trailing singular "s" without mangling short identifiers. */
+const MIN_S_STEM_LENGTH = 4;
 
 export interface RankedToolMatch {
   server: string;
@@ -26,6 +38,27 @@ export function normalizeSearchText(value: string): string {
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_./:-]+/g, " ")
     .toLowerCase();
+}
+
+/** Lightweight plural-to-singular stemmer mirroring Pi's built-in tool_search ranker. */
+function stemTerm(term: string): string {
+  const lower = term.toLowerCase();
+  if (lower.length >= MIN_ES_STEM_LENGTH && lower.endsWith("ies")) {
+    return `${lower.slice(0, -3)}y`;
+  }
+  if (lower.length >= MIN_ES_STEM_LENGTH && /(?:ches|shes|sses|xes|zes)$/.test(lower)) {
+    return lower.slice(0, -2);
+  }
+  if (
+    lower.length >= MIN_S_STEM_LENGTH &&
+    lower.endsWith("s") &&
+    !lower.endsWith("ss") &&
+    !lower.endsWith("us") &&
+    !lower.endsWith("is")
+  ) {
+    return lower.slice(0, -1);
+  }
+  return lower;
 }
 
 function schemaSearchText(schema: unknown): string {
@@ -59,6 +92,7 @@ function schemaEntrySearchText(key: string, value: unknown): string[] {
 
 interface SearchDocument {
   id: number;
+  serverName: string;
   name: string;
   originalName: string;
   description: string;
@@ -87,11 +121,13 @@ function getIndex(state: ToolCatalog): CatalogIndex {
   }
 
   const index = new MiniSearch<SearchDocument>({
-    fields: ["name", "originalName", "description", "schema"],
+    fields: ["serverName", "name", "originalName", "description", "schema"],
+    processTerm: stemTerm,
     searchOptions: {
-      fields: ["name", "description", "schema"],
-      boost: { name: 2, description: 1, schema: 1 },
+      fields: ["serverName", "name", "description", "schema"],
+      boost: { name: 2, serverName: 1.5, description: 1, schema: 1 },
       prefix: true,
+      fuzzy: (term) => (term.length >= MIN_FUZZY_TERM_LENGTH ? SEARCH_FUZZY_FACTOR : false),
     },
   });
   const documents = new Map<number, CatalogTool>();
@@ -104,6 +140,7 @@ function getIndex(state: ToolCatalog): CatalogIndex {
       const documentId = id++;
       index.add({
         id: documentId,
+        serverName: normalizeSearchText(server),
         name: normalizeSearchText(tool.name),
         originalName: normalizeSearchText(tool.originalName),
         description: normalizeSearchText([tool.title, tool.description].filter(Boolean).join(" ")),
@@ -200,10 +237,21 @@ function nonEmpty(value: string | undefined): string | undefined {
 }
 
 interface SuggestionContext {
-  explicitServer: string | undefined;
   matchedServer: string | undefined;
   query: string;
   fields: Array<"name" | "originalName">;
+}
+
+/** Proportional suggestion fuzziness: exact on <=3 chars, 1 edit on 4-6 chars, up to 2 edits on 7+ chars. */
+const SUGGESTION_FUZZY_ONE_MIN_LENGTH = 4;
+/** Longer tool tokens tolerate two edits (e.g., transpositions like "datadgo" -> "datadog"). */
+const SUGGESTION_FUZZY_TWO_MIN_LENGTH = 7;
+
+function suggestionFuzzy(term: string): number | false {
+  if (term.length >= SUGGESTION_FUZZY_TWO_MIN_LENGTH) {
+    return 2;
+  }
+  return term.length >= SUGGESTION_FUZZY_ONE_MIN_LENGTH ? 1 : false;
 }
 
 export function rankSuggestions(
@@ -216,83 +264,106 @@ export function rankSuggestions(
     return [];
   }
 
-  const globalPrefix = state.config.settings?.toolPrefix ?? "server";
-  const context = buildSuggestionContext(state, name, server, globalPrefix);
+  const context = buildSuggestionContext(state, name, server, state.config.settings?.toolPrefix);
   if (context === null) {
     return [];
   }
-  const suggestions = searchCatalog(state, context.query, context.matchedServer, {
+  const strict = searchCatalog(state, context.query, context.matchedServer, {
     fields: context.fields,
     combineWith: "AND",
-    fuzzy: 2,
+    fuzzy: suggestionFuzzy,
+  });
+  if (strict.length > 0) {
+    return strict.slice(0, limit).map((match) => match.tool.name);
+  }
+  return searchCatalog(state, context.query, context.matchedServer, {
+    fields: context.fields,
+    combineWith: "OR",
+    fuzzy: suggestionFuzzy,
   })
     .slice(0, limit)
     .map((match) => match.tool.name);
-  return suggestions.length > 0 || context.explicitServer === undefined
-    ? suggestions
-    : rankSuggestions(state, name, limit);
 }
 
 function buildSuggestionContext(
   state: ToolCatalog,
   name: string,
   server: string | undefined,
-  globalPrefix: ToolPrefix,
+  globalPrefix: ToolPrefix | undefined,
 ): SuggestionContext | null {
   const explicitServer = nonEmpty(server);
   const inferred =
     explicitServer === undefined ? inferServerPrefix(state, name, globalPrefix) : undefined;
-  const matchedServer = nonEmpty(server ?? inferred?.server);
+  const matchedServer = nonEmpty(explicitServer ?? inferred?.server);
   const definition =
     matchedServer !== undefined ? state.config.mcpServers[matchedServer] : undefined;
   if (matchedServer !== undefined && (definition === undefined || isServerDisabled(definition))) {
     return null;
   }
-  const prefix = resolveSuggestionPrefix(inferred, matchedServer, definition, globalPrefix);
-  const query = suggestionQuery(name, prefix);
+  const prefixHead = resolveSuggestionPrefixHead(inferred, matchedServer, definition, globalPrefix);
+  const query = suggestionQuery(name, prefixHead);
   return {
-    explicitServer,
     matchedServer,
     query,
     fields: [matchedServer !== undefined ? "originalName" : "name"],
   };
 }
 
-function resolveSuggestionPrefix(
+function resolveSuggestionPrefixHead(
   inferred: InferredServerPrefix | undefined,
   matchedServer: string | undefined,
   definition: Pick<ServerEntry, "toolPrefix"> | undefined,
-  globalPrefix: ToolPrefix,
+  globalPrefix: ToolPrefix | undefined,
 ): string {
   if (inferred !== undefined) {
-    return inferred.prefix;
+    return inferred.prefixHead;
   }
   if (matchedServer === undefined) {
     return "";
   }
-  return getServerPrefix(matchedServer, resolveToolPrefix(definition, globalPrefix));
+  return getServerToolPrefix(matchedServer, resolveToolPrefix(definition, globalPrefix));
 }
 
-function suggestionQuery(name: string, prefix: string): string {
-  return prefix !== "" && name.startsWith(`${prefix}_`) ? name.slice(prefix.length + 1) : name;
+function suggestionQuery(name: string, prefixHead: string): string {
+  return prefixHead !== "" && name.startsWith(prefixHead) ? name.slice(prefixHead.length) : name;
 }
 
 interface InferredServerPrefix {
   server: string;
-  prefix: string;
+  prefixHead: string;
+}
+
+function candidatePrefixHeads(
+  server: string,
+  definition: Pick<ServerEntry, "toolPrefix">,
+  globalPrefix: ToolPrefix | undefined,
+): string[] {
+  const activeMode = resolveToolPrefix(definition, globalPrefix);
+  const activeHead = getServerToolPrefix(server, activeMode);
+  const heads = activeHead !== "" ? [activeHead] : [];
+  if (activeMode === "mcp") {
+    const legacyServer = getServerToolPrefix(server, "server");
+    const legacySingleMcp = `mcp__${server.replace(/[^A-Za-z0-9_]/g, "_")}_`;
+    heads.push(legacySingleMcp);
+    if (legacyServer !== "") {
+      heads.push(legacyServer);
+    }
+  }
+  return heads;
 }
 
 function inferServerPrefix(
   state: ToolCatalog,
   name: string,
-  globalPrefix: ToolPrefix,
+  globalPrefix: ToolPrefix | undefined,
 ): InferredServerPrefix | undefined {
   return Object.entries(state.config.mcpServers)
-    .filter(([, definition]) => !isServerDisabled(definition))
-    .map(([candidateServer, definition]) => ({
-      server: candidateServer,
-      prefix: getServerPrefix(candidateServer, resolveToolPrefix(definition, globalPrefix)),
-    }))
-    .filter((candidate) => candidate.prefix !== "" && name.startsWith(`${candidate.prefix}_`))
-    .sort((a, b) => b.prefix.length - a.prefix.length)[0];
+    .flatMap(([candidateServer, definition]) =>
+      candidatePrefixHeads(candidateServer, definition, globalPrefix).map((prefixHead) => ({
+        server: candidateServer,
+        prefixHead,
+      })),
+    )
+    .filter((candidate) => candidate.prefixHead !== "" && name.startsWith(candidate.prefixHead))
+    .sort((a, b) => b.prefixHead.length - a.prefixHead.length)[0];
 }

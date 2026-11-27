@@ -218,7 +218,7 @@ describe("proxy auto auth", () => {
     expect(reconnect).toHaveBeenCalledWith("demo", server, stale, expect.any(AbortSignal));
     expect(connect).not.toHaveBeenCalled();
     expect(result.details).toMatchObject({ mode: "list", server: "demo", count: 13 });
-    expect(firstText(result)).toContain("demo_fresh");
+    expect(firstText(result)).toContain("mcp__demo__fresh");
     expect(firstText(result)).toContain(
       'mcp({ action: "list", server: "demo", limit: 12, offset: 12 })',
     );
@@ -274,7 +274,7 @@ describe("proxy auto auth", () => {
     expect(connect).toHaveBeenCalledTimes(1);
     expect(reconnect).toHaveBeenCalledWith("demo", definition, needsAuth, expect.any(AbortSignal));
     expect(state.toolMetadata.get("demo")?.[0]).toMatchObject({
-      name: "mcp__demo_search",
+      name: "mcp__demo__search",
       originalName: "search",
     });
     expect(firstText(result)).toContain("demo (1 tools)");

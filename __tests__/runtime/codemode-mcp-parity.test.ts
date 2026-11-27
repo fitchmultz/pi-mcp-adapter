@@ -367,19 +367,19 @@ describe("Pi 1.6.1 codemode MCP CallToolResult parity", () => {
 
     const coded = await run("codemode", {
       code: `
-        const large = await tools.kb_plain_rows({ size: 60000 });
+        const large = await tools.mcp__kb__plain_rows({ size: 60000 });
         const parsedLarge = JSON.parse(large.content[0].text);
-        const typed = await tools.kb_typed_rows({});
-        const typedErr = await tools.kb_typed_rows({ fail: true });
-        const png = await tools.kb_preview_png({});
+        const typed = await tools.mcp__kb__typed_rows({});
+        const typedErr = await tools.mcp__kb__typed_rows({ fail: true });
+        const png = await tools.mcp__kb__preview_png({});
         image(png.content[0]);
         let gatedError = null;
         try {
-          await tools.kb_gated({});
+          await tools.mcp__kb__gated({});
         } catch (error) {
           gatedError = error.message;
         }
-        const decl = await describeTool("kb_typed_rows");
+        const decl = await describeTool("mcp__kb__typed_rows");
         const ns = await describeNamespace("kb");
         const found = await searchTools("rows", { namespace: "kb" });
         const boilerplateNoise = await searchTools("read-result", { namespace: "kb" });
@@ -464,9 +464,14 @@ describe("Pi 1.6.1 codemode MCP CallToolResult parity", () => {
       name: "mcp_kb",
       description: SERVER_DESCRIPTION,
       instructions: SERVER_INSTRUCTIONS,
-      tools: ["kb_plain_rows", "kb_typed_rows", "kb_preview_png", "kb_gated"],
+      tools: [
+        "mcp__kb__plain_rows",
+        "mcp__kb__typed_rows",
+        "mcp__kb__preview_png",
+        "mcp__kb__gated",
+      ],
     });
-    expect(payload.foundNames.sort()).toEqual(["kb_plain_rows", "kb_typed_rows"]);
+    expect(payload.foundNames.sort()).toEqual(["mcp__kb__plain_rows", "mcp__kb__typed_rows"]);
     expect(payload.boilerplateMatches).toEqual([]);
     expect(payload.gatewayLargeOmitted).toBe(false);
     expect(payload.gatewayLargeBodyLength).toBe(25_000);
@@ -483,7 +488,7 @@ describe("Pi 1.6.1 codemode MCP CallToolResult parity", () => {
     const loaded = await run("tool_search", { query: "typed rows" });
     expect(loaded.isError, textBlocks(loaded).join("\n")).toBe(false);
 
-    const directTyped = await run("kb_typed_rows", {});
+    const directTyped = await run("mcp__kb__typed_rows", {});
     expect(directTyped.isError, textBlocks(directTyped).join("\n")).toBe(false);
     expect(directTyped.content).toEqual([
       {

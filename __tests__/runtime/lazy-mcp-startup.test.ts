@@ -133,21 +133,21 @@ describe("cached lazy MCP startup through native Pi", () => {
     expect(report.sourceLoaded).toBe(true);
     expect(report.errors).toEqual([]);
     expect(report.tools.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["mcp", "lazy00_echo"]),
+      expect.arrayContaining(["mcp", "mcp__lazy00__echo"]),
     );
     expect(
       report.tools
-        .filter((tool) => /^lazy\d+_/.test(tool.name))
+        .filter((tool) => /^mcp__lazy\d+__/.test(tool.name))
         .map((tool) => tool.name)
         .sort(),
-    ).toEqual(serverNames.flatMap((name) => [`${name}_dashboard`, `${name}_echo`]));
-    const cachedEcho = report.tools.find((tool) => tool.name === "lazy00_echo");
+    ).toEqual(serverNames.flatMap((name) => [`mcp__${name}__dashboard`, `mcp__${name}__echo`]));
+    const cachedEcho = report.tools.find((tool) => tool.name === "mcp__lazy00__echo");
     expect(cachedEcho?.description).toContain("Cached echo from lazy00");
     expect(cachedEcho?.parameters).toMatchObject({
       required: ["text"],
       properties: { text: { type: "string" } },
     });
-    expect(report.activeTools).toEqual(["lazy00_echo", "mcp"]);
+    expect(report.activeTools).toEqual(["mcp", "mcp__lazy00__echo"]);
     expect(report.commands.filter((command) => command.name.startsWith("mcp__"))).toEqual(
       serverNames.map((name) => ({
         name: `mcp__${name}__brief`,

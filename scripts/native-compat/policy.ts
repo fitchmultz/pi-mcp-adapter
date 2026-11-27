@@ -14,12 +14,12 @@ function structuredValueOf(input: unknown): unknown {
 
 export function installPolicy(pi: ExtensionAPI): void {
   pi.on("tool_call", (event) =>
-    event.toolName === "local_echo" && valueOf(event.input) === "blocked"
+    event.toolName === "mcp__local__echo" && valueOf(event.input) === "blocked"
       ? { block: true, reason: "fixture policy" }
       : undefined,
   );
   pi.on("tool_result", (event) =>
-    event.toolName === "local_echo" && structuredValueOf(event.structuredContent) === "redact"
+    event.toolName === "mcp__local__echo" && structuredValueOf(event.structuredContent) === "redact"
       ? { content: [{ type: "text", text: "Redacted" }] }
       : undefined,
   );
@@ -33,7 +33,7 @@ export function nativeProbe(pi: ExtensionAPI): void {
     parameters: Type.Object({}),
     async execute(_id, params, signal, _update, ctx) {
       const outcome = await ctx.executeTool(
-        "local_echo",
+        "mcp__local__echo",
         params,
         signal === undefined ? {} : { signal },
       );

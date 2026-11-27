@@ -1,18 +1,84 @@
 import type { McpExtensionState } from "./state.ts";
 import { asObjectRecord } from "./mcp-output-values.ts";
+import { logger } from "./logger.ts";
 import {
   type ToolMetadata,
   type McpTool,
   type McpResource,
   type ServerEntry,
   type ToolPrefix,
+  disambiguateToolName,
   formatToolName,
+  getToolNameCandidates,
   isServerDisabled,
   isServerToolAllowed,
   resolveToolPrefix,
 } from "./types.ts";
 import { extractToolUiStreamMode } from "./utils.ts";
 import { extractUiToolVisibility, isUiToolVisibleToModel } from "./ui-tool-visibility.ts";
+
+export { formatSchema } from "./schema-format.ts";
+
+/** Natural pre-loader name for catalog-disambiguated ToolMetadata entries so refreshes preserve names and de-collision restores originals. */
+const baseToolNames = new WeakMap<ToolMetadata, string>();
+
+export function getBaseToolName(tool: ToolMetadata): string {
+  return baseToolNames.get(tool) ?? tool.name;
+}
+
+export function applyResolvedToolName(tool: ToolMetadata, resolvedName: string): ToolMetadata {
+  if (tool.name === resolvedName) {
+    return tool;
+  }
+  const baseName = getBaseToolName(tool);
+  const cloned: ToolMetadata = { ...tool, name: resolvedName };
+  const result = Object.isFrozen(tool) ? Object.freeze(cloned) : cloned;
+  if (resolvedName !== baseName) {
+    baseToolNames.set(result, baseName);
+  }
+  return result;
+}
+
+function collectResolvedOverrides(
+  previous: readonly ToolMetadata[] | undefined,
+): Map<string, { resolvedName: string; baseName: string }> {
+  const byOriginal = new Map<string, { resolvedName: string; baseName: string }>();
+  if (!previous) {
+    return byOriginal;
+  }
+  for (const tool of previous) {
+    const baseName = (tool.resourceUri ?? "").length > 0 ? undefined : baseToolNames.get(tool);
+    if (baseName !== undefined && tool.name !== baseName) {
+      byOriginal.set(tool.originalName, { resolvedName: tool.name, baseName });
+    }
+  }
+  return byOriginal;
+}
+
+/**
+ * Re-apply loader-resolved public names onto freshly rebuilt per-server metadata when the natural
+ * base name still matches, so live connects and call refreshes never revert disambiguated names.
+ */
+export function preserveResolvedToolNames(
+  previous: readonly ToolMetadata[] | undefined,
+  fresh: ToolMetadata[],
+): ToolMetadata[] {
+  const byOriginal = collectResolvedOverrides(previous);
+  if (byOriginal.size === 0) {
+    return fresh;
+  }
+  const preserved: ToolMetadata[] = [];
+  for (const tool of fresh) {
+    const entry =
+      (tool.resourceUri ?? "").length > 0 ? undefined : byOriginal.get(tool.originalName);
+    preserved.push(
+      entry !== undefined && entry.baseName === tool.name
+        ? applyResolvedToolName(tool, entry.resolvedName)
+        : tool,
+    );
+  }
+  return preserved;
+}
 
 export function buildToolMetadata({
   tools,
@@ -25,12 +91,12 @@ export function buildToolMetadata({
   resources: McpResource[];
   definition: ServerEntry;
   serverName: string;
-  prefix: ToolPrefix;
+  prefix?: ToolPrefix | undefined;
 }): { metadata: ToolMetadata[]; failedTools: string[] } {
-  const metadata: ToolMetadata[] = [];
+  const callable: ToolMetadata[] = [];
   const failedTools: string[] = [];
   if (isServerDisabled(definition)) {
-    return { metadata, failedTools };
+    return { metadata: callable, failedTools };
   }
   const context: MetadataContext = {
     definition,
@@ -49,12 +115,19 @@ export function buildToolMetadata({
     if (!isUiToolVisibleToModel(uiVisibility)) {
       continue;
     }
-    metadata.push(describeTool(tool, context, failedTools, uiVisibility));
+    callable.push(describeTool(tool, context, failedTools, uiVisibility));
   }
-  if (definition.exposeResources !== false) {
-    metadata.push(...resourceMetadata(resources, context));
+  const disambiguatedTools = disambiguateServerTools(callable, serverName);
+  if (definition.exposeResources === false) {
+    return { metadata: disambiguatedTools, failedTools };
   }
-  return { metadata, failedTools };
+  const taken = new Set(disambiguatedTools.map((tool) => tool.name));
+  const disambiguatedResources = disambiguateServerResources(
+    resourceMetadata(resources, context),
+    serverName,
+    taken,
+  );
+  return { metadata: [...disambiguatedTools, ...disambiguatedResources], failedTools };
 }
 
 export function estimateToolTokens(tool: {
@@ -78,6 +151,63 @@ interface MetadataContext {
   definition: ServerEntry;
   serverName: string;
   prefix: ToolPrefix;
+}
+
+function uniqueHashedName(base: string, identity: string, taken: ReadonlySet<string>): string {
+  let candidate = disambiguateToolName(base, identity);
+  let suffix = 1;
+  while (taken.has(candidate)) {
+    candidate = disambiguateToolName(base, `${identity}\0${suffix}`);
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function disambiguateServerTools(tools: ToolMetadata[], serverName: string): ToolMetadata[] {
+  const counts = new Map<string, number>();
+  for (const tool of tools) {
+    counts.set(tool.name, (counts.get(tool.name) ?? 0) + 1);
+  }
+  const taken = new Set(
+    tools.filter((tool) => counts.get(tool.name) === 1).map((tool) => tool.name),
+  );
+  return tools.map((tool) => {
+    if ((counts.get(tool.name) ?? 0) <= 1) {
+      return tool;
+    }
+    const identity = `${serverName}\0${tool.originalName}`;
+    const renamed = uniqueHashedName(tool.name, identity, taken);
+    taken.add(renamed);
+    logger.debug(
+      `MCP: disambiguated colliding tool "${tool.originalName}" on ${serverName} (${tool.name} -> ${renamed})`,
+    );
+    return { ...tool, name: renamed };
+  });
+}
+
+function disambiguateServerResources(
+  resources: ToolMetadata[],
+  serverName: string,
+  taken: Set<string>,
+): ToolMetadata[] {
+  const counts = new Map<string, number>();
+  for (const resource of resources) {
+    counts.set(resource.name, (counts.get(resource.name) ?? 0) + 1);
+  }
+  return resources.map((resource) => {
+    const collides = taken.has(resource.name) || (counts.get(resource.name) ?? 0) > 1;
+    if (!collides) {
+      taken.add(resource.name);
+      return resource;
+    }
+    const identity = `${serverName}\0resource\0${resource.resourceUri ?? resource.originalName}`;
+    const renamed = uniqueHashedName(resource.name, identity, taken);
+    taken.add(renamed);
+    logger.debug(
+      `MCP: disambiguated colliding resource "${resource.originalName}" on ${serverName} (${resource.name} -> ${renamed})`,
+    );
+    return { ...resource, name: renamed };
+  });
 }
 
 function describeTool(
@@ -194,6 +324,42 @@ export function catalogCoverage(
   return { complete: unknownServers.length === 0, knownServers, unknownServers };
 }
 
+export function undiscoveredServersHint(state: McpExtensionState, server?: string): string {
+  const { unknownServers } = catalogCoverage(state, server);
+  if (unknownServers.length === 0) {
+    return "";
+  }
+  const sorted = [...unknownServers].sort((left, right) => left.localeCompare(right));
+  return ` Undiscovered servers: ${sorted.join(", ")}. Use mcp({ action: "connect", server: ${JSON.stringify(sorted[0])} }) to discover one.`;
+}
+
+/**
+ * Match a tool by exact original name or legacy prefixed alias (`<server>_<tool>`,
+ * `<short>_<tool>`, `mcp__<server>__<tool>`, `mcp__<server>_<tool>`) without matching
+ * hyphen-swapped bare typos.
+ */
+export function matchesBackwardCompatibleToolName(
+  tool: ToolMetadata,
+  serverName: string,
+  toolName: string,
+  prefix: ToolPrefix,
+): boolean {
+  if (tool.originalName === toolName) {
+    return true;
+  }
+  if (formatToolName(tool.originalName, serverName, prefix) === toolName) {
+    return true;
+  }
+  if (prefix === "none") {
+    return false;
+  }
+  const normalized = toolName.replace(/-/g, "_");
+  if (normalized === tool.originalName.replace(/-/g, "_")) {
+    return false;
+  }
+  return getToolNameCandidates(tool.originalName, serverName, prefix).has(normalized);
+}
+
 export function findToolByName(
   metadata: ToolMetadata[] | undefined,
   toolName: string,
@@ -208,174 +374,6 @@ export function findToolByName(
   const normalized = toolName.replace(/-/g, "_");
   const matches = metadata.filter((m) => m.name.replace(/-/g, "_") === normalized);
   return matches.length === 1 ? matches[0] : undefined;
-}
-
-export function formatSchema(schema: unknown, indent = "  "): string {
-  const s = asObjectRecord(schema);
-  if (!s || Array.isArray(schema)) {
-    return `${indent}(no schema)`;
-  }
-
-  const props = asObjectRecord(s.properties);
-  if (s.type === "object" && props && !Array.isArray(s.properties)) {
-    return formatObjectParameters(props, s.required, indent);
-  }
-
-  const lines = formatNestedSchema(s, indent);
-  if (lines.length > 0) {
-    return lines.join("\n");
-  }
-
-  const typeStr = formatType(s);
-  if (typeStr !== "") {
-    return `${indent}(${typeStr})`;
-  }
-
-  return `${indent}(complex schema)`;
-}
-
-function formatObjectParameters(
-  props: Record<string, unknown>,
-  requiredValue: unknown,
-  indent: string,
-): string {
-  const required = Array.isArray(requiredValue)
-    ? requiredValue.filter((name): name is string => typeof name === "string")
-    : [];
-  if (Object.keys(props).length === 0) {
-    return `${indent}(no parameters)`;
-  }
-  const lines: string[] = [];
-  for (const [name, propSchema] of Object.entries(props)) {
-    lines.push(...formatProperty(name, propSchema, required.includes(name), indent));
-  }
-  return lines.join("\n");
-}
-
-function formatProperty(
-  name: string,
-  schema: unknown,
-  required: boolean,
-  indent: string,
-): string[] {
-  const s = asObjectRecord(schema);
-  if (!s || Array.isArray(schema)) {
-    return [`${indent}${name}${required ? " *required*" : ""}`];
-  }
-
-  const parts = [`${indent}${name}`];
-  const typeStr = formatType(s);
-  if (typeStr !== "") {
-    parts.push(`(${typeStr})`);
-  }
-  if (required) {
-    parts.push("*required*");
-  }
-  appendSchemaAnnotations(parts, s);
-
-  return [parts.join(" "), ...formatNestedSchema(s, `${indent}  `)];
-}
-
-function formatNestedSchema(schema: Record<string, unknown>, indent: string): string[] {
-  const lines: string[] = [];
-
-  if (Array.isArray(schema.anyOf)) {
-    lines.push(...formatVariants("anyOf", schema.anyOf, indent));
-  }
-  if (Array.isArray(schema.oneOf)) {
-    lines.push(...formatVariants("oneOf", schema.oneOf, indent));
-  }
-  if (schema.items !== undefined) {
-    lines.push(...formatProperty("items", schema.items, false, indent));
-  }
-  const properties = asObjectRecord(schema.properties);
-  if (properties && !Array.isArray(schema.properties)) {
-    const required = Array.isArray(schema.required)
-      ? schema.required.filter((name): name is string => typeof name === "string")
-      : [];
-    for (const [name, propSchema] of Object.entries(properties)) {
-      lines.push(...formatProperty(name, propSchema, required.includes(name), indent));
-    }
-  }
-
-  return lines;
-}
-
-function formatVariants(keyword: "anyOf" | "oneOf", variants: unknown[], indent: string): string[] {
-  const lines = [`${indent}${keyword}:`];
-
-  for (const variant of variants) {
-    const s = asObjectRecord(variant);
-    if (!s || Array.isArray(variant)) {
-      lines.push(`${indent}  - ${JSON.stringify(variant)}`);
-      continue;
-    }
-
-    const formatted = formatType(s);
-    const typeStr = formatted === "" ? "schema" : formatted;
-    const parts = [`${indent}  - ${typeStr}`];
-    appendSchemaAnnotations(parts, s);
-    lines.push(parts.join(" "));
-    lines.push(...formatNestedSchema(s, `${indent}    `));
-  }
-
-  return lines;
-}
-
-function formatType(schema: Record<string, unknown>): string {
-  if (Object.hasOwn(schema, "const")) {
-    return `const ${JSON.stringify(schema.const)}`;
-  }
-
-  if (Array.isArray(schema.enum)) {
-    return `enum: ${schema.enum.map((v) => JSON.stringify(v)).join(", ")}`;
-  }
-
-  if (Array.isArray(schema.type)) {
-    return schema.type.map((type) => String(type)).join(" | ");
-  }
-
-  const type: unknown = schema.type;
-  const hasType = Boolean(type);
-  if (hasType) {
-    return String(type);
-  }
-
-  const properties = asObjectRecord(schema.properties);
-  if (properties && !Array.isArray(schema.properties)) {
-    return "object";
-  }
-
-  if (schema.items !== undefined) {
-    return "array";
-  }
-
-  return "";
-}
-
-function appendSchemaAnnotations(parts: string[], schema: Record<string, unknown>): void {
-  if (typeof schema.description === "string" && schema.description !== "") {
-    parts.push(`- ${schema.description}`);
-  }
-
-  for (const key of [
-    "minLength",
-    "maxLength",
-    "minimum",
-    "maximum",
-    "minItems",
-    "maxItems",
-    "format",
-    "pattern",
-  ] as const) {
-    if (schema[key] !== undefined) {
-      parts.push(`[${key}: ${JSON.stringify(schema[key])}]`);
-    }
-  }
-
-  if (schema.default !== undefined) {
-    parts.push(`[default: ${JSON.stringify(schema.default)}]`);
-  }
 }
 
 function resourceNameToToolName(name: string): string {

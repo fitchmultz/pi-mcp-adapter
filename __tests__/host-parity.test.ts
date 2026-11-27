@@ -32,6 +32,7 @@ import {
   getProjectPiConfigPath,
   writeDirectToolsConfig,
 } from "../config.ts";
+import { computeServerHash, saveMetadataCache, serializeTools } from "../metadata-cache.ts";
 import type { UiServerHandle } from "../ui-server-contracts.ts";
 import { createLifecycleHost, requireValue } from "./fixtures/extension-lifecycle.ts";
 import { createTestExtensionContext } from "./test-extension-context.ts";
@@ -191,8 +192,8 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       });
       await waitFor(
         () =>
-          session.getActiveToolNames().includes("ext_init_noop") &&
-          session.getActiveToolNames().includes("overridden_noop") &&
+          session.getActiveToolNames().includes("mcp__ext_init__noop") &&
+          session.getActiveToolNames().includes("mcp__overridden__noop") &&
           readStartCount(keepStartLog) === 1,
       );
       expect(runnerErrors).toEqual([]);
@@ -210,10 +211,12 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         env: { MCP_START_LOG_FILE: extLateLog },
         exposure: "deferred",
       });
-      await waitFor(() => session.getAllTools().some((tool) => tool.name === "ext_late_noop"));
-      expect(session.getAllTools().find((tool) => tool.name === "ext_late_noop")?.exposure).toBe(
-        "deferred",
+      await waitFor(() =>
+        session.getAllTools().some((tool) => tool.name === "mcp__ext_late__noop"),
       );
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__ext_late__noop")?.exposure,
+      ).toBe("deferred");
       expect(readStartCount(extLateLog)).toBe(1);
       expect(readStartCount(keepStartLog)).toBe(1);
 
@@ -225,14 +228,14 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         env: { MCP_START_LOG_FILE: extLateLog },
         exposure: "direct",
       });
-      await waitFor(() => session.getActiveToolNames().includes("ext_late_noop"));
+      await waitFor(() => session.getActiveToolNames().includes("mcp__ext_late__noop"));
       expect(readStartCount(keepStartLog)).toBe(1);
 
       // Unregister the extension server and verify its tool is withdrawn while config servers stay up.
       api.unregisterMcpServer("ext-late");
       await waitFor(
         () =>
-          session.getAllTools().find((tool) => tool.name === "ext_late_noop")?.exposure ===
+          session.getAllTools().find((tool) => tool.name === "mcp__ext_late__noop")?.exposure ===
           "hidden",
       );
       expect(readStartCount(keepStartLog)).toBe(1);
@@ -297,7 +300,7 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
     const { root, agentDir, project } = createWorkspace();
     writeJson(join(project, ".mcp.json"), {
       mcpServers: {
-        linear: { url: "https://mcp.linear.example.test/mcp" },
+        linear: { url: "https://mcp.linear.example.test/mcp", toolPrefix: "server" },
       },
     });
     const settingsManager = SettingsManager.inMemory();
@@ -398,7 +401,7 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         { ...fixture.context, cwd: project },
       );
       await waitFor(
-        () => runtime.state !== null && fixture.api.getActiveTools().includes("demo_noop"),
+        () => runtime.state !== null && fixture.api.getActiveTools().includes("mcp__demo__noop"),
       );
       const state = requireValue(runtime.state);
       const connection = requireValue(state.manager.getConnection("demo"));
@@ -417,8 +420,8 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       registerCommandSpy.mockClear();
       setActiveToolsSpy.mockClear();
       state.toolMetadata.set("demo", [
-        { name: "demo_noop", originalName: "noop", description: "Noop" },
-        { name: "demo_added", originalName: "added", description: "Added during save" },
+        { name: "mcp__demo__noop", originalName: "noop", description: "Noop" },
+        { name: "mcp__demo__added", originalName: "added", description: "Added during save" },
       ]);
       state.promptMetadata.set("demo", [
         {
@@ -441,7 +444,7 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         ([commandName]) => commandName === "mcp__demo__added",
       );
       expect(addedPromptCall?.[1].description).toContain("Added prompt during save");
-      expect(fixture.api.getActiveTools()).toContain("demo_added");
+      expect(fixture.api.getActiveTools()).toContain("mcp__demo__added");
 
       // Active in-flight requests and scripts are reported as blockers.
       state.manager.incrementInFlight(connection);
@@ -794,17 +797,106 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
     try {
       await host.handlers.get("session_start")({}, { cwd: projectA });
       await waitFor(
-        () => host.api.getActiveTools().includes("proj_a_noop") && runtime.directToolsFrozen,
+        () => host.api.getActiveTools().includes("mcp__proj_a__noop") && runtime.directToolsFrozen,
       );
+      const beforeA = await host.handlers.emitBeforeAgentStart({ cwd: projectA });
+      expect(beforeA.systemPromptOptions.sections.mcp_servers).toContain("proj-a");
+      expect(beforeA.systemPromptOptions.sections.mcp_servers).not.toContain("proj-b");
 
-      await host.handlers.emitBeforeAgentStart({ cwd: projectB });
-      await waitFor(() => host.api.getActiveTools().includes("proj_b_noop"));
-      expect(host.api.getActiveTools()).not.toContain("proj_a_noop");
+      const beforeB = await host.handlers.emitBeforeAgentStart({ cwd: projectB });
+      await waitFor(() => host.api.getActiveTools().includes("mcp__proj_b__noop"));
+      expect(host.api.getActiveTools()).not.toContain("mcp__proj_a__noop");
+      expect(beforeB.systemPromptOptions.sections.mcp_servers).toContain("proj-b");
+      expect(beforeB.systemPromptOptions.sections.mcp_servers).not.toContain("proj-a");
+      const beforeBAgain = await host.handlers.emitBeforeAgentStart({ cwd: projectB });
+      expect(beforeBAgain.systemPromptOptions.sections.mcp_servers).toBe(
+        beforeB.systemPromptOptions.sections.mcp_servers,
+      );
+      expect(runtime.directToolsFrozen).toBe(true);
+
+      // A live config change via mcp_servers_change while frozen must also refresh <mcp_servers> and re-freeze.
+      writeJson(join(projectB, ".pi", "fitch-mcp-adapter", "mcp.json"), {
+        settings: { freezeDirectTools: true },
+        mcpServers: {
+          "proj-b": { command: process.execPath, args: [fixtureServer], directTools: true },
+          "proj-c": { command: process.execPath, args: [fixtureServer], directTools: true },
+        },
+      });
+      await host.runner.emit({ type: "mcp_servers_change", servers: [] });
+      await waitFor(() => host.api.getActiveTools().includes("mcp__proj_c__noop"));
+      const beforeC = await host.handlers.emitBeforeAgentStart({ cwd: projectB });
+      expect(beforeC.systemPromptOptions.sections.mcp_servers).toContain("proj-b");
+      expect(beforeC.systemPromptOptions.sections.mcp_servers).toContain("proj-c");
       expect(runtime.directToolsFrozen).toBe(true);
     } finally {
       await host.dispose();
     }
   }, 15_000);
+
+  it("restores warm-cached catalogs on change_dir with default mcp prefix and detects server opt-out changes", async () => {
+    const { root } = createWorkspace();
+    const fixtureServer = resolve("__tests__/fixtures/tools-only-server.mjs");
+    const projectA = join(root, "cache-a");
+    const projectB = join(root, "cache-b");
+    mkdirSync(projectA, { recursive: true });
+    mkdirSync(projectB, { recursive: true });
+
+    const lazyServer = { command: process.execPath, args: [fixtureServer] };
+    expect(
+      saveMetadataCache({
+        version: 2,
+        servers: {
+          "cached-b": {
+            configHash: computeServerHash(lazyServer),
+            tools: serializeTools([
+              { name: "noop", description: "Noop tool", inputSchema: { type: "object" } },
+            ]),
+            resources: [],
+            prompts: [],
+            cachedAt: Date.now(),
+          },
+        },
+      }),
+    ).toBe("saved");
+
+    writeJson(join(projectA, ".pi", "fitch-mcp-adapter", "mcp.json"), { mcpServers: {} });
+    writeJson(join(projectB, ".pi", "fitch-mcp-adapter", "mcp.json"), {
+      mcpServers: { "cached-b": lazyServer },
+    });
+
+    const host = await createLifecycleHost();
+    const runtime = new McpHostRuntime(host.api, {});
+    runtime.install();
+    try {
+      await host.handlers.get("session_start")({}, { cwd: projectA });
+      await waitFor(() => runtime.state !== null);
+
+      await host.handlers.emitBeforeAgentStart({ cwd: projectB });
+      await waitFor(
+        () =>
+          runtime.state?.toolMetadata
+            .get("cached-b")
+            ?.some((tool) => tool.name === "mcp__cached_b__noop") ?? false,
+      );
+      expect(runtime.state?.toolMetadata.get("cached-b")?.map((tool) => tool.name)).not.toContain(
+        "cached_b_noop",
+      );
+
+      writeJson(join(projectB, ".pi", "fitch-mcp-adapter", "mcp.json"), {
+        settings: { toolPrefix: "server" },
+        mcpServers: { "cached-b": lazyServer },
+      });
+      await host.runner.emit({ type: "mcp_servers_change", servers: [] });
+      await waitFor(
+        () =>
+          runtime.state?.toolMetadata
+            .get("cached-b")
+            ?.some((tool) => tool.name === "cached_b_noop") ?? false,
+      );
+    } finally {
+      await host.dispose();
+    }
+  });
 
   it("rebinds the lazy MCP traceWriter to the new project cwd after change_dir reconcile", async () => {
     const { root } = createWorkspace();
@@ -892,8 +984,8 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         mode: "tui",
         uiContext: session.extensionRunner.getUIContext(),
       });
-      await waitFor(() => session.getAllTools().some((tool) => tool.name === "ext_pin_noop"));
-      expect(session.getActiveToolNames()).not.toContain("ext_pin_noop");
+      await waitFor(() => session.getAllTools().some((tool) => tool.name === "mcp__ext_pin__noop"));
+      expect(session.getActiveToolNames()).not.toContain("mcp__ext_pin__noop");
 
       const command = requireValue(session.extensionRunner.getCommand("mcp"));
       const baseContext = session.extensionRunner.createCommandContext();
@@ -925,7 +1017,7 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       expect(JSON.parse(readFileSync(persistedPath, "utf-8"))).toEqual({
         mcpServers: { "ext-pin": { directTools: true } },
       });
-      await waitFor(() => session.getActiveToolNames().includes("ext_pin_noop"));
+      await waitFor(() => session.getActiveToolNames().includes("mcp__ext_pin__noop"));
 
       // Trigger a live mcp_servers_change reconcile and verify the persisted pin survives.
       requireValue(peerApi).registerMcpServer("ext-other", {
@@ -934,15 +1026,18 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
         cwd: root,
         exposure: "deferred",
       });
-      await waitFor(() => session.getAllTools().some((tool) => tool.name === "ext_other_noop"));
-      expect(session.getActiveToolNames()).toContain("ext_pin_noop");
+      await waitFor(() =>
+        session.getAllTools().some((tool) => tool.name === "mcp__ext_other__noop"),
+      );
+      expect(session.getActiveToolNames()).toContain("mcp__ext_pin__noop");
 
       // Unregistering the pinned extension server prunes its orphan directTools stub cleanly
       // and never bleeds onto a same-name server in another project.
       requireValue(peerApi).unregisterMcpServer("ext-pin");
       await waitFor(
         () =>
-          session.getAllTools().find((tool) => tool.name === "ext_pin_noop")?.exposure === "hidden",
+          session.getAllTools().find((tool) => tool.name === "mcp__ext_pin__noop")?.exposure ===
+          "hidden",
       );
       expect(loadMcpConfig(undefined, project).mcpServers["ext-pin"]).toBeUndefined();
 
@@ -1363,28 +1458,32 @@ describe("Pi 1.6.1+ host parity (MCP-212)", () => {
       });
       await waitFor(
         () =>
-          session.getActiveToolNames().includes("alpha_probe") &&
-          session.getAllTools().some((tool) => tool.name === "beta_probe"),
+          session.getActiveToolNames().includes("mcp__alpha__probe") &&
+          session.getAllTools().some((tool) => tool.name === "mcp__beta__probe"),
       );
 
       // alpha: probe is direct (active), advance is codemode, hidden is excluded.
-      expect(session.getActiveToolNames()).toContain("alpha_probe");
-      expect(session.getActiveToolNames()).not.toContain("alpha_advance");
-      expect(session.getAllTools().find((tool) => tool.name === "alpha_advance")?.exposure).toBe(
-        "codemode",
-      );
-      expect(session.getAllTools().find((tool) => tool.name === "alpha_hidden")).toBeUndefined();
+      expect(session.getActiveToolNames()).toContain("mcp__alpha__probe");
+      expect(session.getActiveToolNames()).not.toContain("mcp__alpha__advance");
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__alpha__advance")?.exposure,
+      ).toBe("codemode");
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__alpha__hidden"),
+      ).toBeUndefined();
 
       // beta: toolExposure overrides directTools: true for deferred and codemode tools.
-      expect(session.getActiveToolNames()).not.toContain("beta_probe");
-      expect(session.getActiveToolNames()).not.toContain("beta_advance");
-      expect(session.getAllTools().find((tool) => tool.name === "beta_probe")?.exposure).toBe(
+      expect(session.getActiveToolNames()).not.toContain("mcp__beta__probe");
+      expect(session.getActiveToolNames()).not.toContain("mcp__beta__advance");
+      expect(session.getAllTools().find((tool) => tool.name === "mcp__beta__probe")?.exposure).toBe(
         "deferred",
       );
-      expect(session.getAllTools().find((tool) => tool.name === "beta_advance")?.exposure).toBe(
-        "codemode",
-      );
-      expect(session.getAllTools().find((tool) => tool.name === "beta_hidden")).toBeUndefined();
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__beta__advance")?.exposure,
+      ).toBe("codemode");
+      expect(
+        session.getAllTools().find((tool) => tool.name === "mcp__beta__hidden"),
+      ).toBeUndefined();
     } finally {
       session.dispose();
     }

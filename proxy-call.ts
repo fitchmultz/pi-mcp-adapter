@@ -13,6 +13,7 @@ import {
   type McpOperationContext,
   type McpToolCallIdentity,
   getServerPrefix,
+  getServerToolPrefix,
   isServerDisabled,
   resolveToolPrefix,
 } from "./types.ts";
@@ -23,7 +24,21 @@ import { ensureToolCallApproved } from "./tool-approval.ts";
 import { getAuthRequiredMessage } from "./proxy-auth.ts";
 import { prepareMcpConnection } from "./proxy-connection.ts";
 import { runToolCall } from "./proxy-call-runtime.ts";
+import {
+  approvalFailure,
+  callPreparationError,
+  invalidCallRequest,
+  nativeToolCallResult,
+  serverNotFoundResult,
+  suggestedServerCallResult,
+  validateCallTargetArguments,
+} from "./proxy-call-validate.ts";
 import { asObjectRecord } from "./mcp-output-values.ts";
+import {
+  catalogCoverage,
+  matchesBackwardCompatibleToolName,
+  undiscoveredServersHint,
+} from "./tool-metadata.ts";
 export interface ExecuteCallOptions {
   exactOriginalName?: boolean;
   resourceUri?: string;
@@ -47,22 +62,6 @@ interface CallRequest extends Omit<ExecuteCallRequest, "args"> {
   identity: McpToolCallIdentity;
   options: ExecuteCallOptions;
 }
-function invalidCall(toolName: unknown, serverOverride: unknown): ProxyToolResult | undefined {
-  if (
-    typeof toolName !== "string" ||
-    toolName.trim().length === 0 ||
-    (serverOverride !== undefined &&
-      (typeof serverOverride !== "string" || serverOverride.length === 0))
-  ) {
-    return {
-      content: [
-        { type: "text", text: "Specify a non-empty tool name and, when supplied, server." },
-      ],
-      details: { mode: "call", error: "invalid_arguments" },
-    };
-  }
-  return;
-}
 export async function executeCall(
   state: McpExtensionState,
   request: ExecuteCallRequest,
@@ -75,7 +74,7 @@ export async function executeCall(
   const { toolName, args: rawArgs, serverOverride, signal } = input;
   const ownedSignal = combineAbortSignals(state.owner.signal, signal);
   throwIfAborted(ownedSignal);
-  const invalid = invalidCall(toolName, serverOverride);
+  const invalid = invalidCallRequest(toolName, serverOverride);
   if (invalid) {
     return invalid;
   }
@@ -87,47 +86,6 @@ export async function executeCall(
     };
   }
   return executeResolvedCall(state, { ...input, args }, ownedSignal);
-}
-
-function callPreparationError(
-  error: ProxyToolResult,
-  cachedTarget: ToolMetadata | undefined,
-  toolName: string,
-  resourceUri?: string,
-): ProxyToolResult {
-  let target: Record<string, unknown> =
-    resourceUri !== undefined ? { resourceUri } : { requestedTool: toolName };
-  if (cachedTarget) {
-    target =
-      (cachedTarget.resourceUri ?? "").length > 0
-        ? { resourceUri: cachedTarget.resourceUri }
-        : { tool: cachedTarget.originalName };
-  }
-  return { ...error, details: { ...error.details, ...target } };
-}
-function approvalFailure(
-  reason: string,
-  serverName: string,
-  toolMeta: ToolMetadata,
-): ProxyToolResult {
-  const denied = reason === "denied";
-  return {
-    isError: true,
-    content: [
-      {
-        type: "text",
-        text: denied
-          ? `The user declined approval to run MCP tool "${toolMeta.originalName}" on server "${serverName}".`
-          : `MCP tool "${toolMeta.originalName}" on server "${serverName}" is approval-gated and requires an interactive session.`,
-      },
-    ],
-    details: {
-      mode: "call",
-      error: denied ? "approval_denied" : "approval_required",
-      server: serverName,
-      tool: toolMeta.originalName,
-    },
-  };
 }
 class CallLookup {
   private readonly state: McpExtensionState;
@@ -158,20 +116,7 @@ class CallLookup {
     definition: ServerEntry | undefined,
   ): ProxyToolResult | undefined {
     if (!definition) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Server "${serverName}" not found. Use mcp({ action: "status" }) to see available servers.`,
-          },
-        ],
-        details: {
-          mode: "call",
-          error: "server_not_found",
-          server: serverName,
-          requestedTool: this.request.toolName,
-        },
-      };
+      return serverNotFoundResult(serverName, this.request.toolName);
     }
     if (isServerDisabled(definition)) {
       return disabledResult("call", serverName);
@@ -185,13 +130,14 @@ class CallLookup {
     const { state } = this;
     const { options } = this.request;
     const cached = state.toolMetadata.get(serverName);
-    if (this.matches(cached).length > 1) {
+    const matched = this.matches(cached, serverName);
+    if (matched.length > 1) {
       return this.ambiguous(serverName);
     }
     // Misspellings in a known catalog do not cause connection churn or guessed execution.
     if (
       cached &&
-      this.matches(cached).length === 0 &&
+      matched.length === 0 &&
       options.exactOriginalName !== true &&
       options.resourceUri === undefined
     ) {
@@ -200,7 +146,7 @@ class CallLookup {
 
     return;
   }
-  matches(metadata: ToolMetadata[] = []): ToolMetadata[] {
+  matches(metadata: ToolMetadata[] = [], serverName?: string): ToolMetadata[] {
     const { options, serverOverride, toolName } = this.request;
     if (options.resourceUri !== undefined) {
       return metadata.filter((tool) => tool.resourceUri === options.resourceUri);
@@ -210,6 +156,17 @@ class CallLookup {
         (tool) => tool.originalName === toolName && (tool.resourceUri ?? "").length === 0,
       );
     }
+    const direct = this.matchDirectNames(metadata, serverOverride, toolName);
+    if (direct.length > 0 || serverName === undefined) {
+      return direct;
+    }
+    return this.matchBackwardCompatibleNames(metadata, serverName, toolName);
+  }
+  private matchDirectNames(
+    metadata: ToolMetadata[],
+    serverOverride: string | undefined,
+    toolName: string,
+  ): ToolMetadata[] {
     if ((serverOverride ?? "").length > 0) {
       const originals = metadata.filter((tool) => tool.originalName === toolName);
       if (originals.length > 0) {
@@ -220,7 +177,21 @@ class CallLookup {
     if (exact.length > 0) {
       return exact;
     }
-    return metadata.filter((tool) => tool.name.replace(/-/g, "_") === toolName.replace(/-/g, "_"));
+    const normalized = toolName.replace(/-/g, "_");
+    return metadata.filter((tool) => tool.name.replace(/-/g, "_") === normalized);
+  }
+  private matchBackwardCompatibleNames(
+    metadata: ToolMetadata[],
+    serverName: string,
+    toolName: string,
+  ): ToolMetadata[] {
+    const prefix = resolveToolPrefix(
+      this.state.config.mcpServers[serverName],
+      this.state.config.settings?.toolPrefix,
+    );
+    return metadata.filter((tool) =>
+      matchesBackwardCompatibleToolName(tool, serverName, toolName, prefix),
+    );
   }
 
   ambiguous(serverName?: string): ProxyToolResult {
@@ -246,7 +217,7 @@ class CallLookup {
     const candidates = [...state.toolMetadata].flatMap(([server, metadata]) =>
       isServerDisabled(state.config.mcpServers[server])
         ? []
-        : this.matches(metadata).map((tool) => ({ server, tool })),
+        : this.matches(metadata, server).map((tool) => ({ server, tool })),
     );
     if (candidates.length > 1) {
       return this.ambiguous();
@@ -255,7 +226,8 @@ class CallLookup {
     if (serverName === undefined || serverName.length === 0) {
       const disabled = [...state.toolMetadata].find(
         ([server, metadata]) =>
-          isServerDisabled(state.config.mcpServers[server]) && this.matches(metadata).length > 0,
+          isServerDisabled(state.config.mcpServers[server]) &&
+          this.matches(metadata, server).length > 0,
       );
       if (disabled) {
         return disabledResult("call", disabled[0]);
@@ -268,21 +240,38 @@ class CallLookup {
   private inferPrefix(): string | ProxyToolResult | undefined {
     const { state } = this;
     const { toolName } = this.request;
-    const prefixes = Object.entries(state.config.mcpServers)
-      .filter(([, definition]) => !isServerDisabled(definition))
-      .map(([server, definition]) => ({
-        server,
-        prefix: getServerPrefix(
-          server,
-          resolveToolPrefix(definition, state.config.settings?.toolPrefix ?? "server"),
-        ),
-      }))
-      .filter(({ prefix }) => prefix.length > 0 && toolName.startsWith(`${prefix}_`))
+    const globalPrefix = state.config.settings?.toolPrefix;
+    const enabled = Object.entries(state.config.mcpServers).filter(
+      ([, definition]) => !isServerDisabled(definition),
+    );
+    const configured = enabled.map(([server, definition]) => ({
+      server,
+      prefix: getServerToolPrefix(server, resolveToolPrefix(definition, globalPrefix)),
+    }));
+    const direct = this.pickPrefixMatch(configured, toolName);
+    if (direct !== undefined) {
+      return direct;
+    }
+    const legacy = enabled
+      .filter(([, definition]) => resolveToolPrefix(definition, globalPrefix) === "mcp")
+      .flatMap(([server]) => [
+        { server, prefix: `${getServerPrefix(server, "mcp")}_` },
+        { server, prefix: getServerToolPrefix(server, "server") },
+      ]);
+    return this.pickPrefixMatch(legacy, toolName);
+  }
+
+  private pickPrefixMatch(
+    entries: Array<{ server: string; prefix: string }>,
+    toolName: string,
+  ): string | ProxyToolResult | undefined {
+    const matches = entries
+      .filter(({ prefix }) => prefix.length > 0 && toolName.startsWith(prefix))
       .sort((a, b) => b.prefix.length - a.prefix.length);
-    if (prefixes.length > 1 && prefixes[0]?.prefix === prefixes[1]?.prefix) {
+    if (matches.length > 1 && matches[0]?.prefix === matches[1]?.prefix) {
       return this.ambiguous();
     }
-    return prefixes[0]?.server;
+    return matches[0]?.server;
   }
   private suggestedOwner() {
     const { state } = this;
@@ -300,7 +289,7 @@ class CallLookup {
             ([server, metadata]) =>
               server !== serverOverride &&
               !isServerDisabled(state.config.mcpServers[server]) &&
-              this.matches(metadata).length === 1,
+              this.matches(metadata, server).length === 1,
           )
         : [];
     const suggestedOwner = owners.length === 1 ? owners[0] : undefined;
@@ -326,6 +315,7 @@ class CallLookup {
     ) {
       hint += ` Refresh a stale catalog with mcp({ action: "connect", server: ${JSON.stringify(serverName)} }).`;
     }
+    hint += undiscoveredServersHint(state, serverName);
 
     return hint;
   }
@@ -336,36 +326,20 @@ class CallLookup {
       (serverOverride ?? "").length === 0 &&
       getPiTools?.().find((tool) => tool.name === toolName && tool.name !== "mcp");
     if (nativeTool !== false && nativeTool !== undefined) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `"${toolName}" is a native Pi tool. Call ${toolName} directly instead of using mcp({ action: "call", tool: "${toolName}" }).`,
-          },
-        ],
-        details: { mode: "call", error: "native_tool", requestedTool: toolName },
-      };
+      return nativeToolCallResult(toolName);
     }
     const suggestedOwner = this.suggestedOwner();
     if (suggestedOwner) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Tool ${JSON.stringify(toolName)} is on server ${JSON.stringify(suggestedOwner[0])}, not ${JSON.stringify(serverOverride)}. Retry the same call with server: ${JSON.stringify(suggestedOwner[0])} or omit server.`,
-          },
-        ],
-        details: {
-          mode: "call",
-          error: "tool_not_found",
-          requestedTool: toolName,
-          hintServer: serverName,
-          suggestedServer: suggestedOwner[0],
-          suggestions: this.matches(suggestedOwner[1]).map((tool) => tool.name),
-        },
-      };
+      return suggestedServerCallResult({
+        toolName,
+        serverOverride,
+        hintServer: serverName,
+        suggestedServer: suggestedOwner[0],
+        suggestions: this.matches(suggestedOwner[1], suggestedOwner[0]).map((tool) => tool.name),
+      });
     }
     const suggestions = rankSuggestions(state, toolName, 5, serverName);
+    const { unknownServers } = catalogCoverage(state, serverName);
     const hint = this.missingHint(serverName, suggestions);
     return {
       content: [{ type: "text", text: `Tool "${toolName}" not found.${hint}` }],
@@ -375,9 +349,13 @@ class CallLookup {
         requestedTool: toolName,
         hintServer: serverName,
         suggestions,
+        ...(unknownServers.length > 0 ? { undiscoveredServers: unknownServers } : {}),
       },
     };
   }
+}
+function singleMatchedTarget(targets: ToolMetadata[]): ToolMetadata | undefined {
+  return targets.length === 1 ? targets[0] : undefined;
 }
 function resolveTarget(
   state: McpExtensionState,
@@ -392,7 +370,7 @@ function resolveTarget(
   if (request.options.resourceUri !== undefined && definition?.exposeResources === false) {
     return resourcesDisabledResult(serverName, request.options.resourceUri);
   }
-  const targets = lookup.matches(state.toolMetadata.get(serverName));
+  const targets = lookup.matches(state.toolMetadata.get(serverName), serverName);
   if (targets.length > 1) {
     return lookup.ambiguous(serverName);
   }
@@ -421,12 +399,25 @@ async function executeResolvedCall(
     return resolved;
   }
   const serverName = resolved;
-  const cached = state.toolMetadata.get(serverName);
+  const cachedTarget =
+    request.options.resourceUri === undefined
+      ? singleMatchedTarget(lookup.matches(state.toolMetadata.get(serverName), serverName))
+      : undefined;
+  let validatedSchema: ToolMetadata["inputSchema"];
+  let validatedArgs = request.args;
+  if (cachedTarget) {
+    const preCheck = validateCallTargetArguments(serverName, cachedTarget, request.args);
+    if (!preCheck.ok) {
+      return preCheck.error;
+    }
+    validatedSchema = cachedTarget.inputSchema;
+    validatedArgs = preCheck.args;
+  }
   const prepared = await prepareMcpConnection(state, serverName, ownedSignal, request.onUpdate);
   if (prepared.error) {
     return callPreparationError(
       prepared.error,
-      lookup.matches(cached)[0],
+      cachedTarget,
       toolName,
       request.options.resourceUri,
     );
@@ -435,12 +426,18 @@ async function executeResolvedCall(
   if ("content" in target) {
     return target;
   }
-  return dispatchApprovedCall(state, request, {
-    serverName,
-    toolMeta: target,
-    ownedSignal,
-    prepared,
-  });
+  if (request.options.resourceUri === undefined && target.inputSchema !== validatedSchema) {
+    const liveCheck = validateCallTargetArguments(serverName, target, request.args);
+    if (!liveCheck.ok) {
+      return liveCheck.error;
+    }
+    validatedArgs = liveCheck.args;
+  }
+  return dispatchApprovedCall(
+    state,
+    { ...request, args: validatedArgs },
+    { serverName, toolMeta: target, ownedSignal, prepared },
+  );
 }
 async function dispatchApprovedCall(
   state: McpExtensionState,

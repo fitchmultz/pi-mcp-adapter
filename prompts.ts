@@ -33,7 +33,7 @@ export function resolveCachedPrompts(config: McpConfig, cacheEnabled = true): Pr
     return [];
   }
 
-  const prefix = config.settings?.toolPrefix ?? "server";
+  const prefix = config.settings?.toolPrefix;
   const specs: PromptMetadata[] = [];
 
   for (const [serverName, entry] of Object.entries(cache.servers)) {

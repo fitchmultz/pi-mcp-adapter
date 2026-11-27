@@ -638,10 +638,10 @@ describe("native Pi project .pi/mcp.json support", () => {
         mode: "tui",
         uiContext: session.extensionRunner.getUIContext(),
       });
-      await waitFor(() => session.getActiveToolNames().includes("native_direct_noop"));
-      expect(session.getActiveToolNames()).toContain("native_direct_noop");
-      expect(session.getActiveToolNames()).not.toContain("mcp__native_direct__noop");
-      expect(session.getActiveToolNames()).not.toContain("native_disabled_noop");
+      await waitFor(() => session.getActiveToolNames().includes("mcp__native_direct__noop"));
+      expect(session.getActiveToolNames()).toContain("mcp__native_direct__noop");
+      expect(session.getAllTools().some((tool) => tool.name === "mcp")).toBe(true);
+      expect(session.getActiveToolNames()).not.toContain("mcp__native_disabled__noop");
       expect(readStartCount(startLog)).toBe(1);
       expect(readStartCount(disabledLog)).toBe(0);
     } finally {
@@ -703,7 +703,7 @@ describe("native Pi project .pi/mcp.json support", () => {
       });
       await waitFor(
         () =>
-          session.getActiveToolNames().includes("control_global_noop") &&
+          session.getActiveToolNames().includes("mcp__control_global__noop") &&
           session.getActiveToolNames().includes("mcp__native_direct__noop"),
         8000,
       );
@@ -770,8 +770,8 @@ describe("native Pi project .pi/mcp.json support", () => {
         mode: "tui",
         uiContext: session.extensionRunner.getUIContext(),
       });
-      await waitFor(() => session.getActiveToolNames().includes("control_global_noop"), 8000);
-      expect(session.getActiveToolNames()).not.toContain("native_direct_noop");
+      await waitFor(() => session.getActiveToolNames().includes("mcp__control_global__noop"), 8000);
+      expect(session.getActiveToolNames()).not.toContain("mcp__native_direct__noop");
       expect(readStartCount(startLog)).toBe(0);
     } finally {
       session.dispose();

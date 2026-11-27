@@ -42,6 +42,12 @@ function cancelled(
   return signal?.aborted === true || (owner !== null && isAbortError(error, owner.signal));
 }
 
+export function parseEnvDirectToolOverride(envRaw: string | undefined): string[] | undefined {
+  return envRaw
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
 export interface FrozenToolsSnapshot {
   readonly config: McpConfig;
   readonly configPath: string | undefined;

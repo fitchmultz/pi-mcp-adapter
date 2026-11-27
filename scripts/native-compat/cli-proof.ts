@@ -60,7 +60,7 @@ function verifyResults(results: CliResult[]): void {
   assert.match(JSON.stringify(redacted.content), /Redacted/);
   assert.equal(blocked.isError, true);
   assert.ok(coded.nestedCalls);
-  assert.ok(coded.nestedCalls.calls.some((call) => call.name === "local_echo"));
+  assert.ok(coded.nestedCalls.calls.some((call) => call.name === "mcp__local__echo"));
 }
 
 export async function verifyCli(fixture: NativeFixture): Promise<void> {
@@ -83,7 +83,7 @@ export async function verifyCli(fixture: NativeFixture): Promise<void> {
       "-e",
       "builtin:codemode",
       "--tools",
-      "mcp,codemode,local_echo",
+      "mcp,codemode,mcp__local__echo",
       "--provider",
       "fixture",
       "--model",

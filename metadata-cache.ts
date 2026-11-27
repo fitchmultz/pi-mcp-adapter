@@ -38,6 +38,7 @@ import {
 import { asObjectRecord } from "./mcp-output-values.ts";
 import {
   interpolateEnvRecord,
+  interpolateSecretExpression,
   resolveBearerToken,
   resolveConfigPath,
   resolveServerUrl,
@@ -140,6 +141,22 @@ export function saveMetadataCache(
   }
 }
 
+function normalizeHashValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return interpolateSecretExpression(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeHashValue);
+  }
+  const record = asObjectRecord(value);
+  if (record !== undefined) {
+    return Object.fromEntries(
+      Object.entries(record).map(([key, entry]) => [key, normalizeHashValue(entry)]),
+    );
+  }
+  return value;
+}
+
 export function computeServerHash(definition: ServerEntry): string {
   // Hash only fields that affect server identity and tool/resource output.
   // Exclude lifecycle, idleTimeout, requestTimeoutMs, debug — those are runtime behavior settings
@@ -153,6 +170,7 @@ export function computeServerHash(definition: ServerEntry): string {
     url: resolveServerUrl(definition),
     headers: interpolateEnvRecord(definition.headers),
     auth: definition.auth,
+    oauth: normalizeHashValue(definition.oauth),
     bearerToken: resolveBearerToken(definition),
     bearerTokenEnv: definition.bearerTokenEnv,
     exposeResources: definition.exposeResources,
@@ -275,15 +293,16 @@ function selectedDirectTools(
 export function reconstructToolMetadata(
   serverName: string,
   entry: ServerCacheEntry,
-  prefix: ToolPrefix,
+  prefix: ToolPrefix | undefined,
   definition: Pick<
     ServerEntry,
     "exposeResources" | "includeTools" | "excludeTools" | "toolExposure" | "toolPrefix" | "disabled"
   >,
 ): ToolMetadata[] {
+  const effectivePrefix = resolveToolPrefix(definition, prefix);
   const key = JSON.stringify([
     serverName,
-    prefix,
+    effectivePrefix,
     definition.exposeResources,
     definition.includeTools,
     definition.excludeTools,
@@ -300,7 +319,7 @@ export function reconstructToolMetadata(
     resources: entry.resources,
     definition,
     serverName,
-    prefix,
+    prefix: effectivePrefix,
   }).metadata;
   if (Object.isFrozen(entry)) {
     toolProjections.set(entry, { key, metadata: freezeMetadata(metadata) });
@@ -387,7 +406,7 @@ function copyPromptArguments(args: McpPromptArgument[]): NonNullable<CachedPromp
 export function reconstructPromptMetadata(
   serverName: string,
   prompts: ReadonlyArray<McpPrompt | CachedPrompt>,
-  prefix: ToolPrefix,
+  prefix: ToolPrefix | undefined,
   definition?: Pick<ServerEntry, "toolPrefix">,
 ): PromptMetadata[] {
   const effectivePrefix = resolveToolPrefix(definition, prefix);

@@ -4,10 +4,12 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { MetadataCache } from "./metadata-cache.ts";
+import { applyResolvedToolName, getBaseToolName } from "./tool-metadata.ts";
 import type { DirectToolSpec, McpConfig, ToolMetadata } from "./types.ts";
 import {
   catalogDefinition,
   collectCatalog,
+  resolveCatalogNames,
   type CatalogTool,
   type LoaderDependencies,
   type Selection,
@@ -15,17 +17,6 @@ import {
 } from "./tool-loader-catalog.ts";
 
 const key = (value: Selection): string => JSON.stringify([value.server, value.tool]);
-const reserved = new Set([
-  "read",
-  "bash",
-  "powershell",
-  "edit",
-  "write",
-  "grep",
-  "find",
-  "ls",
-  "mcp",
-]);
 /**
  * How a registered tool is exposed to Pi: pinned and active from startup, deferred so tool_search
  * loads it, or withdrawn after it left the catalog. Pi cannot unregister a tool, so a withdrawn
@@ -43,11 +34,13 @@ type Exposure =
     };
 
 type Registration = {
+  server: string;
   name: string;
   fingerprint: string;
   definition: ReturnType<typeof catalogDefinition>;
   exposure: Exposure;
 };
+
 interface ToolLoader {
   sync: (
     config: McpConfig,
@@ -55,10 +48,14 @@ interface ToolLoader {
     env?: string[] | null,
     registerGateways?: (pins: DirectToolSpec[]) => boolean | undefined,
   ) => DirectToolSpec[];
+  /** Refresh non-active deferred catalog tools while keeping pinned and active tools frozen. */
+  syncDeferred: (config: McpConfig, cache: MetadataCache | null, env?: string[] | null) => void;
   /** Whether any catalog tool is registered with deferred exposure. */
   hasDeferred: () => boolean;
   /** Decides every registered pin again after a session start or tree navigation. */
   settlePins: () => void;
+  /** Server name owning a registered MCP tool name, if known. */
+  serverForTool: (name: string) => string | undefined;
 }
 
 /** Replays the branch's recorded tool loadout (Pi docs/session-format.md) for one tool. */
@@ -138,12 +135,15 @@ class Loader implements ToolLoader {
   private readonly pi: ExtensionAPI;
   private readonly dependencies: LoaderDependencies;
   private readonly registered = new Map<string, Registration>();
+  private readonly ownedToolNames = new Set<string>();
+  private readonly toolToServer = new Map<string, string>();
   /** Pins decided since the last session boundary, so a later live deselection is not undone. */
   private readonly settled = new Set<string>();
   private readonly fingerprints = new WeakMap<
     ToolMetadata,
     {
       server: string;
+      name: string;
       description: string | undefined;
       instructions: string | undefined;
       pinned: boolean;
@@ -157,34 +157,97 @@ class Loader implements ToolLoader {
     this.dependencies = dependencies;
   }
 
+  private hideRegistration(registration: Registration): void {
+    const hidden: ToolDefinition<
+      ReturnType<typeof catalogDefinition>["parameters"],
+      Record<string, unknown>
+    > = { ...registration.definition, exposure: "hidden" };
+    this.pi.registerTool(hidden);
+    if (this.toolToServer.get(registration.name) === registration.server) {
+      this.toolToServer.delete(registration.name);
+    }
+  }
+
+  private retireRenamed(
+    existing: Registration,
+    claimedNames: ReadonlySet<string>,
+    active: ReadonlySet<string>,
+  ): { lost?: string; wasActive: boolean } {
+    const wasActive = active.has(existing.name);
+    if (!claimedNames.has(existing.name)) {
+      if (existing.exposure.kind !== "withdrawn") {
+        this.hideRegistration(existing);
+      }
+      return { lost: existing.name, wasActive };
+    }
+    return { wasActive };
+  }
+
+  private instructionsFor(serverName: string, cache: MetadataCache | null): string | undefined {
+    return (
+      this.dependencies.getState()?.serverInstructions.get(serverName) ??
+      cache?.servers[serverName]?.instructions
+    );
+  }
+
   /**
    * Reports a pin the tool lost, which Pi keeps active across re-registration, or one it gained or
    * regained active after withdrawal, which activates like a new pin within the session.
    */
-  private register(item: CatalogTool, cache: MetadataCache | null): "lost" | "gained" | undefined {
+  private register(
+    item: CatalogTool,
+    cache: MetadataCache | null,
+    claimedNames: ReadonlySet<string>,
+    active: ReadonlySet<string>,
+  ): { lost?: string; gained?: string } {
     const { spec, selection, name, pinned, unpinnedExposure, description } = item;
-    const instructions =
-      this.dependencies.getState()?.serverInstructions.get(spec.serverName) ??
-      cache?.servers[spec.serverName]?.instructions;
+    const instructions = this.instructionsFor(spec.serverName, cache);
     const fingerprint = this.fingerprint(item, instructions);
     const id = key(selection);
     const existing = this.registered.get(id);
     if (existing?.fingerprint === fingerprint && existing.exposure.kind !== "withdrawn") {
-      return undefined;
+      return {};
     }
+    const retired =
+      existing !== undefined && existing.name !== name
+        ? this.retireRenamed(existing, claimedNames, active)
+        : undefined;
     const definition = catalogDefinition(spec, instructions, this.dependencies, {
       pinned,
       unpinnedExposure,
       description,
     });
     this.pi.registerTool(definition);
+    this.ownedToolNames.add(name);
     this.registered.set(id, {
+      server: selection.server,
       name,
       fingerprint,
       definition,
       exposure: pinned ? { kind: "pinned" } : { kind: unpinnedExposure },
     });
-    return pinChange(existing, pinned);
+    this.toolToServer.set(name, selection.server);
+    return this.pinTransition(existing, pinned, name, retired);
+  }
+
+  private pinTransition(
+    existing: Registration | undefined,
+    pinned: boolean,
+    name: string,
+    retired: { lost?: string; wasActive: boolean } | undefined,
+  ): { lost?: string; gained?: string } {
+    if (retired !== undefined) {
+      const gained = pinned && (retired.wasActive || pinChange(existing, true) === "gained");
+      return {
+        ...(retired.lost !== undefined ? { lost: retired.lost } : {}),
+        ...(gained ? { gained: name } : {}),
+      };
+    }
+    const change = pinChange(existing, pinned);
+    if (change === "lost") {
+      return { lost: name };
+    }
+    return change === "gained" ? { gained: name } : {};
   }
 
   /**
@@ -224,10 +287,16 @@ class Loader implements ToolLoader {
     }
   }
 
-  private withdraw(available: Set<string>): void {
+  private withdraw(available: Set<string>, freezePins: boolean): void {
     const active = new Set(this.pi.getActiveTools());
     for (const [id, registration] of this.registered) {
       if (available.has(id) || registration.exposure.kind === "withdrawn") {
+        continue;
+      }
+      if (
+        freezePins &&
+        (registration.exposure.kind === "pinned" || active.has(registration.name))
+      ) {
         continue;
       }
       registration.exposure = {
@@ -235,11 +304,7 @@ class Loader implements ToolLoader {
         pinned: registration.exposure.kind === "pinned",
         resumes: active.has(registration.name),
       };
-      const hidden: ToolDefinition<
-        ReturnType<typeof catalogDefinition>["parameters"],
-        Record<string, unknown>
-      > = { ...registration.definition, exposure: "hidden" };
-      this.pi.registerTool(hidden);
+      this.hideRegistration(registration);
     }
   }
 
@@ -248,6 +313,7 @@ class Loader implements ToolLoader {
     const previous = Object.isFrozen(source) ? this.fingerprints.get(source) : undefined;
     const fingerprint =
       previous?.server === spec.serverName &&
+      previous.name === name &&
       previous.description === description &&
       previous.instructions === instructions &&
       previous.pinned === pinned &&
@@ -257,6 +323,7 @@ class Loader implements ToolLoader {
     if (Object.isFrozen(source)) {
       this.fingerprints.set(source, {
         server: spec.serverName,
+        name,
         description,
         instructions,
         pinned,
@@ -267,42 +334,119 @@ class Loader implements ToolLoader {
     return fingerprint;
   }
 
-  /** Catalog tools this loader may own: unique, unreserved, and not registered by another extension. */
-  private eligible(specs: readonly CatalogTool[]): CatalogTool[] {
-    const previousNames = new Set([...this.registered.values()].map((item) => item.name));
-    const existing = new Set(this.pi.getAllTools().map((tool) => tool.name));
-    const counts = new Map<string, number>();
-    for (const { name } of specs) {
-      counts.set(name, (counts.get(name) ?? 0) + 1);
+  private baseCatalogItem(item: CatalogTool): CatalogTool {
+    const baseName = getBaseToolName(item.source);
+    if (baseName === item.name) {
+      return item;
     }
-    return specs.filter(
-      ({ name }) =>
-        !reserved.has(name) &&
-        counts.get(name) === 1 &&
-        (!existing.has(name) || previousNames.has(name)),
+    return { ...item, name: baseName, spec: { ...item.spec, prefixedName: baseName } };
+  }
+
+  private resolveNames(rawSpecs: readonly CatalogTool[]): CatalogTool[] {
+    const specs = rawSpecs.map((item) => this.baseCatalogItem(item));
+    const foreign = new Set(
+      this.pi
+        .getAllTools()
+        .map((tool) => tool.name)
+        .filter((name) => !this.ownedToolNames.has(name)),
+    );
+    return resolveCatalogNames(specs, foreign);
+  }
+
+  /**
+   * Write resolved public tool names back into `state.toolMetadata` so gateway search, describe,
+   * and call match the exact names registered with Pi (and refresh MiniSearch via array replacement).
+   */
+  private syncMetadataNames(): void {
+    const state = this.dependencies.getState();
+    if (!state) {
+      return;
+    }
+    for (const [server, tools] of state.toolMetadata) {
+      const updated = this.rewriteServerMetadata(server, tools);
+      if (updated !== undefined) {
+        state.toolMetadata.set(server, updated);
+      }
+    }
+  }
+
+  private rewriteServerMetadata(server: string, tools: ToolMetadata[]): ToolMetadata[] | undefined {
+    let changed = false;
+    const next: ToolMetadata[] = [];
+    for (const tool of tools) {
+      const reg =
+        (tool.resourceUri ?? "").length > 0
+          ? undefined
+          : this.registered.get(key({ server, tool: tool.originalName }));
+      if (!reg || reg.exposure.kind === "withdrawn" || reg.name === tool.name) {
+        next.push(tool);
+        continue;
+      }
+      changed = true;
+      next.push(applyResolvedToolName(tool, reg.name));
+    }
+    return changed ? next : undefined;
+  }
+
+  private isFrozenRegistration(item: CatalogTool, active: ReadonlySet<string>): boolean {
+    if (item.pinned || active.has(item.name)) {
+      return true;
+    }
+    const existing = this.registered.get(key(item.selection));
+    return (
+      existing?.exposure.kind === "pinned" || (existing !== undefined && active.has(existing.name))
     );
   }
 
-  sync: ToolLoader["sync"] = (config, cache, env, registerGateways) => {
-    const specs = collectCatalog(config, cache, env, this.dependencies.getState);
-    const eligible = this.eligible(specs);
-    const available = new Set(eligible.map((item) => key(item.selection)));
+  private syncDeferredOnly(resolved: readonly CatalogTool[], cache: MetadataCache | null): void {
+    const active = new Set(this.pi.getActiveTools());
+    const available = new Set(resolved.map((item) => key(item.selection)));
+    const claimed = new Set(resolved.map((item) => item.name));
     const lost = new Set<string>();
-    const gained = new Set<string>();
-    for (const item of eligible) {
-      const change = this.register(item, cache);
-      if (change !== undefined) {
-        (change === "lost" ? lost : gained).add(item.name);
+    for (const item of resolved) {
+      if (!this.isFrozenRegistration(item, active)) {
+        const change = this.register(item, cache, claimed, active);
+        if (change.lost !== undefined) {
+          lost.add(change.lost);
+        }
       }
     }
-    this.withdraw(available);
+    this.withdraw(available, true);
+    this.deactivate(lost);
+    this.syncMetadataNames();
+  }
+
+  syncDeferred: ToolLoader["syncDeferred"] = (config, cache, env) => {
+    const specs = collectCatalog(config, cache, env, this.dependencies.getState);
+    this.syncDeferredOnly(this.resolveNames(specs), cache);
+  };
+
+  sync: ToolLoader["sync"] = (config, cache, env, registerGateways) => {
+    const specs = collectCatalog(config, cache, env, this.dependencies.getState);
+    const resolved = this.resolveNames(specs);
+    const active = new Set(this.pi.getActiveTools());
+    const available = new Set(resolved.map((item) => key(item.selection)));
+    const claimed = new Set(resolved.map((item) => item.name));
+    const lost = new Set<string>();
+    const gained = new Set<string>();
+    for (const item of resolved) {
+      const change = this.register(item, cache, claimed, active);
+      if (change.lost !== undefined) {
+        lost.add(change.lost);
+      }
+      if (change.gained !== undefined) {
+        gained.add(change.gained);
+      }
+    }
+    this.withdraw(available, false);
     this.deactivate(lost);
     for (const name of lost) {
       this.settled.delete(name);
     }
     this.activatePins(gained);
+    this.syncMetadataNames();
     const permitted = new Set(this.pi.getAllTools().map((tool) => tool.name));
-    const pins = specs
+    const pins = resolved
       .filter(
         (item) => item.pinned && available.has(key(item.selection)) && permitted.has(item.name),
       )
@@ -325,9 +469,17 @@ class Loader implements ToolLoader {
     }
     this.activatePins(new Set());
   };
+
+  serverForTool: ToolLoader["serverForTool"] = (name) => this.toolToServer.get(name);
 }
 
 export function createToolLoader(pi: ExtensionAPI, dependencies: LoaderDependencies): ToolLoader {
   const loader = new Loader(pi, dependencies);
-  return { sync: loader.sync, hasDeferred: loader.hasDeferred, settlePins: loader.settlePins };
+  return {
+    sync: loader.sync,
+    syncDeferred: loader.syncDeferred,
+    hasDeferred: loader.hasDeferred,
+    settlePins: loader.settlePins,
+    serverForTool: loader.serverForTool,
+  };
 }

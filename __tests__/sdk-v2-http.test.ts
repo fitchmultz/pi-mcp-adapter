@@ -71,9 +71,9 @@ function entryCall(
 ): Pick<ToolCall, "name" | "arguments"> {
   switch (entry) {
     case "direct":
-      return { name: `local_${name}`, arguments: args };
+      return { name: `mcp__local__${name}`, arguments: args };
     case "proxy":
-      return { name: "mcp", arguments: { tool: `local_${name}`, args } };
+      return { name: "mcp", arguments: { tool: `mcp__local__${name}`, args } };
     default:
       throw new Error(`Unknown fixture entry: ${entry}`);
   }
@@ -871,7 +871,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(page.details).toMatchObject({
       mode: "list",
       server: "local",
-      tools: ["local_second"],
+      tools: ["mcp__local__second"],
       count: 3,
       hasMore: true,
       nextOffset: 2,
@@ -1096,7 +1096,7 @@ describe("published SDK v2 over real local HTTP", () => {
       const active = getCurrentTools(context.messages);
       const selected = active.find(
         (candidate) =>
-          candidate.name === "local_second" &&
+          candidate.name === "mcp__local__second" &&
           candidate.description.startsWith("Read newly available data"),
       );
       loadingStages.push({
@@ -1107,8 +1107,8 @@ describe("published SDK v2 over real local HTTP", () => {
       let next: Pick<ToolCall, "name" | "arguments"> | undefined;
       if (stage === 0) {
         // tool_search loads a deferred catalog tool through the same native active-tool set.
-        session.setActiveToolsByName([...session.getActiveToolNames(), "local_second"]);
-        next = { name: "mcp", arguments: { action: "describe", tool: "local_second" } };
+        session.setActiveToolsByName([...session.getActiveToolNames(), "mcp__local__second"]);
+        next = { name: "mcp", arguments: { action: "describe", tool: "mcp__local__second" } };
       } else if (stage === 1) {
         next = { name: requireValue(selected).name, arguments: { value: "typed" } };
       } else if (stage === 2) {
@@ -1166,7 +1166,7 @@ describe("published SDK v2 over real local HTTP", () => {
       true,
     ]);
     expect(requireValue(loadingStages[0]).selected).toBeUndefined();
-    expect(requireValue(loadingStages[0]).callable).toContain("local_second");
+    expect(requireValue(loadingStages[0]).callable).toContain("mcp__local__second");
     expect(requireValue(requireValue(loadingStages[1]).selected).parameters).toEqual(
       tool.inputSchema,
     );
@@ -1362,14 +1362,14 @@ describe("published SDK v2 over real local HTTP", () => {
     // This safety/capture fixture explicitly selects its entry points; lazy loading is exercised above.
     session.setActiveToolsByName([...session.getActiveToolNames(), "mcp"]);
     // The eager server's pinned tools register once its connection completes.
-    await expect.poll(() => session.getActiveToolNames().includes("local_echo")).toBe(true);
+    await expect.poll(() => session.getActiveToolNames().includes("mcp__local__echo")).toBe(true);
     let nativeTurns: ToolCall[][] = [
       [
         { type: "toolCall", id: "native-writer", name: "fixture_writer", arguments: {} },
         {
           type: "toolCall",
           id: "native-direct",
-          name: "local_echo",
+          name: "mcp__local__echo",
           arguments: { value: "first" },
         },
       ],
@@ -1378,7 +1378,7 @@ describe("published SDK v2 over real local HTTP", () => {
           type: "toolCall",
           id: "native-proxy",
           name: "mcp",
-          arguments: { tool: "local_echo", args: { value: "resource-1" } },
+          arguments: { tool: "mcp__local__echo", args: { value: "resource-1" } },
         },
       ],
     ];
@@ -1445,7 +1445,7 @@ describe("published SDK v2 over real local HTTP", () => {
       toolCallId: "native-direct",
       args: { value: "first" },
     });
-    expect(requireValue(captures[0]).bytes).toContain('"name":"local_echo"');
+    expect(requireValue(captures[0]).bytes).toContain('"name":"mcp__local__echo"');
     requireValue(captures[0]).res.writeHead(200).end();
     await expect.poll(() => captures.length).toBe(2);
     expect(effects).toBe(1);
@@ -1528,7 +1528,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(effects).toBe(2); // Opening native history does not replay its calls.
 
     const registered = session.extensionRunner.getAllRegisteredTools();
-    for (const name of ["local_echo", "mcp"]) {
+    for (const name of ["mcp__local__echo", "mcp"]) {
       expect(
         requireValue(registered.find((t) => t.definition.name === name)).definition.executionMode,
       ).toBe("sequential");
@@ -1547,7 +1547,7 @@ describe("published SDK v2 over real local HTTP", () => {
       return { ...output, details: z.record(z.string(), z.unknown()).parse(output.details) };
     };
     mode = "reject-before";
-    const blocked = await execute("local_echo", "blocked-outer", { value: "never" });
+    const blocked = await execute("mcp__local__echo", "blocked-outer", { value: "never" });
     expect(blocked.details).toMatchObject({
       error: "call_capture_failed",
       recovery: { phase: "before", toolCallId: "blocked-outer" },
@@ -1555,7 +1555,7 @@ describe("published SDK v2 over real local HTTP", () => {
     expect(effects).toBe(2);
     expect(JSON.stringify(blocked)).not.toContain("synthetic-secret-must-not-leak");
     mode = "reject-after";
-    const interrupted = await execute("local_echo", "interrupted-outer", { value: "first" });
+    const interrupted = await execute("mcp__local__echo", "interrupted-outer", { value: "first" });
     expect(interrupted.details).toMatchObject({
       error: "call_capture_failed",
       recovery: {
@@ -1570,14 +1570,19 @@ describe("published SDK v2 over real local HTTP", () => {
     mode = "hold";
     const controller = new AbortController();
     const stoppedCaptureCount = captures.length;
-    const stopped = execute("local_echo", "stopped-outer", { value: "first" }, controller.signal);
+    const stopped = execute(
+      "mcp__local__echo",
+      "stopped-outer",
+      { value: "first" },
+      controller.signal,
+    );
     await expect.poll(() => captures.length).toBe(stoppedCaptureCount + 1);
     controller.abort(new Error("Stop"));
     expect((await stopped).details.error).toBe("aborted");
     expect(effects).toBe(3);
     mode = "pass";
     const proxy = await execute("mcp", "proxy-outer", {
-      tool: "local_echo",
+      tool: "mcp__local__echo",
       args: { value: "proxy" },
     });
     expect(proxy.details.error).toBeUndefined();
@@ -1587,7 +1592,7 @@ describe("published SDK v2 over real local HTTP", () => {
       args: { value: "proxy" },
     });
     expect(effects).toBe(4);
-    const lost = await execute("local_echo", "lost-outer", { value: "lose-response" });
+    const lost = await execute("mcp__local__echo", "lost-outer", { value: "lose-response" });
     expect(lost.details).toMatchObject({
       error: "ambiguous_outcome",
       recovery: { toolCallId: "lost-outer", action: "readback" },
@@ -1633,9 +1638,9 @@ describe("published SDK v2 over real local HTTP", () => {
       "readback-outer",
     ]);
     checkpointMode = "reject";
-    await expect(execute("local_echo", "checkpoint-rejected", { value: "never" })).rejects.toThrow(
-      "checkpoint unavailable",
-    );
+    await expect(
+      execute("mcp__local__echo", "checkpoint-rejected", { value: "never" }),
+    ).rejects.toThrow("checkpoint unavailable");
     expect(effects).toBe(5);
 
     for (const entry of ["direct", "proxy"]) {
@@ -1660,7 +1665,7 @@ describe("published SDK v2 over real local HTTP", () => {
 
     checkpointMode = "pass";
     mode = "pass";
-    expect(registered.some((t) => t.definition.name === "local_read_saved_data")).toBe(false);
+    expect(registered.some((t) => t.definition.name === "mcp__local__read_saved_data")).toBe(false);
     const operationMetadata = new Map<
       string,
       Pick<McpOperationContext, "annotations" | "resourceUri">
@@ -1707,7 +1712,7 @@ describe("published SDK v2 over real local HTTP", () => {
         expect(requireValue(captures.at(-1)).event).not.toHaveProperty("annotationsTrusted");
       }
     }
-    await execute("untrusted_readback", "untrusted-read", { value: "untrusted" });
+    await execute("mcp__untrusted__readback", "untrusted-read", { value: "untrusted" });
     expect(requireValue(checkpoints.at(-1)).operation).toEqual({
       toolCallId: "untrusted-read",
       server: "untrusted",
@@ -1722,7 +1727,7 @@ describe("published SDK v2 over real local HTTP", () => {
       readbackAnnotations = annotations;
       await execute("mcp", "refresh", { connect: "local" });
       expect(requireValue(checkpoints.at(-1)).operation).toBeUndefined();
-      await execute("local_readback", "stale-direct", { value: "stale" });
+      await execute("mcp__local__readback", "stale-direct", { value: "stale" });
       expect(requireValue(requireValue(checkpoints.at(-1)).operation).annotations).toEqual(
         annotations,
       );

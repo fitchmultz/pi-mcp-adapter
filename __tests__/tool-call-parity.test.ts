@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import type { CallToolResult } from "@modelcontextprotocol/client";
+import {
+  ProtocolError,
+  ProtocolErrorCode,
+  type CallToolResult,
+} from "@modelcontextprotocol/client";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDirectToolExecutor } from "../direct-tools.ts";
 import { executeCall } from "../proxy-modes.ts";
@@ -218,5 +222,107 @@ describe("proxy and direct tool call parity", () => {
     });
     const suffix = hint ? "\n\nExpected parameters:\n  timeout (number)" : "";
     expect(firstText(result)).toBe(`Error: ${diagnostic}${suffix}`);
+  });
+
+  it("validates and coerces gateway call arguments locally before connecting, prompting, or dispatching", async () => {
+    const { state, connection } = await proxyRuntimeState({ name: "echo", result: MCP_RESULT });
+    const schema = {
+      type: "object" as const,
+      properties: {
+        count: { type: "number" },
+        verbose: { type: "boolean" },
+        query: { type: "string" },
+      },
+      required: ["count", "query"],
+    };
+    const meta = state.toolMetadata.get("demo")?.[0];
+    const live = connection.tools[0];
+    assert.ok(meta && live);
+    meta.inputSchema = schema;
+    live.inputSchema = schema;
+    state.config.settings = { ...state.config.settings, approveTools: true };
+    const connect = vi.spyOn(state.manager, "connect");
+    const callTool = vi.spyOn(connection.client, "callTool");
+    const getConnection = vi.spyOn(state.manager, "getConnection").mockImplementation(() => {
+      return;
+    });
+
+    // Invalid arguments fail locally before connect or approval prompt.
+    const rejected = await executeCall(state, {
+      toolName: "demo_echo",
+      args: { count: "not-a-number" },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(rejected.details).toMatchObject({
+      mode: "call",
+      error: "invalid_arguments",
+      server: "demo",
+      tool: "echo",
+    });
+    expect(firstText(rejected)).toContain("Validation failed for tool");
+    expect(firstText(rejected)).toContain("Expected parameters:");
+    expect(connect).not.toHaveBeenCalled();
+    expect(callTool).not.toHaveBeenCalled();
+
+    // Valid string-encoded primitives coerce before dispatch.
+    state.config.settings = { ...state.config.settings, approveTools: false };
+    getConnection.mockReturnValue(connection);
+    const ok = await executeCall(state, {
+      toolName: "demo_echo",
+      args: { count: "42", verbose: "true", query: "hello" },
+    });
+    expect(ok.isError).not.toBe(true);
+    expect(callTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "echo",
+        arguments: { count: 42, verbose: true, query: "hello" },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("always appends Expected parameters on JSON-RPC -32602 and inspects all text blocks on isError", async () => {
+    const { state, connection } = await proxyRuntimeState({ name: "echo", result: MCP_RESULT });
+    const schema = {
+      type: "object" as const,
+      properties: { workspace: { type: "string" } },
+    };
+    const meta = state.toolMetadata.get("demo")?.[0];
+    const live = connection.tools[0];
+    assert.ok(meta && live);
+    meta.inputSchema = schema;
+    live.inputSchema = schema;
+
+    vi.spyOn(connection.client, "callTool").mockRejectedValueOnce(
+      new ProtocolError(ProtocolErrorCode.InvalidParams, "Unknown workspace"),
+    );
+    const invalidParams = await executeCall(state, { toolName: "demo_echo", args: {} });
+    expect(invalidParams.isError).toBe(true);
+    expect(firstText(invalidParams)).toContain("Unknown workspace");
+    expect(firstText(invalidParams)).toContain("Expected parameters:\n  workspace (string)");
+
+    vi.spyOn(connection.client, "callTool").mockRejectedValueOnce(
+      new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        "Tool 'echo' has an invalid outputSchema: unsupported $schema dialect",
+      ),
+    );
+    const invalidOutputSchema = await executeCall(state, { toolName: "demo_echo", args: {} });
+    expect(invalidOutputSchema.isError).toBe(true);
+    expect(firstText(invalidOutputSchema)).toContain("invalid outputSchema");
+    expect(firstText(invalidOutputSchema)).not.toContain("Expected parameters:");
+
+    vi.spyOn(connection.client, "callTool").mockResolvedValueOnce({
+      isError: true,
+      content: [
+        { type: "text", text: "Tool rejected call" },
+        { type: "text", text: 'Missing required parameter: "workspace"' },
+      ],
+    });
+    const multiBlock = await executeCall(state, { toolName: "demo_echo", args: {} });
+    expect(multiBlock.isError).toBe(true);
+    expect(
+      multiBlock.content.map((block) => (block.type === "text" ? block.text : "")).join("\n"),
+    ).toContain("Expected parameters:\n  workspace (string)");
   });
 });

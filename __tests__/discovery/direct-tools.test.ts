@@ -11,7 +11,17 @@ import {
   reconstructToolMetadata,
 } from "../../metadata-cache.ts";
 import { buildToolMetadata } from "../../tool-metadata.ts";
-import { formatToolName, type McpConfig, type ServerEntry } from "../../types.ts";
+import {
+  DEFAULT_TOOL_PREFIX,
+  MAX_PROVIDER_TOOL_NAME_LENGTH,
+  formatPromptCommandName,
+  formatToolName,
+  getToolNameCandidates,
+  resolveToolPrefix,
+  type McpConfig,
+  type ServerEntry,
+} from "../../types.ts";
+import { normalizeDirectToolInputSchema } from "../../utils.ts";
 
 const originalHashEnv = {
   MCP_HASH_CWD: process.env.MCP_HASH_CWD,
@@ -38,7 +48,7 @@ describe("formatToolName", () => {
     expect(formatToolName("namespace.tool", "demo-mcp", "short")).toBe("demo_namespace_tool");
     expect(formatToolName("namespace.tool", "demo", "none")).toBe("namespace_tool");
     expect(formatToolName("namespace.tool", "demo-mcp", "mcp")).toBe(
-      "mcp__demo_mcp_namespace_tool",
+      "mcp__demo_mcp__namespace_tool",
     );
   });
 });
@@ -469,12 +479,17 @@ describe("excludeTools filtering", () => {
       prefix: "server",
     });
 
-    expect(metadata.map((tool) => [tool.name, tool.originalName, tool.description])).toEqual([
-      ["demo_namespace_tool", "namespace.tool", "Dotted"],
-      ["demo_namespace_tool", "namespace_tool", "Underscored"],
-      ["demo_read_namespace_tool", "read_namespace.tool", "Tool before colliding resource"],
-      ["demo_read_namespace_tool", "read_namespace_tool", "Resource"],
+    expect(new Set(metadata.map((tool) => tool.name)).size).toBe(4);
+    expect(metadata.map((tool) => [tool.originalName, tool.description])).toEqual([
+      ["namespace.tool", "Dotted"],
+      ["namespace_tool", "Underscored"],
+      ["read_namespace.tool", "Tool before colliding resource"],
+      ["read_namespace_tool", "Resource"],
     ]);
+    expect(metadata[0]?.name).toMatch(/^demo_namespace_tool_[0-9a-f]{8}$/);
+    expect(metadata[1]?.name).toMatch(/^demo_namespace_tool_[0-9a-f]{8}$/);
+    expect(metadata[2]?.name).toBe("demo_read_namespace_tool");
+    expect(metadata[3]?.name).toMatch(/^demo_read_namespace_tool_[0-9a-f]{8}$/);
   });
 
   it("retains distinct raw identities when cached metadata aliases collide", () => {
@@ -497,12 +512,17 @@ describe("excludeTools filtering", () => {
       definition,
     );
 
-    expect(reconstructed.map((tool) => [tool.name, tool.originalName, tool.description])).toEqual([
-      ["demo_namespace_tool", "namespace.tool", "Dotted"],
-      ["demo_namespace_tool", "namespace_tool", "Underscored"],
-      ["demo_read_namespace_tool", "read_namespace.tool", "Tool before colliding resource"],
-      ["demo_read_namespace_tool", "read_namespace_tool", "Resource"],
+    expect(new Set(reconstructed.map((tool) => tool.name)).size).toBe(4);
+    expect(reconstructed.map((tool) => [tool.originalName, tool.description])).toEqual([
+      ["namespace.tool", "Dotted"],
+      ["namespace_tool", "Underscored"],
+      ["read_namespace.tool", "Tool before colliding resource"],
+      ["read_namespace_tool", "Resource"],
     ]);
+    expect(reconstructed[0]?.name).toMatch(/^demo_namespace_tool_[0-9a-f]{8}$/);
+    expect(reconstructed[1]?.name).toMatch(/^demo_namespace_tool_[0-9a-f]{8}$/);
+    expect(reconstructed[2]?.name).toBe("demo_read_namespace_tool");
+    expect(reconstructed[3]?.name).toMatch(/^demo_read_namespace_tool_[0-9a-f]{8}$/);
   });
 
   it("filters excluded tools during direct tool registration from cache", async () => {
@@ -633,7 +653,7 @@ describe("excludeTools filtering", () => {
 
     const specs = await resolvePinnedTools(config, cache, "mcp");
 
-    expect(specs.map((spec) => spec.prefixedName)).toEqual(["mcp__my_server_other_tool"]);
+    expect(specs.map((spec) => spec.prefixedName)).toEqual(["mcp__my_server__other_tool"]);
   });
 
   it("matches prefixed exclusions even when toolPrefix is none", async () => {
@@ -667,5 +687,96 @@ describe("excludeTools filtering", () => {
     const specs = await resolvePinnedTools(config, cache, "none");
 
     expect(specs.map((spec) => spec.prefixedName)).toEqual(["get_nodes"]);
+  });
+
+  it("defaults toolPrefix to mcp, enforces 64-char sanitized names, and avoids double prompt prefixing", () => {
+    expect(DEFAULT_TOOL_PREFIX).toBe("mcp");
+    expect(resolveToolPrefix()).toBe("mcp");
+    expect(resolveToolPrefix({ toolPrefix: "server" })).toBe("server");
+    expect(formatToolName("weird:tool/name@v1", "my-server", "mcp")).toBe(
+      "mcp__my_server__weird_tool_name_v1",
+    );
+    expect(formatPromptCommandName("daily-brief", "my-server", "mcp")).toBe(
+      "mcp__my_server__daily-brief",
+    );
+
+    const longA = formatToolName(`extremely_long_tool_${"a".repeat(60)}_one`, "my-server", "mcp");
+    const longB = formatToolName(`extremely_long_tool_${"a".repeat(60)}_two`, "my-server", "mcp");
+    expect(longA.length).toBeLessThanOrEqual(MAX_PROVIDER_TOOL_NAME_LENGTH);
+    expect(longB.length).toBeLessThanOrEqual(MAX_PROVIDER_TOOL_NAME_LENGTH);
+    expect(longA).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(longB).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(longA).not.toBe(longB);
+    expect(formatToolName(`extremely_long_tool_${"a".repeat(60)}_one`, "my-server", "mcp")).toBe(
+      longA,
+    );
+
+    const candidates = getToolNameCandidates("get_issue", "gh-mcp", "mcp");
+    expect(candidates).toContain("get_issue");
+    expect(candidates).toContain("mcp__gh_mcp__get_issue");
+    expect(candidates).toContain("mcp__gh_mcp_get_issue");
+    expect(candidates).toContain("gh_mcp_get_issue");
+    expect(candidates).toContain("gh_get_issue");
+  });
+
+  it("normalizes direct-tool inputSchema objects to guarantee type object and properties", () => {
+    expect(normalizeDirectToolInputSchema(null)).toEqual({
+      type: "object",
+      properties: {},
+    });
+    expect(normalizeDirectToolInputSchema({ type: "object" })).toEqual({
+      type: "object",
+      properties: {},
+    });
+    expect(normalizeDirectToolInputSchema({ properties: { q: { type: "string" } } })).toEqual({
+      type: "object",
+      properties: { q: { type: "string" } },
+    });
+  });
+
+  it("invalidates computeServerHash when oauth settings change while staying key-order invariant", () => {
+    const base: ServerEntry = {
+      url: "https://mcp.example.com",
+      auth: "oauth",
+      oauth: {
+        clientId: "client-a",
+        scope: "read",
+      },
+    };
+    const reordered: ServerEntry = {
+      url: "https://mcp.example.com",
+      auth: "oauth",
+      oauth: {
+        scope: "read",
+        clientId: "client-a",
+      },
+    };
+    const changedScope: ServerEntry = {
+      url: "https://mcp.example.com",
+      auth: "oauth",
+      oauth: {
+        clientId: "client-a",
+        scope: "read write",
+      },
+    };
+    const disabledOAuth: ServerEntry = {
+      url: "https://mcp.example.com",
+      auth: "oauth",
+      oauth: false,
+    };
+
+    expect(computeServerHash(base)).toBe(computeServerHash(reordered));
+    expect(computeServerHash(base)).not.toBe(computeServerHash(changedScope));
+    expect(computeServerHash(base)).not.toBe(computeServerHash(disabledOAuth));
+
+    process.env.MCP_HASH_TOKEN = "secret-one";
+    const envSecret: ServerEntry = {
+      url: "https://mcp.example.com",
+      auth: "oauth",
+      oauth: { clientId: "client-a", clientSecret: "${MCP_HASH_TOKEN}" },
+    };
+    const firstHash = computeServerHash(envSecret);
+    process.env.MCP_HASH_TOKEN = "secret-two";
+    expect(computeServerHash(envSecret)).not.toBe(firstHash);
   });
 });

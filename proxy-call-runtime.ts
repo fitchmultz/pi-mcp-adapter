@@ -18,8 +18,6 @@ import { abortable, throwIfAborted } from "./abort.ts";
 import { connectionStderrTail } from "./connection-stdio.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import {
-  guardMcpOutput,
-  guardedMcpDetails,
   retainMcpResult,
   resolveMcpOutputGuardOptions,
   formatMcpResultReference,
@@ -27,10 +25,11 @@ import {
 import {
   appendStderrTail,
   createNoProgressBudget,
+  expectedParametersHint,
   formatInterruptedTimeoutMessage,
   formatProgressText,
   formatTimeoutMessage,
-  inputValidationHint,
+  guardGenericCallFailure,
   stderrDetails,
   toolCallResult,
 } from "./proxy-call-result.ts";
@@ -482,26 +481,19 @@ class ToolCallRuntime {
     const stderrTail = this.stderrTailForError(error);
     const message = appendStderrTail(baseMessage, stderrTail);
     const invalidParamsCode: number = sdk.ProtocolErrorCode.InvalidParams;
-    const suffix =
-      !timedOut && error instanceof sdk.ProtocolError && error.code === invalidParamsCode
-        ? inputValidationHint(this.request.target.inputSchema, message)
-        : "";
+    const isInvalidParams =
+      !timedOut &&
+      !/output\s*schema/i.test(message) &&
+      error instanceof sdk.ProtocolError &&
+      error.code === invalidParamsCode;
     this.uiSession?.sendToolCancelled(message);
-    const guarded = await guardMcpOutput([{ type: "text", text: message }], {
-      ...this.outputGuardOptions,
-      prefix: "Failed to call tool: ",
-      suffix,
+    return guardGenericCallFailure({
+      message,
+      stderrTail,
+      aborted: !timedOut && isAbortError(error, this.callerSignal),
+      suffix: isInvalidParams ? expectedParametersHint(this.request.target.inputSchema) : "",
+      detailsBase: this.request.options.detailsBase,
+      outputGuardOptions: this.outputGuardOptions,
     });
-    return {
-      content: guarded.content,
-      isError: true,
-      details: {
-        ...this.request.options.detailsBase,
-        error: !timedOut && isAbortError(error, this.callerSignal) ? "aborted" : "call_failed",
-        message: guarded.outputGuard ? "output truncated; see outputGuard.fullOutputPath" : message,
-        ...stderrDetails(stderrTail),
-        ...guardedMcpDetails(guarded),
-      },
-    };
   }
 }

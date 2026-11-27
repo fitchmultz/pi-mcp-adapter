@@ -475,7 +475,7 @@ describe("commands onboarding", () => {
     const signal: unknown = expect.any(AbortSignal);
     expect(connect).toHaveBeenCalledWith("notion", state.config.mcpServers.notion, signal);
     expect(state.failureTracker.has("notion")).toBe(false);
-    expect(state.toolMetadata.get("notion")?.[0]?.name).toBe("notion_search");
+    expect(state.toolMetadata.get("notion")?.[0]?.name).toBe("mcp__notion__search");
     expect(callbacks.getConnectionStatus("notion")).toBe("connected");
   });
 

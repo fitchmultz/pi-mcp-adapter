@@ -131,7 +131,7 @@ export function toStringRecord(value: unknown): Record<string, string> | undefin
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function interpolateSecretExpression(value: string): string {
+export function interpolateSecretExpression(value: string): string {
   if (value.startsWith("!!")) {
     return interpolateEnvVars(value.slice(1));
   }
@@ -498,9 +498,17 @@ export function truncateAtWord(text: string, target: number): string {
 
 export function normalizeDirectToolInputSchema(schema: unknown): Record<string, unknown> {
   const record = asObjectRecord(schema);
-  return record !== undefined && !Array.isArray(schema)
-    ? structuredClone(record)
-    : { type: "object", properties: {} };
+  if (record === undefined || Array.isArray(schema)) {
+    return { type: "object", properties: {} };
+  }
+  const cloned = structuredClone(record);
+  if (cloned.type === undefined) {
+    cloned.type = "object";
+  }
+  if (cloned.properties === undefined && cloned.type === "object") {
+    cloned.properties = {};
+  }
+  return cloned;
 }
 
 export function formatAuthRequiredMessage(

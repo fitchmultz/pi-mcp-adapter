@@ -58,11 +58,11 @@ function textOf(result: ToolResultMessage): string[] {
 export async function verifyPlainTextCodemode(native: NativeSession): Promise<void> {
   const coded = await native.run("codemode", {
     code: `
-      const tsvResult = await tools.local_plain_tsv({ value: "sample" });
+      const tsvResult = await tools.mcp__local__plain_tsv({ value: "sample" });
       const tsv = tsvResult.content[0].text;
       const viaGateway = await tools.mcp({ action: "call", server: "local", tool: "plain_tsv", args: { value: "sample" } });
       if (viaGateway !== tsv) throw new Error("The default gateway should return the same plain text");
-      const largeDirect = await tools.local_text_json({ value: "large-json" });
+      const largeDirect = await tools.mcp__local__text_json({ value: "large-json" });
       const parsedLarge = JSON.parse(largeDirect.content[0].text);
       const ns = await describeNamespace("local");
       const found = await searchTools("tsv", { namespace: "local" });
@@ -81,7 +81,7 @@ export async function verifyPlainTextCodemode(native: NativeSession): Promise<vo
     largeNoteLength: 20_000,
     hasMeta: false,
     namespaceName: "mcp_local",
-    foundNames: ["local_plain_tsv"],
+    foundNames: ["mcp__local__plain_tsv"],
   });
   console.log(
     "[native-tools] direct CallToolResult codemode parity, >16KiB direct payload, and namespace aliases passed",

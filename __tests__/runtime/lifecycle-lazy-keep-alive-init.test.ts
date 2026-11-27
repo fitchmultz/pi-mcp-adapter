@@ -68,7 +68,8 @@ vi.mock("../../metadata-cache.ts", () => ({
   serializeSkills: vi.fn<typeof Metadata.serializeSkills>(() => []),
 }));
 
-vi.mock("../../tool-metadata.ts", () => ({
+vi.mock("../../tool-metadata.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof ToolMetadata>()),
   buildToolMetadata: mocks.buildToolMetadata,
   isUiResourceUri: vi.fn<typeof ToolMetadata.isUiResourceUri>((uri) => uri.startsWith("ui://")),
   totalToolCount: vi.fn<typeof ToolMetadata.totalToolCount>(() => 0),

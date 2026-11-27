@@ -85,7 +85,7 @@ const { session } = await sdk.createAgentSession({
   settingsManager,
   modelRuntime,
   noTools: "builtin",
-  tools: ["mcp", "lazy00_echo"],
+  tools: ["mcp", "mcp__lazy00__echo"],
 });
 const errors: ExtensionError[] = [];
 try {
@@ -127,7 +127,7 @@ try {
   // No assistant/model is needed to exercise registration -> stdio -> result.
   const registered = session.extensionRunner
     .getAllRegisteredTools()
-    .find((tool) => tool.definition.name === "lazy00_echo");
+    .find((tool) => tool.definition.name === "mcp__lazy00__echo");
   assert(registered, "The cached direct tool must be registered before first use");
   const call = await sdk
     .wrapRegisteredTool(registered, session.extensionRunner)

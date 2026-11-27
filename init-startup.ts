@@ -1,5 +1,5 @@
 import type { McpExtensionState } from "./state.ts";
-import { isServerDisabled, type ServerDefinition } from "./types.ts";
+import { isServerDisabled, type ServerDefinition, type ToolPrefix } from "./types.ts";
 import {
   loadMetadataCache,
   isServerCacheValid,
@@ -47,7 +47,7 @@ export function registerServers(state: McpExtensionState, serverEntries: ServerE
   const { config } = state;
   state.lifecycle.setGlobalIdleTimeout(config.settings?.idleTimeout ?? 10);
   const cache = loadMetadataCache(state.metadataCacheEnabled);
-  const prefix = config.settings?.toolPrefix ?? "server";
+  const prefix = config.settings?.toolPrefix;
   for (const [name, definition] of serverEntries) {
     registerLifecycle(state, name, definition);
     const cachedEntry = cache?.servers[name];
@@ -101,7 +101,7 @@ export function restoreCachedMetadata(
   input: {
     name: string;
     definition: ServerDefinition;
-    prefix: NonNullable<NonNullable<McpExtensionState["config"]["settings"]>["toolPrefix"]>;
+    prefix?: ToolPrefix | undefined;
     cachedEntry: ServerCacheEntry | undefined;
   },
 ): void {

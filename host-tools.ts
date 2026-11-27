@@ -150,12 +150,7 @@ export class McpHostTools {
     return (
       this.host.state?.toolMetadata.get(server) ??
       (entry && isServerCacheValid(entry, definition)
-        ? reconstructToolMetadata(
-            server,
-            entry,
-            config.settings?.toolPrefix ?? "server",
-            definition,
-          )
+        ? reconstructToolMetadata(server, entry, config.settings?.toolPrefix, definition)
         : [])
     );
   }
