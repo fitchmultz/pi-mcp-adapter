@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.67 - 2026-11-27
+
+<!-- npm-release:unreleased:start -->
+
+### Fixed
+
+- Kept `lazy` and `lazy-keep-alive` MCP servers disconnected at startup and during live config reconciliation on fresh sessions even when verified skills were previously cached, while preserving verified skills discovered on demand across `/reload` without reconnecting the lazy server (`eager` and `keep-alive` servers continue to verify and expose skills at startup).
+
+<!-- npm-release:unreleased:end -->
+
+- fix: keep lazy servers disconnected at startup despite cached skills (#304) ([2cef369](https://github.com/fitchmultz/pi-mcp-adapter/commit/2cef36901526de183a2ca834881c8b6d9a671e2c))
+
+### What's Changed
+
+- fix: keep lazy servers disconnected at startup despite cached skills by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/304
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.66...v8.0.67
+
 ## 8.0.66 - 2026-11-27
 
 <!-- npm-release:unreleased:start -->
