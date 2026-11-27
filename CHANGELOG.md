@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Raise the Pi support floor to `1.7.0`.
+
 ## 8.0.67 - 2026-11-27
 
 <!-- npm-release:unreleased:start -->
