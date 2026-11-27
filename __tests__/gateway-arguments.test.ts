@@ -7,17 +7,14 @@ import {
   parseGatewayArguments,
 } from "../gateway-arguments.ts";
 
-it("advertises explicit actions and validates each action's required fields", () => {
+it("advertises a flat action schema without redundant allOf and enforces cross-field rules clearly", () => {
+  expect(gatewayParameters).not.toHaveProperty("allOf");
   expect(Value.Check(gatewayParameters, { action: "status" })).toBe(true);
-  expect(Value.Check(gatewayParameters, { action: "call" })).toBe(false);
   expect(Value.Check(gatewayParameters, { action: "call", tool: "demo", args: {} })).toBe(true);
-  expect(Value.Check(gatewayParameters, { action: "read-resource", server: "demo" })).toBe(false);
   expect(Value.Check(gatewayParameters, { action: "prompts" })).toBe(true);
   expect(Value.Check(gatewayParameters, { action: "prompts", server: "demo", limit: 10 })).toBe(
     true,
   );
-  expect(Value.Check(gatewayParameters, { action: "prompts", limit: 101 })).toBe(false);
-  expect(Value.Check(gatewayParameters, { action: "get-prompt", server: "demo" })).toBe(false);
   expect(
     Value.Check(gatewayParameters, {
       action: "get-prompt",
@@ -29,6 +26,9 @@ it("advertises explicit actions and validates each action's required fields", ()
   expect(Value.Check(gatewayParameters, { action: "read-result", ref: "saved", limit: 2000 })).toBe(
     true,
   );
+  expect(Value.Check(gatewayParameters, { search: "old" })).toBe(false);
+  expect(Value.Check(gatewayParameters, { action: "status", unknownField: true })).toBe(false);
+
   expect(parseGatewayArguments({ action: "call", tool: "demo", format: "structured" }).format).toBe(
     "structured",
   );
@@ -44,48 +44,62 @@ it("advertises explicit actions and validates each action's required fields", ()
     }).readAll,
   ).toBe(true);
   expect(
-    Value.Check(gatewayParameters, { action: "read-result", ref: "saved", readAll: true }),
-  ).toBe(false);
-  expect(
-    Value.Check(gatewayParameters, {
-      action: "call",
-      tool: "demo",
-      format: "structured",
-      readAll: true,
-    }),
-  ).toBe(false);
-  expect(
-    Value.Check(gatewayParameters, {
-      action: "read-result",
-      ref: "saved",
-      format: "structured",
-      readAll: true,
-      offset: 0,
-    }),
-  ).toBe(false);
-  expect(
-    Value.Check(gatewayParameters, {
-      action: "read-result",
-      ref: "saved",
-      format: "structured",
-      readAll: true,
-      limit: 100,
-    }),
-  ).toBe(false);
-  expect(
-    Value.Check(gatewayParameters, {
+    parseGatewayArguments({
       action: "read-result",
       ref: "saved",
       readAll: false,
       offset: 0,
       limit: 100,
-    }),
-  ).toBe(true);
-  expect(Value.Check(gatewayParameters, { action: "status", format: "structured" })).toBe(false);
-  expect(Value.Check(gatewayParameters, { action: "list", server: "demo", limit: 101 })).toBe(
-    false,
+    }).readAll,
+  ).toBe(false);
+  expect(parseGatewayArguments({ action: "read-result", ref: "saved", limit: 2000 }).limit).toBe(
+    2000,
   );
-  expect(Value.Check(gatewayParameters, { search: "old" })).toBe(false);
+
+  const invalidCases: Array<[Record<string, unknown>, string]> = [
+    [{ action: "call" }, "call requires tool"],
+    [{ action: "read-resource", server: "demo" }, "read-resource requires uri"],
+    [{ action: "list" }, "list requires server"],
+    [{ action: "search" }, "search requires query"],
+    [{ action: "describe" }, "describe requires tool"],
+    [{ action: "connect" }, "connect requires server"],
+    [{ action: "instructions" }, "instructions requires server"],
+    [{ action: "resources" }, "resources requires server"],
+    [{ action: "get-prompt", server: "demo" }, "get-prompt requires prompt"],
+    [{ action: "read-result" }, "read-result requires ref"],
+    [{ action: "auth-start" }, "auth-start requires server"],
+    [{ action: "auth-complete" }, "auth-complete requires server"],
+    [{ action: "list", server: "demo", limit: 101 }, "list limit must be at most 100"],
+    [{ action: "search", query: "q", limit: 101 }, "search limit must be at most 100"],
+    [{ action: "connect", server: "demo", limit: 101 }, "connect limit must be at most 100"],
+    [{ action: "resources", server: "demo", limit: 101 }, "resources limit must be at most 100"],
+    [{ action: "prompts", limit: 101 }, "prompts limit must be at most 100"],
+    [
+      { action: "status", format: "structured" },
+      'format is only supported for "call" and "read-result" actions',
+    ],
+    [
+      { action: "read-result", ref: "saved", readAll: true },
+      'readAll requires format: "structured"',
+    ],
+    [
+      { action: "call", tool: "demo", format: "structured", readAll: true },
+      'readAll is only supported for the "read-result" action',
+    ],
+    [
+      { action: "read-result", ref: "saved", format: "structured", readAll: true, offset: 0 },
+      "readAll cannot be combined with offset or limit",
+    ],
+    [
+      { action: "read-result", ref: "saved", format: "structured", readAll: true, limit: 100 },
+      "readAll cannot be combined with offset or limit",
+    ],
+  ];
+
+  for (const [input, message] of invalidCases) {
+    expect(() => prepareGatewayArguments(input), JSON.stringify(input)).toThrow(message);
+    expect(() => parseGatewayArguments(input), JSON.stringify(input)).toThrow(message);
+  }
 });
 
 it("prepares stored v5 calls without advertising the old precedence schema", () => {
@@ -156,6 +170,16 @@ it("preserves native schema coercion after gateway preparation", () => {
     includeSchemas: true,
     fields: ["id"],
   });
+  // Coerced strings that violate action-level constraints are still caught by parseGatewayArguments.
+  const coercedLimit: unknown = validateToolArguments(tool, {
+    type: "toolCall",
+    id: "coercion-limit",
+    name: "mcp",
+    ...parseToolCallArguments(
+      JSON.stringify(prepareGatewayArguments({ action: "list", server: "demo", limit: "101" })),
+    ),
+  });
+  expect(() => parseGatewayArguments(coercedLimit)).toThrow("list limit must be at most 100");
   expect(() => {
     validateToolArguments(tool, {
       type: "toolCall",

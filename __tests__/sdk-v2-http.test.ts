@@ -1171,8 +1171,8 @@ describe("published SDK v2 over real local HTTP", () => {
       tool.inputSchema,
     );
     expect(savedRef).toBeDefined();
+    expect(savedText).toBe("ok");
     expect(savedText).not.toContain("[MCP result saved:");
-    expect(savedText).toContain(JSON.stringify({ value: "typed" }, null, 2));
     const readback = requireValue(toolResults(session.messages).at(-1));
     expect(readback.isError).toBe(false);
     expect(JSON.parse(textBlock(readback.content[0]))).toEqual({ value: "typed" });

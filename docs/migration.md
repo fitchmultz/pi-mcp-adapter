@@ -2,6 +2,11 @@
 
 [Install the current package](../README.md#install). For pre-v5 state, follow the migration steps below **before restarting Pi**.
 
+## Upgrading to v9
+
+- Direct and deferred catalog MCP tools in Pi `codemode` now match Pi's built-in MCP extension: `await tools.<flat_name>(args)` always resolves to the untruncated `CallToolResult` object (`{ content, structuredContent?, isError? }` with `_meta` stripped) rather than display text (for schema-less tools) or bare `structuredContent` / `mcpAdapter` omission receipts (for schema-ful tools). Update scripts that previously treated schema-less direct tool calls as strings (`res.split(...)` -> `res.content[0].text.split(...)`) or read top-level fields off schema-ful direct tool calls (`res.rows` -> `res.structuredContent.rows`). Non-provider direct-tool failures (such as `approval_required`, `auth_required`, or `server_disabled`) now reject with an `Error` in codemode.
+- Model-facing tool results render `structuredContent` as fallback text only when `content` has no visible blocks, matching Pi's built-in MCP extension and eliminating duplicate JSON output from spec-compliant servers. `structuredContent` remains intact in codemode `CallToolResult` values and retained `resultRef` artifacts.
+
 ## URL-scoped OAuth credentials
 
 OAuth storage keys include the configured server name and exact URL. Existing name-only entries in the current credential service are imported automatically only when their stored URL matches. The adapter verifies the scoped copy before removing the matching source. An existing scoped login wins, and records with missing or different URLs stay untouched. Logout removes only that name and URL's login and matching automatic-import sources.

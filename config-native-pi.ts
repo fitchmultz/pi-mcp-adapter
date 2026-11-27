@@ -100,8 +100,9 @@ function validateScalarBaseFields(raw: Record<string, unknown>, ctx: NativeEntry
 function pickScalarBaseFields(
   raw: Record<string, unknown>,
 ): Pick<NativeBaseFields, "description" | "enabled" | "timeout"> {
+  const description = typeof raw.description === "string" ? raw.description.trim() : "";
   return {
-    ...(typeof raw.description === "string" ? { description: raw.description } : {}),
+    ...(description !== "" ? { description } : {}),
     ...(typeof raw.enabled === "boolean" ? { enabled: raw.enabled } : {}),
     ...(typeof raw.timeout === "number" ? { timeout: raw.timeout } : {}),
   };

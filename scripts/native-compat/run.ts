@@ -50,6 +50,7 @@ async function verifyComposition(f: NativeFixture, native: NativeSession): Promi
   assert.ok(echo);
   assert.equal(echo.exposure, "deferred");
   assert.equal(echo.namespace?.instructions, instructions);
+  assert.deepEqual(echo.namespace.aliases, ["local"]);
   assert.ok(
     session.getActiveToolNames().includes("tool_search"),
     "the adapter activates tool_search for its deferred tools",
@@ -57,7 +58,10 @@ async function verifyComposition(f: NativeFixture, native: NativeSession): Promi
   const loaded = await native.run("tool_search", { query: "echo" });
   assert.ok(session.getActiveToolNames().includes("local_echo"), JSON.stringify(loaded));
   const success = await native.run("native_probe", { value: "ok" });
-  assert.deepEqual(outcome(success).result.structuredContent, { value: "ok" });
+  assert.deepEqual(outcome(success).result.structuredContent, {
+    content: [{ type: "text", text: "Human ok" }],
+    structuredContent: { value: "ok" },
+  });
   assert.equal(outcome(success).isError, false);
   const firstCall = success.nestedCalls?.calls[0];
   assert.ok(firstCall, "native nested call must be recorded");
@@ -66,7 +70,11 @@ async function verifyComposition(f: NativeFixture, native: NativeSession): Promi
   assert.ok(!("result" in firstCall));
   const failure = await native.run("native_probe", { value: "fail" });
   assert.equal(outcome(failure).isError, true);
-  assert.deepEqual(outcome(failure).result.structuredContent, { value: "fail" });
+  assert.deepEqual(outcome(failure).result.structuredContent, {
+    content: [{ type: "text", text: "Human fail" }],
+    structuredContent: { value: "fail" },
+    isError: true,
+  });
   assert.match(JSON.stringify(outcome(failure).result.content), /Human fail/);
   const redacted = await native.run("native_probe", { value: "redact" });
   assert.equal(outcome(redacted).result.structuredContent, undefined);
@@ -81,7 +89,11 @@ async function verifyComposition(f: NativeFixture, native: NativeSession): Promi
   });
   assert.equal(coded.isError, false);
   assert.match(JSON.stringify(coded.content), /coded/);
-  assert.doesNotMatch(JSON.stringify(coded.content), /SYNTHETIC-SECRET|Human coded/);
+  assert.doesNotMatch(JSON.stringify(coded.content), /SYNTHETIC-SECRET/);
+  assert.deepEqual(JSON.parse(textOfBlock(coded, 1, "codemode output")), {
+    content: [{ type: "text", text: "Human coded" }],
+    structuredContent: { value: "coded" },
+  });
   return anchor;
 }
 
@@ -112,7 +124,15 @@ async function verifySelection(
 }
 
 function firstText(result: ToolResultMessage, reason: string): string {
-  const block = result.content[0];
+  return textOfBlock(result, 0, reason);
+}
+
+function textOfBlock(
+  result: ToolResultMessage,
+  index: number,
+  reason = "expected text block",
+): string {
+  const block = result.content[index];
   assert.ok(block, reason);
   assert.ok(block.type === "text");
   return block.text;

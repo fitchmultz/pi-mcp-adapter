@@ -15,9 +15,12 @@ const artifactSchema = z.object({
 const codedSchema = z.object({
   inline: z.object({
     mcpResult: z.object({ content: z.tuple([textBlock.strict()]) }).strict(),
-    mcpAdapter: z.object({ resultRef: z.string() }),
+    mcpAdapter: z.object({ omitted: z.literal(false), resultRef: z.string() }),
   }),
-  large: z.object({ mcpAdapter: z.object({ omitted: z.literal(true), resultRef: z.string() }) }),
+  large: z.object({
+    mcpResult: z.object({ content: z.tuple([textBlock.strict()]) }).strict(),
+    mcpAdapter: z.object({ omitted: z.literal(false), resultRef: z.string() }),
+  }),
   selected: z.object({ text: z.string(), offset: z.literal(0), nextOffset: z.null() }),
   defaultPage: z.string(),
   denied: z
@@ -55,15 +58,34 @@ function textOf(result: ToolResultMessage): string[] {
 export async function verifyPlainTextCodemode(native: NativeSession): Promise<void> {
   const coded = await native.run("codemode", {
     code: `
-      const tsv = await tools.local_plain_tsv({ value: "sample" });
+      const tsvResult = await tools.local_plain_tsv({ value: "sample" });
+      const tsv = tsvResult.content[0].text;
       const viaGateway = await tools.mcp({ action: "call", server: "local", tool: "plain_tsv", args: { value: "sample" } });
       if (viaGateway !== tsv) throw new Error("The default gateway should return the same plain text");
+      const largeDirect = await tools.local_text_json({ value: "large-json" });
+      const parsedLarge = JSON.parse(largeDirect.content[0].text);
+      const ns = await describeNamespace("local");
+      const found = await searchTools("tsv", { namespace: "local" });
       const [, row] = tsv.split("\\n");
-      return row.split("\\t");`,
+      return {
+        row: row.split("\\t"),
+        largeNoteLength: parsedLarge.note.length,
+        hasMeta: "_meta" in largeDirect || "_meta" in largeDirect.content[0],
+        namespaceName: ns?.name,
+        foundNames: found.map((item) => item.name),
+      };`,
   });
   assert.equal(coded.isError, false, textOf(coded).join("\n"));
-  assert.equal(textOf(coded)[1], JSON.stringify(["7", "sample"]));
-  console.log("[native-tools] schema-less plain-text direct result still supports TSV splitting");
+  assert.deepEqual(JSON.parse(textOf(coded)[1] ?? ""), {
+    row: ["7", "sample"],
+    largeNoteLength: 20_000,
+    hasMeta: false,
+    namespaceName: "mcp_local",
+    foundNames: ["local_plain_tsv"],
+  });
+  console.log(
+    "[native-tools] direct CallToolResult codemode parity, >16KiB direct payload, and namespace aliases passed",
+  );
 }
 
 export async function verifyMcpReadback(
@@ -176,6 +198,10 @@ export async function verifyMcpReadback(
     defaultDenial,
   } = codedSchema.parse(JSON.parse(output));
   assert.equal(inline.mcpResult.content[0].text, '{"rows":[{"id":7}],"note":"inline-json"}');
+  assert.equal(
+    large.mcpResult.content[0].text,
+    `{"rows":[{"id":7}],"note":"${"雪".repeat(20_000)}"}`,
+  );
   assert.equal(selected.text, inline.mcpResult.content[0].text);
   assert.equal(defaultPage, selected.text);
   assert.deepEqual(largeSelection.ids, [7]);

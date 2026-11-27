@@ -48,8 +48,14 @@ function verifyResults(results: CliResult[]): void {
   assert.ok(failed);
   assert.ok(redacted);
   assert.ok(blocked);
-  assert.match(JSON.stringify(coded.content), /coded-cli/);
-  assert.doesNotMatch(JSON.stringify(coded.content), /SYNTHETIC-SECRET|Human coded/);
+  const codedBlocks = z
+    .array(z.object({ type: z.string(), text: z.string().optional() }))
+    .parse(coded.content);
+  assert.doesNotMatch(JSON.stringify(coded.content), /SYNTHETIC-SECRET/);
+  assert.deepEqual(JSON.parse(codedBlocks[1]?.text ?? ""), {
+    content: [{ type: "text", text: "Human coded-cli" }],
+    structuredContent: { value: "coded-cli" },
+  });
   assert.match(JSON.stringify(failed.content), /fail/);
   assert.match(JSON.stringify(redacted.content), /Redacted/);
   assert.equal(blocked.isError, true);

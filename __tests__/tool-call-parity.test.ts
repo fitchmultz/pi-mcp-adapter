@@ -169,7 +169,8 @@ describe("proxy and direct tool call parity", () => {
     const resultRef: unknown = expect.any(String);
     expect(proxy.details).toEqual({ mode: "call", ...direct.details, resultRef });
     expect(direct.content).toEqual(proxy.content);
-    expect(direct.content).toHaveLength(2);
+    expect(direct.content).toHaveLength(1);
+    expect(direct.structuredContent).toEqual(MCP_RESULT);
   });
 
   it("does not format the input schema on the success path", async () => {

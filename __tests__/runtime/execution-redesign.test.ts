@@ -314,16 +314,13 @@ describe("MCP execution redesign", () => {
     expect(readResource).toHaveBeenCalledWith({ uri: "test://two" }, expect.anything());
   });
 
-  it("keeps structured content beside human content", () => {
+  it("avoids duplicating structured content when visible content is already present", () => {
     expect(
       resolveMcpResultContent({
         content: [{ type: "text", text: "Done" }],
         structuredContent: { id: 7 },
       }),
-    ).toEqual([
-      { type: "text", text: "Done" },
-      { type: "text", text: JSON.stringify({ id: 7 }, null, 2) },
-    ]);
+    ).toEqual([{ type: "text", text: "Done" }]);
   });
 
   it("does not dispatch an ambiguous unscoped name", async () => {

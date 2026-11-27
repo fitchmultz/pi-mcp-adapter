@@ -343,7 +343,7 @@ describe("cached tool surface through Pi SessionManager", () => {
       await h.session.extensionRunner.emit({ type: "session_start", reason: "resume" });
       await setImmediate();
       expect(active()).toEqual(["demo_pinned", "mcp"]);
-      expect(search()?.description).toMatch(/^updated\n/);
+      expect(search()?.description).toBe("updated");
       expect(search()?.parameters).toMatchObject({
         properties: { query: { description: "updated" } },
       });
