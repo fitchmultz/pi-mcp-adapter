@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Mouse wheel navigation and click-to-select rows in the MCP panels in Pi's fullscreen terminal mode.
+
 ## 8.0.68 - 2026-11-27
 
 <!-- npm-release:unreleased:start -->

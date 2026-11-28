@@ -54,11 +54,12 @@ export class SetupView {
   private readonly t = DEFAULT_THEME;
   private readonly preview: SetupPreview;
   private readonly state: SetupViewState;
+  private readonly itemRows = new Map<number, number>();
   constructor(state: SetupViewState) {
     this.state = state;
     this.preview = new SetupPreview(state);
   }
-  render(width: number): string[] {
+  render(width: number): { lines: string[]; itemRows: ReadonlyMap<number, number> } {
     const panelW = Math.max(MIN_PANEL_WIDTH, width);
     const innerW = panelW - 2;
     const contentW = this.contentWidth(innerW);
@@ -86,19 +87,18 @@ export class SetupView {
     lines.push(`├${border}┤`);
 
     if (this.state.screen === "imports") {
-      lines.push(...this.renderImports(innerW));
+      this.renderImports(innerW, lines);
     } else if (this.state.screen === "paths") {
-      lines.push(...this.renderPaths(innerW));
+      this.renderPaths(innerW, lines);
     } else {
-      lines.push(...this.renderActions(innerW));
+      this.renderActions(innerW, lines);
     }
 
     lines.push(`└${border}┘`);
-    return lines;
+    return { lines, itemRows: this.itemRows };
   }
 
-  private renderActions(innerW: number): string[] {
-    const lines: string[] = [];
+  private renderActions(innerW: number, lines: string[]): void {
     const actions = getSetupActions(this.state.discovery, this.state.screen);
     const compact = innerW < COMPACT_WIDTH;
     const { start, end } = compact
@@ -108,7 +108,7 @@ export class SetupView {
     if (start > 0) {
       lines.push(this.padLine(fg(this.t.muted, `… ${start} more above`), innerW));
     }
-    lines.push(...this.renderActionRows({ actions, start, end, innerW }));
+    this.renderActionRows({ actions, start, end, innerW, lines });
     if (end < actions.length) {
       lines.push(this.padLine(fg(this.t.muted, `… ${actions.length - end} more below`), innerW));
     }
@@ -126,7 +126,6 @@ export class SetupView {
       ? "Enter select · Esc back"
       : "Enter selects, Esc goes back, Ctrl+C closes.";
     lines.push(this.padLine(fg(this.t.muted, hint), innerW));
-    return lines;
   }
 
   private renderActionRows(input: {
@@ -134,9 +133,9 @@ export class SetupView {
     start: number;
     end: number;
     innerW: number;
-  }): string[] {
-    const { actions, start, end, innerW } = input;
-    const lines: string[] = [];
+    lines: string[];
+  }): void {
+    const { actions, start, end, innerW, lines } = input;
     for (let index = start; index < end; index++) {
       const action = actions[index];
       if (!action) {
@@ -150,6 +149,7 @@ export class SetupView {
       }
       const selected = index === this.state.actionCursor;
       const cursor = selected ? fg(this.t.selected, "›") : " ";
+      this.itemRows.set(lines.length, index);
       lines.push(
         this.padLine(
           `${cursor} ${truncateToWidth(action.label, this.contentWidth(innerW) - 2)}`,
@@ -157,12 +157,9 @@ export class SetupView {
         ),
       );
     }
-
-    return lines;
   }
 
-  private renderImports(innerW: number): string[] {
-    const lines: string[] = [];
+  private renderImports(innerW: number, lines: string[]): void {
     lines.push(
       this.padLine(
         "Select compatibility imports. Space toggles, Enter saves, Esc goes back.",
@@ -177,6 +174,7 @@ export class SetupView {
       }
       const selected = this.state.selectedImports.has(entry.kind) ? "[x]" : "[ ]";
       const cursor = index === this.state.importCursor ? fg(this.t.selected, "›") : " ";
+      this.itemRows.set(lines.length, index);
       lines.push(this.padLine(`${cursor} ${selected} ${entry.kind}  ${entry.path}`, innerW));
     }
     lines.push(this.padLine("", innerW));
@@ -195,11 +193,9 @@ export class SetupView {
     )) {
       lines.push(this.padLine(line, innerW));
     }
-    return lines;
   }
 
-  private renderPaths(innerW: number): string[] {
-    const lines: string[] = [];
+  private renderPaths(innerW: number, lines: string[]): void {
     lines.push(
       this.padLine("Select a detected config path to open. Enter opens it, Esc goes back.", innerW),
     );
@@ -209,10 +205,10 @@ export class SetupView {
       const cursor = index === this.state.pathCursor ? fg(this.t.selected, "›") : " ";
       const path = paths[index];
       if (path !== undefined) {
+        this.itemRows.set(lines.length, index);
         lines.push(this.padLine(`${cursor} ${path}`, innerW));
       }
     }
-    return lines;
   }
 
   private discoverySummaryLine(): string {
