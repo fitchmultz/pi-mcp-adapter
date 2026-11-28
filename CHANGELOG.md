@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.70 - 2026-11-28
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Fix TUI log leakage and skills/list Method not found handling (MCP-216) (#307) ([5cf0372](https://github.com/fitchmultz/pi-mcp-adapter/commit/5cf03725c60eef25efa0b4d018f0504c7b9612bc))
+
+### What's Changed
+
+- Fix TUI log leakage and skills/list Method not found handling (MCP-216) by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/307
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.69...v8.0.70
+
 ## 8.0.69 - 2026-11-28
 
 <!-- npm-release:unreleased:start -->
