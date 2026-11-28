@@ -16,7 +16,7 @@ import {
   sanitizeTerminalText,
 } from "./utils.ts";
 import { isAbortError } from "./runtime-owner.ts";
-import { logger } from "./logger.ts";
+import { logger, writeTerminalError } from "./logger.ts";
 import {
   type MetadataCacheUpdates,
   getMetadataCacheUpdates,
@@ -349,6 +349,9 @@ function reportStartupFailure(
     recordFailure(state, name, error);
   }
   const displayError = sanitizeTerminalText(error ?? "Unknown connection failure");
-  ui?.notify(`MCP: Failed to connect to ${name}: ${displayError}`, "error");
-  console.error(`MCP: Failed to connect to ${name}: ${displayError}`);
+  if (ui) {
+    ui.notify(`MCP: Failed to connect to ${name}: ${displayError}`, "error");
+  } else {
+    writeTerminalError(`MCP: Failed to connect to ${name}: ${displayError}`);
+  }
 }

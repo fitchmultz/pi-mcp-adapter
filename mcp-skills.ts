@@ -355,8 +355,13 @@ export async function discoverServerSkills(input: {
     if (signal?.aborted === true) {
       throw error;
     }
+    const { isMethodNotFoundError } = await import("./connection-runtime.ts");
     const message = error instanceof Error ? error.message : String(error);
-    logger.warn(`MCP: skills/list failed for ${serverName}: ${message}`);
+    if (isMethodNotFoundError(error)) {
+      logger.debug(`MCP: skills/list unsupported for ${serverName}: ${message}`);
+      return { supported: false, skills: [], rejectedCount: 0 };
+    }
+    logger.debug(`MCP: skills/list failed for ${serverName}: ${message}`);
     return { supported: true, failed: true, skills: [], rejectedCount: 1 };
   }
 }

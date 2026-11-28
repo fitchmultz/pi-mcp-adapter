@@ -1,6 +1,7 @@
 import type { McpExposure, McpServerConfig } from "@earendil-works/pi-coding-agent";
 import type { McpConfig, OAuthConfig, ServerEntry } from "./config-types.ts";
 import { isConfigObject } from "./config-validation.ts";
+import { writeTerminalWarn } from "./logger.ts";
 
 export interface NativeEntryContext {
   readonly filePath: string;
@@ -15,17 +16,21 @@ type ClientRegistration = NonNullable<NativeOAuthConfig["clientRegistration"]>;
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export function warnNativeEntry(ctx: NativeEntryContext, reason: string): null {
-  console.warn(`Ignoring native Pi MCP entry "${ctx.serverName}" in ${ctx.filePath}: ${reason}`);
+  writeTerminalWarn(
+    `Ignoring native Pi MCP entry "${ctx.serverName}" in ${ctx.filePath}: ${reason}`,
+  );
   return null;
 }
 
 export function warnNativeEntryFalse(ctx: NativeEntryContext, reason: string): false {
-  console.warn(`Ignoring native Pi MCP entry "${ctx.serverName}" in ${ctx.filePath}: ${reason}`);
+  writeTerminalWarn(
+    `Ignoring native Pi MCP entry "${ctx.serverName}" in ${ctx.filePath}: ${reason}`,
+  );
   return false;
 }
 
 export function warnNativeField(ctx: NativeEntryContext, detail: string): void {
-  console.warn(`Native Pi MCP entry "${ctx.serverName}" in ${ctx.filePath}: ${detail}`);
+  writeTerminalWarn(`Native Pi MCP entry "${ctx.serverName}" in ${ctx.filePath}: ${detail}`);
 }
 
 function isValidAuthMetadataUrl(value: unknown): boolean {

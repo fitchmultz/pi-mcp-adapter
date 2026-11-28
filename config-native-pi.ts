@@ -23,6 +23,7 @@ import {
   pickNativeServerPolicy,
   type NativeServerPolicy,
 } from "./config-native-pi-exposure.ts";
+import { writeTerminalWarn } from "./logger.ts";
 
 export interface LoadedNativePiConfig {
   readonly config: McpConfig;
@@ -390,11 +391,11 @@ function parseNativeConfigFile(filePath: string): Record<string, unknown> | null
     const text = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
     raw = JSON.parse(stripJsonComments(text, { trailingCommas: true }));
   } catch (error) {
-    console.warn(`Failed to load native Pi MCP config from ${filePath}:`, error);
+    writeTerminalWarn(`Failed to load native Pi MCP config from ${filePath}:`, error);
     return null;
   }
   if (!isConfigObject(raw)) {
-    console.warn(`Failed to load native Pi MCP config from ${filePath}: expected an object`);
+    writeTerminalWarn(`Failed to load native Pi MCP config from ${filePath}: expected an object`);
     return null;
   }
   return raw;
@@ -441,7 +442,7 @@ function readNativePiConfigFile(
   }
   const adapterTopKeys = findAdapterOnlyTopLevelKeys(raw);
   if (adapterTopKeys.length > 0) {
-    console.warn(
+    writeTerminalWarn(
       `Skipped ${filePath}: top-level adapter-only fields (${adapterTopKeys.join(", ")}) look like a legacy adapter config; move it to ${options.adapterConfigHint}`,
     );
     return null;
@@ -450,7 +451,7 @@ function readNativePiConfigFile(
     return { config: { mcpServers: {} }, replacedServers: new Set() };
   }
   if (!isConfigObject(raw.mcpServers)) {
-    console.warn(
+    writeTerminalWarn(
       `Failed to load native Pi MCP config from ${filePath}: mcpServers must be an object`,
     );
     return null;

@@ -23,6 +23,7 @@ import {
   type AuthStorageOptions,
 } from "./mcp-auth.ts";
 import { isServerDisabled, type ServerEntry } from "./types.ts";
+import { writeTerminalLog, writeTerminalWarn } from "./logger.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals, isAbortError } from "./runtime-owner.ts";
 import {
@@ -415,7 +416,7 @@ async function showAuthorizationUrl(
   if (options.onAuthorizationUrl) {
     await abortable(Promise.resolve(options.onAuthorizationUrl(authorizationUrl)), signal);
   } else {
-    console.log(`MCP Auth: Open this URL to authenticate ${serverName}:\n${authorizationUrl}`);
+    writeTerminalLog(`MCP Auth: Open this URL to authenticate ${serverName}:\n${authorizationUrl}`);
   }
   try {
     await abortable(open(authorizationUrl), signal);
@@ -423,7 +424,7 @@ async function showAuthorizationUrl(
     if (isAbortError(error, signal)) {
       throw error;
     }
-    console.warn(
+    writeTerminalWarn(
       `MCP Auth: Failed to open browser for ${serverName}; waiting for manual callback`,
       { error },
     );
@@ -468,5 +469,5 @@ export async function removeAuth(
   }
   await clearAllCredentials(identity, authStorageOptions);
   throwIfAborted(signal);
-  console.log(`MCP Auth: Removed credentials for ${serverName}`);
+  writeTerminalLog(`MCP Auth: Removed credentials for ${serverName}`);
 }

@@ -19,6 +19,7 @@ import {
   type AuthStorageOptions,
 } from "./mcp-auth.ts";
 import { isServerDisabled, isNonInteractiveOAuth, type ServerEntry } from "./types.ts";
+import { writeTerminalError } from "./logger.ts";
 import { formatTerminalError } from "./utils.ts";
 import { abortable, throwIfAborted } from "./abort.ts";
 import { combineAbortSignals } from "./runtime-owner.ts";
@@ -490,7 +491,9 @@ async function setPendingAuth(
   const cleanupTimer = setTimeout(() => {
     clearPendingAuth(runtime, pendingAuth, oauthState, pendingAuth.authStorageOptions).catch(
       (error: unknown) => {
-        console.error(`MCP Auth: Timed-out flow cleanup failed: ${formatTerminalError(error)}`);
+        writeTerminalError(
+          `MCP Auth: Timed-out flow cleanup failed: ${formatTerminalError(error)}`,
+        );
       },
     );
   }, MANUAL_AUTH_TIMEOUT_MS);

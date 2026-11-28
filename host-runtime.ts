@@ -131,6 +131,7 @@ export class McpHostRuntime implements McpAdapterHost {
 
   private registerEvents(): void {
     this.pi.on("session_start", (event, ctx) => {
+      logger.setUiHost(this, ctx.hasUI ? ctx.ui : null);
       this.sessionManager = ctx.sessionManager;
       this.toolSearchSettled = false;
       this.serversPrompt.clearSurfaced();
@@ -165,6 +166,7 @@ export class McpHostRuntime implements McpAdapterHost {
       }
     });
     this.pi.on("before_agent_start", async (event, ctx) => {
+      logger.setUiHost(this, ctx.hasUI ? ctx.ui : null);
       if (this.runtimeCwd === undefined) {
         await this.startSession(ctx, this.directToolsFrozen);
       } else if (ctx.cwd !== this.runtimeCwd || this.reconcile.retryPending) {
@@ -288,27 +290,31 @@ export class McpHostRuntime implements McpAdapterHost {
     const state = this.state;
     const owner = this.owner;
     const oauthRuntime = this.oauthRuntime;
-    completeSessionShutdownReloadSkills(event, ctx, this.sessionManager, state);
-    this.hasReloadSkills = false;
-    this.session.end();
-    this.sessionManager = undefined;
-    this.oauthRuntime = null;
-    this.runtimeCwd = undefined;
-    this.runtimeCacheEnabled = undefined;
-    this.directToolsFrozen = false;
-    this.reconcile.reset();
-    this.serversPrompt.resetAll();
-    this.skillsTracker.reset();
-    this.startSessionPromise = null;
-    this.prompts.clear();
-    this.workingSession.reset();
-    await finalizeHostShutdown({
-      events: this.pi.events,
-      state,
-      owner,
-      oauthRuntime,
-      flush: this.initModule?.flushMetadataCache,
-    });
+    try {
+      completeSessionShutdownReloadSkills(event, ctx, this.sessionManager, state);
+      this.hasReloadSkills = false;
+      this.session.end();
+      this.sessionManager = undefined;
+      this.oauthRuntime = null;
+      this.runtimeCwd = undefined;
+      this.runtimeCacheEnabled = undefined;
+      this.directToolsFrozen = false;
+      this.reconcile.reset();
+      this.serversPrompt.resetAll();
+      this.skillsTracker.reset();
+      this.startSessionPromise = null;
+      this.prompts.clear();
+      this.workingSession.reset();
+      await finalizeHostShutdown({
+        events: this.pi.events,
+        state,
+        owner,
+        oauthRuntime,
+        flush: this.initModule?.flushMetadataCache,
+      });
+    } finally {
+      logger.setUiHost(this, null);
+    }
   }
 
   private resolveConfig(ctx: ExtensionContext): McpConfig {

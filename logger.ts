@@ -2,6 +2,7 @@
  * Centralized logging for MCP UI operations.
  * Provides structured, contextual logs with levels.
  */
+import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -27,11 +28,151 @@ const LEVEL_PREFIX: Record<LogLevel, string> = {
   error: "[MCP-UI:ERROR]",
 };
 
+export type UiNotify = (message: string, level?: "info" | "warning" | "error") => void;
+
+function isEnvDebugEnabled(): boolean {
+  return process.env.MCP_UI_DEBUG === "1" || process.env.MCP_UI_DEBUG === "true";
+}
+
+function sanitizeNotificationText(text: string): string {
+  return stripOscSequences(text)
+    .split(/\r\n|\r|\n/)
+    .map((line) => sanitizeTerminalText(line))
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function notifySafely(
+  notify: UiNotify,
+  message: string,
+  level: "info" | "warning" | "error",
+): void {
+  const sanitized = sanitizeNotificationText(message);
+  if (sanitized === "") {
+    return;
+  }
+  try {
+    notify(sanitized, level);
+  } catch {
+    // Ignore notification failures during UI teardown or headless transitions.
+  }
+}
+
+function formatTerminalArg(arg: unknown): string {
+  if (typeof arg === "string") {
+    return arg;
+  }
+  if (arg instanceof Error) {
+    return arg.message;
+  }
+  if (typeof arg === "number" || typeof arg === "boolean" || typeof arg === "bigint") {
+    return String(arg);
+  }
+  if (arg === undefined || arg === null) {
+    return "";
+  }
+  try {
+    return JSON.stringify(arg);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function formatTerminalArgs(args: readonly unknown[]): string {
+  return args
+    .map((arg) => formatTerminalArg(arg))
+    .filter((part) => part !== "")
+    .join(" ");
+}
+
+function emitToConsole(level: LogLevel, fullMessage: string, error?: Error): void {
+  if (level === "error") {
+    console.error(fullMessage, error ?? "");
+    return;
+  }
+  if (level === "warn") {
+    console.warn(fullMessage);
+    return;
+  }
+  if (level === "debug") {
+    console.debug(fullMessage);
+    return;
+  }
+  console.log(fullMessage);
+}
+
+function formatNotifyText(level: LogLevel, fullMessage: string, error?: Error): string {
+  if (level === "error" && error !== undefined && error.message !== "") {
+    return `${fullMessage}: ${error.message}`;
+  }
+  return fullMessage;
+}
+
+function emitDiagnosticToUiHost(
+  notifier: UiNotify | undefined,
+  level: "warn" | "error",
+  fullMessage: string,
+  error?: Error,
+): void {
+  if (notifier === undefined) {
+    emitToConsole(level, fullMessage, error);
+    return;
+  }
+  notifySafely(
+    notifier,
+    formatNotifyText(level, fullMessage, error),
+    level === "error" ? "error" : "warning",
+  );
+  if (isEnvDebugEnabled()) {
+    console.error(fullMessage, ...(error !== undefined ? [error] : []));
+  }
+}
+
+function emitToUiHost(
+  notifier: UiNotify | undefined,
+  level: LogLevel,
+  fullMessage: string,
+  error?: Error,
+): void {
+  if (level === "warn" || level === "error") {
+    emitDiagnosticToUiHost(notifier, level, fullMessage, error);
+    return;
+  }
+  if (isEnvDebugEnabled()) {
+    console.error(fullMessage, ...(error !== undefined ? [error] : []));
+  }
+}
+
 class Logger {
   private minLevel: LogLevel = "info";
+  private readonly uiHosts = new Map<object, UiNotify | undefined>();
 
   setLevel(level: LogLevel): void {
     this.minLevel = level;
+  }
+
+  /** Tracks active interactive UI hosts so logs route via notify instead of raw stdout/stderr. */
+  setUiHost(owner: object, ui: { readonly notify?: UiNotify } | null | undefined): void {
+    this.uiHosts.delete(owner);
+    if (ui === null || ui === undefined) {
+      return;
+    }
+    const notifier = typeof ui.notify === "function" ? ui.notify.bind(ui) : undefined;
+    this.uiHosts.set(owner, notifier);
+  }
+
+  hasActiveUiHost(): boolean {
+    return this.uiHosts.size > 0;
+  }
+
+  getActiveNotifier(): UiNotify | undefined {
+    let latest: UiNotify | undefined;
+    for (const notifier of this.uiHosts.values()) {
+      if (notifier !== undefined) {
+        latest = notifier;
+      }
+    }
+    return latest;
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -42,21 +183,16 @@ class Logger {
     if (!this.shouldLog(level)) {
       return;
     }
-
     const prefix = LEVEL_PREFIX[level];
     const contextStr = formatContext(context);
     const fullMessage =
       contextStr !== "" ? `${prefix} ${message} ${contextStr}` : `${prefix} ${message}`;
 
-    if (level === "error") {
-      console.error(fullMessage, error ?? "");
-    } else if (level === "warn") {
-      console.warn(fullMessage);
-    } else if (level === "debug") {
-      console.debug(fullMessage);
-    } else {
-      console.log(fullMessage);
+    if (this.hasActiveUiHost()) {
+      emitToUiHost(this.getActiveNotifier(), level, fullMessage, error);
+      return;
     }
+    emitToConsole(level, fullMessage, error);
   }
 
   debug(message: string, context?: LogContext): void {
@@ -129,7 +265,53 @@ function formatContext(context?: LogContext): string {
 // Singleton instance
 export const logger = new Logger();
 
+export function writeTerminalLog(...args: unknown[]): void {
+  if (!logger.hasActiveUiHost()) {
+    console.log(...args);
+    return;
+  }
+  const notifier = logger.getActiveNotifier();
+  if (notifier !== undefined) {
+    notifySafely(notifier, formatTerminalArgs(args), "info");
+  }
+  if (isEnvDebugEnabled()) {
+    console.error(...args);
+  }
+}
+
+export function writeTerminalWarn(...args: unknown[]): void {
+  if (!logger.hasActiveUiHost()) {
+    console.warn(...args);
+    return;
+  }
+  const notifier = logger.getActiveNotifier();
+  if (notifier !== undefined) {
+    notifySafely(notifier, formatTerminalArgs(args), "warning");
+    if (isEnvDebugEnabled()) {
+      console.warn(...args);
+    }
+    return;
+  }
+  console.warn(...args);
+}
+
+export function writeTerminalError(...args: unknown[]): void {
+  if (!logger.hasActiveUiHost()) {
+    console.error(...args);
+    return;
+  }
+  const notifier = logger.getActiveNotifier();
+  if (notifier !== undefined) {
+    notifySafely(notifier, formatTerminalArgs(args), "error");
+    if (isEnvDebugEnabled()) {
+      console.error(...args);
+    }
+    return;
+  }
+  console.error(...args);
+}
+
 // Enable debug mode via environment variable
-if (process.env.MCP_UI_DEBUG === "1" || process.env.MCP_UI_DEBUG === "true") {
+if (isEnvDebugEnabled()) {
   logger.setLevel("debug");
 }

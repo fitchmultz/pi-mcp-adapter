@@ -202,7 +202,34 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     expect(state.failureMessages.has("srv")).toBe(false);
   });
 
-  it("sanitizes captured diagnostics in startup notifications and terminal logs", async () => {
+  it("sanitizes captured diagnostics in startup notifications without writing raw console output in TUI mode", async () => {
+    mkdirSync(tempDir, { recursive: true });
+    writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
+    mocks.state.config = {
+      settings: {},
+      mcpServers: { srv: { command: "demo", lifecycle: "eager" } },
+    };
+    connect.mockRejectedValueOnce(new Error("stderr \x1b]52;c;clipboard-secret\x07startup failed"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {
+      // Fail closed if TUI startup still writes raw diagnostics directly to stderr.
+    });
+    const notify = vi.spyOn(host.context.ui, "notify");
+    try {
+      const state = await initialize({ hasUI: true, mode: "tui" });
+
+      expect(state.failureMessages.get("srv")).toContain("clipboard-secret");
+      expect(notify).toHaveBeenCalledWith(
+        "MCP: Failed to connect to srv: stderr startup failed",
+        "error",
+      );
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+      notify.mockRestore();
+    }
+  });
+
+  it("sanitizes captured diagnostics in headless terminal logs", async () => {
     mkdirSync(tempDir, { recursive: true });
     writeFileSync(mocks.cachePath, JSON.stringify({ version: 1, servers: {} }));
     mocks.state.config = {
@@ -213,17 +240,16 @@ describe("lazy-keep-alive initializeMcp integration", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {
       // Capture the intentionally unsafe diagnostic without sending it to the terminal.
     });
-    const notify = vi.spyOn(host.context.ui, "notify");
-    const state = await initialize({ hasUI: true, mode: "tui" });
+    try {
+      const state = await initialize({ hasUI: false });
 
-    expect(state.failureMessages.get("srv")).toContain("clipboard-secret");
-    expect(notify).toHaveBeenCalledWith(
-      "MCP: Failed to connect to srv: stderr startup failed",
-      "error",
-    );
-    expect(consoleError).toHaveBeenCalledWith(
-      "MCP: Failed to connect to srv: stderr startup failed",
-    );
+      expect(state.failureMessages.get("srv")).toContain("clipboard-secret");
+      expect(consoleError).toHaveBeenCalledWith(
+        "MCP: Failed to connect to srv: stderr startup failed",
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("honors the status icon opt-out during eager startup", async () => {

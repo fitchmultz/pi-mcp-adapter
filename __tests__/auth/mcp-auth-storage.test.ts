@@ -496,6 +496,7 @@ describe("OAuth credential-store diagnostics", () => {
         "ui-stream-types.ts",
         "abort.ts",
         "utils.ts",
+        "logger.ts",
         "mcp-output-values.ts",
       ]) {
         cpSync(resolve(file), join(home, file));

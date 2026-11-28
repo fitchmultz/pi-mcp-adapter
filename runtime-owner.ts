@@ -1,4 +1,5 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { writeTerminalError } from "./logger.ts";
 import { formatTerminalError } from "./utils.ts";
 
 export interface McpRuntimeOwner {
@@ -28,7 +29,7 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
   };
 
   const reportCleanupFailure = (error: unknown, late: boolean) => {
-    console.error(
+    writeTerminalError(
       `MCP: ${late ? "late " : ""}runtime cleanup failed: ${formatTerminalError(error)}`,
     );
   };
@@ -74,7 +75,7 @@ export function createMcpRuntimeOwner(): McpRuntimeOwner {
         }
         if (failures.length > 0) {
           const aggregate = new AggregateError(failures, "MCP runtime cleanup failed");
-          console.error(`MCP: runtime cleanup failed: ${formatTerminalError(aggregate)}`);
+          writeTerminalError(`MCP: runtime cleanup failed: ${formatTerminalError(aggregate)}`);
           throw aggregate;
         }
         return;
