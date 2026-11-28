@@ -1219,7 +1219,7 @@ describe("MCP Skills (SEP-2640) integration", () => {
     }
   });
 
-  it("suppresses raw console warnings from host runtime while a TUI session is active", async () => {
+  it("routes warnings and errors to ui.notify without raw console writes while a TUI session is active", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "pi-mcp-tui-logger-"));
     const { logger, writeTerminalError } = await import("../logger.ts");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
@@ -1235,12 +1235,22 @@ describe("MCP Skills (SEP-2640) integration", () => {
       writeTerminalError("MCP: Failed to connect to atlas: offline");
       expect(warnSpy).not.toHaveBeenCalled();
       expect(errorSpy).not.toHaveBeenCalled();
+      expect(host.notifications).toContainEqual({
+        message: "[MCP-UI:WARN] MCP: skills/list failed for atlas: Method not found",
+        level: "warning",
+      });
+      expect(host.notifications).toContainEqual({
+        message: "MCP: Failed to connect to atlas: offline",
+        level: "error",
+      });
 
+      const countBeforeShutdown = host.notifications.length;
       await host.fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
       logger.warn("MCP: post-shutdown warning");
       writeTerminalError("MCP: post-shutdown error");
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(host.notifications).toHaveLength(countBeforeShutdown);
     } finally {
       warnSpy.mockRestore();
       errorSpy.mockRestore();

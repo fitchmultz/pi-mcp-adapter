@@ -69,42 +69,76 @@ describe("Logger", () => {
     );
   });
 
-  it("suppresses console output while any TUI owner is active unless MCP_UI_DEBUG is enabled", () => {
+  it("routes warnings and errors to ctx.ui.notify while muting stdout/debug in UI mode", () => {
     const originalDebug = process.env.MCP_UI_DEBUG;
     delete process.env.MCP_UI_DEBUG;
     const ownerA = {};
     const ownerB = {};
+    const rpcOwner = {};
+    const notifyA = vi.fn<(message: string, level?: "info" | "warning" | "error") => void>();
+    const notifyB = vi.fn<(message: string, level?: "info" | "warning" | "error") => void>();
     try {
-      logger.setTuiActive(ownerA, true);
-      logger.setTuiActive(ownerB, true);
+      logger.setUiHost(ownerA, { notify: notifyA });
+      logger.setUiHost(ownerB, { notify: notifyB });
       logger.debug("suppressed debug");
       logger.info("suppressed info");
-      logger.warn("suppressed warn");
-      logger.error("suppressed error", new Error("boom"));
-      writeTerminalLog("suppressed raw log");
-      writeTerminalWarn("suppressed raw warn");
-      writeTerminalError("suppressed raw error");
+      logger.warn("routed warn");
+      logger.error("routed error", new Error("boom"));
+      writeTerminalLog("routed raw log");
+      writeTerminalWarn("routed raw warn");
+      writeTerminalError("routed raw error");
 
       expect(console.debug).not.toHaveBeenCalled();
       expect(console.log).not.toHaveBeenCalled();
       expect(console.warn).not.toHaveBeenCalled();
       expect(console.error).not.toHaveBeenCalled();
+      expect(notifyA).not.toHaveBeenCalled();
+      expect(notifyB).toHaveBeenCalledWith("[MCP-UI:WARN] routed warn", "warning");
+      expect(notifyB).toHaveBeenCalledWith("[MCP-UI:ERROR] routed error: boom", "error");
+      expect(notifyB).toHaveBeenCalledWith("routed raw log", "info");
+      expect(notifyB).toHaveBeenCalledWith("routed raw warn", "warning");
+      expect(notifyB).toHaveBeenCalledWith("routed raw error", "error");
 
-      // Releasing only one owner keeps suppression active until the last TUI owner exits.
-      logger.setTuiActive(ownerA, false);
-      logger.warn("still suppressed");
-      writeTerminalError("still suppressed raw error");
+      notifyB.mockClear();
+      // Removing ownerA keeps routing active through ownerB's UI notifier.
+      logger.setUiHost(ownerA, null);
+      logger.warn("still routed");
+      writeTerminalError("still routed error");
+      expect(notifyB).toHaveBeenCalledWith("[MCP-UI:WARN] still routed", "warning");
+      expect(notifyB).toHaveBeenCalledWith("still routed error", "error");
       expect(console.warn).not.toHaveBeenCalled();
       expect(console.error).not.toHaveBeenCalled();
 
       process.env.MCP_UI_DEBUG = "1";
+      logger.info("debug info mirror");
       logger.warn("debug override");
+      writeTerminalLog("debug raw log");
+      writeTerminalWarn("debug raw warn");
       writeTerminalError("debug raw error");
-      expect(console.warn).toHaveBeenCalledWith("[MCP-UI:WARN] debug override");
+      expect(console.log).not.toHaveBeenCalled();
+      expect(console.debug).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith("[MCP-UI] debug info mirror");
+      expect(console.error).toHaveBeenCalledWith("[MCP-UI:WARN] debug override");
+      expect(console.error).toHaveBeenCalledWith("debug raw log");
+      expect(console.warn).toHaveBeenCalledWith("debug raw warn");
       expect(console.error).toHaveBeenCalledWith("debug raw error");
 
       delete process.env.MCP_UI_DEBUG;
-      logger.setTuiActive(ownerB, false);
+      logger.setUiHost(ownerB, null);
+      // An owner without ui.notify (e.g., headless RPC fallback) keeps warn/error on stderr only.
+      logger.setUiHost(rpcOwner, {});
+      logger.info("rpc muted stdout");
+      logger.error("rpc stderr error", new Error("failed"));
+      writeTerminalError("rpc raw stderr error");
+      expect(console.log).not.toHaveBeenCalled();
+      expect(console.debug).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        "[MCP-UI:ERROR] rpc stderr error",
+        expect.any(Error),
+      );
+      expect(console.error).toHaveBeenCalledWith("rpc raw stderr error");
+
+      logger.setUiHost(rpcOwner, null);
       logger.warn("restored");
       writeTerminalLog("restored raw log");
       writeTerminalWarn("restored raw warn");
@@ -114,8 +148,9 @@ describe("Logger", () => {
       expect(console.warn).toHaveBeenCalledWith("restored raw warn");
       expect(console.error).toHaveBeenCalledWith("restored raw error");
     } finally {
-      logger.setTuiActive(ownerA, false);
-      logger.setTuiActive(ownerB, false);
+      logger.setUiHost(ownerA, null);
+      logger.setUiHost(ownerB, null);
+      logger.setUiHost(rpcOwner, null);
       if (originalDebug === undefined) {
         delete process.env.MCP_UI_DEBUG;
       } else {
