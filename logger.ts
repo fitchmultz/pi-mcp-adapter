@@ -2,6 +2,7 @@
  * Centralized logging for MCP UI operations.
  * Provides structured, contextual logs with levels.
  */
+import { sanitizeTerminalText, stripOscSequences } from "./utils.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -33,13 +34,25 @@ function isEnvDebugEnabled(): boolean {
   return process.env.MCP_UI_DEBUG === "1" || process.env.MCP_UI_DEBUG === "true";
 }
 
+function sanitizeNotificationText(text: string): string {
+  return stripOscSequences(text)
+    .split(/\r\n|\r|\n/)
+    .map((line) => sanitizeTerminalText(line))
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
 function notifySafely(
   notify: UiNotify,
   message: string,
   level: "info" | "warning" | "error",
 ): void {
+  const sanitized = sanitizeNotificationText(message);
+  if (sanitized === "") {
+    return;
+  }
   try {
-    notify(message, level);
+    notify(sanitized, level);
   } catch {
     // Ignore notification failures during UI teardown or headless transitions.
   }

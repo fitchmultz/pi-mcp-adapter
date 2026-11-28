@@ -158,4 +158,43 @@ describe("Logger", () => {
       }
     }
   });
+
+  it("sanitizes OSC and ANSI control sequences before ui.notify while preserving newlines", () => {
+    const owner = {};
+    const notify = vi.fn<(message: string, level?: "info" | "warning" | "error") => void>();
+    logger.setUiHost(owner, { notify });
+    try {
+      logger.warn(
+        "MCP: refused skill \u001b]52;c;Y2xpcGJvYXJk\u0007\u001b[31mbad\u001b[0m\u009b2J",
+      );
+      writeTerminalWarn("Config issue: \u001b]0;spoofed-title\u0007\u001b[1mwarn\u001b[0m");
+      writeTerminalError("Failure: \u001b]52;c;line1\nline2\u0007tail");
+      writeTerminalLog("MCP Auth: Open this URL:\nhttps://example.test/auth");
+
+      expect(notify).toHaveBeenCalledTimes(4);
+      const messages = notify.mock.calls.map(([msg]) => msg);
+      for (const msg of messages) {
+        expect(msg).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+      }
+
+      expect(notify).toHaveBeenNthCalledWith(
+        1,
+        "[MCP-UI:WARN] MCP: refused skill bad 2J",
+        "warning",
+      );
+      expect(notify).toHaveBeenNthCalledWith(2, "Config issue: warn", "warning");
+      expect(notify).toHaveBeenNthCalledWith(3, "Failure: tail", "error");
+      expect(notify).toHaveBeenNthCalledWith(
+        4,
+        "MCP Auth: Open this URL:\nhttps://example.test/auth",
+        "info",
+      );
+      expect(messages[0]).not.toContain("Y2xpcGJvYXJk");
+      expect(messages[1]).not.toContain("spoofed-title");
+      expect(messages[2]).not.toContain("line1");
+      expect(messages[2]).not.toContain("line2");
+    } finally {
+      logger.setUiHost(owner, null);
+    }
+  });
 });
