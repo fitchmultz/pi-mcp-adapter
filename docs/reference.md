@@ -766,6 +766,8 @@ Run `/mcp` to see known tools, per-tool and per-server token estimates, pinned c
 
 **Guided first-run setup:** Run `/mcp setup` to inspect detected shared MCP files, adopt compatibility imports from other hosts, open discovered config paths, preview exact before/after file diffs for writes, scaffold a minimal project `.mcp.json`, add a curated known server (DeepWiki, Context7, Notion, GitHub, or Chrome DevTools), or quick-add RepoPrompt into a standard/shared MCP file.
 
+In Pi's fullscreen terminal mode, use the mouse wheel to move the selection in `/mcp`, `/mcp-auth`, and `/mcp setup`, or click a row to select it. Use the keyboard to run the selected action.
+
 Scaffolding creates a new file only. If `.mcp.json` already exists when the write runs, setup reports the error and leaves its contents unchanged.
 
 **Subagent integration:** If you use the subagent extension, agents can request direct MCP tools in their frontmatter with `mcp:server-name` syntax. See the subagent README for details.
