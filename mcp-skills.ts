@@ -4,7 +4,7 @@ import type { Skill, SkillListing, SkillsClient } from "@modelcontextprotocol/cl
 
 type SkillsSdkModule = typeof SkillsExt;
 const SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills";
-import type { ManagedClient } from "./connection-runtime.ts";
+import { isMethodNotFoundError, type ManagedClient } from "./connection-runtime.ts";
 import { logger } from "./logger.ts";
 import type { SkillMetadata } from "./types.ts";
 
@@ -356,7 +356,11 @@ export async function discoverServerSkills(input: {
       throw error;
     }
     const message = error instanceof Error ? error.message : String(error);
-    logger.warn(`MCP: skills/list failed for ${serverName}: ${message}`);
+    if (isMethodNotFoundError(error)) {
+      logger.debug(`MCP: skills/list unsupported for ${serverName}: ${message}`);
+      return { supported: false, skills: [], rejectedCount: 0 };
+    }
+    logger.debug(`MCP: skills/list failed for ${serverName}: ${message}`);
     return { supported: true, failed: true, skills: [], rejectedCount: 1 };
   }
 }

@@ -131,6 +131,7 @@ export class McpHostRuntime implements McpAdapterHost {
 
   private registerEvents(): void {
     this.pi.on("session_start", (event, ctx) => {
+      logger.setTuiActive(this, ctx.hasUI);
       this.sessionManager = ctx.sessionManager;
       this.toolSearchSettled = false;
       this.serversPrompt.clearSurfaced();
@@ -165,6 +166,7 @@ export class McpHostRuntime implements McpAdapterHost {
       }
     });
     this.pi.on("before_agent_start", async (event, ctx) => {
+      logger.setTuiActive(this, ctx.hasUI);
       if (this.runtimeCwd === undefined) {
         await this.startSession(ctx, this.directToolsFrozen);
       } else if (ctx.cwd !== this.runtimeCwd || this.reconcile.retryPending) {
@@ -285,6 +287,7 @@ export class McpHostRuntime implements McpAdapterHost {
   }
 
   private async shutdown(event?: SessionShutdownEvent, ctx?: ExtensionContext): Promise<void> {
+    logger.setTuiActive(this, false);
     const state = this.state;
     const owner = this.owner;
     const oauthRuntime = this.oauthRuntime;

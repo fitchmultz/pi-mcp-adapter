@@ -27,11 +27,25 @@ const LEVEL_PREFIX: Record<LogLevel, string> = {
   error: "[MCP-UI:ERROR]",
 };
 
+function isEnvDebugEnabled(): boolean {
+  return process.env.MCP_UI_DEBUG === "1" || process.env.MCP_UI_DEBUG === "true";
+}
+
 class Logger {
   private minLevel: LogLevel = "info";
+  private readonly tuiOwners = new Set<object>();
 
   setLevel(level: LogLevel): void {
     this.minLevel = level;
+  }
+
+  /** Tracks active interactive TUI hosts so background console writes do not corrupt the screen. */
+  setTuiActive(owner: object, active: boolean): void {
+    if (active) {
+      this.tuiOwners.add(owner);
+      return;
+    }
+    this.tuiOwners.delete(owner);
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -40,6 +54,9 @@ class Logger {
 
   private emit(level: LogLevel, message: string, context?: LogContext, error?: Error): void {
     if (!this.shouldLog(level)) {
+      return;
+    }
+    if (this.tuiOwners.size > 0 && !isEnvDebugEnabled()) {
       return;
     }
 
@@ -130,6 +147,6 @@ function formatContext(context?: LogContext): string {
 export const logger = new Logger();
 
 // Enable debug mode via environment variable
-if (process.env.MCP_UI_DEBUG === "1" || process.env.MCP_UI_DEBUG === "true") {
+if (isEnvDebugEnabled()) {
   logger.setLevel("debug");
 }

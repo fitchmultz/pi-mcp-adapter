@@ -68,4 +68,46 @@ describe("Logger", () => {
       error,
     );
   });
+
+  it("suppresses console output while any TUI owner is active unless MCP_UI_DEBUG is enabled", () => {
+    const originalDebug = process.env.MCP_UI_DEBUG;
+    delete process.env.MCP_UI_DEBUG;
+    const ownerA = {};
+    const ownerB = {};
+    try {
+      logger.setTuiActive(ownerA, true);
+      logger.setTuiActive(ownerB, true);
+      logger.debug("suppressed debug");
+      logger.info("suppressed info");
+      logger.warn("suppressed warn");
+      logger.error("suppressed error", new Error("boom"));
+
+      expect(console.debug).not.toHaveBeenCalled();
+      expect(console.log).not.toHaveBeenCalled();
+      expect(console.warn).not.toHaveBeenCalled();
+      expect(console.error).not.toHaveBeenCalled();
+
+      // Releasing only one owner keeps suppression active until the last TUI owner exits.
+      logger.setTuiActive(ownerA, false);
+      logger.warn("still suppressed");
+      expect(console.warn).not.toHaveBeenCalled();
+
+      process.env.MCP_UI_DEBUG = "1";
+      logger.warn("debug override");
+      expect(console.warn).toHaveBeenCalledWith("[MCP-UI:WARN] debug override");
+
+      delete process.env.MCP_UI_DEBUG;
+      logger.setTuiActive(ownerB, false);
+      logger.warn("restored");
+      expect(console.warn).toHaveBeenCalledWith("[MCP-UI:WARN] restored");
+    } finally {
+      logger.setTuiActive(ownerA, false);
+      logger.setTuiActive(ownerB, false);
+      if (originalDebug === undefined) {
+        delete process.env.MCP_UI_DEBUG;
+      } else {
+        process.env.MCP_UI_DEBUG = originalDebug;
+      }
+    }
+  });
 });

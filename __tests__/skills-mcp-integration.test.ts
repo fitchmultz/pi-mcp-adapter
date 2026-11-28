@@ -1149,4 +1149,94 @@ describe("MCP Skills (SEP-2640) integration", () => {
       message: "MCP verified skills updated — run /reload to refresh Pi skills.",
     });
   });
+
+  it("treats skills/list MethodNotFound as unsupported and logs failures via debug without warning", async () => {
+    const { Client, InMemoryTransport } = await import("@modelcontextprotocol/client");
+    const { McpServer } = await import("@modelcontextprotocol/server");
+    const { SkillsExtension } = await import("@modelcontextprotocol/server/ext/skills");
+    const { discoverServerSkills } = await import("../mcp-skills.ts");
+    const { logger } = await import("../logger.ts");
+
+    const warnSpy = vi.spyOn(logger, "warn");
+    const debugSpy = vi.spyOn(logger, "debug");
+
+    const unsupportedServer = new McpServer({ name: "atlas-like", version: "1.0.0" });
+    unsupportedServer.server.registerCapabilities({
+      extensions: { "io.modelcontextprotocol/skills": {} },
+    });
+    const [clientTransportA, serverTransportA] = InMemoryTransport.createLinkedPair();
+    const clientA = new Client({ name: "test-client", version: "1.0.0" });
+    await Promise.all([
+      unsupportedServer.connect(serverTransportA),
+      clientA.connect(clientTransportA),
+    ]);
+    try {
+      const result = await discoverServerSkills({
+        serverName: "atlas",
+        client: clientA,
+        exposeSkills: true,
+      });
+      expect(result).toEqual({ supported: false, skills: [], rejectedCount: 0 });
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining("MCP: skills/list unsupported for atlas:"),
+      );
+    } finally {
+      await Promise.all([clientA.close(), unsupportedServer.close()]);
+    }
+
+    debugSpy.mockClear();
+    const failingServer = new McpServer({ name: "broken-skills", version: "1.0.0" });
+    new SkillsExtension({
+      source: {
+        list: async () => {
+          throw new Error("skills backend unavailable");
+        },
+        get: async () => {
+          return;
+        },
+        read: async () => {
+          return;
+        },
+      },
+    }).attach(failingServer);
+    const [clientTransportB, serverTransportB] = InMemoryTransport.createLinkedPair();
+    const clientB = new Client({ name: "test-client", version: "1.0.0" });
+    await Promise.all([failingServer.connect(serverTransportB), clientB.connect(clientTransportB)]);
+    try {
+      const result = await discoverServerSkills({
+        serverName: "broken",
+        client: clientB,
+        exposeSkills: true,
+      });
+      expect(result).toEqual({ supported: true, failed: true, skills: [], rejectedCount: 1 });
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining("MCP: skills/list failed for broken:"),
+      );
+    } finally {
+      await Promise.all([clientB.close(), failingServer.close()]);
+    }
+  });
+
+  it("suppresses raw console warnings from host runtime while a TUI session is active", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "pi-mcp-tui-logger-"));
+    const { logger } = await import("../logger.ts");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      return;
+    });
+    const host = await mountAdapter({ cwd: workdir, config: { mcpServers: {} } });
+    try {
+      await host.start();
+      logger.warn("MCP: skills/list failed for atlas: Method not found");
+      expect(warnSpy).not.toHaveBeenCalled();
+
+      await host.fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
+      logger.warn("MCP: post-shutdown warning");
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
 });
