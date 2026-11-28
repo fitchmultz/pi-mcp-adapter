@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { logger } from "../logger.ts";
+import { logger, writeTerminalError, writeTerminalLog, writeTerminalWarn } from "../logger.ts";
 
 describe("Logger", () => {
   beforeEach(() => {
@@ -81,6 +81,9 @@ describe("Logger", () => {
       logger.info("suppressed info");
       logger.warn("suppressed warn");
       logger.error("suppressed error", new Error("boom"));
+      writeTerminalLog("suppressed raw log");
+      writeTerminalWarn("suppressed raw warn");
+      writeTerminalError("suppressed raw error");
 
       expect(console.debug).not.toHaveBeenCalled();
       expect(console.log).not.toHaveBeenCalled();
@@ -90,16 +93,26 @@ describe("Logger", () => {
       // Releasing only one owner keeps suppression active until the last TUI owner exits.
       logger.setTuiActive(ownerA, false);
       logger.warn("still suppressed");
+      writeTerminalError("still suppressed raw error");
       expect(console.warn).not.toHaveBeenCalled();
+      expect(console.error).not.toHaveBeenCalled();
 
       process.env.MCP_UI_DEBUG = "1";
       logger.warn("debug override");
+      writeTerminalError("debug raw error");
       expect(console.warn).toHaveBeenCalledWith("[MCP-UI:WARN] debug override");
+      expect(console.error).toHaveBeenCalledWith("debug raw error");
 
       delete process.env.MCP_UI_DEBUG;
       logger.setTuiActive(ownerB, false);
       logger.warn("restored");
+      writeTerminalLog("restored raw log");
+      writeTerminalWarn("restored raw warn");
+      writeTerminalError("restored raw error");
       expect(console.warn).toHaveBeenCalledWith("[MCP-UI:WARN] restored");
+      expect(console.log).toHaveBeenCalledWith("restored raw log");
+      expect(console.warn).toHaveBeenCalledWith("restored raw warn");
+      expect(console.error).toHaveBeenCalledWith("restored raw error");
     } finally {
       logger.setTuiActive(ownerA, false);
       logger.setTuiActive(ownerB, false);

@@ -17,7 +17,7 @@ import {
 import { stageHostReconcile } from "./host-registered-servers.ts";
 import type { McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import type { ReloadedServerSkills } from "./mcp-skills.ts";
-import { logger } from "./logger.ts";
+import { logger, writeTerminalError } from "./logger.ts";
 import { formatTerminalError } from "./utils.ts";
 
 export interface LiveSessionReconcileContext {
@@ -262,7 +262,7 @@ export async function rejectHostInitialization(input: {
   if (!session.owns(owner, generation)) {
     return;
   }
-  console.error(`MCP initialization failed: ${formatTerminalError(error)}`);
+  writeTerminalError(`MCP initialization failed: ${formatTerminalError(error)}`);
   const state = session.currentState;
   if (state) {
     session.ready(state);

@@ -1884,4 +1884,34 @@ describe("mcpAdapter session lifecycle", () => {
 
     expect(spies.registerTool).toHaveBeenCalled();
   });
+
+  it("keeps TUI console suppression active while shutdown flush runs", async () => {
+    const state = createState();
+    mocks.initializeMcp.mockResolvedValue(state);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {
+      return;
+    });
+    try {
+      const { default: adapter } = await import("../index.ts");
+      const { logger } = await import("../logger.ts");
+      let warnedDuringFlush = false;
+      mocks.flushMetadataCache.mockImplementation(() => {
+        logger.warn("MCP: shutdown flush busy");
+        warnedDuringFlush = true;
+      });
+      const { api, handlers } = await createPi();
+      adapter(api);
+      await handlers.get("session_start")({}, { hasUI: true });
+      await nextTurn();
+
+      await handlers.get("session_shutdown")({}, { hasUI: true });
+      expect(warnedDuringFlush).toBe(true);
+      expect(consoleWarn).not.toHaveBeenCalled();
+
+      logger.warn("MCP: after shutdown cleanup");
+      expect(consoleWarn).toHaveBeenCalledWith("[MCP-UI:WARN] MCP: after shutdown cleanup");
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
 });

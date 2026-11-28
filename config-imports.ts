@@ -20,6 +20,7 @@ import type {
 import type { ServerProvenance } from "./types.ts";
 import { isConfigObject, isServerEntry, isImportKind } from "./config-validation.ts";
 import { mergeOpenCodeConfigs, mapOpenCodeEntry } from "./config-opencode.ts";
+import { writeTerminalWarn } from "./logger.ts";
 
 function openCodeProjectPath(cwd: string): string {
   const start = resolve(cwd);
@@ -89,7 +90,7 @@ function loadOpenCodeConfig(
         highestPrecedencePath = path;
       }
     } catch (error) {
-      console.warn(warningPrefix, error);
+      writeTerminalWarn(warningPrefix, error);
     }
   }
   return highestPrecedencePath !== undefined
@@ -114,7 +115,7 @@ export function loadImportedConfig(
     try {
       return { path, value: readImportedConfig(path) };
     } catch (error) {
-      console.warn(warningPrefix, error);
+      writeTerminalWarn(warningPrefix, error);
     }
   }
   return null;
@@ -132,14 +133,14 @@ export function readValidatedConfigWithDiagnostics(
     const { config, errors } = validateConfigWithDiagnostics(parsed, path);
     if (errors.length > 0) {
       const firstError = errors.find((entry) => entry.severity === "error") ?? errors[0];
-      console.warn(
+      writeTerminalWarn(
         `Config validation issues in ${label}: ${errors.map((entry) => entry.message).join("; ")}`,
         new Error(firstError?.message ?? "Config validation warning"),
       );
     }
     return { config, errors };
   } catch (error) {
-    console.warn(`Failed to load ${label}:`, error);
+    writeTerminalWarn(`Failed to load ${label}:`, error);
     const message = error instanceof Error ? error.message : String(error);
     return {
       config: null,

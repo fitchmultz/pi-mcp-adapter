@@ -8,6 +8,7 @@ import { shutdownOAuth, type McpOAuthRuntime } from "./mcp-oauth-runtime.ts";
 import type { ReloadedServerSkills } from "./mcp-skills.ts";
 import { cleanupRuntimeSkills } from "./mcp-skills-store.ts";
 import type { McpRuntimeOwner } from "./runtime-owner.ts";
+import { writeTerminalError } from "./logger.ts";
 import { formatTerminalError } from "./utils.ts";
 
 /** Owns the final UI handle release and persistence/transport teardown for a state. */
@@ -91,7 +92,9 @@ export async function stopRuntimeSession(input: {
 
 export function logSessionRestartFailures(failures: readonly unknown[]): void {
   for (const error of failures) {
-    console.error(`MCP: failed to shut down previous session state: ${formatTerminalError(error)}`);
+    writeTerminalError(
+      `MCP: failed to shut down previous session state: ${formatTerminalError(error)}`,
+    );
   }
 }
 
@@ -241,7 +244,9 @@ export async function stopStaleInitState(
   try {
     await new McpStateCleanup(state).stop("stale_session_start", flush);
   } catch (error) {
-    console.error(`MCP: failed to clean stale initialization state: ${formatTerminalError(error)}`);
+    writeTerminalError(
+      `MCP: failed to clean stale initialization state: ${formatTerminalError(error)}`,
+    );
   }
 }
 
@@ -252,7 +257,7 @@ export async function stopRejectedInitialization(
   try {
     await Promise.all([owner.stop("MCP initialization failed"), shutdownOAuth(oauthRuntime)]);
   } catch (cleanupError) {
-    console.error(
+    writeTerminalError(
       `MCP: failed to clean rejected initialization: ${formatTerminalError(cleanupError)}`,
     );
   }

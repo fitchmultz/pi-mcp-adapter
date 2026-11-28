@@ -1221,21 +1221,29 @@ describe("MCP Skills (SEP-2640) integration", () => {
 
   it("suppresses raw console warnings from host runtime while a TUI session is active", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "pi-mcp-tui-logger-"));
-    const { logger } = await import("../logger.ts");
+    const { logger, writeTerminalError } = await import("../logger.ts");
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      return;
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {
       return;
     });
     const host = await mountAdapter({ cwd: workdir, config: { mcpServers: {} } });
     try {
       await host.start();
       logger.warn("MCP: skills/list failed for atlas: Method not found");
+      writeTerminalError("MCP: Failed to connect to atlas: offline");
       expect(warnSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
 
       await host.fixture.runner.emit({ type: "session_shutdown", reason: "quit" });
       logger.warn("MCP: post-shutdown warning");
+      writeTerminalError("MCP: post-shutdown error");
       expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
     } finally {
       warnSpy.mockRestore();
+      errorSpy.mockRestore();
       rmSync(workdir, { recursive: true, force: true });
     }
   });

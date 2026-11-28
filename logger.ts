@@ -48,6 +48,11 @@ class Logger {
     this.tuiOwners.delete(owner);
   }
 
+  /** Returns true while an interactive TUI host is active and debug logging is disabled. */
+  isConsoleSuppressed(): boolean {
+    return this.tuiOwners.size > 0 && !isEnvDebugEnabled();
+  }
+
   private shouldLog(level: LogLevel): boolean {
     return LEVEL_PRIORITY[level] >= LEVEL_PRIORITY[this.minLevel];
   }
@@ -56,7 +61,7 @@ class Logger {
     if (!this.shouldLog(level)) {
       return;
     }
-    if (this.tuiOwners.size > 0 && !isEnvDebugEnabled()) {
+    if (this.isConsoleSuppressed()) {
       return;
     }
 
@@ -145,6 +150,24 @@ function formatContext(context?: LogContext): string {
 
 // Singleton instance
 export const logger = new Logger();
+
+export function writeTerminalLog(...args: unknown[]): void {
+  if (!logger.isConsoleSuppressed()) {
+    console.log(...args);
+  }
+}
+
+export function writeTerminalWarn(...args: unknown[]): void {
+  if (!logger.isConsoleSuppressed()) {
+    console.warn(...args);
+  }
+}
+
+export function writeTerminalError(...args: unknown[]): void {
+  if (!logger.isConsoleSuppressed()) {
+    console.error(...args);
+  }
+}
 
 // Enable debug mode via environment variable
 if (isEnvDebugEnabled()) {
