@@ -1,4 +1,10 @@
-import { matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
+import {
+  matchesKey,
+  type Component,
+  type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
+} from "@earendil-works/pi-tui";
 import { createPanelKeys, type PanelKeys } from "./panel-keys.ts";
 import type { ImportKind } from "./types.ts";
 import type { McpDiscoverySummary } from "./config.ts";
@@ -20,11 +26,14 @@ interface McpSetupPanelInput {
   done: () => void;
 }
 
+type SetupCursor = "actionCursor" | "importCursor" | "pathCursor";
+
 export class McpSetupPanel implements Component {
   private screen: Screen;
   private actionCursor = 0;
   private importCursor = 0;
   private pathCursor = 0;
+  private renderedItems: { screen: Screen; itemRows: ReadonlyMap<number, number> } | undefined;
   private readonly selectedImports = new Set<ImportKind>();
   private busy = false;
   private notice: { text: string; tone: "success" | "warning" | "muted" } | null = null;
@@ -112,6 +121,58 @@ export class McpSetupPanel implements Component {
     }
 
     this.handleActionInput(data);
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type === "wheel") {
+      return this.handleWheel(event.wheelDelta);
+    }
+
+    if (
+      this.busy ||
+      this.renderedItems?.screen !== this.screen ||
+      event.button !== "left" ||
+      (event.type !== "press" && event.type !== "click")
+    ) {
+      return undefined;
+    }
+    const index = this.renderedItems.itemRows.get(event.y);
+    if (index === undefined) {
+      return undefined;
+    }
+    this.resetInactivityTimeout();
+    if (event.type === "press") {
+      // Pi dispatches a component click after the component handles the press.
+      return { handled: true, render: false };
+    }
+    return { handled: true, focus: true, render: this.selectItem(this.activeList().cursor, index) };
+  }
+
+  private handleWheel(wheelDelta: number | undefined): TuiMouseEventResult {
+    this.resetInactivityTimeout();
+    if (this.busy || wheelDelta === undefined || wheelDelta === 0) {
+      return { handled: true, render: false };
+    }
+    const { cursor, count } = this.activeList();
+    const delta = wheelDelta < 0 ? -1 : 1;
+    const index = Math.max(0, Math.min(count - 1, this[cursor] + delta));
+    return { handled: true, render: this.selectItem(cursor, index) };
+  }
+
+  private activeList(): { cursor: SetupCursor; count: number } {
+    if (this.screen === "imports") {
+      return { cursor: "importCursor", count: this.discovery.imports.length };
+    }
+    if (this.screen === "paths") {
+      return { cursor: "pathCursor", count: getDetectedPaths(this.discovery).length };
+    }
+    return { cursor: "actionCursor", count: getSetupActions(this.discovery, this.screen).length };
+  }
+
+  private selectItem(cursor: SetupCursor, index: number): boolean {
+    const changed = this[cursor] !== index;
+    this[cursor] = index;
+    return changed;
   }
 
   private handleActionInput(data: string): void {
@@ -315,7 +376,7 @@ export class McpSetupPanel implements Component {
   }
 
   render(width: number): string[] {
-    return new SetupView({
+    const { lines, itemRows } = new SetupView({
       discovery: this.discovery,
       callbacks: this.callbacks,
       options: this.options,
@@ -326,10 +387,12 @@ export class McpSetupPanel implements Component {
       selectedImports: this.selectedImports,
       notice: this.notice,
     }).render(width);
+    this.renderedItems = { screen: this.screen, itemRows };
+    return lines;
   }
 
   invalidate(): void {
-    // Every render derives its lines from current state; there is no cached layout.
+    // The hit targets are replaced along with the lines on the next render.
   }
 
   dispose(): void {

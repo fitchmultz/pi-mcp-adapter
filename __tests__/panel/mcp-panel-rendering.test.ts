@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { noop } from "./helpers.ts";
+import { mouseEvent, noop } from "./helpers.ts";
 import { createMcpPanel } from "../../mcp-panel.ts";
 import {
   computeServerHash,
@@ -221,31 +221,59 @@ describe("mcp-panel rendering", () => {
     expect(createFailedPanel("idle", "should not appear", 60)).not.toContain("should not appear");
   });
 
-  it("keeps dirty changes and closes when Keep & Close is confirmed", () => {
+  it("focuses a tool below wrapped details, then consumes wheel during discard confirmation", () => {
     const config = createConfig();
     const done = vi.fn<(result: McpPanelResult) => void>();
     const panel = createMcpPanel({
       config,
       cache: createCache(config),
       provenance: new Map(),
-      callbacks: createCallbacks(),
+      callbacks: {
+        ...createCallbacks(),
+        getConnectionStatus: () => "failed",
+        getFailureMessage: () =>
+          "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is it running?",
+      },
       tui: { requestRender: noop },
       done,
     });
 
-    panel.handleInput("\r");
-    panel.handleInput("\x1b[B");
-    panel.handleInput("\r");
-    panel.handleInput("\x1b");
+    try {
+      panel.handleInput("\r");
+      const width = 60;
+      const lines = panel.render(width);
+      const row = lines.findIndex((line) => line.includes("search issues"));
+      const detail = lines.findIndex((line) => line.includes("Cannot connect"));
+      const event = { button: "left", width, height: lines.length } as const;
+      expect(panel.handleMouse(mouseEvent({ ...event, type: "press", y: detail }))).toBeUndefined();
+      expect(panel.handleMouse(mouseEvent({ ...event, type: "press", y: row }))?.handled).toBe(
+        true,
+      );
+      expect(panel.handleMouse(mouseEvent({ ...event, type: "click", y: row }))).toEqual({
+        handled: true,
+        focus: true,
+        render: true,
+      });
+      expect(stripAnsi(panel.render(width).join("\n"))).toContain("▸ ○ search issues");
 
-    expect(stripAnsi(panel.render(120).join("\n"))).toContain("Keep & Close");
+      panel.handleInput("\r");
+      panel.handleInput("\x1b");
+      const prompt = panel.render(120).join("\n");
+      expect(prompt).toContain("Keep & Close");
+      expect(panel.handleMouse(mouseEvent({ type: "wheel", wheelDelta: -3 }))).toEqual({
+        handled: true,
+        render: false,
+      });
+      expect(panel.render(120).join("\n")).toBe(prompt);
+      expect(done).not.toHaveBeenCalled();
 
-    panel.handleInput("\r");
-
-    expect(done).toHaveBeenCalledTimes(1);
-    const result = done.mock.calls.at(0)?.[0];
-    expect(result?.cancelled).toBe(false);
-    expect(result?.changes.get("atlassian")).toEqual(["search\u0007issues"]);
-    panel.dispose();
+      panel.handleInput("\r");
+      expect(done).toHaveBeenCalledTimes(1);
+      const result = done.mock.calls.at(0)?.[0];
+      expect(result?.cancelled).toBe(false);
+      expect(result?.changes.get("atlassian")).toEqual(["search\u0007issues"]);
+    } finally {
+      panel.dispose();
+    }
   });
 });

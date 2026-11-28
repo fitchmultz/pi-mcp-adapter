@@ -65,19 +65,18 @@ class PanelLayout {
 export class PanelView {
   private readonly s: PanelStyler;
   private readonly state: PanelViewState;
+  private readonly itemRows = new Map<number, number>();
   constructor(state: PanelViewState) {
     this.state = state;
     this.s = createPanelStyler(state.theme);
   }
 
-  render(width: number): string[] {
+  render(width: number): { lines: string[]; itemRows: ReadonlyMap<number, number> } {
     const layout = new PanelLayout(width, this.s);
-    return [
-      ...this.renderHeader(layout),
-      ...this.renderBody(layout),
-      ...this.renderFooter(layout),
-      layout.bottom(),
-    ];
+    const lines = this.renderHeader(layout);
+    this.renderBody(layout, lines);
+    lines.push(...this.renderFooter(layout), layout.bottom());
+    return { lines, itemRows: this.itemRows };
   }
 
   private renderHeader(layout: PanelLayout): string[] {
@@ -107,16 +106,17 @@ export class PanelView {
     return lines;
   }
 
-  private renderBody(layout: PanelLayout): string[] {
+  private renderBody(layout: PanelLayout, lines: string[]): void {
     if (this.state.servers.length === 0) {
       const message = this.state.authOnly
         ? "No OAuth-capable MCP servers configured."
         : "No MCP servers configured.";
-      return [
+      lines.push(
         layout.emptyRow(),
         layout.row(this.s.hint(this.s.italic(message))),
         layout.emptyRow(),
-      ];
+      );
+      return;
     }
     const total = this.state.visibleItems.length;
     const start = Math.max(
@@ -124,11 +124,15 @@ export class PanelView {
       Math.min(this.state.cursorIndex - Math.floor(PANEL_PAGE_SIZE / 2), total - PANEL_PAGE_SIZE),
     );
     const end = Math.min(start + PANEL_PAGE_SIZE, total);
-    const lines = [layout.emptyRow()];
+    lines.push(layout.emptyRow());
     for (let index = start; index < end; index++) {
       const item = this.state.visibleItems[index];
       if (item) {
-        lines.push(...this.renderItem(item, index === this.state.cursorIndex, layout));
+        const itemLines = this.renderItem(item, index === this.state.cursorIndex, layout);
+        if (itemLines.length > 0) {
+          this.itemRows.set(lines.length, index);
+          lines.push(...itemLines);
+        }
       }
     }
     lines.push(layout.emptyRow());
@@ -149,7 +153,6 @@ export class PanelView {
         );
       }
     }
-    return lines;
   }
 
   private renderItem(item: VisibleItem, selected: boolean, layout: PanelLayout): string[] {

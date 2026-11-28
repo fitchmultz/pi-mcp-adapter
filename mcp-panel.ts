@@ -1,4 +1,10 @@
-import { matchesKey, type Component, type TUI } from "@earendil-works/pi-tui";
+import {
+  matchesKey,
+  type Component,
+  type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
+} from "@earendil-works/pi-tui";
 import { createPanelKeys, type PanelKeybindings, type PanelKeys } from "./panel-keys.ts";
 import type { McpConfig, McpPanelCallbacks, McpPanelResult, ServerProvenance } from "./types.ts";
 import type { MetadataCache, ServerCacheEntry } from "./metadata-cache.ts";
@@ -47,6 +53,7 @@ class McpPanel implements Component {
   private importNotice: string | null = null;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private visibleItems: VisibleItem[] = [];
+  private itemRows: ReadonlyMap<number, number> | undefined;
   private readonly authOnly: boolean;
   private readonly keys: PanelKeys;
   private readonly theme: PanelThemeInput | undefined;
@@ -170,6 +177,45 @@ class McpPanel implements Component {
       return;
     }
     this.handleBrowseInput(data);
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type === "wheel") {
+      return this.handleWheel(event.wheelDelta);
+    }
+
+    if (
+      !this.canNavigate ||
+      event.button !== "left" ||
+      (event.type !== "press" && event.type !== "click")
+    ) {
+      return undefined;
+    }
+    const index = this.itemRows?.get(event.y);
+    if (index === undefined) {
+      return undefined;
+    }
+    this.resetInactivityTimeout();
+    if (event.type === "press") {
+      // Pi dispatches a component click after the component handles the press.
+      return { handled: true, render: false };
+    }
+    const changed = this.cursorIndex !== index;
+    this.cursorIndex = index;
+    return { handled: true, focus: true, render: changed };
+  }
+
+  private get canNavigate(): boolean {
+    return this.phase === "open" && this.mode.kind !== "confirm-discard";
+  }
+
+  private handleWheel(wheelDelta: number | undefined): TuiMouseEventResult {
+    this.resetInactivityTimeout();
+    const previous = this.cursorIndex;
+    if (this.canNavigate && wheelDelta !== undefined && wheelDelta !== 0) {
+      this.moveCursor(wheelDelta < 0 ? -1 : 1);
+    }
+    return { handled: true, render: this.cursorIndex !== previous };
   }
 
   private closeCancelled(): void {
@@ -454,7 +500,7 @@ class McpPanel implements Component {
   }
 
   render(width: number): string[] {
-    return new PanelView({
+    const { lines, itemRows } = new PanelView({
       servers: this.servers.map((server) => server.data),
       visibleItems: this.visibleItems,
       cursorIndex: this.cursorIndex,
@@ -471,9 +517,11 @@ class McpPanel implements Component {
       dirty: this.dirty,
       ...(this.theme !== undefined ? { theme: this.theme } : {}),
     }).render(width);
+    this.itemRows = itemRows;
+    return lines;
   }
   invalidate(): void {
-    // Lines are rendered from state on every call; no layout is cached.
+    // The hit targets are replaced along with the lines on the next render.
   }
 
   /** Pi owns this panel; disposal releases its inactivity timer even without an answer. */

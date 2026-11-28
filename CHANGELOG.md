@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 8.0.69 - 2026-11-28
+
+<!-- npm-release:unreleased:start -->
+
+### Added
+
+- Mouse wheel navigation and click-to-select rows in the MCP panels in Pi's fullscreen terminal mode.
+
+<!-- npm-release:unreleased:end -->
+
+- Add mouse navigation to MCP panels (#306) ([f5e32ce](https://github.com/fitchmultz/pi-mcp-adapter/commit/f5e32ce5bf8c0f55c197f52d77f3929f15ee7749))
+
+### What's Changed
+
+- Add mouse navigation to MCP panels by @fitchmultz in https://github.com/fitchmultz/pi-mcp-adapter/pull/306
+
+**Full Changelog**: https://github.com/fitchmultz/pi-mcp-adapter/compare/v8.0.68...v8.0.69
+
 ## 8.0.68 - 2026-11-27
 
 <!-- npm-release:unreleased:start -->

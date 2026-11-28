@@ -1,6 +1,6 @@
 import { KeybindingsManager, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
-import { noop } from "./helpers.ts";
+import { mouseEvent, noop } from "./helpers.ts";
 import { createMcpPanel } from "../../mcp-panel.ts";
 import { createMcpSetupPanel, type SetupPanelCallbacks } from "../../mcp-setup-panel.ts";
 import { createPanelKeys } from "../../panel-keys.ts";
@@ -342,5 +342,88 @@ describe("mcp-setup-panel custom keybindings", () => {
     panel.handleInput(ENTER);
     expect(done).toHaveBeenCalledTimes(1);
     panel.dispose();
+  });
+});
+
+describe("panel mouse input", () => {
+  it("moves the MCP server selection one row per wheel event and consumes wheel at the bounds", async () => {
+    const callbacks = createAuthCallbacks();
+    const panel = createMcpPanel({
+      config: createTwoServerConfig(),
+      cache: null,
+      provenance: new Map(),
+      callbacks,
+      tui: { requestRender: noop },
+      done: noop,
+      options: { authOnly: true },
+    });
+    const up = mouseEvent({ type: "wheel", wheelDelta: -3 });
+    const down = mouseEvent({ type: "wheel", wheelDelta: 3 });
+
+    try {
+      expect(panel.handleMouse(up)).toEqual({ handled: true, render: false });
+      expect(panel.handleMouse(down)).toEqual({ handled: true, render: true });
+      expect(panel.handleMouse(down)).toEqual({ handled: true, render: false });
+      panel.handleInput(ENTER);
+      await Promise.resolve();
+      expect(callbacks.authenticate).toHaveBeenLastCalledWith("beta");
+
+      expect(panel.handleMouse(up)).toEqual({ handled: true, render: true });
+      panel.handleInput(ENTER);
+      await Promise.resolve();
+      expect(callbacks.authenticate).toHaveBeenLastCalledWith("alpha");
+
+      panel.handleInput("z");
+      expect(panel.handleMouse(down)).toEqual({ handled: true, render: false });
+    } finally {
+      panel.dispose();
+    }
+  });
+
+  it("scrolls setup actions and focuses a visible compact-list row without running it", async () => {
+    const callbacks = createSetupCallbacks();
+    const done = vi.fn<() => void>();
+    const panel = createMcpSetupPanel({
+      discovery: createEmptyDiscovery(),
+      callbacks,
+      options: {
+        mode: "setup",
+        onboardingState: { version: 1, sharedConfigHintShown: false, setupCompleted: false },
+      },
+      tui: { requestRender: noop },
+      done,
+    });
+    const up = mouseEvent({ type: "wheel", wheelDelta: -3 });
+    const down = mouseEvent({ type: "wheel", wheelDelta: 3 });
+
+    try {
+      expect(panel.handleMouse(up)).toEqual({ handled: true, render: false });
+      expect(panel.handleMouse(down)).toEqual({ handled: true, render: true });
+      expect(panel.handleMouse(up)).toEqual({ handled: true, render: true });
+      expect(panel.handleMouse(down)).toEqual({ handled: true, render: true });
+      panel.handleInput(ENTER);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(callbacks.scaffoldProjectConfig).toHaveBeenCalledTimes(1);
+
+      panel.handleInput(PAGE_DOWN);
+      expect(panel.handleMouse(down)).toEqual({ handled: true, render: false });
+      panel.handleInput(UP);
+      const width = 37;
+      const lines = panel.render(width);
+      const row = lines.findIndex((line) => line.includes("Close"));
+      const event = { button: "left", y: row, width, height: lines.length } as const;
+      expect(panel.handleMouse(mouseEvent({ ...event, type: "press" }))?.handled).toBe(true);
+      expect(panel.handleMouse(mouseEvent({ ...event, type: "click" }))).toEqual({
+        handled: true,
+        focus: true,
+        render: true,
+      });
+      expect(done).not.toHaveBeenCalled();
+      panel.handleInput(ENTER);
+      expect(done).toHaveBeenCalledTimes(1);
+    } finally {
+      panel.dispose();
+    }
   });
 });
